@@ -31,6 +31,10 @@ import { Aviso } from "@/components/shared/aviso";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  AUTOR_DA_NOTA_DA_PASSAGEM,
+  ehNotaDaPassagemDaIa,
+} from "@/lib/agente/nota-da-passagem";
 import { estadoVisualDaConversa } from "@/lib/design/status";
 import type { EnvioEmVoo } from "@/lib/domain/envios-em-voo";
 import type { AgendadasDoFio } from "@/lib/domain/mensagem-agendada";
@@ -75,8 +79,9 @@ export const AUTOR_DA_AUTOMACAO = "Automação";
  *
  * A IA assina como "Assistente"; a mensagem de uma pessoa, pelo nome dela
  * (sem o nome no mapa, a linha nao aparece, como sempre). Sem pessoa, so a
- * nota interna ganha assinatura: a unica nota sem autor e a da automacao. A
- * mensagem automatica ao paciente (regua, confirmacao) segue sem linha.
+ * nota interna ganha assinatura: a nota sem autor e a da automacao, menos a
+ * da passagem da IA (abaixo). A mensagem automatica ao paciente (regua,
+ * confirmacao) segue sem linha.
  *
  * A enviada direto pelo WhatsApp da clinica (pelo_celular) assina "Pelo
  * WhatsApp", seja de uma pessoa (author 'usuario', sem author_user_id: o
@@ -88,6 +93,11 @@ export const AUTOR_DA_AUTOMACAO = "Automação";
  * equipe (author 'sistema', o corpo da FRASE_DE_ESCALONAMENTO) assina
  * "Aviso automático" (revisao de producao de 19/10/2026): sem a linha, ela
  * parecia fala de alguem da equipe.
+ *
+ * A nota interna que a IA deixa ao passar a conversa para a equipe (D-20,
+ * decisao do dono de 27/10/2026) assina "Assistente", como a IA: ela e
+ * gravada como a nota de automacao (author 'sistema'), e se reconhece pelo
+ * cabecalho fixo do corpo (lib/agente/nota-da-passagem.ts).
  */
 export function autorDaBolha(
   message: Pick<
@@ -107,6 +117,9 @@ export function autorDaBolha(
   }
   if (message.author_user_id) {
     return authorNames[message.author_user_id] ?? null;
+  }
+  if (ehNotaDaPassagemDaIa(message)) {
+    return AUTOR_DA_NOTA_DA_PASSAGEM;
   }
   if (message.author === "sistema" && message.is_internal_note) {
     return AUTOR_DA_AUTOMACAO;

@@ -41,10 +41,14 @@ import { cn } from "@/lib/utils";
 // a equipe aprova a consulta que a IA marcou (o painel "Pendente de voce" e
 // o menu da consulta), o que o paciente informou ao assistente para marcar:
 // nome completo, nascimento, CPF, carteirinha, se a consulta e para ele
-// mesmo, quando informou e, se ja entrou no cadastro, quando e por quem. Ao
-// aprovar, o banco aplica esses dados ao cadastro do contato: o nome, se o
-// cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento,
-// CPF e carteirinha, so se estiverem vazios (o gatilho da aprovacao).
+// mesmo, quando informou e, se ja passou pela aprovacao, quando e por quem.
+// Ao aprovar, o banco aplica esses dados ao cadastro do contato (o gatilho
+// da aprovacao): o nome, se o cadastro estiver sem nome ou com o nome que
+// veio do WhatsApp; nascimento e CPF, so se estiverem vazios; a carteirinha,
+// so vazia, na consulta pelo convenio e com o convenio do cadastro vazio
+// (ele entra junto) ou o mesmo. O banco marca aplicado_em mesmo quando
+// nenhum campo estava vazio (e nao diz quais entraram): a tela diz
+// "Conferido na aprovacao", nunca que algum dado entrou.
 //
 // A leitura grava trilha (leu_dados_da_marcacao, sem o conteudo), entao e SO
 // sob demanda: o clique no botao chama a acao (lerDadosInformadosAction),
@@ -102,15 +106,22 @@ export const TEXTOS_DOS_DADOS_INFORMADOS = {
   naoEntraCancelada: "Não entra no cadastro: a consulta foi cancelada.",
   naoEntraOutraPessoa: "Não entra no cadastro: a consulta é para outra pessoa.",
   naoEntrou: "Não entrou no cadastro.",
+  // Revisao curta das correcoes da AG3 (achado 13): a regra inteira do
+  // gatilho da aprovacao (a carteirinha so na consulta pelo convenio, com o
+  // convenio do cadastro vazio ou o mesmo; o nome tambem por cima do nome
+  // que veio do WhatsApp) e, depois da aprovacao, o que de fato se sabe: o
+  // banco marca a aprovacao mesmo quando nenhum campo entrou (e nao diz
+  // quais entraram), entao a linha diz que os dados foram conferidos, nunca
+  // que algum foi aplicado.
   regraDoCadastro:
-    "O nome entra se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento, CPF e carteirinha, só se estiverem vazios.",
+    "Na aprovação, os dados entram no cadastro assim: o nome, se o cadastro estava sem nome ou com o nome que veio do WhatsApp; nascimento e CPF, se estavam vazios; a carteirinha, se estava vazia e a consulta é pelo convênio, com o convênio do cadastro vazio (ele entra junto) ou o mesmo. Fora disso, o cadastro não muda.",
   aplicado: (quando: string, quem: string | null) =>
     quem === null
-      ? `Aplicado em ${quando}, na aprovação da consulta.`
-      : `Aplicado em ${quando}, na aprovação por ${quem}.`,
+      ? `Conferido na aprovação da consulta, em ${quando}.`
+      : `Conferido na aprovação por ${quem}, em ${quando}.`,
   alguemDaEquipe: "alguém da equipe",
   aoAprovar:
-    "Ao aprovar a consulta, estes dados entram no cadastro do paciente. O nome entra se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento, CPF e carteirinha, só se estiverem vazios.",
+    "Ao aprovar a consulta, estes dados entram no cadastro do paciente assim: o nome, se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento e CPF, se estiverem vazios; a carteirinha, se estiver vazia e a consulta for pelo convênio, com o convênio do cadastro vazio (ele entra junto) ou o mesmo. Fora disso, o cadastro não muda.",
   fechar: "Fechar",
 } as const;
 

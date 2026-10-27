@@ -13,6 +13,10 @@ import {
   ehAvisoAutomaticoDaIa,
 } from "@/components/atendimento/aviso-automatico";
 import { AUTOR_PELO_CELULAR } from "@/components/atendimento/pelo-celular";
+import {
+  AUTOR_DA_NOTA_DA_PASSAGEM,
+  ehNotaDaPassagemDaIa,
+} from "@/lib/agente/nota-da-passagem";
 import type { MessageItem, QuotedMessage } from "@/lib/queries/conversations";
 import { cn } from "@/lib/utils";
 
@@ -62,6 +66,11 @@ export function autorDaCitacao(
   }
   if (mensagem.author === "ia") {
     return "Assistente";
+  }
+  // A nota que a IA deixa ao passar a conversa (D-20): a mesma assinatura da
+  // bolha.
+  if (ehNotaDaPassagemDaIa(mensagem)) {
+    return AUTOR_DA_NOTA_DA_PASSAGEM;
   }
   // Enviada direto pelo WhatsApp da clínica: sem pessoa no sistema, e não é
   // a régua. "Sistema" aqui diria que foi mensagem automática do Conduzza.

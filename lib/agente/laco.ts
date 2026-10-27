@@ -131,10 +131,7 @@ import {
   type MensagemDeEntrada,
 } from "@/lib/domain/conformidade/gatilhos-de-entrada";
 import {
-  MARCADOR_DO_NOME_COMPLETO,
-  mascararDadosDaColeta,
-  mascararNascimentos,
-  mascararTrechosCitados,
+  mascararParaOVerificador,
   minimizarParaLlm,
 } from "@/lib/domain/conformidade/minimizar";
 import {
@@ -1108,7 +1105,10 @@ function relogioDesde(agoraMs: number): () => number {
  * Revisao final da AG3 (achado 14): o turno da coleta de dados, em que a
  * pessoa pode mandar o nome completo e o nascimento: com o estado do
  * atendimento, uma reserva no estado (ou a pergunta "Confirma" feita) ou o
- * nome ou o nascimento ainda faltando para marcar.
+ * nome ou o nascimento ainda faltando para marcar. Revisao curta das
+ * correcoes (achado 1): decide so se o NASCIMENTO some da copia do
+ * verificador; o classificador le o texto inteiro sempre, e o nome so some
+ * quando o servidor validou no turno (nomesValidados).
  */
 export function turnoDaColetaDeDados(
   atendimento: AtendimentoDoTurno | null,
@@ -1330,21 +1330,19 @@ async function turnoDoAgente(
     const textosPendentes = pendentes.map((m) =>
       textoParaOsModelos(m, opcoesDoTexto),
     );
-    // Revisao final da AG3 (achado 14, LGPD, minimizacao): no turno da
-    // coleta de dados, o nome completo e o nascimento vao mascarados na
-    // copia do classificador e do verificador (o agente precisa deles; os
-    // outros dois nao). O filtro deterministico (local) le o texto inteiro.
+    // Revisao curta das correcoes da AG3 (achado 1, ALTO, CFM): o
+    // classificador le o texto SEM mascara de nome e de nascimento. A
+    // mascara pela deixa ("me chamo", "meu nome e") escondia o sintoma dito
+    // depois do nome ("me chamo ana e to com o dente mole" chegava como "me
+    // chamo [nome]"); o agente ja le o texto inteiro do mesmo provedor, e
+    // esconder sintoma do portao e o risco maior. A minimizacao de sempre
+    // (CPF, telefone, e-mail, os codigos da carteirinha) continua.
     const naColeta = turnoDaColetaDeDados(entrada.atendimento ?? null);
     const anoCorrente = anoNaClinica(entrada.agoraMs, entrada.fuso);
-    const paraOsClassificadores = (
-      texto: string,
-      nomes: readonly string[] = [],
-    ): string =>
-      naColeta ? mascararDadosDaColeta(texto, { anoCorrente, nomes }) : texto;
     const restanteDoPortao = prazoEm - agora();
     const classificacao = await classificarComPrazo(
       entrada.classificador,
-      textosPendentes.map((texto) => paraOsClassificadores(texto)),
+      textosPendentes,
       Math.min(PRAZO_DO_CLASSIFICADOR_NO_PORTAO_MS, restanteDoPortao),
     );
     const usoDoClassificador = (classificacao as { uso?: unknown }).uso;
@@ -1898,28 +1896,25 @@ async function turnoDoAgente(
       });
       return falhar("desconhecida");
     }
-    // Achado 14: a copia do verificador no turno da coleta vai sem o nome
-    // completo (o que o modelo registrou e o que a heuristica acha) e sem o
-    // nascimento; o texto aprovado continua o rascunho, byte a byte.
-    const verificador: Verificador = naColeta
-      ? (pedido) => {
-          const nomes = agendaDoTurno.nomesCitados();
-          return entrada.verificador({
-            ...pedido,
-            rascunho: mascararNascimentos(
-              mascararTrechosCitados(
-                pedido.rascunho,
-                nomes,
-                MARCADOR_DO_NOME_COMPLETO,
-              ),
-              anoCorrente,
-            ),
-            mensagensDoPaciente: pedido.mensagensDoPaciente.map((m) =>
-              paraOsClassificadores(m, nomes),
-            ),
-          });
-        }
-      : entrada.verificador;
+    // Achado 14 e revisao curta das correcoes (achado 1): a copia do
+    // verificador vai sem o nascimento (no turno da coleta) e sem os nomes
+    // que o servidor VALIDOU neste turno e que parecem nome
+    // (nomesValidados; nunca a heuristica da deixa, que engolia o sintoma).
+    // O resto, sintoma inclusive, chega como esta. O texto aprovado continua
+    // o rascunho, byte a byte.
+    const nomesValidados = agendaDoTurno.nomesValidados();
+    const verificador: Verificador =
+      naColeta || nomesValidados.length > 0
+        ? (pedido) => {
+            const copia = (texto: string) =>
+              mascararParaOVerificador(texto, { anoCorrente, nomesValidados });
+            return entrada.verificador({
+              ...pedido,
+              rascunho: copia(pedido.rascunho),
+              mensagensDoPaciente: pedido.mensagensDoPaciente.map(copia),
+            });
+          }
+        : entrada.verificador;
     filtro = await filtrarSaida({
       rascunho,
       contexto: {

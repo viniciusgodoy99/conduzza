@@ -85,6 +85,7 @@ import type {
   FatosDaFerramenta,
   HorarioLivreDoTurno,
 } from "@/lib/domain/conformidade/fatos-do-turno";
+import { pareceNomeDePessoa } from "@/lib/domain/conformidade/minimizar";
 
 import {
   comHorariosOferecidos,
@@ -115,6 +116,7 @@ import {
   diaAsHora,
   diaEHora,
   escolherHorarios,
+  fusoDaAgenda,
   horarioContinuaLivre,
   pedidoDaReconferencia,
   planejarBuscaDeHorario,
@@ -415,11 +417,14 @@ export type AgendaDoTurno = {
   nota: (motivo: string) => string | null;
   /**
    * Revisao final da AG3 (LGPD): os nomes completos que o modelo mandou
-   * registrar neste turno (como ele copiou e como o paciente escreveu), so
-   * para mascarar a copia do verificador. Nunca vai para log nem para fora
-   * do turno.
+   * registrar neste turno (como ele copiou, sem a marca do contato e como o
+   * paciente escreveu), so para mascarar a copia do verificador. Revisao
+   * curta das correcoes (achado 1, CFM): SO os que o servidor validou (achou
+   * na mensagem do paciente e passou nas regras do nome) E que parecem nome
+   * (pareceNomeDePessoa): "ana e to com o dente mole" nunca entra, mesmo
+   * validado. Nunca vai para log nem para fora do turno.
    */
-  nomesCitados: () => string[];
+  nomesValidados: () => string[];
 };
 
 function saida(
@@ -563,8 +568,11 @@ export function criarAgendaDoTurno(entrada: {
   let chamouAgendar = false;
   let chamouConfirmar = false;
   const resultados: string[] = [];
-  /** Os nomes que o modelo mandou registrar (so para mascarar o verificador). */
-  const nomesCitados: string[] = [];
+  /**
+   * Os nomes que o servidor validou no turno e que parecem nome (so para
+   * mascarar a copia do verificador).
+   */
+  const nomesValidados: string[] = [];
   let ultimaPreferencia: { periodo: string | null; hora: string | null } | null =
     null;
   /** A reserva conhecida: a deste turno ou a do estado, conferida. */
@@ -1141,20 +1149,29 @@ export function criarAgendaDoTurno(entrada: {
       hoje: hojeNoFuso(agoraMs, fuso),
     });
     // Revisao final da AG3 (LGPD): o nome como o modelo copiou e como o
-    // paciente escreveu, para a copia do verificador ir sem ele.
+    // paciente escreveu, para a copia do verificador ir sem ele. Revisao
+    // curta das correcoes (achado 1, CFM): so com o nome VALIDADO pelo
+    // servidor (achado na mensagem do paciente e nas regras do nome) e so as
+    // formas que parecem nome; o resto vai ao verificador como esta.
     const pedidoDoNome = entradaDoRegistroDeDadosSchema.safeParse(argumentos);
-    if (pedidoDoNome.success && pedidoDoNome.data.nome_completo !== null) {
+    if (
+      preparo.tipo === "pronto" &&
+      preparo.dados.nomeCompleto !== null &&
+      pedidoDoNome.success &&
+      pedidoDoNome.data.nome_completo !== null
+    ) {
       const copiado = pedidoDoNome.data.nome_completo;
-      nomesCitados.push(copiado);
       // Sem a marca do nome do contato ("Fulano da Silva" vira "da Silva"
       // quando a resposta tira a marca).
-      const semAMarca = copiado.replace(/(?<!\p{L})fulan[oa](?!\p{L})/giu, " ").trim();
-      if (semAMarca !== copiado && semAMarca.split(/\s+/).length >= 2) {
-        nomesCitados.push(semAMarca);
+      const semAMarca = copiado
+        .replace(/(?<!\p{L})fulan[oa](?!\p{L})/giu, " ")
+        .replace(/\s+/gu, " ")
+        .trim();
+      for (const forma of [copiado, semAMarca, preparo.dados.nomeCompleto]) {
+        if (pareceNomeDePessoa(forma) && !nomesValidados.includes(forma)) {
+          nomesValidados.push(forma);
+        }
       }
-    }
-    if (preparo.tipo === "pronto" && preparo.dados.nomeCompleto !== null) {
-      nomesCitados.push(preparo.dados.nomeCompleto);
     }
     if (preparo.tipo === "entrada_invalida") {
       resultados.push("entrada_invalida");
@@ -1996,6 +2013,11 @@ export function criarAgendaDoTurno(entrada: {
       // "Confirma ...?" que traz o dd/mm e o HH:mm DA reserva viva (e o
       // profissional e a unidade dela, quando cita) e nenhum outro dia e
       // hora; o estado guarda o id da reserva perguntada (o agendar manda).
+      // Revisao curta (achados 2 e 8): pela mensagem inteira, sem palavra
+      // distintiva de outro profissional ou unidade, e com "hoje" e
+      // "amanha" conferidos contra o dia da reserva no fuso da clinica.
+      const inicioDaReserva =
+        reserva?.horario?.inicio ?? reserva?.leitura?.inicio ?? null;
       const perguntouAReserva =
         r !== null &&
         reserva !== null &&
@@ -2009,6 +2031,11 @@ export function criarAgendaDoTurno(entrada: {
           unidade: r.unidade,
           profissionais: nomesDosProfissionais(),
           unidades: (catalogo.unidades ?? []).map((u) => u.nome),
+          diaNaClinica:
+            inicioDaReserva === null || !Number.isFinite(Date.parse(inicioDaReserva))
+              ? null
+              : hojeNoFuso(Date.parse(inicioDaReserva), fusoDaAgenda(fuso)),
+          hojeNaClinica: hojeNoFuso(relogio(), fusoDaAgenda(fuso)),
         });
       if (
         !fim.passou &&
@@ -2104,6 +2131,6 @@ export function criarAgendaDoTurno(entrada: {
     falhasDepois,
     fechar,
     nota,
-    nomesCitados: () => [...nomesCitados],
+    nomesValidados: () => [...nomesValidados],
   };
 }

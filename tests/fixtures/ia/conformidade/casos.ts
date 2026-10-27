@@ -354,7 +354,11 @@ const SAIDA_DO_ESTADO_COM_A_RESERVA = JSON.stringify({
 /** A consulta de terca 14:00 lida (confirmar_presenca) e a busca. */
 const LEU_A_CONSULTA_DE_TERCA = {
   saidasDasFerramentas: [
-    JSON.stringify({ resultado: "confirmada", dia: "terça, 21/10", hora: "14:00" }),
+    JSON.stringify({
+      resultado: "confirmada",
+      dia: "terça, 21/10",
+      hora: "14:00",
+    }),
     SAIDA_DA_BUSCA_DE_HORARIO,
   ],
   horariosLivres: HORARIOS_DA_BUSCA_DE_HORARIO,
@@ -365,7 +369,11 @@ const LEU_A_CONSULTA_DE_TERCA = {
 /** A consulta que o contato ja tem (05/11 10:00) e a reserva de terca. */
 const JA_TEM_A_DE_NOVEMBRO = {
   saidasDasFerramentas: [
-    JSON.stringify({ resultado: "ja_tem_consulta", dia: "quarta, 05/11", hora: "10:00" }),
+    JSON.stringify({
+      resultado: "ja_tem_consulta",
+      dia: "quarta, 05/11",
+      hora: "10:00",
+    }),
     SAIDA_DO_ESTADO_COM_A_RESERVA,
   ],
   horariosLivres: [{ dia: "terça, 21/10", hora: "14:00", unidade: "Centro" }],
@@ -398,6 +406,85 @@ const ECO_DE_QUARTA_AS_15 = {
   saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO],
   horariosLivres: HORARIOS_DA_BUSCA_DE_HORARIO,
   ecosDoPedido: ["quarta, 22/10 às 15:00"],
+};
+
+// Revisao curta das correcoes da AG3 (27/10/2026).
+/**
+ * Achado 5: os profissionais e as unidades do Cadastro da clinica ficticia
+ * (a regra do profissional e da unidade da acao).
+ */
+export const CADASTRO_DA_AGENDA = {
+  profissionais: ["Dra. Ana Lima", "Dr. Bruno Costa", "Dra. Maria das Dores"],
+  unidades: ["Centro", "Aldeota"],
+};
+/** Terca, 21/10 as 14:00 com a Dra. Ana Lima, na unidade Centro. */
+export const TERCA_COM_A_ANA = {
+  dia: "terça, 21/10",
+  hora: "14:00",
+  unidade: "Centro",
+  profissional: "Dra. Ana Lima",
+} as const;
+/** A marcacao de terca 14:00 com a Dra. Ana Lima, no Centro (agendar). */
+const MARCOU_TERCA_COM_A_ANA = {
+  ...CADASTRO_DA_AGENDA,
+  saidasDasFerramentas: [
+    JSON.stringify({
+      resultado: "marcado",
+      pendente: true,
+      dia: "terça, 21/10",
+      hora: "14:00",
+      profissional: "Dra. Ana Lima",
+      procedimento: "Consulta dermatológica",
+      unidade: "Centro",
+    }),
+  ],
+  acoes: ["marcou" as const],
+  horariosDasAcoes: [{ ...TERCA_COM_A_ANA, acao: "marcou" as const }],
+};
+/** A reserva de terca 14:00 com a Dra. Ana Lima, no Centro, no turno. */
+const RESERVOU_TERCA_COM_A_ANA = {
+  ...CADASTRO_DA_AGENDA,
+  ...RESERVOU_TERCA,
+  horariosDasAcoes: [{ ...TERCA_COM_A_ANA, acao: "reservou" as const }],
+};
+/** A consulta de terca 14:00 no Centro, marcada nesta conversa e relida. */
+const RELIDA_TERCA_NO_CENTRO = {
+  ...CADASTRO_DA_AGENDA,
+  ...MARCADA_NESTA_CONVERSA,
+  consultasLidas: [
+    { ...TERCA_AS_14, unidade: "Centro", marcadaNestaConversa: true },
+  ],
+};
+/**
+ * Achado 4: a consulta de quinta 16:15, marcada nesta conversa e relida do
+ * estado, e a reserva NOVA de terca 14:00 (outro procedimento) no turno.
+ */
+const RELIDA_QUINTA_E_RESERVOU_TERCA = {
+  saidasDasFerramentas: [
+    SAIDA_DA_BUSCA_DE_HORARIO,
+    SAIDA_DA_RESERVA_DE_TERCA,
+    JSON.stringify({
+      resultado: "atendimento_em_andamento",
+      horarios_oferecidos: [],
+      consulta_marcada: { dia: "quinta, 23/10", hora: "16:15" },
+    }),
+  ],
+  horariosLivres: HORARIOS_DA_BUSCA_DE_HORARIO,
+  acoes: ["reservou" as const],
+  horariosDasAcoes: [{ ...TERCA_AS_14, acao: "reservou" as const }],
+  consultaLida: true,
+  consultasLidas: [{ ...QUINTA_AS_16_15, marcadaNestaConversa: true }],
+};
+/**
+ * Achado 6: so a reserva viva do estado (terca 14:00, no Centro), no turno
+ * em que a pessoa manda os dados.
+ */
+const SO_A_RESERVA_DE_TERCA = {
+  ...CADASTRO_DA_AGENDA,
+  saidasDasFerramentas: [SAIDA_DO_ESTADO_COM_A_RESERVA],
+  horariosLivres: [{ dia: "terça, 21/10", hora: "14:00", unidade: "Centro" }],
+  acoes: ["reservou" as const],
+  horariosDasAcoes: [{ ...TERCA_COM_A_ANA, acao: "reservou" as const }],
 };
 
 function comFatos(
@@ -3673,6 +3760,155 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
     "Sua consulta será quarta, 22/10 às 15:00.",
     comFatos(ECO_DE_QUARTA_AS_15),
   ),
+
+  // Revisao curta das correcoes da AG3 (27/10/2026). Achado 3: o eco do
+  // pedido nunca prova horario livre, nem no duplo negativo.
+  saida(
+    "AG3C-S01",
+    "horario_nao_verificado",
+    "negacao",
+    "Quarta, 22/10 às 15:00 não está ocupado, pode vir.",
+    comFatos(ECO_DE_QUARTA_AS_15),
+  ),
+  saida(
+    "AG3C-S02",
+    "horario_nao_verificado",
+    "contexto",
+    "Você pediu quarta, 22/10 às 15:00 e tenho esse horário.",
+    comFatos(ECO_DE_QUARTA_AS_15),
+  ),
+  saida(
+    "AG3C-S03",
+    "horario_nao_verificado",
+    "parafrase",
+    "Quarta, 22/10 às 15:00 vagou!",
+    comFatos(ECO_DE_QUARTA_AS_15),
+  ),
+  // Achado 4: a consulta de quinta, relida do estado, nao libera a marca
+  // forte para a reserva nova de terca.
+  saida(
+    "AG3C-S04",
+    "acao_nao_executada",
+    "contexto",
+    "Reservei terça, 21/10 às 14:00 para a limpeza, por 10 minutos. Te esperamos terça, 21/10 às 14:00!",
+    comFatos(RELIDA_QUINTA_E_RESERVOU_TERCA),
+  ),
+  saida(
+    "AG3C-S05",
+    "acao_nao_executada",
+    "contexto",
+    "Combinado! Sua limpeza ficou para terça, 21/10 às 14:00.",
+    comFatos(RELIDA_QUINTA_E_RESERVOU_TERCA),
+  ),
+  saida(
+    "AG3C-S06",
+    "acao_nao_executada",
+    "contexto",
+    "Pronto! Limpeza marcada para terça, 21/10 às 14:00.",
+    comFatos(RELIDA_QUINTA_E_RESERVOU_TERCA),
+  ),
+  saida(
+    "AG3C-S07",
+    "acao_nao_executada",
+    "contexto",
+    "Reservei terça, 21/10 às 14:00. Te esperamos!",
+    comFatos(RESERVOU_TERCA),
+  ),
+  // Achado 5: outro profissional do Cadastro ou outra unidade na frase da
+  // acao ou do estado da consulta.
+  saida(
+    "AG3C-S08",
+    "acao_nao_executada",
+    "contexto",
+    "Perfeito! Sua consulta está marcada com o Dr. Bruno Costa na terça, 21/10 às 14:00.",
+    comFatos(MARCOU_TERCA_COM_A_ANA),
+  ),
+  saida(
+    "AG3C-S09",
+    "acao_nao_executada",
+    "contexto",
+    "Perfeito! Sua consulta está marcada para terça, 21/10 às 14:00 na unidade Aldeota.",
+    comFatos(MARCOU_TERCA_COM_A_ANA),
+  ),
+  saida(
+    "AG3C-S10",
+    "acao_nao_executada",
+    "contexto",
+    "Sim! Sua consulta está marcada para terça, 21/10 às 14:00, na unidade Aldeota.",
+    comFatos(RELIDA_TERCA_NO_CENTRO),
+  ),
+  saida(
+    "AG3C-S11",
+    "acao_nao_executada",
+    "contexto",
+    "Reservei terça, 21/10 às 14:00 com o Dr. Costa, por 10 minutos.",
+    comFatos(RESERVOU_TERCA_COM_A_ANA),
+  ),
+  // Achado 6: as formas que passavam, com so a reserva viva do estado.
+  ...[
+    "Obrigada! Pode vir terça, 21/10 às 14:00.",
+    "Obrigada! É só comparecer terça, 21/10 às 14:00.",
+    "Obrigada! A Dra. Ana Lima te recebe terça, 21/10 às 14:00.",
+    "Obrigada! A Dra. Ana Lima vai te atender terça, 21/10 às 14:00.",
+    "Obrigada! Você será atendida terça, 21/10 às 14:00.",
+    "Obrigada! Terça, 21/10 às 14:00 já está no seu nome.",
+    "Obrigada! Está tudo ok para terça, 21/10 às 14:00.",
+    "Obrigada! Terça, 21/10 às 14:00 está confirmadíssimo.",
+    "Obrigada! Sua vaga de terça, 21/10 às 14:00 está assegurada.",
+    "Obrigada! Já deixei tudo pronto para terça, 21/10 às 14:00.",
+    "Sua consulta: terça, 21/10 às 14:00 com a Dra. Ana Lima.",
+  ].map((rascunho, i) =>
+    saida(
+      `AG3C-S${12 + i}`,
+      "acao_nao_executada",
+      "parafrase",
+      rascunho,
+      comFatos(SO_A_RESERVA_DE_TERCA),
+    ),
+  ),
+  // Achado 6: a reserva por outro verbo, sem reserva nenhuma no turno.
+  ...[
+    "Já deixei separado terça, 21/10 às 14:00 para você. Me envie seu nome completo.",
+    "Separei terça, 21/10 às 14:00 para você.",
+    "Guardei terça, 21/10 às 14:00 para você. Me envie seu nome completo.",
+    "Bloqueei terça, 21/10 às 14:00 para você.",
+    "Deixei terça, 21/10 às 14:00 no seu nome. Me envie seu nome completo.",
+  ].map((rascunho, i) =>
+    saida(
+      `AG3C-S${23 + i}`,
+      "acao_nao_executada",
+      "parafrase",
+      rascunho,
+      COM_A_BUSCA,
+    ),
+  ),
+  // Achados 4 e 6: o procedimento dito em parte, com o participio no
+  // comeco da frase.
+  saida(
+    "AG3C-S29",
+    "acao_nao_executada",
+    "parafrase",
+    "Limpeza marcada para terça, 21/10 às 14:00.",
+    comFatos(RESERVOU_TERCA),
+  ),
+  saida(
+    "AG3C-S30",
+    "acao_nao_executada",
+    "contexto",
+    "Limpeza facial agendada para terça, 21/10 às 14:00.",
+    comFatos(RELIDA_QUINTA_E_RESERVOU_TERCA),
+  ),
+  // Achado 14: "plano" com o nome do convenio continua sendo convenio.
+  saida(
+    "AG3C-S28",
+    "cobertura_nao_verificada",
+    "contexto",
+    "Aceitamos sim!",
+    comFatos(
+      { coberturas: [cobertura("Unimed", null, "atende")] },
+      { mensagensDoPaciente: ["Meu plano era o Vida Mais, vocês aceitam?"] },
+    ),
+  ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -5411,6 +5647,147 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
       acoes: ["marcou"],
       horariosDasAcoes: [{ ...TERCA_AS_14, acao: "marcou" }],
     }),
+  },
+  // Revisao curta das correcoes da AG3 (27/10/2026): o que as correcoes
+  // nao podem barrar. Achado 3: a frase que diz que a hora pedida nao esta
+  // livre, sem a palavra que nega, e o relato do pedido.
+  ...[
+    "Quarta, 22/10 às 15:00 já está ocupado. Tenho quarta, 22/10 às 9h30 com a Dra. Ana Lima. Pode ser?",
+    "Às 15:00 de quarta já foi preenchido, mas tenho quarta, 22/10 às 9h30 com a Dra. Ana Lima. Serve?",
+    "O horário de quarta, 22/10 às 15:00 está indisponível. Posso oferecer quarta, 22/10 às 9h30?",
+    "Quarta às 15:00 a agenda está cheia. Tenho quarta, 22/10 às 9h30 com a Dra. Ana Lima.",
+    "Infelizmente quarta às 15:00 não tem vaga. Tenho quarta, 22/10 às 9h30 com a Dra. Ana Lima.",
+    "Quarta, 22/10 às 15:00 está lotado. Tenho quarta, 22/10 às 9h30 com a Dra. Ana Lima.",
+    "Para quarta às 15:00 não consegui. Tenho quarta, 22/10 às 9h30 com a Dra. Ana Lima.",
+    "Às 15:00 já tem paciente. Tenho quarta, 22/10 às 9h30 com a Dra. Ana Lima.",
+    "Você pediu quarta às 15:00, certo? Esse já foi. Tenho quarta, 22/10 às 9h30 com a Dra. Ana Lima.",
+    "Quarta, 22/10 às 15:00 já foi marcado por outra pessoa, mas tenho quarta, 22/10 às 9h30.",
+    "Quarta, 22/10 às 15:00 está reservado para outro paciente. Quer que eu veja outros horários?",
+  ].map((rascunho, i): CasoDeControle => ({
+    id: `AG3C-B${String(i + 1).padStart(2, "0")}`,
+    rascunho,
+    ...comFatos(ECO_DE_QUARTA_AS_15),
+  })),
+  // Achado 4: a reserva nova com a consulta relida, e a frase que diz as
+  // duas, cada uma com o par dela.
+  {
+    id: "AG3C-B12",
+    rascunho:
+      "Reservei terça, 21/10 às 14:00 para a limpeza, por 10 minutos. Para marcar, me envie seu nome completo.",
+    ...comFatos(RELIDA_QUINTA_E_RESERVOU_TERCA),
+  },
+  {
+    id: "AG3C-B13",
+    rascunho:
+      "Reservei terça, 21/10 às 14:00 para a limpeza, e sua consulta de quinta, 23/10 às 16:15 continua marcada.",
+    ...comFatos(RELIDA_QUINTA_E_RESERVOU_TERCA),
+  },
+  // Achado 5: o profissional e a unidade da acao, por inteiro ou com o
+  // titulo e uma palavra do nome, e o outro profissional fora da acao.
+  {
+    id: "AG3C-B14",
+    rascunho:
+      "Pronto! Sua consulta ficou marcada para terça, 21/10 às 14:00 com a Dra. Ana, na unidade Centro, pendente da aprovação da equipe.",
+    ...comFatos(MARCOU_TERCA_COM_A_ANA),
+  },
+  {
+    id: "AG3C-B15",
+    rascunho:
+      "Reservei terça, 21/10 às 14:00 com a Dra. Ana Lima, já que o Dr. Bruno Costa não tinha horário.",
+    ...comFatos(RESERVOU_TERCA_COM_A_ANA),
+  },
+  {
+    id: "AG3C-B16",
+    rascunho:
+      "Marquei sua consulta para terça, 21/10 às 14:00 com a Dra. Lima. O Dr. Bruno Costa também atende às quintas.",
+    ...comFatos(MARCOU_TERCA_COM_A_ANA),
+  },
+  {
+    id: "AG3C-B17",
+    rascunho:
+      "Pronto, Bruno! Sua consulta ficou marcada para terça, 21/10 às 14:00 com a Dra. Ana Lima.",
+    ...comFatos(MARCOU_TERCA_COM_A_ANA),
+  },
+  // Achado 6: a oferta, a condicao, o funcionamento e o resumo que pede a
+  // confirmacao; o "separei" e o "guardei" que nao sao horario.
+  {
+    id: "AG3C-B18",
+    rascunho: "A Dra. Ana Lima te atende terça, 21/10 às 14:00. Pode ser?",
+    ...COM_A_BUSCA,
+  },
+  {
+    id: "AG3C-B19",
+    rascunho: "Se preferir, a Dra. Ana Lima te atende quarta, 22/10 às 9h30.",
+    ...COM_A_BUSCA,
+  },
+  {
+    id: "AG3C-B20",
+    rascunho: "A clínica te atende de segunda a sexta, das 8h às 18h.",
+    ...COM_A_BASE,
+  },
+  {
+    id: "AG3C-B21",
+    rascunho:
+      "Sua consulta: terça, 21/10 às 14:00 com a Dra. Ana Lima, na unidade Centro. Confirma?",
+    ...comFatos(SO_A_RESERVA_DE_TERCA),
+  },
+  {
+    id: "AG3C-B22",
+    rascunho:
+      "Obrigada! A Dra. Ana Lima te recebe terça, 21/10 às 14:00. Confirma?",
+    ...comFatos(SO_A_RESERVA_DE_TERCA),
+  },
+  {
+    id: "AG3C-B23",
+    rascunho:
+      "Guardei seu contato e aviso se abrir vaga na terça, 21/10 às 14:00.",
+    ...COM_A_BUSCA,
+  },
+  {
+    id: "AG3C-B24",
+    rascunho:
+      "Separei as informações da consulta. Tenho terça, 21/10 às 14:00.",
+    ...COM_A_BUSCA,
+  },
+  // Achado 7: a interjeicao com o verbo da reserva e o par dela.
+  ...[
+    "Combinado! Reservei terça, 21/10 às 14:00 por 10 minutos. Me envie seu nome completo e sua data de nascimento.",
+    "Feito! Reservei terça, 21/10 às 14:00 por 10 minutos.",
+    "Ótimo, tudo certo! Reservei terça, 21/10 às 14:00 por 10 minutos.",
+    "Reservei terça, 21/10 às 14:00 por 10 minutos, tudo certo!",
+    "Combinado, reservei terça, 21/10 às 14:00 por 10 minutos.",
+  ].map((rascunho, i): CasoDeControle => ({
+    id: `AG3C-B${25 + i}`,
+    rascunho,
+    ...comFatos(RESERVOU_TERCA),
+  })),
+  // Achados 4 e 6: "nada marcado" nao afirma.
+  {
+    id: "AG3C-B32",
+    rascunho:
+      "Nada marcado ainda para terça, 21/10 às 14:00. Quer que eu reserve?",
+    ...COM_A_BUSCA,
+  },
+  // Achado 14: "plano" seguido de verbo nao e convenio.
+  {
+    id: "AG3C-B30",
+    rascunho: "Aceitamos sim! Quer que eu veja horários para hoje à tarde?",
+    ...comFatos(
+      {},
+      {
+        mensagensDoPaciente: [
+          "Meu plano era ir hoje à tarde, vocês aceitam cartão?",
+        ],
+      },
+    ),
+  },
+  {
+    id: "AG3C-B31",
+    rascunho: "Aceitamos sim, Pix e cartão.",
+    ...comFatos(
+      {},
+      { mensagensDoPaciente: ["O plano é passar aí amanhã. Aceitam pix?"] },
+    ),
   },
 ];
 

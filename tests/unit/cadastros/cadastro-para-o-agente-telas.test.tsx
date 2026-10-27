@@ -72,7 +72,7 @@ const { EditorDoHorarioDeFuncionamento, TEXTOS_DO_HORARIO } =
   await import("@/components/cadastros/horario-de-funcionamento");
 const { CartaoDaProntidao, TEXTOS_DA_PRONTIDAO } =
   await import("@/components/agente/cartao-da-prontidao");
-const { horarioParaEdicao } =
+const { horarioParaEdicao, problemaNosTextosDaUnidade } =
   await import("@/lib/domain/cadastro-para-o-agente");
 
 import type { ProntidaoDoCadastro } from "@/lib/domain/cadastro-para-o-agente";
@@ -241,6 +241,51 @@ describe("aba Unidades", () => {
       "1": [{ inicio: "08:00", fim: "12:00" }],
       "2": [{ inicio: "08:00", fim: "12:00" }],
     });
+  });
+
+  // D-22 (decisao do dono, 27/10/2026): as regras das respostas do
+  // assistente barram "gratuito" e "sem custo" como oferta casada; a dica
+  // do campo Estacionamento passa a sugerir "de cortesia", que passa.
+  it("D-22: o Estacionamento sugere 'de cortesia', e o exemplo passa nas regras de verdade", () => {
+    const html = renderToStaticMarkup(<UnidadesTab {...props()} />);
+    expect(TEXTOS_DA_UNIDADE.estacionamentoExemplo).toBe(
+      "Ex.: Estacionamento de cortesia para pacientes, no subsolo.",
+    );
+    expect(html).toContain(
+      `placeholder="${TEXTOS_DA_UNIDADE.estacionamentoExemplo}"`,
+    );
+    // A dica fica ligada ao campo (o leitor de tela le junto).
+    expect(html).toMatch(
+      /id="unidade-estacionamento"[^>]*aria-describedby="unidade-estacionamento-ajuda"|aria-describedby="unidade-estacionamento-ajuda"[^>]*id="unidade-estacionamento"/,
+    );
+    expect(html).toContain('id="unidade-estacionamento-ajuda"');
+    expect(html).toContain(
+      TEXTOS_DA_UNIDADE.estacionamentoAjuda.replaceAll('"', "&quot;"),
+    );
+    expect(TEXTOS_DA_UNIDADE.estacionamentoAjuda).toContain('"de cortesia"');
+    semTravessao(html);
+    expect(TEXTOS_DA_UNIDADE.estacionamentoAjuda).not.toMatch(/[\u2013\u2014]/);
+
+    // A validacao de verdade (a mesma do servidor e a do formulario).
+    const exemplo = TEXTOS_DA_UNIDADE.estacionamentoExemplo.replace(/^Ex\.: /, "");
+    expect(problemaNosTextosDaUnidade({ estacionamento: exemplo })).toBeNull();
+    const form = formDaUnidade(SEDE, CADASTRO_DA_SEDE.unidades[0] ?? null);
+    expect(problemaDoFormDaUnidade({ ...form, estacionamento: exemplo })).toBeNull();
+    for (const barrado of [
+      "Estacionamento gratuito para pacientes, no subsolo.",
+      "Estacionamento sem custo para pacientes, no subsolo.",
+      "Estacionamento grátis para pacientes, no subsolo.",
+      "Estacionamento de graça para pacientes, no subsolo.",
+    ]) {
+      expect(
+        problemaNosTextosDaUnidade({ estacionamento: barrado }),
+        barrado,
+      ).toMatch(/^Estacionamento: Tire a oferta casada/);
+      expect(
+        problemaDoFormDaUnidade({ ...form, estacionamento: barrado }),
+        barrado,
+      ).toMatch(/^Estacionamento: Tire a oferta casada/);
+    }
   });
 });
 

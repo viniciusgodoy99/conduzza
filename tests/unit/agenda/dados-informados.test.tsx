@@ -316,15 +316,21 @@ describe("regras puras", () => {
       aplicadoPor: { nome: "Vinicius" },
       paraOTitular: true,
     };
+    // Revisao curta das correcoes (achado 13): o banco marca a aprovacao
+    // mesmo quando nenhum campo estava vazio (e nao diz quais entraram),
+    // entao a linha diz que os dados foram conferidos, nunca "Aplicado".
     expect(textoDoCadastro(aplicado, FUSO, "aprovada")).toBe(
-      "Aplicado em 22/10/2026 às 09:00, na aprovação por Vinicius.",
+      "Conferido na aprovação por Vinicius, em 22/10/2026 às 09:00.",
     );
     expect(
       textoDoCadastro({ ...aplicado, aplicadoPor: { nome: null } }, FUSO, "aprovada"),
-    ).toBe("Aplicado em 22/10/2026 às 09:00, na aprovação por alguém da equipe.");
+    ).toBe("Conferido na aprovação por alguém da equipe, em 22/10/2026 às 09:00.");
     expect(textoDoCadastro({ ...aplicado, aplicadoPor: null }, FUSO, "aprovada")).toBe(
-      "Aplicado em 22/10/2026 às 09:00, na aprovação da consulta.",
+      "Conferido na aprovação da consulta, em 22/10/2026 às 09:00.",
     );
+    for (const quem of ["Vinicius", null]) {
+      expect(T.aplicado("22/10/2026 às 09:00", quem)).not.toMatch(/aplicad/i);
+    }
   });
 
   it("revisão final da AG3: a consulta tratada diz por que os dados não entram", () => {
@@ -540,9 +546,12 @@ describe("o miolo do diálogo", () => {
   });
 
   it("pendente: a frase do que a aprovação faz com os dados, pela regra real", () => {
+    // Revisao curta das correcoes (achado 13): com a condicao do convenio
+    // na carteirinha, e dizendo que fora da regra o cadastro nao muda.
     expect(texto(corpo({ tipo: "pronto", dados: DADOS }))).toContain(
-      "Ao aprovar a consulta, estes dados entram no cadastro do paciente. O nome entra se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento, CPF e carteirinha, só se estiverem vazios.",
+      "Ao aprovar a consulta, estes dados entram no cadastro do paciente assim: o nome, se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento e CPF, se estiverem vazios; a carteirinha, se estiver vazia e a consulta for pelo convênio, com o convênio do cadastro vazio (ele entra junto) ou o mesmo. Fora disso, o cadastro não muda.",
     );
+    expect(T.aoAprovar).not.toContain("carteirinha, só se estiverem vazios");
     // Ja tratada, ja aplicada ou para outra pessoa: a frase nao vale.
     expect(
       texto(corpo({ tipo: "pronto", dados: DADOS }, "aprovada")),
@@ -611,11 +620,16 @@ describe("o miolo do diálogo", () => {
         "aprovada",
       ),
     );
+    // Revisao curta das correcoes (achado 13): o banco marca a aprovacao
+    // mesmo sem nenhum campo aplicado; a tela diz "Conferido", nunca
+    // "Aplicado", e a regra inteira (a condicao do convenio na carteirinha
+    // e "fora disso, o cadastro nao muda").
     expect(visivel).toContain(
-      "No cadastro Aplicado em 22/10/2026 às 09:00, na aprovação por Vinicius.",
+      "No cadastro Conferido na aprovação por Vinicius, em 22/10/2026 às 09:00.",
     );
+    expect(visivel).not.toMatch(/Aplicado em/);
     expect(visivel).toContain(
-      "O nome entra se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento, CPF e carteirinha, só se estiverem vazios.",
+      "Na aprovação, os dados entram no cadastro assim: o nome, se o cadastro estava sem nome ou com o nome que veio do WhatsApp; nascimento e CPF, se estavam vazios; a carteirinha, se estava vazia e a consulta é pelo convênio, com o convênio do cadastro vazio (ele entra junto) ou o mesmo. Fora disso, o cadastro não muda.",
     );
     expect(visivel).not.toContain("só onde ele está vazio");
     expect(visivel).not.toContain("Só entrou o que estava vazio");

@@ -114,6 +114,10 @@ describe("achado 1: a pergunta Confirma mostra a reserva viva", () => {
     "Ótimo, confirma a consulta de quarta, 21/10 às 14:00 com a Dra. Ana Lima?",
     "Você confirma a consulta de quarta, 21/10 às 14:00?",
     "Então, a senhora confirma 21/10 às 14h com a Dra. Ana?",
+    // Revisao curta (achado 8): a mensagem inteira conta; o resumo seguido
+    // do "Confirma?" curto arma (antes nao armava, e a conversa entrava em
+    // laco).
+    "Sua consulta seria quarta, 21/10 às 14:00. Confirma?",
   ])("arma: %s", (texto) => {
     expect(perguntaConfirmaAReserva(texto, RESERVA)).toBe(true);
   });
@@ -130,8 +134,6 @@ describe("achado 1: a pergunta Confirma mostra a reserva viva", () => {
     // Sem o dd/mm ou sem a hora.
     "Confirma a consulta de quarta às 14:00?",
     "Confirma a consulta de quarta, 21/10?",
-    // A pergunta curta depois do horario dito em outra frase.
-    "Sua consulta seria quarta, 21/10 às 14:00. Confirma?",
     // Nao e pergunta de confirmacao.
     "Posso marcar quarta, 21/10 às 14:00?",
   ])("não arma: %s", (texto) => {

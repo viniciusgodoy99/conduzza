@@ -46,8 +46,11 @@
 // acao e de cada consulta lida, e a categoria 1 (acao_nao_executada) diz que
 // dar outro dia, hora ou unidade a elas reprova, e que a reserva de 10
 // minutos nao da a consulta por marcada. No turno da coleta de dados, o
-// nome completo e o nascimento chegam mascarados ([nome] e [nascimento],
-// lib/agente/laco.ts). As vedacoes nao mudam; a versao muda sozinha.
+// nascimento chega mascarado ([nascimento]) e, revisao curta das correcoes
+// (achado 1), so o nome que o servidor validou no turno E que parece nome
+// chega como [nome] (lib/agente/laco.ts, mascararParaOVerificador); o resto,
+// sintoma inclusive, chega como o paciente escreveu. As vedacoes nao mudam;
+// a versao muda sozinha.
 
 import { createHash, randomBytes } from "node:crypto";
 

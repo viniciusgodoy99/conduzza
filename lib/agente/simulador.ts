@@ -407,7 +407,12 @@ function estadoDoSimuladorLido(valor: unknown): EstadoDoSimulador | null {
       // Revisao final da AG3: o vinculo da consulta simulada (opcional).
       (consulta.serviceLinkId === undefined ||
         (typeof consulta.serviceLinkId === "string" &&
-          UUID.test(consulta.serviceLinkId))));
+          UUID.test(consulta.serviceLinkId))) &&
+      // Revisao curta das correcoes (achado 10): a unidade (opcional; a
+      // mesma forma da unidade da reserva, de onde ela vem).
+      (consulta.unidadeId === undefined ||
+        consulta.unidadeId === null ||
+        typeof consulta.unidadeId === "string"));
   if (!reservaValida || !consultaValida) {
     return null;
   }

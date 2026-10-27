@@ -76,6 +76,30 @@
 // o resumo destes fatos, sem dado de paciente (resumo-dos-fatos.ts), e julga
 // fato tambem.
 //
+// Revisao curta das correcoes da AG3 (27/10/2026), os achados da revisao
+// das correcoes da revisao final:
+//  - 3: o eco do pedido (e a hora do paciente) vale tambem na frase que diz
+//    que o horario NAO esta livre sem a palavra que nega ("ja esta
+//    ocupado", "esta indisponivel", "ja foi preenchido", "esta lotado", "a
+//    agenda esta cheia", "ja tem paciente", "esse ja foi", "ja foi marcado
+//    por outra pessoa") e no relato do pedido ("voce pediu quarta as 15h,
+//    certo?"); nunca na que afirma horario livre, que agora tambem le "nao
+//    esta ocupado", "vagou" e "tenho esse horario";
+//  - 4: o par permitido depende do tipo da marca de fechamento: a marca
+//    forte so com o par da consulta marcada, remarcada ou lida (a consulta
+//    de quarta, relida do estado, nao libera "te esperamos terca" da reserva
+//    nova de terca); a da reserva so com o par da reserva;
+//  - 5: a frase da acao, do estado ou do fechamento que cita outro
+//    profissional do Cadastro ou outra unidade barra (o profissional vem nos
+//    fatos, lib/agente/fatos.ts, e nunca vai ao resumo do verificador);
+//  - 6: as formas que passavam ("pode vir", "e so comparecer", "a Dra. Ana
+//    te recebe", "voce sera atendida", "ja esta no seu nome", "tudo ok",
+//    "confirmadissimo", "assegurada", "Sua consulta: ...", "separei",
+//    "guardei", "bloqueei", "Reservei terca. Te esperamos!");
+//  - 7: "Combinado!", "Feito!" e "Tudo certo!" sozinhos so dizem "certo": com
+//    "Reservei quarta as 14h" e o par da reserva, passam;
+//  - 14: "plano" seguido de verbo ("meu plano era ir hoje") nao e convenio.
+//
 // So BLOQUEIA, como toda regra deterministica: o rascunho que passa aqui
 // ainda vai ao verificador por modelo (filtro.ts). As regras leem o rascunho
 // SEM os textos fixos colados em volta dele (saudacao, aviso e encerramento:
@@ -175,6 +199,14 @@ export type HorarioDoFato = {
   dia: string;
   hora: string;
   unidade: string | null;
+  /**
+   * Revisao curta das correcoes da AG3 (achado 5): o nome do Cadastro do
+   * profissional da acao ou da consulta lida ("Dra. Ana Lima"). Ausente ou
+   * nulo: nao se sabe, e a regra do profissional nao le esta acao. Fica so
+   * nas regras deterministicas: o resumo dos fatos nunca leva o profissional
+   * ao verificador (minimizacao).
+   */
+  profissional?: string | null;
 };
 
 /** Uma acao de sucesso com o horario dela. */
@@ -294,6 +326,15 @@ export type FatosDoTurno = {
    * como fonte de endereco e de requisito.
    */
   respostasDaBase: readonly string[];
+  /**
+   * Revisao curta das correcoes da AG3 (achado 5): os nomes dos profissionais
+   * e das unidades do Cadastro, para ler o profissional e a unidade que a
+   * frase da acao ou do estado da consulta cita ("marcada com o Dr. Bruno",
+   * "na unidade Aldeota"). Ausentes ou vazios: a regra nao reconhece nenhum
+   * nome do Cadastro (so os das proprias acoes).
+   */
+  profissionais?: readonly string[];
+  unidades?: readonly string[];
 };
 
 export type AchadoDosFatos = { categoria: CategoriaDosFatos; regra: string };
@@ -317,6 +358,8 @@ export function fatosVazios(anoCorrente: number): FatosDoTurno {
     semConvenioAtivo: false,
     hoje: null,
     respostasDaBase: [],
+    profissionais: [],
+    unidades: [],
   };
 }
 
@@ -358,7 +401,9 @@ function horarioLivreValido(valor: unknown): boolean {
   return (
     typeof h.dia === "string" &&
     typeof h.hora === "string" &&
-    (h.unidade === undefined || h.unidade === null || typeof h.unidade === "string")
+    (h.unidade === undefined ||
+      h.unidade === null ||
+      typeof h.unidade === "string")
   );
 }
 
@@ -370,8 +415,16 @@ function horarioDoFatoValido(valor: unknown): boolean {
   return (
     typeof h.dia === "string" &&
     typeof h.hora === "string" &&
-    (h.unidade === null || typeof h.unidade === "string")
+    (h.unidade === null || typeof h.unidade === "string") &&
+    (h.profissional === undefined ||
+      h.profissional === null ||
+      typeof h.profissional === "string")
   );
+}
+
+/** Lista de textos opcional: ausente vale, presente tem de ser lista. */
+function listaDeTextosOpcional(valor: unknown): boolean {
+  return valor === undefined || listaDeTextos(valor);
 }
 
 function acaoComHorarioValida(valor: unknown): boolean {
@@ -386,8 +439,7 @@ function acaoComHorarioValida(valor: unknown): boolean {
 function consultaDoFatoValida(valor: unknown): boolean {
   return (
     horarioDoFatoValido(valor) &&
-    typeof (valor as Record<string, unknown>).marcadaNestaConversa ===
-      "boolean"
+    typeof (valor as Record<string, unknown>).marcadaNestaConversa === "boolean"
   );
 }
 
@@ -454,7 +506,10 @@ export function fatosValidos(valor: unknown): valor is FatosDoTurno {
     // Sem convenio ativo com convenio no Cadastro e fato incoerente.
     !(f.semConvenioAtivo && f.convenios.length > 0) &&
     diaDaClinicaValido(f.hoje) &&
-    listaDeTextos(f.respostasDaBase)
+    listaDeTextos(f.respostasDaBase) &&
+    // Revisao curta das correcoes da AG3: os nomes do Cadastro, opcionais.
+    listaDeTextosOpcional(f.profissionais) &&
+    listaDeTextosOpcional(f.unidades)
   );
 }
 
@@ -845,8 +900,10 @@ const VAGA_DA_AGENDA =
   "vag(?:a|as|o|os)\\b(?!\\s+(?:de|do|no|na)\\s+(?:estacionamento|garagem|carro|moto))";
 /** O que vem depois de "tenho", "temos" e "tem" numa oferta de horario. */
 const DEPOIS_DE_TER = `(?:horarios?(?!\\s+(?:ja\\s+)?(?:marcad|agendad|reservad|confirmad))|${VAGA_DA_AGENDA}|disponibilidade|encaixes?|agenda|as\\b|a partir|depois d|antes d|para\\b|pra\\b|na\\b|no\\b|nesta|nessa|neste|nesse|dia\\b|dias\\b|amanha|hoje|segunda|terca|quarta|quinta|sexta|sabado|domingo|${HORA_OU_DATA_LOGO_DEPOIS}|de manha|de tarde|de noite|a tarde|a noite|pela manha|pela tarde|pela noite|com\\s+(?:a|o)\\b|livres?\\b|\\u00a7)`;
+// Revisao curta das correcoes da AG3 (achado 3): tambem "tenho esse horario",
+// "temos o mesmo horario" (a oferta que repete o pedido).
 const QUANTIFICADORES_DA_OFERTA =
-  "(?:(?:sim|ainda|so|apenas|tambem|a|o|as|os|um|uma|uns|umas|outro|outra|outros|outras|mais|disponivel|livre|estes|estas|esses|essas|os seguintes|as seguintes|alguns|algumas|dois|duas|tres)\\s+)*";
+  "(?:(?:sim|ainda|so|apenas|tambem|a|o|as|os|um|uma|uns|umas|outro|outra|outros|outras|mais|disponivel|livre|estes|estas|esses|essas|esse|essa|este|esta|mesmo|mesma|os seguintes|as seguintes|alguns|algumas|dois|duas|tres)\\s+)*";
 const PERIODOS_DA_OFERTA = `(?:as\\b|a partir|depois|antes|na\\b|no\\b|dia\\b|amanha|hoje|segunda|terca|quarta|quinta|sexta|sabado|domingo|${HORA_OU_DATA_LOGO_DEPOIS}|de manha|de tarde|de noite|a tarde|a noite|pela manha|pela tarde|nesse|nesta|neste|nessa)`;
 /**
  * O que esta livre ou disponivel sem ser a agenda ("o estacionamento e
@@ -857,6 +914,15 @@ const LIVRE_QUE_NAO_E_AGENDA =
 /** Quem abre e fecha ("a clinica abre apenas as 8h") nao oferece horario. */
 const SO_AS_QUE_NAO_E_OFERTA =
   "(?<!\\b(?:abre|abrimos|abrem|abrindo|fecha|fechamos|fecham|fechando|funciona|funcionamos|funcionam|atende|atendemos|atendem|chegar|chegue|cheguem)\\s+)";
+/**
+ * Revisao curta das correcoes da AG3 (achado 3): as palavras que dizem que o
+ * horario NAO esta livre sem a palavra que nega ("ja esta ocupado", "esta
+ * indisponivel", "ja foi preenchido", "esta lotado", "esgotou", "a agenda
+ * esta cheia", "ja foi pego"). Negadas ("nao esta ocupado") dizem o
+ * contrario: a frase afirma horario livre (AFIRMA_HORARIO_LIVRE).
+ */
+const OCUPADO =
+  "(?:ocupad[oa]s?|indisponive(?:l|is)|preenchid[oa]s?|lotad[oa]s?|esgotad[oa]s?|tomad[oa]s?|peg[oa]s?|cheia|cheias|cheio|cheios|ocupou|ocuparam|preencheu|preencheram|lotou|lotaram|esgotou|esgotaram|encheu|encheram)";
 
 /**
  * A frase afirma horario livre: "tenho as 14h", "temos vaga", "esta
@@ -892,6 +958,11 @@ const AFIRMA_HORARIO_LIVRE = new RegExp(
     // horarios: terca as 14h", "As opcoes sao: ..."), com numero depois.
     "\\b(?:segue|seguem|aqui estao|aqui vao|estes sao|estas sao|sao estes|sao estas)\\b(?=[^.!?]*\\d)",
     "\\b(?:horarios|opcoes|datas|vagas)\\b(?!\\s+de\\s+(?:funcionamento|atendimento|visita))(?:\\s+[^\\s:.!?]+){0,2}?\\s*:(?=[^.!?]*\\d)",
+    // Revisao curta das correcoes da AG3 (achado 3): o horario que "nao esta
+    // ocupado", "nao esta mais lotado", "vagou" ou "desocupou" esta livre.
+    // O eco do pedido nunca prova isso: so o horario livre da ferramenta.
+    `${LIVRE_QUE_NAO_E_AGENDA}\\b(?:nao|nem)\\s+(?:(?:esta|estao|ta|fica|ficou|e|esta mais|ta mais)\\s+)?(?:mais\\s+)?${OCUPADO}\\b`,
+    `${LIVRE_QUE_NAO_E_AGENDA}\\b(?:vagou|vagaram|desocupou|desocuparam|desocupad[oa]s?)\\b`,
   ].join("|"),
   "g",
 );
@@ -1321,6 +1392,68 @@ function fraseNegaHorario(frase: string): boolean {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// O horario que nao esta livre e o relato do pedido (revisao curta das
+// correcoes da AG3, achado 3)
+// ---------------------------------------------------------------------------
+
+/** "Ocupado", "lotado", "ja foi preenchido"... (OCUPADO), fora da negacao. */
+const DIZ_QUE_ESTA_OCUPADO = new RegExp(`\\b${OCUPADO}\\b`, "g");
+/** "Nao esta ocupado", "nem esta mais lotado": a negacao do ocupado. */
+const NEGACAO_DO_OCUPADO =
+  /\b(?:nao|nem|nunca|jamais)\s+(?:(?:esta|estao|ta|fica|ficou|e|foi|era|estava|mais|ja|tinha|sido)\s+){0,3}$/;
+/**
+ * "As 15h ja tem paciente", "ja tem outra pessoa nesse horario", "a Dra.
+ * ja esta com paciente". "Voce ja tem..." e a consulta da pessoa, nao o
+ * horario ocupado.
+ */
+const JA_TEM_PACIENTE =
+  /(?<!\b(?:voce|vc|a senhora|o senhor)\s+)\b(?:ja|tambem)\s+(?:tem|ha|tinha|existe)\s+(?:(?:um|uma|outro|outra|outros|outras)\s+)?(?:pacientes?|pessoas?|alguem|clientes?|gente)\b|\b(?:ja\s+)?(?:esta|estara)\s+com\s+(?:(?:um|uma|outro|outra)\s+)?(?:pacientes?|pessoas?|clientes?)\b/;
+/** "Esse ja foi", "esse horario ja era": o "ja foi" que fecha a oracao. */
+const JA_FOI_NO_FIM = /\bja\s+(?:foi|foram|era|eram)\b(?=\s*(?:[,;:.!?)]|$))/;
+/** "Sua consulta ... ja foi" fala da consulta da pessoa, nao do horario. */
+const CONSULTA_DA_PESSOA =
+  /\b(?:sua|seu|tua|teu)\s+(?:consulta|agendamento|retorno|sessao|avaliacao|atendimento|procedimento|\u00a7)/;
+/**
+ * O horario de outra pessoa: "ja foi marcado por outra pessoa", "esta
+ * reservado para outro paciente", "outra pessoa marcou antes".
+ */
+const DE_OUTRA_PESSOA =
+  /\b(?:marcad|agendad|reservad|ocupad|pegad)[oa]s?\s+(?:por|para|pra)\s+(?:(?:um|uma)\s+)?(?:outr[oa]s?\s+(?:pessoas?|pacientes?|clientes?)|alguem)\b|\b(?:outr[oa]s?\s+(?:pessoas?|pacientes?|clientes?)|alguem)\s+(?:ja\s+)?(?:marcou|agendou|reservou|pegou|ocupou)\b/;
+
+/**
+ * A frase diz que o horario NAO esta livre sem a palavra que nega: "ja esta
+ * ocupado", "esta indisponivel", "ja foi preenchido", "esta lotado", "a
+ * agenda esta cheia", "ja tem paciente", "esse ja foi". Como a frase que
+ * nega (fraseNegaHorario), ela aceita a data e a hora que so o paciente
+ * disse e o eco do pedido; a que afirma horario livre continua nunca
+ * aceitando (aceitaODitoPeloPaciente).
+ */
+function fraseDizQueNaoEstaLivre(frase: string): boolean {
+  for (const m of frase.matchAll(DIZ_QUE_ESTA_OCUPADO)) {
+    const indice = m.index ?? 0;
+    if (
+      !NEGACAO_DO_OCUPADO.test(frase.slice(Math.max(0, indice - 40), indice))
+    ) {
+      return true;
+    }
+  }
+  return (
+    JA_TEM_PACIENTE.test(frase) ||
+    DE_OUTRA_PESSOA.test(frase) ||
+    (JA_FOI_NO_FIM.test(frase) && !CONSULTA_DA_PESSOA.test(frase))
+  );
+}
+
+/**
+ * O relato do pedido da pessoa ("Voce pediu quarta as 15h, certo?", "o
+ * horario que voce queria"): repete o que ela disse, sem afirmar que esta
+ * livre nem que foi feito (as regras do horario livre, da acao e do
+ * fechamento continuam lendo a frase).
+ */
+const RELATO_DO_PEDIDO =
+  /\b(?:voce|vc|a senhora|o senhor)\s+(?:(?:tinha|ja|me|nos|havia)\s+){0,2}(?:pediu|pedia|queria|quer|gostaria|prefere|preferia|preferiu|mencionou|falou|disse|perguntou|solicitou|escolheu|sugeriu|comentou|citou)\b/;
+
 /**
  * O verbo de procurar antes da oferta, na pergunta que oferece procurar
  * ("quer que eu veja se tem horario na quinta?", "prefere que eu procure
@@ -1395,11 +1528,17 @@ function afirmaDisponibilidadeSemData(frase: string): boolean {
  * nega horario ou e pergunta de verdade ("15:00 nao tenho", "prefere as
  * 15:00?"), nunca na que afirma horario livre. A etiqueta de confirmacao
  * ("anotado: as 15h, certo?") e a negacao de outra coisa ("nao tem
- * problema, as 15h") nao valem.
+ * problema, as 15h") nao valem. Revisao curta das correcoes da AG3 (achado
+ * 3): tambem na frase que diz que o horario nao esta livre sem a palavra
+ * que nega ("ja esta ocupado", "esta lotado", "ja tem paciente") e no
+ * relato do pedido ("voce pediu quarta as 15h, certo?").
  */
 function aceitaODitoPeloPaciente(frase: Frase): boolean {
   return (
-    (ehPerguntaDeVerdade(frase.texto) || fraseNegaHorario(frase.texto)) &&
+    (ehPerguntaDeVerdade(frase.texto) ||
+      fraseNegaHorario(frase.texto) ||
+      fraseDizQueNaoEstaLivre(frase.texto) ||
+      RELATO_DO_PEDIDO.test(frase.texto)) &&
     !afirmaHorarioLivre(frase.texto)
   );
 }
@@ -2465,11 +2604,18 @@ const ESTA = [
 ];
 const FEITO = "(?:feit|realizad|concluid|efetuad)[oa]s?";
 /**
- * "O sabado fica reservado para retornos" e regra da agenda, nao a reserva
- * de 10 minutos.
+ * Revisao curta das correcoes da AG3 (achado 3): o horario "ja foi marcado
+ * por outra pessoa" ou "esta reservado para outro paciente" e o horario
+ * ocupado, nao a acao da assistente.
  */
-const RESERVA_QUE_E_REGRA =
-  "(?!\\s+(?:para|pra|aos?|as?)\\s+(?:os\\s+|as\\s+)?(?:retornos?|pacientes?|convenios?|urgencias?|encaixes?|procedimentos?|cirurgias?|exames?|avaliac\\w*|criancas?|idosos?|gestantes?)\\b)";
+const POR_OUTRA_PESSOA =
+  "(?!\\s+(?:por|para|pra)\\s+(?:(?:um|uma)\\s+)?(?:outr[oa]s?\\s+(?:pessoas?|pacientes?|clientes?)|alguem)\\b)";
+/**
+ * "O sabado fica reservado para retornos" e regra da agenda, nao a reserva
+ * de 10 minutos (nem "reservado para outra pessoa", revisao curta das
+ * correcoes da AG3).
+ */
+const RESERVA_QUE_E_REGRA = `(?!\\s+(?:para|pra|aos?|as?)\\s+(?:os\\s+|as\\s+)?(?:retornos?|pacientes?|convenios?|urgencias?|encaixes?|procedimentos?|cirurgias?|exames?|avaliac\\w*|criancas?|idosos?|gestantes?)\\b)${POR_OUTRA_PESSOA}`;
 /**
  * O comeco da frase, com as interjeicoes de quem acabou de fazer ("Pronto,
  * cancelada", "Prontinho! Agendado", "Ok, consulta marcada") e o "ja" e o
@@ -2498,15 +2644,36 @@ type PadraoDeAcao = {
   /** null: o estado da consulta (vale com consultaLida ou marcou). */
   acao: AcaoDoTurno | null;
   regex: RegExp;
+  /**
+   * Revisao curta das correcoes da AG3 (achado 6): o verbo so afirma a acao
+   * com a agenda na frase (dia, hora, "horario", "vaga", "agenda"):
+   * "Separei quarta as 14h" afirma; "Separei as informacoes" nao.
+   */
+  soComAgendaNaFrase: boolean;
 };
 
 function padraoDeAcao(
   nome: string,
   alvo: AcaoDoTurno | null,
   fonte: string,
+  soComAgendaNaFrase = false,
 ): PadraoDeAcao {
-  return { nome, acao: alvo, regex: new RegExp(fonte, "g") };
+  return {
+    nome,
+    acao: alvo,
+    regex: new RegExp(fonte, "g"),
+    soComAgendaNaFrase,
+  };
 }
+
+/** A agenda na frase, para os verbos que so afirmam com ela. */
+const AGENDA_NA_FRASE = /\b(?:horarios?|vagas?|agenda|encaixes?)\b/;
+/**
+ * O que se separa ou se guarda e nao e horario ("Guardei seu contato",
+ * "Separei as informacoes", "Bloqueei o numero").
+ */
+const NAO_E_HORARIO_GUARDADO =
+  "(?!\\s+(?:(?:os|as|o|a|seus|suas|seu|sua|teus|tuas|teu|tua|todos|todas|esses|essas|estes|estas|um|uma|aqui)\\s+){0,2}(?:dados?|nomes?|data|nascimento|cpf|carteirinha|informac\\w*|documentos?|contatos?|telefones?|e-?mails?|numeros?|enderecos?|pedidos?|exames?|fotos?|materia\\w*|lembretes?|recados?|mensage\\w*|duvidas?|perguntas?|respostas?|anotac\\w*|observac\\w*|preferencias?|orcamentos?|valores?|precos?|links?)\\b)";
 
 /** O participio no comeco da frase, com ou sem o objeto. */
 function participioNoComeco(participio: string, depois = ""): string {
@@ -2528,7 +2695,7 @@ const PADROES_DE_ACAO: readonly PadraoDeAcao[] = [
   padraoDeAcao(
     "marcacao",
     "marcou",
-    `\\b${alternativas(JA_ACONTECEU)}\\s+(?:\\w+\\s+)?(?:marcad|agendad)[oa]s?\\b`,
+    `\\b${alternativas(JA_ACONTECEU)}\\s+(?:\\w+\\s+)?(?:marcad|agendad)[oa]s?\\b${POR_OUTRA_PESSOA}`,
   ),
   padraoDeAcao(
     "marcacao",
@@ -2554,7 +2721,11 @@ const PADROES_DE_ACAO: readonly PadraoDeAcao[] = [
   // Revisao da AG2: o participio no comeco da frase ("Agendado!", "Consulta
   // marcada para quinta", "Horario marcado: ..."). E o estado da consulta:
   // vale com a consulta marcada neste turno ou lida por ferramenta.
-  padraoDeAcao("marcacao", null, participioNoComeco("(?:marcad|agendad)")),
+  padraoDeAcao(
+    "marcacao",
+    null,
+    participioNoComeco("(?:marcad|agendad)", POR_OUTRA_PESSOA),
+  ),
   // Reservar.
   padraoDeAcao("reserva", "reservou", "\\b(?:reservei|segurei)\\b"),
   padraoDeAcao(
@@ -2689,6 +2860,28 @@ const PADROES_DE_ACAO: readonly PadraoDeAcao[] = [
     "reservou",
     "\\bconsegui(?:mos)?\\s+(?:te\\s+|lhe\\s+)?(?:reservar|segurar)\\b",
   ),
+  // Revisao curta das correcoes da AG3 (achado 6): separar, guardar e
+  // bloquear o horario sao a reserva ("Separei quarta as 14h para voce",
+  // "Ja deixei separado quarta as 14h", "Bloqueei a agenda de quarta"), so
+  // com a agenda na frase e fora do dado ("Guardei seu contato").
+  padraoDeAcao(
+    "reserva",
+    "reservou",
+    `\\b(?:separei|guardei|bloqueei|separamos|guardamos|bloqueamos)\\b${NAO_E_HORARIO_GUARDADO}`,
+    true,
+  ),
+  padraoDeAcao(
+    "reserva",
+    "reservou",
+    "\\b(?:deixei|deixamos)\\s+(?:\\S+\\s+){0,2}?(?:separad|guardad|bloquead)[oa]s?\\b",
+    true,
+  ),
+  padraoDeAcao(
+    "reserva",
+    "reservou",
+    `\\bconsegui(?:mos)?\\s+(?:te\\s+|lhe\\s+)?(?:separar|guardar|bloquear)\\b${NAO_E_HORARIO_GUARDADO}`,
+    true,
+  ),
   padraoDeAcao(
     "cancelamento",
     "cancelou",
@@ -2739,7 +2932,7 @@ const PADROES_DE_ACAO: readonly PadraoDeAcao[] = [
   padraoDeAcao(
     "consulta_existente",
     null,
-    `\\b${alternativas(ESTA)}\\s+(?:(?:tudo|ja|certinho|bem|sim)\\s+)?(?:marcad|agendad)[oa]s?\\b`,
+    `\\b${alternativas(ESTA)}\\s+(?:(?:tudo|ja|certinho|bem|sim)\\s+)?(?:marcad|agendad)[oa]s?\\b${POR_OUTRA_PESSOA}`,
   ),
   padraoDeAcao(
     "consulta_existente",
@@ -2765,11 +2958,35 @@ const PADROES_DE_ACAO: readonly PadraoDeAcao[] = [
     null,
     `(?<=(?:^|[.!?;:])\\s*)(?:a|o)\\s+${OBJETO_NO_SINGULAR}\\s+(?:marcad|agendad)[oa]\\s+(?:para|pra|no|na|em|dia|as|amanha|hoje)\\b`,
   ),
+  // Revisao curta das correcoes da AG3 (achados 4 e 6): o procedimento dito
+  // em parte, que a mascara do catalogo nao cobre, no comeco da frase com o
+  // dia ou a hora ("Limpeza marcada para terca as 14h", "Pronto! Limpeza
+  // facial agendada para amanha"). "Nada marcado ainda" nao afirma; o
+  // verbo no lugar do nome ("Esta agendado", "Fica marcado") e dos padroes
+  // de antes.
+  padraoDeAcao(
+    "marcacao",
+    null,
+    `${NO_COMECO_DA_FRASE}(?!(?:nada|nenhum|nenhuma|ninguem|tudo|nao|nem|isso|isto|algo|ainda|ja|esta|estao|estava|ta|fica|ficou|ficaram|ficara|foi|foram|sera|seria|era|vai|vao|deixei|deixamos|deixou|continua|segue|seguem|tem|tinha)\\b)[a-z]{3,}(?:\\s+(?:(?:de|do|da)\\s+)?[a-z]{3,})?\\s+(?:marcad|agendad)[oa]\\s+(?:para|pra)\\s+(?:o\\s+dia\\b|dia\\b|amanha|hoje|depois de amanha|segunda|terca|quarta|quinta|sexta|sabado|domingo|\\d)`,
+  ),
 ];
 
 /** "Agendadinho", "marcadinha": o participio no diminutivo. */
 const PARTICIPIO_NO_DIMINUTIVO =
   /\b(marcad|agendad|cancelad|desmarcad|remarcad|reagendad|reservad|confirmad)inh([oa]s?)\b/g;
+/**
+ * Revisao curta das correcoes da AG3 (achado 6): "confirmadissimo",
+ * "garantidissima": o participio no superlativo.
+ */
+const PARTICIPIO_NO_SUPERLATIVO =
+  /\b(marcad|agendad|cancelad|desmarcad|remarcad|reagendad|reservad|confirmad|garantid|assegurad|combinad)issim([oa]s?)\b/g;
+
+/** O participio sem o diminutivo e sem o superlativo. */
+function semFlexaoDoParticipio(texto: string): string {
+  return texto
+    .replace(PARTICIPIO_NO_DIMINUTIVO, "$1$2")
+    .replace(PARTICIPIO_NO_SUPERLATIVO, "$1$2");
+}
 
 /** Negacao colada na afirmacao ("nao marquei", "ainda nao foi marcada"). */
 const NEGACAO_ANTES =
@@ -2780,25 +2997,47 @@ function negada(texto: string, indice: number): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Regra estrutural do fechamento (revisao 2 da AG2; revisao final da AG3)
+// Regra estrutural do fechamento (revisao 2 da AG2; revisao final da AG3;
+// revisao curta das correcoes)
 // ---------------------------------------------------------------------------
 
 /**
  * O tipo da marca de fechamento (revisao final da AG3: a marca e licenciada
- * pela acao, nao por qualquer acao de sucesso):
+ * pela acao, nao por qualquer acao de sucesso; revisao curta das correcoes,
+ * achados 4, 6 e 7: o par permitido depende do tipo):
  *  - "fraca": "pronto" e "prontinho" no comeco da frase (a oferta "Pronto!
  *    Tenho terca as 14h" nao fecha nada);
- *  - "forte": a consulta dada por feita ("combinado", "te esperamos",
- *    "ficou para", "tudo certo", "confirmado", "nos vemos", "ate terca",
- *    "sua consulta sera", "fica terca", "Agendamento: ..."). So com a
- *    consulta marcada ou remarcada no turno, ou com uma consulta lida;
- *  - "horario": "seu horario e", "seu horario sera" (o horario da pessoa).
- *    Como a forte, a nao ser na frase que diz a acao que o turno fez ("Seu
- *    horario e quarta as 14h, reservado por 10 minutos");
+ *  - "interjeicao": "Combinado!", "Feito!", "Tudo certo!" sozinhos no comeco
+ *    (a frase curta ou o comeco com a pontuacao logo depois): so dizem
+ *    "certo", e o que foi feito e o verbo que vem depois ("Combinado!
+ *    Reservei quarta as 14h"). Como a fraca;
+ *  - "forte": a consulta dada por feita ("te esperamos", "ficou para",
+ *    "tudo certo para", "confirmado", "nos vemos", "ate terca", "sua
+ *    consulta sera", "fica terca", "Agendamento: ...", "tudo pronto",
+ *    "assegurada"). So com a consulta marcada ou remarcada no turno, ou com
+ *    uma consulta lida, e so com o par delas;
+ *  - "compromisso": a pessoa ja tem onde ir ("a Dra. Ana te recebe", "pode
+ *    vir", "e so comparecer", "voce sera atendida"). Como a forte, menos na
+ *    frase que pergunta (tambem "pode ser?"), da alternativa ("ou") ou da
+ *    condicao ("se"), que e oferta;
+ *  - "horario": "seu horario e", "seu horario sera", "ja esta no seu nome"
+ *    (o horario da pessoa). Com a consulta marcada ou lida (o par delas) ou
+ *    na frase que diz a acao que o turno fez (o par dela: "Seu horario e
+ *    quarta as 14h, reservado por 10 minutos");
+ *  - "resumo": "Sua consulta: quarta as 14h". Como a do horario, menos
+ *    quando a frase seguinte pede a confirmacao ("... Confirma?");
  *  - "reserva": "reservado", "reservei", "segurei" (so a reserva de 10
- *    minutos): com a reserva no turno (ou a consulta marcada ou lida).
+ *    minutos): com a reserva no turno e so com o par dela (sem reserva no
+ *    turno, a palavra na frase da consulta marcada ou lida, com o par dela).
  */
-type TipoDaMarca = "fraca" | "forte" | "horario" | "reserva";
+type TipoDaMarca =
+  | "fraca"
+  | "interjeicao"
+  | "forte"
+  | "compromisso"
+  | "horario"
+  | "resumo"
+  | "reserva";
 
 /** As interjeicoes que podem vir antes da marca no comeco da frase. */
 const INTERJEICAO_ANTES_DA_MARCA =
@@ -2812,12 +3051,31 @@ const FECHAMENTO_FRACO_NO_COMECO = new RegExp(
   `^[\\s"'(]*(?:${INTERJEICAO_ANTES_DA_MARCA}\\s*[,!.]*\\s+)*(?:pronto|prontinho|prontissimo)\\b`,
 );
 /**
- * No comeco da frase: "Feito!", "Fechado," com a pontuacao logo depois
- * ("Fechado aos domingos" e o horario da clinica, nao fechamento) e,
- * revisao final da AG3, "Ate terca", "Ate amanha" e "Agendamento: ...".
+ * Revisao curta das correcoes da AG3 (achado 7): as interjeicoes que so dizem
+ * "certo" ("Combinado!", "Feito!", "Fechado,", "Tudo certo!"), com a
+ * pontuacao logo depois ("Fechado aos domingos" e "tudo certo para quinta"
+ * nao sao interjeicao).
+ */
+const INTERJEICAO_DE_FECHAMENTO =
+  "(?:combinad[oa]s?|feito|feita|fechado|fechadissimo|tudo certo|tudo certinho|tudo ok|tudo okay|tudo pronto|tudo prontinho)";
+/** Uma interjeicao no comeco do texto, com a pontuacao depois (ou o fim). */
+const INTERJEICAO_NO_COMECO = new RegExp(
+  `^[\\s"'(]*(?:(${INTERJEICAO_DE_FECHAMENTO})|pronto|prontinho|prontissimo|${INTERJEICAO_ANTES_DA_MARCA})(?:\\s+entao)?\\s*(?:[,!.:;]+|$)`,
+);
+/**
+ * A interjeicao no fim, depois da virgula ("Reservei quarta as 14h, tudo
+ * certo!"). Sem a virgula ("Esta tudo certo!") e a marca forte.
+ */
+const INTERJEICAO_NO_FIM = new RegExp(
+  `[,;:]\\s*(?:${INTERJEICAO_ANTES_DA_MARCA}\\s*[,!.]*\\s+)*${INTERJEICAO_DE_FECHAMENTO}(?:\\s+entao)?\\s*[!.]*\\s*$`,
+);
+/**
+ * No comeco da frase (depois das interjeicoes): revisao final da AG3, "Ate
+ * terca", "Ate amanha" e "Agendamento: ...". "Feito!" e "Fechado," sao
+ * interjeicao desde a revisao curta das correcoes.
  */
 const FECHAMENTO_FORTE_NO_COMECO = new RegExp(
-  `^[\\s"'(]*(?:${INTERJEICAO_ANTES_DA_MARCA}\\s*[,!.]*\\s+)*(?:(?:feito|fechado|fechadissimo)\\s*[,!.:;]|ate\\s+(?:segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje|depois de amanha|o dia\\b|dia\\b|\\d)|(?:(?:o|a|seu|sua)\\s+)?(?:agendamento|marcacao)\\s*:)`,
+  `^[\\s"'(]*(?:${INTERJEICAO_ANTES_DA_MARCA}\\s*[,!.]*\\s+)*(?:ate\\s+(?:segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje|depois de amanha|o dia\\b|dia\\b|\\d)|(?:(?:o|a|seu|sua)\\s+)?(?:agendamento|marcacao)\\s*:)`,
 );
 /**
  * Revisao final da AG3: o dado da pessoa ("anotei seus dados", "nome
@@ -2831,15 +3089,18 @@ const NAO_E_DADO_ANTES = `(?<!\\b${DADO_DA_PESSOA}\\s+(?:\\S+\\s+)?)`;
 /** As marcas FORTES, em qualquer lugar da frase. */
 const FECHAMENTO_FORTE = new RegExp(
   [
-    "\\btudo certo\\b",
+    // Revisao curta das correcoes da AG3 (achado 6): tambem "tudo ok", "tudo
+    // pronto" ("ja deixei tudo pronto para quarta", "esta tudo ok para").
+    "\\btudo\\s+(?:certo|certinho|ok|okay|pronto|prontinho|acertado|resolvido)\\b",
     "\\bcombinad[oa]s?\\b",
     "\\bficou\\s+(?:tudo\\s+|entao\\s+)?(?:para|pra)\\b",
     "\\b(?:coloquei|colocamos)\\b(?!\\s+(?:(?:aqui|abaixo|acima|embaixo)\\b|(?:os|as)\\s+(?:horarios|opcoes|datas|dias)\\b|(?:\\S+\\s+){0,3}?(?:na|em)\\s+(?:nossa\\s+|a\\s+)?lista de espera\\b))",
     "\\b(?:encaixei|encaixamos)\\b",
     `${NAO_E_DADO_ANTES}\\b(?:registrei|registramos|registrad[oa]s?)\\b${NAO_E_DADO_DEPOIS}`,
     `${NAO_E_DADO_ANTES}\\b(?:anotei|anotamos|anotad[oa]s?)\\b${NAO_E_DADO_DEPOIS}`,
-    "\\bgarantid[oa]s?\\b",
-    "\\bte\\s+(?:esperamos|espero|aguardamos|aguardo)\\b",
+    // Achado 6: "sua vaga esta assegurada".
+    "\\b(?:garantid|assegurad)[oa]s?\\b",
+    "\\bte\\s+(?:esperamos|espero|aguardamos|aguardo|esperando|aguardando)\\b",
     "\\b(?:esperamos|aguardamos|espero|aguardo)\\s+(?:voce|vc|a senhora|o senhor|por voce)\\b",
     "\\bconfirmad[oa]s?\\b",
     "\\b(?:esta|ta|ficou|fica|ja esta)\\s+(?:tudo\\s+)?(?:feito|fechado)\\b",
@@ -2851,11 +3112,61 @@ const FECHAMENTO_FORTE = new RegExp(
   ].join("|"),
   "g",
 );
-/** Revisao final da AG3: "seu horario e quarta", "seu horario sera as 14h". */
-const FECHAMENTO_DO_HORARIO = new RegExp(
-  `\\b${POSSESSIVO}\\s+horarios?\\s+(?:(?!reservad)\\S+\\s+){0,4}?(?:sera|vai ser|e|eh|fica|ficara|vai ficar)\\b`,
+/**
+ * Revisao curta das correcoes da AG3 (achado 6): a pessoa ja tem onde ir ("A
+ * Dra. Ana te recebe quarta", "vai te atender", "voce sera atendida", "pode
+ * vir quarta", "e so comparecer"). "Pode vir a partir das 8h" e regra de
+ * funcionamento, nao compromisso.
+ */
+const FECHAMENTO_DO_COMPROMISSO = new RegExp(
+  [
+    "\\bte\\s+(?:recebe|recebera|recebem|receberao|recebemos|receberemos|atende|atendera|atendem|atenderao|atendemos|atenderemos|aguarda|aguardara|espera|esperara)\\b",
+    "\\b(?:vai|vao|vamos|irei|iremos|ira|irao)\\s+te\\s+(?:receber|atender|esperar|aguardar)\\b",
+    "\\b(?:voce|vc|a senhora|o senhor)\\s+(?:(?:ja|entao)\\s+)?(?:sera|vai ser|esta|fica|ficou)\\s+(?:atendid|recebid|esperad|aguardad)[oa]s?\\b",
+    "\\b(?:pode|podera)\\s+(?:vir|comparecer|aparecer)\\b(?!\\s+(?:a partir|depois|antes|entre|ate\\b|de\\s+\\d|das\\s+\\d|no horario|em qualquer|qualquer|sem\\b))",
+    "\\b(?:e so|basta)\\s+(?:voce\\s+|vc\\s+)?(?:vir|comparecer|aparecer|chegar)\\b(?!\\s+(?:a partir|depois|antes|entre|ate\\b|de\\s+\\d|das\\s+\\d|no horario|em qualquer|qualquer|sem\\b))",
+  ].join("|"),
   "g",
 );
+/**
+ * O compromisso que e oferta ou condicao: "se preferir, a Dra. Ana te
+ * atende quarta", "assim que confirmar, te recebemos", "quando chegar".
+ * O "se" reflexivo ("ela se especializou") nao e condicao.
+ */
+const CONDICAO_NA_FRASE =
+  /\b(?:caso|quando|assim que|depois que|desde que|logo que)\b|\bse\s+(?:(?:voce|vc|a senhora|o senhor)\s+)?(?:quiser|preferir|confirmar|puder|der|for|tiver|precisar|desejar|estiver|houver|conseguir|achar|topar|aceitar|gostar|interessar|fizer|vier|confirmarmos)\b/;
+/**
+ * O compromisso que e o funcionamento ("a clinica te atende de segunda a
+ * sexta, das 8h as 18h", "a Dra. Ana te atende as tercas"): a faixa de
+ * horas, o dia da semana no plural ou a faixa de dias.
+ */
+const FUNCIONAMENTO_NA_FRASE =
+  /\b(?:das\s+\d{1,2}\S*\s+(?:as|ate)\b|de\s+\d{1,2}\S*\s+(?:as|a|ate)\s+\d|a partir d|ate as\b|(?:segunda|terca|quarta|quinta|sexta|sabado|domingo)s\b|(?:segunda|terca|quarta|quinta|sexta|sabado|domingo)(?:-feira)?\s+a\s+(?:segunda|terca|quarta|quinta|sexta|sabado|domingo)|tod[oa]s?\s+(?:(?:as|os)\s+)?(?:segunda|terca|quarta|quinta|sexta|sabado|domingo|dias|semanas?))/;
+/**
+ * Revisao final da AG3: "seu horario e quarta", "seu horario sera as 14h".
+ * Revisao curta das correcoes (achado 6): "ja esta no seu nome", "deixei
+ * quarta as 14h no seu nome".
+ */
+const FECHAMENTO_DO_HORARIO = new RegExp(
+  [
+    `\\b${POSSESSIVO}\\s+horarios?\\s+(?:(?!reservad)\\S+\\s+){0,4}?(?:sera|vai ser|e|eh|fica|ficara|vai ficar)\\b`,
+    "\\b(?:esta|estao|ta|ja esta|ficou|ficaram|fica|ficara|vai ficar|deixei|deixamos|coloquei|colocamos|botei|pus)\\s+(?:\\S+\\s+){0,6}?(?:no|em)\\s+(?:seu|teu)\\s+nome\\b",
+  ].join("|"),
+  "g",
+);
+/** Revisao curta das correcoes da AG3 (achado 6): "Sua consulta: quarta...". */
+const FECHAMENTO_DO_RESUMO = new RegExp(
+  `\\b${POSSESSIVO}\\s+(?:consulta|agendamento|horario|atendimento|retorno|sessao|avaliacao|procedimento|\\u00a7)\\s*:`,
+  "g",
+);
+/**
+ * A frase seguinte que pergunta a escolha ou pede a confirmacao ("Sua
+ * consulta: quarta as 14h. Confirma?", "A Dra. Ana te recebe quarta as
+ * 14h. Pode ser?"): o resumo e o compromisso de antes sao a proposta, nao o
+ * feito.
+ */
+const PERGUNTA_DE_ESCOLHA =
+  /\b(?:confirma|confirmar|confirmamos|confirmo|posso (?:marcar|agendar|confirmar|reservar)|podemos (?:marcar|agendar|confirmar|reservar)|marco|agendo|reservo|pode ser|serve|prefere|quer|gostaria|topa|fica bom|esta bom|ta bom|tudo bem|esta certo|ta certo|certo|correto|combinado|de acordo|ok)\b[^.!]*\?\s*$/;
 /** As marcas da reserva de 10 minutos ("reservado", "reservei"). */
 const FECHAMENTO_DA_RESERVA = new RegExp(
   `\\breservad[oa]s?\\b${RESERVA_QUE_E_REGRA}|\\b(?:reservei|reservamos|segurei|seguramos)\\b`,
@@ -2867,7 +3178,7 @@ const FECHAMENTO_DA_RESERVA = new RegExp(
  * reservado", "ja nao esta confirmada").
  */
 const NEGACAO_DA_MARCA =
-  /\b(?:nao|nem|nunca)\s+(?:(?:te|lhe|me|se|a|o|ainda|tinha|esta|estao|ta|foi|foram|ficou|ficaram|fica|e|mais|ja)\s+){0,3}$/;
+  /\b(?:nao|nem|nunca)\s+(?:(?:te|lhe|me|se|a|o|ainda|tinha|esta|estao|ta|foi|foram|ficou|ficaram|fica|e|mais|ja|vai|pode|sera)\s+){0,3}$/;
 /**
  * Revisao final da AG3: a frase que diz que a reserva ou o horario nao vale
  * mais ("a reserva de quarta as 14h venceu", "o horario de quarta nao esta
@@ -2877,23 +3188,96 @@ const NEGACAO_DA_MARCA =
 const NAO_VALE_MAIS =
   /\b(?:venceu|venceram|vencid[oa]s?|expirou|expiraram|expirad[oa]s?)\b|\b(?:nao|ja nao)\s+(?:esta|estao|ta|ficou|ficaram|fica|e)\s+(?:mais\s+)?(?:reservad|livre|disponive|valend|garantid)/;
 
-/** As marcas de fechamento da frase, pelo tipo (vazio: nenhuma). */
-function marcasDeFechamento(frase: string): Set<TipoDaMarca> {
+/**
+ * As interjeicoes do comeco da frase ("Otimo, tudo certo!", "Combinado,
+ * reservei..."): se alguma e de fechamento (INTERJEICAO_DE_FECHAMENTO), e o
+ * resto da frase depois delas.
+ */
+function interjeicoesDoComeco(frase: string): {
+  deFechamento: boolean;
+  resto: string;
+} {
+  let resto = frase;
+  let deFechamento = false;
+  for (;;) {
+    const m = INTERJEICAO_NO_COMECO.exec(resto);
+    if (m === null || m[0] === "") {
+      break;
+    }
+    if (m[1] !== undefined) {
+      deFechamento = true;
+    }
+    resto = resto.slice(m[0].length);
+  }
+  const noFim = INTERJEICAO_NO_FIM.exec(resto);
+  if (noFim !== null) {
+    deFechamento = true;
+    resto = resto.slice(0, noFim.index);
+  }
+  return { deFechamento, resto };
+}
+
+/**
+ * O compromisso que a frase afirma: fora da pergunta (tambem "pode ser?"),
+ * da alternativa ("ou"), da condicao, do funcionamento e da proposta que a
+ * frase seguinte pergunta ("... Pode ser?").
+ */
+function afirmaCompromisso(
+  frase: string,
+  seguinte: string | undefined,
+  semNegacao: (texto: string, regex: RegExp) => RegExpMatchArray[],
+): boolean {
+  if (
+    frase.trimEnd().endsWith("?") ||
+    /\sou\s/.test(frase) ||
+    CONDICAO_NA_FRASE.test(frase) ||
+    FUNCIONAMENTO_NA_FRASE.test(frase) ||
+    (seguinte !== undefined && PERGUNTA_DE_ESCOLHA.test(seguinte))
+  ) {
+    return false;
+  }
+  return semNegacao(frase, FECHAMENTO_DO_COMPROMISSO).length > 0;
+}
+
+/**
+ * As marcas de fechamento da frase, pelo tipo (vazio: nenhuma). A frase
+ * seguinte so decide o resumo ("Sua consulta: quarta as 14h. Confirma?").
+ */
+function marcasDeFechamento(
+  frase: string,
+  seguinte: string | undefined,
+): Set<TipoDaMarca> {
   const tipos = new Set<TipoDaMarca>();
-  const semNegacao = (regex: RegExp) =>
-    [...frase.matchAll(regex)].some((m) => {
+  const semNegacao = (texto: string, regex: RegExp) =>
+    [...texto.matchAll(regex)].filter((m) => {
       const indice = m.index ?? 0;
       return !NEGACAO_DA_MARCA.test(
-        frase.slice(Math.max(0, indice - 40), indice),
+        texto.slice(Math.max(0, indice - 40), indice),
       );
     });
-  if (FECHAMENTO_FORTE_NO_COMECO.test(frase) || semNegacao(FECHAMENTO_FORTE)) {
+  const { deFechamento, resto } = interjeicoesDoComeco(frase);
+  if (deFechamento) {
+    tipos.add("interjeicao");
+  }
+  if (
+    FECHAMENTO_FORTE_NO_COMECO.test(resto) ||
+    semNegacao(resto, FECHAMENTO_FORTE).length > 0
+  ) {
     tipos.add("forte");
   }
-  if (semNegacao(FECHAMENTO_DO_HORARIO)) {
+  if (afirmaCompromisso(frase, seguinte, semNegacao)) {
+    tipos.add("compromisso");
+  }
+  if (semNegacao(frase, FECHAMENTO_DO_HORARIO).length > 0) {
     tipos.add("horario");
   }
-  if (semNegacao(FECHAMENTO_DA_RESERVA)) {
+  if (
+    semNegacao(frase, FECHAMENTO_DO_RESUMO).length > 0 &&
+    !(seguinte !== undefined && PERGUNTA_DE_ESCOLHA.test(seguinte))
+  ) {
+    tipos.add("resumo");
+  }
+  if (semNegacao(frase, FECHAMENTO_DA_RESERVA).length > 0) {
     tipos.add("reserva");
   }
   if (FECHAMENTO_FRACO_NO_COMECO.test(frase)) {
@@ -2904,6 +3288,12 @@ function marcasDeFechamento(frase: string): Set<TipoDaMarca> {
 
 /** Quantas palavras, no maximo, tem a frase que so fecha ("Pronto, Maria!"). */
 const MAXIMO_DE_PALAVRAS_DA_INTERJEICAO = 4;
+
+/** As marcas que so dizem "certo" (o feito e o verbo da frase). */
+const MARCAS_DE_INTERJEICAO: ReadonlySet<TipoDaMarca> = new Set([
+  "fraca",
+  "interjeicao",
+]);
 
 /** Uma frase com dia ou hora e marca de fechamento. */
 type FechamentoDaFrase = {
@@ -2919,44 +3309,281 @@ type FechamentoDaFrase = {
  * As frases (fora da pergunta de verdade) com dia, dia da semana, "hoje",
  * "amanha" ou hora E uma marca de fechamento, na propria frase ou na frase
  * curta logo antes ("Combinado! Te esperamos quinta", "Pronto. Quinta as
- * 14h"). A marca fraca ("pronto") com a oferta de horario livre na frase
- * nao conta: a oferta ja e conferida com os horarios livres. A frase que
- * diz que a reserva ou o horario nao vale mais tambem nao (NAO_VALE_MAIS).
+ * 14h"). Revisao curta das correcoes da AG3: tambem a da frase curta logo
+ * DEPOIS, sem dia nem hora ("Reservei quarta as 14h. Te esperamos!"). A
+ * marca que so diz "certo" ("pronto", "combinado!") com a oferta de horario
+ * livre na frase nao conta: a oferta ja e conferida com os horarios livres.
+ * A frase que diz que a reserva ou o horario nao vale mais tambem nao
+ * (NAO_VALE_MAIS).
  */
 function fechamentosDasFrases(
   texto: string,
   frases: readonly Frase[],
   hoje: DiaDaClinica | null,
 ): FechamentoDaFrase[] {
-  const fechamentos: FechamentoDaFrase[] = [];
-  let herdadas: ReadonlySet<TipoDaMarca> = new Set();
-  frases.forEach((frase, indice) => {
-    const marcas = marcasDeFechamento(frase.texto);
+  const lidas = frases.map((frase, indice) => {
+    const marcas = marcasDeFechamento(frase.texto, frases[indice + 1]?.texto);
     const pergunta = ehPerguntaDeVerdade(frase.texto);
-    const daAnterior = herdadas;
-    herdadas =
-      !pergunta &&
-      marcas.size > 0 &&
-      palavrasDe(frase.texto).length <= MAXIMO_DE_PALAVRAS_DA_INTERJEICAO
-        ? marcas
-        : new Set();
-    const tipos = new Set([...marcas, ...daAnterior]);
-    if (pergunta || tipos.size === 0 || NAO_VALE_MAIS.test(frase.texto)) {
-      return;
-    }
     const partes = partesDaOferta(texto, frase, hoje);
-    if (!partes.some((parte) => parte.tipo === "data" || parte.tipo === "hora")) {
-      return;
-    }
+    return {
+      frase,
+      marcas,
+      pergunta,
+      partes,
+      /** A frase curta que so fecha ("Pronto, Maria!", "Te esperamos!"). */
+      curta:
+        !pergunta &&
+        marcas.size > 0 &&
+        palavrasDe(frase.texto).length <= MAXIMO_DE_PALAVRAS_DA_INTERJEICAO,
+      temDiaOuHora: partes.some(
+        (parte) => parte.tipo === "data" || parte.tipo === "hora",
+      ),
+    };
+  });
+  const fechamentos: FechamentoDaFrase[] = [];
+  lidas.forEach((lida, indice) => {
+    const anterior = lidas[indice - 1];
+    const seguinte = lidas[indice + 1];
+    const tipos = new Set([
+      ...lida.marcas,
+      ...(anterior?.curta ? anterior.marcas : []),
+      ...(seguinte?.curta && !seguinte.temDiaOuHora ? seguinte.marcas : []),
+    ]);
     if (
-      [...tipos].every((tipo) => tipo === "fraca") &&
-      afirmaHorarioLivre(frase.texto)
+      lida.pergunta ||
+      tipos.size === 0 ||
+      NAO_VALE_MAIS.test(lida.frase.texto) ||
+      !lida.temDiaOuHora
     ) {
       return;
     }
-    fechamentos.push({ indice, tipos, pares: paresDaOferta(partes) });
+    if (
+      [...tipos].every((tipo) => MARCAS_DE_INTERJEICAO.has(tipo)) &&
+      afirmaHorarioLivre(lida.frase.texto)
+    ) {
+      return;
+    }
+    fechamentos.push({ indice, tipos, pares: paresDaOferta(lida.partes) });
   });
   return fechamentos;
+}
+
+// ---------------------------------------------------------------------------
+// O profissional e a unidade da acao (revisao curta das correcoes da AG3,
+// achado 5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Um fato da agenda (acao ou consulta lida) lido: o dia e a hora, e o
+ * profissional e a unidade dele (nulo: nao se sabe ou sem unidade).
+ */
+type FatoDaAgendaLido = HorarioLivreLido & {
+  profissional: string | null;
+  unidade: string | null;
+};
+
+/** Os titulos que nao fazem parte do nome ("Dra. Ana Lima" e "ana lima"). */
+const TITULOS_DO_PROFISSIONAL: ReadonlySet<string> = new Set([
+  "dr",
+  "dra",
+  "drs",
+  "dras",
+  "doutor",
+  "doutora",
+  "doutores",
+  "doutoras",
+  "prof",
+  "profa",
+  "professor",
+  "professora",
+]);
+
+/** As palavras do nome, sem titulo e sem pontuacao, ja sem acento. */
+function palavrasDoNomeDaPessoa(nome: string): string[] {
+  return normalizarBase(nome)
+    .split(/[^a-z0-9]+/)
+    .filter((p) => p !== "" && !TITULOS_DO_PROFISSIONAL.has(p));
+}
+
+/** As palavras do nome da unidade, sem o "unidade" do comeco. */
+function palavrasDoNomeDaUnidade(nome: string): string[] {
+  const palavras = normalizarBase(nome)
+    .split(/[^a-z0-9]+/)
+    .filter((p) => p !== "");
+  return palavras[0] === "unidade" ? palavras.slice(1) : palavras;
+}
+
+/**
+ * O titulo com o nome logo depois ("dra. ana", "dr bruno", "doutora ana").
+ * O titulo do nome de rua ("Rua Dr. Jose Lourenco") nao e o profissional.
+ */
+const TITULO_E_NOME =
+  /(?<!\b(?:rua|r\.|av\.?|avenida|travessa|tv\.|alameda|al\.|praca|pca\.?|rodovia|rod\.|estrada|largo|ladeira|beco|viela|hospital|colegio|escola|edificio|predio|shopping)\s+)\b(?:dra?s?|doutora?s?|doutores)\b\.?\s+([a-z]+)/g;
+/**
+ * O nome dito com a negacao logo depois ("o Dr. Bruno nao tinha horario",
+ * "a unidade Aldeota nao tem vaga") nao e o da acao.
+ */
+const NEGACAO_DEPOIS_DA_MENCAO = /^(?:\s+\S+){0,3}?\s+(?:nao|nem|sem|nunca)\b/;
+
+/** Um nome citado na frase e as chaves de quem ele pode ser. */
+type MencaoNaFrase = {
+  inicio: number;
+  fim: number;
+  chaves: ReadonlySet<string>;
+};
+
+function sobrepoe(
+  mencoes: readonly MencaoNaFrase[],
+  inicio: number,
+  fim: number,
+): boolean {
+  return mencoes.some((m) => inicio < m.fim && fim > m.inicio);
+}
+
+function regexDasPalavras(palavras: readonly string[], antes = ""): RegExp {
+  return new RegExp(
+    `(?<![a-z0-9])${antes}${palavras.map(escaparRegex).join("[^a-z0-9]+")}(?![a-z0-9])`,
+    "g",
+  );
+}
+
+/**
+ * Os profissionais que a frase (ja normalizada, sem a mascara) cita: o nome
+ * inteiro sem titulo, de duas palavras ou mais ("Ana Lima", "Dr. Bruno
+ * Costa"), ou o titulo com uma palavra do nome ("Dra. Ana", "Dr. Costa":
+ * todos os profissionais com essa palavra). O primeiro nome sem titulo
+ * ("com a Ana") nao conta: pode ser o nome da pessoa.
+ */
+function profissionaisCitados(
+  frase: string,
+  nomes: readonly string[],
+): MencaoNaFrase[] {
+  const chaves = [
+    ...new Set(nomes.map((nome) => palavrasDoNomeDaPessoa(nome).join(" "))),
+  ]
+    .filter((chave) => chave !== "")
+    .sort((a, b) => b.length - a.length);
+  const mencoes: MencaoNaFrase[] = [];
+  for (const chave of chaves) {
+    const palavras = chave.split(" ");
+    if (palavras.length < 2) {
+      continue;
+    }
+    for (const m of frase.matchAll(regexDasPalavras(palavras))) {
+      const inicio = m.index ?? 0;
+      const fim = inicio + m[0].length;
+      if (!sobrepoe(mencoes, inicio, fim)) {
+        mencoes.push({ inicio, fim, chaves: new Set([chave]) });
+      }
+    }
+  }
+  for (const m of frase.matchAll(TITULO_E_NOME)) {
+    const palavra = m[1] ?? "";
+    const inicio = m.index ?? 0;
+    const fim = inicio + m[0].length;
+    const de = chaves.filter((chave) => chave.split(" ").includes(palavra));
+    if (de.length === 0 || sobrepoe(mencoes, inicio, fim)) {
+      continue;
+    }
+    mencoes.push({ inicio, fim, chaves: new Set(de) });
+  }
+  return mencoes.filter(
+    (m) => !NEGACAO_DEPOIS_DA_MENCAO.test(frase.slice(m.fim, m.fim + 40)),
+  );
+}
+
+/**
+ * As unidades que a frase (ja normalizada) cita com a palavra "unidade"
+ * ("na unidade Aldeota", "unidade do Centro", "Unidade: Centro"). O nome
+ * solto ("no Centro", "na Aldeota") pode ser o bairro, e fica para o
+ * verificador.
+ */
+function unidadesCitadas(
+  frase: string,
+  nomes: readonly string[],
+): MencaoNaFrase[] {
+  const chaves = [
+    ...new Set(nomes.map((nome) => palavrasDoNomeDaUnidade(nome).join(" "))),
+  ]
+    .filter((chave) => chave !== "")
+    .sort((a, b) => b.length - a.length);
+  const mencoes: MencaoNaFrase[] = [];
+  for (const chave of chaves) {
+    const regex = regexDasPalavras(
+      chave.split(" "),
+      "unidade\\s*:?\\s*(?:(?:do|da|de|dos|das)\\s+)?",
+    );
+    for (const m of frase.matchAll(regex)) {
+      const inicio = m.index ?? 0;
+      const fim = inicio + m[0].length;
+      if (!sobrepoe(mencoes, inicio, fim)) {
+        mencoes.push({ inicio, fim, chaves: new Set([chave]) });
+      }
+    }
+  }
+  return mencoes.filter(
+    (m) => !NEGACAO_DEPOIS_DA_MENCAO.test(frase.slice(m.fim, m.fim + 40)),
+  );
+}
+
+/**
+ * A frase da acao, do estado ou do fechamento cita outro profissional ou
+ * outra unidade que a do fato dela? Os fatos da frase sao os da alegacao e
+ * os das marcas licenciadas; com dia ou hora, so os do par da frase (o par
+ * fora do fato ja barra em outra regra). Fato sem profissional (ou sem
+ * unidade) conhecido: nao se sabe, e nao barra. Devolve as regras.
+ */
+function profissionalOuUnidadeForaDaAcao(
+  frase: string,
+  pares: readonly ParDaOferta[],
+  fatosDaFrase: readonly FatoDaAgendaLido[],
+  fatos: FatosDoTurno,
+): string[] {
+  const daFrase =
+    pares.length === 0
+      ? fatosDaFrase
+      : fatosDaFrase.filter((f) =>
+          pares.some((par) => parNoHorarioLivre(par, f)),
+        );
+  if (daFrase.length === 0) {
+    return [];
+  }
+  const regras: string[] = [];
+  const profissionais = daFrase.flatMap((f) =>
+    f.profissional === null ? [] : [f.profissional],
+  );
+  const citados = profissionaisCitados(frase, [
+    ...(fatos.profissionais ?? []),
+    ...profissionais,
+  ]);
+  if (
+    citados.length > 0 &&
+    profissionais.length === daFrase.length &&
+    !profissionais.some((nome) => {
+      const chave = palavrasDoNomeDaPessoa(nome).join(" ");
+      return citados.every((m) => m.chaves.has(chave));
+    })
+  ) {
+    regras.push("profissional_fora_da_acao");
+  }
+  const unidades = daFrase.flatMap((f) =>
+    f.unidade === null ? [] : [f.unidade],
+  );
+  const naFrase = unidadesCitadas(frase, [
+    ...(fatos.unidades ?? []),
+    ...unidades,
+  ]);
+  if (
+    naFrase.length > 0 &&
+    unidades.length === daFrase.length &&
+    !unidades.some((nome) => {
+      const chave = palavrasDoNomeDaUnidade(nome).join(" ");
+      return naFrase.every((m) => m.chaves.has(chave));
+    })
+  ) {
+    regras.push("unidade_fora_da_acao");
+  }
+  return regras;
 }
 
 // ---------------------------------------------------------------------------
@@ -3009,7 +3636,18 @@ const OPERADORAS_CONHECIDAS = [
   "trasmontano",
   "ameplan",
 ];
-const CONVENIO_GENERICO = `(?:convenios?|planos?(?!\\s+de\\s+(?:tratamento|pagamento|acao|saude bucal))|seguro saude|operadoras?|${OPERADORAS_CONHECIDAS.join("|")})`;
+/**
+ * Revisao curta das correcoes da AG3 (achado 14): "plano" seguido de verbo e
+ * o plano de fazer algo, nao o convenio ("meu plano era ir hoje a tarde",
+ * "o plano e passar ai amanha", "meu plano de vir cedo"). O adjetivo em -ar
+ * e -er ("plano familiar", "plano hospitalar", "plano master") continua
+ * sendo convenio, e "meu plano e a Hapvida" tambem.
+ */
+const VERBO_DEPOIS_DO_PLANO =
+  "\\s+(?:(?:e|eh|era|foi|seria|sera|e de|era de|de|seria de|sera de)\\s+)?(?:ir|vir|ver|ser|ter|dar|ler|[a-z]{2,}(?:ar|er|ir))\\b(?<!\\b(?:familiar|popular|regular|titular|hospitalar|similar|escolar|militar|singular|particular|lugar|celular|exemplar|master|super|premier|mulher))";
+/** "Plano" que nao e o plano de fazer algo (VERBO_DEPOIS_DO_PLANO). */
+const NAO_E_PLANO_DE_FAZER = `(?!${VERBO_DEPOIS_DO_PLANO})`;
+const CONVENIO_GENERICO = `(?:convenios?|planos?(?!\\s+de\\s+(?:tratamento|pagamento|acao|saude bucal))${NAO_E_PLANO_DE_FAZER}|seguro saude|operadoras?|${OPERADORAS_CONHECIDAS.join("|")})`;
 
 /** "cobre": precisa de "coberto"; "aceita": basta o convenio atender. */
 type Alegacao = "cobre" | "aceita";
@@ -3107,8 +3745,11 @@ const FIM_DO_OBJETO =
   /[.;:!?]|,\s*(?=(?:e|mas|que|porque|pois|se|entao|ja|sim|nao|o|a|os|as|tudo|ok|certo|claro|pode|quer|posso|voce|so|apenas|inclusive|alem|caso)\b)|\s(?=(?:para|pra|no|na|nos|nas|em|se|mas|quando|porque|pois|ate|desde|via|caso|que|onde|so|apenas|somente|inclusive|exceto|menos|mediante|conforme)\b)/;
 
 /** "plano de tratamento" e "plano de pagamento" nao sao convenio. */
-const PLANO_QUE_NAO_E_CONVENIO =
-  /\bplanos?\s+de\s+(?:tratamento|pagamento|acao|saude bucal)\b/g;
+/** Revisao curta das correcoes da AG3 (achado 14): nem "plano de ir amanha". */
+const PLANO_QUE_NAO_E_CONVENIO = new RegExp(
+  `\\bplanos?(?:\\s+de\\s+(?:tratamento|pagamento|acao|saude bucal)\\b|(?=${VERBO_DEPOIS_DO_PLANO}))`,
+  "g",
+);
 
 /** Lugar coberto ("estacionamento coberto", "area coberta"). */
 const LUGAR_ANTES_DE_COBERTO =
@@ -3131,8 +3772,9 @@ const VERBO_ANTES_DE_COBERTO =
 const TER_COBERTURA =
   /\b(?:tem|ha|possui|possuem|com|inclui|incluid[oa]|dentro da)\s+(?:\S+\s+)?$/;
 /** O paciente perguntou de convenio ou de cobertura. */
-const CONVENIO_NA_MENSAGEM =
-  /\b(?:convenios?|planos?(?!\s+de\s+(?:tratamento|pagamento))|operadoras?|carteirinha|seguro saude|cobre|cobrem|cobertura|coberto|coberta|credenciad\w*|reembolso)\b/;
+const CONVENIO_NA_MENSAGEM = new RegExp(
+  `\\b(?:convenios?|planos?(?!\\s+de\\s+(?:tratamento|pagamento))${NAO_E_PLANO_DE_FAZER}|operadoras?|carteirinha|seguro saude|cobre|cobrem|cobertura|coberto|coberta|credenciad\\w*|reembolso)\\b`,
+);
 
 /** A negacao da afirmacao de convenio, ate tres palavras antes. */
 const NEGACAO_DO_CONVENIO =
@@ -3290,8 +3932,10 @@ function procedimentoNoObjeto(objeto: string): string[] {
  * Revisao final da AG3 (item 9): o nome depois da palavra generica de
  * convenio ("meu plano e o X", "convenio X", "a operadora Y").
  */
-const NOME_DEPOIS_DO_CONVENIO =
-  /\b(?:convenios?|planos?(?!\s+de\s+(?:tratamento|pagamento|acao|saude bucal))|operadoras?|seguro saude)\b(?:\s+(?:e|eh|sera|seria|chamad[oa]|chama)\b|\s*:)?/g;
+const NOME_DEPOIS_DO_CONVENIO = new RegExp(
+  `\\b(?:convenios?|planos?(?!\\s+de\\s+(?:tratamento|pagamento|acao|saude bucal))${NAO_E_PLANO_DE_FAZER}|operadoras?|seguro saude)\\b(?:\\s+(?:e|eh|sera|seria|chamad[oa]|chama)\\b|\\s*:)?`,
+  "g",
+);
 /**
  * "Tenho Humana Saude", "uso o plano X", "sou cliente da Y": o objeto, que
  * so conta quando cita convenio (a palavra generica, como "saude" ou
@@ -3318,13 +3962,16 @@ function convenioNaoReconhecidoNaMensagem(
       nomesDeConvenio,
     );
     return (
-      analise.desconhecidas.length > 0 && (!soComConvenio || analise.citaConvenio)
+      analise.desconhecidas.length > 0 &&
+      (!soComConvenio || analise.citaConvenio)
     );
   };
   for (const padrao of PADROES_PELO_OBJETO) {
     for (const m of mensagem.matchAll(padrao.regex)) {
       const fim = (m.index ?? 0) + m[0].length;
-      if (desconhecido(objetoDepois(mensagem, fim), padrao.objeto === "convenio")) {
+      if (
+        desconhecido(objetoDepois(mensagem, fim), padrao.objeto === "convenio")
+      ) {
         return true;
       }
     }
@@ -3941,8 +4588,10 @@ type MencaoDeConvenio = {
  * "operadora", "seguro saude"), fora de "plano de tratamento" e "plano de
  * pagamento".
  */
-const MENCAO_GENERICA_DE_CONVENIO =
-  /(?<![a-z0-9])(?:convenios?|conveniad[oa]s?|credenciad[oa]s?|parceir[oa]s?|parcerias?|operadoras?|seguro saude|planos?(?!\s+de\s+(?:tratamento|pagamento|acao|saude bucal)))(?![a-z0-9])/g;
+const MENCAO_GENERICA_DE_CONVENIO = new RegExp(
+  `(?<![a-z0-9])(?:convenios?|conveniad[oa]s?|credenciad[oa]s?|parceir[oa]s?|parcerias?|operadoras?|seguro saude|planos?(?!\\s+de\\s+(?:tratamento|pagamento|acao|saude bucal))${NAO_E_PLANO_DE_FAZER})(?![a-z0-9])`,
+  "g",
+);
 /** Pergunta indireta: "vou ver se o seu convenio", "nao sei informar se". */
 const SABER_ANTES =
   /\b(?:ver|veja|vejo|verificar|verifique|verifico|consultar|consulte|consulto|conferir|confira|confiro|checar|cheque|saber|sei|informar|informe|descobrir|perguntar|pergunte|confirmar|confirme)\b(?:\s+[^\s,;:.!?]+){0,4}\s*$/;
@@ -4160,7 +4809,10 @@ export function regrasDosFatos(
   frases.forEach((frase, indice) => {
     const afirmaAqui = afirmaHorarioLivre(frase.texto);
     const afirma =
-      afirmaAqui || (ofertaAnterior && !fraseNegaHorario(frase.texto));
+      afirmaAqui ||
+      (ofertaAnterior &&
+        !fraseNegaHorario(frase.texto) &&
+        !fraseDizQueNaoEstaLivre(frase.texto));
     if (!afirma) {
       ofertaAnterior = false;
       return;
@@ -4266,7 +4918,8 @@ export function regrasDosFatos(
   }
 
   // Acao e estado da consulta. O diminutivo e o participio ("ficou
-  // agendadinho").
+  // agendadinho"; revisao curta das correcoes da AG3, o superlativo:
+  // "confirmadissimo").
   const acoes = new Set(fatos.acoes);
   // Revisao final da AG3: a consulta que a IA marcou nesta conversa, relida
   // no turno (o estado do atendimento), sustenta "ficou marcada" e "foi
@@ -4275,8 +4928,14 @@ export function regrasDosFatos(
     (c) => c.marcadaNestaConversa,
   );
   const acoesSemFerramenta = new Set<string>();
-  const semDiminutivo = mascarada.replace(PARTICIPIO_NO_DIMINUTIVO, "$1$2");
+  const semDiminutivo = semFlexaoDoParticipio(mascarada);
   const frasesSemDiminutivo = frasesComPosicao(semDiminutivo);
+  /** A frase tem a agenda (dia, hora, "horario", "vaga", "agenda")? */
+  const temAgenda = (frase: Frase) =>
+    AGENDA_NA_FRASE.test(frase.texto) ||
+    partesDaOferta(semDiminutivo, frase, fatos.hoje).some(
+      (parte) => parte.tipo === "data" || parte.tipo === "hora",
+    );
   /** As alegacoes sustentadas de cada frase (pelo indice): a acao ou o estado. */
   const alegadas = new Map<number, Set<AlegacaoDaFrase>>();
   for (const padrao of PADROES_DE_ACAO) {
@@ -4296,6 +4955,14 @@ export function regrasDosFatos(
         padrao.acao === null &&
         frase !== undefined &&
         ehPerguntaDeVerdade(frase.texto)
+      ) {
+        continue;
+      }
+      // Revisao curta das correcoes da AG3 (achado 6): "separei", "guardei" e
+      // "bloqueei" so afirmam a reserva com a agenda na frase.
+      if (
+        padrao.soComAgendaNaFrase &&
+        (frase === undefined || !temAgenda(frase))
       ) {
         continue;
       }
@@ -4327,41 +4994,64 @@ export function regrasDosFatos(
   // Revisao final da AG3 (item 2): a frase da acao ou do estado da consulta
   // com dia ou hora so passa com o par DAQUELA acao ou da consulta lida
   // (reservou quarta 14h e a resposta diz "reservei quinta as 13h": barra,
-  // mesmo com quinta 13h livre na busca).
-  const lidos = (lista: readonly HorarioDoFato[]) =>
-    lista
-      .map((h) => horarioLivreLido(h, fatos.anoCorrente))
-      .filter((h): h is HorarioLivreLido => h !== null);
+  // mesmo com quinta 13h livre na busca). Revisao curta das correcoes: cada
+  // fato leva o profissional e a unidade dele (achado 5).
+  const lidos = (lista: readonly HorarioDoFato[]): FatoDaAgendaLido[] =>
+    lista.flatMap((h) => {
+      const lido = horarioLivreLido(h, fatos.anoCorrente);
+      return lido === null
+        ? []
+        : [
+            {
+              ...lido,
+              profissional: h.profissional ?? null,
+              unidade: h.unidade,
+            },
+          ];
+    });
   const daAcao = (...quais: AcaoDoTurno[]) =>
     lidos(fatos.horariosDasAcoes.filter((h) => quais.includes(h.acao)));
   const permitidosDaAlegacao = (
     alegacao: AlegacaoDaFrase,
-  ): HorarioLivreLido[] => {
+  ): FatoDaAgendaLido[] => {
     switch (alegacao) {
       case "estado":
-        return [...lidos(fatos.consultasLidas), ...daAcao("marcou", "remarcou")];
+        return [
+          ...lidos(fatos.consultasLidas),
+          ...daAcao("marcou", "remarcou"),
+        ];
       case "marcou":
         return [
           ...daAcao("marcou"),
           ...lidos(fatos.consultasLidas.filter((c) => c.marcadaNestaConversa)),
         ];
       case "confirmou_presenca":
-        return [...lidos(fatos.consultasLidas), ...daAcao("confirmou_presenca")];
+        return [
+          ...lidos(fatos.consultasLidas),
+          ...daAcao("confirmou_presenca"),
+        ];
       default:
         return daAcao(alegacao);
     }
   };
   const foraDoParDaAcao = new Set<string>();
+  /** Os fatos de cada frase de acao, de estado ou de fechamento licenciado. */
+  const fatosDaFrase = new Map<number, FatoDaAgendaLido[]>();
+  const juntarFatos = (indice: number, lista: readonly FatoDaAgendaLido[]) =>
+    fatosDaFrase.set(indice, [...(fatosDaFrase.get(indice) ?? []), ...lista]);
   for (const [indice, daFrase] of alegadas) {
     const frase = frasesSemDiminutivo[indice];
     if (frase === undefined) {
       continue;
     }
-    const pares = paresDaOferta(partesDaOferta(semDiminutivo, frase, fatos.hoje));
+    const permitidos = [...daFrase].flatMap(permitidosDaAlegacao);
+    juntarFatos(indice, permitidos);
+    const pares = paresDaOferta(
+      partesDaOferta(semDiminutivo, frase, fatos.hoje),
+    );
     if (pares.length === 0) {
       continue;
     }
-    const permitidos = [...daFrase].flatMap(permitidosDaAlegacao);
     if (
       pares.some((par) => !permitidos.some((h) => parNoHorarioLivre(par, h)))
     ) {
@@ -4379,19 +5069,26 @@ export function regrasDosFatos(
   // Revisao 2 (regra estrutural), com a licenca pela acao (revisao final da
   // AG3, item 3): a frase com dia ou hora e marca de fechamento ("pronto",
   // "combinado", "ficou para", "te esperamos"...) afirma que algo foi feito
-  // na agenda, seja qual for o verbo. A marca forte so vale com a consulta
-  // marcada ou remarcada no turno ou com uma consulta lida; a da reserva
-  // ("reservado", "reservei"), tambem com a reserva; a fraca ("pronto") e a
-  // do horario ("seu horario e"), tambem na frase que diz a acao que o turno
-  // fez. A reserva viva do estado NAO libera "te esperamos". E a frase
-  // licenciada so passa com o par da acao ou da consulta lida.
+  // na agenda, seja qual for o verbo. A reserva viva do estado NAO libera
+  // "te esperamos". Revisao curta das correcoes da AG3 (achados 4 e 7): o par
+  // permitido depende do tipo da marca, e a frase passa so com o par que
+  // TODAS as marcas dela permitem:
+  //  - forte e compromisso: a consulta marcada ou remarcada no turno ou uma
+  //    consulta lida, com o par delas (a consulta de quarta, lida, nao
+  //    libera "te esperamos terca" da reserva nova de terca);
+  //  - reserva: a reserva do turno, com o par dela (sem reserva no turno, a
+  //    consulta marcada ou lida, com o par dela);
+  //  - fraca, interjeicao, horario e resumo: a consulta marcada ou lida
+  //    (com o par dela) ou a acao que a frase diz (com o par dela:
+  //    "Combinado! Reservei quarta as 14h" passa com a reserva de quarta).
   if (acoesSemFerramenta.size === 0) {
     const licencaGeral =
       fatos.consultaLida || acoes.has("marcou") || acoes.has("remarcou");
-    const permitidosDoFechamento = [
-      ...lidos(fatos.horariosDasAcoes),
+    const paresGerais = [
       ...lidos(fatos.consultasLidas),
+      ...daAcao("marcou", "remarcou"),
     ];
+    const paresDaReserva = daAcao("reservou");
     let semLicenca = false;
     let foraDoPar = false;
     for (const fechamento of fechamentosDasFrases(
@@ -4400,22 +5097,55 @@ export function regrasDosFatos(
       fatos.hoje,
     )) {
       const daFrase = alegadas.get(fechamento.indice) ?? new Set();
-      const reservaLicenciada =
+      const reservaNaFrase =
         fechamento.tipos.has("reserva") && acoes.has("reservou");
-      const acaoNaFrase = daFrase.size > 0 || reservaLicenciada;
-      const licenciada = [...fechamento.tipos].every(
-        (tipo) =>
-          licencaGeral ||
-          (tipo === "reserva" && acoes.has("reservou")) ||
-          ((tipo === "fraca" || tipo === "horario") && acaoNaFrase),
-      );
-      if (!licenciada) {
+      const acaoNaFrase = daFrase.size > 0 || reservaNaFrase;
+      const daAcaoNaFrase = [
+        ...[...daFrase].flatMap(permitidosDaAlegacao),
+        ...(reservaNaFrase ? paresDaReserva : []),
+      ];
+      const permitidosDoTipo = (
+        tipo: TipoDaMarca,
+      ): FatoDaAgendaLido[] | null => {
+        switch (tipo) {
+          case "forte":
+          case "compromisso":
+            return licencaGeral ? paresGerais : null;
+          case "reserva":
+            // A outra acao dita na mesma frase ("reservei terca, e sua
+            // consulta de quarta continua marcada") vale com o par dela
+            // (a regra do par da acao ja confere).
+            if (acoes.has("reservou")) {
+              return [
+                ...paresDaReserva,
+                ...[...daFrase]
+                  .filter((alegacao) => alegacao !== "reservou")
+                  .flatMap(permitidosDaAlegacao),
+              ];
+            }
+            return licencaGeral ? paresGerais : null;
+          default:
+            if (!licencaGeral && !acaoNaFrase) {
+              return null;
+            }
+            return [
+              ...(licencaGeral ? paresGerais : []),
+              ...(acaoNaFrase ? daAcaoNaFrase : []),
+            ];
+        }
+      };
+      const porTipo = [...fechamento.tipos].map(permitidosDoTipo);
+      if (porTipo.some((lista) => lista === null)) {
         semLicenca = true;
         continue;
       }
+      const listas = porTipo.filter(
+        (lista): lista is FatoDaAgendaLido[] => lista !== null,
+      );
+      juntarFatos(fechamento.indice, listas.flat());
       if (
-        fechamento.pares.some(
-          (par) => !permitidosDoFechamento.some((h) => parNoHorarioLivre(par, h)),
+        fechamento.pares.some((par) =>
+          listas.some((lista) => !lista.some((h) => parNoHorarioLivre(par, h))),
         )
       ) {
         foraDoPar = true;
@@ -4432,6 +5162,41 @@ export function regrasDosFatos(
         categoria: "acao_nao_executada",
         regra: "fechamento_fora_do_horario",
       });
+    }
+  }
+
+  // Revisao curta das correcoes da AG3 (achado 5): a frase da acao, do estado
+  // da consulta ou do fechamento licenciado que cita OUTRO profissional do
+  // Cadastro ou OUTRA unidade ("Sua consulta esta marcada com o Dr. Bruno",
+  // marcada com a Dra. Ana; "na unidade Aldeota", marcada no Centro) barra.
+  // O nome so aparece no texto sem a mascara do catalogo: a frase e a mesma
+  // pela posicao (as frases com e sem mascara tem de bater em numero; nao
+  // batendo, a regra nao le, e o verificador continua lendo).
+  if (fatosDaFrase.size > 0) {
+    const frasesSemMascara = frasesComPosicao(semFlexaoDoParticipio(base));
+    if (frasesSemMascara.length === frasesSemDiminutivo.length) {
+      const foraDaAcao = new Set<string>();
+      for (const [indice, lista] of fatosDaFrase) {
+        const frase = frasesSemDiminutivo[indice];
+        const semMascara = frasesSemMascara[indice];
+        if (frase === undefined || semMascara === undefined) {
+          continue;
+        }
+        const pares = paresDaOferta(
+          partesDaOferta(semDiminutivo, frase, fatos.hoje),
+        );
+        for (const regra of profissionalOuUnidadeForaDaAcao(
+          semMascara.texto,
+          pares,
+          lista,
+          fatos,
+        )) {
+          foraDaAcao.add(regra);
+        }
+      }
+      for (const regra of foraDaAcao) {
+        achados.push({ categoria: "acao_nao_executada", regra });
+      }
     }
   }
 
@@ -4511,7 +5276,8 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   "lugar da ferramenta: duas palavras de nome, a palavra clinica so no fim",
   PALAVRAS_CLINICAS_DE_NOME_DE_LUGAR.join(","),
   ...PADROES_DE_ACAO.map(
-    (p) => `${p.nome} ${p.acao ?? "estado"} ${p.regex.source}`,
+    (p) =>
+      `${p.nome} ${p.acao ?? "estado"} ${p.regex.source}${p.soComAgendaNaFrase ? " so com agenda na frase" : ""}`,
   ),
   NEGACAO_ANTES.source,
   PARTICIPIO_NO_DIMINUTIVO.source,
@@ -4538,6 +5304,38 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   "marcou: tambem a consulta marcada nesta conversa, relida no turno",
   "fechamento licenciado: o par de uma acao ou de uma consulta lida",
   "eco do pedido: fonte so na frase que nega ou pergunta",
+  // Revisao curta das correcoes da AG3 (achados 3 a 7): o horario que nao esta
+  // livre, o relato do pedido, o horario de outra pessoa, o duplo negativo
+  // como horario livre, os tipos de marca com o par de cada um, as marcas
+  // novas, a frase curta depois, o superlativo, a reserva por "separei" e o
+  // profissional e a unidade da acao.
+  OCUPADO,
+  DIZ_QUE_ESTA_OCUPADO.source,
+  NEGACAO_DO_OCUPADO.source,
+  JA_TEM_PACIENTE.source,
+  JA_FOI_NO_FIM.source,
+  CONSULTA_DA_PESSOA.source,
+  DE_OUTRA_PESSOA.source,
+  RELATO_DO_PEDIDO.source,
+  POR_OUTRA_PESSOA,
+  "paciente e eco: tambem na frase que diz que o horario nao esta livre e no relato do pedido",
+  PARTICIPIO_NO_SUPERLATIVO.source,
+  AGENDA_NA_FRASE.source,
+  NAO_E_HORARIO_GUARDADO,
+  INTERJEICAO_DE_FECHAMENTO,
+  INTERJEICAO_NO_COMECO.source,
+  INTERJEICAO_NO_FIM.source,
+  FECHAMENTO_DO_COMPROMISSO.source,
+  CONDICAO_NA_FRASE.source,
+  FUNCIONAMENTO_NA_FRASE.source,
+  FECHAMENTO_DO_RESUMO.source,
+  PERGUNTA_DE_ESCOLHA.source,
+  "fechamento por tipo: forte e compromisso com o par da consulta marcada ou lida; reserva com o da reserva (e o da outra acao da frase); fraca, interjeicao, horario e resumo tambem com o da acao da frase; a frase passa so com o par que todas as marcas permitem",
+  "fechamento: a frase curta logo depois, sem dia nem hora, tambem marca a frase",
+  [...TITULOS_DO_PROFISSIONAL].join(","),
+  TITULO_E_NOME.source,
+  NEGACAO_DEPOIS_DA_MENCAO.source,
+  "profissional e unidade: a frase da acao, do estado ou do fechamento licenciado com outro profissional do Cadastro (nome inteiro ou titulo com o nome) ou outra unidade (com a palavra unidade) barra; fato sem profissional ou unidade nao barra",
   CONVENIO_GENERICO,
   DETERMINANTES,
   ...PADROES_DE_COBERTURA.map(
@@ -4584,4 +5382,6 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   NOME_DEPOIS_DO_CONVENIO.source,
   TER_O_CONVENIO.source,
   "convenio: o citado pelo paciente e nao reconhecido barra a afirmacao generica e a regra invertida",
+  // Revisao curta das correcoes da AG3 (achado 14): "plano" com verbo.
+  VERBO_DEPOIS_DO_PLANO,
 ];

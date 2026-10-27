@@ -1397,9 +1397,11 @@ async function gravarRecusa(
 // AG3 (decisao D-7 do dono, padrao recomendado): o que o paciente informou a
 // IA para marcar (nome completo, nascimento, CPF e carteirinha) fica a parte
 // e so entra no cadastro do contato quando a equipe APROVA a consulta: o
-// nome se o cadastro estiver sem nome ou com o do WhatsApp; nascimento, CPF
-// e carteirinha so nos campos vazios (o gatilho do banco). Quem aprova confere antes, pelo
-// "Ver dados informados" do painel "Pendente de voce" e do menu da consulta.
+// nome se o cadastro estiver sem nome ou com o do WhatsApp; nascimento e CPF
+// so nos campos vazios; a carteirinha so vazia, na consulta pelo convenio e
+// com o convenio do cadastro vazio ou o mesmo (o gatilho do banco). Quem
+// aprova confere antes, pelo "Ver dados informados" do painel "Pendente de
+// voce" e do menu da consulta.
 //
 // A leitura e pela SESSAO, pela RPC ler_dados_informados_na_marcacao (a
 // unica leitura humana da tabela), que confere de novo o papel (quem escreve

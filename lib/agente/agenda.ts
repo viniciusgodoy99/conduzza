@@ -1016,6 +1016,12 @@ export type MemoriaDoSimulador = {
     appointmentId: string;
     inicio: string;
     serviceLinkId?: string;
+    /**
+     * Revisao curta das correcoes (achado 10): a unidade da consulta
+     * simulada (a da reserva), como a consulta que a RPC grava. Ausente no
+     * pacote de antes: sem unidade.
+     */
+    unidadeId?: string | null;
   } | null;
 };
 
@@ -1142,21 +1148,25 @@ export function portaDaAgendaDoSimulador(
     },
     agendar: async (pedido) => {
       if (memoria !== undefined && e.catalogo && e.config) {
+        // Revisao curta das correcoes (achado 10): na ORDEM da RPC
+        // (agendar_pela_ia): reserva_inexistente, reserva_diferente e so
+        // depois reserva_vencida. A reserva da conversa que nao foi
+        // consumida conta, vencida ou nao, como no banco.
         const reserva = memoria.reserva;
         if (reserva === null) {
           return { ok: false, motivo: "reserva_inexistente" };
         }
-        if (Date.parse(reserva.expiraEm) <= e.agora()) {
-          return { ok: false, motivo: "reserva_vencida" };
-        }
         // Revisao final da AG3: como a RPC, a reserva perguntada tem de ser
-        // a viva.
+        // a da conversa.
         if (
           pedido?.slotHoldId !== undefined &&
           pedido.slotHoldId !== null &&
           pedido.slotHoldId !== reserva.holdId
         ) {
           return { ok: false, motivo: "reserva_diferente" };
+        }
+        if (Date.parse(reserva.expiraEm) <= e.agora()) {
+          return { ok: false, motivo: "reserva_vencida" };
         }
         const dados = dadosAtuais;
         if (dados.para_o_titular === false) {
@@ -1182,6 +1192,9 @@ export function portaDaAgendaDoSimulador(
           appointmentId: randomUUID(),
           inicio: reserva.inicio,
           serviceLinkId: reserva.serviceLinkId,
+          // Revisao curta das correcoes (achado 10): a unidade da reserva,
+          // como a consulta que a RPC grava.
+          unidadeId: reserva.unidadeId,
         };
         memoria.reserva = null;
         return {
@@ -1324,6 +1337,9 @@ export function portaDaAgendaDoSimulador(
       return {
         inicio: consulta.inicio,
         ativa: Date.parse(consulta.inicio) > e.agora(),
+        // Revisao curta das correcoes (achado 10): a unidade, como
+        // lerConsultaDaIa (o pacote de antes, sem ela: sem unidade).
+        unidadeId: consulta.unidadeId ?? null,
       };
     },
   };

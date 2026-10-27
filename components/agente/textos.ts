@@ -262,7 +262,7 @@ export const TEXTOS_DO_AGENTE = {
   resposta: "Resposta",
   perguntaPlaceholder: "Ex.: Tem estacionamento?",
   respostaPlaceholder:
-    "Ex.: Sim, temos estacionamento gratuito para pacientes na entrada da clínica.",
+    "Ex.: Sim, temos estacionamento de cortesia para pacientes na entrada da clínica.",
   ativa: "Ativa: o assistente usa esta resposta",
   ativaDescricao:
     "Desmarcada, fica guardada aqui e o assistente deixa de usar.",

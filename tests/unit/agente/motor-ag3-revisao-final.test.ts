@@ -918,8 +918,8 @@ describe("achado 11: os falsos positivos da reserva que venceu", () => {
   });
 });
 
-describe("achado 14: o nome e o nascimento mascarados na cópia do classificador e do verificador", () => {
-  it("no turno da coleta, o agente lê os dados e os outros dois não", async () => {
+describe("achado 14 (com a revisão curta, achado 1): o nome validado e o nascimento só somem da cópia do verificador", () => {
+  it("no turno da coleta, o agente e o classificador leem o texto; o verificador, sem o nome validado e sem o nascimento", async () => {
     const vistosPeloClassificador: string[] = [];
     const vistosPeloVerificador: string[] = [];
     const conversa = new Conversa();
@@ -954,12 +954,19 @@ describe("achado 14: o nome e o nascimento mascarados na cópia do classificador
     const doAgente = JSON.stringify(conversa.corpos.at(-1));
     expect(doAgente).toContain("Aparecida da Silva Souza");
     expect(doAgente).toContain("12/03/1985");
-    // O classificador e o verificador, nao.
-    for (const visto of [...vistosPeloClassificador, ...vistosPeloVerificador]) {
+    // Revisao curta (achado 1): o classificador le o texto como o agente,
+    // sem mascara de nome nem de nascimento (esconder sintoma do portao e o
+    // risco maior).
+    expect(vistosPeloClassificador).toEqual([
+      "Fulano Aparecida da Silva Souza, nascida em 12/03/1985",
+    ]);
+    // O verificador, nao: o nome que o servidor validou (como o modelo
+    // copiou, sem a marca e como o paciente escreveu) e o nascimento somem.
+    for (const visto of vistosPeloVerificador) {
       expect(visto).not.toMatch(/Aparecida|Silva|Souza|1985|12\/03/);
     }
-    expect(vistosPeloClassificador.join(" ")).toContain("[nome]");
-    expect(vistosPeloClassificador.join(" ")).toContain("[nascimento]");
+    expect(vistosPeloVerificador[0]).toBe("[nome], nascida em [nascimento]");
+    expect(vistosPeloVerificador.at(-1)).toContain("Obrigada [nome]!");
     // O texto aprovado e o rascunho (sem a marca do contato), byte a byte:
     // a mascara e so da copia do verificador.
     expect(r.resposta).toContain("Obrigada Aparecida da Silva Souza!");

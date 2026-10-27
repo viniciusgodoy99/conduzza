@@ -20,6 +20,7 @@ import { datasEHorasDoTexto } from "@/lib/domain/conformidade/fatos-do-turno";
 import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
 
 import type { CatalogoDoAgente } from "./ferramentas/buscar-procedimento";
+import { CABECALHO_DA_NOTA_DA_PASSAGEM } from "./nota-da-passagem";
 
 // ---------------------------------------------------------------------------
 // Listas fechadas (as do CHECK de ia_atendimento)
@@ -640,6 +641,15 @@ export type ReservaPerguntada = {
   profissionais: readonly string[];
   /** Os nomes de todas as unidades do catalogo. */
   unidades: readonly string[];
+  /**
+   * Revisao curta das correcoes (achado 8): o dia da reserva no fuso da
+   * clinica (aaaa-mm-dd). Com ele e com hojeNaClinica, "hoje", "amanha" e o
+   * ano escrito sao conferidos. Ausente: a mensagem com "hoje", "amanha" ou
+   * ano nao arma.
+   */
+  diaNaClinica?: string | null;
+  /** Hoje no fuso da clinica (aaaa-mm-dd), para "hoje" e "amanha". */
+  hojeNaClinica?: string | null;
 };
 
 const DIAS_DA_SEMANA_SEM_ACENTO = [
@@ -656,6 +666,18 @@ const DIA_DA_SEMANA_NA_FRASE =
 /** Os titulos que nao fazem parte do nome ("Dra. Ana Lima" e "ana lima"). */
 const TITULOS = new Set(["dr", "dra", "doutor", "doutora", "prof", "profa"]);
 const TITULO_E_NOME = /\b(?:dr|dra|doutor|doutora)\b\.?\s+([a-z]+)/g;
+/** As particulas, que nunca distinguem um nome de outro ("Ana DA Silva"). */
+const PARTICULAS_DO_NOME = new Set(["da", "das", "de", "do", "dos", "e", "d"]);
+/**
+ * O dia dito em relacao a hoje (revisao curta, achado 8), com quantos dias
+ * depois de hoje ele e. "depois de amanha" antes de "amanha".
+ */
+const DIA_RELATIVO = /\b(depois de amanha|amanha|hoje)\b/g;
+const DIAS_DO_DIA_RELATIVO: Readonly<Record<string, number>> = {
+  hoje: 0,
+  amanha: 1,
+  "depois de amanha": 2,
+};
 
 /** As palavras do nome, sem titulo e sem pontuacao ("dra. ana lima": ana lima). */
 function palavrasDoNome(nome: string): string[] {
@@ -676,14 +698,87 @@ function citaONome(frase: string, palavras: readonly string[]): boolean {
 }
 
 /**
+ * Revisao curta das correcoes (achado 2): as palavras DISTINTIVAS dos outros
+ * nomes do catalogo, o primeiro nome e o sobrenome (sem titulo e sem
+ * particula) que nao estao no nome da reserva. "Bruno" e "Costa" de "Dr.
+ * Bruno Costa" com a reserva da Dra. Ana Lima; com a Dra. Ana Costa no
+ * catalogo, so "Costa" ("Ana" tambem e da reserva). Numero e letra solta
+ * ("Unidade 2", "Bloco B") ficam de fora, para nao casar com a hora e a
+ * data: esses nomes so contam inteiros (citaONome).
+ */
+function palavrasDistintivas(
+  nomes: readonly string[],
+  daReserva: readonly string[],
+): string[] {
+  const proprias = new Set(daReserva);
+  return [
+    ...new Set(
+      nomes
+        .flatMap(palavrasDoNome)
+        .filter(
+          (p) =>
+            p.length > 1 &&
+            !/^\d+$/.test(p) &&
+            !PARTICULAS_DO_NOME.has(p) &&
+            !proprias.has(p),
+        ),
+    ),
+  ];
+}
+
+/** A mensagem cita a palavra inteira. */
+function citaAPalavra(mensagem: string, palavra: string): boolean {
+  return citaONome(mensagem, [palavra]);
+}
+
+/**
+ * A mensagem inteira, sem acento e minuscula, para conferir a pergunta: o
+ * ponto das abreviacoes ("Dra. Ana") e dos numeros ("R$ 1.500") sai, como
+ * em perguntasDoTexto.
+ */
+function baseDaMensagem(texto: string): string {
+  return normalizarBase(
+    semAcento(texto)
+      .replace(/\b(dra|dr|sra|sr|srta|av|prof|profa|dona|sto|sta|n)\./g, "$1")
+      .replace(/(\d)\.(\d)/g, "$1$2"),
+  );
+}
+
+/** Quantos dias de calendario vao de `de` ate `ate` (aaaa-mm-dd), ou null. */
+function diasEntre(de: string, ate: string): number | null {
+  const ler = (dia: string) => {
+    const partes = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dia);
+    return partes
+      ? Date.UTC(Number(partes[1]), Number(partes[2]) - 1, Number(partes[3]))
+      : null;
+  };
+  const inicio = ler(de);
+  const fim = ler(ate);
+  return inicio === null || fim === null
+    ? null
+    : Math.round((fim - inicio) / 86_400_000);
+}
+
+/**
  * Revisao final da AG3 (achado 1, ALTO): a pergunta "Confirma ...?" mostra
- * A RESERVA VIVA. Toda frase de confirmacao da resposta tem de trazer o dia
- * com o mes (dd/mm) e a hora (HH:mm) da reserva e nenhum outro dia ou hora
- * (nem dia da semana diferente); quando cita profissional (o titulo ou o
- * nome de outro do catalogo) ou unidade, os da reserva. Sem isso, a etapa
- * aguardando_confirmacao nao e armada e o "sim" seguinte nao marca: marcar
- * um horario diferente do que a pessoa confirmou e o pior erro do
- * agendamento.
+ * A RESERVA VIVA, e so ela. Sem isso, a etapa aguardando_confirmacao nao e
+ * armada e o "sim" seguinte nao marca: marcar um horario diferente do que a
+ * pessoa confirmou e o pior erro do agendamento.
+ *
+ * Revisao curta das correcoes (achados 2 e 8), pela MENSAGEM INTEIRA, nao so
+ * pela frase da pergunta. Arma so quando:
+ *  - a mensagem tem a pergunta que comeca com "Confirma" (frasesQueConfirmam;
+ *    o resumo seguido de "Confirma?" curto vale);
+ *  - TODO dia e TODA hora da mensagem sao os da reserva, com pelo menos o
+ *    dd/mm e o HH:mm dela ("Ou prefere quinta, 22/10 as 13:00?" e o lembrete
+ *    com outra hora nao armam: o "sim" ficaria ambiguo); o dia da semana, o
+ *    ano escrito e "hoje", "amanha" e "depois de amanha" batem com o dia da
+ *    reserva no fuso da clinica;
+ *  - nenhum outro profissional nem outra unidade e citado: nem o nome
+ *    inteiro, nem o titulo com outro primeiro nome, nem uma palavra
+ *    distintiva (primeiro nome ou sobrenome) de outro do catalogo que nao
+ *    esteja no nome da reserva ("com o Bruno", "com a Costa");
+ *  - "unidade" so com a unidade da reserva.
  */
 export function perguntaConfirmaAReserva(
   texto: string,
@@ -692,11 +787,6 @@ export function perguntaConfirmaAReserva(
   if (frasesQueConfirmam(texto).length === 0) {
     return false;
   }
-  // Toda pergunta com "confirma" (tambem "Ou confirma quinta...?") tem de
-  // mostrar a reserva: duas opcoes deixam o "sim" sem horario certo.
-  const frases = perguntasDoTexto(texto).filter((frase) =>
-    /\bconfirma\b/.test(frase),
-  );
   const doDia = datasEHorasDoTexto(normalizarBase(reserva.dia), "fonte");
   const dataDaReserva = doDia.datas[0];
   const horaDaReserva = datasEHorasDoTexto(
@@ -713,14 +803,78 @@ export function perguntaConfirmaAReserva(
   ) {
     return false;
   }
+  const mensagem = baseDaMensagem(texto);
+
+  // Os dias e as horas: so os da reserva, com o dd/mm e o HH:mm dela.
+  const { datas, horas } = datasEHorasDoTexto(mensagem, "rascunho");
+  if (
+    !datas.some(
+      (d) => d.dia === dataDaReserva.dia && d.mes === dataDaReserva.mes,
+    ) ||
+    datas.some(
+      (d) =>
+        d.dia !== dataDaReserva.dia ||
+        (d.mes !== null && d.mes !== dataDaReserva.mes),
+    ) ||
+    !horas.includes(horaDaReserva) ||
+    horas.some((h) => h !== horaDaReserva)
+  ) {
+    return false;
+  }
+  // O ano escrito e o do dia da reserva (sem saber o dia, nao arma).
+  const anoDaReserva = reserva.diaNaClinica
+    ? Number(reserva.diaNaClinica.slice(0, 4))
+    : null;
+  // (o leitor ja devolve o ano com quatro digitos: "21/10/26" e 2026)
+  if (datas.some((d) => d.ano !== null && d.ano !== anoDaReserva)) {
+    return false;
+  }
+  for (const m of mensagem.matchAll(DIA_DA_SEMANA_NA_FRASE)) {
+    if (m[1] !== semanaDaReserva) {
+      return false;
+    }
+  }
+  // "hoje", "amanha", "depois de amanha": o dia da reserva no fuso da
+  // clinica (sem saber hoje ou o dia da reserva, nao arma).
+  const diasAteAReserva =
+    reserva.diaNaClinica && reserva.hojeNaClinica
+      ? diasEntre(reserva.hojeNaClinica, reserva.diaNaClinica)
+      : null;
+  for (const m of mensagem.matchAll(DIA_RELATIVO)) {
+    if (
+      diasAteAReserva === null ||
+      DIAS_DO_DIA_RELATIVO[m[1] ?? ""] !== diasAteAReserva
+    ) {
+      return false;
+    }
+  }
+
+  // O profissional: o titulo com o primeiro nome da reserva, e nenhum
+  // outro profissional do catalogo, nem por uma palavra distintiva.
   const nomeDaReserva =
     reserva.profissional === null ? [] : palavrasDoNome(reserva.profissional);
+  for (const m of mensagem.matchAll(TITULO_E_NOME)) {
+    if (nomeDaReserva.length === 0 || m[1] !== nomeDaReserva[0]) {
+      return false;
+    }
+  }
   const outrosProfissionais = reserva.profissionais
     .map(palavrasDoNome)
     .filter(
       (palavras) =>
         palavras.length > 0 && palavras.join(" ") !== nomeDaReserva.join(" "),
     );
+  if (
+    outrosProfissionais.some((nome) => citaONome(mensagem, nome)) ||
+    palavrasDistintivas(reserva.profissionais, nomeDaReserva).some((p) =>
+      citaAPalavra(mensagem, p),
+    )
+  ) {
+    return false;
+  }
+
+  // A unidade: a da reserva, quando cita; nenhuma outra, nem por uma
+  // palavra distintiva.
   const unidadeDaReserva =
     reserva.unidade === null ? [] : palavrasDoNome(reserva.unidade);
   const outrasUnidades = reserva.unidades
@@ -729,50 +883,21 @@ export function perguntaConfirmaAReserva(
       (palavras) =>
         palavras.length > 0 && palavras.join(" ") !== unidadeDaReserva.join(" "),
     );
-  return frases.every((original) => {
-    const frase = normalizarBase(original);
-    const { datas, horas } = datasEHorasDoTexto(frase, "rascunho");
-    // O dd/mm e o HH:mm da reserva, e nenhum outro.
-    if (
-      !datas.some(
-        (d) => d.dia === dataDaReserva.dia && d.mes === dataDaReserva.mes,
-      ) ||
-      datas.some(
-        (d) =>
-          d.dia !== dataDaReserva.dia ||
-          (d.mes !== null && d.mes !== dataDaReserva.mes),
-      ) ||
-      !horas.includes(horaDaReserva) ||
-      horas.some((h) => h !== horaDaReserva)
-    ) {
-      return false;
-    }
-    for (const m of frase.matchAll(DIA_DA_SEMANA_NA_FRASE)) {
-      if (m[1] !== semanaDaReserva) {
-        return false;
-      }
-    }
-    // O profissional: o titulo e o primeiro nome da reserva, e nenhum outro.
-    for (const m of frase.matchAll(TITULO_E_NOME)) {
-      if (nomeDaReserva.length === 0 || m[1] !== nomeDaReserva[0]) {
-        return false;
-      }
-    }
-    if (outrosProfissionais.some((nome) => citaONome(frase, nome))) {
-      return false;
-    }
-    // A unidade: a da reserva, quando cita.
-    if (outrasUnidades.some((nome) => citaONome(frase, nome))) {
-      return false;
-    }
-    if (
-      /\bunidade\b/.test(frase) &&
-      (unidadeDaReserva.length === 0 || !citaONome(frase, unidadeDaReserva))
-    ) {
-      return false;
-    }
-    return true;
-  });
+  if (
+    outrasUnidades.some((nome) => citaONome(mensagem, nome)) ||
+    palavrasDistintivas(reserva.unidades, unidadeDaReserva).some((p) =>
+      citaAPalavra(mensagem, p),
+    )
+  ) {
+    return false;
+  }
+  if (
+    /\bunidade\b/.test(mensagem) &&
+    (unidadeDaReserva.length === 0 || !citaONome(mensagem, unidadeDaReserva))
+  ) {
+    return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -917,9 +1042,9 @@ export function notaDaPassagem(entrada: EntradaDaNota): string | null {
   if (!temAtendimentoParaContar(estado, dados)) {
     return null;
   }
-  const linhas: string[] = [
-    "Resumo do assistente para a equipe (montado pelo sistema, sem dados do paciente).",
-  ];
+  // D-20: o cabecalho fixo e o que faz o Atendimento assinar a nota como do
+  // assistente (lib/agente/nota-da-passagem.ts).
+  const linhas: string[] = [CABECALHO_DA_NOTA_DA_PASSAGEM];
   const pedido: string[] = [];
   if (entrada.procedimento !== null) {
     pedido.push(`marcar ${entrada.procedimento}`);

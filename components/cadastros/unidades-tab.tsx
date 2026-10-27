@@ -84,8 +84,13 @@ export const TEXTOS_DA_UNIDADE = {
   linkDoMapaAjuda:
     "Cole o link do Google Maps ou de outro mapa, começando com https://. Fica guardado no cadastro: hoje o assistente não manda link na conversa.",
   estacionamento: "Estacionamento",
+  // D-22 (decisao do dono, 27/10/2026): as regras das respostas do
+  // assistente barram "gratuito", "sem custo", "grátis" e "de graça" como
+  // oferta casada; "de cortesia" passa (conferido em problemaNosTextosDaUnidade).
   estacionamentoExemplo:
-    "Ex.: Estacionamento próprio no subsolo, para pacientes.",
+    "Ex.: Estacionamento de cortesia para pacientes, no subsolo.",
+  estacionamentoAjuda:
+    'Se o estacionamento não for cobrado, escreva "de cortesia", como no exemplo. Gratuito, grátis, de graça e sem custo não passam nas regras das respostas do assistente.',
   acessibilidade: "Acessibilidade",
   acessibilidadeExemplo: "Ex.: Rampa na entrada e elevador até o consultório.",
   observacao: "Observação ao paciente",
@@ -717,8 +722,15 @@ export function UnidadesTab({
                 value={form.estacionamento}
                 maxLength={LIMITES_DO_CADASTRO.estacionamento}
                 placeholder={TEXTOS_DA_UNIDADE.estacionamentoExemplo}
+                aria-describedby="unidade-estacionamento-ajuda"
                 onChange={(e) => mudar("estacionamento", e.target.value)}
               />
+              <p
+                id="unidade-estacionamento-ajuda"
+                className="text-xs text-text-secondary"
+              >
+                {TEXTOS_DA_UNIDADE.estacionamentoAjuda}
+              </p>
             </div>
             <div className="grid gap-1.5">
               <div className="flex items-center justify-between gap-3">

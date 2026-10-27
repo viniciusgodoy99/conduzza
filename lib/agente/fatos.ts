@@ -32,7 +32,13 @@
 //    consulta lida com o dia, a hora e a unidade dela (a frase da acao com
 //    dia ou hora so passa com o par daquela acao), e o eco do pedido (a
 //    hora e o dia que a pessoa pediu, o horario que a reserva recusou) fora
-//    das saidas, em ecosDoPedido: so vale na frase que nega ou pergunta.
+//    das saidas, em ecosDoPedido: so vale na frase que nega ou pergunta;
+//  - revisao curta das correcoes da AG3 (achado 5): o profissional de cada
+//    acao e de cada consulta lida (o que a ferramenta passou ou, sem ele, o
+//    da propria saida que o modelo leu, no objeto com o mesmo dia e a mesma
+//    hora) e os nomes dos profissionais e das unidades do Cadastro, para a
+//    regra que barra a frase da acao com outro profissional ou outra
+//    unidade. O profissional nunca vai ao resumo do verificador.
 // As mensagens novas do paciente (fonte de data e hora) o filtro ja recebe
 // em mensagensDoPaciente. Quem chama (lib/agente/laco.ts) falha fechado se
 // montar os fatos lancar.
@@ -48,6 +54,7 @@ import type {
   DiaDaClinica,
   FatosDaFerramenta,
   FatosDoTurno,
+  HorarioDoFato,
   HorarioLivreDoTurno,
 } from "@/lib/domain/conformidade/fatos-do-turno";
 import {
@@ -117,6 +124,89 @@ export function textosPublicadosDoTurno(entrada: {
   return textos;
 }
 
+/** As chaves da saida que trazem o horario da acao ou da consulta. */
+const CHAVES_DO_HORARIO_NA_SAIDA = [
+  "horario_reservado",
+  "consulta_marcada",
+  "consulta",
+] as const;
+
+/**
+ * Revisao curta das correcoes da AG3 (achado 5): o profissional que a saida
+ * da ferramenta (o JSON que o modelo leu) traz com este dia e esta hora: o
+ * do objeto de cima ("reservado", "marcado") ou o de horario_reservado,
+ * consulta_marcada e consulta. Nenhum, ou dois diferentes: nulo (nao se
+ * sabe). As listas (horarios_oferecidos) nao contam: o mesmo horario pode
+ * ter dois profissionais.
+ */
+export function profissionalDaSaida(
+  saida: string,
+  horario: { dia: string; hora: string },
+): string | null {
+  let lido: unknown;
+  try {
+    lido = JSON.parse(saida);
+  } catch {
+    return null;
+  }
+  if (typeof lido !== "object" || lido === null || Array.isArray(lido)) {
+    return null;
+  }
+  const raiz = lido as Record<string, unknown>;
+  const candidatos = [
+    raiz,
+    ...CHAVES_DO_HORARIO_NA_SAIDA.map((chave) => raiz[chave]),
+  ];
+  const achados = new Set<string>();
+  for (const candidato of candidatos) {
+    if (
+      typeof candidato !== "object" ||
+      candidato === null ||
+      Array.isArray(candidato)
+    ) {
+      continue;
+    }
+    const objeto = candidato as Record<string, unknown>;
+    if (
+      objeto.dia === horario.dia &&
+      objeto.hora === horario.hora &&
+      typeof objeto.profissional === "string" &&
+      objeto.profissional.trim() !== ""
+    ) {
+      achados.add(objeto.profissional.trim());
+    }
+  }
+  const [unico] = [...achados];
+  return achados.size === 1 && unico !== undefined ? unico : null;
+}
+
+/** O profissional do horario: o que a ferramenta passou ou o da saida. */
+function comOProfissional<T extends HorarioDoFato>(
+  horario: T,
+  saida: string,
+): T {
+  if (typeof horario.profissional === "string") {
+    return horario;
+  }
+  const daSaida = profissionalDaSaida(saida, horario);
+  return daSaida === null ? horario : { ...horario, profissional: daSaida };
+}
+
+/** Os nomes dos profissionais do Cadastro (os dos vinculos e os ativos). */
+function nomesDosProfissionais(catalogo: CatalogoDoAgente): string[] {
+  return [
+    ...new Set(
+      [
+        ...catalogo.vinculos.map((v) => v.profissional),
+        ...(catalogo.vinculosDaEquipe ?? []).map((v) => v.profissional),
+        ...(catalogo.profissionais ?? []).map((p) => p.nome),
+      ]
+        .map((nome) => nome.replace(/\s+/g, " ").trim())
+        .filter((nome) => nome !== ""),
+    ),
+  ];
+}
+
 /**
  * Monta os fatos do turno. Pode lancar (configuracao fora do formato): quem
  * chama trata como falha fechada.
@@ -144,21 +234,27 @@ export function montarFatosDoTurno(entrada: {
   const consultasLidas: ConsultaDoFato[] = [];
   const ecosDoPedido: string[] = [];
   let consultaLida = false;
-  for (const { fatos } of entrada.ferramentas) {
+  for (const { saida, fatos } of entrada.ferramentas) {
     coberturas.push(...(fatos?.coberturas ?? []));
     horariosLivres.push(...(fatos?.horarios ?? []));
     ecosDoPedido.push(...(fatos?.ecos ?? []));
     if (fatos?.acao !== undefined) {
       acoes.add(fatos.acao);
-      // Revisao final da AG3: o horario da acao vai junto dela.
+      // Revisao final da AG3: o horario da acao vai junto dela (revisao curta
+      // das correcoes: com o profissional).
       if (fatos.horarioDaAcao !== undefined) {
-        horariosDasAcoes.push({ ...fatos.horarioDaAcao, acao: fatos.acao });
+        horariosDasAcoes.push({
+          ...comOProfissional(fatos.horarioDaAcao, saida),
+          acao: fatos.acao,
+        });
       }
     }
     if (fatos?.consultaLida === true) {
       consultaLida = true;
       if (fatos.consultaComHorario !== undefined) {
-        consultasLidas.push({ ...fatos.consultaComHorario });
+        consultasLidas.push({
+          ...comOProfissional(fatos.consultaComHorario, saida),
+        });
       }
     }
   }
@@ -196,5 +292,10 @@ export function montarFatosDoTurno(entrada: {
     semConvenioAtivo: convenios.length === 0,
     hoje: hojeNaClinica(entrada.agoraMs, entrada.fuso),
     respostasDaBase: [...(entrada.respostasDaBase ?? [])],
+    // Revisao curta das correcoes da AG3 (achado 5): os nomes do Cadastro.
+    profissionais: nomesDosProfissionais(catalogo),
+    unidades: (catalogo.unidades ?? [])
+      .map((u) => u.nome.trim())
+      .filter((nome) => nome !== ""),
   };
 }
