@@ -11,7 +11,10 @@ import { CartaoDeMetrica } from "@/components/shared/cartao-de-metrica";
 import { Button } from "@/components/ui/button";
 import type { PeriodoDaLista } from "@/lib/domain/campanha-e-anuncio-do-lead";
 import type { DimensaoDaOrigem } from "@/lib/domain/exportacao-de-resultados";
-import { formatarPercentual, percentualDe } from "@/lib/domain/formato-compacto";
+import {
+  formatarPercentual,
+  percentualDe,
+} from "@/lib/domain/formato-compacto";
 import type { ConversoesResumo } from "@/lib/queries/conversoes-meta";
 import type {
   AnunciosDoPeriodo,
@@ -28,8 +31,9 @@ import type {
 // Leads, outra tela, com a trilha de leitura dela.
 // Fase 4: Custo por lead, Campanhas e o detalhe por campanha leem
 // campanhas_do_periodo (uma verdade so: as mesmas linhas nos tres).
-// O detalhe por anuncio (20/10/2026) le anuncios_do_periodo, buscada pelo
-// pai so quando essa dimensao esta escolhida.
+// O detalhe por anuncio (20/10/2026) le anuncios_do_periodo, que o pai busca
+// sempre nesta aba desde 26/10/2026: sem campanha, o quadro Campanhas mostra
+// os anuncios, e a Origem dos leads, a divisao por plataforma.
 // Os rotulos da Origem dos leads e do Detalhe da origem abrem essa lista com
 // o mesmo periodo e os mesmos leads da linha (pedido do dono em 20/10/2026).
 
@@ -63,7 +67,7 @@ export function AbaMarketing({
   campanhas: Periodizado<CampanhasDoPeriodo> | undefined;
   campanhasComErro: boolean;
   aoTentarCampanhasDeNovo: () => void;
-  /** anuncios_do_periodo; undefined = carregando ou dimensao nao escolhida */
+  /** anuncios_do_periodo; undefined = carregando */
   anuncios?: AnunciosDoPeriodo;
   anunciosComErro?: boolean;
   aoTentarAnunciosDeNovo?: () => void;
@@ -147,13 +151,17 @@ export function AbaMarketing({
       </section>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
-        <OrigemDosLeads funil={atual} periodo={periodo} />
+        <OrigemDosLeads funil={atual} periodo={periodo} anuncios={anuncios} />
         <CampanhasSecao
           campanhas={campanhas}
           podeVerValores={podeVerValores}
           timezone={timezone}
           erro={campanhasComErro}
           tentarDeNovo={tentarDeNovo(aoTentarCampanhasDeNovo)}
+          anuncios={anuncios}
+          anunciosPedidos
+          anunciosComErro={anunciosComErro}
+          periodo={periodo}
         />
       </div>
 

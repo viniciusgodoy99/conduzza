@@ -22,6 +22,7 @@ import type { PeriodoDaLista } from "@/lib/domain/campanha-e-anuncio-do-lead";
 import type {
   AbaDeResultados,
   AgendaDoPeriodo,
+  AnunciosDoPeriodo,
   AtendimentoDoPeriodo,
   CampanhasDoPeriodo,
   FaturamentoDoPeriodo,
@@ -65,6 +66,8 @@ export function AbaVisaoGeral({
   campanhas,
   campanhasComErro,
   aoTentarCampanhasDeNovo,
+  anuncios,
+  anunciosComErro = false,
   linhaDeBase,
   objetivo,
   podeVerValores,
@@ -90,6 +93,13 @@ export function AbaVisaoGeral({
   campanhas: Periodizado<CampanhasDoPeriodo> | undefined;
   campanhasComErro: boolean;
   aoTentarCampanhasDeNovo: () => void;
+  /**
+   * anuncios_do_periodo (26/10/2026): sem campanha, o quadro Campanhas mostra
+   * os anuncios, e a Origem dos leads, a divisao por plataforma.
+   * undefined = carregando.
+   */
+  anuncios?: AnunciosDoPeriodo;
+  anunciosComErro?: boolean;
   linhaDeBase: LinhaDeBase;
   objetivo: ObjetivoDeConversao | undefined;
   podeVerValores: boolean;
@@ -183,7 +193,7 @@ export function AbaVisaoGeral({
           erro={serieComErro}
           tentarDeNovo={tentarDeNovo(aoTentarSerieDeNovo)}
         />
-        <OrigemDosLeads funil={atual} periodo={periodo} />
+        <OrigemDosLeads funil={atual} periodo={periodo} anuncios={anuncios} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -205,6 +215,10 @@ export function AbaVisaoGeral({
         timezone={timezone}
         erro={campanhasComErro}
         tentarDeNovo={tentarDeNovo(aoTentarCampanhasDeNovo)}
+        anuncios={anuncios}
+        anunciosPedidos
+        anunciosComErro={anunciosComErro}
+        periodo={periodo}
       />
 
       {podeDefinirObjetivo ? (

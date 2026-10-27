@@ -170,7 +170,9 @@ export function RelatoriosClient({
   const irParaAba = (aba: AbaDeResultados, ancora?: string) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set("aba", aba);
-    router.replace(`${pathname}?${params.toString()}${ancora ? `#${ancora}` : ""}`);
+    router.replace(
+      `${pathname}?${params.toString()}${ancora ? `#${ancora}` : ""}`,
+    );
   };
 
   // O que cada aba precisa. Funil, agenda e atendimento sao o corpo da aba
@@ -183,8 +185,10 @@ export function RelatoriosClient({
   const precisaFaturamento =
     podeVerValores && (abaAtiva === "geral" || abaAtiva === "comercial");
   const precisaCampanhas = abaAtiva === "geral" || abaAtiva === "marketing";
-  const precisaAnuncios =
-    abaAtiva === "marketing" && dimensaoOrigem === "anuncio";
+  // Desde 26/10/2026 os anuncios entram na Visao geral e no Marketing: sem
+  // campanha, o quadro Campanhas mostra os anuncios, e a Origem dos leads, a
+  // divisao por plataforma (pedido do dono).
+  const precisaAnuncios = abaAtiva === "geral" || abaAtiva === "marketing";
 
   useDadosDoServidor(
     relatoriosKeys.funil(clinicId, diaDeInicial, diaAteInicial),
@@ -453,6 +457,8 @@ export function RelatoriosClient({
               campanhas={campanhasQuery.data}
               campanhasComErro={campanhasQuery.isError}
               aoTentarCampanhasDeNovo={() => void campanhasQuery.refetch()}
+              anuncios={anunciosQuery.data}
+              anunciosComErro={anunciosQuery.isError}
               linhaDeBase={linhaDeBaseQuery.data ?? null}
               objetivo={objetivoQuery.data}
               podeVerValores={podeVerValores}

@@ -17,6 +17,14 @@ import { adminClient, anonClient } from "./stack";
 //   nao identificado; o inicio do periodo fechado e o fim aberto), os
 //   mesmos numeros em todo papel que le, zeros para outra clinica, null para
 //   o profissional, 42501 para anon.
+// - desde a migration 20261026130000 (pedido do dono de 26/10/2026, ver em
+//   Resultados o anuncio e a plataforma sem a conta da Meta): em cada linha,
+//   a descricao e o link da linha do anuncio (null sem ela) e as plataformas
+//   dos leads (contact.source_medium aparado como no JavaScript, vazio vira
+//   null; mais leads primeiro, depois a plataforma em ordem de byte, null
+//   por ultimo); as plataformas tambem em nao_identificado (vazia sem lead);
+//   a soma das plataformas e o leads do grupo; o lead sem anuncio com
+//   plataforma nao entra em plataforma nenhuma.
 // Toda negacao tem o caso positivo ao lado (anti falso positivo). Clinicas
 // e_de_teste: o motor de producao as ignora. ESCRITO, AINDA NAO RODADO
 // (roda depois de aplicar a migration: npm run test:rls -- anuncio-do-whatsapp).
@@ -36,6 +44,10 @@ const P_ATE = "2026-11-01T03:00:00.000Z";
 const ANUNCIO_X = "900000000000000101";
 const ANUNCIO_Y = "900000000000000102";
 
+/** Brancos que o .trim() do JavaScript tira, montados pelo codigo. */
+const ESPACO_NAO_SEPARAVEL = String.fromCharCode(0xa0);
+const TAB = String.fromCharCode(0x09);
+
 // Horarios das mensagens (o envio no aparelho), do mais velho ao mais novo.
 const T0 = "2026-10-05T12:00:00.000Z";
 const T1 = "2026-10-05T13:00:00.000Z";
@@ -46,6 +58,9 @@ let clinicaA = "";
 let clinicaB = "";
 let profissionalA = "";
 
+/** Os leads de anuncio de um grupo numa plataforma (20261026130000). */
+type Plataforma = { plataforma: string | null; leads: number };
+
 type Bloco = {
   leads: number;
   linhas: {
@@ -55,8 +70,16 @@ type Bloco = {
     leads: number;
     agendaram: number;
     compareceram: number;
+    descricao: string | null;
+    link: string | null;
+    plataformas: Plataforma[];
   }[];
-  nao_identificado: { leads: number; agendaram: number; compareceram: number };
+  nao_identificado: {
+    leads: number;
+    agendaram: number;
+    compareceram: number;
+    plataformas: Plataforma[];
+  };
   sem_anuncio: { leads: number; agendaram: number; compareceram: number };
 };
 
@@ -190,6 +213,11 @@ beforeAll(async () => {
   // clique, so o id do conjunto, so o da campanha) e dois sem anuncio (um
   // chegou exatamente no inicio do periodo). Fora: um do Y que chegou
   // exatamente no fim (o fim e aberto). Na B: um do X.
+  // A plataforma (source_medium, 20261026130000): no X, Instagram, Facebook
+  // e Instagram com NBSP e tabulacao nas pontas (aparado: Instagram); o Y
+  // sem; nos nao identificados, Instagram, vazio (null) e Facebook; o
+  // organico com Instagram (sem anuncio: fora das plataformas); na B,
+  // Facebook.
   await admin
     .from("contact")
     .insert([
@@ -200,6 +228,7 @@ beforeAll(async () => {
         first_contact_at: "2026-10-05T15:00:00.000Z",
         ctwa_clid: `clid-x1-${sufixo}`,
         source_ad_id: ANUNCIO_X,
+        source_medium: "Instagram",
       },
       {
         clinic_id: clinicaA,
@@ -208,6 +237,7 @@ beforeAll(async () => {
         first_contact_at: "2026-10-06T15:00:00.000Z",
         ctwa_clid: `clid-x2-${sufixo}`,
         source_ad_id: ANUNCIO_X,
+        source_medium: "Facebook",
       },
       {
         clinic_id: clinicaA,
@@ -222,12 +252,14 @@ beforeAll(async () => {
         name: "Lead so clique",
         first_contact_at: "2026-10-08T15:00:00.000Z",
         ctwa_clid: `clid-solto-${sufixo}`,
+        source_medium: "Instagram",
       },
       {
         clinic_id: clinicaA,
         phone_e164: telefone(5),
         name: "Lead organico",
         first_contact_at: "2026-10-09T15:00:00.000Z",
+        source_medium: "Instagram",
       },
       {
         clinic_id: clinicaA,
@@ -236,6 +268,7 @@ beforeAll(async () => {
         first_contact_at: "2026-10-10T15:00:00.000Z",
         ctwa_clid: `clid-x3-${sufixo}`,
         source_ad_id: `\u00a0${ANUNCIO_X}\t`,
+        source_medium: `${ESPACO_NAO_SEPARAVEL}Instagram${TAB}`,
       },
       {
         clinic_id: clinicaA,
@@ -243,6 +276,7 @@ beforeAll(async () => {
         name: "Lead so com o conjunto",
         first_contact_at: "2026-10-11T15:00:00.000Z",
         source_adset_id: "900000000000005001",
+        source_medium: "",
       },
       {
         clinic_id: clinicaA,
@@ -250,6 +284,7 @@ beforeAll(async () => {
         name: "Lead so com a campanha",
         first_contact_at: "2026-10-12T15:00:00.000Z",
         source_campaign_id: "900000000000006001",
+        source_medium: "Facebook",
       },
       {
         clinic_id: clinicaA,
@@ -271,6 +306,7 @@ beforeAll(async () => {
         first_contact_at: "2026-10-05T15:00:00.000Z",
         ctwa_clid: `clid-b-${sufixo}`,
         source_ad_id: ANUNCIO_X,
+        source_medium: "Facebook",
       },
     ])
     .throwOnError();
@@ -613,6 +649,13 @@ describe("anuncios_do_periodo", () => {
         leads: 3,
         agendaram: 0,
         compareceram: 0,
+        descricao: "Agende sua avaliação.\nVagas limitadas.",
+        link: "https://fb.me/ensaioX",
+        // O Instagram com NBSP e tab nas pontas e o mesmo Instagram.
+        plataformas: [
+          { plataforma: "Instagram", leads: 2 },
+          { plataforma: "Facebook", leads: 1 },
+        ],
       },
       {
         ad_id: ANUNCIO_Y,
@@ -621,9 +664,23 @@ describe("anuncios_do_periodo", () => {
         leads: 1,
         agendaram: 0,
         compareceram: 0,
+        descricao: null,
+        link: null,
+        plataformas: [{ plataforma: null, leads: 1 }],
       },
     ],
-    nao_identificado: { leads: 3, agendaram: 0, compareceram: 0 },
+    // Empate em 1: a plataforma em ordem de byte, a nula (o vazio) por
+    // ultimo.
+    nao_identificado: {
+      leads: 3,
+      agendaram: 0,
+      compareceram: 0,
+      plataformas: [
+        { plataforma: "Facebook", leads: 1 },
+        { plataforma: "Instagram", leads: 1 },
+        { plataforma: null, leads: 1 },
+      ],
+    },
     sem_anuncio: { leads: 2, agendaram: 0, compareceram: 0 },
   };
 
@@ -644,13 +701,45 @@ describe("anuncios_do_periodo", () => {
     ).toBe(ESPERADO_A.leads);
   });
 
+  it("as plataformas somam os leads de cada linha e de nao_identificado, para todo papel que lê", async () => {
+    const somar = (lista: Plataforma[]) =>
+      lista.reduce((total, item) => total + item.leads, 0);
+    for (const papel of ["admin-a", "gestor-a", "recepcao-a", "leitura-a"]) {
+      const { data, error } = await periodo(papel, clinicaA);
+      expect(error).toBeNull();
+      const bloco = data as Bloco;
+      for (const linha of bloco.linhas) {
+        expect(linha.plataformas.length).toBeGreaterThan(0);
+        expect(somar(linha.plataformas)).toBe(linha.leads);
+      }
+      expect(somar(bloco.nao_identificado.plataformas)).toBe(
+        bloco.nao_identificado.leads,
+      );
+      // O organico com plataforma nao entra: so os leads de anuncio.
+      const deAnuncio =
+        bloco.linhas.reduce((total, linha) => total + linha.leads, 0) +
+        bloco.nao_identificado.leads;
+      expect(
+        bloco.linhas.reduce(
+          (total, linha) => total + somar(linha.plataformas),
+          0,
+        ) + somar(bloco.nao_identificado.plataformas),
+      ).toBe(deAnuncio);
+    }
+  });
+
   it("outra clínica vê zeros; o profissional, null; anon, 42501", async () => {
     const { data: daB, error } = await periodo("admin-b", clinicaA);
     expect(error).toBeNull();
     expect(daB).toEqual({
       leads: 0,
       linhas: [],
-      nao_identificado: { leads: 0, agendaram: 0, compareceram: 0 },
+      nao_identificado: {
+        leads: 0,
+        agendaram: 0,
+        compareceram: 0,
+        plataformas: [],
+      },
       sem_anuncio: { leads: 0, agendaram: 0, compareceram: 0 },
     });
     // Contraprova: a B ve o proprio lead do X, com o titulo da B.
@@ -663,6 +752,10 @@ describe("anuncios_do_periodo", () => {
         leads: 1,
         agendaram: 0,
         compareceram: 0,
+        // A linha da B so tem o titulo: o texto e o link da A nao vazam.
+        descricao: null,
+        link: null,
+        plataformas: [{ plataforma: "Facebook", leads: 1 }],
       },
     ]);
 

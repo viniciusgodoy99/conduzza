@@ -8,6 +8,7 @@ import {
   FATURAMENTO,
   FUNIL,
   agenda,
+  anunciosDoPeriodo,
   campanhasPeriodizadas,
 } from "./dados-de-exemplo";
 
@@ -34,9 +35,8 @@ vi.mock("@/app/(app)/relatorios/actions", () => ({
   registrarExportacaoDeRelatorioAction: vi.fn(),
 }));
 
-const { AbaVisaoGeral } = await import(
-  "@/components/relatorios/aba-visao-geral"
-);
+const { AbaVisaoGeral } =
+  await import("@/components/relatorios/aba-visao-geral");
 const { AbaComercial } = await import("@/components/relatorios/aba-comercial");
 const { AbaMarketing } = await import("@/components/relatorios/aba-marketing");
 const { AbaAgenteIa } = await import("@/components/relatorios/aba-agente-ia");
@@ -129,10 +129,14 @@ describe("Visão geral", () => {
     }
     expect(lido).toContain("Fora da Meta");
     expect(lido).toContain("Sem leads");
-    expect(lido).toContain("Investimento sem lead casado: R$ 500,00 em 1 campanha");
+    expect(lido).toContain(
+      "Investimento sem lead casado: R$ 500,00 em 1 campanha",
+    );
     expect(lido).toContain("Leads sem campanha: 150 de 486");
     expect(lido).toContain("Investimento atualizado em 02/10 às 06:00.");
-    expect(lido).not.toContain("Investimento e custo por lead: só administrador e gestor.");
+    expect(lido).not.toContain(
+      "Investimento e custo por lead: só administrador e gestor.",
+    );
   });
 
   it("recepção vê Faturamento e Custo por lead sem acesso, sem nenhum R$", () => {
@@ -183,7 +187,9 @@ describe("Visão geral", () => {
       />,
     );
     expect(html).toContain('data-estado="vazio"');
-    expect(texto(html)).toContain("Nenhum lead nem consulta agendada no período");
+    expect(texto(html)).toContain(
+      "Nenhum lead nem consulta agendada no período",
+    );
     // Erro do faturamento e erro escrito, nunca zero.
     expect(texto(html)).toContain("Não foi possível carregar");
     // Erro das campanhas: o cartao e a tabela dizem que falhou.
@@ -279,13 +285,18 @@ describe("Marketing e Agente de IA", () => {
     expect(lido).toContain("Sem campanha");
   });
 
-  it.each([true, false])(
-    "leads sem nenhuma campanha (podeVerValores=%s): a tabela não diz que não houve lead",
-    (podeVerValores) => {
-      // Retrato de hoje em producao: nenhum contato com campanha e nenhuma
-      // leitura da Meta ainda (investimento null deixa a tabela sem as
-      // colunas em reais).
-      const html = renderToStaticMarkup(
+  // Retrato de hoje em producao: nenhum contato com campanha e nenhuma
+  // leitura da Meta ainda (investimento null deixa a tabela sem as colunas
+  // em reais).
+  function marketingSemCampanha(
+    podeVerValores: boolean,
+    anuncios: {
+      anuncios?: ReturnType<typeof anunciosDoPeriodo>;
+      anunciosComErro?: boolean;
+    },
+  ): string {
+    return texto(
+      renderToStaticMarkup(
         <AbaMarketing
           funil={{ atual: FUNIL, anterior: null }}
           periodo={PERIODO}
@@ -298,22 +309,76 @@ describe("Marketing e Agente de IA", () => {
           })}
           campanhasComErro={false}
           aoTentarCampanhasDeNovo={nada}
+          {...anuncios}
           conversoes={CONVERSOES}
           timezone={TZ}
           podeVerValores={podeVerValores}
           dimensao="canal"
           aoMudarDimensao={nada}
         />,
-      );
-      const lido = texto(html);
+      ),
+    );
+  }
+
+  it.each([true, false])(
+    "leads sem nenhuma campanha, com os anúncios carregados (podeVerValores=%s): o quadro mostra os anúncios, nunca que não houve lead (pedido do dono de 26/10/2026)",
+    (podeVerValores) => {
+      const lido = marketingSemCampanha(podeVerValores, {
+        anuncios: anunciosDoPeriodo(),
+      });
       expect(lido).not.toContain("Nenhum lead no período");
-      expect(lido).toContain("Nenhum lead com campanha no período");
+      expect(lido).not.toContain("Nenhum lead com campanha no período");
       expect(lido).toContain(
-        "Os leads deste período chegaram sem campanha reconhecida. A contagem está logo abaixo.",
+        "Nenhum lead deste período tem campanha reconhecida. Por enquanto, cada anúncio aparece pelo título que veio com o lead.",
       );
+      expect(lido).toContain("Anúncio Plataforma Leads Agendaram Compareceram");
+      expect(lido).toContain(
+        "Limpeza de pele com 30% de desconto Ver anúncio Instagram 80 · Facebook 15 · Não informada 5 100 70 50",
+      );
+      expect(lido).toContain("Botox outubro Facebook 40 30 20");
+      expect(lido).toContain("Anúncio não identificado Instagram 12 7 7");
       expect(lido).toContain("Leads sem campanha: 486 de 486");
+      // A Origem dos leads ganha a divisao por plataforma de todos os leads de
+      // anuncio (a terceira linha do exemplo nao tem a divisao: some).
+      expect(lido).not.toContain("Dos leads de anúncio");
     },
   );
+
+  it("com a divisão em todos os anúncios, a Origem dos leads mostra as plataformas embaixo de Tráfego pago", () => {
+    const anuncios = anunciosDoPeriodo();
+    const lido = marketingSemCampanha(true, {
+      anuncios: {
+        ...anuncios,
+        linhas: anuncios.linhas.map((linha) =>
+          linha.plataformas === null
+            ? {
+                ...linha,
+                plataformas: [{ plataforma: null, leads: linha.leads }],
+              }
+            : linha,
+        ),
+      },
+    });
+    expect(lido).toContain(
+      "Dos leads de anúncio: Instagram 92 · Facebook 55 · Não informada 15",
+    );
+  });
+
+  it("os anúncios com erro: fica o vazio de antes (Nenhum lead com campanha no período)", () => {
+    const lido = marketingSemCampanha(false, { anunciosComErro: true });
+    expect(lido).toContain("Nenhum lead com campanha no período");
+    expect(lido).toContain(
+      "Os leads deste período chegaram sem campanha reconhecida. A contagem está logo abaixo.",
+    );
+    expect(lido).toContain("Leads sem campanha: 486 de 486");
+  });
+
+  it("os anúncios carregando: o quadro espera, sem dizer que não houve lead nem que não houve campanha", () => {
+    const lido = marketingSemCampanha(true, {});
+    expect(lido).not.toContain("Nenhum lead no período");
+    expect(lido).not.toContain("Nenhum lead com campanha no período");
+    expect(lido).toContain("Leads sem campanha: 486 de 486");
+  });
 
   it("nenhum lead no período: a tabela mantém Nenhum lead no período", () => {
     const html = renderToStaticMarkup(

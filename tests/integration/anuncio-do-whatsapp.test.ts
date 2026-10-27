@@ -25,6 +25,13 @@ import { adminClient, stackCredentials } from "../rls/stack";
 // nao grava; link fora dos enderecos do anuncio e redirecionador nao viram
 // link; o id com espaco Unicode vai aparado para o contato e para a linha; e
 // anuncios_do_periodo devolve o titulo guardado na linha do anuncio.
+// Desde a migration 20261026130000 (pedido do dono de 26/10/2026): a linha
+// do anuncio em anuncios_do_periodo traz tambem a descricao e o link
+// guardados e os leads por plataforma, a plataforma que a ingestao gravou no
+// contato de cada clique (o sourceApp do referral; sem ele, o
+// entryPointConversionApp do contexto), somando os leads da linha; sem lead
+// de anuncio sem id, nao_identificado vem com as plataformas vazias. Esses
+// asserts rodam depois de aplicar a 20261026130000.
 //
 // ESCRITO, AINDA NAO RODADO: roda depois de aplicar a migration
 // (npm run test:integration -- anuncio-do-whatsapp). Clinicas e_de_teste
@@ -302,19 +309,44 @@ describe("webhook: a mensagem de anúncio grava os detalhes do anúncio", () => 
       p_ate: new Date(agora + 24 * 60 * 60_000).toISOString(),
     });
     expect(error).toBeNull();
-    expect(
-      (
-        data as {
-          linhas: { ad_id: string; titulo: string | null; leads: number }[];
-        }
-      ).linhas,
-    ).toContainEqual(
+    type Plataforma = { plataforma: string | null; leads: number };
+    const bloco = data as {
+      linhas: {
+        ad_id: string;
+        titulo: string | null;
+        leads: number;
+        descricao: string | null;
+        link: string | null;
+        plataformas: Plataforma[];
+      }[];
+      nao_identificado: { leads: number; plataformas: Plataforma[] };
+    };
+    expect(bloco.linhas).toContainEqual(
       expect.objectContaining({
         ad_id: ANUNCIO,
         titulo: "Limpeza de pele, texto novo do anunciante",
         leads: 3,
       }),
     );
+    // As chaves de 20261026130000: o texto e o link guardados e a
+    // plataforma de cada clique (o primeiro e o "antigo" pelo Instagram, o
+    // segundo pelo Facebook), mais leads primeiro.
+    const linha = bloco.linhas.find((l) => l.ad_id === ANUNCIO);
+    expect(linha).toMatchObject({
+      descricao: "Agende sua avaliação.\nVagas limitadas para outubro.",
+      link: "https://fb.me/ensaioAnuncio",
+      plataformas: [
+        { plataforma: "Instagram", leads: 2 },
+        { plataforma: "Facebook", leads: 1 },
+      ],
+    });
+    expect(
+      linha!.plataformas.reduce((total, item) => total + item.leads, 0),
+    ).toBe(linha!.leads);
+    expect(bloco.nao_identificado).toMatchObject({
+      leads: 0,
+      plataformas: [],
+    });
   });
 });
 

@@ -253,7 +253,23 @@ export type LinhaDeAnuncioDoPeriodo = ContagemDaCoorte & {
   adId: string;
   titulo: string | null;
   nomeNaMeta: string | null;
+  /**
+   * O texto e o link do anuncio como vieram na mensagem
+   * (anuncio_do_whatsapp; null sem eles). Desde a migration 20261026130000
+   * (pedido do dono de 26/10/2026: ver em Resultados o que o uazapi grava).
+   */
+  descricao: string | null;
+  link: string | null;
+  /**
+   * Os leads do anuncio por plataforma (contact.source_medium; somam leads).
+   * null: o banco nao mandou (antes da migration 20261026130000) ou a soma
+   * nao bateu, e a tela nao mostra a divisao.
+   */
+  plataformas: PlataformaDosLeads[] | null;
 };
+
+/** Os leads de anuncio numa plataforma; null = a plataforma nao veio. */
+export type PlataformaDosLeads = { plataforma: string | null; leads: number };
 
 export type AnunciosDoPeriodo = {
   /** Leads que chegaram no periodo (o mesmo numero do funil). */
@@ -261,7 +277,9 @@ export type AnunciosDoPeriodo = {
   /** Uma por anuncio, mais leads primeiro. */
   linhas: LinhaDeAnuncioDoPeriodo[];
   /** De anuncio (clique, ids ou metodo), mas sem id de anuncio valido. */
-  naoIdentificado: ContagemDaCoorte;
+  naoIdentificado: ContagemDaCoorte & {
+    plataformas: PlataformaDosLeads[] | null;
+  };
   /** Nao vieram de anuncio. */
   semAnuncio: ContagemDaCoorte;
 };
@@ -372,7 +390,10 @@ export function janelaDoPeriodo(
   return {
     de: limitesDoDia(timezone, diaDe).inicio.toISOString(),
     ate: limitesDoDia(timezone, diaAte).fim.toISOString(),
-    deAnterior: limitesDoDia(timezone, somarDias(diaDe, -dias)).inicio.toISOString(),
+    deAnterior: limitesDoDia(
+      timezone,
+      somarDias(diaDe, -dias),
+    ).inicio.toISOString(),
   };
 }
 
@@ -382,7 +403,10 @@ export function janelaDoPeriodo(
 
 type Opcoes = { comparar?: boolean };
 
-function exigirCorpo<T>(data: unknown, rpc: string): { atual: T; anterior?: T } {
+function exigirCorpo<T>(
+  data: unknown,
+  rpc: string,
+): { atual: T; anterior?: T } {
   // null e a trava de papel do banco (profissional pedindo agregado da
   // clinica, ou o recorte de outro profissional). Nunca renderizar zero.
   if (data === null || data === undefined) {
@@ -546,7 +570,9 @@ export async function fetchAgendaDoPeriodo(
     p_de: janela.de,
     p_ate: janela.ate,
     ...(opcoes.comparar === false ? {} : { p_de_anterior: janela.deAnterior }),
-    ...(opcoes.professionalId ? { p_professional_id: opcoes.professionalId } : {}),
+    ...(opcoes.professionalId
+      ? { p_professional_id: opcoes.professionalId }
+      : {}),
   });
   if (error) {
     throw new Error(error.message);
@@ -644,7 +670,10 @@ export async function fetchProximasAcoes(
   timezone: string,
 ): Promise<ProximasAcoes> {
   // O mesmo recorte "pendentes de amanha" do contador do menu (layout.tsx).
-  const amanha = limitesDoDia(timezone, somarDias(diaCivil(timezone, new Date()), 1));
+  const amanha = limitesDoDia(
+    timezone,
+    somarDias(diaCivil(timezone, new Date()), 1),
+  );
   const ha24h = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
 
   const [pendentes, aguardando, semResposta] = await Promise.all([
@@ -682,7 +711,6 @@ export async function fetchProximasAcoes(
     semResposta24h: semResposta.count ?? 0,
   };
 }
-
 
 export async function fetchLinhaDeBase(
   supabase: SupabaseClient,
@@ -789,7 +817,9 @@ export async function fetchSerieDiariaDoPeriodo(
   }
   if (data === null || data === undefined) {
     // Trava do profissional no banco: recorte indisponivel, nunca serie zerada.
-    throw new Error("Recorte indisponível para este perfil (serie_diaria_do_periodo).");
+    throw new Error(
+      "Recorte indisponível para este perfil (serie_diaria_do_periodo).",
+    );
   }
   return (data as PontoDaSerie[]).map((ponto) => ({
     dia: ponto.dia,
@@ -947,16 +977,49 @@ export async function fetchCampanhasDoPeriodo(
 
 type ContagemRpc = { leads: number; agendaram: number; compareceram: number };
 
+type PlataformasRpc = { plataforma: unknown; leads: unknown }[] | undefined;
+
 type AnunciosRpc = {
   leads: number;
   linhas: (ContagemRpc & {
     ad_id: string;
     titulo: string | null;
     nome_na_meta: string | null;
+    // Desde a migration 20261026130000; ausentes no banco de antes.
+    descricao?: string | null;
+    link?: string | null;
+    plataformas?: PlataformasRpc;
   })[];
-  nao_identificado: ContagemRpc;
+  nao_identificado: ContagemRpc & { plataformas?: PlataformasRpc };
   sem_anuncio: ContagemRpc;
 };
+
+/**
+ * As plataformas de um anuncio (ou do grupo sem id): a plataforma aparada,
+ * vazia vira null. Sem a chave (banco de antes da migration
+ * 20261026130000), fora do formato ou com a soma diferente dos leads: null,
+ * e a tela nao mostra a divisao em vez de um numero que nao confere.
+ */
+function lerPlataformas(
+  bruto: PlataformasRpc,
+  leads: number,
+): PlataformaDosLeads[] | null {
+  if (!Array.isArray(bruto)) {
+    return null;
+  }
+  const plataformas: PlataformaDosLeads[] = [];
+  for (const item of bruto) {
+    const quantos = Number(item?.leads);
+    if (!Number.isSafeInteger(quantos) || quantos < 0) {
+      return null;
+    }
+    const nome =
+      typeof item?.plataforma === "string" ? item.plataforma.trim() : "";
+    plataformas.push({ plataforma: nome === "" ? null : nome, leads: quantos });
+  }
+  const soma = plataformas.reduce((total, item) => total + item.leads, 0);
+  return soma === leads ? plataformas : null;
+}
 
 function lerContagem(bruto: ContagemRpc): ContagemDaCoorte {
   return {
@@ -994,15 +1057,28 @@ export async function fetchAnunciosDoPeriodo(
     );
   }
   const corpo = data as AnunciosRpc;
+  const naoIdentificado = lerContagem(corpo.nao_identificado);
   return {
     leads: Number(corpo.leads),
-    linhas: corpo.linhas.map((linha) => ({
-      adId: linha.ad_id,
-      titulo: linha.titulo,
-      nomeNaMeta: linha.nome_na_meta,
-      ...lerContagem(linha),
-    })),
-    naoIdentificado: lerContagem(corpo.nao_identificado),
+    linhas: corpo.linhas.map((linha) => {
+      const contagem = lerContagem(linha);
+      return {
+        adId: linha.ad_id,
+        titulo: linha.titulo,
+        nomeNaMeta: linha.nome_na_meta,
+        descricao: typeof linha.descricao === "string" ? linha.descricao : null,
+        link: typeof linha.link === "string" ? linha.link : null,
+        plataformas: lerPlataformas(linha.plataformas, contagem.leads),
+        ...contagem,
+      };
+    }),
+    naoIdentificado: {
+      ...naoIdentificado,
+      plataformas: lerPlataformas(
+        corpo.nao_identificado.plataformas,
+        naoIdentificado.leads,
+      ),
+    },
     semAnuncio: lerContagem(corpo.sem_anuncio),
   };
 }

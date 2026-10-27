@@ -5,6 +5,7 @@ import {
   ROTULO_SEM_ANUNCIO,
   rotuloDoAnuncio,
   rotulosDosAnuncios,
+  sanearLinkDoAnuncio,
 } from "@/lib/domain/anuncio-do-whatsapp";
 import {
   ANUNCIO_NAO_IDENTIFICADO,
@@ -47,6 +48,7 @@ import type {
   LinhaDeCampanhaDoPeriodo,
   ObjetivoDeConversao,
   Periodizado,
+  PlataformaDosLeads,
   PontoDaSerie,
 } from "@/lib/queries/relatorios";
 
@@ -96,7 +98,9 @@ export function estadoDoFaturamento(
 /** "64,2%" com 1 casa; sem denominador, "sem dados" (nunca "0%"). */
 export function percentualOuSemDados(parte: number, total: number): string {
   const percentual = percentualDe(parte, total);
-  return percentual === null ? "sem dados" : `${formatarPercentual(percentual)}%`;
+  return percentual === null
+    ? "sem dados"
+    : `${formatarPercentual(percentual)}%`;
 }
 
 /** Percentual do objetivo como a clinica digitou: 60 -> "60", 35.5 -> "35,5". */
@@ -182,7 +186,11 @@ export const TITULO_DO_DETALHE_DA_ORIGEM: Record<DimensaoDaOrigem, string> = {
 // anuncios moram em lib/domain/anuncio-do-whatsapp.ts (a lista e a
 // exportacao de leads usam os mesmos); reexportados aqui para quem ja
 // importava.
-export { ROTULO_ANUNCIO_NAO_IDENTIFICADO, ROTULO_SEM_ANUNCIO, rotulosDosAnuncios };
+export {
+  ROTULO_ANUNCIO_NAO_IDENTIFICADO,
+  ROTULO_SEM_ANUNCIO,
+  rotulosDosAnuncios,
+};
 
 export type LinhaDeOrigem = {
   rotulo: string;
@@ -204,7 +212,9 @@ export type LinhaDeOrigemDaTela = LinhaDeOrigem & {
 };
 
 /** Rotulo de uma linha de campanha: o nome, senao "Campanha {id}". */
-export function rotuloDaLinhaDeCampanha(linha: LinhaDeCampanhaDoPeriodo): string {
+export function rotuloDaLinhaDeCampanha(
+  linha: LinhaDeCampanhaDoPeriodo,
+): string {
   return (
     linha.rotulo ??
     (linha.metaCampaignId
@@ -287,7 +297,11 @@ export function montarDetalheDeOrigemDaTela(
       }),
     );
     const restos = [
-      [ROTULO_ANUNCIO_NAO_IDENTIFICADO, ANUNCIO_NAO_IDENTIFICADO, anuncios.naoIdentificado],
+      [
+        ROTULO_ANUNCIO_NAO_IDENTIFICADO,
+        ANUNCIO_NAO_IDENTIFICADO,
+        anuncios.naoIdentificado,
+      ],
       [ROTULO_SEM_ANUNCIO, ANUNCIO_SEM, anuncios.semAnuncio],
     ] as const;
     for (const [rotulo, valor, contagem] of restos) {
@@ -331,7 +345,10 @@ export function montarDetalheDeOrigemDaTela(
       filtro: { campo: "campanha", valor: linha.chave },
     }));
   if (campanhas.leadsSemCampanha > 0) {
-    const somaAgendaram = linhas.reduce((soma, l) => soma + (l.agendaram ?? 0), 0);
+    const somaAgendaram = linhas.reduce(
+      (soma, l) => soma + (l.agendaram ?? 0),
+      0,
+    );
     const somaCompareceram = linhas.reduce(
       (soma, l) => soma + (l.compareceram ?? 0),
       0,
@@ -421,7 +438,8 @@ export function montarCampanhas(
 ): LinhaDeCampanhaDaTela[] {
   const comValores = campanhasComValores(campanhas, podeVerValores);
   const medido =
-    comValores && coberturaDoInvestimento(campanhas.investimento) === "completa";
+    comValores &&
+    coberturaDoInvestimento(campanhas.investimento) === "completa";
   return campanhas.linhas
     .filter((linha) => comValores || linha.leads > 0)
     .map((linha) => {
@@ -435,7 +453,10 @@ export function montarCampanhas(
           investimento = medido
             ? celulaEmReais(linha.investimentoCents ?? 0)
             : celulaDeEstado(CELULA_NAO_MEDIDO);
-          const custo = custoPorLeadCents(linha.investimentoCents ?? 0, linha.leads);
+          const custo = custoPorLeadCents(
+            linha.investimentoCents ?? 0,
+            linha.leads,
+          );
           custoPorLead =
             linha.leads === 0
               ? celulaDeEstado(CELULA_SEM_LEADS)
@@ -481,6 +502,193 @@ export function estadoVazioDasCampanhas(
   return campanhas.leads > 0
     ? TEXTOS_DO_VAZIO_DAS_CAMPANHAS.semCampanha
     : TEXTOS_DO_VAZIO_DAS_CAMPANHAS.semLead;
+}
+
+// ---------------------------------------------------------------------------
+// Anuncios no quadro Campanhas (pedido do dono de 26/10/2026)
+// ---------------------------------------------------------------------------
+// Sem a conta de anuncios da Meta, o nome da campanha nao chega: o anuncio de
+// clique para WhatsApp traz o id, o titulo, o texto, o link e a plataforma,
+// nunca a campanha. Quando o quadro Campanhas nao tem nenhuma linha, ele
+// mostra os anuncios que trouxeram leads (anuncios_do_periodo), pelo titulo
+// que veio com o lead, com a plataforma; e a Origem dos leads ganha a divisao
+// por plataforma embaixo de Trafego pago. Com campanha reconhecida, o quadro
+// fica como antes; a dimensao Anuncio do Detalhe da origem nao muda.
+
+/** A plataforma que nao veio com o lead (contact.source_medium vazio). */
+export const ROTULO_PLATAFORMA_NAO_INFORMADA = "Não informada";
+
+function nomeDaPlataforma(plataforma: string | null): string {
+  return plataforma ?? ROTULO_PLATAFORMA_NAO_INFORMADA;
+}
+
+/**
+ * As plataformas numa linha de texto: "Instagram" quando todos os leads
+ * vieram de uma so (a coluna Leads ja diz quantos); "Instagram 18 · Não
+ * informada 8" com mais de uma, na ordem recebida. comContagem poe o numero
+ * mesmo com uma so (a linha da Origem dos leads). null sem a divisao.
+ */
+export function textoDasPlataformas(
+  plataformas: readonly PlataformaDosLeads[] | null,
+  { comContagem = false }: { comContagem?: boolean } = {},
+): string | null {
+  if (!plataformas || plataformas.length === 0) {
+    return null;
+  }
+  const [unica] = plataformas;
+  if (plataformas.length === 1 && unica && !comContagem) {
+    return nomeDaPlataforma(unica.plataforma);
+  }
+  return plataformas
+    .map(
+      (item) =>
+        `${nomeDaPlataforma(item.plataforma)} ${item.leads.toLocaleString("pt-BR")}`,
+    )
+    .join(" · ");
+}
+
+/**
+ * A soma por plataforma de todos os leads de anuncio do periodo (os anuncios
+ * e o grupo sem id), para a linha embaixo de Trafego pago na Origem dos
+ * leads: mais leads primeiro, desempate pelo nome, a nao informada por
+ * ultimo no empate (a mesma ordem do banco). null sem os anuncios, sem lead
+ * de anuncio ou quando alguma parte nao trouxe a divisao (a soma ficaria
+ * incompleta).
+ */
+export function plataformasDosAnuncios(
+  anuncios: AnunciosDoPeriodo | undefined,
+): PlataformaDosLeads[] | null {
+  if (!anuncios) {
+    return null;
+  }
+  const partes = [
+    ...anuncios.linhas.map((linha) => ({
+      leads: linha.leads,
+      plataformas: linha.plataformas,
+    })),
+    {
+      leads: anuncios.naoIdentificado.leads,
+      plataformas: anuncios.naoIdentificado.plataformas,
+    },
+  ].filter((parte) => parte.leads > 0);
+  if (partes.length === 0) {
+    return null;
+  }
+  const soma = new Map<string | null, number>();
+  for (const parte of partes) {
+    if (parte.plataformas === null) {
+      return null;
+    }
+    for (const item of parte.plataformas) {
+      soma.set(item.plataforma, (soma.get(item.plataforma) ?? 0) + item.leads);
+    }
+  }
+  return [...soma.entries()]
+    .map(([plataforma, leads]) => ({ plataforma, leads }))
+    .filter((item) => item.leads > 0)
+    .sort((a, b) => {
+      if (b.leads !== a.leads) {
+        return b.leads - a.leads;
+      }
+      if (a.plataforma === null || b.plataforma === null) {
+        return a.plataforma === null ? 1 : -1;
+      }
+      return a.plataforma.localeCompare(b.plataforma, "pt-BR");
+    });
+}
+
+/** Uma linha do quadro Campanhas sem campanha: um anuncio do WhatsApp. */
+export type LinhaDeAnuncioSemCampanha = {
+  chave: string;
+  /** O titulo que veio, senao o nome na Meta, senao "Anúncio sem título (id ...)". */
+  rotulo: string;
+  /** "Instagram", "Instagram 18 · Não informada 8"; sem a divisao, "Não informada". */
+  plataforma: string;
+  leads: number;
+  agendaram: number;
+  compareceram: number;
+  /** O "Ver anúncio": o texto e o link (saneado) como vieram; null sem os dois. */
+  anuncio: {
+    titulo: string;
+    descricao: string | null;
+    link: string | null;
+  } | null;
+  /** A lista de Leads com os mesmos leads (o filtro do Detalhe da origem). */
+  filtro: FiltroDaListaDeLeads;
+};
+
+/** A frase em cima dos anuncios no quadro Campanhas. Sem travessao. */
+export const TEXTOS_DOS_ANUNCIOS_SEM_CAMPANHA = {
+  semMeta:
+    "Sem a conta de anúncios da Meta ligada, o nome da campanha não chega pelo WhatsApp. Por enquanto, cada anúncio aparece pelo título que veio com o lead.",
+  semCampanha:
+    "Nenhum lead deste período tem campanha reconhecida. Por enquanto, cada anúncio aparece pelo título que veio com o lead.",
+} as const;
+
+/**
+ * A frase do quadro: "Sem a conta da Meta ligada" so quando a gestao ve que
+ * a conta nao esta configurada; para os outros papeis (sem acesso ao
+ * investimento) e com a conta ligada, a neutra.
+ */
+export function textoDosAnunciosSemCampanha(
+  campanhas: Pick<CampanhasDoPeriodo, "investimento">,
+): string {
+  return coberturaDoInvestimento(campanhas.investimento) === "nao-configurado"
+    ? TEXTOS_DOS_ANUNCIOS_SEM_CAMPANHA.semMeta
+    : TEXTOS_DOS_ANUNCIOS_SEM_CAMPANHA.semCampanha;
+}
+
+/**
+ * Os anuncios do quadro Campanhas quando ele nao tem nenhuma linha de
+ * campanha: um por anuncio de anuncios_do_periodo (na ordem do banco, com os
+ * mesmos rotulos da dimensao Anuncio), mais "Anúncio não identificado" (lead
+ * de anuncio sem id). null quando nao se aplica: ha linha de campanha, os
+ * anuncios nao carregaram ou nenhum lead veio de anuncio.
+ */
+export function anunciosSemCampanha(
+  campanhas: CampanhasDoPeriodo,
+  anuncios: AnunciosDoPeriodo | undefined,
+  podeVerValores: boolean,
+): LinhaDeAnuncioSemCampanha[] | null {
+  if (!anuncios || montarCampanhas(campanhas, podeVerValores).length > 0) {
+    return null;
+  }
+  const rotulos = rotulosDosAnuncios(anuncios.linhas);
+  const linhas: LinhaDeAnuncioSemCampanha[] = anuncios.linhas.map(
+    (linha, indice) => {
+      const rotulo = rotulos[indice] ?? rotuloDoAnuncio(linha);
+      const descricao = linha.descricao?.trim() ? linha.descricao : null;
+      const link = sanearLinkDoAnuncio(linha.link);
+      return {
+        chave: linha.adId,
+        rotulo,
+        plataforma:
+          textoDasPlataformas(linha.plataformas) ??
+          ROTULO_PLATAFORMA_NAO_INFORMADA,
+        leads: linha.leads,
+        agendaram: linha.agendaram,
+        compareceram: linha.compareceram,
+        anuncio: descricao || link ? { titulo: rotulo, descricao, link } : null,
+        filtro: { campo: "anuncio", valor: linha.adId },
+      };
+    },
+  );
+  const semId = anuncios.naoIdentificado;
+  if (semId.leads > 0) {
+    linhas.push({
+      chave: ANUNCIO_NAO_IDENTIFICADO,
+      rotulo: ROTULO_ANUNCIO_NAO_IDENTIFICADO,
+      plataforma:
+        textoDasPlataformas(semId.plataformas) ??
+        ROTULO_PLATAFORMA_NAO_INFORMADA,
+      leads: semId.leads,
+      agendaram: semId.agendaram,
+      compareceram: semId.compareceram,
+      anuncio: null,
+      filtro: { campo: "anuncio", valor: ANUNCIO_NAO_IDENTIFICADO },
+    });
+  }
+  return linhas.length > 0 ? linhas : null;
 }
 
 function plural(n: number, singular: string, pluralizado: string): string {
@@ -642,7 +850,9 @@ export type TaxaDaConfirmacao = {
  * - comparecimento e faltas / consultas com desfecho (compareceu ou faltou);
  * - remarcaram apos a falta / faltas.
  */
-export function taxasDaConfirmacao(agenda: AgendaDoPeriodo): TaxaDaConfirmacao[] {
+export function taxasDaConfirmacao(
+  agenda: AgendaDoPeriodo,
+): TaxaDaConfirmacao[] {
   const comDesfecho = agenda.porStatus.compareceu + agenda.porStatus.faltou;
   const taxa = (rotulo: string, parte: number, total: number) => ({
     rotulo,
@@ -651,7 +861,11 @@ export function taxasDaConfirmacao(agenda: AgendaDoPeriodo): TaxaDaConfirmacao[]
     percentual: percentualDe(parte, total),
   });
   return [
-    taxa("Confirmadas em algum momento", agenda.confirmadasAlgumaVez, agenda.total),
+    taxa(
+      "Confirmadas em algum momento",
+      agenda.confirmadasAlgumaVez,
+      agenda.total,
+    ),
     taxa("Comparecimento", agenda.porStatus.compareceu, comDesfecho),
     taxa("Faltas", agenda.porStatus.faltou, comDesfecho),
     taxa(
@@ -783,20 +997,46 @@ function celula(valor: CelulaDeCampanha | null): string {
   return valor?.texto ?? "";
 }
 
-/** A tabela Campanhas como na tela, com as linhas de conferencia no fim. */
+/**
+ * A tabela Campanhas como na tela, com as linhas de conferencia no fim. Sem
+ * nenhuma linha de campanha e com os anuncios carregados (pedido do dono de
+ * 26/10/2026), a mesma frase e os mesmos anuncios do quadro no lugar do
+ * cabecalho vazio.
+ */
 function secaoDeCampanhas(
   campanhas: CampanhasDoPeriodo,
   podeVerValores: boolean,
+  anuncios?: AnunciosDoPeriodo,
 ): SecaoExportavel {
   const comValores = campanhasComValores(campanhas, podeVerValores);
   const linhas = montarCampanhas(campanhas, podeVerValores);
+  const semCampanha = anunciosSemCampanha(campanhas, anuncios, podeVerValores);
   const cabecalho = comValores
-    ? ["Campanha", "Investimento", "Leads", "Custo por lead", "Agendados", "Conversão"]
+    ? [
+        "Campanha",
+        "Investimento",
+        "Leads",
+        "Custo por lead",
+        "Agendados",
+        "Conversão",
+      ]
     : ["Campanha", "Leads", "Agendados", "Conversão"];
   return {
     titulo: "Campanhas",
     linhas: [
-      cabecalho,
+      ...(semCampanha
+        ? [
+            [textoDosAnunciosSemCampanha(campanhas)],
+            ["Anúncio", "Plataforma", "Leads", "Agendados", "Compareceram"],
+            ...semCampanha.map((linha) => [
+              linha.rotulo,
+              linha.plataforma,
+              numero(linha.leads),
+              numero(linha.agendaram),
+              numero(linha.compareceram),
+            ]),
+          ]
+        : [cabecalho]),
       ...linhas.map((linha) =>
         comValores
           ? [
@@ -865,7 +1105,9 @@ function linhasDoInvestimento(
   if (atualizado) {
     linhas.push(["Investimento atualizado em", atualizado]);
   }
-  const avisoDeFuso = timezone ? avisoDeFusoDaConta(investimento, timezone) : null;
+  const avisoDeFuso = timezone
+    ? avisoDeFusoDaConta(investimento, timezone)
+    : null;
   if (avisoDeFuso) {
     linhas.push(["Fuso do investimento", avisoDeFuso]);
   }
@@ -1013,7 +1255,11 @@ function montarGeral(entrada: EntradaDaExportacao): SecaoExportavel[] {
   }
   if (entrada.campanhas) {
     secoes.push(
-      secaoDeCampanhas(entrada.campanhas.atual, entrada.podeVerValores),
+      secaoDeCampanhas(
+        entrada.campanhas.atual,
+        entrada.podeVerValores,
+        entrada.anuncios,
+      ),
     );
   }
   return secoes;
@@ -1069,7 +1315,11 @@ function montarMarketing(entrada: EntradaDaExportacao): SecaoExportavel[] {
     }
     if (entrada.campanhas) {
       secoes.push(
-        secaoDeCampanhas(entrada.campanhas.atual, entrada.podeVerValores),
+        secaoDeCampanhas(
+          entrada.campanhas.atual,
+          entrada.podeVerValores,
+          entrada.anuncios,
+        ),
       );
     }
   }

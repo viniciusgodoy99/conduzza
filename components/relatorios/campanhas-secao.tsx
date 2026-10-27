@@ -4,6 +4,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Target } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { AnunciosSemCampanha } from "@/components/relatorios/anuncios-sem-campanha";
 import { Secao } from "@/components/relatorios/secao";
 import { Aviso } from "@/components/shared/aviso";
 import { DataTable } from "@/components/shared/data-table";
@@ -15,16 +16,20 @@ import {
   dicaLeituraAtrasada,
   formatarAtualizadoEm,
 } from "@/lib/domain/custo-por-lead";
+import type { PeriodoDaLista } from "@/lib/domain/campanha-e-anuncio-do-lead";
 import {
   NOTA_DOS_VALORES_DAS_CAMPANHAS,
+  anunciosSemCampanha,
   campanhasComValores,
   estadoVazioDasCampanhas,
   montarCampanhas,
   rodapesDasCampanhas,
+  textoDosAnunciosSemCampanha,
   type CelulaDeCampanha,
   type LinhaDeCampanhaDaTela,
 } from "@/lib/domain/exportacao-de-resultados";
 import type {
+  AnunciosDoPeriodo,
   CampanhasDoPeriodo,
   Periodizado,
 } from "@/lib/queries/relatorios";
@@ -54,7 +59,9 @@ const COLUNA_CAMPANHA: ColumnDef<LinhaDeCampanhaDaTela, unknown> = {
   accessorKey: "rotulo",
   header: "Campanha",
   cell: ({ row }) => (
-    <span className="font-semibold text-text-strong">{row.original.rotulo}</span>
+    <span className="font-semibold text-text-strong">
+      {row.original.rotulo}
+    </span>
   ),
 };
 
@@ -138,6 +145,10 @@ export function CampanhasSecao({
   timezone,
   erro = false,
   tentarDeNovo,
+  anuncios,
+  anunciosPedidos = false,
+  anunciosComErro = false,
+  periodo,
   className,
 }: {
   /** undefined = carregando */
@@ -146,6 +157,16 @@ export function CampanhasSecao({
   timezone: string;
   erro?: boolean;
   tentarDeNovo?: ReactNode;
+  /**
+   * anuncios_do_periodo (pedido do dono de 26/10/2026): sem nenhuma linha de
+   * campanha, o quadro mostra os anuncios que trouxeram leads. undefined com
+   * anunciosPedidos = carregando; com erro, fica o estado vazio de antes.
+   */
+  anuncios?: AnunciosDoPeriodo;
+  anunciosPedidos?: boolean;
+  anunciosComErro?: boolean;
+  /** O periodo da tela: o rotulo do anuncio abre a lista de Leads. */
+  periodo?: PeriodoDaLista;
   className?: string;
 }) {
   if (erro) {
@@ -182,6 +203,17 @@ export function CampanhasSecao({
   // Sem linha nenhuma: com leads no periodo, todos chegaram sem campanha (a
   // contagem esta no rodape); "Nenhum lead no período" so com 0 lead.
   const vazio = estadoVazioDasCampanhas(atual);
+  // Sem linha de campanha e com leads de anuncio: os anuncios no lugar do
+  // vazio. Enquanto eles carregam, o esqueleto (nunca o vazio piscando).
+  const semCampanha = anunciosComErro
+    ? null
+    : anunciosSemCampanha(atual, anuncios, podeVerValores);
+  const esperandoAnuncios =
+    anunciosPedidos &&
+    !anunciosComErro &&
+    anuncios === undefined &&
+    linhas.length === 0 &&
+    atual.leadsDeAnuncio > 0;
   // Ultima leitura com problema, com algo ja lido: os numeros podem estar
   // parados. Aviso com icone, texto e cor (nunca so cor).
   const leituraComProblema =
@@ -205,13 +237,22 @@ export function CampanhasSecao({
           </Aviso>
         </div>
       ) : null}
-      <DataTable
-        variant="bare"
-        columns={comValores ? COLUNAS_COM_VALORES : COLUNAS_SEM_VALORES}
-        data={linhas}
-        emptyTitle={vazio.titulo}
-        emptyDescription={vazio.descricao}
-      />
+      {semCampanha ? (
+        <AnunciosSemCampanha
+          linhas={semCampanha}
+          texto={textoDosAnunciosSemCampanha(atual)}
+          periodo={periodo}
+        />
+      ) : (
+        <DataTable
+          variant="bare"
+          columns={comValores ? COLUNAS_COM_VALORES : COLUNAS_SEM_VALORES}
+          data={linhas}
+          isLoading={esperandoAnuncios}
+          emptyTitle={vazio.titulo}
+          emptyDescription={vazio.descricao}
+        />
+      )}
       {rodapes.length > 0 ? (
         <div className="grid gap-1 border-t border-border px-4 py-3 text-[13px] text-text-secondary">
           {rodapes.map((texto) => (
