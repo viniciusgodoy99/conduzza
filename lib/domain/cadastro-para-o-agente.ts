@@ -835,6 +835,30 @@ export const requisitosDoProcedimentoSchema = z.object({
     .max(LIMITES_DO_CADASTRO.requisitosPorProcedimento * 4),
 });
 
+/** Um requisito como a RPC salvar_requisitos_do_procedimento devolve. */
+const requisitoGravadoSchema = z.object({
+  id: z.string(),
+  procedure_id: z.string(),
+  insurance_id: z.string().nullable(),
+  tipo: z.enum(TIPOS_DE_REQUISITO),
+  valor_inteiro: z.number().int().nullable(),
+  texto_ao_paciente: z.string().nullable(),
+  ativo: z.boolean(),
+});
+
+/**
+ * A resposta da RPC salvar_requisitos_do_procedimento (migration
+ * 20261027100000, item 7): quantos apagou, mudou e criou, e a lista inteira
+ * do procedimento depois do Salvar (com o que outra pessoa criou com o modal
+ * aberto), em ordem de criacao.
+ */
+export const respostaDosRequisitosSchema = z.object({
+  apagados: z.number().int().min(0),
+  alterados: z.number().int().min(0),
+  criados: z.number().int().min(0),
+  requisitos: z.array(requisitoGravadoSchema),
+});
+
 // ---------------------------------------------------------------------------
 // Prontidao do cadastro (prontidao_do_cadastro_da_ia)
 // ---------------------------------------------------------------------------

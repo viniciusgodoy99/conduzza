@@ -10,14 +10,17 @@ import { MENSAGEM_CADASTRO_MUDOU } from "@/lib/domain/convenios-do-medico";
 //     CEP), o texto antigo mantido sem os campos, as colunas novas AUSENTES
 //     quando o cliente antigo nao as manda, e os textos ao paciente
 //     recusados pelas regras ANTES do banco;
-//   - salvarRequisitosDoProcedimentoAction: a ORDEM (apagar so o que estava
-//     na abertura, desativar antes de ativar, criar por ultimo), o
-//     "cadastro mudou" sem gravar nada, as regras da lista antes do banco e
-//     a traducao dos erros;
+//   - salvarRequisitosDoProcedimentoAction: a lista INTEIRA numa chamada so
+//     da RPC salvar_requisitos_do_procedimento (a troca de tipo entre dois
+//     ativos inclusive), nenhuma escrita da action fora dela (uma falha da
+//     RPC e o fim: nada gravado pela action, nem a trilha, que e da RPC), a
+//     frase certa para cada SQLSTATE (CZ409 vira "cadastro_mudou"), as
+//     regras da lista e o procedimento da clinica ativa antes do banco;
 //   - a idade e a grade no salvarProfissionalAction e ia_pode_informar no
 //     salvarProcedimentoAction.
-// O comportamento do banco (CHECKs, RLS, gatilho) esta no ensaio e em
-// tests/rls/cadastro-para-o-agente.test.ts.
+// O comportamento do banco (CHECKs, RLS, gatilho, e a RPC: a troca sem bater
+// no indice, a atomicidade, o CZ409, a trilha) esta no ensaio e em
+// tests/rls/ e tests/integration/cadastro-para-o-agente.test.ts.
 
 const CLINICA = "0a0a0a0a-0000-4000-8000-00000000000a";
 const PROCEDIMENTO = "3d3d3d3d-0000-4000-8000-000000000001";
@@ -26,7 +29,6 @@ const UNIMED = "2c2c2c2c-0000-4000-8000-000000000001";
 const R1 = "5f5f5f5f-0000-4000-8000-000000000001";
 const R2 = "5f5f5f5f-0000-4000-8000-000000000002";
 const R3 = "5f5f5f5f-0000-4000-8000-000000000003";
-const OUTRA_PESSOA = "5f5f5f5f-0000-4000-8000-0000000000ff";
 const NOVO = "6a6a6a6a-0000-4000-8000-000000000001";
 
 type Linha = Record<string, unknown>;
@@ -41,6 +43,11 @@ const estado = {
   erroNoUpdate: {} as Record<string, Erro>,
   erroNoInsert: {} as Record<string, Erro>,
   auditoria: [] as Linha[],
+  rpcs: [] as { nome: string; args: Linha }[],
+  respostaDaRpc: { data: null, error: null } as {
+    data: unknown;
+    error: Erro | null;
+  },
 };
 
 function consulta(tabela: string) {
@@ -140,7 +147,11 @@ function consulta(tabela: string) {
 }
 
 const cliente = {
-  rpc: async () => ({ data: null, error: null }),
+  rpc: async (nome: string, args: Linha) => {
+    estado.eventos.push(`rpc:${nome}`);
+    estado.rpcs.push({ nome, args });
+    return estado.respostaDaRpc;
+  },
   from: (tabela: string) => consulta(tabela),
 };
 
@@ -199,6 +210,8 @@ beforeEach(() => {
   estado.erroNoUpdate = {};
   estado.erroNoInsert = {};
   estado.auditoria = [];
+  estado.rpcs = [];
+  estado.respostaDaRpc = { data: null, error: null };
   sessao.active.role = "admin";
 });
 
@@ -338,8 +351,12 @@ describe("salvarRequisitosDoProcedimentoAction", () => {
     ativo: true,
     ...parcial,
   });
+  const RPC = "rpc:salvar_requisitos_do_procedimento";
+  const ESCRITAS = ["insert:", "update:", "delete:", "audit:"];
+  const escritasDaAction = () =>
+    estado.eventos.filter((e) => ESCRITAS.some((x) => e.startsWith(x)));
 
-  it("leitura nao grava", async () => {
+  it("leitura nao grava (a frase do papel, sem chamar a RPC)", async () => {
     sessao.active.role = "leitura";
     const resultado = await salvarRequisitosDoProcedimentoAction({
       procedure_id: PROCEDIMENTO,
@@ -353,80 +370,139 @@ describe("salvarRequisitosDoProcedimentoAction", () => {
     expect(estado.eventos).toEqual([]);
   });
 
-  it("apaga so o que estava na abertura, desativa antes de ativar e cria por ultimo", async () => {
-    estado.tabelas.procedure_requirement = [
-      requisitoGravado(R1),
-      requisitoGravado(R2, {
-        tipo: "carteirinha",
-        insurance_id: UNIMED,
-        ativo: false,
+  it("a troca de tipo entre dois ativos salva: a lista inteira vai numa chamada so", async () => {
+    // A carteirinha vira documento com foto e B o inverso: em escritas
+    // separadas, a primeira bateria no indice unico (23505); a RPC desativa
+    // antes, numa transacao so (provado no ensaio e no teste de integracao).
+    const depois = [
+      requisitoGravado(R1, { tipo: "documento_com_foto" }),
+      requisitoGravado(R2, { tipo: "carteirinha" }),
+      requisitoGravado(NOVO, {
+        tipo: "chegar_antes_minutos",
+        valor_inteiro: 15,
       }),
-      requisitoGravado(R3, { tipo: "acompanhante" }),
-      // Criado por outra pessoa depois que o modal abriu: fica.
-      requisitoGravado(OUTRA_PESSOA, { tipo: "exames_anteriores" }),
-    ];
+    ].map(({ clinic_id: _c, ...r }) => {
+      void _c;
+      return r;
+    });
+    estado.respostaDaRpc = {
+      data: { apagados: 1, alterados: 2, criados: 1, requisitos: depois },
+      error: null,
+    };
     const resultado = await salvarRequisitosDoProcedimentoAction({
       procedure_id: PROCEDIMENTO,
       requisitos: [
-        // R2 passa a ativo; R1 passa a inativo (o mesmo tipo do novo).
-        item({
-          id: R2,
-          tipo: "carteirinha",
-          insurance_id: UNIMED,
-          ativo: true,
-        }),
-        item({ id: R1, ativo: false }),
-        item({ tipo: "pedido_medico", texto_ao_paciente: "Traga o pedido." }),
+        item({ id: R1, tipo: "documento_com_foto" }),
+        item({ id: R2, tipo: "carteirinha" }),
+        item({ tipo: "chegar_antes_minutos", valor_inteiro: 15 }),
       ],
       ids_na_abertura: [R1, R2, R3],
     });
-    expect(resultado.ok).toBe(true);
-    expect(estado.eventos).toEqual([
-      "delete:procedure_requirement",
-      "update:procedure_requirement",
-      "update:procedure_requirement",
-      "insert:procedure_requirement",
-      "audit:editou_requisitos_do_procedimento",
-    ]);
-    expect(estado.deletes[0]?.ids).toEqual([R3]);
-    expect(estado.deletes[0]?.filtros).toEqual({
-      clinic_id: CLINICA,
-      procedure_id: PROCEDIMENTO,
-    });
-    // O que fica inativo vai primeiro.
-    expect(estado.updates.map((u) => u.filtros.id)).toEqual([R1, R2]);
-    expect(estado.updates[0]?.valores.ativo).toBe(false);
-    expect(estado.inserts[0]?.valores).toEqual([
+    expect(resultado).toEqual({ ok: true, requisitos: depois });
+    expect(estado.eventos).toEqual([RPC]);
+    expect(estado.rpcs).toEqual([
       {
-        clinic_id: CLINICA,
-        procedure_id: PROCEDIMENTO,
-        tipo: "pedido_medico",
-        insurance_id: null,
-        valor_inteiro: null,
-        texto_ao_paciente: "Traga o pedido.",
-        ativo: true,
+        nome: "salvar_requisitos_do_procedimento",
+        args: {
+          p_procedure_id: PROCEDIMENTO,
+          p_itens: [
+            {
+              id: R1,
+              tipo: "documento_com_foto",
+              insurance_id: null,
+              valor_inteiro: null,
+              texto_ao_paciente: null,
+              ativo: true,
+            },
+            {
+              id: R2,
+              tipo: "carteirinha",
+              insurance_id: null,
+              valor_inteiro: null,
+              texto_ao_paciente: null,
+              ativo: true,
+            },
+            // O novo vai sem a chave id (a RPC cria).
+            {
+              tipo: "chegar_antes_minutos",
+              insurance_id: null,
+              valor_inteiro: 15,
+              texto_ao_paciente: null,
+              ativo: true,
+            },
+          ],
+          // So o que estava na abertura pode ser apagado (o que outra pessoa
+          // criou no meio fica: a RPC confere).
+          p_ids_na_abertura: [R1, R2, R3],
+        },
       },
     ]);
-    expect(estado.auditoria[0]).toMatchObject({
-      action: "editou_requisitos_do_procedimento",
-      entity: "procedure",
-      entity_id: PROCEDIMENTO,
-    });
+    expect(Object.keys((estado.rpcs[0]?.args.p_itens as Linha[])[2] ?? {}))
+      .not.toContain("id");
   });
 
-  it("sem mudanca, nada e gravado nem vai para a trilha", async () => {
-    estado.tabelas.procedure_requirement = [requisitoGravado(R1)];
+  it("falha no meio nao deixa nada gravado: o erro da RPC e o fim, sem escrita da action nem trilha", async () => {
+    // O convenio de outra clinica no terceiro item: no banco, o gatilho
+    // recusa (23503) depois de a RPC ja ter mudado os dois primeiros, e a
+    // transacao inteira volta. Aqui: a action nao tenta mais nada.
+    estado.respostaDaRpc = {
+      data: null,
+      error: {
+        code: "23503",
+        message: "O convênio informado não pertence a esta clínica.",
+      },
+    };
     const resultado = await salvarRequisitosDoProcedimentoAction({
       procedure_id: PROCEDIMENTO,
-      requisitos: [item({ id: R1 })],
-      ids_na_abertura: [R1],
+      requisitos: [
+        item({ id: R1, texto_ao_paciente: "Traga o pedido." }),
+        item({ tipo: "carteirinha" }),
+        item({ tipo: "autorizacao_previa", insurance_id: UNIMED }),
+      ],
+      ids_na_abertura: [R1, R2],
     });
-    expect(resultado.ok).toBe(true);
-    expect(estado.eventos).toEqual([]);
+    expect(resultado).toEqual({
+      ok: false,
+      error: "Um convênio escolhido não é desta clínica.",
+    });
+    expect(estado.eventos).toEqual([RPC]);
+    expect(escritasDaAction()).toEqual([]);
+    expect(estado.auditoria).toEqual([]);
   });
 
-  it("item que sumiu do banco no meio: cadastro mudou, nada gravado", async () => {
-    estado.tabelas.procedure_requirement = [];
+  it.each([
+    [
+      "23505",
+      "Já existe um item ativo deste tipo para este convênio neste procedimento. Deixe um só ativo.",
+    ],
+    ["23503", "Um convênio escolhido não é desta clínica."],
+    [
+      "23514",
+      "Confira o que o paciente precisa: um item ficou fora das regras.",
+    ],
+    ["22023", "Confira o que o paciente precisa."],
+    ["42501", "Somente administradores e gestores alteram os cadastros."],
+    ["P0002", "Procedimento não encontrado."],
+    ["XX000", "Não foi possível salvar o que o paciente precisa."],
+  ])("o SQLSTATE %s da RPC vira a frase certa, nada gravado", async (codigo, frase) => {
+    estado.respostaDaRpc = {
+      data: null,
+      error: { code: codigo, message: "mensagem do banco" },
+    };
+    const resultado = await salvarRequisitosDoProcedimentoAction({
+      procedure_id: PROCEDIMENTO,
+      requisitos: [item()],
+      ids_na_abertura: [],
+    });
+    expect(resultado).toEqual({ ok: false, error: frase });
+    expect(escritasDaAction()).toEqual([]);
+  });
+
+  it("CZ409 (o cadastro mudou desde que o modal abriu): cadastro_mudou, nada gravado", async () => {
+    estado.respostaDaRpc = {
+      data: null,
+      error: { code: "CZ409", message: MENSAGEM_CADASTRO_MUDOU },
+    };
     const resultado = await salvarRequisitosDoProcedimentoAction({
       procedure_id: PROCEDIMENTO,
       requisitos: [item({ id: R1 })],
@@ -437,10 +513,38 @@ describe("salvarRequisitosDoProcedimentoAction", () => {
       code: "cadastro_mudou",
       error: MENSAGEM_CADASTRO_MUDOU,
     });
-    expect(estado.eventos).toEqual([]);
+    expect(escritasDaAction()).toEqual([]);
   });
 
-  it("procedimento de outra clinica (ou que nao existe): nao encontrado", async () => {
+  it("sem mudanca: a RPC devolve zero e a lista; a action nao escreve nada", async () => {
+    const lista = [requisitoGravado(R1)].map(({ clinic_id: _c, ...r }) => {
+      void _c;
+      return r;
+    });
+    estado.respostaDaRpc = {
+      data: { apagados: 0, alterados: 0, criados: 0, requisitos: lista },
+      error: null,
+    };
+    const resultado = await salvarRequisitosDoProcedimentoAction({
+      procedure_id: PROCEDIMENTO,
+      requisitos: [item({ id: R1 })],
+      ids_na_abertura: [R1],
+    });
+    expect(resultado).toEqual({ ok: true, requisitos: lista });
+    expect(estado.eventos).toEqual([RPC]);
+  });
+
+  it("resposta fora do formato: gravou, sem a lista (a tela recarrega o catalogo)", async () => {
+    estado.respostaDaRpc = { data: { inesperado: true }, error: null };
+    const resultado = await salvarRequisitosDoProcedimentoAction({
+      procedure_id: PROCEDIMENTO,
+      requisitos: [item()],
+      ids_na_abertura: [],
+    });
+    expect(resultado).toEqual({ ok: true, requisitos: null });
+  });
+
+  it("procedimento de outra clinica (ou que nao existe): nao encontrado, sem chamar a RPC", async () => {
     estado.tabelas.procedure = [];
     const resultado = await salvarRequisitosDoProcedimentoAction({
       procedure_id: PROCEDIMENTO,
@@ -454,7 +558,7 @@ describe("salvarRequisitosDoProcedimentoAction", () => {
     expect(estado.eventos).toEqual([]);
   });
 
-  it("as regras da lista antes do banco", async () => {
+  it("as regras da lista antes do banco (sem chamar a RPC)", async () => {
     const duplicado = await salvarRequisitosDoProcedimentoAction({
       procedure_id: PROCEDIMENTO,
       requisitos: [item(), item()],
@@ -478,36 +582,22 @@ describe("salvarRequisitosDoProcedimentoAction", () => {
       ids_na_abertura: [],
     });
     expect(!comLink.ok && comLink.error).toMatch(/^Outro: Tire o link/);
-    expect(estado.eventos).toEqual([]);
-  });
-
-  it("o erro do banco vira frase de recepcionista", async () => {
-    estado.erroNoInsert.procedure_requirement = {
-      code: "23505",
-      message: "duplicate key value violates unique constraint",
+    // A troca entre dois ativos NAO e duplicado: a lista final tem um de
+    // cada.
+    estado.respostaDaRpc = {
+      data: { apagados: 0, alterados: 2, criados: 0, requisitos: [] },
+      error: null,
     };
-    const resultado = await salvarRequisitosDoProcedimentoAction({
+    const troca = await salvarRequisitosDoProcedimentoAction({
       procedure_id: PROCEDIMENTO,
-      requisitos: [item()],
-      ids_na_abertura: [],
+      requisitos: [
+        item({ id: R1, tipo: "carteirinha", insurance_id: UNIMED }),
+        item({ id: R2, tipo: "carteirinha", insurance_id: null }),
+      ],
+      ids_na_abertura: [R1, R2],
     });
-    expect(resultado).toEqual({
-      ok: false,
-      error:
-        "Já existe um item ativo deste tipo para este convênio neste procedimento. Deixe um só ativo.",
-    });
-    estado.erroNoInsert.procedure_requirement = {
-      code: "23503",
-      message: "O convênio informado não pertence a esta clínica.",
-    };
-    const deOutra = await salvarRequisitosDoProcedimentoAction({
-      procedure_id: PROCEDIMENTO,
-      requisitos: [item({ insurance_id: UNIMED })],
-      ids_na_abertura: [],
-    });
-    expect(!deOutra.ok && deOutra.error).toBe(
-      "Um convênio escolhido não é desta clínica.",
-    );
+    expect(troca.ok).toBe(true);
+    expect(estado.eventos).toEqual([RPC]);
   });
 });
 

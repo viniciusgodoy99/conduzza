@@ -1,48 +1,82 @@
 -- Rollback manual da migration 20261027100000_cadastro_para_o_agente.sql
 -- (cadastro para o agente, AG1: o endereco estruturado e o horario da
--- unidade, o que o procedimento exige do paciente, a idade e a grade do
--- profissional, a chave ia_pode_informar e a prontidao do cadastro;
--- 26/10/2026).
+-- unidade, o que o procedimento exige do paciente e o Salvar dele numa
+-- transacao, a idade e a grade do profissional, a chave ia_pode_informar e
+-- a prontidao do cadastro; 26 e 27/10/2026).
 --
 -- O QUE A MIGRATION FEZ (so acrescimo): criou as funcoes
 -- cadastro_texto_valido(text, integer), horario_de_funcionamento_valido
--- (jsonb), exigir_requisito_da_mesma_clinica() e
--- prontidao_do_cadastro_da_ia(uuid); 13 colunas em unit, com os CHECKs; a
--- tabela procedure_requirement (indices, gatilhos, RLS, policies e
--- grants); 3 colunas em professional, com os CHECKs; procedure.
--- ia_pode_informar. Nenhuma funcao, policy, gatilho ou constraint que ja
--- existia foi trocada ou apagada, entao nao ha corpo anterior a devolver: o
--- nome do arquivo segue o padrao dos rollbacks.
+-- (jsonb), exigir_requisito_da_mesma_clinica(), prontidao_do_cadastro_da_ia
+-- (uuid) e salvar_requisitos_do_procedimento(uuid, jsonb, uuid[]); 13
+-- colunas em unit, com os CHECKs; a tabela procedure_requirement (indices,
+-- gatilhos, RLS, policies e grants); 3 colunas em professional, com os
+-- CHECKs; procedure.ia_pode_informar. Nenhuma funcao, policy, gatilho ou
+-- constraint que ja existia foi trocada ou apagada, entao nao ha corpo
+-- anterior a devolver: o nome do arquivo segue o padrao dos rollbacks.
 --
--- O QUE ESTE ARQUIVO FAZ: apaga tudo isso, na ordem das dependencias (a
--- funcao da prontidao; a tabela, que leva os gatilhos, as policies e os
--- indices; a funcao do gatilho; as colunas, que levam os CHECKs; por
--- ultimo as duas funcoes de validacao, que os CHECKs usavam). Sem IF
--- EXISTS: com qualquer objeto faltando ou diferente, falha e desfaz tudo.
--- Confere no fim que nada ficou.
+-- O QUE ESTE ARQUIVO FAZ: pega as travas (abaixo); apaga tudo isso, na
+-- ordem das dependencias (as duas funcoes que a sessao chama, a do Salvar e
+-- a da prontidao; a tabela, que leva os gatilhos, as policies e os indices;
+-- a funcao do gatilho; as colunas, que levam os CHECKs; por ultimo as duas
+-- funcoes de validacao, que os CHECKs usavam). Sem IF EXISTS: com qualquer
+-- objeto faltando ou diferente, falha e desfaz tudo. Confere no fim que
+-- nada ficou.
 --
 -- ORDEM: PRIMEIRO voltar o codigo (o de agente-completo le as colunas, a
--- tabela e a funcao; o do main 922fb4b nao le nada disto), DEPOIS este
--- arquivo.
+-- tabela e a prontidao e grava os requisitos pela RPC; o do main 922fb4b nao
+-- le nada disto), DEPOIS este arquivo.
 --
 -- O QUE SE PERDE: o que foi cadastrado nas colunas e na tabela novas
 -- (endereco estruturado, horario de funcionamento, referencia,
 -- estacionamento, acessibilidade, link do mapa, observacao ao paciente,
 -- requisitos dos procedimentos, idades, grade e a chave ia_pode_informar).
 -- O `address` de texto da unidade fica (a tela grava nele o endereco
--- composto).
+-- composto). A trilha editou_requisitos_do_procedimento fica em audit_log.
 --
--- TRAVAS: ACCESS EXCLUSIVE em procedure_requirement, procedure,
--- professional e unit ate o commit (os DROP COLUMN so marcam a coluna no
--- catalogo, sem reescrever). lock_timeout de 1 s (menor que o da
--- migration, de proposito): com a tabela ocupada, o rollback falha inteiro
--- e roda-se de novo.
+-- TRAVAS (medidas no Postgres local: pg_locks da transacao): ACCESS
+-- EXCLUSIVE em procedure_requirement, procedure, professional e unit (os
+-- DROP e os ALTER) e TAMBEM em clinic e insurance (o DROP TABLE tira os
+-- gatilhos das FKs da tabela nova nas tabelas referenciadas: clinic,
+-- procedure e insurance). Todas no comeco, numa ordem fixa, com NOWAIT: com
+-- uma ocupada, solta as que pegou (o savepoint do bloco), espera 100 ms sem
+-- trava nenhuma e tenta de novo, ate 10 vezes (uns 1 s, menos que os 3 s da
+-- migration, de proposito); depois falha inteiro com 55P03, nada desfeito:
+-- rodar de novo. Nunca espera trava com outra na mao (nao fecha ciclo,
+-- 40P01, com sessao nenhuma). Ate o commit (de 17 a 28 ms no Postgres
+-- local, 5 rodadas: os DROP COLUMN so marcam a coluna no catalogo, sem
+-- reescrever), ninguem le nem grava clinic, procedure, professional, unit
+-- nem insurance: quem chega espera. clinic e lida em quase toda tela, por
+-- isso horario calmo.
 --
 -- Rodar inteiro, numa transacao, no SQL editor, em horario calmo.
 
 begin;
 set local lock_timeout = '1s';
 
+-- As travas, todas aqui, antes de qualquer mudanca (cabecalho, TRAVAS).
+do $travas$
+declare
+  v_tentativas integer := 0;
+begin
+  loop
+    begin
+      lock table public.procedure_requirement, public.procedure, public.professional,
+                 public.unit, public.clinic, public.insurance
+        in access exclusive mode nowait;
+      exit;
+    exception when lock_not_available then
+      v_tentativas := v_tentativas + 1;
+      if v_tentativas >= 10 then
+        raise exception using errcode = 'lock_not_available',
+          message = 'Rollback de 20261027100000: uma das tabelas seguiu ocupada por 1 s. Nada foi desfeito: rode de novo em horario calmo.';
+      end if;
+      perform pg_sleep(0.1);
+    end;
+  end loop;
+end;
+$travas$;
+
+drop function public.salvar_requisitos_do_procedimento(uuid, jsonb, uuid[]);
 drop function public.prontidao_do_cadastro_da_ia(uuid);
 
 drop table public.procedure_requirement;
@@ -77,6 +111,7 @@ drop function public.cadastro_texto_valido(text, integer);
 do $conferencia$
 begin
   if to_regclass('public.procedure_requirement') is not null
+     or to_regprocedure('public.salvar_requisitos_do_procedimento(uuid,jsonb,uuid[])') is not null
      or to_regprocedure('public.prontidao_do_cadastro_da_ia(uuid)') is not null
      or to_regprocedure('public.exigir_requisito_da_mesma_clinica()') is not null
      or to_regprocedure('public.horario_de_funcionamento_valido(jsonb)') is not null

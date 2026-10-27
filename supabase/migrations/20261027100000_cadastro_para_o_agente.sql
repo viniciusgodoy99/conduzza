@@ -82,6 +82,39 @@
 --      CONTAGENS e listas curtas de NOMES de cadastro (ate 10, por nome e
 --      id), nunca dado de paciente (nao le contact, conversation, message
 --      nem appointment). EXECUTE so para authenticated e service_role.
+--   7. salvar_requisitos_do_procedimento(p_procedure_id, p_itens,
+--      p_ids_na_abertura) returns jsonb: o Salvar de "O que o paciente
+--      precisa" numa transacao so (revisao de 27/10/2026: a action apagava,
+--      mudava e criava em chamadas separadas; trocar o tipo ou o convenio
+--      entre dois ativos batia no indice unico, e a falha no meio deixava
+--      gravado o que veio antes). plpgsql, SECURITY DEFINER, search_path
+--      vazio. Guarda antes de tudo: sem sessao, a service role e o SQL
+--      editor; com sessao, as regras da policy de escrita da tabela (membro
+--      ATIVO administrador ou gestor da clinica do procedimento, com
+--      user_can_write: a clinica suspensa recusa, e o super admin sem vinculo
+--      tambem); os outros (anon sem EXECUTE, authenticated sem sub, recepcao,
+--      leitura, profissional, pendente, outra clinica, e o procedimento de
+--      outra clinica ou que nao existe) 42501. Sem sessao: 22004
+--      (procedimento nulo) e P0002 (que nao existe). Trava a linha do
+--      procedimento (FOR NO KEY UPDATE: dois Salvar do mesmo procedimento vao
+--      em fila) e as dos requisitos dele, em ordem de id. Confere a forma
+--      (22023: ate 30 objetos, so as seis chaves, tipo e ativo obrigatorios,
+--      id e convenio em formato uuid, numero inteiro, cada id uma vez; ate
+--      120 ids na abertura, sem nulo), as regras dos CHECKs (23514) e um
+--      ativo do mesmo tipo e convenio na lista (23505, como o indice). O que
+--      mudou desde que o modal abriu (id da lista que nao e deste
+--      procedimento, ou item ativo que bate com um ativo que outra pessoa
+--      criou com o modal aberto): CZ409, nada gravado; nunca 40001 nem 40P01.
+--      Depois, nesta ordem: apaga so o que estava na abertura e saiu da lista
+--      (o que outra pessoa criou fica), desativa antes os ativos que mudam de
+--      tipo ou de convenio ou que ficam inativos (a troca entre dois ativos
+--      nao bate no indice), grava os valores finais (o gatilho de mesma
+--      clinica confere o convenio: 23503), cria os novos e, se algo mudou,
+--      grava a trilha editou_requisitos_do_procedimento (entity procedure;
+--      user_id da sessao, nulo sem sessao; nunca o conteudo). Qualquer erro
+--      desfaz tudo. Devolve {apagados, alterados, criados, requisitos: a
+--      lista inteira do procedimento, em ordem de criacao}. EXECUTE so para
+--      authenticated e service_role.
 --
 -- FORMATO EXATO do jsonb de prontidao_do_cadastro_da_ia (toda chave sempre
 -- presente; "total" e a contagem inteira e "nomes" os 10 primeiros em ordem
@@ -120,40 +153,91 @@
 -- Os CHECKs novos valem para as linhas que existem: todas as colunas novas
 -- nascem nulas (ia_pode_informar nasce verdadeira), entao nenhuma recusa.
 --
--- TRAVAS: lock_timeout de 3 s (com a tabela ocupada, falha inteira com
--- 55P03 e roda de novo). ACCESS EXCLUSIVE ate o commit em unit (0 linhas),
--- professional (21) e procedure (16), nessa ordem: os ADD COLUMN sao so de
--- catalogo (anulaveis; o default constante de ia_pode_informar nao reescreve
--- a tabela) e os CHECKs novos varrem essas poucas linhas. Enquanto a
--- migration espera a trava, quem chega para ler essas tabelas espera atras
--- dela (no maximo os 3 s); depois, milissegundos. As FKs da tabela nova
--- seguram SHARE ROW EXCLUSIVE em clinic e insurance ate o commit (a leitura
--- segue; a escrita nessas tabelas, rara, espera). Nenhum ALTER em message,
--- conversation, contact, clinic_member, job_queue nem clinic, e nenhuma
--- linha delas muda. Nada levanta 40001 nem 40P01. Horario calmo.
+-- TRAVAS (medidas no Postgres local: pg_locks da transacao depois da
+-- migration). TODAS no comeco, no bloco 0, antes de qualquer mudanca, numa
+-- ordem fixa e cada uma ja no modo mais forte que a migration pede na
+-- tabela: procedure, professional e unit em ACCESS EXCLUSIVE (os ALTER;
+-- em procedure, tambem a FK da tabela nova); clinic e insurance em SHARE
+-- ROW EXCLUSIVE (as FKs da tabela nova). Cada tentativa pede as cinco com
+-- NOWAIT; com uma ocupada, solta as que pegou (o savepoint do bloco),
+-- espera 100 ms SEM trava nenhuma e tenta de novo, ate 30 vezes (uns 3 s);
+-- depois falha inteira com 55P03, nada gravado: rodar de novo. Assim a
+-- migration nunca espera trava com outra na mao e nao fecha ciclo (40P01)
+-- com sessao nenhuma. (A revisao de 27/10/2026 achou o ciclo na versao
+-- anterior: a FK pegava SHARE ROW EXCLUSIVE em procedure antes do ALTER de
+-- professional, o ALTER de procedure no fim subia para ACCESS EXCLUSIVE, e
+-- a transacao que ja tinha lido procedure e esperava professional ou unit
+-- levava 40P01. O teste de concorrencia do harness reproduz esse caso, o
+-- espelho dele e a escrita em insurance: ~/.claude/plans/agente-completo/
+-- ag1/banco/travas.) Depois do bloco, a migration so pede travas que ja tem
+-- (ou mais fracas, nas mesmas tabelas) e nunca espera; o lock_timeout de
+-- 3 s fica de rede. Quanto tempo: do bloco ao commit, de 12 a 20 ms no
+-- Postgres local (5 rodadas, com o commit; o bloco pega as cinco de uma
+-- vez quando ninguem as segura): os ADD COLUMN sao so de catalogo
+-- (anulaveis; o default constante de ia_pode_informar nao reescreve a
+-- tabela) e os CHECKs novos varrem as poucas linhas de hoje (unit 0,
+-- professional 21, procedure 16). Nesse tempo, procedure, professional e
+-- unit nem leem nem gravam (quem chega espera os milissegundos); clinic e
+-- insurance seguem lendo, e a escrita nelas (rara) espera. Nenhuma trava em
+-- message, conversation, contact, clinic_member, job_queue nem audit_log, e
+-- nenhuma linha delas muda. Nada levanta 40001 nem 40P01. Horario calmo.
 --
 -- ORDEM DE PUBLICACAO: a migration vai ANTES do codigo. O codigo publicado
 -- hoje (main 922fb4b) nao le nem grava nada disto: o INSERT e o UPDATE de
 -- unidade, profissional e procedimento dele nao mandam as colunas novas
 -- (nascem nulas; ia_pode_informar, verdadeira), entao aplicar antes nao
 -- muda nada para ninguem. O codigo novo (Cadastros e a Tela 6, branch
--- agente-completo) le as colunas, a tabela e a funcao: publicado antes da
--- migration, Cadastros cai no erro da pagina e o cartao da prontidao, no
--- erro dele. Os tipos de lib/supabase/database.types.ts foram escritos a
--- mao no formato do gerador; regenerar depois de aplicar.
+-- agente-completo) le as colunas, a tabela e a prontidao e grava os
+-- requisitos pela RPC do item 7: publicado antes da migration, Cadastros
+-- cai no erro da pagina e o cartao da prontidao, no erro dele. Os tipos de
+-- lib/supabase/database.types.ts foram escritos a mao no formato do
+-- gerador; regenerar depois de aplicar.
 --
 -- ROLLBACK (manual), ORDEM: PRIMEIRO voltar o codigo (o novo le as colunas,
--- a tabela e a funcao), DEPOIS, numa transacao, no SQL editor, o arquivo
+-- a tabela e as funcoes), DEPOIS, numa transacao, no SQL editor, o arquivo
 -- supabase/operacao/rollback/20261027100000-corpos-anteriores.sql (apaga a
--- funcao da prontidao, a tabela procedure_requirement com o gatilho e a
--- funcao dele, as colunas novas com os CHECKs e as duas funcoes de
--- validacao; confere no fim). SE PERDE o que foi cadastrado nas colunas e
--- na tabela novas (endereco estruturado, horario, textos ao paciente,
--- requisitos, idades, grade e a chave ia_pode_informar); o `address` de
--- texto fica (a tela grava nele o endereco composto).
+-- RPC do Salvar e a funcao da prontidao, a tabela procedure_requirement com
+-- o gatilho e a funcao dele, as colunas novas com os CHECKs e as duas
+-- funcoes de validacao; confere no fim; as travas dele estao no cabecalho
+-- dele, e pegam ACCESS EXCLUSIVE tambem em clinic e insurance). SE PERDE o
+-- que foi cadastrado nas colunas e na tabela novas (endereco estruturado,
+-- horario, textos ao paciente, requisitos, idades, grade e a chave
+-- ia_pode_informar); o `address` de texto fica (a tela grava nele o
+-- endereco composto).
 -- ---------------------------------------------------------------------------
 
 set local lock_timeout = '3s';
+
+-- ---------------------------------------------------------------------------
+-- 0) As travas, todas aqui, antes de qualquer mudanca (cabecalho, TRAVAS)
+-- ---------------------------------------------------------------------------
+-- Ordem fixa, cada tabela ja no modo mais forte que a migration pede nela.
+-- NOWAIT: tabela ocupada solta o que esta tentativa pegou (o savepoint do
+-- bloco) e espera 100 ms sem trava nenhuma; 30 tentativas, depois 55P03 e
+-- nada gravado. Nunca espera com trava na mao: nao fecha ciclo com sessao.
+
+do $travas$
+declare
+  v_tentativas integer := 0;
+begin
+  loop
+    begin
+      lock table public.procedure, public.professional, public.unit
+        in access exclusive mode nowait;
+      lock table public.clinic, public.insurance
+        in share row exclusive mode nowait;
+      exit;
+    exception when lock_not_available then
+      v_tentativas := v_tentativas + 1;
+      if v_tentativas >= 30 then
+        raise exception using errcode = 'lock_not_available',
+          message = 'Migration 20261027100000: procedure, professional, unit, clinic ou insurance seguiu ocupada por 3 s. Nada foi gravado: rode de novo em horario calmo.';
+      end if;
+      perform pg_sleep(0.1);
+    end;
+  end loop;
+end;
+$travas$;
 
 -- ---------------------------------------------------------------------------
 -- 1) As funcoes de validacao dos CHECKs
@@ -614,3 +698,269 @@ grant execute on function public.prontidao_do_cadastro_da_ia(uuid) to authentica
 
 comment on function public.prontidao_do_cadastro_da_ia(uuid) is
   'O que falta no cadastro para o agente de IA (migration 20261027100000_cadastro_para_o_agente.sql): profissionais ativos sem jornada, procedimentos da IA sem vinculo que a IA use ou sem preco, unidades ativas (e se nao ha nenhuma), unidades sem endereco estruturado ou sem horario, convenios ativos sem cobertura e procedimentos sem requisitos (informativo). So contagens e ate 10 nomes de cadastro por lista, nunca dado de paciente. Super admin, administrador ou gestor ativo da clinica com escrita, service role e SQL editor; o resto 42501. SECURITY DEFINER.';
+
+-- ---------------------------------------------------------------------------
+-- 7) O Salvar de "O que o paciente precisa", numa transacao so
+-- ---------------------------------------------------------------------------
+
+create function public.salvar_requisitos_do_procedimento(
+  p_procedure_id uuid,
+  p_itens jsonb,
+  p_ids_na_abertura uuid[]
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_clinic_id uuid;
+  v_item jsonb;
+  v_ids uuid[];
+  v_mudam uuid[];
+  v_apagados integer := 0;
+  v_criados integer := 0;
+  v_sem_permissao constant text := 'Somente administradores e gestores alteram os cadastros.';
+  v_lista_invalida constant text := 'A lista do que o paciente precisa é inválida.';
+  v_mudou constant text := 'O cadastro mudou enquanto você editava. Feche, abra de novo e salve.';
+  v_uuid constant text := '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
+begin
+  -- 1. Guarda sem sessao: so a service role e o SQL editor (anon nem tem
+  -- EXECUTE; authenticated sem sub, 42501).
+  if auth.uid() is null and coalesce(auth.role(), 'service_role') <> 'service_role' then
+    raise exception using errcode = '42501', message = v_sem_permissao;
+  end if;
+
+  -- 2. O procedimento, travado ate o fim (FOR NO KEY UPDATE): dois Salvar do
+  -- mesmo procedimento vao em fila, e o segundo le o que o primeiro gravou.
+  -- A FK de quem grava algo que aponta para ele (FOR KEY SHARE) nao espera.
+  select p.clinic_id into v_clinic_id
+    from public.procedure p
+   where p.id = p_procedure_id
+     for no key update;
+
+  -- 3. Guarda com sessao: as regras da policy de escrita de
+  -- procedure_requirement (administrador ou gestor ATIVO da clinica do
+  -- procedimento, com escrita; a clinica suspensa recusa). O procedimento de
+  -- outra clinica, ou que nao existe, da o mesmo 42501: a sessao nao
+  -- descobre se ele existe.
+  if auth.uid() is not null
+     and not (public.user_has_role(v_clinic_id, array['admin', 'gestor'])
+              and public.user_can_write(v_clinic_id)) then
+    raise exception using errcode = '42501', message = v_sem_permissao;
+  end if;
+  if p_procedure_id is null then
+    raise exception using errcode = '22004', message = 'Informe o procedimento.';
+  end if;
+  if v_clinic_id is null then
+    raise exception using errcode = 'P0002', message = 'Procedimento não encontrado.';
+  end if;
+
+  -- 4. A forma (22023): uma lista de ate 30 objetos, cada um so com as seis
+  -- chaves, tipo em texto e ativo em booleano (obrigatorios), id e convenio
+  -- em formato uuid ou nulos, o numero inteiro ou nulo, o texto em texto ou
+  -- nulo, e cada id uma vez; os ids da abertura, uma lista sem nulo, ate
+  -- 120. Nada aqui lanca erro de conversao: so 22023.
+  if p_itens is null or jsonb_typeof(p_itens) <> 'array' or p_ids_na_abertura is null then
+    raise exception using errcode = '22023', message = v_lista_invalida;
+  end if;
+  if coalesce(array_ndims(p_ids_na_abertura), 1) <> 1 then
+    raise exception using errcode = '22023', message = v_lista_invalida;
+  end if;
+  if cardinality(p_ids_na_abertura) > 120 or array_position(p_ids_na_abertura, null) is not null then
+    raise exception using errcode = '22023', message = v_lista_invalida;
+  end if;
+  if jsonb_array_length(p_itens) > 30 then
+    raise exception using errcode = '22023',
+      message = 'Um procedimento tem no máximo 30 itens em O que o paciente precisa.';
+  end if;
+  for v_item in select e.value from jsonb_array_elements(p_itens) as e loop
+    if jsonb_typeof(v_item) <> 'object' then
+      raise exception using errcode = '22023', message = v_lista_invalida;
+    end if;
+    if not (v_item ? 'tipo' and v_item ? 'ativo')
+       or exists (select 1
+                    from jsonb_object_keys(v_item) as k (chave)
+                   where k.chave not in ('id', 'tipo', 'insurance_id', 'valor_inteiro',
+                                         'texto_ao_paciente', 'ativo'))
+       or jsonb_typeof(v_item -> 'tipo') <> 'string'
+       or jsonb_typeof(v_item -> 'ativo') <> 'boolean'
+       or coalesce(jsonb_typeof(v_item -> 'id'), 'null') not in ('string', 'null')
+       or coalesce(jsonb_typeof(v_item -> 'insurance_id'), 'null') not in ('string', 'null')
+       or coalesce(jsonb_typeof(v_item -> 'valor_inteiro'), 'null') not in ('number', 'null')
+       or coalesce(jsonb_typeof(v_item -> 'texto_ao_paciente'), 'null') not in ('string', 'null')
+       or (jsonb_typeof(v_item -> 'id') = 'string' and (v_item ->> 'id') !~ v_uuid)
+       or (jsonb_typeof(v_item -> 'insurance_id') = 'string' and (v_item ->> 'insurance_id') !~ v_uuid)
+       or (jsonb_typeof(v_item -> 'valor_inteiro') = 'number'
+           and (v_item ->> 'valor_inteiro') !~ '^-?[0-9]{1,9}$')
+    then
+      raise exception using errcode = '22023', message = v_lista_invalida;
+    end if;
+  end loop;
+  v_ids := array(
+    select d.id
+      from jsonb_to_recordset(p_itens) as d (id uuid)
+     where d.id is not null
+  );
+  if cardinality(v_ids) <> (select count(distinct x.id) from unnest(v_ids) as x (id)) then
+    raise exception using errcode = '22023', message = v_lista_invalida;
+  end if;
+
+  -- 5. As regras de cada item, as mesmas dos CHECKs da tabela (23514), e um
+  -- ativo do mesmo tipo e convenio na lista, menos "outro" (23505, como o
+  -- indice unico, o convenio nulo contando como um), antes de gravar.
+  if exists (
+    select 1
+      from jsonb_to_recordset(p_itens) as d (tipo text, valor_inteiro integer, texto_ao_paciente text)
+     where d.tipo not in ('pedido_medico', 'autorizacao_previa', 'carteirinha', 'documento_com_foto',
+                          'exames_anteriores', 'acompanhante', 'chegar_antes_minutos', 'idade_minima',
+                          'avaliacao_previa', 'outro')
+        or not (case d.tipo
+                  when 'chegar_antes_minutos' then d.valor_inteiro is not null and d.valor_inteiro between 1 and 480
+                  when 'idade_minima' then d.valor_inteiro is not null and d.valor_inteiro between 1 and 120
+                  else d.valor_inteiro is null
+                end)
+        or not public.cadastro_texto_valido(d.texto_ao_paciente, 300)
+        or (d.tipo = 'outro' and d.texto_ao_paciente is null)
+  ) then
+    raise exception using errcode = '23514',
+      message = 'Confira o que o paciente precisa: um item ficou fora das regras.';
+  end if;
+  if exists (
+    select 1
+      from jsonb_to_recordset(p_itens) as d (tipo text, insurance_id uuid, ativo boolean)
+     where d.ativo
+       and d.tipo <> 'outro'
+     group by d.tipo, d.insurance_id
+    having count(*) > 1
+  ) then
+    raise exception using errcode = '23505',
+      message = 'Já existe um item ativo deste tipo para este convênio neste procedimento.';
+  end if;
+
+  -- 6. Os requisitos do procedimento, travados em ordem de id (quem grava
+  -- direto na tabela espera o fim; a ordem fixa nao abre ciclo entre dois
+  -- Salvar), e o que mudou desde que o modal abriu: CZ409, nada gravado
+  -- (nunca 40001: o PostgREST repetiria sem fim).
+  perform 1
+     from public.procedure_requirement q
+    where q.procedure_id = p_procedure_id
+    order by q.id
+      for update;
+  -- Item da lista que nao e deste procedimento (sumiu no meio da edicao).
+  if exists (
+    select 1
+      from unnest(v_ids) as x (id)
+     where not exists (
+       select 1 from public.procedure_requirement q
+        where q.id = x.id
+          and q.procedure_id = p_procedure_id
+     )
+  ) then
+    raise exception using errcode = 'CZ409', message = v_mudou;
+  end if;
+  -- Item ativo da lista que bate com um ativo que outra pessoa criou com o
+  -- modal aberto (nem na lista nem na abertura): quem salva nao viu esse.
+  if exists (
+    select 1
+      from public.procedure_requirement q
+      join jsonb_to_recordset(p_itens) as d (tipo text, insurance_id uuid, ativo boolean)
+        on d.tipo = q.tipo
+       and d.insurance_id is not distinct from q.insurance_id
+     where q.procedure_id = p_procedure_id
+       and q.ativo
+       and q.tipo <> 'outro'
+       and d.ativo
+       and not (q.id = any (v_ids))
+       and not (q.id = any (p_ids_na_abertura))
+  ) then
+    raise exception using errcode = 'CZ409', message = v_mudou;
+  end if;
+
+  -- 7. Apaga so o que estava na abertura e saiu da lista (o que outra pessoa
+  -- criou com o modal aberto fica).
+  delete from public.procedure_requirement q
+   where q.procedure_id = p_procedure_id
+     and q.id = any (p_ids_na_abertura)
+     and not (q.id = any (v_ids));
+  get diagnostics v_apagados = row_count;
+
+  -- 8. O que muda: qualquer campo diferente do gravado.
+  v_mudam := array(
+    select q.id
+      from public.procedure_requirement q
+      join jsonb_to_recordset(p_itens)
+             as d (id uuid, tipo text, insurance_id uuid, valor_inteiro integer,
+                   texto_ao_paciente text, ativo boolean)
+        on d.id = q.id
+     where q.procedure_id = p_procedure_id
+       and (q.tipo, q.insurance_id, q.valor_inteiro, q.texto_ao_paciente, q.ativo)
+           is distinct from (d.tipo, d.insurance_id, d.valor_inteiro, d.texto_ao_paciente, d.ativo)
+  );
+  -- Primeiro desativa os ativos que mudam de tipo ou de convenio, ou que
+  -- ficam inativos: fora do indice unico, a troca entre dois ativos (A
+  -- carteirinha para documento com foto, B o inverso) nao bate nele. Os
+  -- ativos que sobram sao os que nao mudam de chave, e a lista final ja foi
+  -- conferida sem repeticao (passos 5 e 6).
+  update public.procedure_requirement q
+     set ativo = false
+    from jsonb_to_recordset(p_itens) as d (id uuid, tipo text, insurance_id uuid, ativo boolean)
+   where q.id = d.id
+     and q.id = any (v_mudam)
+     and q.ativo
+     and (not d.ativo
+          or d.tipo is distinct from q.tipo
+          or d.insurance_id is distinct from q.insurance_id);
+  -- Depois os valores finais (o gatilho de mesma clinica confere o
+  -- convenio: de outra clinica, 23503, e tudo volta).
+  update public.procedure_requirement q
+     set tipo = d.tipo,
+         insurance_id = d.insurance_id,
+         valor_inteiro = d.valor_inteiro,
+         texto_ao_paciente = d.texto_ao_paciente,
+         ativo = d.ativo
+    from jsonb_to_recordset(p_itens)
+           as d (id uuid, tipo text, insurance_id uuid, valor_inteiro integer,
+                 texto_ao_paciente text, ativo boolean)
+   where q.id = d.id
+     and q.id = any (v_mudam);
+
+  -- 9. Os novos.
+  insert into public.procedure_requirement
+    (clinic_id, procedure_id, insurance_id, tipo, valor_inteiro, texto_ao_paciente, ativo)
+  select v_clinic_id, p_procedure_id, d.insurance_id, d.tipo, d.valor_inteiro,
+         d.texto_ao_paciente, d.ativo
+    from jsonb_to_recordset(p_itens)
+           as d (id uuid, tipo text, insurance_id uuid, valor_inteiro integer,
+                 texto_ao_paciente text, ativo boolean)
+   where d.id is null;
+  get diagnostics v_criados = row_count;
+
+  -- 10. A trilha, so quando algo mudou: quem, quando e qual procedimento,
+  -- nunca o conteudo.
+  if v_apagados + cardinality(v_mudam) + v_criados > 0 then
+    insert into public.audit_log (clinic_id, user_id, action, entity, entity_id)
+    values (v_clinic_id, auth.uid(), 'editou_requisitos_do_procedimento', 'procedure', p_procedure_id);
+  end if;
+
+  return jsonb_build_object(
+    'apagados', v_apagados,
+    'alterados', cardinality(v_mudam),
+    'criados', v_criados,
+    'requisitos', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id', q.id, 'procedure_id', q.procedure_id, 'insurance_id', q.insurance_id,
+               'tipo', q.tipo, 'valor_inteiro', q.valor_inteiro,
+               'texto_ao_paciente', q.texto_ao_paciente, 'ativo', q.ativo)
+             order by q.created_at, q.id)
+        from public.procedure_requirement q
+       where q.procedure_id = p_procedure_id), '[]'::jsonb)
+  );
+end;
+$$;
+
+revoke all on function public.salvar_requisitos_do_procedimento(uuid, jsonb, uuid[]) from public, anon;
+grant execute on function public.salvar_requisitos_do_procedimento(uuid, jsonb, uuid[]) to authenticated, service_role;
+
+comment on function public.salvar_requisitos_do_procedimento(uuid, jsonb, uuid[]) is
+  'O Salvar de "O que o paciente precisa" de um procedimento, numa transacao so (migration 20261027100000_cadastro_para_o_agente.sql): apaga o que estava na abertura (p_ids_na_abertura) e saiu da lista, desativa antes os ativos que mudam de tipo ou de convenio (a troca nao bate no indice unico), grava os valores finais, cria os novos e grava a trilha editou_requisitos_do_procedimento quando algo mudou; o que outra pessoa criou com o modal aberto fica. Tudo ou nada. Com sessao, administrador ou gestor ativo da clinica do procedimento com escrita (a policy de escrita da tabela); sem sessao, service role e SQL editor; o resto 42501. 22004, P0002, 22023 (forma), 23514 (regras dos CHECKs), 23505 (dois ativos do mesmo tipo e convenio), 23503 (convenio de outra clinica) e CZ409 (o cadastro mudou desde que o modal abriu); nunca 40001 nem 40P01. Devolve {apagados, alterados, criados, requisitos}. SECURITY DEFINER.';

@@ -6319,6 +6319,14 @@ export type Database = {
         }
         Returns: string
       }
+      salvar_requisitos_do_procedimento: {
+        Args: {
+          p_ids_na_abertura: string[]
+          p_itens: Json
+          p_procedure_id: string
+        }
+        Returns: Json
+      }
       saude_do_motor: { Args: never; Returns: Json }
       seed_reguas_padrao: { Args: { p_clinic_id: string }; Returns: undefined }
       serie_diaria_do_periodo: {

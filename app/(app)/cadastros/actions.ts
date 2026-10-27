@@ -11,9 +11,9 @@ import {
   problemaNosRequisitos,
   problemaNosTextosDaUnidade,
   requisitosDoProcedimentoSchema,
+  respostaDosRequisitosSchema,
   temEnderecoEstruturado,
   type RequisitoDoProcedimento,
-  type TipoDeRequisito,
 } from "@/lib/domain/cadastro-para-o-agente";
 import {
   CODIGO_CADASTRO_MUDOU,
@@ -908,33 +908,41 @@ export async function salvarUnidadeAction(
 export type ResultadoDosRequisitos =
   | {
       ok: true;
-      /** A lista gravada; nula quando gravou e so a releitura falhou. */
+      /**
+       * A lista do procedimento depois do Salvar (com o que outra pessoa
+       * criou com o modal aberto); nula quando gravou e so a resposta veio
+       * fora do formato (a tela recarrega o catalogo).
+       */
       requisitos: RequisitoDoProcedimento[] | null;
     }
   | { ok: false; error: string; code?: "cadastro_mudou" };
 
 const ERRO_DOS_REQUISITOS = "Não foi possível salvar o que o paciente precisa.";
 
+/** O SQLSTATE da RPC salvar_requisitos_do_procedimento, em frase de recepcao. */
 const MENSAGENS_DOS_REQUISITOS: Record<string, string> = {
   "23505":
     "Já existe um item ativo deste tipo para este convênio neste procedimento. Deixe um só ativo.",
   "23503": "Um convênio escolhido não é desta clínica.",
   "23514": "Confira o que o paciente precisa: um item ficou fora das regras.",
+  "22023": "Confira o que o paciente precisa.",
   "42501": "Somente administradores e gestores alteram os cadastros.",
+  P0002: "Procedimento não encontrado.",
 };
 
-const COLUNAS_DO_REQUISITO =
-  "id, procedure_id, insurance_id, tipo, valor_inteiro, texto_ao_paciente, ativo";
-
 /**
- * Grava a lista de "O que o paciente precisa" de um procedimento: APAGA so o
- * que estava na abertura do modal e saiu da lista (o que outra pessoa criou
- * no meio fica), ATUALIZA o que mudou (desativando antes de ativar, para o
- * indice unico de um ativo por tipo e convenio nao recusar uma troca) e CRIA
- * o novo, nesta ordem. Pela sessao: a RLS (administrador e gestor) e o
- * gatilho de mesma clinica valem. Repetir com a mesma lista e seguro. Item
- * da lista que sumiu do banco no meio da edicao: "cadastro_mudou", nada
- * gravado. Devolve a lista gravada (com os ids novos), para a tela.
+ * Grava a lista de "O que o paciente precisa" de um procedimento numa
+ * transacao so, pela RPC salvar_requisitos_do_procedimento (migration
+ * 20261027100000, item 7): APAGA so o que estava na abertura do modal e saiu
+ * da lista (o que outra pessoa criou no meio fica), desativa antes os ativos
+ * que mudam de tipo ou de convenio (a troca entre dois ativos nao bate no
+ * indice unico), grava o que mudou, CRIA o novo e grava a trilha
+ * editou_requisitos_do_procedimento quando algo mudou. Tudo ou nada: com
+ * qualquer erro, nada fica gravado. A RPC confere de novo o papel (as regras
+ * da policy de escrita da tabela) e a lista. Item da lista que sumiu do
+ * banco, ou item ativo que bate com um que outra pessoa criou com o modal
+ * aberto: CZ409, "cadastro_mudou", nada gravado. Repetir com a mesma lista
+ * e seguro. Devolve a lista gravada (com os ids novos), para a tela.
  */
 export async function salvarRequisitosDoProcedimentoAction(
   input: unknown,
@@ -960,6 +968,9 @@ export async function salvarRequisitosDoProcedimentoAction(
     return { ok: false, error: problema };
   }
 
+  // O procedimento da clinica ATIVA (a RLS deixa quem e membro de duas
+  // clinicas ler as duas): de outra clinica, ou que nao existe, nao chega a
+  // RPC.
   const supabase = await createClient();
   const { data: procedimento, error: erroDoProcedimento } = await supabase
     .from("procedure")
@@ -973,129 +984,43 @@ export async function salvarRequisitosDoProcedimentoAction(
   if (!procedimento) {
     return { ok: false, error: "Procedimento não encontrado." };
   }
-  const { data: atuais, error: erroDosAtuais } = await supabase
-    .from("procedure_requirement")
-    .select(COLUNAS_DO_REQUISITO)
-    .eq("clinic_id", guard.clinicId)
-    .eq("procedure_id", procedure_id);
-  if (erroDosAtuais) {
-    return { ok: false, error: ERRO_DOS_REQUISITOS };
-  }
-  const gravados = new Map(
-    ((atuais ?? []) as RequisitoDoProcedimento[]).map((r) => [r.id, r]),
-  );
-  if (requisitos.some((r) => r.id !== undefined && !gravados.has(r.id))) {
-    return {
-      ok: false,
-      code: "cadastro_mudou",
-      error: MENSAGEM_CADASTRO_MUDOU,
-    };
-  }
 
-  const desejados = new Set(
-    requisitos.flatMap((r) => (r.id === undefined ? [] : [r.id])),
-  );
-  const apagar = ids_na_abertura.filter(
-    (id) => gravados.has(id) && !desejados.has(id),
-  );
-  const mudar = requisitos.filter((r) => {
-    const antes = r.id === undefined ? undefined : gravados.get(r.id);
-    return (
-      antes !== undefined &&
-      (antes.tipo !== r.tipo ||
-        antes.insurance_id !== r.insurance_id ||
-        antes.valor_inteiro !== r.valor_inteiro ||
-        antes.texto_ao_paciente !== r.texto_ao_paciente ||
-        antes.ativo !== r.ativo)
-    );
-  });
-  // Quem fica inativo vai primeiro: um ativo do mesmo tipo pode estar
-  // entrando no lugar dele.
-  mudar.sort((a, b) => Number(a.ativo) - Number(b.ativo));
-  const criar = requisitos.filter((r) => r.id === undefined);
-
-  const traduzir = (erro: { code?: string }) =>
-    MENSAGENS_DOS_REQUISITOS[erro.code ?? ""] ?? ERRO_DOS_REQUISITOS;
-
-  if (apagar.length > 0) {
-    const { error } = await supabase
-      .from("procedure_requirement")
-      .delete()
-      .eq("clinic_id", guard.clinicId)
-      .eq("procedure_id", procedure_id)
-      .in("id", apagar);
-    if (error) {
-      return { ok: false, error: traduzir(error) };
-    }
-  }
-  for (const requisito of mudar) {
-    const { data, error } = await supabase
-      .from("procedure_requirement")
-      .update({
-        tipo: requisito.tipo,
-        insurance_id: requisito.insurance_id,
-        valor_inteiro: requisito.valor_inteiro,
-        texto_ao_paciente: requisito.texto_ao_paciente,
-        ativo: requisito.ativo,
-      })
-      .eq("clinic_id", guard.clinicId)
-      .eq("procedure_id", procedure_id)
-      .eq("id", requisito.id as string)
-      .select("id");
-    if (error) {
-      return { ok: false, error: traduzir(error) };
-    }
-    if (!data || data.length === 0) {
-      return { ok: false, error: ERRO_DOS_REQUISITOS };
-    }
-  }
-  if (criar.length > 0) {
-    const { error } = await supabase.from("procedure_requirement").insert(
-      criar.map((requisito) => ({
-        clinic_id: guard.clinicId,
-        procedure_id,
+  const { data, error } = await supabase.rpc(
+    "salvar_requisitos_do_procedimento",
+    {
+      p_procedure_id: procedure_id,
+      p_itens: requisitos.map((requisito) => ({
+        ...(requisito.id === undefined ? {} : { id: requisito.id }),
         tipo: requisito.tipo,
         insurance_id: requisito.insurance_id,
         valor_inteiro: requisito.valor_inteiro,
         texto_ao_paciente: requisito.texto_ao_paciente,
         ativo: requisito.ativo,
       })),
-    );
-    if (error) {
-      return { ok: false, error: traduzir(error) };
+      p_ids_na_abertura: ids_na_abertura,
+    },
+  );
+  if (error) {
+    if (error.code === CODIGO_CADASTRO_MUDOU) {
+      return {
+        ok: false,
+        code: "cadastro_mudou",
+        error: MENSAGEM_CADASTRO_MUDOU,
+      };
     }
+    return {
+      ok: false,
+      error: MENSAGENS_DOS_REQUISITOS[error.code ?? ""] ?? ERRO_DOS_REQUISITOS,
+    };
   }
-  if (apagar.length + mudar.length + criar.length > 0) {
-    await auditar(
-      supabase,
-      guard.clinicId,
-      guard.context.userId,
-      "editou_requisitos_do_procedimento",
-      "procedure",
-      procedure_id,
-    );
-  }
-
-  const { data: depois, error: erroDeDepois } = await supabase
-    .from("procedure_requirement")
-    .select(COLUNAS_DO_REQUISITO)
-    .eq("clinic_id", guard.clinicId)
-    .eq("procedure_id", procedure_id)
-    .order("created_at")
-    .order("id");
   revalidatePath("/cadastros");
   revalidatePath("/agente");
-  if (erroDeDepois) {
-    // Gravou; so a releitura falhou. Nao e erro: a tela fecha e o catalogo
-    // recarrega (reenviar criaria de novo os itens sem id).
-    return { ok: true, requisitos: null };
-  }
+  const resposta = respostaDosRequisitosSchema.safeParse(data);
+  // Gravou; a resposta fora do formato nao e erro: a tela fecha e o
+  // catalogo recarrega (reenviar criaria de novo os itens sem id).
   return {
     ok: true,
-    requisitos: ((depois ?? []) as RequisitoDoProcedimento[]).map((r) => ({
-      ...r,
-      tipo: r.tipo as TipoDeRequisito,
-    })),
+    requisitos: resposta.success ? resposta.data.requisitos : null,
   };
 }
 

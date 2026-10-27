@@ -159,6 +159,22 @@ export const ROTULO_IA_PODE_INFORMAR =
 export const AJUDA_IA_PODE_INFORMAR =
   "Mesmo quando a IA não agenda este procedimento, ela pode dizer o preço e o que o paciente precisa.";
 
+/**
+ * A frase quando o procedimento gravou e "O que o paciente precisa" nao (a
+ * RPC e uma transacao so: nada da lista entrou). No "cadastro mudou"
+ * (CZ409), salvar de novo daria o mesmo: a frase da action ja pede para
+ * fechar e abrir, sem o "Clique em Salvar de novo".
+ */
+export function erroDosRequisitosNoSalvar(resultado: {
+  error: string;
+  code?: "cadastro_mudou";
+}): string {
+  const frase = `O procedimento foi salvo, mas o que o paciente precisa não. ${resultado.error}`;
+  return resultado.code === "cadastro_mudou"
+    ? frase
+    : `${frase} Clique em Salvar de novo.`;
+}
+
 let contadorDoRequisito = 0;
 function novaChaveDoRequisito(): string {
   contadorDoRequisito += 1;
@@ -1593,9 +1609,12 @@ export function ProcedimentosTab({
     }
 
     // "O que o paciente precisa" vai depois da linha (o procedimento novo
-    // precisa do id) e so quando mudou. Se falhar, o procedimento ja esta
-    // salvo: o modal fica aberto com o id, e o proximo Salvar so reenvia o
-    // que falta (a lista e conferida contra o banco, sem duplicar).
+    // precisa do id) e so quando mudou, numa transacao so (a RPC
+    // salvar_requisitos_do_procedimento): se falhar, nada da lista foi
+    // gravado, e o procedimento ja esta salvo. O modal fica aberto com o id,
+    // e o proximo Salvar reenvia a lista inteira (sem duplicar: nada dela
+    // entrou). Se o cadastro mudou enquanto a pessoa editava (CZ409), salvar
+    // de novo daria o mesmo: a frase pede para fechar e abrir.
     const mandarRequisitos = desfecho.criado
       ? requisitosDoSalvar.length > 0
       : requisitosMudaram(requisitosDoSalvar, requisitosNaAbertura);
@@ -1610,9 +1629,7 @@ export function ProcedimentosTab({
       if (!gravouRequisitos.ok) {
         const idGravado = desfecho.id;
         setForm((atual) => ({ ...atual, id: idGravado }));
-        setErro(
-          `O procedimento foi salvo, mas o que o paciente precisa não. ${gravouRequisitos.error} Clique em Salvar de novo.`,
-        );
+        setErro(erroDosRequisitosNoSalvar(gravouRequisitos));
         aoMudar();
         return;
       }

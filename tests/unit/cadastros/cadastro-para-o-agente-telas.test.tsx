@@ -54,8 +54,12 @@ const {
   entradaDaUnidade,
   resumoDoHorario,
 } = await import("@/components/cadastros/unidades-tab");
-const { ProcedimentosTab, ROTULO_IA_PODE_INFORMAR, AJUDA_IA_PODE_INFORMAR } =
-  await import("@/components/cadastros/procedimentos-tab");
+const {
+  ProcedimentosTab,
+  ROTULO_IA_PODE_INFORMAR,
+  AJUDA_IA_PODE_INFORMAR,
+  erroDosRequisitosNoSalvar,
+} = await import("@/components/cadastros/procedimentos-tab");
 const { ProfissionaisTab, TEXTOS_DA_IDADE_E_GRADE, idadeEGradeDoForm } =
   await import("@/components/cadastros/profissionais-tab");
 const {
@@ -376,6 +380,28 @@ describe("modal do Procedimento", () => {
         <RequisitosSomenteLeitura requisitos={[]} convenios={[]} />,
       ),
     ).toContain(TEXTOS_DOS_REQUISITOS.leituraVazia);
+  });
+
+  it("a lista que nao gravou: Salvar de novo, menos no cadastro que mudou", () => {
+    // A RPC e uma transacao so: nada da lista entrou, e o proximo Salvar
+    // reenvia a lista inteira. No CZ409, salvar de novo daria o mesmo.
+    expect(
+      erroDosRequisitosNoSalvar({
+        error: "Um convênio escolhido não é desta clínica.",
+      }),
+    ).toBe(
+      "O procedimento foi salvo, mas o que o paciente precisa não. Um convênio escolhido não é desta clínica. Clique em Salvar de novo.",
+    );
+    const mudou = erroDosRequisitosNoSalvar({
+      code: "cadastro_mudou",
+      error:
+        "O cadastro mudou enquanto você editava. Feche, abra de novo e salve.",
+    });
+    expect(mudou).toBe(
+      "O procedimento foi salvo, mas o que o paciente precisa não. O cadastro mudou enquanto você editava. Feche, abra de novo e salve.",
+    );
+    expect(mudou).not.toContain("Clique em Salvar de novo");
+    semTravessao(mudou);
   });
 
   it("o que vai para a action: numero do tipo que pede, texto aparado", () => {
