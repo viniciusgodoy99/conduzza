@@ -20,7 +20,11 @@ import { adminClient, anonClient } from "./stack";
 //   reordenar a entrada da IA passam (admin, gestor e recepcao);
 // - a clinica A nao le a entrada da IA da clinica B; leitura e profissional
 //   veem (com as colunas novas) e nao editam;
-// - ai_turno: o CHECK das lidas (nulo dentro e 23514).
+// - ai_turno: o CHECK das lidas (nulo dentro e 23514);
+// - a revisao de 28/10/2026: a interna nova consulta_futura_do_procedimento
+//   (42501 para toda sessao, anon e a service role) e as duas trocadas
+//   encerrar_envios_da_oferta e expirar_ofertas_de_espera (42501 para toda
+//   sessao e anon; o servidor chama, como antes).
 // Toda negacao tem o caso positivo ao lado (anti falso positivo).
 //
 // CUIDADO, o banco e o da producao: clinicas e_de_teste com o slug
@@ -321,6 +325,38 @@ describe("as RPCs novas: so o servidor", () => {
       argsMarcar,
     );
     expect(marcar.ok).toBe(true);
+  });
+});
+
+describe("a revisao de 28/10/2026: a interna nova e as duas do fechamento da oferta", () => {
+  it("consulta_futura_do_procedimento: ninguem da API executa, nem o servidor", async () => {
+    const args = {
+      p_clinic_id: clinicaA,
+      p_contato: contatoA,
+      p_procedure_id: procedimentoA,
+      p_exceto: null,
+    };
+    for (const cliente of [anonClient(), ...SESSOES.map(como), admin]) {
+      const { error } = await cliente.rpc("consulta_futura_do_procedimento", args);
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
+    }
+  });
+
+  it("encerrar_envios_da_oferta e expirar_ofertas_de_espera: sessao e anon 42501; o servidor chama", async () => {
+    const oferta = crypto.randomUUID();
+    for (const cliente of [anonClient(), ...SESSOES.map(como)]) {
+      const { error: erroEncerrar } = await cliente.rpc("encerrar_envios_da_oferta", {
+        p_clinic_id: clinicaA,
+        p_offer_id: oferta,
+      });
+      expect(erroEncerrar?.code).toBe(PERMISSAO_NEGADA);
+      const { error: erroExpirar } = await cliente.rpc("expirar_ofertas_de_espera");
+      expect(erroExpirar?.code).toBe(PERMISSAO_NEGADA);
+    }
+    // O servidor: nenhum envio dessa oferta (que nao existe) e cancelado.
+    expect(
+      await rpcOk<number>("encerrar_envios_da_oferta", { p_clinic_id: clinicaA, p_offer_id: oferta }),
+    ).toBe(0);
   });
 });
 

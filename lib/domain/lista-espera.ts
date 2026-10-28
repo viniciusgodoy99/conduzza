@@ -125,6 +125,40 @@ export function regraDaEntrada(entrada: EntradaDaFila): {
   };
 }
 
+/**
+ * Uma consulta futura do contato que conta como "ja tem consulta" (AG5,
+ * revisao de 28/10/2026, R1): o procedimento dela. O job le pelo predicado
+ * de D-41 (consulta_futura_do_procedimento no banco, a mesma regra do
+ * aceite).
+ */
+export type ConsultaFuturaDoContato = {
+  contactId: string;
+  procedureId: string;
+};
+
+/**
+ * AG5 (revisao de 28/10/2026, R1): a entrada da IA cujo contato ja tem
+ * consulta futura do MESMO procedimento sai da onda. O SIM dela seria a
+ * segunda consulta do procedimento, e o aceite (aceitar_oferta_de_espera)
+ * recusa com sem_vinculo: ofertar so queimaria a vez de quem pode aceitar.
+ * As entradas da equipe nao mudam (a paridade: o aceite delas e o de
+ * antes). PURO.
+ */
+export function semEntradasDaIaComConsulta(
+  entradas: readonly EntradaDaFila[],
+  consultas: readonly ConsultaFuturaDoContato[],
+): EntradaDaFila[] {
+  const comConsulta = new Set(
+    consultas.map((consulta) => `${consulta.contactId}|${consulta.procedureId}`),
+  );
+  return entradas.filter(
+    (entrada) =>
+      entrada.origem !== "ia" ||
+      entrada.procedureId === null ||
+      !comConsulta.has(`${entrada.contactId}|${entrada.procedureId}`),
+  );
+}
+
 /** Repouso entre ofertas de SLOTS DIFERENTES para a mesma pessoa. */
 export const REPOUSO_POS_OFERTA_MS = 2 * 60 * 60 * 1000;
 

@@ -12,16 +12,21 @@
 // e sem travessao: o filtro le "vaga" como horario livre, e a IA nunca
 // promete que um horario vai abrir. Trocar um texto e trocar a constante (o
 // teste das frases roda cada uma preenchida no filtro). PURO.
+//
+// Revisao da AG5 (achado 5): a oferta da reoferta sai pelo numero que a
+// clinica escolheu para a lista de espera (o numero fixo do tipo
+// lista_espera, quando configurado), que pode nao ser o desta conversa: a
+// mensagem chega "pelo WhatsApp", e nem sempre "por aqui" (por este numero).
 
 import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
 
 /** T-E1: a pergunta de confirmacao (proposta do desenho, D-40). */
 export const PERGUNTA_DA_LISTA_DE_ESPERA =
-  "Confirma a sua entrada na lista de espera para {{procedimento}}, {{profissional}}, {{pagamento}}, {{preferencia}}? Se abrir um horário assim, você recebe uma mensagem por aqui para ficar com ele.";
+  "Confirma a sua entrada na lista de espera para {{procedimento}}, {{profissional}}, {{pagamento}}, {{preferencia}}? Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp para ficar com ele.";
 
 /** T-E2: a resposta, com a entrada feita (proposta do desenho, D-40). */
 export const RESPOSTA_DA_LISTA_DE_ESPERA =
-  "Pronto, você entrou na lista de espera para {{procedimento}}, {{profissional}}, {{pagamento}}, {{preferencia}}. Se abrir um horário assim, você recebe uma mensagem por aqui.";
+  "Pronto, você entrou na lista de espera para {{procedimento}}, {{profissional}}, {{pagamento}}, {{preferencia}}. Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp.";
 
 /** O profissional da frase ("com Dra. Ana Lima" ou qualquer um). */
 export const COM_QUALQUER_PROFISSIONAL = "com qualquer profissional";

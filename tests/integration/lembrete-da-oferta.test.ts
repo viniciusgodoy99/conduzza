@@ -28,10 +28,19 @@ import { adminClient, stackCredentials } from "../rls/stack";
 //   offer_id; nenhum turno da IA; a mensagem sai das pendentes (o turno
 //   sintetico de marcar_mensagem_tratada_pelo_sistema) e a conversa sai do
 //   contador;
-// - a mensagem seguinte vai para a IA (sem segundo lembrete, nada marcado);
-// - o SIM seguinte (depois do lembrete, que e do sistema) e aceito pelo
-//   interceptador: a consulta nasce no horario, a oferta fecha, o eco sai e
-//   o SIM tambem sai das pendentes;
+// - revisao da AG5 (achado 1b): a mensagem seguinte, com o lembrete AINDA NA
+//   FILA, fica coberta por ele (marcada, sem turno, sem segundo lembrete); o
+//   lembrete sai e o SIM e aceito: a consulta nasce no horario, a oferta
+//   fecha e o SIM tambem sai das pendentes;
+// - achado 1a: a resposta da IA entre a oferta e a saida do lembrete nao
+//   leva o SIM para a IA (o lembrete que saiu e a pergunta de novo);
+// - achado 1c, o caso que CONTINUA com a IA: o lembrete saiu, a pessoa
+//   perguntou outra coisa (vai para a IA), a IA RESPONDEU (a resposta
+//   simulada aqui: a clinica de teste nao roda o turno, e sem ela o SIM
+//   passava so por isso), e o SIM sem citar fica com quem atende: a oferta
+//   continua aberta. Citando o lembrete, o SIM e aceito;
+// - achado 3: sem a autorizacao para receber mensagens, nenhum lembrete, e a
+//   mensagem fica com a IA (que passa para a equipe);
 // - a conversa com a equipe (telefone fora da lista da IA) fica como hoje:
 //   sem lembrete, nada marcado.
 //
@@ -46,9 +55,11 @@ import { adminClient, stackCredentials } from "../rls/stack";
 // execucao que morreu ha mais de uma hora). A IA liberada so nela (fora da
 // lista fechada: nao depende do interruptor, so atende em numero 'fake' e o
 // motor da IA de producao nunca a reivindica); nenhum executor roda aqui e
-// nenhuma mensagem sai (numero 'fake'; a mensagem da oferta "sai" por um
-// insert do teste, como em tests/integration/lista-espera.test.ts). O
-// interruptor global NUNCA e tocado. Telefones ficticios.
+// nenhuma mensagem sai (numero 'fake'; o motor de producao ignora a clinica
+// de teste, entao o lembrete fica 'pendente' na fila; a mensagem da oferta,
+// a do lembrete e a resposta da IA "saem" por um insert do teste, como em
+// tests/integration/lista-espera.test.ts). O interruptor global NUNCA e
+// tocado. Telefones ficticios.
 //
 // LIMPEZA MANUAL, se uma execucao morrer antes do afterAll: no SQL editor,
 //   delete from public.clinic
@@ -74,6 +85,13 @@ let procedimento = "";
 let vinculo = "";
 let telefones = 0;
 let mensagens = 0;
+
+type Oferta = { id: string; slot_starts_at: string; expires_at: string };
+type Lembrete = {
+  id: string;
+  payload: Record<string, unknown>;
+  whatsapp_account_id: string | null;
+};
 
 async function rpcOk<T>(
   nome: string,
@@ -194,14 +212,7 @@ async function contatoPelaIngestao(
  * cancelada (o gatilho enfileira a reoferta), o job da reoferta executado e
  * a mensagem da oferta "saindo" na conversa dele (send.ts grava o job_id).
  */
-async function ofertaPara(
-  contato: string,
-  conversa: string,
-): Promise<{
-  id: string;
-  slot_starts_at: string;
-  expires_at: string;
-}> {
+async function ofertaPara(contato: string, conversa: string): Promise<Oferta> {
   await inserir("waitlist", {
     clinic_id: clinica,
     contact_id: contato,
@@ -278,7 +289,53 @@ async function ofertaPara(
     billable: false,
     cost_cents: 0,
   });
-  return oferta as { id: string; slot_starts_at: string; expires_at: string };
+  return oferta as Oferta;
+}
+
+/**
+ * O executor manda o lembrete (o motor de producao ignora a clinica de
+ * teste): a mensagem do sistema com o job do lembrete, como send.ts a grava.
+ * O wa_message_id permite citar o lembrete.
+ */
+async function lembreteSai(
+  lembrete: Lembrete,
+  conversa: string,
+): Promise<string> {
+  const waMessageId = `lembrete-oferta-int:${sufixo}:lembrete:${lembrete.id}`;
+  await inserir("message", {
+    clinic_id: clinica,
+    conversation_id: conversa,
+    direction: "saida",
+    author: "sistema",
+    content_type: "texto",
+    body: lembrete.payload.body,
+    job_id: lembrete.id,
+    wa_message_id: waMessageId,
+    delivery_status: "enviada",
+    whatsapp_account_id: numero.id,
+    billable: false,
+    cost_cents: 0,
+  });
+  return waMessageId;
+}
+
+/**
+ * A resposta da IA a uma pergunta da pessoa (o turno nao roda na clinica de
+ * teste; sem job, o gatilho da IA deixa a clinica de teste gravar).
+ */
+async function iaResponde(conversa: string): Promise<void> {
+  await inserir("message", {
+    clinic_id: clinica,
+    conversation_id: conversa,
+    direction: "saida",
+    author: "ia",
+    content_type: "texto",
+    body: "Resposta da IA (simulada no teste)",
+    delivery_status: "enviada",
+    whatsapp_account_id: numero.id,
+    billable: false,
+    cost_cents: 0,
+  });
 }
 
 async function mensagemPeloWa(waMessageId: string): Promise<string> {
@@ -310,7 +367,7 @@ async function respondidas(conversa: string): Promise<Set<string>> {
   );
 }
 
-async function lembretesDe(contato: string) {
+async function lembretesDe(contato: string): Promise<Lembrete[]> {
   const { data } = await admin
     .from("job_queue")
     .select("id, kind, payload, whatsapp_account_id")
@@ -319,11 +376,7 @@ async function lembretesDe(contato: string) {
     .eq("payload->>contact_id", contato)
     .not(`payload->>${CHAVE_DO_LEMBRETE}`, "is", null)
     .throwOnError();
-  return (data ?? []) as {
-    id: string;
-    payload: Record<string, unknown>;
-    whatsapp_account_id: string | null;
-  }[];
+  return (data ?? []) as Lembrete[];
 }
 
 async function turnosDaIa(conversa: string): Promise<number> {
@@ -345,6 +398,47 @@ async function aguardandoResposta(conversa: string): Promise<boolean> {
     .single()
     .throwOnError();
   return (data as { awaiting_reply: boolean }).awaiting_reply;
+}
+
+async function situacaoDaOferta(id: string): Promise<{
+  status: string;
+  responded_by: string | null;
+  appointment_id: string | null;
+}> {
+  const { data } = await admin
+    .from("waitlist_offer")
+    .select("status, responded_by, appointment_id")
+    .eq("id", id)
+    .single()
+    .throwOnError();
+  return data as {
+    status: string;
+    responded_by: string | null;
+    appointment_id: string | null;
+  };
+}
+
+/** A oferta aceita pelo contato: a consulta nasce no horario oferecido. */
+async function esperarAceita(oferta: Oferta, contato: string): Promise<void> {
+  const depois = await situacaoDaOferta(oferta.id);
+  expect(depois).toMatchObject({
+    status: "preenchida",
+    responded_by: contato,
+  });
+  const { data: consulta } = await admin
+    .from("appointment")
+    .select("contact_id, status, starts_at, created_by")
+    .eq("id", depois.appointment_id!)
+    .single()
+    .throwOnError();
+  expect(consulta).toMatchObject({
+    contact_id: contato,
+    status: "agendado",
+    created_by: "sistema",
+  });
+  expect(Date.parse((consulta as { starts_at: string }).starts_at)).toBe(
+    Date.parse(oferta.slot_starts_at),
+  );
 }
 
 beforeAll(async () => {
@@ -430,12 +524,12 @@ afterAll(async () => {
 });
 
 describe("a oferta na conversa com a IA (D-39)", () => {
-  it("o lembrete enfileirado, nenhum turno, a mensagem tratada fora das pendentes; depois, a IA; e o SIM seguinte aceito", async () => {
+  it("o lembrete enfileirado, nenhum turno, a mensagem fora das pendentes; a seguinte, com o lembrete na fila, coberta por ele; o lembrete sai e o SIM é aceito", async () => {
     const { telefone, contato, conversa } = await contatoNaIa();
     const oferta = await ofertaPara(contato, conversa);
 
     // 1) Outra coisa, nem SIM nem NAO QUERO: o lembrete.
-    const primeira = await receber(telefone, "Que horas mesmo?");
+    const primeira = await receber(telefone, "Oi, que horário é esse?");
     expect(primeira.status).toBe(200);
     const [lembrete, ...mais] = await lembretesDe(contato);
     expect(mais).toEqual([]);
@@ -471,62 +565,107 @@ describe("a oferta na conversa com a IA (D-39)", () => {
       mensagens_lidas: [idDaPrimeira],
     });
 
-    // A mensagem do lembrete "sai" (o executor nao roda aqui): autor
-    // sistema, com o job do lembrete. Ela nao fecha a oferta.
-    await inserir("message", {
-      clinic_id: clinica,
-      conversation_id: conversa,
-      direction: "saida",
-      author: "sistema",
-      content_type: "texto",
-      body: lembrete?.payload.body,
-      job_id: lembrete?.id,
-      delivery_status: "enviada",
-      whatsapp_account_id: numero.id,
-      billable: false,
-      cost_cents: 0,
-    });
-
-    // 2) A mensagem seguinte vai para a IA: sem segundo lembrete, nada
-    // marcado (a clinica de teste nao enfileira o turno sem a flag do
-    // teste: fora_da_fase, so no log).
+    // 2) A seguinte chega com o lembrete AINDA NA FILA (o motor de producao
+    // ignora a clinica de teste): coberta por ele, marcada, sem turno e sem
+    // segundo lembrete (revisao da AG5, achado 1b).
     const segunda = await receber(telefone, "E onde fica a clínica?");
     expect(segunda.status).toBe(200);
     expect(await lembretesDe(contato)).toHaveLength(1);
     const idDaSegunda = await mensagemPeloWa(segunda.waMessageId);
-    expect((await respondidas(conversa)).has(idDaSegunda)).toBe(false);
+    expect((await respondidas(conversa)).has(idDaSegunda)).toBe(true);
+    expect(await turnosDaIa(conversa)).toBe(0);
+    expect(await aguardandoResposta(conversa)).toBe(false);
 
-    // 3) O SIM seguinte e do interceptador: a consulta nasce no horario.
+    // 3) O lembrete sai (autor sistema, com o job do lembrete; ele nao fecha
+    // a oferta) e o SIM seguinte e do interceptador: a consulta nasce no
+    // horario.
+    await lembreteSai(lembrete!, conversa);
     const sim = await receber(telefone, "SIM");
     expect(sim.status).toBe(200);
-    const { data: depois } = await admin
-      .from("waitlist_offer")
-      .select("status, responded_by, appointment_id")
-      .eq("id", oferta.id)
-      .single()
-      .throwOnError();
-    expect(depois).toMatchObject({
-      status: "preenchida",
-      responded_by: contato,
-    });
-    const { data: consulta } = await admin
-      .from("appointment")
-      .select("contact_id, status, starts_at, created_by")
-      .eq("id", (depois as { appointment_id: string }).appointment_id)
-      .single()
-      .throwOnError();
-    expect(consulta).toMatchObject({
-      contact_id: contato,
-      status: "agendado",
-      created_by: "sistema",
-    });
-    expect(Date.parse((consulta as { starts_at: string }).starts_at)).toBe(
-      Date.parse(oferta.slot_starts_at),
-    );
+    await esperarAceita(oferta, contato);
     // O SIM tambem sai das pendentes, sem turno.
     const idDoSim = await mensagemPeloWa(sim.waMessageId);
     expect((await respondidas(conversa)).has(idDoSim)).toBe(true);
     expect(await turnosDaIa(conversa)).toBe(0);
+  });
+
+  it("a resposta da IA entre a oferta e a saída do lembrete não leva o SIM para a IA: o lembrete que saiu é a pergunta de novo (achado 1a)", async () => {
+    const { telefone, contato, conversa } = await contatoNaIa();
+    const oferta = await ofertaPara(contato, conversa);
+
+    await receber(telefone, "Que horas mesmo?");
+    const [lembrete] = await lembretesDe(contato);
+    expect(lembrete).toBeDefined();
+    // Um turno que ja estava em andamento responde agora (mais nova que a
+    // oferta); so depois o lembrete sai.
+    await iaResponde(conversa);
+    await lembreteSai(lembrete!, conversa);
+
+    const sim = await receber(telefone, "SIM");
+    expect(sim.status).toBe(200);
+    await esperarAceita(oferta, contato);
+    const idDoSim = await mensagemPeloWa(sim.waMessageId);
+    expect((await respondidas(conversa)).has(idDoSim)).toBe(true);
+  });
+
+  it("o caso que continua com a IA (achado 1c): o lembrete saiu, a pessoa perguntou outra coisa, a IA respondeu, e o SIM sem citar fica com quem atende; citando o lembrete, é aceito", async () => {
+    const { telefone, contato, conversa } = await contatoNaIa();
+    const oferta = await ofertaPara(contato, conversa);
+
+    await receber(telefone, "Que horas mesmo?");
+    const [lembrete] = await lembretesDe(contato);
+    expect(lembrete).toBeDefined();
+    const waDoLembrete = await lembreteSai(lembrete!, conversa);
+
+    // O lembrete ja saiu: a outra pergunta vai para a IA (nada marcado, sem
+    // segundo lembrete). A clinica de teste nao enfileira o turno sem a flag
+    // do teste (fora_da_fase, so no log): a RESPOSTA da IA e simulada.
+    const pergunta = await receber(telefone, "E onde fica a clínica?");
+    expect(pergunta.status).toBe(200);
+    expect(await lembretesDe(contato)).toHaveLength(1);
+    const idDaPergunta = await mensagemPeloWa(pergunta.waMessageId);
+    expect((await respondidas(conversa)).has(idDaPergunta)).toBe(false);
+    await iaResponde(conversa);
+
+    // O SIM sem citar responde a fala mais recente, a da IA: o interceptador
+    // nao aceita, a mensagem fica com quem atende (a IA, que pelo prompt
+    // passa para a equipe quem fala do horario oferecido). A oferta continua
+    // aberta para esta pessoa.
+    const sim = await receber(telefone, "SIM");
+    expect(sim.status).toBe(200);
+    expect(await situacaoDaOferta(oferta.id)).toMatchObject({
+      status: "aberta",
+      responded_by: null,
+    });
+    const idDoSim = await mensagemPeloWa(sim.waMessageId);
+    expect((await respondidas(conversa)).has(idDoSim)).toBe(false);
+    expect(await aguardandoResposta(conversa)).toBe(true);
+
+    // Citando o lembrete ("responder" no WhatsApp), o SIM e da oferta.
+    const citando = await receber(telefone, "SIM", {
+      quotedWaMessageId: waDoLembrete,
+    });
+    expect(citando.status).toBe(200);
+    await esperarAceita(oferta, contato);
+  });
+
+  it("sem a autorização para receber mensagens: nenhum lembrete, e a mensagem fica com a IA (achado 3)", async () => {
+    const { telefone, contato, conversa } = await contatoNaIa();
+    await ofertaPara(contato, conversa);
+    await admin
+      .from("contact_consent")
+      .update({ revoked_at: new Date().toISOString() })
+      .eq("clinic_id", clinica)
+      .eq("contact_id", contato)
+      .is("revoked_at", null)
+      .throwOnError();
+
+    const r = await receber(telefone, "Que horas mesmo?");
+    expect(r.status).toBe(200);
+    expect(await lembretesDe(contato)).toEqual([]);
+    const id = await mensagemPeloWa(r.waMessageId);
+    expect((await respondidas(conversa)).has(id)).toBe(false);
+    expect(await aguardandoResposta(conversa)).toBe(true);
   });
 
   it("na conversa com a equipe nada muda: sem lembrete e nada marcado", async () => {

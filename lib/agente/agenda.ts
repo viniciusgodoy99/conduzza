@@ -1805,8 +1805,9 @@ export function portaDaAgendaDoSimulador(
   /**
    * AG5: as conferencias do banco para a lista de espera que o simulador
    * sabe fazer (na ordem do banco): a unidade, o vinculo que a IA marca, a
-   * entrada no mesmo grupo, a consulta para outra pessoa e a consulta do
-   * mesmo procedimento (a simulada). A autorizacao e a idade nao (o contato
+   * entrada do mesmo procedimento (revisao da AG5, C1: de qualquer
+   * profissional), a consulta para outra pessoa e a consulta do mesmo
+   * procedimento (a simulada). A autorizacao e a idade nao (o contato
    * do simulador nao existe).
    */
   const conferirEsperaSimulada = (
@@ -1834,19 +1835,27 @@ export function portaDaAgendaDoSimulador(
     ) {
       return { ok: false, motivo: "so_com_a_equipe" };
     }
-    const noGrupo = (memoria?.espera?.entradas ?? []).find(
-      (p) =>
-        p.procedimentoId === pedido.procedimentoId &&
-        p.profissionalId === pedido.profissionalId,
+    // Revisao da AG5 (contrato da frente de banco, C1): qualquer entrada do
+    // mesmo procedimento, de qualquer profissional; a do grupo exato
+    // primeiro, depois a de qualquer profissional, depois a de outro.
+    const doProcedimento = (memoria?.espera?.entradas ?? []).filter(
+      (p) => p.procedimentoId === pedido.procedimentoId,
     );
-    if (noGrupo !== undefined) {
+    const existente =
+      doProcedimento.find((p) => p.profissionalId === pedido.profissionalId) ??
+      doProcedimento.find((p) => p.profissionalId === null) ??
+      doProcedimento[0];
+    if (existente !== undefined) {
       return {
         ok: false,
         motivo: "ja_na_lista",
         entrada: {
-          profissional: nomeDoProfissionalSimulado(noGrupo.profissionalId),
-          turnos: [...noGrupo.turnos],
-          dias: [...noGrupo.dias],
+          procedimento:
+            e.catalogo?.procedimentos.find((p) => p.id === existente.procedimentoId)
+              ?.nome ?? null,
+          profissional: nomeDoProfissionalSimulado(existente.profissionalId),
+          turnos: [...existente.turnos],
+          dias: [...existente.dias],
         },
       };
     }

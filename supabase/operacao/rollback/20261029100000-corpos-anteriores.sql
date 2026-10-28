@@ -1,12 +1,14 @@
 -- Rollback manual da migration 20261029100000_lista_de_espera_pela_ia.sql
--- (a IA coloca o paciente na lista de espera, AG5, parte de banco; 27/10/2026).
+-- (a IA coloca o paciente na lista de espera, AG5, parte de banco; 27/10/2026,
+-- com a revisao de 28/10/2026).
 --
--- Corpos lidos da producao em 27/10/2026 (fndef.js, so leitura), antes da
--- migration, com o md5(prosrc) na leitura (o ensaio confere que o banco
--- ainda esta assim antes de trocar, e o fim deste arquivo confere que
--- voltaram):
---   aceitar_oferta_de_espera(uuid,uuid,uuid,uuid)   ee00dcac054a8e54129543f567604b38 (sem comentario)
---   podar_agendamento_da_ia()                       2adc71187aaf5c4bacfc58abc073473e
+-- Corpos lidos da producao (fndef.js, so leitura), antes da migration, com o
+-- md5(prosrc) na leitura (o ensaio confere que o banco ainda esta assim
+-- antes de trocar, e o fim deste arquivo confere que voltaram):
+--   aceitar_oferta_de_espera(uuid,uuid,uuid,uuid)   ee00dcac054a8e54129543f567604b38 (sem comentario; 27/10)
+--   podar_agendamento_da_ia()                       2adc71187aaf5c4bacfc58abc073473e (27/10)
+--   encerrar_envios_da_oferta(uuid,uuid)            c131b15190b9ae007ad332b15e6cb0f4 (sem comentario; 28/10)
+--   expirar_ofertas_de_espera()                     ba0b3dc29bfb4dbaa986d3987507c52f (sem comentario; 28/10)
 --
 -- O QUE A MIGRATION FEZ: o CHECK ai_turno_lidas_sem_nulo em ai_turno; em
 -- waitlist, as colunas origem, ia_job_id, conversation_id, insurance_id (FK
@@ -15,10 +17,12 @@
 -- exigir_entrada_da_ia (com a funcao); a tabela ia_pedido_de_espera (com os
 -- indices, a RLS e os grants); as funcoes preferencia_da_espera_valida,
 -- descrever_preferencia_da_espera, lista_de_espera_da_ia_ligada,
--- entrada_da_espera_no_grupo, conferir_pedido_de_espera_da_ia,
--- pedir_lista_de_espera_pela_ia, entrar_na_lista_de_espera_pela_ia e
--- marcar_mensagem_tratada_pelo_sistema; trocou os corpos (e o comentario)
--- de aceitar_oferta_de_espera e podar_agendamento_da_ia.
+-- entrada_da_espera_no_grupo, consulta_futura_do_procedimento,
+-- conferir_pedido_de_espera_da_ia, pedir_lista_de_espera_pela_ia,
+-- entrar_na_lista_de_espera_pela_ia e marcar_mensagem_tratada_pelo_sistema;
+-- trocou os corpos (e o comentario) de aceitar_oferta_de_espera,
+-- podar_agendamento_da_ia, encerrar_envios_da_oferta e
+-- expirar_ofertas_de_espera.
 --
 -- O QUE ESTE ARQUIVO FAZ: pega as travas (abaixo); recusa se houver entrada
 -- ATIVA na fila com pagamento declarado que a regra de antes nao reproduz
@@ -26,11 +30,12 @@
 -- cadastro): sem a coluna, a oferta e o aceite voltariam ao convenio do
 -- contato, senao o particular. Desative essas entradas na Lista de espera
 -- (ou todas as da IA, avisando a clinica) antes. Depois tira o gatilho,
--- as RPCs novas, devolve os dois corpos de antes (com o comentario de
--- antes; os grants nao mudaram) ANTES de apagar o que eles nao chamam mais,
--- apaga a tabela, as funcoes internas, os indices, os CHECKs e as colunas
--- novas e o CHECK de ai_turno; confere no fim os dois md5, os comentarios,
--- os grants e que nada novo ficou (com qualquer diferenca, falha e desfaz
+-- as RPCs novas, devolve os quatro corpos de antes (com o comentario de
+-- antes; os grants nao mudaram) ANTES de apagar o que eles nao chamam mais
+-- (o aceite de hoje chama consulta_futura_do_procedimento), apaga a
+-- tabela, as funcoes internas, os indices, os CHECKs e as colunas novas e o
+-- CHECK de ai_turno; confere no fim os quatro md5, os comentarios, os
+-- grants e que nada novo ficou (com qualquer diferenca, falha e desfaz
 -- tudo). Sem IF EXISTS: com qualquer objeto faltando ou diferente, falha e
 -- desfaz tudo.
 --
@@ -43,12 +48,17 @@
 -- (elas ficam, como entradas comuns da fila) e os pedidos (vivos e
 -- consumidos). Os eventos da conversa ficam. As linhas sinteticas de
 -- ai_turno (a mensagem tratada pelo sistema) ficam: sao turnos encerrados
--- comuns.
+-- comuns. Os lembretes de oferta ja cancelados ficam cancelados; um
+-- lembrete pendente de oferta que fechar depois do rollback volta a nao ser
+-- cancelado pelo banco (so a guarda do executor, se o codigo dela ficar).
 --
 -- TRAVAS: ACCESS EXCLUSIVE em waitlist, ai_turno e ia_pedido_de_espera (os
 -- DROP) e TAMBEM em insurance e clinic (medido no Postgres local: tirar uma
 -- FK pega ACCESS EXCLUSIVE na tabela referenciada; a migration so pegava
--- SHARE ROW EXCLUSIVE nelas). Todas no comeco, numa ordem fixa, com NOWAIT:
+-- SHARE ROW EXCLUSIVE nelas), e ROW EXCLUSIVE em job_queue e waitlist_offer
+-- (a validacao dos dois corpos SQL de volta, que tem UPDATE e INSERT nelas;
+-- nao barra leitura nem escrita de ninguem). Todas no comeco, numa ordem
+-- fixa, com NOWAIT:
 -- com uma ocupada, solta as que pegou (o savepoint do bloco), espera 100 ms
 -- sem trava nenhuma e tenta de novo, ate 10 vezes (uns 1 s, menos que os 3 s
 -- da migration, de proposito); depois falha inteiro com 55P03, nada
@@ -72,6 +82,7 @@ begin
       lock table public.waitlist, public.ai_turno, public.ia_pedido_de_espera, public.insurance,
                  public.clinic
         in access exclusive mode nowait;
+      lock table public.job_queue, public.waitlist_offer in row exclusive mode nowait;
       exit;
     exception when lock_not_available then
       v_tentativas := v_tentativas + 1;
@@ -114,7 +125,7 @@ drop function public.marcar_mensagem_tratada_pelo_sistema(uuid, uuid, uuid);
 drop function public.entrar_na_lista_de_espera_pela_ia(uuid, uuid, uuid);
 drop function public.pedir_lista_de_espera_pela_ia(uuid, uuid, uuid, uuid, uuid, uuid, boolean, text[], smallint[]);
 
--- 4. Os dois corpos de antes (os grants nao mudaram: CREATE OR REPLACE
+-- 4. Os quatro corpos de antes (os grants nao mudaram: CREATE OR REPLACE
 --    mantem), com o comentario de antes.
 CREATE OR REPLACE FUNCTION public.aceitar_oferta_de_espera(p_clinic_id uuid, p_offer_id uuid, p_contact_id uuid, p_conversation_id uuid DEFAULT NULL::uuid)
  RETURNS jsonb
@@ -392,10 +403,69 @@ $function$
 comment on function public.podar_agendamento_da_ia() is
   'Interna (motor_manutencao; nenhum papel da API executa): a poda do agendamento completo pela IA (AG3). ia_atendimento: conversa que sumiu, resolvida ha mais de 30 dias, janela que nao e mais a da conversa, ou parado ha mais de 90 dias. dados_informados_na_marcacao: a linha aberta 7 dias depois de mexida (ou da conversa que sumiu); a da consulta 30 dias depois de deixar de estar pendente, ou 30 dias depois do dia da consulta. Ate 1000 linhas de cada por passagem, SKIP LOCKED. Devolve {atendimentos, dados}.';
 
+CREATE OR REPLACE FUNCTION public.encerrar_envios_da_oferta(p_clinic_id uuid, p_offer_id uuid)
+ RETURNS integer
+ LANGUAGE sql
+ SECURITY DEFINER
+ SET search_path TO ''
+AS $function$
+  with encerrados as (
+    update public.job_queue
+       set status = 'cancelado',
+           last_error = 'oferta_encerrada'
+     where clinic_id = p_clinic_id
+       and kind = 'enviar_mensagem_ativa'
+       and status = 'pendente'
+       and payload->>'offer_id' = p_offer_id::text
+    returning 1
+  )
+  select count(*)::integer from encerrados;
+$function$
+;
+
+comment on function public.encerrar_envios_da_oferta(uuid, uuid) is null;
+
+CREATE OR REPLACE FUNCTION public.expirar_ofertas_de_espera()
+ RETURNS integer
+ LANGUAGE sql
+ SECURITY DEFINER
+ SET search_path TO ''
+AS $function$
+  with vencidas as (
+    update public.waitlist_offer
+       set status = 'expirada'
+     where status = 'aberta' and expires_at < now()
+    returning id, clinic_id
+  ),
+  enfileiradas as (
+    insert into public.job_queue (clinic_id, kind, payload)
+    select clinic_id, 'oferecer_lista_espera',
+           jsonb_build_object('origem_offer_id', id)
+      from vencidas
+    returning 1
+  ),
+  envios_encerrados as (
+    update public.job_queue j
+       set status = 'cancelado',
+           last_error = 'oferta_encerrada'
+      from vencidas v
+     where j.clinic_id = v.clinic_id
+       and j.kind = 'enviar_mensagem_ativa'
+       and j.status = 'pendente'
+       and j.payload->>'offer_id' = v.id::text
+    returning 1
+  )
+  select count(*)::integer from vencidas;
+$function$
+;
+
+comment on function public.expirar_ofertas_de_espera() is null;
+
 -- 5. As funcoes internas, a tabela, os indices, os CHECKs e as colunas
 --    novas, e o CHECK de ai_turno.
 drop function public.conferir_pedido_de_espera_da_ia(uuid, uuid, timestamptz, uuid, uuid, uuid, uuid);
 drop function public.entrada_da_espera_no_grupo(uuid, uuid, uuid, uuid);
+drop function public.consulta_futura_do_procedimento(uuid, uuid, uuid, uuid);
 drop function public.lista_de_espera_da_ia_ligada(uuid);
 drop function public.descrever_preferencia_da_espera(text[], smallint[]);
 drop table public.ia_pedido_de_espera;
@@ -429,7 +499,13 @@ begin
          'postgres=X/postgres,service_role=X/postgres'),
         ('public.podar_agendamento_da_ia()',
          '2adc71187aaf5c4bacfc58abc073473e', '6c7c26eb44d891a0bfb27e7b212f355e',
-         'postgres=X/postgres')
+         'postgres=X/postgres'),
+        ('public.encerrar_envios_da_oferta(uuid,uuid)',
+         'c131b15190b9ae007ad332b15e6cb0f4', null,
+         'postgres=X/postgres,service_role=X/postgres'),
+        ('public.expirar_ofertas_de_espera()',
+         'ba0b3dc29bfb4dbaa986d3987507c52f', null,
+         'postgres=X/postgres,service_role=X/postgres')
       ) as t(assinatura, md5, md5_comentario, grants)
   loop
     if (select md5(p.prosrc) from pg_proc p where p.oid = to_regprocedure(v_caso.assinatura))
@@ -452,7 +528,8 @@ begin
         where p.pronamespace = 'public'::regnamespace
           and p.proname in ('exigir_entrada_da_ia', 'preferencia_da_espera_valida',
                             'descrever_preferencia_da_espera', 'lista_de_espera_da_ia_ligada',
-                            'entrada_da_espera_no_grupo', 'conferir_pedido_de_espera_da_ia',
+                            'entrada_da_espera_no_grupo', 'consulta_futura_do_procedimento',
+                            'conferir_pedido_de_espera_da_ia',
                             'pedir_lista_de_espera_pela_ia', 'entrar_na_lista_de_espera_pela_ia',
                             'marcar_mensagem_tratada_pelo_sistema'))
      or exists (

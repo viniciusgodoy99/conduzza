@@ -1066,11 +1066,14 @@ export type EntradaDaNota = {
    * AG5: a lista de espera nesta conversa: o pedido em texto ("Limpeza de
    * pele, com Dra. Ana Lima, no particular, de manhã, às segundas") e a
    * situacao (a pergunta feita e ainda sem a confirmacao, ou a entrada
-   * feita). So nomes do Cadastro e listas fechadas.
+   * feita). So nomes do Cadastro e listas fechadas. Revisao da AG5 (achado
+   * 3): so quando a lista e o pedido vivo do turno (quem monta decide; com
+   * outra marcacao depois da entrada, nulo e a nota de sempre); e
+   * "nao_entrou", o pedido que o turno tentou sem perguntar nem colocar.
    */
   listaDeEspera?: {
     pedido: string;
-    situacao: "perguntada" | "entrou";
+    situacao: "perguntada" | "entrou" | "nao_entrou";
   } | null;
 };
 
@@ -1138,7 +1141,9 @@ export function notaDaPassagem(entrada: EntradaDaNota): string | null {
     linhas.push(
       espera.situacao === "entrou"
         ? "Entrou na lista de espera pelo assistente nesta conversa."
-        : "A pergunta da lista de espera foi feita; a pessoa ainda não confirmou.",
+        : espera.situacao === "nao_entrou"
+          ? "Não entrou na lista de espera."
+          : "A pergunta da lista de espera foi feita; a pessoa ainda não confirmou.",
     );
     linhas.push(`Parou em: ${entrada.parouEm}.`);
     return linhas.join("\n");

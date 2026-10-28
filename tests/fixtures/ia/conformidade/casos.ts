@@ -4825,6 +4825,74 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
       nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
     }),
   ),
+  // Revisao independente da AG5 (28/10/2026, achado 2): as formas que so o
+  // verificador pegava. A posicao sem "da fila", a prioridade quando abrir,
+  // a acao que a IA promete fazer quando abrir (ela nunca age depois,
+  // sozinha) e o procedimento citado em parte.
+  saida(
+    "AG5R-S01",
+    "horario_nao_verificado",
+    "literal",
+    "Você é a próxima a ser chamada.",
+    comFatos(ENTROU_NA_LISTA, { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA }),
+  ),
+  saida(
+    "AG5R-S02",
+    "horario_nao_verificado",
+    "parafrase",
+    "Você terá prioridade quando abrir um horário.",
+    comFatos(ENTROU_NA_LISTA, { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA }),
+  ),
+  saida(
+    "AG5R-S03",
+    "horario_nao_verificado",
+    "parafrase",
+    "Assim que abrir um horário, eu reservo para você.",
+    comFatos(NA_LISTA_DESTA_CONVERSA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  ),
+  saida(
+    "AG5R-S04",
+    "horario_nao_verificado",
+    "parafrase",
+    "Assim que abrir um horário, já marco para você.",
+    comFatos(ENTROU_NA_LISTA, { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA }),
+  ),
+  saida(
+    "AG5R-S05",
+    "acao_nao_executada",
+    "contexto",
+    "Você está na lista de espera para peeling.",
+    comFatos(NA_LISTA_DESTA_CONVERSA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  ),
+  saida(
+    "AG5R-S06",
+    "horario_nao_verificado",
+    "parafrase",
+    "Se alguém cancelar, o horário é seu.",
+    comFatos(DA_LISTA_DE_ESPERA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  ),
+  saida(
+    "AG5R-S07",
+    "horario_nao_verificado",
+    "parafrase",
+    "Se vagar um horário, eu te encaixo.",
+    comFatos(ENTROU_NA_LISTA, { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA }),
+  ),
+  saida(
+    "AG5R-S08",
+    "horario_nao_verificado",
+    "contexto",
+    "Fica tranquila, você tem prioridade na lista de espera.",
+    comFatos(NA_LISTA_DESTA_CONVERSA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -7145,6 +7213,100 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
     ...comFatos(NA_LISTA_DESTA_CONVERSA, {
       nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
     }),
+  },
+  // Revisao independente da AG5 (28/10/2026, achado 1): a vaga_prometida
+  // barrava frases certas da marcacao da AG3, em todas as clinicas. Com os
+  // fatos certos (a marcacao, a reserva, os horarios livres da busca), sem
+  // e com a lista de espera ligada, nada dispara: "o horario e seu" e "fica
+  // com voce" so prometem vaga na frase de um horario que ainda vai abrir
+  // (ou da lista), e o substantivo "vaga" nunca e o verbo do prazo.
+  {
+    id: "AG5R-B01",
+    rascunho:
+      "Pronto! Sua consulta ficou marcada para terça, 21/10 às 14:00. O horário é seu.",
+    ...comFatos(MARCOU_TERCA_COM_A_ANA),
+  },
+  {
+    id: "AG5R-B02",
+    rascunho:
+      "Pronto! Sua consulta ficou marcada para terça, 21/10 às 14:00. O horário é seu.",
+    ...comFatos({ ...MARCOU_TERCA_COM_A_ANA, listaDeEsperaLigada: true }),
+  },
+  {
+    id: "AG5R-B03",
+    rascunho:
+      "Reservei terça, 21/10 às 14:00. O horário fica com você por 10 minutos.",
+    ...comFatos(RESERVOU_TERCA_COM_A_ANA),
+  },
+  {
+    id: "AG5R-B04",
+    rascunho:
+      "Reservei terça, 21/10 às 14:00. Esse horário fica para você por 10 minutos.",
+    ...comFatos({ ...RESERVOU_TERCA_COM_A_ANA, listaDeEsperaLigada: true }),
+  },
+  {
+    id: "AG5R-B05",
+    rascunho: "Tenho terça, 21/10 às 14:00. Se quiser, o horário é seu.",
+    ...COM_A_BUSCA,
+  },
+  {
+    id: "AG5R-B06",
+    rascunho: "Com certeza tenho vaga na terça, 21/10 às 14:00.",
+    ...COM_A_BUSCA,
+  },
+  {
+    id: "AG5R-B07",
+    rascunho: "Tenho vaga sim, com certeza: terça, 21/10 às 14:00.",
+    ...COM_A_BUSCA,
+  },
+  {
+    id: "AG5R-B08",
+    rascunho: "Assim que você escolher, eu reservo para você.",
+    ...COM_A_BUSCA,
+  },
+  // Revisao da AG5 (achados 2 e 5): o que as regras novas nao podem barrar.
+  {
+    id: "AG5R-B09",
+    rascunho: "Se surgir alguma dúvida, é só chamar por aqui.",
+    ...comFatos(DA_LISTA_DE_ESPERA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  },
+  {
+    id: "AG5R-B10",
+    rascunho: "Idosos e gestantes têm prioridade no atendimento.",
+    ...comFatos(DA_LISTA_DE_ESPERA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  },
+  {
+    id: "AG5R-B11",
+    rascunho:
+      "Não existe ordem de prioridade na lista: quando abre um horário, as pessoas da lista recebem a mensagem.",
+    ...comFatos(NA_LISTA_DESTA_CONVERSA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  },
+  {
+    id: "AG5R-B12",
+    rascunho:
+      "Em março, se abrir um horário assim, você recebe uma mensagem pelo WhatsApp.",
+    ...comFatos(NA_LISTA_DESTA_CONVERSA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  },
+  {
+    id: "AG5R-B13",
+    rascunho: "Você está na lista de espera para Limpeza de pele, no particular.",
+    ...comFatos(NA_LISTA_DESTA_CONVERSA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  },
+  {
+    id: "AG5R-B14",
+    rascunho:
+      "Se abrir um horário, não consigo reservar para você: você recebe uma mensagem pelo WhatsApp.",
+    ...comFatos(ENTROU_NA_LISTA, { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA }),
   },
 ];
 

@@ -16,6 +16,11 @@ import {
   type MotivoDaEsperaDoCanal,
 } from "@/lib/domain/espera-do-canal";
 import {
+  CHAVE_DO_LEMBRETE,
+  ofertaDePeParaOContato,
+  type OfertaDoLembrete,
+} from "@/lib/domain/lembrete-da-oferta";
+import {
   classificarFalhaDeUpload,
   marcaDeIndisponivel,
   motivoDaDesistencia,
@@ -166,6 +171,40 @@ async function executarEnvioAtivo(
       return { ok: false, erro: "leitura_falhou" };
     }
     if (situacao === "encerrada") {
+      return { ok: false, erro: "oferta_encerrada", definitivo: true };
+    }
+  }
+
+  // AG5 (D-39, revisao achado 2): o LEMBRETE da oferta (T-E4, eco do
+  // interceptador com payload.lembrete_da_oferta e sem offer_id) pede "responda
+  // SIM ate as 10:30". So sai enquanto a oferta ainda pergunta algo a este
+  // contato (oferecida a ele, aberta, no prazo e sem a recusa dele): a
+  // reoferta cancelada, a onda que outro candidato ganhou, o NAO QUERO dele
+  // ou o numero que caiu por horas (o job espera o canal ate 12 h) encerram o
+  // envio sem mandar nada, antes de qualquer efeito colateral. Releitura a
+  // cada tentativa: a espera do canal passa por aqui de novo.
+  const lembreteDaOferta = job.payload[CHAVE_DO_LEMBRETE];
+  if (lembreteDaOferta !== undefined && lembreteDaOferta !== null) {
+    if (typeof lembreteDaOferta !== "string") {
+      return { ok: false, erro: "payload_invalido", definitivo: true };
+    }
+    const { data: oferta, error: erroDaOferta } = await admin
+      .from("waitlist_offer")
+      .select("status, expires_at, declined_by, offered_to")
+      .eq("clinic_id", job.clinic_id)
+      .eq("id", lembreteDaOferta)
+      .maybeSingle();
+    if (erroDaOferta) {
+      return { ok: false, erro: "leitura_falhou" };
+    }
+    const lida = oferta as
+      | (OfertaDoLembrete & { offered_to: string[] | null })
+      | null;
+    if (
+      !lida ||
+      !(lida.offered_to ?? []).includes(contactId) ||
+      !ofertaDePeParaOContato(lida, contactId, Date.now())
+    ) {
       return { ok: false, erro: "oferta_encerrada", definitivo: true };
     }
   }

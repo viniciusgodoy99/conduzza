@@ -591,7 +591,8 @@ export const ROTULO_DO_MOTIVO_DA_AGENDA: Readonly<
   sem_autorizacao: "o contato não tem autorização para receber mensagens",
   lista_de_espera_desligada:
     "a lista de espera não está ligada, ou Agendar consulta não vale, na versão publicada",
-  sem_pedido_de_espera: "não havia pedido de lista de espera nesta conversa",
+  sem_pedido_de_espera:
+    "não havia pedido de lista de espera para cumprir nesta conversa (ou a entrada desta resposta já saiu da lista)",
 };
 
 /** O passo da trilha de cada motivo de confirmar_presenca. */
@@ -1337,8 +1338,15 @@ export function criarAgendaDoTurno(entrada: {
     conferirAPergunta: (frase, molde) => conferirAPergunta(frase, molde),
     respostaCitaOutraMensagem: () => respostaCitaOutraMensagem(),
     instanteDaPergunta: () => instanteDaPergunta(),
+    saidaDaIaAntesDaResposta: () => saidaDaIaAntesDaResposta(),
     nomeDoProfissional: (id) => nomeDoProfissional(id),
   });
+  /**
+   * Revisao da AG5 (achado 3): a ultima ferramenta de agenda que o modelo
+   * chamou neste turno (nula: nenhuma). Diz se a lista de espera e o pedido
+   * vivo do turno, para a nota da equipe.
+   */
+  let ultimaFerramentaDeAgenda: FerramentaDeAgenda | null = null;
 
   /**
    * AG4: uma consulta como fato do turno (o dia, a hora, a unidade e o
@@ -1530,6 +1538,45 @@ export function criarAgendaDoTurno(entrada: {
     return saidaAntes?.tipo === "lida" && saidaAntes.saida !== null
       ? saidaAntes.saida.criadaEm
       : null;
+  }
+
+  /**
+   * Revisao da AG5 (achado 3): o texto da saida da IA logo antes da resposta
+   * da pessoa, pelas mesmas fontes de conferirAPergunta (a lida do banco no
+   * preparo; sem ela, a do historico, com a autoria real). De outro autor,
+   * falhada, empatada ou sem texto: null. So para a nota da equipe (nunca
+   * decide uma acao, nunca vai a log).
+   */
+  function saidaDaIaAntesDaResposta(): string | null {
+    if (saidaAntes !== null) {
+      if (saidaAntes.tipo === "falhou") {
+        return null;
+      }
+      const lida = saidaAntes.saida;
+      return lida !== null && lida.autoria === "ia" && !lida.falhou && !lida.empate
+        ? lida.texto
+        : null;
+    }
+    const antes = entrada.mensagens?.antesDasPendentes ?? null;
+    return antes !== null && antes.autoria === "ia" ? antes.texto : null;
+  }
+
+  /**
+   * Revisao da AG5 (achado 3): a lista de espera e o pedido VIVO do turno. A
+   * ultima ferramenta de agenda do turno foi uma das duas da lista; ou o
+   * turno nao chamou ferramenta de agenda e a resposta da pessoa veio logo
+   * depois da pergunta (T-E1) ou da resposta (T-E2) da lista. Senao (a
+   * pessoa seguiu para outra marcacao, com reserva e dados, depois de entrar
+   * na lista), a nota de sempre: a entrada antiga nao esconde o estado.
+   */
+  function esperaEhOPedidoDoTurno(): boolean {
+    if (ultimaFerramentaDeAgenda !== null) {
+      return (
+        ultimaFerramentaDeAgenda === "pedir_lista_de_espera" ||
+        ultimaFerramentaDeAgenda === "entrar_na_lista_de_espera"
+      );
+    }
+    return espera.assuntoDoComeco();
   }
 
   /**
@@ -4764,13 +4811,15 @@ export function criarAgendaDoTurno(entrada: {
       parouEm,
       pedidoDaConsulta,
       remarcacao,
-      // AG5: a lista de espera (o pedido e a situacao).
-      listaDeEspera: espera.nota(),
+      // AG5: a lista de espera (o pedido e a situacao). Revisao da AG5
+      // (achado 3): so quando ela e o pedido vivo do turno.
+      listaDeEspera: esperaEhOPedidoDoTurno() ? espera.nota() : null,
     });
   }
 
   return {
     executar: (nome, argumentos) => {
+      ultimaFerramentaDeAgenda = nome;
       switch (nome) {
         case "buscar_horario":
           return buscar(argumentos);

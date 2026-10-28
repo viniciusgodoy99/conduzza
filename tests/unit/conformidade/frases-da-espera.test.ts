@@ -9,7 +9,10 @@ import { filtrarSaida } from "@/lib/domain/conformidade/filtro";
 import { avaliarRegras } from "@/lib/domain/conformidade/filtro-deterministico";
 import { FRASE_DO_ASSISTENTE_VIRTUAL } from "@/lib/domain/conformidade/frase-fixa";
 import type { Verificador } from "@/lib/domain/conformidade/veredicto";
-import { textoDoLembreteDaOferta } from "@/lib/domain/lembrete-da-oferta";
+import {
+  LEMBRETE_DA_OFERTA,
+  textoDoLembreteDaOferta,
+} from "@/lib/domain/lembrete-da-oferta";
 import {
   PERGUNTA_DA_LISTA_DE_ESPERA,
   perguntaDaListaDeEspera,
@@ -255,13 +258,13 @@ describe("T-E1 e T-E2 preenchidas passam no filtro inteiro", () => {
   it("o texto exato do desenho (T-E1 e T-E2 do exemplo da secao 1.3)", () => {
     const pedido = CASOS[0]!.pedido;
     expect(perguntaDaListaDeEspera(pedido)).toBe(
-      "Confirma a sua entrada na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, de manhã, às segundas e às quartas? Se abrir um horário assim, você recebe uma mensagem por aqui para ficar com ele.",
+      "Confirma a sua entrada na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, de manhã, às segundas e às quartas? Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp para ficar com ele.",
     );
     expect(respostaDaListaDeEspera(pedido)).toBe(
-      "Pronto, você entrou na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, de manhã, às segundas e às quartas. Se abrir um horário assim, você recebe uma mensagem por aqui.",
+      "Pronto, você entrou na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, de manhã, às segundas e às quartas. Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp.",
     );
     expect(perguntaDaListaDeEspera(CASOS[1]!.pedido)).toBe(
-      "Confirma a sua entrada na lista de espera para Toxina botulínica, com qualquer profissional, pelo convênio Unimed (Nacional), em qualquer dia e horário? Se abrir um horário assim, você recebe uma mensagem por aqui para ficar com ele.",
+      "Confirma a sua entrada na lista de espera para Toxina botulínica, com qualquer profissional, pelo convênio Unimed (Nacional), em qualquer dia e horário? Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp para ficar com ele.",
     );
   });
 
@@ -294,6 +297,21 @@ describe("T-E1 e T-E2 preenchidas passam no filtro inteiro", () => {
     }
   });
 
+  it("revisão da AG5 (achado 5): a mensagem da oferta chega pelo WhatsApp, nunca 'por aqui' (o número fixo da lista de espera pode ser outro)", () => {
+    for (const modelo of [PERGUNTA_DA_LISTA_DE_ESPERA, RESPOSTA_DA_LISTA_DE_ESPERA]) {
+      expect(modelo).not.toMatch(/por aqui|neste número|nesta conversa/i);
+      expect(modelo).toContain("você recebe uma mensagem pelo WhatsApp");
+    }
+    for (const { pedido } of CASOS) {
+      expect(perguntaDaListaDeEspera(pedido)).toMatch(
+        /\? Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp para ficar com ele\.$/,
+      );
+      expect(respostaDaListaDeEspera(pedido)).toMatch(
+        /\. Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp\.$/,
+      );
+    }
+  });
+
   it("a T-E2 sem a entrada do turno (a ação feita) bloqueia", async () => {
     const pedido = CASOS[0]!.pedido;
     const { decisao, verificador } = await noFiltro(
@@ -322,12 +340,21 @@ describe("T-E4 (o lembrete da oferta, do sistema)", () => {
     fuso: "America/Fortaleza",
   });
 
-  it("é o texto do exemplo do desenho", () => {
+  it("é o modelo da frente das telas preenchido no fuso da clínica", () => {
+    // Revisao da AG5: o texto e da frente do interceptador (que acrescentou
+    // "Se for outro assunto, é só escrever de novo."); aqui, o preenchimento
+    // (a data, a hora e o prazo no fuso) e o que a bateria exige do texto.
     expect(lembrete).toBe(
-      "Sobre o horário de 03/11/2026 às 09:00: para ficar com ele, responda SIM até as 10:30. Se não quiser, responda NÃO QUERO, que você continua na lista de espera.",
+      LEMBRETE_DA_OFERTA.replace("{{data}}", "03/11/2026")
+        .replace("{{hora}}", "09:00")
+        .replace("{{prazo}}", "10:30"),
     );
+    expect(lembrete).toMatch(
+      /^Sobre o horário de 03\/11\/2026 às 09:00: para ficar com ele, responda SIM até as 10:30\. Se não quiser, responda NÃO QUERO, que você continua na lista de espera\./,
+    );
+    expect(lembrete).not.toMatch(/\{\{|\}\}/);
     expect(lembrete).not.toMatch(/[—–]/);
-    expect(lembrete).not.toMatch(/\bvagas?\b|garant/i);
+    expect(lembrete).not.toMatch(/\bvagas?\b|garant|logo|em breve|primeir|prioridade/i);
   });
 
   it("passa no filtro inteiro como texto do sistema (colado), e nas regras do CFM", async () => {

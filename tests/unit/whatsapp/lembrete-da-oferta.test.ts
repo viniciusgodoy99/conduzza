@@ -9,10 +9,12 @@ import {
   CHAVE_DO_LEMBRETE,
   LEMBRETE_DA_OFERTA,
   ofertaDePeParaOContato,
+  situacaoDoLembrete,
   textoDoLembreteDaOferta,
 } from "@/lib/domain/lembrete-da-oferta";
 import {
   RESPOSTA_CONFIRMADA,
+  RESPOSTA_OFERTA_PERDIDA,
   RESPOSTA_OFERTA_RECUSADA,
 } from "@/lib/domain/textos-padrao";
 import {
@@ -20,27 +22,36 @@ import {
   interceptarRespostaDePaciente,
   type EntradaDaResposta,
 } from "@/lib/integrations/whatsapp/interceptar-resposta";
+import { esperar } from "@/lib/utils/esperar";
 
 // AG5, a oferta da lista de espera na conversa com a IA (desenho, secoes
 // 1.6 e 5; decisao D-39 pela recomendacao, pendente do dono), com o
 // interceptador DE VERDADE sobre um banco em memoria que imita as consultas
 // dele (eq, in, gte, contains, or, not is, o caminho ->> do payload, a chave
-// primaria):
-// - o T-E4 preenchido no fuso da clinica, sem "vaga" nem travessao;
+// primaria, o status padrao do job):
+// - o T-E4 preenchido no fuso da clinica, sem "vaga" nem travessao, com o
+//   "se for outro assunto, e so escrever de novo" (revisao da AG5, achado 4);
 // - a oferta como a pergunta respondida (a mais recente ou a citada) e sem
 //   intencao: o lembrete UMA vez por oferta e contato, pela fila, com o
 //   numero que recebeu, sem offer_id, e a conversa fora do contador;
-// - so na conversa com a IA (fora dela, nada muda: nenhuma leitura);
+// - so na conversa com a IA (fora dela, nada muda: nenhuma leitura) e com a
+//   autorizacao para receber mensagens (achado 3);
 // - outra pergunta mais recente (toque, fala da equipe ou da IA), a oferta
 //   recusada, vencida, por outro numero ou ainda na fila: sem lembrete;
+// - o lembrete na fila cobre a mensagem seguinte (achado 1b); o que saiu e a
+//   pergunta da oferta feita de novo (achado 1a); e o caso que continua com
+//   a IA (achado 1c);
 // - o SIM depois do lembrete (sem citar ou citando o lembrete) continua do
 //   interceptador;
+// - a resposta a oferta sem nada a fazer sai do contador na conversa com a
+//   IA, e o NAO QUERO do vencedor fica com quem atende (achado 5);
 // - nao regressao dos botoes de hoje (Confirmar, Cancelar, Remarcar), dentro
 //   e fora da conversa com a IA;
 // - a rota: em todo tratou_com_eco na conversa com a IA, a mensagem e
 //   marcada como tratada pelo sistema e sai das pendentes do historico (o
-//   toque que hoje volta pendente para a IA tambem); fora da IA, nada; o
-//   log so com ids.
+//   toque que hoje volta pendente para a IA tambem), com nova tentativa curta
+//   e prazo (achado 6) e o fora_da_ia em info (achado 7); fora da IA, nada;
+//   o log so com ids.
 
 // ---------------------------------------------------------------------------
 // Banco em memoria
@@ -50,7 +61,14 @@ type Linha = Record<string, unknown>;
 type Erro = { code?: string; message?: string };
 type Resposta = { data: unknown; error: Erro | null };
 type Filtro = (linha: Linha) => boolean;
-type Manipulador = (args: Record<string, unknown>) => Resposta;
+type Manipulador = (
+  args: Record<string, unknown>,
+) => Resposta | Promise<Resposta>;
+
+/** Os padroes de coluna que o banco preenche no insert (o que o teste le). */
+const PADROES_DO_INSERT: Record<string, Linha> = {
+  job_queue: { status: "pendente" },
+};
 
 /** O valor da coluna, com o caminho "payload->>chave" do PostgREST (texto). */
 function valorDe(linha: Linha, coluna: string): unknown {
@@ -249,6 +267,7 @@ class Consulta implements PromiseLike<Resposta> {
         const linha: Linha = {
           id: randomUUID(),
           created_at: new Date().toISOString(),
+          ...PADROES_DO_INSERT[this.tabela],
           ...nova,
         };
         const recusa = this.banco.aoInserir?.(this.tabela, linha) ?? null;
@@ -371,6 +390,8 @@ function montar(
       created_at: atras(9 * MINUTO),
     });
   }
+  // A autorizacao para receber mensagens, vigente (achado 3).
+  banco.rpc("consentimento_vigente", () => ({ data: true, error: null }));
 }
 
 /** Uma fala da clinica (gente ou IA) depois da oferta. */
@@ -438,22 +459,31 @@ function toqueDeConfirmacao(ha: number): string {
   return inicio;
 }
 
-/** O lembrete que ja saiu: o job (com a chave) e a mensagem do sistema. */
-function lembreteJaEnviado(ha: number): void {
+const PAYLOAD_DO_LEMBRETE = {
+  contact_id: CONTATO,
+  body: "o lembrete",
+  resposta_ao_paciente: true,
+  [CHAVE_DO_LEMBRETE]: OFERTA,
+};
+
+/**
+ * O lembrete que SAIU: o job (com a chave) e a mensagem do sistema, que pode
+ * ter falhado ou saido por outro numero.
+ */
+function lembreteJaEnviado(
+  ha: number,
+  opcoes: { entrega?: string; numero?: string } = {},
+): void {
   const id = idDoJobDoLembrete(OFERTA, CONTATO);
+  const numero = opcoes.numero ?? NUMERO;
   banco.linhas("job_queue").push({
     id,
     clinic_id: CLINICA,
     kind: "enviar_mensagem_ativa",
-    status: "concluido",
-    payload: {
-      contact_id: CONTATO,
-      body: "o lembrete",
-      resposta_ao_paciente: true,
-      [CHAVE_DO_LEMBRETE]: OFERTA,
-    },
-    whatsapp_account_id: NUMERO,
-    created_at: atras(ha),
+    status: opcoes.entrega === "falhou" ? "falhou" : "concluido",
+    payload: PAYLOAD_DO_LEMBRETE,
+    whatsapp_account_id: numero,
+    created_at: atras(ha + MINUTO),
   });
   banco.linhas("message").push({
     id: randomUUID(),
@@ -464,9 +494,60 @@ function lembreteJaEnviado(ha: number): void {
     is_internal_note: false,
     job_id: id,
     wa_message_id: "wa-lembrete",
-    delivery_status: "entregue",
-    whatsapp_account_id: NUMERO,
+    delivery_status: opcoes.entrega ?? "entregue",
+    whatsapp_account_id: numero,
     created_at: atras(ha),
+  });
+}
+
+/**
+ * O lembrete NA FILA: o job (pendente, por padrao, pelo numero que recebeu)
+ * sem mensagem que saiu (nenhuma, ou a que falhou e espera nova tentativa).
+ */
+function lembreteNaFila(
+  opcoes: { status?: string; numero?: string; mensagemQueFalhou?: boolean } = {},
+): void {
+  const id = idDoJobDoLembrete(OFERTA, CONTATO);
+  const numero = opcoes.numero ?? NUMERO;
+  banco.linhas("job_queue").push({
+    id,
+    clinic_id: CLINICA,
+    kind: "enviar_mensagem_ativa",
+    status: opcoes.status ?? "pendente",
+    payload: PAYLOAD_DO_LEMBRETE,
+    whatsapp_account_id: numero,
+    created_at: atras(2 * MINUTO),
+  });
+  if (opcoes.mensagemQueFalhou) {
+    banco.linhas("message").push({
+      id: randomUUID(),
+      clinic_id: CLINICA,
+      conversation_id: CONVERSA,
+      direction: "saida",
+      author: "sistema",
+      is_internal_note: false,
+      job_id: id,
+      delivery_status: "falhou",
+      whatsapp_account_id: numero,
+      created_at: atras(MINUTO),
+    });
+  }
+}
+
+/** O executor manda o lembrete que esta na fila (a linha do envio). */
+function executorMandaOLembrete(): void {
+  banco.linhas("message").push({
+    id: randomUUID(),
+    clinic_id: CLINICA,
+    conversation_id: CONVERSA,
+    direction: "saida",
+    author: "sistema",
+    is_internal_note: false,
+    job_id: idDoJobDoLembrete(OFERTA, CONTATO),
+    wa_message_id: "wa-lembrete",
+    delivery_status: "enviada",
+    whatsapp_account_id: NUMERO,
+    created_at: new Date().toISOString(),
   });
 }
 
@@ -496,9 +577,50 @@ function ecos(): Linha[] {
     );
 }
 
+/** Os jobs de lembrete (com a chave do payload). */
+function lembretes(): Linha[] {
+  return ecos().filter(
+    (j) => (j.payload as Linha | undefined)?.[CHAVE_DO_LEMBRETE] !== undefined,
+  );
+}
+
 function awaitingReply(): unknown {
   return banco.linhas("conversation").find((c) => c.id === CONVERSA)
     ?.awaiting_reply;
+}
+
+/** A ingestao da mensagem seguinte poe a conversa de volta no contador. */
+function voltarAoContador(): void {
+  for (const c of banco.linhas("conversation")) {
+    if (c.id === CONVERSA) {
+      c.awaiting_reply = true;
+    }
+  }
+}
+
+function mudarStatusDaConversa(status: string): void {
+  for (const c of banco.linhas("conversation")) {
+    if (c.id === CONVERSA) {
+      c.status = status;
+    }
+  }
+}
+
+function nomesDasChamadas(): string[] {
+  return banco.chamadas.map((c) => c.nome);
+}
+
+/** O aceite que da certo (aceitar_oferta_de_espera). */
+function aceiteQueDaCerto(): void {
+  banco.rpc("aceitar_oferta_de_espera", () => ({
+    data: {
+      ok: true,
+      starts_at: HORARIO,
+      profissional: "Dra. Ana Lima",
+      timezone: FUSO,
+    },
+    error: null,
+  }));
 }
 
 const interceptar = (e: EntradaDaResposta) =>
@@ -515,7 +637,7 @@ describe("o texto do lembrete (T-E4)", () => {
         fuso: FUSO,
       }),
     ).toBe(
-      "Sobre o horário de 03/11/2026 às 09:00: para ficar com ele, responda SIM até as 10:30. Se não quiser, responda NÃO QUERO, que você continua na lista de espera.",
+      "Sobre o horário de 03/11/2026 às 09:00: para ficar com ele, responda SIM até as 10:30. Se não quiser, responda NÃO QUERO, que você continua na lista de espera. Se for outro assunto, é só escrever de novo.",
     );
     // Outro fuso, outro relogio (CLAUDE.md 3.6).
     expect(
@@ -533,6 +655,12 @@ describe("o texto do lembrete (T-E4)", () => {
     expect(LEMBRETE_DA_OFERTA).not.toMatch(/[—–]/);
     expect(LEMBRETE_DA_OFERTA).not.toMatch(/\bvagas?\b|garant|é seu|é sua/i);
     expect(CHAVE_DO_LEMBRETE).toBe("lembrete_da_oferta");
+  });
+
+  it("diz que outro assunto é só escrever de novo (a mensagem que recebeu o lembrete nunca é respondida pela IA; achado 4)", () => {
+    expect(
+      LEMBRETE_DA_OFERTA.endsWith(" Se for outro assunto, é só escrever de novo."),
+    ).toBe(true);
   });
 
   it("a oferta de pé: aberta, no prazo e sem a recusa da pessoa", () => {
@@ -557,6 +685,34 @@ describe("o texto do lembrete (T-E4)", () => {
     expect(
       ofertaDePeParaOContato({ ...aberta, declined_by: null }, CONTATO, agora),
     ).toBe(true);
+  });
+
+  it("a situação do lembrete: pelo job e pelas mensagens dele", () => {
+    expect(situacaoDoLembrete(null, [])).toBe("nenhum");
+    expect(situacaoDoLembrete({ status: "pendente" }, [])).toBe("na_fila");
+    // A que falhou e espera nova tentativa ainda nao saiu.
+    expect(
+      situacaoDoLembrete({ status: "executando" }, [
+        { delivery_status: "falhou" },
+      ]),
+    ).toBe("na_fila");
+    // 'enviando' ja pode ter chegado: conta como saida (como a da oferta).
+    expect(
+      situacaoDoLembrete({ status: "executando" }, [
+        { delivery_status: "enviando" },
+      ]),
+    ).toBe("saiu");
+    expect(
+      situacaoDoLembrete({ status: "concluido" }, [
+        { delivery_status: "lida" },
+      ]),
+    ).toBe("saiu");
+    for (const status of ["falhou", "cancelado", "concluido", null]) {
+      expect(situacaoDoLembrete({ status }, []), String(status)).toBe("morto");
+      expect(
+        situacaoDoLembrete({ status }, [{ delivery_status: "falhou" }]),
+      ).toBe("morto");
+    }
   });
 
   it("o id do job do lembrete: o mesmo para a mesma oferta e contato, um UUID", () => {
@@ -600,22 +756,29 @@ describe("o lembrete na conversa com a IA", () => {
     expect(lembrete?.payload).not.toHaveProperty("offer_id");
     // O sistema respondeu: a conversa sai do contador do Atendimento.
     expect(awaitingReply()).toBe(false);
-    // Nem aceita nem recusa.
-    expect(banco.chamadas).toEqual([]);
+    // Conferiu a autorizacao (achado 3); nem aceita nem recusa.
+    expect(banco.chamadasDe("consentimento_vigente")).toEqual([
+      { p_clinic_id: CLINICA, p_contact_id: CONTATO, p_channel: "whatsapp" },
+    ]);
+    expect(nomesDasChamadas()).toEqual(["consentimento_vigente"]);
   });
 
-  it("uma vez por oferta e contato: a mensagem seguinte vai para a IA, com uma leitura leve e nenhuma escrita", async () => {
+  it("uma vez por oferta e contato: depois que o lembrete saiu, a mensagem seguinte vai para a IA, com três leituras leves e nenhuma escrita", async () => {
     await interceptar(entrada("Que horas mesmo?"));
+    executorMandaOLembrete();
+    voltarAoContador();
     banco.operacoes.length = 0;
     expect(await interceptar(entrada("E onde fica a clínica?"))).toBe(
       "sem_intencao",
     );
     expect(ecos()).toHaveLength(1);
     expect(banco.escritas()).toEqual([]);
-    // A oferta e o lembrete pela chave: duas leituras, nenhum fato a mais.
+    expect(awaitingReply()).toBe(true);
+    // A oferta, o lembrete pela chave e as mensagens dele: nenhum fato a mais.
     expect(banco.operacoes.map((o) => o.tabela)).toEqual([
       "waitlist_offer",
       "job_queue",
+      "message",
     ]);
   });
 
@@ -719,7 +882,7 @@ describe("o lembrete na conversa com a IA", () => {
   it("o vocabulário do menu (Remarcar) com a oferta como a pergunta: o lembrete", async () => {
     expect(await interceptar(entrada("Remarcar"))).toBe("tratou_com_eco");
     expect(ecos()).toHaveLength(1);
-    expect(banco.chamadas).toEqual([]);
+    expect(nomesDasChamadas()).toEqual(["consentimento_vigente"]);
   });
 
   it("Confirmar sem citar, com o toque ANTES da oferta: não confirma o toque velho, recebe o lembrete", async () => {
@@ -733,17 +896,46 @@ describe("o lembrete na conversa com a IA", () => {
     ]);
   });
 
-  it("duas mensagens ao mesmo tempo: a chave do job barra o segundo lembrete", async () => {
+  it("duas mensagens ao mesmo tempo: a chave do job barra o segundo lembrete, e o da outra mensagem, na fila, cobre esta", async () => {
     // A outra mensagem gravou o lembrete entre a conferencia e o insert.
-    banco.aoInserir = (tabela, linha) =>
-      tabela === "job_queue" && linha.id === idDoJobDoLembrete(OFERTA, CONTATO)
-        ? { code: "23505" }
-        : null;
+    banco.aoInserir = (tabela, linha) => {
+      if (
+        tabela === "job_queue" &&
+        linha.id === idDoJobDoLembrete(OFERTA, CONTATO)
+      ) {
+        banco.linhas("job_queue").push({ ...linha, status: "pendente" });
+        return { code: "23505" };
+      }
+      return null;
+    };
+    expect(await interceptar(entrada("Que horas mesmo?"))).toBe(
+      "tratou_com_eco",
+    );
+    expect(lembretes()).toHaveLength(1);
+    expect(awaitingReply()).toBe(false);
+  });
+
+  it("a corrida em que a releitura não acha o lembrete (ou falha): nada coberto, a mensagem fica com a IA", async () => {
+    banco.aoInserir = (tabela) =>
+      tabela === "job_queue" ? { code: "23505" } : null;
     expect(await interceptar(entrada("Que horas mesmo?"))).toBe("alvo_nenhum");
+    expect(awaitingReply()).toBe(true);
+
+    montar();
+    banco.aoInserir = (tabela) => {
+      if (tabela !== "job_queue") {
+        return null;
+      }
+      banco.erros.set("job_queue:select", { code: "57014" });
+      return { code: "23505" };
+    };
+    expect(await interceptar(entrada("Que horas mesmo?"))).toBe(
+      "fatos_ilegiveis",
+    );
     expect(awaitingReply()).toBe(true);
   });
 
-  it("falha na fila ou no fuso: nenhum lembrete pela metade, a mensagem fica com a IA", async () => {
+  it("falha na fila, no fuso ou na autorização: nenhum lembrete pela metade, a mensagem fica com a IA", async () => {
     banco.erros.set("job_queue:insert", { code: "57014" });
     expect(await interceptar(entrada("Que horas mesmo?"))).toBe(
       "fatos_ilegiveis",
@@ -763,6 +955,196 @@ describe("o lembrete na conversa com a IA", () => {
       "fatos_ilegiveis",
     );
     expect(ecos()).toEqual([]);
+
+    montar();
+    banco.rpc("consentimento_vigente", () => ({
+      data: null,
+      error: { code: "57014" },
+    }));
+    expect(await interceptar(entrada("Que horas mesmo?"))).toBe(
+      "fatos_ilegiveis",
+    );
+    expect(ecos()).toEqual([]);
+    expect(awaitingReply()).toBe(true);
+
+    montar();
+    banco.erros.set("message:select", { code: "57014" });
+    expect(await interceptar(entrada("Que horas mesmo?"))).toBe(
+      "fatos_ilegiveis",
+    );
+    expect(ecos()).toEqual([]);
+  });
+});
+
+describe("o lembrete na fila cobre a mensagem seguinte (revisão da AG5, achado 1)", () => {
+  beforeEach(() => montar());
+
+  it("a primeira pede o lembrete; a segunda, com ele ainda na fila, fica coberta: sem segundo lembrete, sem turno, fora do contador", async () => {
+    expect(await interceptar(entrada("Oi, que horário é esse?"))).toBe(
+      "tratou_com_eco",
+    );
+    voltarAoContador();
+    expect(await interceptar(entrada("E onde fica a clínica?"))).toBe(
+      "tratou_com_eco",
+    );
+    expect(lembretes()).toHaveLength(1);
+    expect(ecos()).toHaveLength(1);
+    expect(awaitingReply()).toBe(false);
+    // Nem aceita nem recusa: so a autorizacao, uma vez por mensagem.
+    expect(nomesDasChamadas()).toEqual([
+      "consentimento_vigente",
+      "consentimento_vigente",
+    ]);
+  });
+
+  it("depois que o lembrete sai, o SIM é aceito (a mensagem coberta não deu turno à IA)", async () => {
+    aceiteQueDaCerto();
+    await interceptar(entrada("Oi, que horário é esse?"));
+    await interceptar(entrada("E onde fica a clínica?"));
+    executorMandaOLembrete();
+    expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
+    expect(banco.chamadasDe("aceitar_oferta_de_espera")).toHaveLength(1);
+  });
+
+  it("a mensagem do lembrete que falhou e espera nova tentativa: ainda na fila, cobre", async () => {
+    lembreteNaFila({ mensagemQueFalhou: true });
+    expect(await interceptar(entrada("E onde fica a clínica?"))).toBe(
+      "tratou_com_eco",
+    );
+    expect(lembretes()).toHaveLength(1);
+    expect(awaitingReply()).toBe(false);
+  });
+
+  it("o job em execução, sem mensagem ainda: cobre", async () => {
+    lembreteNaFila({ status: "executando" });
+    expect(await interceptar(entrada("E onde fica a clínica?"))).toBe(
+      "tratou_com_eco",
+    );
+  });
+
+  it("o vocabulário do menu com a oferta como a pergunta também fica coberto", async () => {
+    lembreteNaFila();
+    expect(await interceptar(entrada("Confirmar"))).toBe("tratou_com_eco");
+    expect(lembretes()).toHaveLength(1);
+    expect(banco.chamadasDe("confirmar_pelo_paciente")).toEqual([]);
+  });
+
+  it("a IA falou depois da oferta: a mensagem é resposta a ela, não fica coberta", async () => {
+    lembreteNaFila();
+    falaDaClinica("ia", MINUTO);
+    expect(await interceptar(entrada("E onde fica a clínica?"))).toBe(
+      "alvo_nenhum",
+    );
+    expect(awaitingReply()).toBe(true);
+  });
+
+  it("o lembrete na fila de outro número não chega a esta conversa: a mensagem fica com a IA", async () => {
+    lembreteNaFila({ numero: OUTRO_NUMERO });
+    expect(await interceptar(entrada("E onde fica a clínica?"))).toBe(
+      "alvo_nenhum",
+    );
+    expect(awaitingReply()).toBe(true);
+  });
+
+  it("a conversa saiu da IA: nada coberto", async () => {
+    lembreteNaFila();
+    mudarStatusDaConversa("em_atendimento");
+    expect(await interceptar(entrada("E onde fica a clínica?"))).toBe(
+      "alvo_nenhum",
+    );
+    expect(awaitingReply()).toBe(true);
+  });
+
+  it.each(["falhou", "cancelado", "concluido"])(
+    "o lembrete morto (%s, nada saiu): a mensagem vai para a IA, sem segundo lembrete",
+    async (status) => {
+      lembreteNaFila({ status, mensagemQueFalhou: true });
+      expect(await interceptar(entrada("E onde fica a clínica?"))).toBe(
+        "sem_intencao",
+      );
+      expect(lembretes()).toHaveLength(1);
+      expect(awaitingReply()).toBe(true);
+    },
+  );
+});
+
+describe("o lembrete que saiu é a pergunta da oferta feita de novo (revisão da AG5, achado 1)", () => {
+  beforeEach(() => {
+    montar();
+    aceiteQueDaCerto();
+  });
+
+  it("a IA falou entre a oferta e o lembrete: o SIM que o lembrete pediu é aceito", async () => {
+    // A oferta saiu ha 9 minutos; a IA respondeu outra mensagem ha 6 (um
+    // turno que ja estava em andamento); o lembrete saiu ha 3.
+    falaDaClinica("ia", 6 * MINUTO);
+    lembreteJaEnviado(3 * MINUTO);
+    expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
+    expect(banco.chamadasDe("aceitar_oferta_de_espera")).toHaveLength(1);
+  });
+
+  it("um toque saiu entre a oferta e o lembrete: o SIM aceita a oferta e nunca confirma a consulta", async () => {
+    toqueDeConfirmacao(6 * MINUTO);
+    lembreteJaEnviado(3 * MINUTO);
+    expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
+    expect(banco.chamadasDe("aceitar_oferta_de_espera")).toHaveLength(1);
+    expect(banco.chamadasDe("confirmar_pelo_paciente")).toEqual([]);
+  });
+
+  it.each([
+    ["falhou", { entrega: "falhou" }],
+    ["saiu por outro número", { numero: OUTRO_NUMERO }],
+  ])(
+    "o lembrete que %s não conta: a fala da IA continua a pergunta mais recente",
+    async (_nome, opcoes) => {
+      falaDaClinica("ia", 6 * MINUTO);
+      lembreteJaEnviado(3 * MINUTO, opcoes);
+      expect(await interceptar(entrada("SIM"))).toBe("alvo_nenhum");
+      expect(banco.chamadasDe("aceitar_oferta_de_espera")).toEqual([]);
+    },
+  );
+
+  it("o caso que continua com a IA (achado 1c): o lembrete saiu, a IA respondeu outra pergunta depois dele, e o SIM sem citar fica com a IA; citando o lembrete, aceita", async () => {
+    lembreteJaEnviado(3 * MINUTO);
+    // "E onde fica a clinica?" foi para a IA (o lembrete ja tinha saido), e
+    // a IA respondeu.
+    falaDaClinica("ia", MINUTO);
+    expect(await interceptar(entrada("SIM"))).toBe("alvo_nenhum");
+    expect(banco.chamadasDe("aceitar_oferta_de_espera")).toEqual([]);
+    expect(awaitingReply()).toBe(true);
+    // Citar o lembrete (ou a oferta) continua aceitando.
+    expect(
+      await interceptar(entrada("SIM", { quotedWaMessageId: "wa-lembrete" })),
+    ).toBe("tratou_com_eco");
+    expect(banco.chamadasDe("aceitar_oferta_de_espera")).toHaveLength(1);
+  });
+});
+
+describe("sem a autorização para receber mensagens, nenhum lembrete (revisão da AG5, achado 3)", () => {
+  beforeEach(() => {
+    montar();
+    banco.rpc("consentimento_vigente", () => ({ data: false, error: null }));
+  });
+
+  it("revogada: a mensagem fica com a IA (que passa para a equipe), sem lembrete e no contador", async () => {
+    expect(await interceptar(entrada("Que horas mesmo?"))).toBe("alvo_nenhum");
+    expect(ecos()).toEqual([]);
+    expect(awaitingReply()).toBe(true);
+  });
+
+  it("revogada com o lembrete na fila: nada coberto (o executor o descartaria)", async () => {
+    lembreteNaFila();
+    expect(await interceptar(entrada("E onde fica a clínica?"))).toBe(
+      "alvo_nenhum",
+    );
+    expect(awaitingReply()).toBe(true);
+  });
+
+  it("revogada não muda o SIM e o NÃO QUERO (a recusa e o aceite são do banco)", async () => {
+    aceiteQueDaCerto();
+    expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
+    expect(banco.chamadasDe("aceitar_oferta_de_espera")).toHaveLength(1);
+    expect(banco.chamadasDe("consentimento_vigente")).toEqual([]);
   });
 });
 
@@ -770,15 +1152,7 @@ describe("depois do lembrete, o SIM continua do interceptador", () => {
   beforeEach(() => {
     montar();
     lembreteJaEnviado(MINUTO);
-    banco.rpc("aceitar_oferta_de_espera", () => ({
-      data: {
-        ok: true,
-        starts_at: HORARIO,
-        profissional: "Dra. Ana Lima",
-        timezone: FUSO,
-      },
-      error: null,
-    }));
+    aceiteQueDaCerto();
     banco.rpc("recusar_oferta_de_espera", () => ({
       data: { ok: true },
       error: null,
@@ -817,6 +1191,107 @@ describe("depois do lembrete, o SIM continua do interceptador", () => {
   });
 });
 
+describe("a resposta à oferta sem nada a fazer sai do contador na conversa com a IA (revisão da AG5, achado 5)", () => {
+  const VENCEU = { status: "preenchida", responded_by: CONTATO };
+
+  it.each([
+    ["o vencedor agradece com ok", VENCEU, "ok"],
+    ["o vencedor repete SIM", VENCEU, "SIM"],
+    ["o vencedor manda joinha", VENCEU, "\u{1F44D}"],
+    ["o vencedor diz vou", VENCEU, "vou"],
+    [
+      "NÃO QUERO depois de outro ganhar",
+      { status: "preenchida", responded_by: OUTRO_CONTATO },
+      "Não quero",
+    ],
+    ["NÃO QUERO depois do prazo", { expires_at: atras(MINUTO) }, "Não quero"],
+    ["NÃO QUERO de novo, já recusada", { declined_by: [CONTATO] }, "Não quero"],
+  ])(
+    "%s: tratado, sem eco, e fora do contador só na conversa com a IA",
+    async (_nome, oferta, body) => {
+      montar({ oferta });
+      expect(await interceptar(entrada(body))).toBe("tratou_com_eco");
+      expect(ecos()).toEqual([]);
+      expect(awaitingReply()).toBe(false);
+
+      // Fora da conversa com a IA: a recepcao ve a mensagem, como antes.
+      montar({ oferta, status: "aguardando_humano" });
+      expect(
+        await interceptar(entrada(body, { conversaComAIa: false })),
+      ).toBe("tratou_com_eco");
+      expect(awaitingReply()).toBe(true);
+
+      // Alguem assumiu entre a ingestao e agora: a recepcao ve a mensagem.
+      montar({ oferta, status: "em_atendimento" });
+      expect(await interceptar(entrada(body))).toBe("tratou_com_eco");
+      expect(awaitingReply()).toBe(true);
+    },
+  );
+
+  it("o sim duplo (o outro SIM do mesmo contato ganhou no meio): tratado, sem eco, fora do contador", async () => {
+    montar();
+    banco.rpc("aceitar_oferta_de_espera", () => {
+      for (const o of banco.linhas("waitlist_offer")) {
+        o.status = "preenchida";
+        o.responded_by = CONTATO;
+      }
+      return { data: { ok: false, erro: "ja_tratado" }, error: null };
+    });
+    expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
+    expect(ecos()).toEqual([]);
+    expect(awaitingReply()).toBe(false);
+  });
+
+  it("o segundo a responder recebe a recusa educada e sai do contador, como antes", async () => {
+    montar({ oferta: { status: "preenchida", responded_by: OUTRO_CONTATO } });
+    expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
+    expect((ecos()[0]?.payload as Linha).body).toBe(RESPOSTA_OFERTA_PERDIDA);
+    expect(awaitingReply()).toBe(false);
+  });
+
+  it("o VENCEDOR dizendo NÃO QUERO desiste da consulta que tem: fica com quem atende (a IA ou a equipe), no contador", async () => {
+    for (const conversaComAIa of [true, false]) {
+      montar({ oferta: VENCEU });
+      expect(
+        await interceptar(entrada("Não quero", { conversaComAIa })),
+      ).toBe("reconheceu_sem_efeito");
+      expect(ecos()).toEqual([]);
+      expect(awaitingReply()).toBe(true);
+      expect(nomesDasChamadas()).toEqual([]);
+    }
+  });
+
+  it("a corrida do NÃO QUERO logo depois do próprio SIM (a recusa volta ja_tratado e ele ganhou): fica com quem atende, no contador", async () => {
+    montar();
+    banco.rpc("recusar_oferta_de_espera", () => {
+      for (const o of banco.linhas("waitlist_offer")) {
+        o.status = "preenchida";
+        o.responded_by = CONTATO;
+      }
+      return { data: { ok: false, erro: "ja_tratado" }, error: null };
+    });
+    expect(await interceptar(entrada("Não quero"))).toBe(
+      "reconheceu_sem_efeito",
+    );
+    expect(ecos()).toEqual([]);
+    expect(awaitingReply()).toBe(true);
+  });
+
+  it("a recusa que volta ja_tratado porque OUTRO ganhou: sem eco e fora do contador, como antes", async () => {
+    montar();
+    banco.rpc("recusar_oferta_de_espera", () => {
+      for (const o of banco.linhas("waitlist_offer")) {
+        o.status = "preenchida";
+        o.responded_by = OUTRO_CONTATO;
+      }
+      return { data: { ok: false, erro: "ja_tratado" }, error: null };
+    });
+    expect(await interceptar(entrada("Não quero"))).toBe("tratou_com_eco");
+    expect(ecos()).toEqual([]);
+    expect(awaitingReply()).toBe(false);
+  });
+});
+
 describe("os botões de hoje não mudam (Confirmar, Cancelar, Remarcar)", () => {
   it.each([
     ["Confirmar", "confirmar_pelo_paciente"],
@@ -844,11 +1319,7 @@ describe("os botões de hoje não mudam (Confirmar, Cancelar, Remarcar)", () => 
           },
         ]);
         expect(ecos()).toHaveLength(1);
-        expect(
-          ecos().some(
-            (j) => (j.payload as Linha)[CHAVE_DO_LEMBRETE] !== undefined,
-          ),
-        ).toBe(false);
+        expect(lembretes()).toEqual([]);
       }
     },
   );
@@ -865,9 +1336,7 @@ describe("os botões de hoje não mudam (Confirmar, Cancelar, Remarcar)", () => 
         `^${RESPOSTA_CONFIRMADA.split("{{data}}")[0] ?? ""}\\d{2}/\\d{2} às \\d{2}:\\d{2}, obrigado!`,
       ),
     );
-    expect(
-      ecos().filter((j) => (j.payload as Linha)[CHAVE_DO_LEMBRETE]),
-    ).toEqual([]);
+    expect(lembretes()).toEqual([]);
   });
 });
 
@@ -896,12 +1365,50 @@ vi.mock("@/lib/integrations/whatsapp/trava-celular", () => ({
 vi.mock("@/lib/integrations/whatsapp/termo-chave", () => ({
   tentarMoverPorTermo: async () => null,
 }));
+// A espera entre as tentativas da marcacao (achado 6), sem relogio: o teste
+// confere QUANTO a rota esperaria.
+vi.mock("@/lib/utils/esperar", () => ({
+  esperar: vi.fn(async () => undefined),
+}));
 
 const { POST } = await import("@/app/api/webhooks/whatsapp/route");
 
 const SEGREDO = "segredo-do-numero";
 const TELEFONE = "+5584999990001";
 let logs: string[];
+
+/**
+ * O contrato do banco (frente A, contrato 9), simplificado: so na conversa
+ * com a IA, um turno sintetico encerrado que leu a mensagem; ja lida, nada
+ * novo.
+ */
+function marcarComoOBanco(args: Record<string, unknown>): Resposta {
+  const conversa = banco
+    .linhas("conversation")
+    .find((c) => c.id === args.p_conversation_id);
+  if (conversa?.status !== "ia_atendendo") {
+    return { data: { ok: false, motivo: "fora_da_ia" }, error: null };
+  }
+  const jaLida = banco
+    .linhas("ai_turno")
+    .some((t) =>
+      ((t.mensagens_lidas as string[] | undefined) ?? []).includes(
+        args.p_message_id as string,
+      ),
+    );
+  if (jaLida) {
+    return { data: { ok: true, marcada: false }, error: null };
+  }
+  banco.linhas("ai_turno").push({
+    job_id: randomUUID(),
+    clinic_id: args.p_clinic_id,
+    conversation_id: args.p_conversation_id,
+    estado: "enviado",
+    saida: "nenhuma",
+    mensagens_lidas: [args.p_message_id],
+  });
+  return { data: { ok: true, marcada: true }, error: null };
+}
 
 function prepararRota(iaAtendendo = true): void {
   estado.banco = banco;
@@ -943,25 +1450,7 @@ function prepararRota(iaAtendendo = true): void {
     data: { codigo: "enfileirado", job_id: randomUUID() },
     error: null,
   }));
-  // O contrato do banco (frente A, 3.3 d), simplificado: so na conversa com
-  // a IA, um turno sintetico encerrado que leu a mensagem.
-  banco.rpc("marcar_mensagem_tratada_pelo_sistema", (args) => {
-    const conversa = banco
-      .linhas("conversation")
-      .find((c) => c.id === args.p_conversation_id);
-    if (conversa?.status !== "ia_atendendo") {
-      return { data: { ok: false, motivo: "fora_da_ia" }, error: null };
-    }
-    banco.linhas("ai_turno").push({
-      job_id: randomUUID(),
-      clinic_id: args.p_clinic_id,
-      conversation_id: args.p_conversation_id,
-      estado: "enviado",
-      saida: "nenhuma",
-      mensagens_lidas: [args.p_message_id],
-    });
-    return { data: { ok: true, marcada: true }, error: null };
-  });
+  banco.rpc("marcar_mensagem_tratada_pelo_sistema", marcarComoOBanco);
 }
 
 function pedido(body: string, extra: Record<string, unknown> = {}) {
@@ -1008,30 +1497,57 @@ function pendentesParaAIa(): string[] {
   ).pendentes;
 }
 
+type LinhaDeLog = Record<string, unknown> & { nivel?: string; evento?: string };
+
+/** As linhas de log capturadas, lidas como o coletor as le (JSON por linha). */
+function linhasDeLog(evento?: string): LinhaDeLog[] {
+  return logs
+    .join("")
+    .split("\n")
+    .flatMap((linha) => {
+      try {
+        const lida = JSON.parse(linha) as LinhaDeLog;
+        return lida && typeof lida === "object" ? [lida] : [];
+      } catch {
+        return [];
+      }
+    })
+    .filter((l) => evento === undefined || l.evento === evento);
+}
+
+function capturarLogs(): void {
+  logs = [];
+  const capturar = (linha: string | Uint8Array): boolean => {
+    logs.push(String(linha));
+    return true;
+  };
+  vi.spyOn(process.stdout, "write").mockImplementation(capturar);
+  vi.spyOn(process.stderr, "write").mockImplementation(capturar);
+  vi.mocked(esperar).mockClear();
+}
+
+function semDadoDoPacienteNoLog(): void {
+  const tudo = logs.join("");
+  // Regra 3.1: o log so leva ids e codigos.
+  for (const proibido of [
+    TELEFONE,
+    "Que horas",
+    "Confirmar",
+    "Remarcar",
+    "Bom dia",
+    "onde fica",
+    "corpo do paciente",
+  ]) {
+    expect(tudo).not.toContain(proibido);
+  }
+}
+
 describe("a rota: a mensagem tratada pelo sistema", () => {
-  beforeEach(() => {
-    logs = [];
-    const capturar = (linha: string | Uint8Array): boolean => {
-      logs.push(String(linha));
-      return true;
-    };
-    vi.spyOn(process.stdout, "write").mockImplementation(capturar);
-    vi.spyOn(process.stderr, "write").mockImplementation(capturar);
-  });
+  beforeEach(capturarLogs);
 
   afterEach(() => {
     vi.restoreAllMocks();
-    const tudo = logs.join("");
-    // Regra 3.1: o log so leva ids e codigos.
-    for (const proibido of [
-      TELEFONE,
-      "Que horas",
-      "Confirmar",
-      "Bom dia",
-      "corpo do paciente",
-    ]) {
-      expect(tudo).not.toContain(proibido);
-    }
+    semDadoDoPacienteNoLog();
   });
 
   it("o lembrete na conversa com a IA: sem turno, e a mensagem sai das pendentes", async () => {
@@ -1053,6 +1569,53 @@ describe("a rota: a mensagem tratada pelo sistema", () => {
     ]);
     expect(pendentesParaAIa()).toEqual([]);
     expect(logs.join("")).toContain("webhook_ia_tratada_pelo_sistema");
+  });
+
+  it("a mensagem coberta pelo lembrete na fila (achado 1b): sem turno, sem segundo lembrete, fora das pendentes", async () => {
+    montar();
+    lembreteNaFila();
+    prepararRota();
+    await POST(pedido("E onde fica a clínica?"));
+    expect(lembretes()).toHaveLength(1);
+    expect(banco.chamadasDe("enfileirar_resposta_da_ia")).toEqual([]);
+    expect(
+      banco.chamadasDe("marcar_mensagem_tratada_pelo_sistema"),
+    ).toHaveLength(1);
+    expect(pendentesParaAIa()).toEqual([]);
+    expect(awaitingReply()).toBe(false);
+  });
+
+  it("sem a autorização (achado 3): o turno da IA de sempre, sem lembrete e nada marcado", async () => {
+    montar();
+    banco.rpc("consentimento_vigente", () => ({ data: false, error: null }));
+    prepararRota();
+    await POST(pedido("Que horas mesmo?"));
+    expect(ecos()).toEqual([]);
+    expect(banco.chamadasDe("enfileirar_resposta_da_ia")).toHaveLength(1);
+    expect(banco.chamadasDe("marcar_mensagem_tratada_pelo_sistema")).toEqual(
+      [],
+    );
+    expect(pendentesParaAIa()).toEqual([MENSAGEM_NOVA]);
+  });
+
+  it("o vencedor agradece (achado 5): marcada, sem turno e fora do contador; o NÃO QUERO dele vai para a IA", async () => {
+    montar({ oferta: { status: "preenchida", responded_by: CONTATO } });
+    prepararRota();
+    await POST(pedido("ok"));
+    expect(banco.chamadasDe("enfileirar_resposta_da_ia")).toEqual([]);
+    expect(
+      banco.chamadasDe("marcar_mensagem_tratada_pelo_sistema"),
+    ).toHaveLength(1);
+    expect(awaitingReply()).toBe(false);
+
+    montar({ oferta: { status: "preenchida", responded_by: CONTATO } });
+    prepararRota();
+    await POST(pedido("Não quero"));
+    expect(banco.chamadasDe("enfileirar_resposta_da_ia")).toHaveLength(1);
+    expect(banco.chamadasDe("marcar_mensagem_tratada_pelo_sistema")).toEqual(
+      [],
+    );
+    expect(pendentesParaAIa()).toEqual([MENSAGEM_NOVA]);
   });
 
   it("o toque (Confirmar) na conversa com a IA: confirma, sem turno, e não volta pendente para a IA", async () => {
@@ -1106,7 +1669,7 @@ describe("a rota: a mensagem tratada pelo sistema", () => {
     prepararRota(false);
     await POST(pedido("Que horas mesmo?"));
     expect(ecos()).toEqual([]);
-    expect(banco.chamadas.map((c) => c.nome)).toEqual([]);
+    expect(nomesDasChamadas()).toEqual([]);
   });
 
   it("reentrega: nem interceptador nem marcação", async () => {
@@ -1165,4 +1728,189 @@ describe("a rota: a mensagem tratada pelo sistema", () => {
       expect(banco.chamadasDe("enfileirar_resposta_da_ia")).toEqual([]);
     },
   );
+});
+
+describe("a rota: a marcação tenta de novo, com prazo (revisão da AG5, achados 6 e 7)", () => {
+  beforeEach(() => {
+    capturarLogs();
+    montar();
+    prepararRota();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    semDadoDoPacienteNoLog();
+  });
+
+  /** A marcacao que falha nas primeiras `n` chamadas e depois e o banco. */
+  function falhaAntes(n: number, falha: Manipulador): void {
+    let feitas = 0;
+    banco.rpc("marcar_mensagem_tratada_pelo_sistema", (args) => {
+      feitas += 1;
+      return feitas <= n ? falha(args) : marcarComoOBanco(args);
+    });
+  }
+
+  it.each([
+    ["conexão (08006)", () => ({ data: null, error: { code: "08006" } })],
+    ["prazo do banco (57014)", () => ({ data: null, error: { code: "57014" } })],
+    [
+      "conexão do PostgREST (PGRST000)",
+      () => ({ data: null, error: { code: "PGRST000" } }),
+    ],
+    ["sem código (rede)", () => ({ data: null, error: { message: "fetch" } })],
+    [
+      "exceção",
+      () => {
+        throw new Error("rede");
+      },
+    ],
+  ])(
+    "falha transitória (%s) e depois certo: duas chamadas, a mensagem marcada, o log de sucesso",
+    async (_nome, falha) => {
+      falhaAntes(1, falha as Manipulador);
+      const resposta = await POST(pedido("Que horas mesmo?"));
+      expect(resposta.status).toBe(200);
+      expect(
+        banco.chamadasDe("marcar_mensagem_tratada_pelo_sistema"),
+      ).toHaveLength(2);
+      expect(vi.mocked(esperar).mock.calls).toEqual([[200]]);
+      expect(pendentesParaAIa()).toEqual([]);
+      expect(linhasDeLog("webhook_ia_tratada_pelo_sistema")).toEqual([
+        expect.objectContaining({
+          nivel: "info",
+          status: "marcada",
+          attempt: 2,
+          message_id: MENSAGEM_NOVA,
+        }),
+      ]);
+      expect(linhasDeLog("webhook_ia_tratada_nao_marcada")).toEqual([]);
+    },
+  );
+
+  it("sempre falhando: três chamadas, esperas de 200 e 500 ms, e o aviso com o código e a tentativa", async () => {
+    falhaAntes(99, () => ({ data: null, error: { code: "57014" } }));
+    const resposta = await POST(pedido("Que horas mesmo?"));
+    expect(resposta.status).toBe(200);
+    expect(
+      banco.chamadasDe("marcar_mensagem_tratada_pelo_sistema"),
+    ).toHaveLength(3);
+    expect(vi.mocked(esperar).mock.calls).toEqual([[200], [500]]);
+    expect(linhasDeLog("webhook_ia_tratada_nao_marcada")).toEqual([
+      expect.objectContaining({
+        nivel: "warn",
+        error_code: "57014",
+        attempt: 3,
+      }),
+    ]);
+    // A mensagem volta pendente para a IA (o que a nova tentativa evita).
+    expect(pendentesParaAIa()).toEqual([MENSAGEM_NOVA]);
+    expect(banco.chamadasDe("enfileirar_resposta_da_ia")).toEqual([]);
+  });
+
+  it.each(["22004", "22023", "42883", "PGRST202", "23514"])(
+    "erro que outra tentativa não muda (%s): uma chamada só, o aviso",
+    async (codigo) => {
+      falhaAntes(99, () => ({ data: null, error: { code: codigo } }));
+      await POST(pedido("Que horas mesmo?"));
+      expect(
+        banco.chamadasDe("marcar_mensagem_tratada_pelo_sistema"),
+      ).toHaveLength(1);
+      expect(esperar).not.toHaveBeenCalled();
+      expect(linhasDeLog("webhook_ia_tratada_nao_marcada")).toEqual([
+        expect.objectContaining({
+          nivel: "warn",
+          error_code: codigo,
+          attempt: 1,
+        }),
+      ]);
+    },
+  );
+
+  it("resposta fora do contrato: uma chamada só, o aviso com o status", async () => {
+    falhaAntes(99, () => ({ data: { ok: false }, error: null }));
+    await POST(pedido("Que horas mesmo?"));
+    expect(
+      banco.chamadasDe("marcar_mensagem_tratada_pelo_sistema"),
+    ).toHaveLength(1);
+    expect(linhasDeLog("webhook_ia_tratada_nao_marcada")).toEqual([
+      expect.objectContaining({ nivel: "warn", status: "desconhecido" }),
+    ]);
+  });
+
+  it("a chamada presa: cada tentativa espera no máximo 1,5 s, e o 200 sai em até 3 s", async () => {
+    let chegou: () => void = () => undefined;
+    const primeiraChamada = new Promise<void>((resolve) => {
+      chegou = resolve;
+    });
+    banco.rpc("marcar_mensagem_tratada_pelo_sistema", () => {
+      chegou();
+      return new Promise<Resposta>(() => undefined);
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    let saiu = false;
+    const promessa = POST(pedido("Que horas mesmo?")).then((r) => {
+      saiu = true;
+      return r;
+    });
+    // Em tempo real, ate a rota chegar a marcacao, com o relogio falso
+    // parado: o prazo da primeira tentativa comeca no instante 0.
+    await primeiraChamada;
+    await vi.advanceTimersByTimeAsync(1_499);
+    expect(
+      banco.chamadasDe("marcar_mensagem_tratada_pelo_sistema"),
+    ).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(
+      banco.chamadasDe("marcar_mensagem_tratada_pelo_sistema"),
+    ).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1_499);
+    expect(saiu).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(saiu).toBe(true);
+    const resposta = await promessa;
+    expect(resposta.status).toBe(200);
+    // A terceira nao cabe no prazo: duas chamadas, o aviso do prazo.
+    expect(
+      banco.chamadasDe("marcar_mensagem_tratada_pelo_sistema"),
+    ).toHaveLength(2);
+    expect(linhasDeLog("webhook_ia_tratada_nao_marcada")).toEqual([
+      expect.objectContaining({
+        nivel: "warn",
+        error_code: "prazo",
+        attempt: 2,
+      }),
+    ]);
+  });
+
+  it("o Remarcar na conversa com a IA tira a conversa da IA: o fora_da_ia é info, nunca aviso, e não tenta de novo (achado 7)", async () => {
+    banco.tabelas.set("waitlist_offer", []);
+    const inicio = toqueDeConfirmacao(5 * MINUTO);
+    banco.rpc("pedir_remarcacao_pelo_paciente", () => {
+      // A RPC deixa a conversa esperando a recepcao.
+      mudarStatusDaConversa("aguardando_humano");
+      return {
+        data: { ok: true, starts_at: inicio, timezone: FUSO },
+        error: null,
+      };
+    });
+    const resposta = await POST(
+      pedido("Remarcar", { quotedWaMessageId: "wa-toque" }),
+    );
+    expect(resposta.status).toBe(200);
+    expect(banco.chamadasDe("pedir_remarcacao_pelo_paciente")).toHaveLength(1);
+    expect(
+      banco.chamadasDe("marcar_mensagem_tratada_pelo_sistema"),
+    ).toHaveLength(1);
+    expect(esperar).not.toHaveBeenCalled();
+    expect(linhasDeLog("webhook_ia_tratada_nao_marcada")).toEqual([
+      expect.objectContaining({
+        nivel: "info",
+        status: "fora_da_ia",
+        message_id: MENSAGEM_NOVA,
+      }),
+    ]);
+    expect(linhasDeLog().filter((l) => l.nivel === "warn")).toEqual([]);
+  });
 });

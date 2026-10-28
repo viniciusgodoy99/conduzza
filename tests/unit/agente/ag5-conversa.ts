@@ -157,8 +157,8 @@ export class CenarioDaAg5 extends CenarioDaAg4 {
 
 /** A T-E1 do exemplo do desenho (Limpeza de pele, Dra. Ana, a noite). */
 export const T_E1_ANA_NOITE_SEG_QUA =
-  "Confirma a sua entrada na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à noite, às segundas e às quartas? Se abrir um horário assim, você recebe uma mensagem por aqui para ficar com ele.";
+  "Confirma a sua entrada na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à noite, às segundas e às quartas? Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp para ficar com ele.";
 
 /** A T-E2 do mesmo pedido. */
 export const T_E2_ANA_NOITE_SEG_QUA =
-  "Pronto, você entrou na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à noite, às segundas e às quartas. Se abrir um horário assim, você recebe uma mensagem por aqui.";
+  "Pronto, você entrou na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à noite, às segundas e às quartas. Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp.";

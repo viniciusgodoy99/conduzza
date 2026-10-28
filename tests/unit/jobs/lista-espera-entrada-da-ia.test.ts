@@ -1,9 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
 
+import { semEntradasDaIaComConsulta } from "@/lib/domain/lista-espera";
 import {
+  APROVACAO_QUE_CONTA,
+  consultasFuturasDaFila,
   entradasDaFila,
   executarOfertaDeEspera,
+  SITUACOES_QUE_NAO_CONTAM,
   vinculosDaVaga,
 } from "@/lib/jobs/lista-espera";
 import type { Job } from "@/lib/jobs/worker";
@@ -151,17 +155,32 @@ describe("entradasDaFila", () => {
 // O job inteiro, com o cliente falso
 // ---------------------------------------------------------------------------
 
-type Chamada = { tabela: string; select: string };
+type Chamada = { tabela: string; select: string; filtros: unknown[][] };
+
+/** A leitura das consultas futuras do job (revisao de 28/10/2026, R1). */
+const SELECT_DAS_CONSULTAS = "contact_id, service_link:service_link_id ( procedure_id )";
 
 function clienteFalso(opcoes: {
   fila: Record<string, unknown>[];
   vinculos: Record<string, unknown>[];
+  /** As consultas futuras que a leitura do job devolve. */
+  consultas?: Record<string, unknown>[];
+  /** A leitura das consultas futuras falha. */
+  consultasFalham?: boolean;
 }) {
   const chamadas: Chamada[] = [];
   const rpcs: { nome: string; args: Record<string, unknown> }[] = [];
-  const responder = (tabela: string, select: string): { data: unknown; error: null } => {
+  const responder = (
+    tabela: string,
+    select: string,
+  ): { data: unknown; error: { code: string } | null } => {
     switch (tabela) {
       case "appointment":
+        if (select === SELECT_DAS_CONSULTAS) {
+          return opcoes.consultasFalham
+            ? { data: null, error: { code: "XX000" } }
+            : { data: opcoes.consultas ?? [], error: null };
+        }
         if (select.startsWith("id, professional_id")) {
           return {
             data: {
@@ -206,20 +225,23 @@ function clienteFalso(opcoes: {
   };
   const cliente = {
     from(tabela: string) {
-      let select = "";
+      const chamada: Chamada = { tabela, select: "", filtros: [] };
       const consulta: Record<string, unknown> = {};
       for (const metodo of ["eq", "neq", "is", "not", "in", "gt", "gte", "lt", "lte", "or", "order", "limit"]) {
-        consulta[metodo] = () => consulta;
+        consulta[metodo] = (...args: unknown[]) => {
+          chamada.filtros.push([metodo, ...args]);
+          return consulta;
+        };
       }
       consulta.select = (colunas: string) => {
-        select = colunas;
-        chamadas.push({ tabela, select });
+        chamada.select = colunas;
+        chamadas.push(chamada);
         return consulta;
       };
-      consulta.maybeSingle = async () => responder(tabela, select);
-      consulta.single = async () => responder(tabela, select);
+      consulta.maybeSingle = async () => responder(tabela, chamada.select);
+      consulta.single = async () => responder(tabela, chamada.select);
       consulta.then = (resolver: (valor: unknown) => unknown, rejeitar?: (motivo: unknown) => unknown) =>
-        Promise.resolve(responder(tabela, select)).then(resolver, rejeitar);
+        Promise.resolve(responder(tabela, chamada.select)).then(resolver, rejeitar);
       return consulta;
     },
     async rpc(nome: string, args: Record<string, unknown>) {
@@ -356,5 +378,147 @@ describe("executarOfertaDeEspera com a entrada da IA", () => {
     });
     expect(await executarOfertaDeEspera(b.admin, JOB)).toEqual({ ok: true });
     expect(b.rpcs.some((r) => r.nome === "criar_oferta_de_espera")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A segunda consulta (revisao de 28/10/2026, R1)
+// ---------------------------------------------------------------------------
+
+function idsDaOnda(b: ReturnType<typeof clienteFalso>): string[] | null {
+  const criar = b.rpcs.find((r) => r.nome === "criar_oferta_de_espera");
+  if (!criar) {
+    return null;
+  }
+  return (criar.args.p_destinatarios as { waitlist_id: string }[]).map((d) => d.waitlist_id);
+}
+
+describe("semEntradasDaIaComConsulta e consultasFuturasDaFila (puras)", () => {
+  it("tira só a da IA do mesmo contato e do mesmo procedimento", () => {
+    const entradas = entradasDaFila([
+      linhaDaFila({ id: "ia-mesmo", contact_id: "k1", origem: "ia", particular: true }),
+      linhaDaFila({ id: "ia-outro-proc", contact_id: "k2", procedure_id: "proc-2", origem: "ia", particular: true }),
+      linhaDaFila({ id: "ia-sem-consulta", contact_id: "k3", origem: "ia", particular: true }),
+      linhaDaFila({ id: "equipe-mesmo", contact_id: "k4" }),
+      linhaDaFila({ id: "equipe-qualquer", contact_id: "k5", procedure_id: null }),
+    ]);
+    const consultas = [
+      { contactId: "k1", procedureId: PROCEDIMENTO },
+      { contactId: "k2", procedureId: PROCEDIMENTO },
+      { contactId: "k4", procedureId: PROCEDIMENTO },
+      { contactId: "k5", procedureId: PROCEDIMENTO },
+    ];
+    expect(semEntradasDaIaComConsulta(entradas, consultas).map((e) => e.id)).toEqual([
+      "ia-outro-proc",
+      "ia-sem-consulta",
+      "equipe-mesmo",
+      "equipe-qualquer",
+    ]);
+    expect(semEntradasDaIaComConsulta(entradas, []).map((e) => e.id)).toHaveLength(5);
+  });
+
+  it("lê o vínculo como objeto ou lista; sem o contato ou o procedimento, a linha não conta", () => {
+    expect(
+      consultasFuturasDaFila([
+        { contact_id: "k1", service_link: { procedure_id: "p1" } },
+        { contact_id: "k2", service_link: [{ procedure_id: "p2" }] },
+        { contact_id: "k3", service_link: null },
+        { contact_id: "k4", service_link: [] },
+        { contact_id: null, service_link: { procedure_id: "p5" } },
+        { service_link: { procedure_id: "p6" } },
+      ]),
+    ).toEqual([
+      { contactId: "k1", procedureId: "p1" },
+      { contactId: "k2", procedureId: "p2" },
+    ]);
+  });
+});
+
+describe("executarOfertaDeEspera: a segunda consulta (revisão de 28/10/2026, R1)", () => {
+  it("a da IA com consulta futura do mesmo procedimento fica fora; a da equipe na mesma situação entra (a paridade)", async () => {
+    const daIa = linhaDaFila({ origem: "ia", particular: true, created_at: "2026-10-27T11:00:00Z" });
+    const daEquipe = linhaDaFila({});
+    const b = clienteFalso({
+      fila: [daIa, daEquipe],
+      vinculos: [linhaDoVinculo({})],
+      consultas: [
+        { contact_id: daIa.contact_id, service_link: { procedure_id: PROCEDIMENTO } },
+        { contact_id: daEquipe.contact_id, service_link: { procedure_id: PROCEDIMENTO } },
+      ],
+    });
+    expect(await executarOfertaDeEspera(b.admin, JOB)).toEqual({ ok: true });
+    expect(idsDaOnda(b)).toEqual([daEquipe.id]);
+  });
+
+  it("a consulta de outro procedimento não tira a da IA", async () => {
+    const daIa = linhaDaFila({ origem: "ia", particular: true });
+    const b = clienteFalso({
+      fila: [daIa],
+      vinculos: [linhaDoVinculo({})],
+      consultas: [{ contact_id: daIa.contact_id, service_link: { procedure_id: "proc-2" } }],
+    });
+    expect(await executarOfertaDeEspera(b.admin, JOB)).toEqual({ ok: true });
+    expect(idsDaOnda(b)).toEqual([daIa.id]);
+  });
+
+  it("só a da IA com consulta: nenhuma onda, e a vaga não espera por ela", async () => {
+    const daIa = linhaDaFila({ origem: "ia", particular: true });
+    const b = clienteFalso({
+      fila: [daIa],
+      vinculos: [linhaDoVinculo({})],
+      consultas: [{ contact_id: daIa.contact_id, service_link: [{ procedure_id: PROCEDIMENTO }] }],
+    });
+    expect(await executarOfertaDeEspera(b.admin, JOB)).toEqual({ ok: true });
+    expect(idsDaOnda(b)).toBeNull();
+  });
+
+  it("lê pelo predicado de D-41, só os contatos das entradas da IA", async () => {
+    const daIa = linhaDaFila({ origem: "ia", particular: true });
+    const daIa2 = linhaDaFila({ origem: "ia", particular: false, insurance_id: "unimed" });
+    const daEquipe = linhaDaFila({});
+    const antes = Date.now();
+    const b = clienteFalso({ fila: [daIa, daIa2, daEquipe], vinculos: [linhaDoVinculo({})] });
+    await executarOfertaDeEspera(b.admin, JOB);
+    const leituras = b.chamadas.filter((c) => c.tabela === "appointment" && c.select === SELECT_DAS_CONSULTAS);
+    expect(leituras).toHaveLength(1);
+    const filtros = leituras[0]!.filtros;
+    expect(filtros).toContainEqual(["eq", "clinic_id", CLINICA]);
+    expect(filtros).toContainEqual(["in", "contact_id", [daIa.contact_id, daIa2.contact_id]]);
+    expect(filtros).toContainEqual(["not", "status", "in", "(cancelado_paciente,cancelado_clinica,faltou,compareceu)"]);
+    expect(SITUACOES_QUE_NAO_CONTAM).toBe("(cancelado_paciente,cancelado_clinica,faltou,compareceu)");
+    expect(filtros).toContainEqual(["or", "approval_status.is.null,approval_status.neq.recusado"]);
+    expect(APROVACAO_QUE_CONTA).toBe("approval_status.is.null,approval_status.neq.recusado");
+    const futuro = filtros.find((f) => f[0] === "gt" && f[1] === "starts_at");
+    expect(futuro).toBeDefined();
+    const instante = Date.parse(String(futuro![2]));
+    expect(instante).toBeGreaterThanOrEqual(antes);
+    expect(instante).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("sem entrada da IA na fila, nenhuma leitura de consulta (a fila de hoje, como antes)", async () => {
+    const b = clienteFalso({ fila: [linhaDaFila({}), linhaDaFila({})], vinculos: [linhaDoVinculo({})] });
+    expect(await executarOfertaDeEspera(b.admin, JOB)).toEqual({ ok: true });
+    expect(b.chamadas.some((c) => c.select === SELECT_DAS_CONSULTAS)).toBe(false);
+    expect(idsDaOnda(b)).toHaveLength(2);
+  });
+
+  it("a leitura falhou: leitura_falhou e nenhuma onda (nunca oferta sem a conferência)", async () => {
+    const b = clienteFalso({
+      fila: [linhaDaFila({ origem: "ia", particular: true }), linhaDaFila({})],
+      vinculos: [linhaDoVinculo({})],
+      consultasFalham: true,
+    });
+    expect(await executarOfertaDeEspera(b.admin, JOB)).toEqual({ ok: false, erro: "leitura_falhou" });
+    expect(idsDaOnda(b)).toBeNull();
+  });
+
+  it("muitos contatos da IA: a leitura em lotes de 100 (a lista vai na URL)", async () => {
+    const fila = Array.from({ length: 250 }, () => linhaDaFila({ origem: "ia", particular: true }));
+    const b = clienteFalso({ fila, vinculos: [linhaDoVinculo({})] });
+    await executarOfertaDeEspera(b.admin, JOB);
+    const lotes = b.chamadas
+      .filter((c) => c.select === SELECT_DAS_CONSULTAS)
+      .map((c) => (c.filtros.find((f) => f[0] === "in")?.[2] as string[]).length);
+    expect(lotes).toEqual([100, 100, 50]);
   });
 });

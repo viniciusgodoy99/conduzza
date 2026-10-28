@@ -281,12 +281,12 @@ describe("as peças do motor da lista de espera", () => {
       "Lista de espera (só com as ferramentas da lista de espera; o bloco <atendimento> diz se estão ligadas):",
     );
     expect(TEXTO_FIXO_DO_AGENTE).toContain('Use "horário", nunca "vaga".');
+    // Revisao da AG5 (achado 2): tambem a prioridade e a acao futura, as
+    // formas novas da vaga_prometida; (achado 5) "pelo WhatsApp".
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
-      "Nunca prometa que um horário vai abrir, quando abre, quanto tempo a lista demora, a posição da pessoa na lista nem que o horário vai ser dela",
+      "Nunca prometa que um horário vai abrir, quando abre, quanto tempo a lista demora, a posição ou a prioridade da pessoa na lista, que o horário vai ser dela nem que você vai reservar ou marcar quando abrir: diga só que, se abrir um horário assim, ela recebe uma mensagem pelo WhatsApp.",
     );
-    expect(TEXTO_FIXO_DO_AGENTE).toContain(
-      "não aceite, não recuse e não fale desse horário",
-    );
+    expect(TEXTO_FIXO_DO_AGENTE).not.toContain("mensagem por aqui");
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
       "nem que colocou a pessoa na lista de espera ou que ela está na lista sem a ferramenta ou o bloco <atendimento_em_andamento> dizer",
     );
@@ -308,6 +308,39 @@ describe("as peças do motor da lista de espera", () => {
     expect(nomes).toHaveLength(19);
     expect(nomes).toContain("pedir_lista_de_espera");
     expect(nomes).toContain("entrar_na_lista_de_espera");
+  });
+
+  it("revisão da AG5 (achado 4): a mensagem automática da oferta vale em toda conversa, fora da seção da habilidade", async () => {
+    const { TEXTO_FIXO_DO_AGENTE, montarInstrucoes } = await import(
+      "@/lib/agente/prompt"
+    );
+    const { CATALOGO_DA_AG5 } = await import("./ag5-conversa");
+    const regra =
+      'Mensagem automática da lista de espera (vale em toda conversa, com ou sem as ferramentas da lista de espera): a mensagem automática da clínica com um horário da lista de espera (para ficar com ele, responder SIM) é do sistema. Não aceite, não recuse e não fale desse horário; se a pessoa falar dele, passe para a equipe com o motivo "pedido_de_agenda".';
+    // Um paragrafo proprio, uma vez so.
+    expect(TEXTO_FIXO_DO_AGENTE.split(regra)).toHaveLength(2);
+    expect(TEXTO_FIXO_DO_AGENTE).toContain(`\n\n${regra}\n\n`);
+    // A secao da habilidade (do titulo ate a linha em branco) nao a tem mais.
+    const inicio = TEXTO_FIXO_DO_AGENTE.indexOf(
+      "Lista de espera (só com as ferramentas da lista de espera;",
+    );
+    expect(inicio).toBeGreaterThan(-1);
+    const fim = TEXTO_FIXO_DO_AGENTE.indexOf("\n\n", inicio);
+    const secao = TEXTO_FIXO_DO_AGENTE.slice(inicio, fim);
+    expect(secao).not.toMatch(/mensagem automática|não fale desse horário/i);
+    expect(secao).toContain("Encaixe nunca");
+    // E vai ao modelo com a lista de espera desligada (e com a agenda
+    // desligada): a oferta da reoferta chega a qualquer conversa.
+    const desligada = configDaAg5({
+      habilidades: { ...configDaAg5().habilidades, lista_de_espera: false },
+    });
+    const instrucoes = montarInstrucoes({
+      config: desligada,
+      catalogo: CATALOGO_DA_AG5,
+      agoraTexto: "terça-feira, 20/10/2026, 09:00",
+    });
+    expect(instrucoes).toContain(regra);
+    expect(instrucoes).toContain(FRASES_DO_ATENDIMENTO.listaDeEsperaDesligada);
   });
 
   it("as definições das ferramentas: strict, os enums e sem argumento na entrada", async () => {

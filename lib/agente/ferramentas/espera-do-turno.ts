@@ -47,8 +47,10 @@ import type {
 } from "@/lib/domain/conformidade/fatos-do-turno";
 import { interpretarRespostaAListaDeEspera } from "@/lib/domain/resposta-paciente";
 import {
+  COM_QUALQUER_PROFISSIONAL,
   PERGUNTA_DA_LISTA_DE_ESPERA,
   pedidoDaEsperaEmTexto,
+  RESPOSTA_DA_LISTA_DE_ESPERA,
   perguntaDaListaDeEspera,
   preferenciaEmTexto,
   respostaDaListaDeEspera,
@@ -72,6 +74,7 @@ import {
   entradaDaEntradaNaEsperaSchema,
   entradaDoPedidoDeEsperaSchema,
   numeroDoDia,
+  type EntradaQueJaExiste,
   type EsperaDaConversa,
   type MotivoDaEntradaNaEspera,
   type MotivoDoPedidoDeEspera,
@@ -96,7 +99,11 @@ export const ROTULO_DO_MOTIVO_DA_ESPERA: Readonly<
   ia_desligada: "o assistente não está mais atendendo esta conversa",
   lista_de_espera_desligada:
     "a lista de espera não está ligada, ou Agendar consulta não vale, na versão publicada",
-  sem_pedido_de_espera: "não havia pedido de lista de espera nesta conversa",
+  // Revisao da AG5 (contrato da frente de banco, C4): tambem o mesmo job
+  // de novo com a entrada dele ja fora da fila (a recepcao a removeu entre
+  // as tentativas): falha fechada, nada de T-E2.
+  sem_pedido_de_espera:
+    "não havia pedido de lista de espera para cumprir nesta conversa (ou a entrada desta resposta já saiu da lista)",
   mais_de_uma_unidade:
     "a clínica tem mais de uma unidade, e a lista de espera ainda não guarda a unidade",
   so_com_a_equipe:
@@ -151,6 +158,15 @@ const T_E1_DE_QUALQUER_PEDIDO = new RegExp(
   `${literal(PERGUNTA_DA_LISTA_DE_ESPERA).replace(/\\\{\\\{[a-z_]+\\\}\\\}/g, "[^?]+?")}\\s*$`,
 );
 
+/**
+ * Revisao da AG5 (achado 3): a T-E2 de QUALQUER pedido, no fim da mensagem
+ * (como a T-E1). So para a nota da equipe: a resposta da pessoa veio logo
+ * depois da entrada feita.
+ */
+const T_E2_DE_QUALQUER_PEDIDO = new RegExp(
+  `${literal(RESPOSTA_DA_LISTA_DE_ESPERA).replace(/\\\{\\\{[a-z_]+\\\}\\\}/g, "[^?]+?")}\\s*$`,
+);
+
 /** O resultado da conferencia da pergunta do turno anterior (AG4). */
 export type PerguntaConferidaPeloTurno =
   | "conferida"
@@ -183,6 +199,13 @@ export type ContextoDaEspera = {
   respostaCitaOutraMensagem: () => boolean;
   /** O instante da pergunta conferida (a saida lida do banco), ou null. */
   instanteDaPergunta: () => string | null;
+  /**
+   * Revisao da AG5 (achado 3): o texto da saida da IA logo antes da resposta
+   * da pessoa (a lida do banco no preparo; sem ela, a do historico, com a
+   * autoria real), ou null (de outro autor, falhada, empatada, nada). So
+   * para a nota da equipe.
+   */
+  saidaDaIaAntesDaResposta: () => string | null;
   /** O nome do profissional pelo id, do Cadastro. */
   nomeDoProfissional: (id: string | null | undefined) => string | null;
 };
@@ -208,10 +231,15 @@ export type ListaDeEsperaParaOModelo = {
   entradas: string[];
 };
 
-/** O que a nota da equipe conta da lista (lib/agente/atendimento.ts monta). */
+/**
+ * O que a nota da equipe conta da lista (lib/agente/atendimento.ts monta).
+ * Revisao da AG5 (achado 3): "nao_entrou" e o pedido que a ferramenta da
+ * lista tentou NESTE turno sem perguntar nem colocar (a recusa do banco ou
+ * do servidor, a pessoa que nao quis); o "Parou em" diz o porque.
+ */
 export type ListaDeEsperaNaNota = {
   pedido: string;
-  situacao: "perguntada" | "entrou";
+  situacao: "perguntada" | "entrou" | "nao_entrou";
 };
 
 export type EsperaDoTurno = {
@@ -231,6 +259,13 @@ export type EsperaDoTurno = {
   paraOModelo: () => ListaDeEsperaParaOModelo | null;
   /** As entradas desta conversa, relidas, como fato (o turno seguinte). */
   fatosDoEstado: () => FatosDaFerramenta | null;
+  /**
+   * Revisao da AG5 (achado 3): a resposta da pessoa veio logo depois da
+   * pergunta (T-E1) ou da resposta (T-E2) da lista: a lista e o assunto com
+   * que o turno comeca. Quem chama so pede a nota da lista quando ela e o
+   * pedido vivo do turno.
+   */
+  assuntoDoComeco: () => boolean;
   nota: () => ListaDeEsperaNaNota | null;
 };
 
@@ -268,6 +303,12 @@ function frase(
   };
 }
 
+/** O pedido que a nota descreve (os ids e a preferencia). */
+type PedidoTentado = Pick<
+  PedidoDeEsperaLido,
+  "procedimentoId" | "profissionalId" | "convenioId" | "turnos" | "dias"
+>;
+
 /** O pedido como a porta manda ao banco (ids, listas fechadas). */
 type PedidoParaOBanco = {
   procedimentoId: string;
@@ -292,6 +333,14 @@ export function criarEsperaDoTurno(c: ContextoDaEspera): EsperaDoTurno {
   let perguntadoNoTurno: PedidoDeEsperaLido | null = null;
   /** A entrada feita neste turno (a T-E2 que saiu). */
   let entrouNoTurno: PedidoDeEsperaLido | null = null;
+  /** Revisao da AG5 (achado 3): uma ferramenta da lista rodou neste turno. */
+  let executouNoTurno = false;
+  /**
+   * Revisao da AG5 (achado 3): o pedido que a ferramenta da lista tentou
+   * neste turno (o do estado com a preferencia, ou o vivo que a pessoa
+   * respondeu), para a nota quando nada foi perguntado nem feito.
+   */
+  let tentadoNoTurno: PedidoTentado | null = null;
 
   const registrar = (...codigos: string[]) => {
     c.resultados.push(...codigos);
@@ -573,6 +622,7 @@ export function criarEsperaDoTurno(c: ContextoDaEspera): EsperaDoTurno {
         "Tentou pedir a lista de espera sem a busca de horário antes (o procedimento ou o pagamento não estavam definidos)",
       );
     }
+    tentadoNoTurno = pedido;
     // D-38 (recomendacao): a fila e a oferta nao guardam a unidade.
     if ((catalogo.unidades ?? []).length > 1) {
       registrar("mais_de_uma_unidade");
@@ -599,7 +649,7 @@ export function criarEsperaDoTurno(c: ContextoDaEspera): EsperaDoTurno {
   function recusaDaEspera(
     r: {
       motivo: MotivoDoPedidoDeEspera | MotivoDaEntradaNaEspera;
-      entrada?: { profissional: string | null; turnos: PeriodoDaEspera[]; dias: number[] } | null;
+      entrada?: EntradaQueJaExiste | null;
       inicio?: string | null;
     },
     pedido: Pick<PedidoParaOBanco, "procedimentoId" | "profissionalId" | "convenioId">,
@@ -637,27 +687,41 @@ export function criarEsperaDoTurno(c: ContextoDaEspera): EsperaDoTurno {
       case "ja_na_lista": {
         registrar(r.motivo);
         const entrada = r.entrada ?? null;
-        const procedimento = procedimentoDe(pedido.procedimentoId)?.nome ?? null;
-        if (entrada === null || procedimento === null) {
+        const doPedido = procedimentoDe(pedido.procedimentoId)?.nome ?? null;
+        if (entrada === null || doPedido === null) {
           // A entrada que ja existe sem a preferencia: o modelo so ouve que
           // a pessoa ja esta na lista (o fato sem a preferencia nao e dado:
           // a frase com dia ou periodo nao passa).
           return saida("ja_na_lista", {}, passo);
         }
+        // Revisao da AG5 (contrato da frente de banco, C1): a entrada que JA
+        // existe pode ser de outro profissional, de qualquer profissional
+        // (null) ou de qualquer procedimento. O fato e a trilha dizem a
+        // DELA, nunca a do pedido: com a de qualquer profissional, nenhum
+        // nome passa ("na lista com a Dra. Ana" barra). O procedimento de
+        // qualquer um (null) cobre o do pedido; sem o campo, o do pedido. Ao
+        // modelo, como antes, so a preferencia (minimizacao).
+        const procedimento =
+          entrada.procedimento === undefined || entrada.procedimento === null
+            ? doPedido
+            : entrada.procedimento;
         const preferencia = preferenciaEmTexto(entrada.turnos, entrada.dias);
+        const daEntrada = [
+          entrada.procedimento === null ? "qualquer procedimento" : procedimento,
+          entrada.profissional === null
+            ? COM_QUALQUER_PROFISSIONAL
+            : `com ${entrada.profissional}`,
+          preferencia,
+        ].join(", ");
         return saida(
           "ja_na_lista",
           { preferencia },
-          `${passo} (${preferencia})`,
+          `${passo} (${daEntrada})`,
           {
             entradasDaEspera: [
               {
                 procedimento,
-                profissional:
-                  entrada.profissional ??
-                  (pedido.profissionalId === null
-                    ? null
-                    : c.nomeDoProfissional(pedido.profissionalId)),
+                profissional: entrada.profissional,
                 turnos: [...entrada.turnos],
                 dias: [...entrada.dias],
                 origem: "existente",
@@ -750,6 +814,7 @@ export function criarEsperaDoTurno(c: ContextoDaEspera): EsperaDoTurno {
       };
     }
     const vivo = lida?.vivo ?? null;
+    tentadoNoTurno = vivo;
     if (vivo === null) {
       registrar("sem_pergunta_de_espera");
       return saida(
@@ -881,18 +946,6 @@ export function criarEsperaDoTurno(c: ContextoDaEspera): EsperaDoTurno {
   // O bloco do modelo, os fatos e a nota
   // -------------------------------------------------------------------------
 
-  /** As entradas desta conversa (relidas) e a do turno, em texto. */
-  function entradasEmTexto(): PedidoDaEsperaEmTexto[] {
-    const todas = [
-      ...(lida?.entradas ?? []),
-      ...(entrouNoTurno === null ? [] : [entrouNoTurno]),
-    ];
-    return todas.flatMap((p) => {
-      const texto = emTexto(p);
-      return texto === null ? [] : [texto];
-    });
-  }
-
   function paraOModelo(): ListaDeEsperaParaOModelo | null {
     const entradas = (lida?.entradas ?? []).flatMap((p) => {
       const texto = emTexto(p);
@@ -919,33 +972,61 @@ export function criarEsperaDoTurno(c: ContextoDaEspera): EsperaDoTurno {
     return entradas.length === 0 ? null : { entradasDaEspera: entradas };
   }
 
+  function assuntoDoComeco(): boolean {
+    const texto = c.saidaDaIaAntesDaResposta();
+    if (texto === null) {
+      return false;
+    }
+    const fim = texto.trim();
+    return T_E1_DE_QUALQUER_PEDIDO.test(fim) || T_E2_DE_QUALQUER_PEDIDO.test(fim);
+  }
+
+  /**
+   * O que a nota conta da lista (quem chama so pede quando a lista e o
+   * pedido vivo do turno). Revisao da AG5 (achado 3), na ordem do mais novo:
+   * a entrada feita neste turno; a pergunta feita neste turno; o pedido que
+   * a ferramenta da lista tentou neste turno sem perguntar nem colocar; a
+   * pergunta de um turno anterior que a pessoa ainda nao confirmou (o pedido
+   * vivo); e so entao a ultima entrada desta conversa (relida). Antes, a
+   * entrada relida vinha primeiro e escondia o pedido novo.
+   */
   function nota(): ListaDeEsperaNaNota | null {
-    const entradas = entradasEmTexto();
-    const ultima = entradas.at(-1);
-    if (ultima !== undefined) {
-      return { pedido: pedidoDaEsperaEmTexto(ultima), situacao: "entrou" };
+    const naNota = (
+      pedido: PedidoTentado | null,
+      situacao: ListaDeEsperaNaNota["situacao"],
+    ): ListaDeEsperaNaNota | null => {
+      const texto = pedido === null ? null : emTexto(pedido);
+      return texto === null
+        ? null
+        : { pedido: pedidoDaEsperaEmTexto(texto), situacao };
+    };
+    if (entrouNoTurno !== null) {
+      return naNota(entrouNoTurno, "entrou");
     }
-    // A pergunta feita neste turno, ou a de um turno anterior que a pessoa
-    // ainda nao confirmou (o pedido vivo desta janela): a equipe sabe do
-    // pedido.
-    const perguntado = perguntadoNoTurno ?? lida?.vivo ?? null;
-    if (perguntado === null) {
-      return null;
+    if (perguntadoNoTurno !== null) {
+      return naNota(perguntadoNoTurno, "perguntada");
     }
-    const texto = emTexto(perguntado);
-    return texto === null
-      ? null
-      : { pedido: pedidoDaEsperaEmTexto(texto), situacao: "perguntada" };
+    if (executouNoTurno) {
+      return naNota(tentadoNoTurno, "nao_entrou");
+    }
+    const vivo = lida?.vivo ?? null;
+    if (vivo !== null) {
+      return naNota(vivo, "perguntada");
+    }
+    return naNota(lida?.entradas.at(-1) ?? null, "entrou");
   }
 
   return {
     ler,
     temPerguntaAConferir,
     conferir,
-    executar: (nome, argumentos) =>
-      nome === "pedir_lista_de_espera" ? pedir(argumentos) : entrar(argumentos),
+    executar: (nome, argumentos) => {
+      executouNoTurno = true;
+      return nome === "pedir_lista_de_espera" ? pedir(argumentos) : entrar(argumentos);
+    },
     paraOModelo,
     fatosDoEstado,
+    assuntoDoComeco,
     nota,
   };
 }
