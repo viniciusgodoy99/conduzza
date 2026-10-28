@@ -25,6 +25,22 @@ import type { BloqueioDaAgenda, ConsultaDaAgenda } from "@/lib/queries/agenda";
 
 const ZAP_DO_ENCAIXE = STATUS_TONE_VARS.neutral.text;
 
+/**
+ * O bloco se arrasta para remarcar? So quem edita a agenda, nunca a
+ * consulta em situacao final e, AG4 (D-32), nunca a antiga com a remarcacao
+ * da IA pendente (o "Remarcar" do menu diz por que; o banco recusa de novo).
+ */
+export function blocoArrastavel(
+  contexto: Pick<ContextoAgenda, "podeEditar" | "remarcacaoPendenteDe">,
+  consulta: Pick<ConsultaDaAgenda, "id" | "status">,
+): boolean {
+  return (
+    contexto.podeEditar &&
+    !STATUS_TERMINAIS.includes(consulta.status) &&
+    !(contexto.remarcacaoPendenteDe?.(consulta.id) ?? null)
+  );
+}
+
 export function AppointmentBlock({
   contexto,
   consulta,
@@ -47,9 +63,10 @@ export function AppointmentBlock({
   lanes: number;
 }) {
   // Arrastavel para remarcar (sensor exige 8px de movimento, entao o clique
-  // continua abrindo o menu). Status terminal nao se remarca.
-  const arrastavel =
-    contexto.podeEditar && !STATUS_TERMINAIS.includes(consulta.status);
+  // continua abrindo o menu). Status terminal nao se remarca. AG4 (D-32): a
+  // consulta antiga com a remarcacao da IA pendente tambem nao (o menu diz
+  // por que, no "Remarcar" desabilitado; o banco recusa de novo).
+  const arrastavel = blocoArrastavel(contexto, consulta);
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({
       id: consulta.id,
@@ -169,9 +186,7 @@ export function AppointmentBlock({
               ) : null}
               <span className="truncate" style={{ color: tone.text }}>
                 {definicao.label}
-                {aguardaAprovacao(consulta)
-                  ? " · aguarda aprovação"
-                  : ""}
+                {aguardaAprovacao(consulta) ? " · aguarda aprovação" : ""}
                 {" · "}
                 <span className="cz-num">{duracaoMin} min</span>
               </span>

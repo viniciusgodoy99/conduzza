@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { CalendarCog, Loader2, Sparkles } from "lucide-react";
+import { CalendarCog, CalendarFold, Loader2, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -16,10 +16,20 @@ import {
   DialogoDosDadosInformados,
   useDadosInformados,
 } from "@/components/agenda/dados-informados";
+import { DialogoDaRemarcacao } from "@/components/agenda/dialogo-da-remarcacao";
+import {
+  DURACAO_DO_TOAST_LONGO,
+  duracaoDoToast,
+  linhasDoCartaoDaRemarcacao,
+  TEXTOS_DA_REMARCACAO,
+  type AcaoDaRemarcacao,
+} from "@/components/agenda/remarcacao-da-ia";
 import type { ContextoAgenda } from "@/components/agenda/tipos";
+import { Aviso } from "@/components/shared/aviso";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   APPOINTMENT_STATUS,
   STATUS_TONE_VARS,
@@ -27,7 +37,11 @@ import {
   type StatusDefinition,
 } from "@/lib/design/status";
 import { situacaoDaConsulta } from "@/lib/domain/dados-informados";
-import { ehConsultaDaIa, type ConsultaDaAgenda } from "@/lib/queries/agenda";
+import {
+  ehConsultaDaIa,
+  ehRemarcacaoDaIa,
+  type ConsultaDaAgenda,
+} from "@/lib/queries/agenda";
 
 // Painel lateral "Pendente de voce" (264px, cartao do design system, docs/06
 // secao 5.6): o que a IA deixou para a equipe aprovar. Abaixo, a legenda
@@ -59,6 +73,25 @@ import { ehConsultaDaIa, type ConsultaDaAgenda } from "@/lib/queries/agenda";
 // leitura grava trilha e por isso so acontece no clique
 // (components/agenda/dados-informados.tsx). O encaixe nao tem: a IA nao
 // pede dado para sugerir encaixe.
+//
+// AG4 (D-10; desenho da secao 5): a terceira pendencia, "Remarcação pela
+// IA" (CalendarFold, tom da IA): a consulta NOVA que a IA pediu para
+// remarcar outra, pendente e ligada a antiga. CalendarFold nao tinha dono em
+// nenhuma tela nem mapa (conferido em 27/10/2026; nunca CalendarSync, do
+// "Remarcada" da agenda, nem CalendarCog, da "Marcada pela IA"): o
+// calendario com a folha dobrada, a data que vira. O cartao diz "De ..." (a
+// antiga, com "(já cancelada)" quando ela foi cancelada nesse meio) e
+// "Para ..." (a nova), sem "Ver dados informados" (a remarcacao nao pede
+// dado, D-26). Aprovar e Recusar abrem os dialogos da remarcacao
+// (dialogo-da-remarcacao.tsx), com o aviso ao paciente na aprovacao (D-28).
+// A antiga vem numa leitura a parte (fetchPendencias): se ela falhar, so o
+// cartao da remarcacao diz que a antiga nao carregou (Aviso de atencao no
+// lugar do "De"), e o resto do painel e da Agenda abre normalmente.
+//
+// Revisao curta da AG4: a lista inteira que nao veio do servidor tambem nao
+// derruba a Agenda. O cliente le de novo; enquanto isso o painel mostra o
+// esqueleto, e se a leitura falhar, o erro com "Tentar de novo" (40px), nunca
+// o "Nada pendente de você" sem saber.
 
 export const CHIP_ENCAIXE_IA: StatusDefinition = {
   label: "Encaixe da IA",
@@ -72,10 +105,24 @@ export const CHIP_MARCADA_PELA_IA: StatusDefinition = {
   icon: CalendarCog,
 };
 
-/** O chip de cada pendencia: a consulta que a IA marcou ou o encaixe. */
+export const CHIP_REMARCACAO_PELA_IA: StatusDefinition = {
+  label: TEXTOS_DA_REMARCACAO.chip,
+  tone: "ai",
+  icon: CalendarFold,
+};
+
+/**
+ * O chip de cada pendencia: a remarcacao que a IA pediu, a consulta que a
+ * IA marcou ou o encaixe.
+ */
 export function chipDaPendencia(
-  consulta: Pick<ConsultaDaAgenda, "created_by" | "is_overbooking">,
+  consulta: Pick<ConsultaDaAgenda, "created_by" | "is_overbooking"> & {
+    remarcacao_de?: string | null;
+  },
 ): StatusDefinition {
+  if (ehRemarcacaoDaIa(consulta)) {
+    return CHIP_REMARCACAO_PELA_IA;
+  }
   return ehConsultaDaIa(consulta) ? CHIP_MARCADA_PELA_IA : CHIP_ENCAIXE_IA;
 }
 
@@ -83,7 +130,10 @@ export const TEXTOS_DO_PAINEL = {
   titulo: "Pendente de você",
   vazioTitulo: "Nada pendente de você",
   vazioTexto:
-    "Quando a IA marcar uma consulta ou sugerir um encaixe, aparece aqui para a equipe aprovar.",
+    "Quando a IA marcar ou remarcar uma consulta, ou sugerir um encaixe, aparece aqui para a equipe aprovar.",
+  carregando: "Carregando o que está pendente de você",
+  erro: "Não foi possível carregar o que está pendente de você. Confira a conexão e tente de novo.",
+  tentarDeNovo: "Tentar de novo",
   semProcedimento: "Procedimento não informado",
   particular: "Particular",
   paciente: "Paciente",
@@ -92,19 +142,46 @@ export const TEXTOS_DO_PAINEL = {
   legenda: "Legenda de situações",
 } as const;
 
+/**
+ * A lista do painel (revisao curta da AG4): a leitura que falha no servidor
+ * nao derruba a Agenda; o cliente le de novo, e so o painel diz que esta
+ * carregando ou que nao carregou, nunca "Nada pendente de você" sem saber.
+ */
+export type EstadoDasPendencias = "pronto" | "carregando" | "erro";
+
+/**
+ * O estado pela leitura da lista (TanStack Query), como a grade do dia: com
+ * a lista, ela (mesmo que uma releitura falhe depois); sem a lista, erro
+ * quando a leitura falhou e nao ha outra em curso, e carregando no resto.
+ */
+export function estadoDasPendencias(leitura: {
+  data: readonly unknown[] | undefined;
+  isError: boolean;
+  isFetching: boolean;
+}): EstadoDasPendencias {
+  if (leitura.data !== undefined) {
+    return "pronto";
+  }
+  return leitura.isError && !leitura.isFetching ? "erro" : "carregando";
+}
+
 export type AcaoDaPendencia = "aprovar" | "recusar";
 
 /** O toast de cada resultado, pelo tipo da pendencia. */
 export type RetornoNaTela = {
   tipo: "success" | "info" | "warning" | "error";
   texto: string;
+  /** Em ms (duracaoDoToast). Sem ela: a atencao fica 10 s, o resto 4 s. */
+  duracao?: number;
 };
 
 /**
  * O que a tela diz depois de aprovar ou recusar. A consulta da IA pede que a
  * equipe avise o paciente (a IA disse a ele que a equipe confirma por aqui).
  * Aviso da acao (a conversa nao voltou para a equipe) e warning, nunca
- * sucesso calado.
+ * sucesso calado, e vai SOZINHO: por isso todo aviso da recusa e
+ * autocontido ("A consulta foi recusada, mas ...", e na remarcacao da IA "A
+ * remarcação foi recusada, mas ..."; revisao da AG4, achado 5).
  */
 export function retornoDaPendencia(
   resultado: AgendaActionResult,
@@ -114,6 +191,17 @@ export function retornoDaPendencia(
   if (resultado.ok) {
     if (resultado.aviso) {
       return { tipo: "warning", texto: resultado.aviso };
+    }
+    // AG4: o texto do servidor (a remarcacao da IA, com o horario da antiga
+    // lido do banco) vale mais que o generico. Ele diz o que a recepcao faz
+    // depois (avisar pelo Atendimento; na recusa, o "Manter o horário"):
+    // 10 s na tela, como no dialogo (revisao curta da AG4).
+    if (resultado.mensagem) {
+      return {
+        tipo: "success",
+        texto: resultado.mensagem,
+        duracao: DURACAO_DO_TOAST_LONGO,
+      };
     }
     if (daIa) {
       return {
@@ -165,27 +253,40 @@ function diaEHora(instante: string, timezone: string): string {
 
 /**
  * O toast de cada retorno, o mesmo no painel e no menu da consulta (revisao
- * da E4: o menu mostrava sucesso calado quando a conversa nao voltava).
+ * da E4: o menu mostrava sucesso calado quando a conversa nao voltava). A
+ * atencao (a recusa valeu, mas a conversa nao voltou) e o sucesso que pede
+ * uma acao ficam 10 s: a recepcao precisa ler (duracaoDoToast).
  */
 export function mostrarRetornoDaPendencia(retorno: RetornoNaTela): void {
-  if (retorno.tipo === "success") {
-    toast.success(retorno.texto);
-  } else if (retorno.tipo === "info") {
-    toast.info(retorno.texto);
-  } else if (retorno.tipo === "warning") {
-    // A recusa valeu, mas a conversa nao voltou: a recepcao precisa ler.
-    toast.warning(retorno.texto, { duration: 10_000 });
+  const duracao = duracaoDoToast(retorno);
+  const opcoes = duracao === undefined ? null : { duration: duracao };
+  const exibir =
+    retorno.tipo === "success"
+      ? toast.success
+      : retorno.tipo === "info"
+        ? toast.info
+        : retorno.tipo === "warning"
+          ? toast.warning
+          : toast.error;
+  if (opcoes) {
+    exibir(retorno.texto, opcoes);
   } else {
-    toast.error(retorno.texto);
+    exibir(retorno.texto);
   }
 }
 
 export function PendingPanel({
   contexto,
   pendencias,
+  estado = "pronto",
+  aoTentarDeNovo,
 }: {
   contexto: ContextoAgenda;
   pendencias: ConsultaDaAgenda[];
+  /** Carregando e erro so aqui: a grade da Agenda abre do mesmo jeito. */
+  estado?: EstadoDasPendencias;
+  /** O "Tentar de novo" do erro: le a lista de novo. */
+  aoTentarDeNovo?: () => void;
 }) {
   const queryClient = useQueryClient();
   const [emAndamento, setEmAndamento] = useState<{
@@ -200,6 +301,21 @@ export function PendingPanel({
   const verDadosInformados = (consulta: ConsultaDaAgenda) => {
     setConsultaDosDados(consulta);
     dadosInformados.abrir(consulta.id);
+  };
+  // AG4: a remarcacao da IA aprova e recusa pelo dialogo dela. A consulta
+  // fica guardada aqui, como a dos dados, para o dialogo nao perder o texto
+  // se ela sair da lista enquanto aberto.
+  const [remarcacaoAberta, setRemarcacaoAberta] = useState<{
+    consulta: ConsultaDaAgenda;
+    acao: AcaoDaRemarcacao;
+  } | null>(null);
+
+  const escolher = (consulta: ConsultaDaAgenda, acao: AcaoDaPendencia) => {
+    if (ehRemarcacaoDaIa(consulta)) {
+      setRemarcacaoAberta({ consulta, acao });
+      return;
+    }
+    void tratar(consulta, acao);
   };
 
   async function tratar(consulta: ConsultaDaAgenda, acao: AcaoDaPendencia) {
@@ -236,7 +352,37 @@ export function PendingPanel({
       </div>
 
       <div className="relative flex cz-scroll min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-4">
-        {pendencias.length === 0 ? (
+        {estado === "erro" ? (
+          // A lista nao veio: o painel diz isso e oferece ler de novo; a
+          // grade e o resto da Agenda continuam abertos.
+          <div className="grid gap-2">
+            <Aviso tom="alert" role="alert">
+              {TEXTOS_DO_PAINEL.erro}
+            </Aviso>
+            {aoTentarDeNovo ? (
+              <Button
+                variant="outline"
+                className="h-10 w-full"
+                onClick={aoTentarDeNovo}
+              >
+                {TEXTOS_DO_PAINEL.tentarDeNovo}
+              </Button>
+            ) : null}
+          </div>
+        ) : estado === "carregando" ? (
+          // role="status" e o texto em sr-only: o leitor de tela anuncia o
+          // carregando (aria-label sozinho num div nao e lido).
+          <div
+            role="status"
+            aria-busy="true"
+            className="grid gap-3"
+            aria-label={TEXTOS_DO_PAINEL.carregando}
+          >
+            <span className="sr-only">{TEXTOS_DO_PAINEL.carregando}</span>
+            <Skeleton className="h-36 w-full rounded-xl" />
+            <Skeleton className="h-36 w-full rounded-xl" />
+          </div>
+        ) : pendencias.length === 0 ? (
           // Vazio compacto no tom da IA (ladrilho lime suave com o Sparkles):
           // quem deixa pendencia aqui e a IA.
           <div className="flex flex-col items-center justify-center gap-2 px-2 py-7 text-center">
@@ -255,6 +401,10 @@ export function PendingPanel({
             {pendencias.map((consulta) => {
               const ocupado = emAndamento?.id === consulta.id;
               const profissional = nomeDoProfissional(consulta.professional_id);
+              const remarcacao = ehRemarcacaoDaIa(consulta);
+              const horarios = remarcacao
+                ? linhasDoCartaoDaRemarcacao(consulta, contexto.timezone)
+                : null;
               return (
                 <li
                   key={consulta.id}
@@ -284,11 +434,29 @@ export function PendingPanel({
                         {profissional}
                       </p>
                     ) : null}
-                    <p className="cz-num text-xs text-text-secondary">
-                      {diaEHora(consulta.starts_at, contexto.timezone)}
-                    </p>
+                    {horarios ? (
+                      <>
+                        {horarios.de ? (
+                          <p className="cz-num text-xs text-text-secondary">
+                            {horarios.de}
+                          </p>
+                        ) : null}
+                        <p className="cz-num text-xs text-text-secondary">
+                          {horarios.para}
+                        </p>
+                        {horarios.naoCarregada ? (
+                          <Aviso tom="warning" className="mt-1.5 px-3 py-2.5">
+                            {TEXTOS_DA_REMARCACAO.antigaNaoCarregada}
+                          </Aviso>
+                        ) : null}
+                      </>
+                    ) : (
+                      <p className="cz-num text-xs text-text-secondary">
+                        {diaEHora(consulta.starts_at, contexto.timezone)}
+                      </p>
+                    )}
                   </div>
-                  {ehConsultaDaIa(consulta) ? (
+                  {ehConsultaDaIa(consulta) && !remarcacao ? (
                     <BotaoDosDadosInformados
                       podeLer={contexto.podeEditar}
                       aoAbrir={() => verDadosInformados(consulta)}
@@ -305,7 +473,7 @@ export function PendingPanel({
                             (ocupado && emAndamento?.acao === "aprovar") ||
                             undefined
                           }
-                          onClick={() => tratar(consulta, "aprovar")}
+                          onClick={() => escolher(consulta, "aprovar")}
                         >
                           {ocupado && emAndamento?.acao === "aprovar" ? (
                             <Loader2 className="animate-spin" aria-hidden />
@@ -320,7 +488,7 @@ export function PendingPanel({
                             (ocupado && emAndamento?.acao === "recusar") ||
                             undefined
                           }
-                          onClick={() => tratar(consulta, "recusar")}
+                          onClick={() => escolher(consulta, "recusar")}
                         >
                           {ocupado && emAndamento?.acao === "recusar" ? (
                             <Loader2 className="animate-spin" aria-hidden />
@@ -378,6 +546,27 @@ export function PendingPanel({
           aoTentarDeNovo={dadosInformados.tentarDeNovo}
           aoRevelar={dadosInformados.revelar}
         />
+
+        {remarcacaoAberta ? (
+          <DialogoDaRemarcacao
+            key={`${remarcacaoAberta.consulta.id}-${remarcacaoAberta.acao}`}
+            contexto={contexto}
+            // A da lista AGORA (o tempo real a renova, com a antiga lida de
+            // novo); a guardada so quando ela ja saiu da lista.
+            consulta={
+              pendencias.find(
+                (pendencia) => pendencia.id === remarcacaoAberta.consulta.id,
+              ) ?? remarcacaoAberta.consulta
+            }
+            acao={remarcacaoAberta.acao}
+            aoFechar={() => setRemarcacaoAberta(null)}
+            aoTerminar={() =>
+              queryClient.invalidateQueries({
+                queryKey: ["agenda", contexto.clinicId],
+              })
+            }
+          />
+        ) : null}
 
         <div className="grid gap-2 border-t border-border pt-4">
           <h3 className="cz-eyebrow text-text-secondary">

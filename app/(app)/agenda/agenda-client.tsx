@@ -9,7 +9,10 @@ import { BloquearHorarioDialog } from "@/components/agenda/bloquear-horario-dial
 import { horarioDoVao } from "@/components/agenda/bloqueio-comum";
 import { DayGrid } from "@/components/agenda/day-grid";
 import { FilterBar } from "@/components/agenda/filter-bar";
-import { PendingPanel } from "@/components/agenda/pending-panel";
+import {
+  estadoDasPendencias,
+  PendingPanel,
+} from "@/components/agenda/pending-panel";
 import { WeekGrid } from "@/components/agenda/week-grid";
 import {
   FILTROS_VAZIOS,
@@ -27,6 +30,8 @@ import {
   agendaKeys,
   fetchAgendaDia,
   fetchPendencias,
+  remarcacoesPendentesPorAntiga,
+  remarcacoesPendentesPorNova,
   type AgendaDia,
   type ConsultaDaAgenda,
 } from "@/lib/queries/agenda";
@@ -86,7 +91,12 @@ export function AgendaClient({
   diaInicial: string;
   catalogoInicial: Catalogo;
   diaInicialDados: AgendaDia;
-  pendenciasIniciais: ConsultaDaAgenda[];
+  /**
+   * A lista do "Pendente de você" lida no servidor; null quando a leitura
+   * falhou (revisao curta da AG4): o cliente le de novo, e so o painel
+   * mostra carregando ou erro.
+   */
+  pendenciasIniciais: ConsultaDaAgenda[] | null;
   podeEditar: boolean;
   dica: string;
   podeEditarCadastros?: boolean;
@@ -127,7 +137,12 @@ export function AgendaClient({
   // da visita anterior (initialData so vale na criacao da entrada).
   useDadosDoServidor(catalogoKeys.tudo(clinicId), catalogoInicial);
   useDadosDoServidor(agendaKeys.dia(clinicId, diaInicial), diaInicialDados);
-  useDadosDoServidor(agendaKeys.pendencias(clinicId), pendenciasIniciais);
+  // Sem a lista do servidor (null), nada e gravado no cache: a consulta
+  // abaixo le de novo na montagem.
+  useDadosDoServidor(
+    agendaKeys.pendencias(clinicId),
+    pendenciasIniciais ?? undefined,
+  );
 
   const catalogoQuery = useQuery({
     queryKey: catalogoKeys.tudo(clinicId),
@@ -153,7 +168,7 @@ export function AgendaClient({
   const pendenciasQuery = useQuery({
     queryKey: agendaKeys.pendencias(clinicId),
     queryFn: () => fetchPendencias(supabase, clinicId),
-    initialData: pendenciasIniciais,
+    initialData: pendenciasIniciais ?? undefined,
     staleTime: 30_000,
   });
 
@@ -187,6 +202,20 @@ export function AgendaClient({
       }
     : undefined;
 
+  // AG4 (D-32): a remarcacao da IA pendente de cada consulta antiga, pela
+  // mesma lista do "Pendente de voce" (o tempo real a renova a cada mudanca
+  // de consulta).
+  const remarcacoesPendentes = useMemo(
+    () => remarcacoesPendentesPorAntiga(pendenciasQuery.data ?? []),
+    [pendenciasQuery.data],
+  );
+  // A mesma lista pela consulta NOVA: o menu dela abre os dialogos com a
+  // antiga lida a parte (a consulta do dia nao traz a antiga).
+  const remarcacoesPorNova = useMemo(
+    () => remarcacoesPendentesPorNova(pendenciasQuery.data ?? []),
+    [pendenciasQuery.data],
+  );
+
   const contexto: ContextoAgenda = {
     clinicId,
     timezone,
@@ -199,6 +228,9 @@ export function AgendaClient({
     podeRegistrarAutorizacao,
     dicaAutorizacao,
     abrirAgendamento: abrirModal,
+    remarcacaoPendenteDe: (consultaId) =>
+      remarcacoesPendentes.get(consultaId) ?? null,
+    remarcacaoNaLista: (novaId) => remarcacoesPorNova.get(novaId) ?? null,
   };
 
   const weekdayDoDia = weekdayLocal(
@@ -447,6 +479,8 @@ export function AgendaClient({
         <PendingPanel
           contexto={contexto}
           pendencias={pendenciasQuery.data ?? []}
+          estado={estadoDasPendencias(pendenciasQuery)}
+          aoTentarDeNovo={() => void pendenciasQuery.refetch()}
         />
       </div>
 

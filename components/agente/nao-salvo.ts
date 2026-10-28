@@ -21,6 +21,10 @@ import { ABAS_DO_AGENTE, type AbaDoAgente } from "@/components/agente/textos";
 // sao sobre marcar consulta e moram juntos. A aba fica pendente enquanto um
 // dos dois tiver o que nao foi salvo, e descartar remonta os dois (a mesma
 // geracao).
+//
+// AG4: o quinto, "Prazos para cancelar e remarcar", tambem conta como o dos
+// limites: o painel junta o nao salvo dele ao dos dados para marcar antes de
+// chamar comOsDadosParaMarcar, e descartar remonta os tres.
 
 /** Os formularios com Salvar (Habilidades grava no toque, sem Salvar). */
 export const FORMULARIOS_DO_AGENTE = [

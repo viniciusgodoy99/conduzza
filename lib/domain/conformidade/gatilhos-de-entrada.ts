@@ -293,6 +293,71 @@ const RESPOSTA_PARA_A_PESSOA = new RegExp(
 const RESPOSTA_NEGADA =
   /^\s*(?:nao|nem)\s+(?:e|eh|seria|sera|vai ser|era|foi)\b/;
 
+// AG4 (27/10/2026): cancelar e remarcar a consulta de outra pessoa adulta
+// tambem passa para a equipe antes do modelo (D-8): "cancela a consulta da
+// minha mae", "quero remarcar o horario do meu pai", "cancela a da minha
+// mae", "minha mae precisa cancelar" e "minha mae tem consulta amanha e nao
+// vai poder ir, quero cancelar". "Da minha mae" so conta COLADO na consulta
+// (ou no verbo, com o artigo): "preciso cancelar por causa da minha mae" e
+// "quero remarcar, tenho que cuidar da minha mae" sao da propria pessoa.
+// Filho e filha seguem fora (a regra do menor).
+
+/** O que diz que e cancelar ou remarcar. */
+const PEDIDO_DE_CANCELAR_OU_REMARCAR =
+  /\b(?:cancelar|cancela|cancele|cancelamento|desmarcar|desmarca|desmarque|remarcar|remarca|remarque|remarcacao|reagendar|reagenda|reagendamento|adiar|mudar\s+(?:o|a)\s+(?:horario|consulta|data|dia))\b/;
+/** "da minha mae", "do meu pai", "dos meus pais". */
+const DA_PESSOA = `(?:da|do|das|dos)\\s+(?:minha|meu|minhas|meus|nossa|nosso)\\s+${PESSOA_ADULTA}`;
+/**
+ * A consulta colada na pessoa: "a consulta da minha mae", "o horario marcado
+ * do meu pai", "a consulta de amanha da minha mae", "o retorno do dia 29 do
+ * meu marido".
+ */
+const CONSULTA_DA_PESSOA = new RegExp(
+  "\\b(?:consulta|consultas|horario|horarios|agendamento|agendamentos|marcacao|retorno|sessao|sessoes|atendimento|avaliacao|procedimento|encaixe)" +
+    "(?:\\s+(?:marcad[oa]s?|agendad[oa]s?))?" +
+    "(?:\\s+(?:de|do|da|para|pra|pro)\\s+(?:hoje|amanha|depois de amanha|segunda|terca|quarta|quinta|sexta|sabado|domingo|semana que vem|(?:dia\\s+)?\\d{1,2}(?:\\/\\d{1,2})?))?" +
+    `\\s+${DA_PESSOA}\\b`,
+  "g",
+);
+/** O verbo com o artigo, sem o nome da consulta: "cancela a da minha mae". */
+const ACAO_NA_DA_PESSOA = new RegExp(
+  `\\b(?:cancelar|cancela|cancele|desmarcar|desmarca|desmarque|remarcar|remarca|remarque|reagendar|reagenda|reagende|adiar|mudar)\\s+(?:a|o|as|os)\\s+${DA_PESSOA}\\b`,
+  "g",
+);
+/** "minha mae precisa cancelar", "meu pai quer remarcar a consulta". */
+const A_PESSOA_QUER_CANCELAR_OU_REMARCAR = new RegExp(
+  `\\b${DE_QUEM}\\s+${PESSOA_ADULTA}\\s+(?:que\\s+)?(?:quer|queria|gostaria|precisa|precisaria|vai|deseja|desejaria|tem que|teria que)\\s+(?:de\\s+)?(?:cancelar|desmarcar|remarcar|reagendar|adiar|mudar\\s+(?:o|a)\\s+(?:horario|consulta|data|dia))\\b`,
+);
+/**
+ * "minha mae tem consulta amanha" (com o pedido de cancelar ou remarcar na
+ * mesma mensagem, em qualquer frase dela).
+ */
+const A_PESSOA_TEM_CONSULTA = new RegExp(
+  `\\b${DE_QUEM}\\s+${PESSOA_ADULTA}\\s+(?:tem|tinha|ta com|esta com)\\s+(?:uma\\s+|um\\s+)?(?:consulta|horario|retorno|sessao|avaliacao|atendimento|procedimento)\\b`,
+);
+/** A negacao antes da consulta citada: "nao e a consulta da minha mae". */
+const NEGACAO_ANTES_DA_CONSULTA =
+  /\b(?:nao|nem|nunca)\s+(?:(?:e|eh|sera|seria|vai ser|era|foi|so|e so)\s+)?(?:(?:a|o|as|os)\s+)?$/;
+
+/**
+ * AG4: a frase cita a consulta (ou o horario) DA pessoa adulta, colada nela
+ * ("a consulta da minha mae", "cancela a da minha mae"), fora da negacao
+ * ("nao e a consulta do meu pai").
+ */
+function citaAConsultaDaPessoa(frase: string): boolean {
+  for (const padrao of [CONSULTA_DA_PESSOA, ACAO_NA_DA_PESSOA]) {
+    for (const m of frase.matchAll(padrao)) {
+      const inicio = m.index ?? 0;
+      const antes = frase.slice(Math.max(0, inicio - 40), inicio);
+      if (NEGACAO_ANTES_DA_CONSULTA.test(antes)) {
+        continue;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Revisao curta das correcoes da AG3 (achado 9): a frase pede a consulta para
  * a pessoa (o "para minha mae" que nao e negado, nao e a pessoa fazendo
@@ -328,20 +393,38 @@ function pedeParaAPessoa(frase: string): boolean {
 export function pedidoDeConsultaParaOutraPessoa(
   textos: readonly (string | null)[],
 ): boolean {
-  return textos.some((texto) => {
-    if (texto === null) {
-      return false;
-    }
-    return normalizarBase(texto)
-      .split(/[.!?\n]+/)
-      .map((frase) => frase.trim())
-      .some(
-        (frase) =>
-          (PEDIDO_DE_AGENDA.test(frase) && pedeParaAPessoa(frase)) ||
-          A_PESSOA_QUER.test(frase) ||
-          (RESPOSTA_PARA_A_PESSOA.test(frase) && !RESPOSTA_NEGADA.test(frase)),
-      );
-  });
+  const normalizados = textos
+    .filter((texto): texto is string => texto !== null)
+    .map((texto) => normalizarBase(texto));
+  return (
+    normalizados.some((texto) =>
+      texto
+        .split(/[.!?\n]+/)
+        .map((frase) => frase.trim())
+        .some(
+          (frase) =>
+            (PEDIDO_DE_AGENDA.test(frase) && pedeParaAPessoa(frase)) ||
+            A_PESSOA_QUER.test(frase) ||
+            (RESPOSTA_PARA_A_PESSOA.test(frase) &&
+              !RESPOSTA_NEGADA.test(frase)) ||
+            // AG4: cancelar ou remarcar a consulta da pessoa adulta.
+            citaAConsultaDaPessoa(frase) ||
+            A_PESSOA_QUER_CANCELAR_OU_REMARCAR.test(frase),
+        ),
+    ) || aPessoaTemConsultaECancela(normalizados)
+  );
+}
+
+/**
+ * AG4: "minha mae tem consulta amanha e nao vai poder ir, quero cancelar"
+ * (a consulta da pessoa e o pedido de cancelar ou remarcar nas mensagens do
+ * mesmo turno, na mesma frase ou nao).
+ */
+function aPessoaTemConsultaECancela(normalizados: readonly string[]): boolean {
+  return (
+    normalizados.some((texto) => A_PESSOA_TEM_CONSULTA.test(texto)) &&
+    normalizados.some((texto) => PEDIDO_DE_CANCELAR_OU_REMARCAR.test(texto))
+  );
 }
 
 /**
@@ -373,6 +456,14 @@ export const FONTES_DO_PORTAO_EM_CODIGO: readonly string[] = [
   CONVENIENCIA_ANTES_DA_PESSOA.source,
   RESPOSTA_NEGADA.source,
   "outra pessoa adulta: so com a intencao de marcar para ela",
+  // AG4: cancelar e remarcar a consulta de outra pessoa adulta.
+  PEDIDO_DE_CANCELAR_OU_REMARCAR.source,
+  CONSULTA_DA_PESSOA.source,
+  ACAO_NA_DA_PESSOA.source,
+  A_PESSOA_QUER_CANCELAR_OU_REMARCAR.source,
+  A_PESSOA_TEM_CONSULTA.source,
+  NEGACAO_ANTES_DA_CONSULTA.source,
+  "outra pessoa adulta: a consulta dela (colada: a consulta da minha mae, cancela a da minha mae), a pessoa que quer cancelar ou remarcar e a que tem consulta com o pedido de cancelar nas mensagens do turno, fora da negacao",
 ];
 
 /** Atalho para o filtro de saida: gatilhos de um conjunto de textos. */

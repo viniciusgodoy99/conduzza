@@ -323,11 +323,12 @@ describe("cartão", () => {
     expect(texto(html)).toMatch(/Ver dados informados .*Aprovar .*Recusar/);
   });
 
-  it("vazio: diz que a IA deixa aqui a consulta marcada e o encaixe", () => {
+  it("vazio: diz que a IA deixa aqui a consulta marcada, a remarcação e o encaixe", () => {
     const visivel = texto(render([]));
     expect(visivel).toContain("Nada pendente de você");
+    // AG4: a remarcacao pedida pela IA tambem espera aqui.
     expect(visivel).toContain(
-      "Quando a IA marcar uma consulta ou sugerir um encaixe, aparece aqui para a equipe aprovar.",
+      "Quando a IA marcar ou remarcar uma consulta, ou sugerir um encaixe, aparece aqui para a equipe aprovar.",
     );
     // A legenda dos 10 status continua embaixo.
     expect(visivel).toContain("Legenda de situações");

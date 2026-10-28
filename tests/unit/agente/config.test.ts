@@ -83,6 +83,19 @@ import {
   tipoDoContatoSchema,
   TIPOS_DO_CONTATO,
   TONS_DO_AGENTE,
+  ACOES_COM_PRAZO,
+  DICA_DA_REMARCACAO_INCOMPLETA,
+  DICA_DO_PRAZO_DE_CANCELAR,
+  dicaDaHabilidade,
+  ERRO_DO_PRAZO,
+  PRAZO_DA_IA,
+  prazoDaAcao,
+  prazosDoAgenteSchema,
+  prazosDoBanco,
+  prazosPadrao,
+  prazosParaOBanco,
+  ROTULO_DOS_PRAZOS,
+  TEXTO_DO_EVENTO_DA_IA,
   type ConfigDoAgente,
   type HorarioDeOperacao,
   type ItemDaBase,
@@ -184,11 +197,13 @@ describe("tom de voz", () => {
 });
 
 describe("habilidades", () => {
-  it("e a lista fechada (E4: agendar e confirmar presenca)", () => {
+  it("e a lista fechada (E4: agendar e confirmar presenca; AG4: cancelar e remarcar)", () => {
     expect(HABILIDADES_DO_AGENTE.map((h) => h.chave)).toEqual([
       "responder_duvidas",
       "informar_preco_e_convenio",
       "agendar",
+      "cancelar",
+      "remarcar",
       "confirmar_presenca",
       "passar_para_equipe",
     ]);
@@ -234,10 +249,43 @@ describe("habilidades", () => {
     expect(porChave.passar_para_equipe?.ferramentas).toEqual([
       "escalar_humano",
     ]);
-    // Toda ferramenta conhecida vem de uma habilidade, e as de agenda sao
-    // as das duas habilidades novas.
+    // AG4: cancelar e remarcar, com as dependencias (o prazo; remarcar
+    // tambem "Agendar consulta").
+    expect(porChave.cancelar).toMatchObject({
+      titulo: "Cancelar consulta",
+      descricao:
+        "Cancela a consulta quando o paciente pede e confirma numa mensagem nova, até o prazo da clínica. Dentro do prazo, passa para a equipe.",
+      travada: false,
+      padrao: false,
+      precisaDaAgenda: false,
+      precisaDaHabilidade: null,
+      precisaDoPrazo: "cancelar",
+      dicaDaDependencia: "Preencha o prazo para cancelar em Regras e limites.",
+      ferramentas: [
+        "consultar_minhas_consultas",
+        "pedir_cancelamento",
+        "cancelar_consulta",
+      ],
+    });
+    expect(porChave.remarcar).toMatchObject({
+      titulo: "Remarcar consulta",
+      descricao:
+        "Pede a remarcação para um horário livre da Agenda, com o mesmo profissional. A nova fica pendente até a equipe aprovar, e a antiga continua valendo até lá.",
+      travada: false,
+      padrao: false,
+      precisaDaAgenda: false,
+      precisaDaHabilidade: "agendar",
+      precisaDoPrazo: "remarcar",
+      dicaDaDependencia:
+        "Ligue Agendar consulta e preencha o prazo para remarcar em Regras e limites.",
+      ferramentas: ["consultar_minhas_consultas", "buscar_horario_para_remarcar"],
+    });
+    // Toda ferramenta conhecida vem de uma habilidade (consultar_minhas_
+    // consultas, de duas), e as de agenda sao as da porta.
     expect(
-      HABILIDADES_DO_AGENTE.flatMap((h) => [...h.ferramentas]).sort(),
+      [
+        ...new Set(HABILIDADES_DO_AGENTE.flatMap((h) => [...h.ferramentas])),
+      ].sort(),
     ).toEqual([...FERRAMENTAS_DO_AGENTE].sort());
     expect([...FERRAMENTAS_DE_AGENDA]).toEqual([
       "buscar_horario",
@@ -247,6 +295,11 @@ describe("habilidades", () => {
       // AG3: pela porta da agenda do turno (gravam ou leem pelo servidor).
       "registrar_dados_do_paciente",
       "consultar_cadastro_do_contato",
+      // AG4: remarcar e cancelar.
+      "consultar_minhas_consultas",
+      "pedir_cancelamento",
+      "cancelar_consulta",
+      "buscar_horario_para_remarcar",
     ]);
     expect(ehFerramentaDeAgenda("agendar")).toBe(true);
     expect(ehFerramentaDeAgenda("buscar_procedimento")).toBe(false);
@@ -272,11 +325,15 @@ describe("habilidades", () => {
         informar_preco_e_convenio: false,
         agendar: true,
         remarcar: true,
+        lista_de_espera: true,
       }),
     ).toEqual({
       responder_duvidas: true,
       informar_preco_e_convenio: false,
       agendar: true,
+      // AG4: remarcar virou chave conhecida (lista_de_espera, nao).
+      cancelar: false,
+      remarcar: true,
       confirmar_presenca: false,
       passar_para_equipe: true,
     });
@@ -284,6 +341,8 @@ describe("habilidades", () => {
       responder_duvidas: true,
       informar_preco_e_convenio: true,
       agendar: false,
+      cancelar: false,
+      remarcar: false,
       confirmar_presenca: false,
       passar_para_equipe: true,
     });
@@ -301,7 +360,7 @@ describe("habilidades", () => {
 
   it("as ferramentas seguem as habilidades; escalar_humano e as frases fixas sempre vem", () => {
     const semAgenda = agendaPadrao();
-    expect(ferramentasDoAgente({}, semAgenda)).toEqual([
+    expect(ferramentasDoAgente({}, semAgenda, prazosPadrao())).toEqual([
       "fora_do_assunto",
       "sou_assistente_virtual",
       "consultar_unidades",
@@ -311,7 +370,11 @@ describe("habilidades", () => {
       "escalar_humano",
     ]);
     expect(
-      ferramentasDoAgente({ informar_preco_e_convenio: false }, semAgenda),
+      ferramentasDoAgente(
+        { informar_preco_e_convenio: false },
+        semAgenda,
+        prazosPadrao(),
+      ),
     ).toEqual([
       "fora_do_assunto",
       "sou_assistente_virtual",
@@ -321,17 +384,17 @@ describe("habilidades", () => {
       "escalar_humano",
     ]);
     expect(
-      ferramentasDoAgente({ responder_duvidas: false }, semAgenda),
+      ferramentasDoAgente({ responder_duvidas: false }, semAgenda, null),
     ).toContain("fora_do_assunto");
     expect(
-      ferramentasDoAgente({ passar_para_equipe: false }, semAgenda),
+      ferramentasDoAgente({ passar_para_equipe: false }, semAgenda, null),
     ).toContain("escalar_humano");
   });
 
   it("agendar so da as ferramentas com a antecedencia e o horizonte (falha fechada)", () => {
     const completa = { antecedenciaHoras: 2, horizonteDias: 30 };
     const ligadas = { agendar: true, confirmar_presenca: true };
-    expect(ferramentasDoAgente(ligadas, completa)).toEqual([
+    expect(ferramentasDoAgente(ligadas, completa, prazosPadrao())).toEqual([
       "fora_do_assunto",
       "sou_assistente_virtual",
       "consultar_unidades",
@@ -355,7 +418,7 @@ describe("habilidades", () => {
       { antecedenciaHoras: 721, horizonteDias: 30 },
       { antecedenciaHoras: 1.5, horizonteDias: 30 },
     ]) {
-      expect(ferramentasDoAgente(ligadas, agenda)).toEqual([
+      expect(ferramentasDoAgente(ligadas, agenda, prazosPadrao())).toEqual([
         "fora_do_assunto",
         "sou_assistente_virtual",
         "consultar_unidades",
@@ -379,6 +442,8 @@ describe("habilidades", () => {
       responder_duvidas: true,
       informar_preco_e_convenio: false,
       agendar: false,
+      cancelar: false,
+      remarcar: false,
       confirmar_presenca: false,
       passar_para_equipe: true,
     });
@@ -865,7 +930,18 @@ describe("escalonamento e conformidade", () => {
       (m) => m[1],
     );
     expect([...MOTIVOS_DE_ESCALONAMENTO].sort()).toEqual(doBanco.sort());
-    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(21);
+    // AG4 (migration 20261028100000): fora_do_prazo.
+    expect((arquivoDoCheck ?? "") >= "20261028100000").toBe(true);
+    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(22);
+  });
+
+  it("AG4: fora_do_prazo tem o rótulo do banco e o texto do evento", () => {
+    expect(ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.fora_do_prazo).toBe(
+      "o pedido de cancelar ou remarcar ficou dentro do prazo da clínica",
+    );
+    expect(TEXTO_DO_EVENTO_DA_IA.fora_do_prazo).toBe(
+      "A IA passou a conversa para a equipe: o pedido de cancelar ou remarcar ficou dentro do prazo da clínica.",
+    );
   });
 
   it("AG3: os três motivos novos têm o rótulo do banco", () => {
@@ -1466,6 +1542,8 @@ describe("leitura do banco", () => {
         responder_duvidas: true,
         informar_preco_e_convenio: false,
         agendar: false,
+        cancelar: false,
+        remarcar: false,
         confirmar_presenca: false,
         passar_para_equipe: true,
       },
@@ -1476,6 +1554,8 @@ describe("leitura do banco", () => {
       // AG3: colunas fora do select (ou antes da migration) leem falso,
       // como as versoes de antes da migration 20261027120000.
       dadosExigidos: { nomeCompleto: false, nascimento: false, cpf: false },
+      // AG4: colunas fora do select (ou antes da migration) leem nulo.
+      prazos: { cancelarHoras: null, remarcarHoras: null },
       instrucoes: "Seja breve.",
       base,
     });
@@ -1537,6 +1617,8 @@ describe("leitura do banco", () => {
         responder_duvidas: true,
         informar_preco_e_convenio: true,
         agendar: false,
+        cancelar: false,
+        remarcar: false,
         confirmar_presenca: false,
         passar_para_equipe: true,
       },
@@ -1549,6 +1631,8 @@ describe("leitura do banco", () => {
       publico: null,
       // AG3 (D-6): o padrao da coluna para a primeira versao da clinica.
       dadosExigidos: { nomeCompleto: true, nascimento: true, cpf: false },
+      // AG4 (D-24): os prazos nascem vazios.
+      prazos: { cancelarHoras: null, remarcarHoras: null },
       instrucoes: null,
       base: [],
     });
@@ -2024,5 +2108,328 @@ describe("texto de interface", () => {
       expect(texto, texto).not.toMatch(TRAVESSAO);
       expect(texto, texto).not.toMatch(JARGAO);
     }
+  });
+});
+
+// AG4 (27/10/2026): remarcar e cancelar pela IA. As habilidades novas, os
+// prazos da clinica (D-24, recomendacao: dois campos versionados e vazios;
+// sem o prazo, a habilidade nao liga) e a dependencia de remarcar em
+// "Agendar consulta" (D-26).
+describe("AG4: prazos para cancelar e remarcar", () => {
+  const AGENDA_COMPLETA = { antecedenciaHoras: 2, horizonteDias: 30 };
+  const PRAZOS = { cancelarHoras: 24, remarcarHoras: 12 };
+
+  it("as faixas e os textos sao os do desenho (sem travessao nem jargao)", () => {
+    expect([...ACOES_COM_PRAZO]).toEqual(["cancelar", "remarcar"]);
+    expect(PRAZO_DA_IA).toEqual({ minimo: 0, maximo: 720 });
+    expect(ERRO_DO_PRAZO).toBe("Use um número inteiro de 0 a 720 horas.");
+    expect(ROTULO_DOS_PRAZOS).toEqual({
+      titulo: "Prazos para cancelar e remarcar",
+      cancelarHoras: "Cancelar pelo assistente até (horas antes da consulta)",
+      remarcarHoras: "Remarcar pelo assistente até (horas antes da consulta)",
+      ajuda:
+        "Com menos tempo do que isso, o assistente passa o pedido para a equipe.",
+      mudancaCancelar: "Prazo para cancelar pelo assistente",
+      mudancaRemarcar: "Prazo para remarcar pelo assistente",
+    });
+    for (const texto of [
+      ERRO_DO_PRAZO,
+      DICA_DO_PRAZO_DE_CANCELAR,
+      DICA_DA_REMARCACAO_INCOMPLETA,
+      ...Object.values(ROTULO_DOS_PRAZOS),
+      ...HABILIDADES_DO_AGENTE.map((h) => h.descricao),
+    ]) {
+      expect(texto).not.toMatch(TRAVESSAO);
+      expect(texto).not.toMatch(JARGAO);
+    }
+  });
+
+  it("o schema aceita inteiros de 0 a 720 ou vazio, e recusa o resto com o erro da tela", () => {
+    expect(
+      prazosDoAgenteSchema.parse({ cancelarHoras: 0, remarcarHoras: 720 }),
+    ).toEqual({ cancelarHoras: 0, remarcarHoras: 720 });
+    expect(
+      prazosDoAgenteSchema.parse({ cancelarHoras: null, remarcarHoras: 24 }),
+    ).toEqual({ cancelarHoras: null, remarcarHoras: 24 });
+    for (const valor of [-1, 721, 1.5, Number.NaN, "24", true]) {
+      const lido = prazosDoAgenteSchema.safeParse({
+        cancelarHoras: valor,
+        remarcarHoras: null,
+      });
+      expect(lido.success, String(valor)).toBe(false);
+      expect(lido.error?.issues[0]?.message).toBe(ERRO_DO_PRAZO);
+    }
+    // A Server Action usa .strict(): chave a mais e erro.
+    expect(
+      prazosDoAgenteSchema
+        .strict()
+        .safeParse({ cancelarHoras: 1, remarcarHoras: 1, outra: 1 }).success,
+    ).toBe(false);
+  });
+
+  it("le e grava as duas colunas; fora da faixa ou ausente le nulo (falha fechada)", () => {
+    expect(
+      prazosDoBanco({
+        cancelar_antecedencia_horas: 24,
+        remarcar_antecedencia_horas: 0,
+      }),
+    ).toEqual({ cancelarHoras: 24, remarcarHoras: 0 });
+    expect(prazosDoBanco({})).toEqual(prazosPadrao());
+    expect(
+      prazosDoBanco({
+        cancelar_antecedencia_horas: 721,
+        remarcar_antecedencia_horas: "12",
+      }),
+    ).toEqual(prazosPadrao());
+    expect(prazosParaOBanco(PRAZOS)).toEqual({
+      cancelar_antecedencia_horas: 24,
+      remarcar_antecedencia_horas: 12,
+    });
+    expect(prazoDaAcao(PRAZOS, "cancelar")).toBe(24);
+    expect(prazoDaAcao(PRAZOS, "remarcar")).toBe(12);
+    expect(prazoDaAcao(null, "cancelar")).toBeNull();
+    expect(prazoDaAcao(undefined, "remarcar")).toBeNull();
+    expect(prazoDaAcao({ cancelarHoras: 1.5, remarcarHoras: null }, "cancelar")).toBeNull();
+  });
+
+  it("configDaLinha le os prazos, e com eles cancelar e remarcar valem ligadas", () => {
+    const linha: LinhaDaConfigDoAgente = {
+      version: 4,
+      status: "publicada",
+      agent_name: "Ana",
+      tone: "cordial",
+      use_emoji: false,
+      greeting: null,
+      closing: null,
+      skills: { agendar: true, cancelar: true, remarcar: true },
+      operating_mode: "24h",
+      fallback_minutes: 5,
+      operating_hours: null,
+      agenda_antecedencia_horas: 2,
+      agenda_horizonte_dias: 30,
+      cancelar_antecedencia_horas: 24,
+      remarcar_antecedencia_horas: 12,
+    };
+    const lida = configDaLinha(linha, { base: [] });
+    expect(lida.prazos).toEqual(PRAZOS);
+    expect(lida.habilidades.cancelar).toBe(true);
+    expect(lida.habilidades.remarcar).toBe(true);
+    // Sem as colunas (antes da migration): as duas valem desligadas.
+    const semColunas = { ...linha } as Partial<LinhaDaConfigDoAgente>;
+    delete semColunas.cancelar_antecedencia_horas;
+    delete semColunas.remarcar_antecedencia_horas;
+    const antiga = configDaLinha(semColunas as LinhaDaConfigDoAgente, {
+      base: [],
+    });
+    expect(antiga.prazos).toEqual(prazosPadrao());
+    expect(antiga.habilidades.cancelar).toBe(false);
+    expect(antiga.habilidades.remarcar).toBe(false);
+  });
+
+  it("o que vale de fato: cancelar so com o prazo; remarcar com agendar valendo e o prazo", () => {
+    const tudo = { agendar: true, cancelar: true, remarcar: true };
+    expect(habilidadesComAgenda(tudo, AGENDA_COMPLETA, PRAZOS)).toMatchObject({
+      agendar: true,
+      cancelar: true,
+      remarcar: true,
+    });
+    // Sem os prazos (ausentes ou nulos): as duas desligadas.
+    for (const prazos of [undefined, null, prazosPadrao()]) {
+      expect(
+        habilidadesComAgenda(tudo, AGENDA_COMPLETA, prazos),
+      ).toMatchObject({ agendar: true, cancelar: false, remarcar: false });
+    }
+    // So o prazo de cancelar.
+    expect(
+      habilidadesComAgenda(tudo, AGENDA_COMPLETA, {
+        cancelarHoras: 0,
+        remarcarHoras: null,
+      }),
+    ).toMatchObject({ cancelar: true, remarcar: false });
+    // Remarcar sem "Agendar consulta" (desligada, ou sem a agenda).
+    expect(
+      habilidadesComAgenda({ ...tudo, agendar: false }, AGENDA_COMPLETA, PRAZOS),
+    ).toMatchObject({ agendar: false, cancelar: true, remarcar: false });
+    expect(habilidadesComAgenda(tudo, agendaPadrao(), PRAZOS)).toMatchObject({
+      agendar: false,
+      cancelar: true,
+      remarcar: false,
+    });
+  });
+
+  it("as ferramentas: cancelar e remarcar so com o que vale; consultar_minhas_consultas uma vez", () => {
+    const tudo = { agendar: true, cancelar: true, remarcar: true };
+    expect(ferramentasDoAgente(tudo, AGENDA_COMPLETA, PRAZOS)).toEqual([
+      "fora_do_assunto",
+      "sou_assistente_virtual",
+      "consultar_unidades",
+      "consultar_requisitos",
+      "buscar_profissionais",
+      "buscar_procedimento",
+      "consultar_cadastro_do_contato",
+      "buscar_horario",
+      "reservar_horario",
+      "registrar_dados_do_paciente",
+      "agendar",
+      "consultar_minhas_consultas",
+      "pedir_cancelamento",
+      "cancelar_consulta",
+      "buscar_horario_para_remarcar",
+      "escalar_humano",
+    ]);
+    // So remarcar (com agendar): a lista vem uma vez, sem as de cancelar.
+    expect(
+      ferramentasDoAgente(
+        { agendar: true, remarcar: true },
+        AGENDA_COMPLETA,
+        PRAZOS,
+      ).filter((f) =>
+        [
+          "consultar_minhas_consultas",
+          "pedir_cancelamento",
+          "cancelar_consulta",
+          "buscar_horario_para_remarcar",
+        ].includes(f),
+      ),
+    ).toEqual(["consultar_minhas_consultas", "buscar_horario_para_remarcar"]);
+    // Sem prazo: nada de cancelar nem remarcar (falha fechada).
+    expect(
+      ferramentasDoAgente(tudo, AGENDA_COMPLETA, null).some((f) =>
+        [
+          "consultar_minhas_consultas",
+          "pedir_cancelamento",
+          "cancelar_consulta",
+          "buscar_horario_para_remarcar",
+        ].includes(f),
+      ),
+    ).toBe(false);
+  });
+
+  it("a dica da chave: o prazo de cancelar; agendar e o prazo de remarcar", () => {
+    const contexto = {
+      habilidades: { agendar: true },
+      agenda: AGENDA_COMPLETA,
+      prazos: PRAZOS,
+    };
+    expect(dicaDaHabilidade("cancelar", contexto)).toBeNull();
+    expect(dicaDaHabilidade("remarcar", contexto)).toBeNull();
+    expect(
+      dicaDaHabilidade("cancelar", { ...contexto, prazos: prazosPadrao() }),
+    ).toBe(DICA_DO_PRAZO_DE_CANCELAR);
+    expect(
+      dicaDaHabilidade("remarcar", {
+        ...contexto,
+        prazos: { cancelarHoras: 24, remarcarHoras: null },
+      }),
+    ).toBe(DICA_DA_REMARCACAO_INCOMPLETA);
+    expect(
+      dicaDaHabilidade("remarcar", { ...contexto, habilidades: {} }),
+    ).toBe(DICA_DA_REMARCACAO_INCOMPLETA);
+    expect(
+      dicaDaHabilidade("remarcar", { ...contexto, agenda: agendaPadrao() }),
+    ).toBe(DICA_DA_REMARCACAO_INCOMPLETA);
+    expect(
+      dicaDaHabilidade("agendar", { ...contexto, agenda: agendaPadrao() }),
+    ).toBe(DICA_DA_AGENDA_INCOMPLETA);
+    // Sem dependencia, nunca ha dica (a de permissao e de quem chama).
+    expect(dicaDaHabilidade("confirmar_presenca", contexto)).toBeNull();
+    expect(dicaDaHabilidade("desconhecida", contexto)).toBeNull();
+  });
+
+  it("a Server Action recusa ligar sem o prazo, com a dica; remarcar sem agendar so vale desligada", () => {
+    const sem = habilidadesComAgendaSchema(AGENDA_COMPLETA, prazosPadrao());
+    const cancelar = sem.safeParse({ cancelar: true });
+    expect(cancelar.success).toBe(false);
+    expect(cancelar.error?.issues[0]?.message).toBe(DICA_DO_PRAZO_DE_CANCELAR);
+    expect(cancelar.error?.issues[0]?.path).toEqual(["cancelar"]);
+    const remarcar = sem.safeParse({ agendar: true, remarcar: true });
+    expect(remarcar.error?.issues[0]?.message).toBe(
+      DICA_DA_REMARCACAO_INCOMPLETA,
+    );
+    // Sem os prazos (ausentes): recusa tambem.
+    expect(
+      habilidadesComAgendaSchema(AGENDA_COMPLETA).safeParse({ cancelar: true })
+        .success,
+    ).toBe(false);
+    // Com os prazos: liga.
+    const com = habilidadesComAgendaSchema(AGENDA_COMPLETA, PRAZOS);
+    expect(com.parse({ agendar: true, cancelar: true, remarcar: true })).toMatchObject({
+      cancelar: true,
+      remarcar: true,
+    });
+    // Desligar "Agendar consulta" com "Remarcar consulta" ligada passa (a
+    // tela manda o objeto inteiro): remarcar fica gravada e vale desligada.
+    const gravado = com.parse({ agendar: false, remarcar: true });
+    expect(gravado.remarcar).toBe(true);
+    expect(habilidadesComAgenda(gravado, AGENDA_COMPLETA, PRAZOS).remarcar).toBe(
+      false,
+    );
+  });
+
+  it("toda habilidade que depende de outra vem depois dela na lista", () => {
+    const ordem = HABILIDADES_DO_AGENTE.map((h) => h.chave as string);
+    for (const habilidade of HABILIDADES_DO_AGENTE) {
+      if (habilidade.precisaDaHabilidade !== null) {
+        expect(ordem.indexOf(habilidade.precisaDaHabilidade)).toBeGreaterThanOrEqual(0);
+        expect(ordem.indexOf(habilidade.precisaDaHabilidade)).toBeLessThan(
+          ordem.indexOf(habilidade.chave),
+        );
+      }
+      // Quem tem dependencia tem a dica; quem nao tem, nao.
+      const temDependencia =
+        habilidade.precisaDaAgenda ||
+        habilidade.precisaDaHabilidade !== null ||
+        habilidade.precisaDoPrazo !== null;
+      expect(habilidade.dicaDaDependencia !== null).toBe(temDependencia);
+    }
+  });
+
+  it("o que mudou: cada prazo conta uma vez, com as horas ou nao preenchido", () => {
+    const publicada = config({ status: "publicada", versao: 2 });
+    expect(
+      diferencasDoRascunho(
+        config({ prazos: { cancelarHoras: 24, remarcarHoras: 1 } }),
+        publicada,
+      ).filter((m) => m.campo === "prazos"),
+    ).toEqual([
+      { campo: "prazos", rotulo: "Prazo para cancelar pelo assistente: 24 horas" },
+      { campo: "prazos", rotulo: "Prazo para remarcar pelo assistente: 1 hora" },
+    ]);
+    expect(
+      diferencasDoRascunho(
+        config(),
+        config({
+          status: "publicada",
+          prazos: { cancelarHoras: 24, remarcarHoras: null },
+        }),
+      ).filter((m) => m.campo === "prazos"),
+    ).toEqual([
+      {
+        campo: "prazos",
+        rotulo: "Prazo para cancelar pelo assistente: não preenchido",
+      },
+    ]);
+    // Iguais: nada.
+    expect(
+      diferencasDoRascunho(config(), publicada).filter(
+        (m) => m.campo === "prazos",
+      ),
+    ).toEqual([]);
+    // As habilidades sao comparadas como valem de fato: ligar cancelar sem
+    // o prazo nao e mudanca; com o prazo, e.
+    const ligada = config({
+      habilidades: { ...configPadraoDoAgente().habilidades, cancelar: true },
+    });
+    expect(
+      diferencasDoRascunho(ligada, publicada).some((m) =>
+        m.rotulo.startsWith("Cancelar consulta"),
+      ),
+    ).toBe(false);
+    expect(
+      diferencasDoRascunho(
+        { ...ligada, prazos: { cancelarHoras: 24, remarcarHoras: null } },
+        publicada,
+      ),
+    ).toContainEqual({ campo: "habilidades", rotulo: "Cancelar consulta: ligada" });
   });
 });

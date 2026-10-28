@@ -104,3 +104,70 @@ export async function lerDadosInformadosNaMarcacao(
     },
   };
 }
+
+/** O dado que a tela mostra inteiro, sob pedido (o "olho" do dialogo). */
+export type CampoRevelado = "cpf" | "carteirinha";
+
+export type LeituraDoDadoRevelado =
+  | { ok: true; valor: string | null }
+  /** codigo: o SQLSTATE do banco, ou "forma" quando o retorno nao fecha. */
+  | { ok: false; codigo: string | null };
+
+// AG4 (33.14, ponto 2; migration 20261028100000): com p_campo, a RPC devolve
+// so a chave pedida ({dados: {cpf}} ou {dados: {carteirinha}}, nula quando
+// o paciente nao informou; {dados: null} sem linha) e grava a trilha
+// revelou_dado_da_marcacao com o campo (detalhes {campo}), sem o valor.
+const reveladoSchema = {
+  cpf: z.object({
+    dados: z
+      .object({
+        cpf: z
+          .string()
+          .regex(/^\d{11}$/)
+          .nullable(),
+      })
+      .nullable(),
+  }),
+  carteirinha: z.object({
+    dados: z.object({ carteirinha: z.string().nullable() }).nullable(),
+  }),
+} as const;
+
+/**
+ * O CPF ou a carteirinha inteiros, pela sessao, so no pedido de quem esta
+ * com o dialogo aberto (revisao final da AG3, achado 12): a RPC confere o
+ * papel de novo e a trilha diz QUAL dado foi visto. Nunca lanca: erro do
+ * banco ou retorno fora da forma voltam como { ok: false, codigo }.
+ */
+export async function revelarDadoInformadoNaMarcacao(
+  supabase: SupabaseClient,
+  clinicId: string,
+  appointmentId: string,
+  campo: CampoRevelado,
+): Promise<LeituraDoDadoRevelado> {
+  let resposta: { data: unknown; error: { code?: string } | null };
+  try {
+    resposta = await supabase.rpc("ler_dados_informados_na_marcacao", {
+      p_clinic_id: clinicId,
+      p_appointment_id: appointmentId,
+      p_campo: campo,
+    });
+  } catch {
+    return { ok: false, codigo: null };
+  }
+  if (resposta.error) {
+    return { ok: false, codigo: resposta.error.code ?? null };
+  }
+  if (campo === "cpf") {
+    const lido = reveladoSchema.cpf.safeParse(resposta.data);
+    if (!lido.success) {
+      return { ok: false, codigo: "forma" };
+    }
+    return { ok: true, valor: lido.data.dados?.cpf ?? null };
+  }
+  const lido = reveladoSchema.carteirinha.safeParse(resposta.data);
+  if (!lido.success) {
+    return { ok: false, codigo: "forma" };
+  }
+  return { ok: true, valor: lido.data.dados?.carteirinha ?? null };
+}

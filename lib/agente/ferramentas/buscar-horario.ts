@@ -86,8 +86,10 @@ import {
   coberturaDoConvenio,
   convenioParaAgenda,
   indiceDosProfissionais,
+  nomeDoConvenio as nomeDoConvenioDoCadastro,
   valoresDosVinculos,
   type CatalogoDoAgente,
+  type ConvenioDaAgenda,
   type ConvenioDoAgente,
   type ProcedimentoDoIndice,
   type VinculoDoAgente,
@@ -528,6 +530,12 @@ export function planejarBuscaDeHorario(entrada: {
    * ao modelo. Ausente: nenhum.
    */
   nascimentos?: readonly string[];
+  /**
+   * AG4 (remarcacao, D-26): o convenio da consulta que esta sendo remarcada,
+   * fixado no servidor (null = o particular). Presente, o campo convenio da
+   * entrada nao e lido: o pagamento e o da consulta. Ausente: como antes.
+   */
+  convenioFixo?: ConvenioDoAgente | null;
 }): PlanoOuResultado {
   const { catalogo } = entrada;
   const lido = entradaDaBuscaDeHorarioSchema.safeParse(entrada.argumentos);
@@ -631,7 +639,16 @@ export function planejarBuscaDeHorario(entrada: {
     );
   }
 
-  const convenio = convenioParaAgenda(catalogo, pedido.convenio);
+  const convenio: ConvenioDaAgenda =
+    entrada.convenioFixo === undefined
+      ? convenioParaAgenda(catalogo, pedido.convenio)
+      : entrada.convenioFixo === null
+        ? { tipo: "particular" }
+        : {
+            tipo: "casou",
+            convenio: entrada.convenioFixo,
+            nome: nomeDoConvenioDoCadastro(entrada.convenioFixo),
+          };
   const doPaciente = `Consultou a agenda de ${procedimento.nome}`;
   switch (convenio.tipo) {
     case "convenio_nao_informado":

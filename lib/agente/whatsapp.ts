@@ -683,18 +683,27 @@ export type DecisaoParaGravar = {
  * fora do assunto e "você é um robô?"; a contagem do fora do assunto na
  * janela le este campo), depois a consulta (horario, preco e, desde a AG2,
  * as do Cadastro: quem atende, o que o paciente precisa e as unidades). Sem
- * a lista, o preco sai da trilha, como antes do E4.
+ * a lista, o preco sai da trilha, como antes do E4. AG4: cancelar_consulta
+ * logo depois de agendar (efeito), pedir_cancelamento depois dos dados (so
+ * arma a pergunta), e a busca da remarcacao e a lista das consultas com as
+ * consultas.
  */
 const PESO_DA_FERRAMENTA: readonly string[] = [
   "agendar",
+  // AG4: cancelar grava (a consulta cancelada); o pedido arma a pergunta.
+  "cancelar_consulta",
   "confirmar_presenca",
   "reservar_horario",
   // AG3: os dados para marcar gravam (dados_informados_na_marcacao).
   "registrar_dados_do_paciente",
+  "pedir_cancelamento",
   "escalar_humano",
   "fora_do_assunto",
   "sou_assistente_virtual",
+  // AG4: a busca da remarcacao e a lista das consultas da pessoa.
+  "buscar_horario_para_remarcar",
   "buscar_horario",
+  "consultar_minhas_consultas",
   // AG3: so sinais do cadastro da pessoa.
   "consultar_cadastro_do_contato",
   "buscar_procedimento",

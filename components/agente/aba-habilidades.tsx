@@ -12,12 +12,12 @@ import {
 } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import {
-  agendaCompleta,
-  DICA_DA_AGENDA_INCOMPLETA,
+  dicaDaHabilidade,
   HABILIDADES_DO_AGENTE,
   habilidadesComAgenda,
   type AgendaDoAgente,
   type HabilidadesDoAgente,
+  type PrazosDoAgente,
 } from "@/lib/domain/agente/config";
 
 // Aba Habilidades da Tela 6: a lista FECHADA (lib/domain/agente), cada uma
@@ -41,28 +41,43 @@ import {
 // Conduzza (o forcado). A nota fica embaixo da descricao dela, sempre
 // visivel, para todos os papeis. E nota, nao status: so texto, sem chip,
 // sem cor propria.
+//
+// AG4 (27/10/2026; decisoes D-9, D-10, D-24 e D-26, as tres ultimas pela
+// recomendacao, pendentes do dono): "Cancelar consulta" e "Remarcar
+// consulta", desligadas por padrao. Cancelar so liga com o prazo para
+// cancelar preenchido em Regras e limites; Remarcar, com "Agendar consulta"
+// valendo e o prazo para remarcar (a dica de cada uma vem da configuracao,
+// dicaDaHabilidade, e vale como a da agenda: escrita embaixo da descricao e
+// no cursor). As duas levam a nota da fase de teste: quem tem consulta ja e
+// paciente, e o telefone comum de paciente nao aciona o assistente.
 
 /** As habilidades que, nesta fase de teste, levam a nota do telefone. */
 export const HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA: ReadonlySet<string> =
-  new Set(["confirmar_presenca"]);
+  new Set(["cancelar", "remarcar", "confirmar_presenca"]);
 
-/** Por que a chave nao muda: sem permissao vence; depois, a agenda. */
+/**
+ * Por que a chave nao muda: sem permissao vence; depois, o que falta para a
+ * habilidade valer (a agenda, o prazo ou, na remarcacao, "Agendar consulta").
+ */
 export function motivoDaChaveTravada(
-  habilidade: { precisaDaAgenda: boolean },
-  agenda: AgendaDoAgente,
+  chave: string,
+  contexto: {
+    habilidades: unknown;
+    agenda: AgendaDoAgente;
+    prazos: PrazosDoAgente;
+  },
   dicaDePermissao: string | null,
 ): string | null {
   if (dicaDePermissao) {
     return dicaDePermissao;
   }
-  return habilidade.precisaDaAgenda && !agendaCompleta(agenda)
-    ? DICA_DA_AGENDA_INCOMPLETA
-    : null;
+  return dicaDaHabilidade(chave, contexto);
 }
 
 export function AbaHabilidades({
   habilidades,
   agenda,
+  prazos,
   podeEditar,
   dica,
   pendente,
@@ -72,6 +87,8 @@ export function AbaHabilidades({
   habilidades: Record<string, boolean>;
   /** Os limites para marcar consulta do rascunho (Regras e limites). */
   agenda: AgendaDoAgente;
+  /** AG4: os prazos para cancelar e remarcar do rascunho (Regras e limites). */
+  prazos: PrazosDoAgente;
   podeEditar: boolean;
   dica: string | null;
   pendente: boolean;
@@ -82,8 +99,7 @@ export function AbaHabilidades({
     habilidade: (typeof HABILIDADES_DO_AGENTE)[number],
   ) => void;
 }) {
-  const efetivas = habilidadesComAgenda(habilidades, agenda);
-  const semAgenda = !agendaCompleta(agenda);
+  const efetivas = habilidadesComAgenda(habilidades, agenda, prazos);
   return (
     <Card role="region" aria-labelledby="agente-habilidades-titulo">
       <CardHeader>
@@ -109,16 +125,23 @@ export function AbaHabilidades({
             }
             const ligada = efetivas[habilidade.chave];
             const idRotulo = `agente-habilidade-${habilidade.chave}`;
+            // O id da dica de dependencia ("-agenda" desde o E4; vale tambem
+            // para o prazo e para a outra habilidade, AG4).
             const idDaAgenda = `${idRotulo}-agenda`;
-            const faltaAgenda = habilidade.precisaDaAgenda && semAgenda;
-            const motivo = motivoDaChaveTravada(habilidade, agenda, dica);
+            const contexto = { habilidades, agenda, prazos };
+            const falta = dicaDaHabilidade(habilidade.chave, contexto);
+            const motivo = motivoDaChaveTravada(
+              habilidade.chave,
+              contexto,
+              dica,
+            );
             const chave = (
               <Switch
                 checked={ligada}
                 aria-labelledby={idRotulo}
-                aria-describedby={faltaAgenda ? idDaAgenda : undefined}
+                aria-describedby={falta ? idDaAgenda : undefined}
                 aria-busy={ocupado(habilidade.chave) || undefined}
-                disabled={!podeEditar || pendente || faltaAgenda}
+                disabled={!podeEditar || pendente || falta !== null}
                 onCheckedChange={(valor) =>
                   aoAlternar(
                     { ...efetivas, [habilidade.chave]: valor === true },
@@ -149,12 +172,12 @@ export function AbaHabilidades({
                       {T.habilidadeNaFaseDeTeste}
                     </span>
                   ) : null}
-                  {faltaAgenda ? (
+                  {falta ? (
                     <span
                       id={idDaAgenda}
                       className="text-xs font-semibold text-text-secondary"
                     >
-                      {DICA_DA_AGENDA_INCOMPLETA}
+                      {falta}
                     </span>
                   ) : null}
                   {ocupado(habilidade.chave) ? (

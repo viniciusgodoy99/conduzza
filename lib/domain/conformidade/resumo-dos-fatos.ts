@@ -79,7 +79,9 @@ const ROTULO_DA_ACAO: Readonly<Record<AcaoDoTurno, string>> = {
   confirmou_presenca:
     "confirmou a presença numa consulta que a pessoa já tinha",
   cancelou: "cancelou a consulta",
-  remarcou: "remarcou a consulta",
+  // AG4: a remarcacao fica pendente da aprovacao da equipe (D-10).
+  remarcou:
+    "pediu a remarcação da consulta, pendente da aprovação da equipe; a consulta de antes continua marcada até lá",
   lista_de_espera: "colocou a pessoa na lista de espera",
 };
 
@@ -92,9 +94,18 @@ const ROTULO_DA_ACAO_COM_HORARIO: Readonly<Record<AcaoDoTurno, string>> = {
   marcou: "marcou a consulta de {}, pendente da aprovação da equipe",
   confirmou_presenca: "confirmou a presença na consulta de {}",
   cancelou: "cancelou a consulta de {}",
-  remarcou: "remarcou a consulta para {}",
+  // AG4 (D-10): a nova pendente; a antiga continua marcada ate a aprovacao.
+  remarcou:
+    "pediu a remarcação para {}, pendente da aprovação da equipe; a consulta de antes continua marcada até lá",
   lista_de_espera: "colocou a pessoa na lista de espera para {}",
 };
+
+/**
+ * AG4: a remarcacao com o horario da consulta antiga ("{}" e o horario
+ * novo; "[]" e o da antiga).
+ */
+const ROTULO_DA_REMARCACAO_COM_A_ANTIGA =
+  "pediu a remarcação para {}, pendente da aprovação da equipe; a consulta de [] continua marcada até lá";
 
 /** O que segue a acao que nao tem o horario dela no turno. */
 const SEM_HORARIO_DA_ACAO = "(sem dia e hora informados)";
@@ -292,7 +303,27 @@ export function resumirFatosDoTurno(
       if (lido === null) {
         return { ok: false, motivo: "horario_fora_do_formato" };
       }
-      acoes.push(ROTULO_DA_ACAO_COM_HORARIO[acao].replace("{}", () => lido));
+      // AG4: a remarcacao com a consulta antiga, que continua marcada.
+      const anterior =
+        acao === "remarcou" && h.anterior !== undefined && h.anterior !== null
+          ? horarioEmTexto(h.anterior)
+          : null;
+      if (
+        acao === "remarcou" &&
+        h.anterior !== undefined &&
+        h.anterior !== null &&
+        anterior === null
+      ) {
+        return { ok: false, motivo: "horario_fora_do_formato" };
+      }
+      acoes.push(
+        anterior === null
+          ? ROTULO_DA_ACAO_COM_HORARIO[acao].replace("{}", () => lido)
+          : ROTULO_DA_REMARCACAO_COM_A_ANTIGA.replace("{}", () => lido).replace(
+              "[]",
+              () => anterior,
+            ),
+      );
     }
   }
   const consultas: string[] = [];
@@ -304,8 +335,22 @@ export function resumirFatosDoTurno(
     consultas.push(
       c.marcadaNestaConversa
         ? `${lido} (marcada pela assistente nesta conversa, pendente da aprovação da equipe)`
-        : lido,
+        : c.remarcadaNestaConversa === true
+          ? `${lido} (remarcação pedida pela assistente nesta conversa, pendente da aprovação da equipe)`
+          : c.remarcacaoAprovada === true
+            ? `${lido} (remarcação pedida pela assistente nesta conversa, já aprovada pela equipe)`
+            : lido,
     );
+  }
+  // Revisao da AG4 (achado 7): as consultas que a assistente cancelou nesta
+  // conversa num turno anterior, relidas e ainda canceladas.
+  const canceladas: string[] = [];
+  for (const c of fatos.consultasCanceladas ?? []) {
+    const lido = horarioEmTexto(c);
+    if (lido === null) {
+      return { ok: false, motivo: "horario_fora_do_formato" };
+    }
+    canceladas.push(lido);
   }
   const consultaLida =
     consultas.length > 0
@@ -369,6 +414,15 @@ export function resumirFatosDoTurno(
       "nenhuma",
     ),
     consultaLida,
+    ...(canceladas.length === 0
+      ? []
+      : [
+          secao(
+            "Consultas que a assistente cancelou nesta conversa, relidas pelo sistema nesta resposta e ainda canceladas (dia e hora juntos)",
+            canceladas,
+            "nenhuma",
+          ),
+        ]),
     secao(
       "Horários livres que a agenda trouxe nesta resposta (dia e hora juntos)",
       horarios,
@@ -428,4 +482,12 @@ export const FONTES_DO_RESUMO: readonly string[] = [
   JSON.stringify(ROTULO_DA_ACAO_COM_HORARIO),
   SEM_HORARIO_DA_ACAO,
   "resumo: consultas lidas com o dia, a hora e a unidade; a marcada nesta conversa avisada",
+  // AG4: a remarcacao pendente com a consulta antiga, e a remarcada nesta
+  // conversa avisada.
+  ROTULO_DA_REMARCACAO_COM_A_ANTIGA,
+  "resumo: a remarcacao pedida nesta conversa avisada como pendente",
+  // Revisao da AG4 (achado 7): a remarcacao ja aprovada e as canceladas
+  // nesta conversa.
+  "resumo: a remarcacao pedida nesta conversa e ja aprovada avisada como aprovada",
+  "resumo: as consultas canceladas pela assistente nesta conversa, relidas, numa secao propria so quando ha",
 ];

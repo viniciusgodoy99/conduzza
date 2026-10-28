@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { TEXTOS_DA_REMARCACAO } from "@/components/agenda/remarcacao-da-ia";
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import { STATUS_DE_CANCELAMENTO } from "@/lib/domain/appointment-status";
 import { horaParaMinutos } from "@/lib/domain/horarios";
 import { canEdit } from "@/lib/domain/permissions";
 import { RECUSAS_DA_REGUA } from "@/lib/domain/reguas-de-followup";
@@ -29,6 +31,11 @@ const horaSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 export type ConfirmacoesActionResult = {
   ok: boolean;
   error?: string;
+  /**
+   * AG4: "Manter o horário" com a remarcacao pedida pela IA esperando a
+   * equipe na Agenda. Nada mudou; a tela avisa (nao e falha do sistema).
+   */
+  code?: "remarcacao_da_ia_pendente";
 };
 
 export type CobrancaResult = ConfirmacoesActionResult & {
@@ -318,6 +325,36 @@ export async function cobrarAgoraAction(
 
 const manterHorarioSchema = z.object({ appointment_id: idSchema });
 
+const TEXTOS_DO_MANTER = {
+  erro: "Não foi possível manter o horário.",
+  semPedido: "Esta consulta não tem mais pedido de remarcação em aberto.",
+  mudou: "Esta consulta acabou de mudar. Confira a lista e tente de novo.",
+} as const;
+
+/**
+ * Ha remarcacao pedida pela IA (a consulta nova ligada por remarcacao_de)
+ * esperando a equipe? So a pendente e nao cancelada conta. "erro" quando a
+ * leitura falha: quem chama recusa (nunca zera a marca sem conferir).
+ */
+async function remarcacaoDaIaPendente(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clinicId: string,
+  antigaId: string,
+): Promise<boolean | "erro"> {
+  const { data, error } = await supabase
+    .from("appointment")
+    .select("id")
+    .eq("clinic_id", clinicId)
+    .eq("remarcacao_de", antigaId)
+    .eq("approval_status", "pendente")
+    .not("status", "in", `(${STATUS_DE_CANCELAMENTO.join(",")})`)
+    .limit(1);
+  if (error) {
+    return "erro";
+  }
+  return Array.isArray(data) && data.length > 0;
+}
+
 /**
  * O paciente pediu para remarcar, a recepcao falou com ele e ele fica com o
  * horario. Sem esta acao, a marca so saia movendo a consulta (o que avisa o
@@ -330,6 +367,25 @@ const manterHorarioSchema = z.object({ appointment_id: idSchema });
  * RLS (user_can_write) decidem; o update condicional nao mexe em consulta
  * sem pedido em aberto. A trilha vai para audit_log: a trilha da consulta
  * (appointment_status_history.event) so aceita 'remarcacao_pedida' hoje.
+ *
+ * AG4 (desenho, secao 5; D-29 e D-32 pela recomendacao): quando o pedido
+ * veio da IA e a remarcacao dela (a consulta nova, ligada por
+ * remarcacao_de) ainda espera a equipe, manter o horario aqui voltaria a
+ * pedir confirmacao do horario antigo ao paciente enquanto ele espera o
+ * novo. Nada muda: a tela avisa que a remarcacao esta na Agenda, para
+ * aprovar ou recusar antes (a recusa deixa a marca, e ai o "Manter o
+ * horário" vale). Leitura que falha recusa: nunca zera a marca sem conferir.
+ *
+ * Revisao da AG4 (achado 7): a conferencia e o update eram dois passos, e a
+ * remarcacao que a IA pedisse no meio (milissegundos) teria a marca zerada:
+ * a regua voltaria a pedir confirmacao do horario antigo. Agora a condicao
+ * vai no proprio update, sem mudar o banco: a versao da consulta
+ * (updated_at, lida ANTES de conferir a remarcacao) vai no filtro. A IA so
+ * cria a remarcacao gravando na antiga, na mesma transacao (agendar_pela_ia
+ * com p_remarcar poe a marca com coalesce, e o gatilho set_updated_at muda
+ * a versao mesmo quando a marca ja existia). Se a versao mudou, zero linhas:
+ * confere de novo (uma volta a mais) e, com a remarcacao pendente, avisa
+ * como acima, sem zerar nada.
  */
 export async function manterHorarioAction(
   input: unknown,
@@ -342,33 +398,76 @@ export async function manterHorarioAction(
   if (!parsed.success) {
     return { ok: false, error: "Consulta inválida." };
   }
+  const id = parsed.data.appointment_id;
 
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("appointment")
-    .update({ remarcacao_pedida_em: null })
-    .eq("clinic_id", guard.clinicId)
-    .eq("id", parsed.data.appointment_id)
-    .not("remarcacao_pedida_em", "is", null)
-    .select("id");
-  if (error) {
-    return { ok: false, error: "Não foi possível manter o horário." };
-  }
-  if (!data || data.length === 0) {
-    return {
-      ok: false,
-      error: "Esta consulta não tem mais pedido de remarcação em aberto.",
-    };
-  }
+  for (let volta = 0; volta < 2; volta += 1) {
+    // 1. A marca e a versao da consulta, ANTES de conferir a remarcacao: a
+    // remarcacao que chegar depois desta leitura muda a versao.
+    const { data: lida, error: erroDaConsulta } = await supabase
+      .from("appointment")
+      .select("remarcacao_pedida_em, updated_at")
+      .eq("clinic_id", guard.clinicId)
+      .eq("id", id)
+      .maybeSingle();
+    if (erroDaConsulta) {
+      return { ok: false, error: TEXTOS_DO_MANTER.erro };
+    }
+    const consulta = lida as {
+      remarcacao_pedida_em?: unknown;
+      updated_at?: unknown;
+    } | null;
+    if (
+      !consulta ||
+      consulta.remarcacao_pedida_em === null ||
+      consulta.remarcacao_pedida_em === undefined
+    ) {
+      return { ok: false, error: TEXTOS_DO_MANTER.semPedido };
+    }
+    if (typeof consulta.updated_at !== "string") {
+      return { ok: false, error: TEXTOS_DO_MANTER.erro };
+    }
 
-  await supabase.from("audit_log").insert({
-    clinic_id: guard.clinicId,
-    user_id: guard.context.userId,
-    action: "manteve_horario_apos_pedido_de_remarcacao",
-    entity: "appointment",
-    entity_id: parsed.data.appointment_id,
-  });
-  revalidatePath("/confirmacoes");
-  revalidatePath("/agenda");
-  return { ok: true };
+    // 2. A remarcacao da IA esperando a equipe: nada muda.
+    const pendente = await remarcacaoDaIaPendente(supabase, guard.clinicId, id);
+    if (pendente === "erro") {
+      return { ok: false, error: TEXTOS_DO_MANTER.erro };
+    }
+    if (pendente) {
+      return {
+        ok: false,
+        code: "remarcacao_da_ia_pendente",
+        error: TEXTOS_DA_REMARCACAO.manterHorarioComRemarcacao,
+      };
+    }
+
+    // 3. So zera a marca da versao conferida.
+    const { data, error } = await supabase
+      .from("appointment")
+      .update({ remarcacao_pedida_em: null })
+      .eq("clinic_id", guard.clinicId)
+      .eq("id", id)
+      .eq("updated_at", consulta.updated_at)
+      .not("remarcacao_pedida_em", "is", null)
+      .select("id");
+    if (error) {
+      return { ok: false, error: TEXTOS_DO_MANTER.erro };
+    }
+    if (data && data.length > 0) {
+      await supabase.from("audit_log").insert({
+        clinic_id: guard.clinicId,
+        user_id: guard.context.userId,
+        action: "manteve_horario_apos_pedido_de_remarcacao",
+        entity: "appointment",
+        entity_id: id,
+      });
+      revalidatePath("/confirmacoes");
+      revalidatePath("/agenda");
+      return { ok: true };
+    }
+    // Zero linhas: a consulta mudou entre a leitura e o update (a IA pode
+    // ter pedido a remarcacao nesse meio). A proxima volta confere tudo de
+    // novo.
+  }
+  return { ok: false, error: TEXTOS_DO_MANTER.mudou };
 }

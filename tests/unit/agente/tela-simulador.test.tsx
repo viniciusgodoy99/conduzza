@@ -137,14 +137,18 @@ describe("Testar como", () => {
 });
 
 describe("cenários", () => {
-  it("são os 4 do brief, nesta ordem", () => {
+  it("são os 4 do brief e, desde a AG4, cancelar e remarcar, nesta ordem", () => {
     expect(CENARIOS_DO_SIMULADOR.map((c) => c.rotulo)).toEqual([
       "Paciente perguntando preço",
       "Paciente querendo agendar",
       "Paciente descrevendo sintoma",
       "Paciente irritado",
+      "Paciente querendo cancelar",
+      "Paciente querendo remarcar",
     ]);
     expect(ehCenario("preco")).toBe(true);
+    expect(ehCenario("cancelar")).toBe(true);
+    expect(ehCenario("remarcar")).toBe(true);
     expect(ehCenario("outro")).toBe(false);
   });
 

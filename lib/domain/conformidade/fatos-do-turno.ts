@@ -209,16 +209,38 @@ export type HorarioDoFato = {
   profissional?: string | null;
 };
 
-/** Uma acao de sucesso com o horario dela. */
-export type AcaoComHorario = HorarioDoFato & { acao: AcaoDoTurno };
+/**
+ * Uma acao de sucesso com o horario dela. AG4: na remarcacao, `anterior` e o
+ * horario da consulta antiga (que continua marcada ate a aprovacao); vai ao
+ * resumo do verificador ("pediu a remarcacao para X; a consulta de Y
+ * continua marcada").
+ */
+export type AcaoComHorario = HorarioDoFato & {
+  acao: AcaoDoTurno;
+  anterior?: HorarioDoFato | null;
+};
 
 /**
  * Uma consulta que a ferramenta leu (confirmar_presenca, ja_tem_consulta ou
  * a consulta do estado). marcadaNestaConversa: a consulta que a IA marcou
  * nesta conversa num turno anterior, relida agora (o estado do
- * atendimento): "ficou marcada" e "foi marcada" valem com ela.
+ * atendimento): "ficou marcada" e "foi marcada" valem com ela. AG4:
+ * remarcadaNestaConversa e a consulta NOVA da remarcacao que a IA pediu
+ * nesta conversa, relida e ainda pendente da aprovacao: "foi remarcada" vale
+ * com ela, e a mensagem que diz isso tem de dizer que depende da aprovacao
+ * (remarcacao_sem_pendencia).
  */
-export type ConsultaDoFato = HorarioDoFato & { marcadaNestaConversa: boolean };
+export type ConsultaDoFato = HorarioDoFato & {
+  marcadaNestaConversa: boolean;
+  remarcadaNestaConversa?: boolean;
+  /**
+   * Revisao da AG4 (achado 7): a consulta NOVA da remarcacao que a IA pediu
+   * nesta conversa, ja aprovada pela equipe (relida agora): "foi remarcada"
+   * vale com ela, com o par dela, sem a pendencia (que ja nao e verdade).
+   * Nunca junto de remarcadaNestaConversa (fato incoerente bloqueia).
+   */
+  remarcacaoAprovada?: boolean;
+};
 
 /** O que uma ferramenta acrescenta aos fatos, alem da propria saida. */
 export type FatosDaFerramenta = {
@@ -236,6 +258,23 @@ export type FatosDaFerramenta = {
    * estado da consulta com dia ou hora nao passa.
    */
   consultaComHorario?: ConsultaDoFato;
+  /**
+   * AG4: as consultas lidas de uma vez (consultar_minhas_consultas, a
+   * consulta em foco e, na remarcacao, a antiga), com o horario de cada uma.
+   */
+  consultasComHorario?: readonly ConsultaDoFato[];
+  /**
+   * AG4: na remarcacao (acao "remarcou"), o horario da consulta antiga, que
+   * continua marcada ate a aprovacao.
+   */
+  horarioAnterior?: HorarioDoFato;
+  /**
+   * Revisao da AG4 (achado 7): as consultas que a IA cancelou nesta conversa
+   * num turno anterior, relidas agora e ainda canceladas (o estado do
+   * atendimento). So sustentam a frase do cancelamento, com o par delas;
+   * nunca sao consulta lida (nao estao marcadas).
+   */
+  consultasCanceladas?: readonly HorarioDoFato[];
   /**
    * Os horarios livres que a ferramenta trouxe (buscar_horario) ou reservou
    * (reservar_horario): a unica prova de "tenho as 14h".
@@ -291,6 +330,13 @@ export type FatosDoTurno = {
    * da consulta marcada ou remarcada no turno).
    */
   consultasLidas: readonly ConsultaDoFato[];
+  /**
+   * Revisao da AG4 (achado 7): as consultas que a IA cancelou nesta conversa
+   * num turno anterior, relidas e ainda canceladas. "Foi cancelada" vale com
+   * o par de uma delas; nunca sustentam o estado da consulta nem o
+   * fechamento. Ausente: nenhuma.
+   */
+  consultasCanceladas?: readonly HorarioDoFato[];
   /**
    * Revisao final da AG3: o eco do pedido (FatosDaFerramenta.ecos), fonte
    * de data e hora so na frase que nega ou pergunta.
@@ -351,6 +397,7 @@ export function fatosVazios(anoCorrente: number): FatosDoTurno {
     horariosDasAcoes: [],
     consultaLida: false,
     consultasLidas: [],
+    consultasCanceladas: [],
     ecosDoPedido: [],
     anoCorrente,
     horariosLivres: [],
@@ -428,18 +475,42 @@ function listaDeTextosOpcional(valor: unknown): boolean {
 }
 
 function acaoComHorarioValida(valor: unknown): boolean {
+  const anterior = (valor as Record<string, unknown> | null)?.anterior;
   return (
     horarioDoFatoValido(valor) &&
     (ACOES_DO_TURNO as readonly unknown[]).includes(
       (valor as Record<string, unknown>).acao,
-    )
+    ) &&
+    // AG4: o horario da consulta antiga, opcional, so na remarcacao.
+    (anterior === undefined ||
+      anterior === null ||
+      (horarioDoFatoValido(anterior) &&
+        (valor as Record<string, unknown>).acao === "remarcou"))
   );
 }
 
 function consultaDoFatoValida(valor: unknown): boolean {
+  const remarcada = (valor as Record<string, unknown> | null)
+    ?.remarcadaNestaConversa;
+  const aprovada = (valor as Record<string, unknown> | null)
+    ?.remarcacaoAprovada;
   return (
     horarioDoFatoValido(valor) &&
-    typeof (valor as Record<string, unknown>).marcadaNestaConversa === "boolean"
+    typeof (valor as Record<string, unknown>).marcadaNestaConversa ===
+      "boolean" &&
+    (remarcada === undefined || typeof remarcada === "boolean") &&
+    // Revisao da AG4 (achado 7): aprovada, opcional, nunca junto da
+    // pendente.
+    (aprovada === undefined || typeof aprovada === "boolean") &&
+    !(remarcada === true && aprovada === true)
+  );
+}
+
+/** Revisao da AG4 (achado 7): a lista opcional das consultas canceladas. */
+function consultasCanceladasValidas(valor: unknown): boolean {
+  return (
+    valor === undefined ||
+    (Array.isArray(valor) && valor.every(horarioDoFatoValido))
   );
 }
 
@@ -497,6 +568,7 @@ export function fatosValidos(valor: unknown): valor is FatosDoTurno {
     Array.isArray(f.consultasLidas) &&
     f.consultasLidas.every(consultaDoFatoValida) &&
     (f.consultasLidas.length === 0 || f.consultaLida === true) &&
+    consultasCanceladasValidas(f.consultasCanceladas) &&
     listaDeTextos(f.ecosDoPedido) &&
     inteiroEntre(f.anoCorrente, 2000, 2200) &&
     Array.isArray(f.horariosLivres) &&
@@ -2988,6 +3060,275 @@ function semFlexaoDoParticipio(texto: string): string {
     .replace(PARTICIPIO_NO_SUPERLATIVO, "$1$2");
 }
 
+/**
+ * AG4 (27/10/2026): a frase diz que a remarcacao depende da aprovacao da
+ * equipe ("pendente da aprovacao", "ate a equipe aprovar", "falta a
+ * aprovacao"). "Aprovada" e "aprovado" NAO contam: dizem que ja foi.
+ * Revisao da AG4 (achado 5): so a pendencia DITA, com a aprovacao ou a
+ * equipe junto ("qualquer pendencia, me chame" e "a aprovacao" sozinha nao
+ * contam), lida na frase da afirmacao e na frase logo depois dela (nunca na
+ * mensagem inteira). Revisao curta das correcoes da AG4 (achado 5): cada
+ * expressao daqui e so o COMECO da conferencia (pendenciaDaRemarcacao): a
+ * frase tem de falar da APROVACAO ("aprov...") e nao pode ser a pendencia
+ * de outra coisa ("ficou pendente so o pagamento", "seu cadastro esta
+ * pendente", "falta a equipe aprovar o seu cadastro").
+ */
+const PENDENCIA_DA_REMARCACAO = new RegExp(
+  [
+    // "pendente da aprovacao da equipe", "pendente de aprovacao",
+    // "pendente ate a equipe aprovar".
+    "\\bpendentes?\\s+(?:de|da|do|ate|ainda)\\s+(?:\\w+\\s+){0,2}?(?:aprovacao|equipe|aprovar)\\b",
+    // "esta pendente", "fica pendente", "continua pendente".
+    "\\b(?:esta|estao|fica|ficam|ficou|ficaram|continua|continuam|segue|seguem)\\s+(?:ainda\\s+)?pendentes?\\b",
+    // "aguardando a aprovacao", "depende da equipe", "sujeita a aprovacao".
+    "\\b(?:aguardando|esperando|aguarda|espera|aguardam|esperam|aguardar|esperar|depende|dependem|dependendo|sujeit[oa]s?)\\s+(?:\\w+\\s+){0,2}?(?:aprovacao|equipe)\\b",
+    // "ate a equipe aprovar", "assim que a equipe confirmar".
+    "\\b(?:ate|assim que|quando|depois que|logo que|antes que)\\s+(?:a\\s+)?(?:equipe|clinica|recepcao)\\s+(?:\\w+\\s+)?(?:aprovar|aprove|confirmar|confirme)\\b",
+    // "ate a aprovacao", "depois da aprovacao".
+    "\\b(?:ate|antes da|depois da|apos a|apos)\\s+(?:a\\s+)?aprovacao\\b",
+    // "precisa ser aprovada", "falta a equipe aprovar", "tem que ser aprovada".
+    "\\b(?:precisa|precisam|falta|faltando|tem que|ainda tem que)\\s+(?:\\w+\\s+){0,3}?(?:aprovad[oa]s?|aprovacao|aprovar)\\b",
+    // "ainda nao foi aprovada".
+    "\\bainda nao (?:foi|esta|ficou) aprovad[oa]s?\\b",
+  ].join("|"),
+);
+
+/**
+ * Revisao curta das correcoes da AG4 (achado 5): a pendencia que sustenta a
+ * remarcacao fala da APROVACAO ("aprovacao", "aprovar", "aprovada"): "esta
+ * pendente" e "ate a recepcao confirmar" sozinhos nao dizem do que.
+ */
+const APROVACAO_NA_PENDENCIA = /\baprov(?:acao|acoes|ar|a|am|e|em|ad[oa]s?)\b/;
+
+/**
+ * Revisao curta das correcoes da AG4 (achado 5): a frase da pendencia que
+ * fala de OUTRA coisa (o pagamento, o cadastro, um documento, o convenio):
+ * a pendencia dela nao e a da remarcacao, nem na frase da afirmacao nem na
+ * seguinte. Lado seguro: na frase inteira (a remarcacao com a pendencia dita
+ * e o pagamento na mesma frase barra; o verificador continua lendo).
+ */
+const OUTRA_PENDENCIA =
+  /\b(?:cadastros?|pagamentos?|pago|documentos?|documentacao|exames?|guias?|laudos?|receitas?|fichas?|formularios?|cpf|carteirinhas?|convenios?|autorizacao|reembolsos?|orcamentos?|contratos?|boletos?|pix|sinal|depositos?|matriculas?|inscricao|taxas?|multas?)\b/;
+
+/**
+ * Revisao curta das correcoes da AG4 (achado 5): a frase diz a pendencia DA
+ * REMARCACAO? Uma expressao de pendencia, a aprovacao dita na frase, nenhuma
+ * outra coisa pendente nela e nenhuma aprovacao afirmada (nem pendencia
+ * negada).
+ */
+function pendenciaDaRemarcacao(frase: string): boolean {
+  return (
+    PENDENCIA_DA_REMARCACAO.test(frase) &&
+    APROVACAO_NA_PENDENCIA.test(frase) &&
+    !OUTRA_PENDENCIA.test(frase) &&
+    !APROVACAO_AFIRMADA.test(frase)
+  );
+}
+
+/** As palavras que negam o que vem logo depois (APROVACAO_AFIRMADA). */
+const NEGA = "(?:nao|nem|nunca|jamais)";
+
+/**
+ * Revisao final da AG4 (M2): a negacao COLADA no verbo ("nao saiu", "ainda
+ * nao aprovaram", "nao a aprovaram", "nem veio", "ninguem aprovou"), com no
+ * maximo um pronome ou "ainda" no meio. So ela tira a afirmacao: a negacao
+ * solta antes ("a aprovacao NEM demorou e ja saiu", o "nem" intensificador)
+ * nao nega o verbo que vem depois.
+ */
+const SEM_NEGACAO_COLADA = `(?<!\\b(?:nao|nem|nunca|jamais|ninguem)\\s(?:(?:a|o|as|os|lhe|te|me|ainda)\\s)?)`;
+
+/**
+ * Revisao da revisao final da AG4 (27/10/2026, falsos positivos do
+ * participio sem o auxiliar): ate dois artigos, possessivos ou adverbios
+ * entre o que vem antes e o nome ("o", "a sua", "ainda o").
+ */
+const DETERMINANTES_DO_PARTICIPIO =
+  "(?:(?:a|o|as|os|sua|seu|suas|seus|essa|esse|nova|novo|ja|ainda|mais)\\s){0,2}";
+
+/**
+ * Revisao da revisao final da AG4: o verbo da hipotese que vem antes do
+ * nome ("assim que ESTIVER tudo aprovado", "quando TIVER a consulta
+ * aprovada", "espero que ESTEJA tudo aprovado"): o futuro e o presente do
+ * subjuntivo nunca afirmam.
+ */
+const VERBO_DA_HIPOTESE =
+  "(?:estiver|estiverem|estivermos|estivesse|estivessem|esteja|estejam|estejamos|tiver|tiverem|tivermos|tivesse|tivessem|tenha|tenham|tenhamos|houver|houvesse|haja|for|forem|formos|fosse|fossem|seja|sejam)";
+
+/**
+ * Revisao da revisao final da AG4: o infinitivo antes do nome ("ate ESTAR
+ * tudo aprovado", "para TER a consulta aprovada", e o futuro do subjuntivo
+ * igual a ele, "quando a equipe DEIXAR tudo aprovado") tambem nao afirma,
+ * menos depois do verbo que promete ou supoe ("VAI estar tudo aprovado",
+ * "DEVE estar tudo aprovado", "vou DEIXAR tudo aprovado"), que continua
+ * barrando.
+ */
+const INFINITIVO_SEM_PROMESSA =
+  "(?<!\\b(?:vai|vao|vou|vamos|ira|irao|deve|devem|deveria|deveriam|pode|podem|costuma|costumam)\\s)(?:estar|estarem|ter|terem|ficar|ficarem|deixar|deixarem)";
+
+/**
+ * Revisao da revisao final da AG4: a conjuncao de tempo com o presente do
+ * habito ("QUANDO TEM tudo aprovado, a de antes e cancelada", "assim que
+ * esta tudo aprovado"). Sem o "se": "se ja esta tudo aprovado? Esta!" e o
+ * eco da pergunta, e continua barrando como "se ja esta aprovado".
+ */
+const TEMPO_COM_O_PRESENTE =
+  "(?:quando|assim\\s+que|logo\\s+que|depois\\s+que|sempre\\s+que)\\s(?:ja\\s)?(?:tem|temos|esta|estao|ta|fica|ficam|ha)";
+
+/**
+ * Revisao da revisao final da AG4 (falsos positivos novos de
+ * remarcacao_sem_pendencia): o que vem antes do participio sem o auxiliar e
+ * tira a afirmacao ("tudo aprovado", "o horario aprovado"):
+ *  - a condicao e o tempo, como antes ("com a remarcacao aprovada", "se
+ *    tudo aprovado");
+ *  - o verbo da hipotese e o infinitivo sem promessa ("assim que estiver
+ *    tudo aprovado", "quando tiver a consulta aprovada");
+ *  - a conjuncao de tempo com o presente do habito ("quando tem tudo
+ *    aprovado, a de antes e cancelada");
+ *  - a negacao COLADA no verbo que vem antes do nome ("ainda nao esta tudo
+ *    aprovado", "ainda nao temos o horario aprovado"), no maximo um verbo
+ *    no meio (a negacao solta, "nao se preocupe, tudo aprovado", afirma);
+ *  - a negacao do nome ("nenhum horario aprovado ainda", "sem a consulta
+ *    aprovada"); "nenhum tudo" nao existe, entao "problema nenhum tudo
+ *    aprovado" continua barrando.
+ * O indicativo sem negacao ("esta tudo aprovado", "temos o horario
+ * aprovado", "ja tem tudo aprovado"), a promessa ("vai estar tudo
+ * aprovado") e a pergunta indireta ("vou ver se ja esta tudo aprovado",
+ * como "vou ver se ja esta aprovado" no auxiliar) continuam barrando.
+ */
+const PARTICIPIO_QUE_NAO_AFIRMA_ANTES = `(?<!\\b(?:(?:com|quando|apos|se|depois\\s+de|depois\\s+da|depois\\s+do)\\s${DETERMINANTES_DO_PARTICIPIO}|${VERBO_DA_HIPOTESE}\\s${DETERMINANTES_DO_PARTICIPIO}|${INFINITIVO_SEM_PROMESSA}\\s${DETERMINANTES_DO_PARTICIPIO}|${TEMPO_COM_O_PRESENTE}\\s${DETERMINANTES_DO_PARTICIPIO}|(?:nao|nem|nunca|jamais)\\s(?:(?:ainda|mais)\\s)?(?:\\w+\\s)?${DETERMINANTES_DO_PARTICIPIO}|(?:nenhum|nenhuma)\\s(?!tudo\\b)${DETERMINANTES_DO_PARTICIPIO}|sem\\s${DETERMINANTES_DO_PARTICIPIO}))`;
+
+/**
+ * Revisao da revisao final da AG4: a palavra de duracao depois do verbo da
+ * espera ("nao vai precisar esperar MUITO pela aprovacao", "nao precisa
+ * esperar TANTO tempo"): a negacao fala do tempo da espera, que continua,
+ * e nao da aprovacao.
+ */
+const SEM_PALAVRA_DE_DURACAO =
+  "(?!(?:muito|muita|tanto|tanta|demais|bastante|longo|longa|tempo|dias?|horas?|semanas?)\\b)";
+
+/**
+ * Revisao da revisao final da AG4: o que pode ficar entre a negacao e o
+ * verbo da pendencia negada (a negacao COLADA, como em SEM_NEGACAO_COLADA):
+ * o auxiliar ("nao ESTA mais aguardando", "nao VAI precisar de aprovacao",
+ * "nao FICA esperando"), um pronome, "mais" e "ainda". Outro verbo no meio
+ * ("nao ESQUECA QUE depende da aprovacao") nega outra coisa.
+ */
+const ENTRE_A_NEGACAO_E_A_PENDENCIA =
+  "(?:(?:esta|estao|ta|fica|ficam|ficou|ficara|ficar|estar|vai|vao|vou|vamos|ira|irao|precisa|precisam|precisar|precisou|tem|tera|teria|mais|ainda|se|me|te|lhe|a|o|voce|voces)\\s+){0,2}?";
+
+/**
+ * Revisao da revisao final da AG4 (lacunas que o verificador cobria): o
+ * participio sozinho no comeco da frase ("Aprovada!", "Oba, aprovado.",
+ * "Remarcacao: aprovada!"), sem a pergunta ("Aprovada?") e sem o aposto da
+ * condicao ("Aprovada, a consulta de quinta e cancelada sozinha").
+ */
+const INTERJEICAO_ANTES_DO_PARTICIPIO =
+  "(?:ok|okay|oba|eba|opa|pronto|prontinho|otimo|perfeito|maravilha|show|isso|sim|legal|certo|entao|boa noticia|boas noticias)";
+
+/**
+ * Revisao da AG4 (achado 5): a frase que AFIRMA a aprovacao ou nega a
+ * pendencia ("a aprovacao ja saiu", "ja aprovada", "a equipe aprovou",
+ * "nao precisa de aprovacao", "sem pendencia"). Com a remarcacao pendente,
+ * qualquer uma delas na mensagem barra (a remarcacao ainda nao foi
+ * aprovada), e a frase com ela nunca conta como pendencia.
+ *
+ * Revisao curta das correcoes da AG4 (achado 3): a negacao vale. "A
+ * aprovacao ainda nao saiu", "nao veio ainda", "ainda nao tem a aprovacao
+ * da equipe" e "nao ha aprovacao" dizem que a remarcacao CONTINUA pendente
+ * (a resposta certa a "ja aprovaram?") e passam. So barra o que nega a
+ * pendencia ("nao esta pendente", "nao tem nada pendente", "nao ha
+ * pendencia") ou a necessidade da aprovacao ("nao precisa de aprovacao",
+ * "nao depende da equipe").
+ *
+ * Revisao final da AG4 (M2): a negacao so vale COLADA no verbo
+ * (SEM_NEGACAO_COLADA: "a aprovacao nem demorou e ja saiu" afirma); a
+ * aprovacao que deixou de existir ("nao tem MAIS aprovacao", "nao ha
+ * aprovacao nessa clinica", "nao ha necessidade de aprovacao"); a pendencia
+ * NEGADA ("nao esta mais aguardando aprovacao", "nem precisa de aprovacao",
+ * "sem precisar aguardar aprovacao", "nenhuma aprovacao pendente"), que
+ * tambem deixa de contar como a pendencia da frase; e a aprovacao dita sem
+ * o verbo auxiliar ("remarcacao aprovada", "aprovaram", "aprovou").
+ *
+ * Revisao da revisao final da AG4 (27/10/2026): o participio sem o auxiliar
+ * nao barra a hipotese, o habito nem a negacao
+ * (PARTICIPIO_QUE_NAO_AFIRMA_ANTES: "assim que estiver tudo aprovado", "ainda
+ * nao temos o horario aprovado", "nenhum horario aprovado ainda"); a
+ * pendencia negada so com a negacao colada no verbo e sem a palavra de
+ * duracao ("nao esqueca que depende da aprovacao" e "nao vai precisar
+ * esperar muito pela aprovacao" passam); e as lacunas que o verificador
+ * cobria barram tambem aqui: "Aprovamos!" (menos o do habito,
+ * "normalmente aprovamos"), "Ta aprovado!" e o participio sozinho no comeco
+ * da frase ("Aprovada! Pode ir na terca"), e "liberaram a sua remarcacao".
+ */
+const APROVACAO_AFIRMADA = new RegExp(
+  [
+    "\\bja\\s+(?:foi\\s+|foram\\s+|esta\\s+|estao\\s+|ta\\s+|ficou\\s+|ficaram\\s+)?aprovad[oa]s?\\b",
+    // "a aprovacao (da equipe) ja saiu": sem negacao COLADA no verbo ("a
+    // aprovacao ainda nao saiu" nao afirma; "nem demorou e ja saiu", sim).
+    `\\baprovacao\\s+(?:\\w+\\s+){0,3}?${SEM_NEGACAO_COLADA}(?:ja\\s+)?(?:saiu|veio|chegou|foi dada|foi feita|aconteceu)\\b`,
+    // "ja saiu a aprovacao" (sem negacao antes do verbo).
+    `(?<!\\b${NEGA}\\s)\\b(?:ja\\s+)?(?:saiu|veio|chegou)\\s+a\\s+aprovacao\\b`,
+    "\\b(?:equipe|clinica|recepcao)\\s+(?:ja\\s+)?(?:aprovou|aprovaram)\\b",
+    "\\bja\\s+(?:aprovou|aprovaram|aprovamos|aprovei)\\b",
+    // Revisao final (M2): "aprovaram", "aprovou", "aprovei" sem a negacao
+    // colada ("ainda nao aprovaram" e "nao a aprovou" sao a pendencia).
+    `${SEM_NEGACAO_COLADA}\\baprov(?:ou|aram|ei)\\b`,
+    // Revisao da revisao final: "Aprovamos!" (o preterito), menos o presente
+    // do habito e da condicao ("normalmente aprovamos no mesmo dia", "quando
+    // aprovamos, a de antes e cancelada").
+    `${SEM_NEGACAO_COLADA}(?<!\\b(?:normalmente|geralmente|sempre|so|somente|apenas|costumeiramente|habitualmente|quando|se|assim\\s+que|logo\\s+que|depois\\s+que)\\s)\\baprovamos\\b`,
+    // Revisao da revisao final: "ta" ("Ta aprovado!") entre os auxiliares.
+    `(?<!\\b${NEGA}\\s)\\b(?:foi|foram|esta|estao|ta|ficou|ficaram|sido)\\s+aprovad[oa]s?\\b`,
+    // Revisao final (M2): o participio sem o auxiliar ("Remarcacao
+    // aprovada!", "tudo aprovado"), menos o da condicao ("com a remarcacao
+    // aprovada, ..."). Revisao da revisao final: tambem menos o da hipotese,
+    // do habito e da negacao (PARTICIPIO_QUE_NAO_AFIRMA_ANTES).
+    `${PARTICIPIO_QUE_NAO_AFIRMA_ANTES}\\b(?:remarcacao|remarcacoes|reagendamento|consulta|horario|pedido|solicitacao|troca|mudanca|alteracao|tudo)\\s+(?:ja\\s+)?aprovad[oa]s?\\b`,
+    // Revisao da revisao final: o participio sozinho no comeco da frase
+    // ("Aprovada! Pode ir na terca", "Oba, aprovado.").
+    `(?:^|[.!?;:]\\s*)(?:${INTERJEICAO_ANTES_DO_PARTICIPIO}\\s*[,!.]*\\s+)*aprovad[oa]s?\\s*(?:[!.;:]|,(?!\\s*(?:a|o|as|os|sua|seu|suas|seus)\\s)|$)`,
+    // Revisao da revisao final: "liberaram a sua remarcacao" (a aprovacao
+    // por outro verbo), so com a remarcacao como objeto: "liberou um
+    // horario" (a vaga) nao. "Aceitou" fica com o verificador: "o pedido foi
+    // aceito" tambem e o registro do pedido, que e verdade.
+    `${SEM_NEGACAO_COLADA}\\bliber(?:ou|aram|amos|ei)\\s+(?:(?:a|o|sua|seu)\\s+){0,2}(?:remarcacao|reagendamento|troca\\s+de\\s+horario|mudanca\\s+de\\s+horario)\\b`,
+    // Nega a pendencia: "nao esta (mais) pendente", "nao tem nada pendente",
+    // "nao ha nenhuma aprovacao pendente", "nao tem pendencia". "Nao tem a
+    // aprovacao" e "nao ha aprovacao" (sem "pendente") NAO: e a pendencia.
+    "\\bnao\\s+(?:esta|estao|fica|ficam|ficou|ficaram|tem|ha|existe|existem)\\s+(?:mais\\s+)?(?:(?:nada|nenhuma|nenhum)\\s+)?(?:\\w+\\s+){0,2}?(?:pendentes?|pendencias?)\\b",
+    // Revisao final (M2): "nenhuma aprovacao pendente", "sem aprovacao
+    // pendente".
+    "\\b(?:nenhuma|sem)\\s+aprovac(?:ao|oes)\\s+pendentes?\\b",
+    // Revisao final (M2): a aprovacao que deixou de existir. "Nao tem MAIS
+    // aprovacao" (sem o "mais", "nao tem aprovacao" e a pendencia).
+    "\\bnao\\s+(?:tem|ha|existe|existem)\\s+mais\\s+(?:\\w+\\s+){0,2}?aprov",
+    // Revisao final (M2): a clinica sem a etapa da aprovacao ("nao ha
+    // aprovacao nessa clinica", "aqui nao tem aprovacao"); com "ainda" na
+    // frase e a pendencia ("ainda nao tem aprovacao aqui").
+    "(?<!\\b(?:ainda|enquanto)\\s)\\bnao\\s+(?:tem|ha|existe|existem)\\s+(?:a\\s+|nenhuma\\s+)?aprovac(?:ao|oes)\\s+(?:nesta|nessa|neste|nesse|aqui|na\\s+clinica)\\b(?![^.!?]*\\bainda\\b)",
+    "\\b(?:aqui|nesta\\s+clinica|nessa\\s+clinica|na\\s+clinica)\\s+nao\\s+(?:tem|ha|existe|existem)\\s+(?:a\\s+|nenhuma\\s+)?aprovac(?:ao|oes)\\b(?![^.!?]*\\bainda\\b)",
+    // Revisao final (M2): "nao ha necessidade de aprovacao", "nao existe
+    // etapa de aprovacao".
+    `\\b(?:${NEGA}|sem)\\s+(?:(?:ha|tem|existe|existem)\\s+)?(?:mais\\s+)?(?:nenhuma\\s+)?(?:necessidade|exigencia|obrigacao|obrigatoriedade|etapa|processo)\\s+de\\s+(?:\\w+\\s+)?aprov`,
+    // Nega a necessidade: "nao precisa de aprovacao", "nao precisa ser
+    // aprovada", "nao e preciso aprovar", "nao depende da equipe" (revisao
+    // final: tambem com "nem", "nunca" e "jamais"). Revisao da revisao
+    // final: sem a palavra de duracao ("nao precisa esperar muito pela
+    // aprovacao" fala do tempo da espera).
+    `\\b${NEGA}\\s+(?:precisa|precisam|e preciso|e necessari[oa]|tem que|tem de)\\s+(?:mais\\s+)?(?:${SEM_PALAVRA_DE_DURACAO}\\w+\\s+){0,3}?aprov`,
+    "\\bnao\\s+(?:depende|dependem)\\s+(?:mais\\s+)?(?:de\\s+|da\\s+|do\\s+)?(?:nenhuma\\s+)?(?:\\w+\\s+)?(?:aprov|equipe\\b)",
+    // Revisao final (M2): a pendencia NEGADA ("nao esta mais aguardando
+    // aprovacao", "nem precisa de aprovacao", "sem precisar aguardar
+    // aprovacao", "nao fica esperando a equipe"). Revisao da revisao final:
+    // a negacao COLADA no verbo (ENTRE_A_NEGACAO_E_A_PENDENCIA: "nao
+    // esqueca que depende da aprovacao" passa) e sem a palavra de duracao
+    // ("nao vai precisar esperar muito pela aprovacao" passa).
+    `\\b(?:${NEGA}|sem)\\s+${ENTRE_A_NEGACAO_E_A_PENDENCIA}(?:aguardando|esperando|aguardar|esperar|aguarda|espera|precisa|precisar|precisou|precisam|depende|dependem|dependendo)\\s+(?:${SEM_PALAVRA_DE_DURACAO}\\w+\\s+){0,2}?(?:aprov|equipe\\b)`,
+    "\\b(?:sem|nenhuma)\\s+pendencias?\\b",
+    "\\bsem\\s+(?:necessidade|precisar)\\s+de\\s+(?:\\w+\\s+)?aprov",
+  ].join("|"),
+);
+
 /** Negacao colada na afirmacao ("nao marquei", "ainda nao foi marcada"). */
 const NEGACAO_ANTES =
   /\b(?:nao|nem|nunca)\s+(?:(?:te|lhe|me|se|a|o|ainda|tinha)\s+)?$/;
@@ -4927,6 +5268,19 @@ export function regrasDosFatos(
   const marcadaNestaConversa = fatos.consultasLidas.some(
     (c) => c.marcadaNestaConversa,
   );
+  // AG4: a remarcacao que a IA pediu nesta conversa, relida no turno (ainda
+  // pendente), sustenta "foi remarcada" no turno seguinte ao do pedido.
+  const remarcadaNestaConversa = fatos.consultasLidas.some(
+    (c) => c.remarcadaNestaConversa === true,
+  );
+  // Revisao da AG4 (achado 7): a remarcacao pedida nesta conversa e ja
+  // aprovada pela equipe tambem sustenta "foi remarcada" (sem a pendencia),
+  // e a consulta que a IA cancelou nesta conversa, relida e ainda
+  // cancelada, sustenta "foi cancelada"; as duas so com o par delas.
+  const remarcacaoAprovada = fatos.consultasLidas.some(
+    (c) => c.remarcacaoAprovada === true,
+  );
+  const canceladas = fatos.consultasCanceladas ?? [];
   const acoesSemFerramenta = new Set<string>();
   const semDiminutivo = semFlexaoDoParticipio(mascarada);
   const frasesSemDiminutivo = frasesComPosicao(semDiminutivo);
@@ -4972,7 +5326,10 @@ export function regrasDosFatos(
         padrao.acao === null
           ? fatos.consultaLida || acoes.has("marcou") || acoes.has("remarcou")
           : acoes.has(padrao.acao) ||
-            (padrao.acao === "marcou" && marcadaNestaConversa);
+            (padrao.acao === "marcou" && marcadaNestaConversa) ||
+            (padrao.acao === "remarcou" &&
+              (remarcadaNestaConversa || remarcacaoAprovada)) ||
+            (padrao.acao === "cancelou" && canceladas.length > 0);
       if (!sustentada) {
         acoesSemFerramenta.add(padrao.nome);
         continue;
@@ -5030,6 +5387,23 @@ export function regrasDosFatos(
           ...lidos(fatos.consultasLidas),
           ...daAcao("confirmou_presenca"),
         ];
+      case "remarcou":
+        // AG4: a remarcacao do turno ou a pedida nesta conversa, relida
+        // (revisao da AG4, achado 7: pendente ou ja aprovada).
+        return [
+          ...daAcao("remarcou"),
+          ...lidos(
+            fatos.consultasLidas.filter(
+              (c) =>
+                c.remarcadaNestaConversa === true ||
+                c.remarcacaoAprovada === true,
+            ),
+          ),
+        ];
+      case "cancelou":
+        // Revisao da AG4 (achado 7): o cancelamento do turno ou o feito
+        // nesta conversa num turno anterior, relido.
+        return [...daAcao("cancelou"), ...lidos(canceladas)];
       default:
         return daAcao(alegacao);
     }
@@ -5161,6 +5535,52 @@ export function regrasDosFatos(
       achados.push({
         categoria: "acao_nao_executada",
         regra: "fechamento_fora_do_horario",
+      });
+    }
+  }
+
+  // AG4 (27/10/2026): a remarcacao que a IA pede nasce PENDENTE da aprovacao
+  // da equipe, e a consulta antiga continua marcada ate la (D-10). A frase
+  // que diz que remarcou (a acao, ou o estado ou o fechamento com o par da
+  // consulta nova) so passa com a pendencia dita (PENDENCIA_DA_REMARCACAO):
+  // "Remarquei para terca" sozinho barra. Revisao da AG4 (achado 5): a
+  // pendencia na PROPRIA frase ou na frase logo depois dela (a T4: "Pronto,
+  // pedi a remarcacao para ... Ate a equipe aprovar, ..."), nunca em
+  // qualquer lugar da mensagem; a frase que afirma a aprovacao ou nega a
+  // pendencia (APROVACAO_AFIRMADA) nunca conta, e com a remarcacao pendente
+  // ela barra em qualquer lugar da mensagem ("a aprovacao ja saiu").
+  // Revisao curta das correcoes da AG4 (achado 5): a pendencia tem de falar
+  // da aprovacao, e nunca da de outra coisa (pendenciaDaRemarcacao).
+  const paresDaRemarcacao = [
+    ...daAcao("remarcou"),
+    ...lidos(
+      fatos.consultasLidas.filter((c) => c.remarcadaNestaConversa === true),
+    ),
+  ];
+  const pendenciaNaFrase = (indice: number): boolean => {
+    const frase = frasesSemDiminutivo[indice];
+    return frase !== undefined && pendenciaDaRemarcacao(frase.texto);
+  };
+  if (acoes.has("remarcou") || remarcadaNestaConversa) {
+    const indices = new Set([...alegadas.keys(), ...fatosDaFrase.keys()]);
+    const dizQueRemarcou = [...indices].some((indice) => {
+      const frase = frasesSemDiminutivo[indice];
+      if (frase === undefined) {
+        return false;
+      }
+      const daRemarcacao =
+        alegadas.get(indice)?.has("remarcou") === true ||
+        paresDaOferta(partesDaOferta(semDiminutivo, frase, fatos.hoje)).some(
+          (par) => paresDaRemarcacao.some((h) => parNoHorarioLivre(par, h)),
+        );
+      return (
+        daRemarcacao && !pendenciaNaFrase(indice) && !pendenciaNaFrase(indice + 1)
+      );
+    });
+    if (dizQueRemarcou || APROVACAO_AFIRMADA.test(semDiminutivo)) {
+      achados.push({
+        categoria: "acao_nao_executada",
+        regra: "remarcacao_sem_pendencia",
       });
     }
   }
@@ -5336,6 +5756,36 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   TITULO_E_NOME.source,
   NEGACAO_DEPOIS_DA_MENCAO.source,
   "profissional e unidade: a frase da acao, do estado ou do fechamento licenciado com outro profissional do Cadastro (nome inteiro ou titulo com o nome) ou outra unidade (com a palavra unidade) barra; fato sem profissional ou unidade nao barra",
+  // AG4 (27/10/2026): a remarcacao pedida nesta conversa e a pendencia.
+  "remarcou: tambem a remarcacao pedida nesta conversa, relida e pendente",
+  PENDENCIA_DA_REMARCACAO.source,
+  // Revisao da AG4 (achados 5 e 7): a pendencia na frase (ou na seguinte),
+  // a aprovacao afirmada, a remarcacao aprovada e a cancelada nesta
+  // conversa.
+  APROVACAO_AFIRMADA.source,
+  "remarcacao_sem_pendencia: a frase que diz que remarcou (acao, ou estado ou fechamento com o par da consulta nova) so com a pendencia nela ou na frase logo depois, sem a aprovacao afirmada; com a remarcacao pendente, a aprovacao afirmada em qualquer frase barra",
+  // Revisao curta das correcoes da AG4 (achados 3 e 5): a negacao da
+  // aprovacao e a pendencia (passam), e a pendencia so com a aprovacao dita
+  // e sem outra coisa pendente na frase.
+  APROVACAO_NA_PENDENCIA.source,
+  OUTRA_PENDENCIA.source,
+  "pendencia da remarcacao: expressao de pendencia, a aprovacao dita na frase, nenhuma outra coisa pendente e nenhuma aprovacao afirmada",
+  "aprovacao afirmada: a negacao entre a aprovacao e o verbo nao afirma; nao ter a aprovacao e a pendencia; nao estar pendente e nao precisar da aprovacao barram",
+  // Revisao final da AG4 (M2): a negacao so colada no verbo, a aprovacao que
+  // deixou de existir, a pendencia negada e o participio sem o auxiliar.
+  SEM_NEGACAO_COLADA,
+  "aprovacao afirmada (revisao final): a negacao so vale colada no verbo; nao ter mais a aprovacao, a clinica sem a aprovacao, a necessidade negada, a pendencia negada (que tambem nao sustenta a remarcacao) e o participio sem o auxiliar barram",
+  // Revisao da revisao final da AG4 (27/10/2026): os falsos positivos do
+  // participio e da pendencia negada, e as lacunas que o verificador cobria.
+  PARTICIPIO_QUE_NAO_AFIRMA_ANTES,
+  TEMPO_COM_O_PRESENTE,
+  SEM_PALAVRA_DE_DURACAO,
+  ENTRE_A_NEGACAO_E_A_PENDENCIA,
+  INTERJEICAO_ANTES_DO_PARTICIPIO,
+  "aprovacao afirmada (revisao da revisao final): o participio sem o auxiliar nao barra a hipotese, o infinitivo sem promessa, o habito depois da conjuncao de tempo nem a negacao colada; a pendencia negada so com a negacao colada no verbo e sem a palavra de duracao; aprovamos (menos o do habito), ta aprovado, o participio sozinho no comeco da frase e liberaram a remarcacao barram",
+  "remarcou: tambem a remarcacao pedida nesta conversa e ja aprovada, relida, com o par dela e sem a pendencia",
+  "cancelou: tambem a consulta cancelada nesta conversa num turno anterior, relida e ainda cancelada, com o par dela; nunca consulta lida",
+  "acao com horario: o anterior so na remarcacao",
   CONVENIO_GENERICO,
   DETERMINANTES,
   ...PADROES_DE_COBERTURA.map(

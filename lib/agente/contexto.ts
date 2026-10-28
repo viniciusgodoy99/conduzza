@@ -43,9 +43,16 @@ type Cliente = SupabaseClient;
  * dizia "Não há alterações". Existem so DEPOIS da migration
  * 20261027120000_agendamento_completo_da_ia.sql: este codigo vai ao ar com
  * ela aplicada (a mesma licao).
+ *
+ * AG4 (27/10/2026): cancelar_antecedencia_horas e remarcar_antecedencia_horas
+ * (os prazos da clinica para a IA cancelar e remarcar, D-24). Sem eles no
+ * select, cancelar e remarcar valem desligadas (prazosDoBanco le nulo). Existem
+ * so DEPOIS da migration 20261028100000_remarcar_e_cancelar_pela_ia.sql: este
+ * codigo vai ao ar com ela aplicada (antes, 42703 e a IA de todas as clinicas
+ * falha fechada).
  */
 const COLUNAS_DA_CONFIG =
-  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, publico_atendido, exige_nome_completo, exige_nascimento, exige_cpf, instrucoes, conhecimento, updated_at";
+  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, publico_atendido, exige_nome_completo, exige_nascimento, exige_cpf, cancelar_antecedencia_horas, remarcar_antecedencia_horas, instrucoes, conhecimento, updated_at";
 
 type LinhaDoMotor = LinhaDaConfigDoAgente & {
   id: string;

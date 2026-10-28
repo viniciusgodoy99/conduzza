@@ -71,6 +71,18 @@ export function profissionaisParaRemarcar(
   );
 }
 
+/**
+ * Os textos do aviso de remarcacao ao paciente: os mesmos na chave do
+ * Remarcar (menu e arrastar) e na caixa do "Aprovar a remarcação?" (AG4).
+ */
+export const TEXTOS_DO_AVISO_AO_PACIENTE = {
+  rotulo: "Avisar o paciente pelo WhatsApp",
+  marcada:
+    "Sai uma mensagem automática com o novo dia e horário, só se o paciente autorizou receber mensagens.",
+  desmarcada:
+    "Nenhuma mensagem sai. Avise o paciente por telefone ou pela conversa.",
+} as const;
+
 export function ChaveAvisarPaciente({
   id,
   marcada,
@@ -84,7 +96,7 @@ export function ChaveAvisarPaciente({
   return (
     <div className="grid gap-1 rounded-xl border border-border px-3.5 py-2.5">
       <div className="flex min-h-10 items-center justify-between gap-3">
-        <Label htmlFor={id}>Avisar o paciente pelo WhatsApp</Label>
+        <Label htmlFor={id}>{TEXTOS_DO_AVISO_AO_PACIENTE.rotulo}</Label>
         <Switch
           id={id}
           checked={marcada}
@@ -94,8 +106,8 @@ export function ChaveAvisarPaciente({
       </div>
       <p id={idDescricao} className="text-xs text-text-secondary">
         {marcada
-          ? "Sai uma mensagem automática com o novo dia e horário, só se o paciente autorizou receber mensagens."
-          : "Nenhuma mensagem sai. Avise o paciente por telefone ou pela conversa."}
+          ? TEXTOS_DO_AVISO_AO_PACIENTE.marcada
+          : TEXTOS_DO_AVISO_AO_PACIENTE.desmarcada}
       </p>
     </div>
   );

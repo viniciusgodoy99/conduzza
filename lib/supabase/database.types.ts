@@ -39,6 +39,7 @@ export type Database = {
           agenda_antecedencia_horas: number | null
           agenda_horizonte_dias: number | null
           agent_name: string
+          cancelar_antecedencia_horas: number | null
           clinic_id: string
           closing: string | null
           conhecimento: Json
@@ -56,6 +57,7 @@ export type Database = {
           publico_atendido: string | null
           published_at: string | null
           published_by: string | null
+          remarcar_antecedencia_horas: number | null
           skills: Json
           status: string
           tone: string
@@ -67,6 +69,7 @@ export type Database = {
           agenda_antecedencia_horas?: number | null
           agenda_horizonte_dias?: number | null
           agent_name?: string
+          cancelar_antecedencia_horas?: number | null
           clinic_id: string
           closing?: string | null
           conhecimento?: Json
@@ -84,6 +87,7 @@ export type Database = {
           publico_atendido?: string | null
           published_at?: string | null
           published_by?: string | null
+          remarcar_antecedencia_horas?: number | null
           skills?: Json
           status?: string
           tone?: string
@@ -95,6 +99,7 @@ export type Database = {
           agenda_antecedencia_horas?: number | null
           agenda_horizonte_dias?: number | null
           agent_name?: string
+          cancelar_antecedencia_horas?: number | null
           clinic_id?: string
           closing?: string | null
           conhecimento?: Json
@@ -112,6 +117,7 @@ export type Database = {
           publico_atendido?: string | null
           published_at?: string | null
           published_by?: string | null
+          remarcar_antecedencia_horas?: number | null
           skills?: Json
           status?: string
           tone?: string
@@ -407,6 +413,7 @@ export type Database = {
           package_balance_id: string | null
           package_balance_item_id: string | null
           professional_id: string
+          remarcacao_de: string | null
           remarcacao_pedida_em: string | null
           resource_id: string | null
           send_confirmation: boolean
@@ -434,6 +441,7 @@ export type Database = {
           package_balance_id?: string | null
           package_balance_item_id?: string | null
           professional_id: string
+          remarcacao_de?: string | null
           remarcacao_pedida_em?: string | null
           resource_id?: string | null
           send_confirmation?: boolean
@@ -461,6 +469,7 @@ export type Database = {
           package_balance_id?: string | null
           package_balance_item_id?: string | null
           professional_id?: string
+          remarcacao_de?: string | null
           remarcacao_pedida_em?: string | null
           resource_id?: string | null
           send_confirmation?: boolean
@@ -508,6 +517,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "appointment_remarcacao_de_fkey"
+            columns: ["remarcacao_de"]
+            isOneToOne: false
+            referencedRelation: "appointment"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "appointment_resource_id_fkey"
             columns: ["resource_id"]
             isOneToOne: false
@@ -538,6 +554,7 @@ export type Database = {
           changed_by_user_id: string | null
           clinic_id: string
           event: string | null
+          ia_job_id: string | null
           id: string
           kind: string
           new_professional_id: string | null
@@ -553,6 +570,7 @@ export type Database = {
           changed_by_user_id?: string | null
           clinic_id: string
           event?: string | null
+          ia_job_id?: string | null
           id?: string
           kind?: string
           new_professional_id?: string | null
@@ -568,6 +586,7 @@ export type Database = {
           changed_by_user_id?: string | null
           clinic_id?: string
           event?: string | null
+          ia_job_id?: string | null
           id?: string
           kind?: string
           new_professional_id?: string | null
@@ -5418,6 +5437,7 @@ export type Database = {
           p_clinic_id: string
           p_conversation_id: string
           p_job_id: string
+          p_remarcar?: string
           p_slot_hold_id?: string
         }
         Returns: Json
@@ -5478,6 +5498,15 @@ export type Database = {
       cadastro_texto_valido: {
         Args: { p_maximo: number; p_texto: string }
         Returns: boolean
+      }
+      cancelar_consulta_pela_ia: {
+        Args: {
+          p_appointment_id: string
+          p_clinic_id: string
+          p_conversation_id: string
+          p_job_id: string
+        }
+        Returns: Json
       }
       cancelar_pelo_paciente: {
         Args: {
@@ -5639,6 +5668,16 @@ export type Database = {
       contato_do_job: {
         Args: { p_clinic_id: string; p_payload: Json }
         Returns: string
+      }
+      conferir_consulta_da_ia: {
+        Args: {
+          p_acao: string
+          p_appointment_id: string
+          p_clinic_id: string
+          p_contato: string
+          p_prazo_horas: number
+        }
+        Returns: Record<string, unknown>
       }
       conferir_horario_da_ia: {
         Args: {
@@ -6146,7 +6185,11 @@ export type Database = {
         Returns: Json
       }
       ler_dados_informados_na_marcacao: {
-        Args: { p_appointment_id: string; p_clinic_id: string }
+        Args: {
+          p_appointment_id: string
+          p_campo?: string
+          p_clinic_id: string
+        }
         Returns: Json
       }
       ler_rascunho_bloqueado: {
@@ -6244,6 +6287,14 @@ export type Database = {
       passar_conversa_da_ia_para_equipe: {
         Args: { p_job_id: string; p_motivo: string; p_worker: string }
         Returns: Json
+      }
+      pedido_da_ia_na_conversa: {
+        Args: {
+          p_clinic_id: string
+          p_conversation_id: string
+          p_job_id: string
+        }
+        Returns: Record<string, unknown>
       }
       pedir_remarcacao_pelo_paciente: {
         Args: {
@@ -6513,6 +6564,7 @@ export type Database = {
           p_clinic_id: string
           p_conversation_id: string
           p_job_id: string
+          p_remarcar?: string
           p_service_link_id: string
           p_starts_at: string
           p_unit_id?: string

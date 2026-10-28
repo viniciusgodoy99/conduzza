@@ -651,14 +651,27 @@ describe("agendar", () => {
   });
 
   // AG3: as quatro recusas novas tem saida propria (abaixo); revisao final
-  // da AG3, reserva_diferente tambem (le a reserva viva).
+  // da AG3, reserva_diferente tambem (le a reserva viva). Revisao curta das
+  // correcoes da AG4: mensagem_nova_do_paciente para o turno sem enviar nada.
   const RECUSAS_DA_AG3: readonly string[] = [
     "consulta_para_outra_pessoa",
     "menor_de_idade",
     "ja_tem_consulta",
     "faltam_dados",
     "reserva_diferente",
+    "mensagem_nova_do_paciente",
   ];
+
+  it("revisao curta das correcoes da AG4: mensagem_nova_do_paciente para o turno sem enviar nada (nunca a saida do modelo nem falha)", async () => {
+    rpcsDoContrato({ recusarAgendar: "mensagem_nova_do_paciente" });
+    const turno = turnoCom(portaDoWhatsapp());
+    const r = await turno.executar("agendar", {});
+    expect(r).toEqual({
+      tipo: "mensagem_nova",
+      passo: `Não marcou a consulta: ${ROTULO_DO_MOTIVO_DA_AGENDA.mensagem_nova_do_paciente}. Nada foi enviado; a próxima resposta lê a mensagem nova.`,
+    });
+    expect(turno.falhasDepois()).toBe(0);
+  });
   it.each(
     MOTIVOS_DO_AGENDAR.filter(
       (m) => m !== "ia_desligada" && !RECUSAS_DA_AG3.includes(m),
@@ -728,9 +741,12 @@ describe("agendar", () => {
       },
     });
     // A leitura da consulta: do contato da conversa, so o inicio, o estado
-    // e a unidade.
+    // e a unidade (AG4: e o profissional, o vinculo e a remarcacao, so para
+    // os fatos e o foco; nunca ao modelo).
     const leitura = banco.leituras.find((l) => l.tabela === "appointment");
-    expect(leitura?.colunas).toBe("starts_at, status, approval_status, unit_id");
+    expect(leitura?.colunas).toBe(
+      "starts_at, status, approval_status, unit_id, professional_id, service_link_id, remarcacao_de",
+    );
     expect(leitura?.filtros).toEqual(
       expect.arrayContaining([
         `eq:clinic_id=${CLINICA}`,

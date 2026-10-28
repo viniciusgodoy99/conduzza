@@ -17,6 +17,7 @@ import { mudarStatusAction } from "@/app/(app)/agenda/actions";
 import {
   cobrarAgoraAction,
   manterHorarioAction,
+  type ConfirmacoesActionResult,
 } from "@/app/(app)/confirmacoes/actions";
 import { AgendamentoModal } from "@/components/agenda/agendamento-modal";
 import { FILTROS_VAZIOS } from "@/components/agenda/tipos";
@@ -29,6 +30,7 @@ import {
   type CanalDaConfirmacao,
 } from "@/components/confirmacoes/lista-confirmacoes";
 import { ListaFaltas } from "@/components/confirmacoes/lista-faltas";
+import { retornoDoManterHorario } from "@/components/confirmacoes/manter-horario";
 import { PainelRegua } from "@/components/confirmacoes/painel-regua";
 import { resumoDaCobranca } from "@/components/confirmacoes/resumo-da-cobranca";
 import { Aviso } from "@/components/shared/aviso";
@@ -294,15 +296,25 @@ export function ConfirmacoesClient({
 
   // Manter o horario depois de um pedido de remarcacao (R12). A pergunta de
   // confirmacao mora na lista; aqui so a acao, o aviso e a recarga do dia.
+  // AG4: com a remarcacao da IA esperando a equipe, nada muda e a tela
+  // aponta a Agenda (retornoDoManterHorario).
   const manterHorario = (consulta: ConsultaDaConfirmacao) => {
     iniciarTransicao(async () => {
-      const resultado = await manterHorarioAction({
-        appointment_id: consulta.id,
-      });
-      if (resultado.ok) {
-        toast.success("Horário mantido. O pedido de remarcação saiu da lista.");
+      let resultado: ConfirmacoesActionResult;
+      try {
+        resultado = await manterHorarioAction({
+          appointment_id: consulta.id,
+        });
+      } catch {
+        resultado = { ok: false };
+      }
+      const retorno = retornoDoManterHorario(resultado);
+      if (retorno.tipo === "success") {
+        toast.success(retorno.texto);
+      } else if (retorno.tipo === "warning") {
+        toast.warning(retorno.texto, { duration: 10_000 });
       } else {
-        toast.error(resultado.error ?? "Não foi possível manter o horário.");
+        toast.error(retorno.texto);
       }
       await atualizarDia();
     });

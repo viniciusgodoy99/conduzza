@@ -398,21 +398,29 @@ function estadoDoSimuladorLido(valor: unknown): EstadoDoSimulador | null {
       instante(reserva.fim) &&
       instante(reserva.expiraEm) &&
       (reserva.unidadeId === null || typeof reserva.unidadeId === "string"));
+  const consultaSimuladaValida = (c: unknown): boolean =>
+    ehObjeto(c) &&
+    typeof c.appointmentId === "string" &&
+    UUID.test(c.appointmentId) &&
+    instante(c.inicio) &&
+    // Revisao final da AG3: o vinculo da consulta simulada (opcional).
+    (c.serviceLinkId === undefined ||
+      (typeof c.serviceLinkId === "string" && UUID.test(c.serviceLinkId))) &&
+    // Revisao curta das correcoes (achado 10): a unidade (opcional; a
+    // mesma forma da unidade da reserva, de onde ela vem).
+    (c.unidadeId === undefined ||
+      c.unidadeId === null ||
+      typeof c.unidadeId === "string");
   const consultaValida =
     consulta === null ||
-    (ehObjeto(consulta) &&
-      typeof consulta.appointmentId === "string" &&
-      UUID.test(consulta.appointmentId) &&
-      instante(consulta.inicio) &&
-      // Revisao final da AG3: o vinculo da consulta simulada (opcional).
-      (consulta.serviceLinkId === undefined ||
-        (typeof consulta.serviceLinkId === "string" &&
-          UUID.test(consulta.serviceLinkId))) &&
-      // Revisao curta das correcoes (achado 10): a unidade (opcional; a
-      // mesma forma da unidade da reserva, de onde ela vem).
-      (consulta.unidadeId === undefined ||
-        consulta.unidadeId === null ||
-        typeof consulta.unidadeId === "string"));
+    (consultaSimuladaValida(consulta) &&
+      // AG4: a remarcacao simulada leva a consulta antiga (opcional), sem
+      // outra dentro dela.
+      ehObjeto(consulta) &&
+      (consulta.remarcacaoDe === undefined ||
+        (consultaSimuladaValida(consulta.remarcacaoDe) &&
+          ehObjeto(consulta.remarcacaoDe) &&
+          consulta.remarcacaoDe.remarcacaoDe === undefined)));
   if (!reservaValida || !consultaValida) {
     return null;
   }
@@ -503,10 +511,14 @@ export async function simularTurno(
     log.info("ia_simulador_conversa_com_a_equipe", { clinic_id: clinicId });
     return { ok: false, error: TEXTOS_DO_SIMULADOR.conversaComAEquipe };
   }
-  const mensagens: MensagemDaConversa[] = falas.map((fala) => ({
-    autor: fala.autor,
-    texto: fala.texto,
-  }));
+  // Revisao da AG4 (achado 1): no simulador, toda fala do assistente e da
+  // IA (o historico e assinado), a autoria que a pergunta do cancelamento e
+  // da remarcacao confere.
+  const mensagens: MensagemDaConversa[] = falas.map((fala) =>
+    fala.autor === "assistente"
+      ? { autor: fala.autor, autoria: "ia", texto: fala.texto }
+      : { autor: fala.autor, texto: fala.texto },
+  );
 
   // AG3: o estado do atendimento simulado, ligado a ultima resposta.
   let anterior: EstadoDoSimulador = {

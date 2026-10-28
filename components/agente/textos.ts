@@ -137,6 +137,19 @@ export const CENARIOS_DO_SIMULADOR = [
     mensagem:
       "Já é a terceira vez que eu mando mensagem e ninguém responde. Que falta de respeito!",
   },
+  // AG4 (desenho, secao 5): cancelar e remarcar pela IA. No simulador so
+  // aparece a consulta marcada na propria conversa de teste, e nada e
+  // gravado.
+  {
+    chave: "cancelar",
+    rotulo: "Paciente querendo cancelar",
+    mensagem: "Oi, preciso cancelar a minha consulta.",
+  },
+  {
+    chave: "remarcar",
+    rotulo: "Paciente querendo remarcar",
+    mensagem: "Oi, queria remarcar a minha consulta para outro dia.",
+  },
 ] as const;
 
 export type CenarioDoSimulador =
@@ -235,17 +248,20 @@ export const TEXTOS_DO_AGENTE = {
   // Habilidades
   habilidadesTitulo: "Habilidades",
   // E4 (20/10/2026): o assistente marca consulta (pendente da aprovacao da
-  // equipe, D12); remarcar, cancelar, lista de espera e encaixe continuam
-  // com a equipe (o pedido passa para ela).
+  // equipe, D12). AG4 (27/10/2026): tambem cancela e remarca (a remarcacao
+  // fica pendente da aprovacao da equipe, D-10); lista de espera e encaixe
+  // continuam com a equipe (o pedido passa para ela).
   habilidadesDescricao:
-    "O que o assistente pode fazer na conversa. Remarcar, cancelar, lista de espera e encaixe continuam com a equipe.",
+    "O que o assistente pode fazer na conversa. Lista de espera e encaixe continuam com a equipe.",
   // Decisao do dono de 20/10/2026 (E4), revista na onda 2 (item 10, depois
   // da migration da conversao na aprovacao): a consulta da IA so transforma
   // o contato em paciente quando a equipe APROVA, e so entao o telefone da
   // equipe que nao foi cadastrado pela equipe Conduzza (o "forcado") deixa
   // de acionar o assistente. "Agendar consulta" funciona com telefone
-  // comum; a nota fica so em "Confirmar presença"
-  // (HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA). Nota, nao status.
+  // comum; a nota fica em "Confirmar presença" e, desde a AG4, em "Cancelar
+  // consulta" e "Remarcar consulta": as tres mexem em consulta ja aprovada,
+  // de quem ja e paciente (HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA). Nota,
+  // nao status.
   habilidadeNaFaseDeTeste:
     "Nesta fase de teste, só com telefone da equipe cadastrado pela equipe Conduzza: depois que a equipe aprova a consulta, o contato vira paciente e um telefone comum deixa de acionar o assistente.",
   habilidadeLigada: (titulo: string) => `${titulo}: ligada no rascunho.`,
@@ -333,6 +349,23 @@ export const TEXTOS_DO_AGENTE = {
     "Com nenhuma caixa marcada, o assistente marca a consulta sem pedir esses dados.",
   salvarDados: "Salvar dados",
   dadosSalvos: "Dados para marcar consulta salvos no rascunho.",
+  // Prazos para cancelar e remarcar (AG4, decisao D-24 pela recomendacao,
+  // pendente do dono). O titulo, os rotulos dos campos e a ajuda vem de
+  // lib/domain/agente/config.ts (ROTULO_DOS_PRAZOS); o erro do campo e o
+  // ERRO_DO_PRAZO do Zod da configuracao. A clinica preenche; ninguem
+  // inventa valor: os campos nascem vazios.
+  prazosDescricao:
+    "Salvo no rascunho, vale ao publicar. Cancelar consulta e Remarcar consulta só ligam com o prazo de cada uma preenchido.",
+  prazoDica: (minimo: number, maximo: number, ajuda: string) =>
+    `De ${minimo} a ${maximo} horas. ${ajuda}`,
+  prazosVazios:
+    "Com os dois campos vazios, Cancelar consulta e Remarcar consulta ficam desligadas.",
+  prazoDeCancelarVazio:
+    "Com o prazo para cancelar vazio, Cancelar consulta fica desligada.",
+  prazoDeRemarcarVazio:
+    "Com o prazo para remarcar vazio, Remarcar consulta fica desligada.",
+  salvarPrazos: "Salvar prazos",
+  prazosSalvos: "Prazos salvos no rascunho.",
   gatilhosTitulo: "Quando o assistente passa para a equipe",
   gatilhosDescricao:
     "Nestes casos a conversa sempre vai para a equipe, e o paciente recebe uma frase fixa, nunca escrita pelo assistente. Não podem ser desligados.",
@@ -360,7 +393,7 @@ export const TEXTOS_DO_AGENTE = {
   // tambem as instrucoes da equipe Conduzza daquela versao (achados 3, 16,
   // 25 e 28): o dialogo diz as duas coisas, sem mostrar o texto.
   restaurarDescricao:
-    "O rascunho passa a ter a persona, as habilidades, o horário, quem o assistente atende, os limites e os dados para marcar consulta, as instruções da equipe Conduzza e as perguntas desta versão. As perguntas que não estão nesta versão ficam desativadas, não são apagadas: dá para reativar no Conhecimento. As outras alterações que ainda não foram publicadas se perdem. Para o paciente, nada muda até você publicar.",
+    "O rascunho passa a ter a persona, as habilidades, o horário, quem o assistente atende, os limites e os dados para marcar consulta, os prazos para cancelar e remarcar, as instruções da equipe Conduzza e as perguntas desta versão. As perguntas que não estão nesta versão ficam desativadas, não são apagadas: dá para reativar no Conhecimento. As outras alterações que ainda não foram publicadas se perdem. Para o paciente, nada muda até você publicar.",
   restaurada: (versao: number) =>
     `Versão ${versao} restaurada no rascunho. Confira e publique.`,
   autorDesconhecido: "Pessoa fora da equipe",
@@ -368,8 +401,9 @@ export const TEXTOS_DO_AGENTE = {
   simuladorTitulo: "Simulador",
   // O buscar horario le a Agenda de verdade; reservar e marcar no simulador
   // so devolvem a resposta simulada, sem gravar (contrato da E4, secao 2).
+  // AG4: cancelar e remarcar tambem so simulam (desenho, secao 4.7).
   simuladorDescricao:
-    "Converse como se fosse o paciente. Usa o rascunho e nada vai para o WhatsApp: os horários vêm da Agenda, mas reservar e marcar aqui não gravam nada.",
+    "Converse como se fosse o paciente. Usa o rascunho e nada vai para o WhatsApp: os horários vêm da Agenda, mas reservar, marcar, cancelar e remarcar aqui não gravam nada.",
   simuladorAviso: "Use dados de teste. Não escreva dados de pacientes reais.",
   cenario: "Cenário",
   cenarioPlaceholder: "Escolha um cenário",

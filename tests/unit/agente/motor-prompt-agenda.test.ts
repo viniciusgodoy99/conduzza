@@ -97,7 +97,8 @@ describe("texto fixo: o fluxo de marcar", () => {
       "Não escreva que a equipe vai confirmar, responder ou entrar em contato",
     );
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
-      'diga que marcou, reservou ou confirmou sem a ferramenta ter dito "marcado", "reservado" ou "confirmada"',
+      // AG4: tambem cancelou e remarcou.
+      'diga que marcou, reservou, confirmou, cancelou ou remarcou sem a ferramenta ter dito "marcado", "reservado", "confirmada", "cancelada" ou "remarcado"',
     );
   });
 
@@ -143,7 +144,8 @@ describe("texto fixo: o fluxo de marcar", () => {
 
   it("remarcar, cancelar, lista de espera e encaixe continuam com a equipe", () => {
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
-      'Remarcar, cancelar, lista de espera e encaixe continuam com a equipe: passe com o motivo "pedido_de_agenda".',
+      // AG4: remarcar e cancelar sairam desta linha (tem ferramenta).
+      'Lista de espera e encaixe continuam com a equipe: passe com o motivo "pedido_de_agenda".',
     );
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
       'Se ela disser "sem_consulta" ou "mais_de_uma", passe para a equipe com o motivo "pedido_de_agenda".',
@@ -171,12 +173,15 @@ describe("bloco <atendimento> e <profissionais>", () => {
     const linhas = blocoEm(instrucoes(configComAgenda()), "atendimento") ?? [];
     // AG3: e os dados que a clinica pede para marcar (D-6, o padrao da
     // primeira versao: nome completo e nascimento).
-    expect(linhas.slice(-5)).toEqual([
+    // AG4: e as linhas de cancelar e remarcar (desligadas sem os prazos).
+    expect(linhas.slice(-7)).toEqual([
       "Marcar consulta: ligado.",
       "Antecedência mínima para marcar: 2 horas.",
       "Marcar até quantos dias à frente: 14 dias.",
       "Dados que a clínica pede para marcar: nome completo e data de nascimento, e o número da carteirinha quando o convênio ou o procedimento pede.",
       "Confirmar presença: ligado.",
+      FRASES_DO_ATENDIMENTO.cancelarDesligado,
+      FRASES_DO_ATENDIMENTO.remarcarDesligado,
     ]);
     const semDados = blocoEm(
       instrucoes(
@@ -378,6 +383,11 @@ describe("ferramentas e versão", () => {
       "reservar_horario",
       "registrar_dados_do_paciente",
       "agendar",
+      // AG4: remarcar e cancelar.
+      "consultar_minhas_consultas",
+      "pedir_cancelamento",
+      "cancelar_consulta",
+      "buscar_horario_para_remarcar",
       "confirmar_presenca",
       "escalar_humano",
     ]);

@@ -86,6 +86,15 @@
 //  - na passagem, a nota interna para a equipe (notaParaAEquipe), montada so
 //    do estado e do Cadastro.
 //
+// AG4 (27/10/2026), remarcar e cancelar: as ferramentas novas rodam pela
+// porta da agenda; nos momentos que decidem (a pergunta e o resultado do
+// cancelamento e da remarcacao) a ferramenta devolve uma FRASE FIXA (tipo
+// "frase"), que encerra o turno como as frases da onda 2: o laco a compoe
+// com a saudacao e o aviso e a manda pelo filtro INTEIRO, com os fatos dela
+// (bloqueio vira a frase de escalonamento). As recusas que sao da equipe
+// passam com pedido_de_agenda e a do prazo com fora_do_prazo (origem
+// "ferramenta").
+//
 // A trilha ("Por que a IA respondeu isso") diz o que foi consultado, com
 // nomes do Cadastro e da base da clinica, NUNCA texto do paciente. Log so com
 // ids, codigos, modelo e duracao.
@@ -195,6 +204,7 @@ import {
   NOME_DO_FORA_DO_ASSUNTO,
   semArgumentos,
 } from "./ferramentas/fora-do-assunto";
+import { limiteDaSaidaDasMinhasConsultas } from "./ferramentas/minhas-consultas";
 import {
   esconderCodigosCurtos,
   falaDaCarteirinha,
@@ -281,8 +291,25 @@ const CARACTERES_POR_MENSAGEM = LIMITE_DE_MENSAGEM;
 /** So responses.create e usado; os testes injetam um falso com roteiro. */
 export type ClienteDoAgente = Pick<OpenAI, "responses">;
 
+/**
+ * Revisao da AG4: quem escreveu a mensagem que nao e do paciente, como o
+ * banco guarda (message.author): a IA, a equipe (usuario, inclusive pelo
+ * celular) ou o sistema (regua, campanha, mensagem agendada, a frase de
+ * escalonamento).
+ */
+export type AutoriaDaClinica = "ia" | "usuario" | "sistema";
+
 export type MensagemDaConversa = {
   autor: "paciente" | "assistente";
+  /**
+   * Revisao da AG4 (achado 1): a autoria REAL da mensagem do "assistente"
+   * (o historico mostra a IA, a equipe e o sistema todos como
+   * "assistente"). So o servidor le isto: a pergunta do cancelamento (T1) e
+   * a da remarcacao (T3) so valem quando a mensagem logo antes das
+   * pendentes e da IA. Nunca vai a OpenAI. Ausente ou nula: nao se sabe
+   * (falha fechada: nao conta como da IA).
+   */
+  autoria?: AutoriaDaClinica | null;
   /**
    * null para midia sem texto. No historico do WhatsApp, com o nome do
    * contato trocado pela marca (lib/agente/historico.ts): e o texto que os
@@ -399,6 +426,16 @@ type Comum = {
    * do paciente). Nula: nada a contar.
    */
   notaParaAEquipe?: string | null;
+  /**
+   * Revisao final da AG4 (M1 e B1): o turno parou porque o banco disse
+   * mensagem_nova_do_paciente (a pessoa escreveu, ou apagou o que o turno
+   * leu, depois da leitura). O desfecho continua o do "sem mensagem" (nada
+   * sai, ninguem assume, nenhuma falha); isto o separa do turno que nao
+   * tinha mensagem a responder. O executor do WhatsApp NAO grava o estado
+   * (ele nao mudou) e garante o job seguinte (enfileirar_resposta_da_ia),
+   * para a conversa nunca ficar calada. Ausente: nao foi isso.
+   */
+  mensagemNova?: true;
 };
 
 export type ResultadoDoTurno =
@@ -999,6 +1036,7 @@ export function custoMaximoDoTurno(entrada: {
   const ferramentas = ferramentasDoAgente(
     entrada.config.habilidades,
     entrada.config.agenda,
+    entrada.config.prazos,
   );
   const comAgenda = ferramentas.some(ehFerramentaDeAgenda);
   const crescimento =
@@ -1008,6 +1046,11 @@ export function custoMaximoDoTurno(entrada: {
       comAgenda ? limiteDaSaidaDaBuscaDeHorario(entrada.catalogo) : 0,
       // AG2: as consultas do Cadastro vem sempre (habilidade travada).
       limiteDasConsultasDoCadastro(entrada.catalogo),
+      // AG4: as consultas do contato (a busca da remarcacao cabe no teto de
+      // buscar_horario).
+      ferramentas.includes("consultar_minhas_consultas")
+        ? limiteDaSaidaDasMinhasConsultas()
+        : 0,
     ) +
     FOLGA_DA_CHAMADA;
   const rodadas = comAgenda ? MAXIMO_DE_RODADAS_COM_AGENDA : MAXIMO_DE_RODADAS;
@@ -1152,6 +1195,13 @@ export async function executarTurnoDoAgente(
   const comEstado =
     entrada.atendimento !== null && entrada.atendimento !== undefined;
   const pendentes = mensagensPendentes(entrada.mensagens);
+  // Revisao da AG4 (achado 1): a mensagem logo antes das pendentes, com a
+  // autoria real (a pergunta do cancelamento e da remarcacao so vale quando
+  // e ela, da IA).
+  const antes =
+    pendentes.length === 0
+      ? undefined
+      : entrada.mensagens[entrada.mensagens.length - pendentes.length - 1];
   const agendaDoTurno = criarAgendaDoTurno({
     porta: entrada.agenda ?? null,
     catalogo: entrada.catalogo,
@@ -1162,6 +1212,13 @@ export async function executarTurnoDoAgente(
     mensagens: {
       doPaciente: mensagensDoPacienteParaOsDados(entrada.mensagens),
       pendentes: mensagensDoPacienteParaOsDados(pendentes),
+      antesDasPendentes:
+        antes === undefined || antes.autor !== "assistente"
+          ? null
+          : {
+              autoria: antes.autoria ?? null,
+              texto: (antes.tipo ?? "texto") === "texto" ? antes.texto : null,
+            },
     },
     nascimentos: [entrada.dataDeNascimento, entrada.nascimentoInformado].filter(
       (n): n is string => typeof n === "string" && n !== "",
@@ -1176,7 +1233,13 @@ export async function executarTurnoDoAgente(
     return resultado;
   }
   try {
-    const passou = resultado.tipo === "frase_fixa";
+    // Revisao curta das correcoes da AG4 (achado 1): o turno sem mensagem a
+    // responder (inclusive a mensagem nova da pessoa no meio do turno) nao
+    // sai e nao passa para a equipe (o executor fecha sem envio).
+    const semEnvio =
+      resultado.desfecho.tipo === "falhou" &&
+      resultado.desfecho.motivo === "sem_mensagem";
+    const passou = resultado.tipo === "frase_fixa" && !semEnvio;
     const atendimento = agendaDoTurno.fechar({
       mensagemFinal: resultado.tipo === "resposta" ? resultado.resposta : null,
       passou,
@@ -1403,7 +1466,11 @@ async function turnoDoAgente(
     // 4. O agente.
     const ferramentas: FunctionTool[] = ferramentasDaChamada(entrada.config);
     const permitidas: ReadonlySet<string> = new Set(
-      ferramentasDoAgente(entrada.config.habilidades, entrada.config.agenda),
+      ferramentasDoAgente(
+        entrada.config.habilidades,
+        entrada.config.agenda,
+        entrada.config.prazos,
+      ),
     );
     // AG3: a reconferencia leve do estado (os horarios ja oferecidos, a
     // reserva e a consulta marcada nesta conversa), antes da primeira
@@ -1452,8 +1519,11 @@ async function turnoDoAgente(
     // Onda 2 (item 5 e P5c): a ferramenta de frase fixa que encerrou o turno.
     let fraseEscolhida: "fora_do_assunto" | "sou_assistente_virtual" | null =
       null;
+    // AG4: a frase fixa da agenda (a pergunta ou o resultado do cancelamento
+    // e da remarcacao) que encerrou o turno.
+    let fraseDaAgenda: string | null = null;
 
-    for (let rodada = 1; rodada <= maximoDeRodadas; rodada += 1) {
+    rodadas: for (let rodada = 1; rodada <= maximoDeRodadas; rodada += 1) {
       if (entrada.conferirTrava) {
         const liberada = await entrada.conferirTrava().catch(() => false);
         if (!liberada) {
@@ -1694,6 +1764,21 @@ async function turnoDoAgente(
           trilha.push({ tipo: "agenda", texto: efeito.passo });
           return falhar("liberacao_suspensa");
         }
+        if (efeito.tipo === "mensagem_nova") {
+          // Revisao curta das correcoes da AG4 (achado 1): a pessoa escreveu
+          // de novo enquanto o turno rodava (mensagem_nova_do_paciente do
+          // banco). Nada sai e a conversa NAO passa para a equipe: o desfecho
+          // e o de "sem mensagem" (o executor fecha o turno sem envio e
+          // conclui o job), e o proximo job responde lendo a mensagem nova.
+          // O estado fica como no comeco (AgendaDoTurno.fechar). Revisao
+          // final da AG4 (M1 e B1): marcado como mensagem nova, o executor
+          // nao grava o estado e garante o job seguinte.
+          trilha.push({ tipo: "agenda", texto: efeito.passo });
+          return {
+            ...fraseFixa({ tipo: "falhou", motivo: "sem_mensagem" }),
+            mensagemNova: true,
+          };
+        }
         if (efeito.tipo === "passar") {
           // AG3 (D-8): a consulta e para outra pessoa, ou o paciente e menor
           // de idade. O servidor passa a conversa, com o motivo do banco; o
@@ -1713,6 +1798,14 @@ async function turnoDoAgente(
             clinic_id: entrada.clinicId,
           });
           return falhar("desconhecida");
+        }
+        if (efeito.tipo === "frase") {
+          // AG4: a frase fixa encerra o turno (o resto da rodada nao roda).
+          // Os fatos dela entram nos do turno, como uma saida de ferramenta.
+          ferramentasDoTurno.push({ saida: efeito.saida, fatos: efeito.fatos });
+          trilha.push({ tipo: "agenda", texto: efeito.passo });
+          fraseDaAgenda = efeito.texto;
+          break rodadas;
         }
         precosDoTurno.push(...efeito.precos);
         ferramentasDoTurno.push({ saida: efeito.saida, fatos: efeito.fatos });
@@ -1756,7 +1849,18 @@ async function turnoDoAgente(
     // para o resumo dos fatos que vai ao verificador.
     const respostasDaBase: string[] = [];
 
-    if (fraseEscolhida !== null) {
+    if (fraseDaAgenda !== null) {
+      // AG4: a frase fixa da agenda, com a saudacao e o aviso colados como
+      // numa resposta comum, pelo filtro inteiro (com os fatos dela).
+      rascunho = comporResposta({
+        mensagem: fraseDaAgenda,
+        saudacao: entrada.config.saudacao,
+        encerramento: null,
+        primeiraResposta,
+        encerra: false,
+        aviso,
+      });
+    } else if (fraseEscolhida !== null) {
       ferramentasUsadas.push(fraseEscolhida);
       // P5b: a segunda pergunta fora do assunto na janela passa para a
       // equipe (motivo de sistema), com a frase de escalonamento.

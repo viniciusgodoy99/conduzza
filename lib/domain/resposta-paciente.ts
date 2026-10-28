@@ -133,6 +133,160 @@ export function interpretarResposta(body: string | null): IntencaoDoPaciente {
 }
 
 // ---------------------------------------------------------------------------
+// AG4 (27/10/2026, decisao D-30, recomendacao): o "sim" do cancelamento pela
+// IA, numa lista FECHADA, no molde de interpretarResposta. A pergunta e a
+// frase fixa "Confirma o cancelamento da sua consulta de ...?" (T1); o
+// cancelamento so sai com a resposta que e um sim claro, por frase inteira.
+// "Sim, mas tem multa?", "acho que sim" e "sim e a outra?" nao sao: a
+// pergunta volta e conta uma falha (na segunda seguida, a equipe). Errar para
+// o lado do "nao entendi" e barato; cancelar sem querer, nao.
+// ---------------------------------------------------------------------------
+
+export type RespostaAoCancelamento = "sim" | "nao" | "nao_reconhecida";
+
+const SIM_DO_CANCELAMENTO = new Set([
+  "sim",
+  "s",
+  "ss",
+  "sim sim",
+  "isso",
+  "isso mesmo",
+  "isso ai",
+  "exato",
+  "exatamente",
+  "confirmo",
+  "confirmado",
+  "confirmada",
+  "confirma",
+  "sim confirmo",
+  "confirmo sim",
+  "confirmo o cancelamento",
+  "sim confirmo o cancelamento",
+  "pode",
+  "pode sim",
+  "sim pode",
+  "pode cancelar",
+  "pode cancelar sim",
+  "sim pode cancelar",
+  "pode desmarcar",
+  "sim pode desmarcar",
+  "cancela",
+  "cancelar",
+  "pode cancelar por favor",
+  "cancela por favor",
+  "sim cancela",
+  "sim cancelar",
+  "sim cancele",
+  "cancele",
+  "pode cancelar a consulta",
+  "sim pode cancelar a consulta",
+  "quero cancelar",
+  "sim quero cancelar",
+  "sim quero",
+  "quero sim",
+  "sim por favor",
+  "por favor",
+  "claro",
+  "sim claro",
+  "com certeza",
+  "ok",
+  "okay",
+  "ok pode cancelar",
+  "sim obrigado",
+  "sim obrigada",
+  "certo",
+]);
+
+const NAO_DO_CANCELAMENTO = new Set([
+  "nao",
+  "n",
+  "nao nao",
+  "nao obrigado",
+  "nao obrigada",
+  "nao quero",
+  "nao quero cancelar",
+  "nao cancela",
+  "nao cancele",
+  "nao precisa",
+  "nao precisa cancelar",
+  "deixa",
+  "deixa assim",
+  "nao deixa",
+  "nao deixa assim",
+  "esquece",
+  "mudei de ideia",
+  "melhor nao",
+]);
+
+/**
+ * Revisao da AG4 (achado 8): a mensagem com ponto de interrogacao e uma
+ * pergunta ("Sim?", "Pode?", "Cancela?"), nunca um sim (nem um nao): a
+ * normalizacao tira a pontuacao, entao a pergunta e lida antes.
+ */
+const PERGUNTA_NA_MENSAGEM = /[?¿؟？]/u;
+
+/** Uma mensagem so, pela lista fechada. */
+function respostaDeUmaMensagem(body: string): RespostaAoCancelamento {
+  if (PERGUNTA_NA_MENSAGEM.test(body)) {
+    return "nao_reconhecida";
+  }
+  const semModificadores = body.replace(MODIFICADORES, "");
+  let restante = semModificadores;
+  let temEmojiDeConfirmacao = false;
+  for (const emoji of EMOJIS_DE_CONFIRMACAO) {
+    if (restante.includes(emoji)) {
+      temEmojiDeConfirmacao = true;
+      restante = restante.split(emoji).join(" ");
+    }
+  }
+  const texto = normalizar(restante);
+  if (texto.length === 0) {
+    return temEmojiDeConfirmacao ? "sim" : "nao_reconhecida";
+  }
+  if (SIM_DO_CANCELAMENTO.has(texto)) {
+    return "sim";
+  }
+  if (NAO_DO_CANCELAMENTO.has(texto)) {
+    return "nao";
+  }
+  return "nao_reconhecida";
+}
+
+/**
+ * A resposta do paciente a pergunta do cancelamento (as mensagens dele
+ * depois da pergunta, ainda nao respondidas). "sim" so quando TODAS sao um
+ * sim da lista fechada; "nao" so quando todas sao um nao; qualquer outra
+ * mistura, mensagem vazia ou sem texto e "nao_reconhecida". PURA, nunca
+ * lanca.
+ */
+export function interpretarRespostaAoCancelamento(
+  mensagens: readonly (string | null)[],
+): RespostaAoCancelamento {
+  if (mensagens.length === 0) {
+    return "nao_reconhecida";
+  }
+  const lidas = mensagens.map((m) =>
+    m === null || m.trim() === "" ? "nao_reconhecida" : respostaDeUmaMensagem(m),
+  );
+  if (lidas.every((r) => r === "sim")) {
+    return "sim";
+  }
+  if (lidas.every((r) => r === "nao")) {
+    return "nao";
+  }
+  return "nao_reconhecida";
+}
+
+/** As listas do "sim" e do "nao" (para a versao das regras do agente). */
+export const FONTES_DA_RESPOSTA_AO_CANCELAMENTO: readonly string[] = [
+  [...SIM_DO_CANCELAMENTO].join(","),
+  [...NAO_DO_CANCELAMENTO].join(","),
+  EMOJIS_DE_CONFIRMACAO.join(","),
+  // Revisao da AG4 (achado 8): a pergunta nunca e sim nem nao.
+  PERGUNTA_NA_MENSAGEM.source,
+];
+
+// ---------------------------------------------------------------------------
 // A QUE PERGUNTA o paciente respondeu (revisao de liberacao de 24/09).
 //
 // Ler "ok" como confirmacao so e seguro quando o "ok" responde ao toque. O

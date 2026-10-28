@@ -11,7 +11,6 @@ import {
   X,
 } from "lucide-react";
 import { useId, useMemo, useState, useTransition } from "react";
-import { toast } from "sonner";
 
 import {
   aprovarEncaixeAction,
@@ -32,6 +31,7 @@ import {
   podeRemoverBloqueio,
   ResumoDoBloqueio,
 } from "@/components/agenda/detalhe-do-bloqueio";
+import { DialogoDaRemarcacao } from "@/components/agenda/dialogo-da-remarcacao";
 import {
   mostrarRetornoDaPendencia,
   retornoDaPendencia,
@@ -44,6 +44,11 @@ import {
   NotaDaConfirmacao,
   profissionaisParaRemarcar,
 } from "@/components/agenda/remarcacao-comum";
+import {
+  linhaDaAntigaNoMenu,
+  TEXTOS_DA_REMARCACAO,
+  type AcaoDaRemarcacao,
+} from "@/components/agenda/remarcacao-da-ia";
 import { StatusHistorySheet } from "@/components/agenda/status-history-sheet";
 import type { ContextoAgenda } from "@/components/agenda/tipos";
 import { Aviso } from "@/components/shared/aviso";
@@ -104,6 +109,7 @@ import {
   agendaKeys,
   cancelarContaComoRecusa,
   ehConsultaDaIa,
+  ehRemarcacaoDaIa,
   fetchListaDeEsperaDaClinica,
   type BloqueioDaAgenda,
   type ConsultaDaAgenda,
@@ -149,13 +155,46 @@ import { createClient } from "@/lib/supabase/client";
 // quando e por quem, ou por que nao entram). A leitura so acontece no clique
 // (grava trilha). Sem permissao, visivel e desabilitado com o porque logo
 // abaixo.
+//
+// AG4 (D-10; desenho da secao 5): na remarcacao que a IA pediu (a consulta
+// NOVA, pendente e ligada a antiga), o grupo "Remarcação pela IA" com
+// "Aprovar remarcação" e "Recusar remarcação", que abrem os dialogos da
+// remarcacao (o mesmo do painel), e cancelar pela mudanca de situacao abre o
+// "Recusar a remarcação?" (cancelar a nova pendente e recusar). Sem "Ver
+// dados informados": a remarcacao nao pede dado (D-26). Na ANTIGA, com a
+// remarcacao pendente (D-32, pela recomendacao), a linha "Remarcação pedida
+// pela IA para ..." e o "Remarcar" desabilitado com a dica do gatilho (o
+// arrastar tambem nao vale, appointment-block.tsx). O rotulo e escrito, sem
+// o CalendarFold: o icone tem um dono so, o chip do painel (docs/06 4.6).
+// Revisao da AG4 (achados 1 e 3): a consulta do dia nao traz a antiga; os
+// dialogos da remarcacao abrem com a nova como esta na lista do "Pendente de
+// você" (contexto.remarcacaoNaLista), que o tempo real renova a cada mudanca
+// de consulta, e a guardada na abertura so quando ela ja saiu da lista. A
+// troca pela da lista mora no proprio dialogo (remarcacaoNoDialogo; revisao
+// curta da AG4, achado 4), e nao no JSX daqui.
+//
+// Revisao curta da AG4 (achado 3): as transicoes do menu (mudar a situacao e
+// o "Remarcar consulta") chamam a acao por mudarSituacaoNoMenu e
+// remarcarPeloMenu, que nunca rejeitam: a acao que lanca vira o erro de
+// sempre. A transicao assincrona rejeitada e relancada no render (React 19)
+// e levava a Agenda inteira para a tela de erro.
 
 /** Os textos do grupo de pendencia do menu, pelo tipo da pendencia. */
-export function rotulosDaPendenciaNoMenu(daIa: boolean): {
+export function rotulosDaPendenciaNoMenu(
+  daIa: boolean,
+  remarcacao = false,
+): {
   grupo: string;
   aprovar: string;
   recusar: string;
 } {
+  if (daIa && remarcacao) {
+    return {
+      grupo: TEXTOS_DA_REMARCACAO.grupoDoMenu,
+      aprovar: TEXTOS_DA_REMARCACAO.aprovarNoMenu,
+      recusar: TEXTOS_DA_REMARCACAO.recusarNoMenu,
+    };
+  }
   return daIa
     ? {
         grupo: "Consulta marcada pela IA",
@@ -201,10 +240,12 @@ export function retornoDaMudancaDeSituacao(
   novoStatus: AppointmentStatus,
 ): RetornoNaTela {
   if (resultado.ok && resultado.recusada) {
+    // A remarcacao da IA e uma consulta da IA: o texto vem do servidor (a
+    // antiga continua marcada), e o aviso da conversa vale como sempre.
     return retornoDaPendencia(
       resultado,
       "recusar",
-      resultado.recusada === "consulta_da_ia",
+      resultado.recusada !== "encaixe",
     );
   }
   if (resultado.ok) {
@@ -217,6 +258,135 @@ export function retornoDaMudancaDeSituacao(
     tipo: "error",
     texto: resultado.error ?? "Não foi possível mudar a situação.",
   };
+}
+
+/** A mudanca de situacao que o menu pede (o que mudarStatusAction recebe). */
+export type PedidoDeSituacao = {
+  id: string;
+  status_atual: AppointmentStatus;
+  novo_status: AppointmentStatus;
+  canal: CanalConfirmacao | null;
+  oferecer_vaga?: boolean;
+};
+
+/**
+ * Muda a situacao pela acao e devolve se deu certo e o que a tela diz
+ * (retornoDaMudancaDeSituacao). A acao que lanca (a rede caiu, deploy novo
+ * no meio) vira o erro de sempre: dentro da transicao assincrona do menu, o
+ * erro era relancado no render (React 19) e levava a Agenda inteira para a
+ * tela de erro (revisao curta da AG4).
+ */
+export async function mudarSituacaoNoMenu(
+  pedido: PedidoDeSituacao,
+): Promise<{ ok: boolean; retorno: RetornoNaTela }> {
+  let resultado: AgendaActionResult;
+  try {
+    resultado = await mudarStatusAction(pedido);
+  } catch {
+    resultado = { ok: false };
+  }
+  return {
+    ok: resultado.ok,
+    retorno: retornoDaMudancaDeSituacao(resultado, pedido.novo_status),
+  };
+}
+
+/**
+ * A consulta que o menu guarda ao abrir os dialogos da remarcacao da IA: a
+ * nova como esta na lista do "Pendente de você" (com a antiga lida a parte)
+ * ou, sem ela na lista, a do dia. O dialogo troca pela da lista a cada
+ * render (remarcacaoNoDialogo); a guardada so vale quando a nova ja saiu da
+ * lista. A consulta do dia nunca traz a antiga.
+ */
+export function consultaDaRemarcacaoNoMenu(
+  daLista: ConsultaDaAgenda | null,
+  guardada: ConsultaDaAgenda,
+): ConsultaDaAgenda {
+  return daLista ?? guardada;
+}
+
+/**
+ * O que o "Remarcar consulta" do menu faz com cada resposta da acao:
+ * - deu certo: fecha com "Consulta remarcada." e, se o aviso ao paciente nao
+ *   saiu, a atencao logo depois; refaz a agenda;
+ * - o que a recepcao corrige (outro horario ou profissional): fica aberto,
+ *   com o erro;
+ * - remarcacao_pendente (D-32: a IA pediu a remarcacao desta consulta
+ *   depois de a tela carregar): fecha com o erro e refaz a agenda, para o
+ *   menu e o arrastar travarem com a dica (revisao da AG4, achado 6);
+ * - outro erro: fecha com o erro.
+ */
+export type DesfechoDoRemarcar =
+  | { fechar: true; avisos: RetornoNaTela[]; atualizarAgenda: boolean }
+  | { fechar: false; erro: string };
+
+export function desfechoDoRemarcar(
+  resultado: AgendaActionResult,
+): DesfechoDoRemarcar {
+  if (resultado.ok) {
+    return {
+      fechar: true,
+      avisos: [
+        { tipo: "success", texto: "Consulta remarcada." },
+        // O aviso NAO saiu: a recepcao precisa saber para ligar.
+        ...(resultado.aviso
+          ? [{ tipo: "warning" as const, texto: resultado.aviso }]
+          : []),
+      ],
+      atualizarAgenda: true,
+    };
+  }
+  if (resultado.code && ERROS_CORRIGIVEIS_NA_REMARCACAO.has(resultado.code)) {
+    // Mantem o dialogo aberto para escolher outro horario ou profissional.
+    return {
+      fechar: false,
+      erro: resultado.error ?? "Não foi possível remarcar neste horário.",
+    };
+  }
+  return {
+    fechar: true,
+    avisos: [
+      { tipo: "error", texto: resultado.error ?? "Não foi possível remarcar." },
+    ],
+    atualizarAgenda: resultado.code === "remarcacao_pendente",
+  };
+}
+
+/** O novo horario escolhido no "Remarcar consulta" do menu. */
+export type PedidoDeRemarcacaoNoMenu = {
+  consulta: Pick<ConsultaDaAgenda, "id" | "starts_at">;
+  timezone: string;
+  /** aaaa-mm-dd e HH:MM, no fuso da clinica. */
+  dia: string;
+  hora: string;
+  profissionalId: string;
+  avisarPaciente: boolean;
+};
+
+/**
+ * Remarca pela acao e devolve o desfecho (desfechoDoRemarcar). A duracao sai
+ * do vinculo no servidor; a tela so manda o novo inicio. O que lanca (a rede
+ * caiu, deploy novo no meio, o dia e a hora que nao viram um instante) vira o
+ * erro de sempre ({ ok: false }), sem derrubar a Agenda: a transicao
+ * assincrona rejeitada e relancada no render (revisao curta da AG4).
+ */
+export async function remarcarPeloMenu(
+  pedido: PedidoDeRemarcacaoNoMenu,
+): Promise<DesfechoDoRemarcar> {
+  try {
+    const novoInicio = instanteLocal(pedido.timezone, pedido.dia, pedido.hora);
+    return desfechoDoRemarcar(
+      await remarcarAgendamentoAction({
+        id: pedido.consulta.id,
+        starts_at_esperado: pedido.consulta.starts_at,
+        novo_starts_at: novoInicio.toISOString(),
+        novo_professional_id: pedido.profissionalId,
+        avisar_paciente: pedido.avisarPaciente,
+      }),
+    );
+  } catch {
+    return desfechoDoRemarcar({ ok: false });
+  }
 }
 
 /** "quinta-feira, 25/09 às 10:00" no fuso da clinica. */
@@ -335,8 +505,29 @@ export function AppointmentMenu({
   const idBloqueio = useId();
   const idDicaDados = useId();
   const podeRemoverBloqueios = podeRemoverBloqueio(contexto);
-  // "Ver dados informados" (AG3): so a consulta que a IA marcou.
   const daIa = ehConsultaDaIa(consulta);
+  // AG4: a remarcacao que a IA pediu (esta e a consulta nova) e, na antiga,
+  // a remarcacao dela que ainda espera a equipe.
+  const remarcacao = ehRemarcacaoDaIa(consulta);
+  const remarcacaoDaAntiga =
+    contexto.remarcacaoPendenteDe?.(consulta.id) ?? null;
+  // A nova como esta na lista do "Pendente de você", com a antiga (a do dia
+  // nao traz). Os dialogos abrem com ela; a guardada so se ela sair da lista.
+  const remarcacaoDaLista = remarcacao
+    ? (contexto.remarcacaoNaLista?.(consulta.id) ?? null)
+    : null;
+  const [remarcacaoAberta, setRemarcacaoAberta] = useState<{
+    acao: AcaoDaRemarcacao;
+    consulta: ConsultaDaAgenda;
+  } | null>(null);
+  const abrirRemarcacao = (acao: AcaoDaRemarcacao) =>
+    setRemarcacaoAberta({
+      acao,
+      consulta: consultaDaRemarcacaoNoMenu(remarcacaoDaLista, consulta),
+    });
+  // "Ver dados informados" (AG3): so a consulta que a IA marcou, nunca a
+  // remarcacao (ela nao pede dado, D-26).
+  const comDadosInformados = daIa && !remarcacao;
   const dadosInformados = useDadosInformados();
 
   const nome =
@@ -349,6 +540,13 @@ export function AppointmentMenu({
     new Date(agora),
   );
   const remarcavel = podeRemarcar(consulta.status);
+  // Por que o "Remarcar" nao vale agora: a consulta encerrada (de sempre) ou,
+  // AG4 (D-32), a remarcacao da IA pendente desta consulta.
+  const dicaDoRemarcar = !remarcavel
+    ? DICA_REMARCAR_ENCERRADA
+    : remarcacaoDaAntiga
+      ? TEXTOS_DA_REMARCACAO.dicaDaAntiga
+      : null;
   // Consulta pendente (item 10): alguma situacao da lista espera a
   // aprovacao? A dica aparece uma vez, embaixo do rotulo do grupo.
   const algumaEsperaAprovacao = transicoes.some((novoStatus) =>
@@ -386,17 +584,17 @@ export function AppointmentMenu({
     oferecerVaga?: boolean,
   ) => {
     iniciarTransicao(async () => {
-      const resultado = await mudarStatusAction({
+      // mudarSituacaoNoMenu nunca rejeita: a acao que lanca vira o erro de
+      // sempre, e a transicao nao derruba a Agenda.
+      const { ok, retorno } = await mudarSituacaoNoMenu({
         id: consulta.id,
         status_atual: consulta.status,
         novo_status: novoStatus,
         canal,
         ...(oferecerVaga === undefined ? {} : { oferecer_vaga: oferecerVaga }),
       });
-      mostrarRetornoDaPendencia(
-        retornoDaMudancaDeSituacao(resultado, novoStatus),
-      );
-      if (resultado.ok) {
+      mostrarRetornoDaPendencia(retorno);
+      if (ok) {
         await atualizarAgenda();
       }
       aoTerminar?.();
@@ -415,6 +613,12 @@ export function AppointmentMenu({
     // Cancelar nao tem volta e pode acionar a lista de espera: sempre com
     // confirmacao que nomeia paciente, procedimento e horario (achado 80).
     if (eCancelamento(novoStatus)) {
+      // AG4: cancelar a remarcacao da IA pendente e recusa-la: o dialogo
+      // dela diz o que acontece com as duas consultas.
+      if (remarcacao && aguardaAprovacao(consulta)) {
+        abrirRemarcacao("recusar");
+        return;
+      }
       setCancelamento(novoStatus);
       return;
     }
@@ -449,7 +653,7 @@ export function AppointmentMenu({
     });
   };
 
-  const rotulosDaPendencia = rotulosDaPendenciaNoMenu(daIa);
+  const rotulosDaPendencia = rotulosDaPendenciaNoMenu(daIa, remarcacao);
   const pendenteDeAprovacao = aguardaAprovacao(consulta);
   // O mesmo item nos dois lugares (no grupo da pendencia ou junto do
   // historico): a leitura so no clique.
@@ -475,6 +679,13 @@ export function AppointmentMenu({
     </>
   );
   const tratarPendencia = (decisao: AcaoDaPendencia) => {
+    // AG4: a remarcacao da IA aprova e recusa pelo dialogo dela (a frase do
+    // que acontece com as duas consultas e, na aprovacao, o aviso ao
+    // paciente, D-28).
+    if (remarcacao) {
+      abrirRemarcacao(decisao);
+      return;
+    }
     iniciarTransicao(async () => {
       mostrarRetornoDaPendencia(await tratarPendenciaNoMenu(consulta, decisao));
       await atualizarAgenda();
@@ -514,6 +725,20 @@ export function AppointmentMenu({
             </span>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
+
+          {/* AG4 (D-32): a antiga com a remarcacao da IA pendente diz para
+              quando a IA pediu; o "Remarcar" la embaixo explica o resto. */}
+          {remarcacaoDaAntiga ? (
+            <>
+              <DropdownMenuLabel className="max-w-64 text-xs font-semibold whitespace-normal text-text-strong">
+                {linhaDaAntigaNoMenu(
+                  remarcacaoDaAntiga.starts_at,
+                  contexto.timezone,
+                )}
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+            </>
+          ) : null}
 
           {bloqueios.length > 0 ? (
             <>
@@ -575,7 +800,7 @@ export function AppointmentMenu({
                 <DropdownMenuLabel className="cz-eyebrow text-[10px] text-text-tertiary">
                   {rotulosDaPendencia.grupo}
                 </DropdownMenuLabel>
-                {daIa ? itemDosDadosInformados : null}
+                {comDadosInformados ? itemDosDadosInformados : null}
                 <DropdownMenuItem
                   disabled={!contexto.podeEditar || pendente}
                   className="h-10"
@@ -677,20 +902,24 @@ export function AppointmentMenu({
 
           <DropdownMenuSeparator />
           <DropdownMenuItem
-            disabled={!contexto.podeEditar || pendente || !remarcavel}
-            aria-describedby={!remarcavel ? idDicaRemarcar : undefined}
+            disabled={
+              !contexto.podeEditar || pendente || dicaDoRemarcar !== null
+            }
+            aria-describedby={
+              dicaDoRemarcar !== null ? idDicaRemarcar : undefined
+            }
             className="h-10"
             onSelect={() => setDialogRemarcar(true)}
           >
             <CalendarClock className="size-4" aria-hidden />
             <span>Remarcar</span>
           </DropdownMenuItem>
-          {!remarcavel ? (
+          {dicaDoRemarcar !== null ? (
             <p
               id={idDicaRemarcar}
               className="max-w-64 px-[9px] pb-1.5 text-xs whitespace-normal text-text-secondary"
             >
-              {DICA_REMARCAR_ENCERRADA}
+              {dicaDoRemarcar}
             </p>
           ) : null}
           {consulta.status === "faltou" && contexto.abrirAgendamento ? (
@@ -703,7 +932,9 @@ export function AppointmentMenu({
               <span>Marcar nova consulta</span>
             </DropdownMenuItem>
           ) : null}
-          {daIa && !pendenteDeAprovacao ? itemDosDadosInformados : null}
+          {comDadosInformados && !pendenteDeAprovacao
+            ? itemDosDadosInformados
+            : null}
           <DropdownMenuItem
             className="h-10"
             onSelect={() => setHistoricoAberto(true)}
@@ -828,7 +1059,7 @@ export function AppointmentMenu({
           consulta={consulta}
           aberto={dialogRemarcar}
           onFechar={() => setDialogRemarcar(false)}
-          onSucesso={atualizarAgenda}
+          atualizarAgenda={atualizarAgenda}
         />
       ) : null}
 
@@ -839,7 +1070,7 @@ export function AppointmentMenu({
         onFechar={() => setHistoricoAberto(false)}
       />
 
-      {daIa ? (
+      {comDadosInformados ? (
         <DialogoDosDadosInformados
           aberto={dadosInformados.aberta !== null}
           nome={contatoDaConsulta(consulta)}
@@ -851,6 +1082,21 @@ export function AppointmentMenu({
           aoRevelar={dadosInformados.revelar}
         />
       ) : null}
+
+      {remarcacaoAberta ? (
+        <DialogoDaRemarcacao
+          key={remarcacaoAberta.acao}
+          contexto={contexto}
+          // A guardada na abertura: o dialogo troca pela da lista do
+          // "Pendente de você" a cada render (remarcacaoNoDialogo, pelo
+          // contexto), entao a consulta do dia nunca chega ao texto quando
+          // a da lista existe (revisao curta da AG4, achado 4).
+          consulta={remarcacaoAberta.consulta}
+          acao={remarcacaoAberta.acao}
+          aoFechar={() => setRemarcacaoAberta(null)}
+          aoTerminar={atualizarAgenda}
+        />
+      ) : null}
     </>
   );
 }
@@ -860,13 +1106,14 @@ function RemarcarDialog({
   consulta,
   aberto,
   onFechar,
-  onSucesso,
+  atualizarAgenda,
 }: {
   contexto: ContextoAgenda;
   consulta: ConsultaDaAgenda;
   aberto: boolean;
   onFechar: () => void;
-  onSucesso: () => void;
+  /** Refaz a agenda (o dia, a lista das pendencias e o historico). */
+  atualizarAgenda: () => Promise<unknown>;
 }) {
   const [pendente, iniciarTransicao] = useTransition();
   const [erro, setErro] = useState<string | null>(null);
@@ -908,34 +1155,26 @@ function RemarcarDialog({
     }
     setErro(null);
     iniciarTransicao(async () => {
-      // A duracao sai do vinculo no servidor; a tela so manda o novo inicio.
-      const novoInicio = instanteLocal(contexto.timezone, dia, hora);
-      const resultado = await remarcarAgendamentoAction({
-        id: consulta.id,
-        starts_at_esperado: consulta.starts_at,
-        novo_starts_at: novoInicio.toISOString(),
-        novo_professional_id: profissionalId,
-        avisar_paciente: avisarPaciente,
+      // remarcarPeloMenu nunca rejeita: a acao que lanca vira o erro de
+      // sempre, e a transicao nao derruba a Agenda.
+      const desfecho = await remarcarPeloMenu({
+        consulta,
+        timezone: contexto.timezone,
+        dia,
+        hora,
+        profissionalId,
+        avisarPaciente,
       });
-      if (resultado.ok) {
-        toast.success("Consulta remarcada.");
-        if (resultado.aviso) {
-          // O aviso NAO saiu: a recepcao precisa saber para ligar.
-          toast.warning(resultado.aviso, { duration: 10_000 });
-        }
-        onSucesso();
-        onFechar();
+      if (!desfecho.fechar) {
+        setErro(desfecho.erro);
         return;
       }
-      if (
-        resultado.code &&
-        ERROS_CORRIGIVEIS_NA_REMARCACAO.has(resultado.code)
-      ) {
-        // Mantem o dialogo aberto para escolher outro horario ou profissional
-        setErro(resultado.error ?? "Não foi possível remarcar neste horário.");
-        return;
+      for (const aviso of desfecho.avisos) {
+        mostrarRetornoDaPendencia(aviso);
       }
-      toast.error(resultado.error ?? "Não foi possível remarcar.");
+      if (desfecho.atualizarAgenda) {
+        void atualizarAgenda();
+      }
       onFechar();
     });
   };

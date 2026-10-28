@@ -32,6 +32,37 @@ export type ConsultaDaAgenda = {
     procedure: { id: string; name: string } | null;
     insurance: { id: string; name: string } | null;
   } | null;
+  /**
+   * AG4 (D-10): a consulta que esta remarca, quando a IA pediu a remarcacao
+   * (a nova nasce pendente e ligada a antiga; so o servidor grava). Nulo na
+   * consulta comum. Opcional so para os dubles dos testes: a leitura sempre
+   * preenche (normalizarConsulta).
+   */
+  remarcacao_de?: string | null;
+  /**
+   * A antiga da remarcacao da IA (o horario e a situacao dela), para o
+   * cartao e os dialogos dizerem "De ... para ...". So a lista do "Pendente
+   * de voce" traz (fetchPendencias, numa leitura a parte); a consulta do dia
+   * e a do tempo real nao trazem (ausente: a Agenda nunca depende dela para
+   * abrir). Nula quando a RLS nao deixa ler a antiga ou quando a leitura
+   * dela falhou (erroNaAntiga).
+   */
+  antiga?: AntigaDaRemarcacao | null;
+  /**
+   * A leitura da antiga falhou: so a remarcacao diz que nao carregou (o
+   * cartao e os dialogos); a lista e a Agenda abrem do mesmo jeito, e o
+   * servidor le a antiga de novo ao aprovar ou recusar.
+   */
+  erroNaAntiga?: boolean;
+};
+
+/** O que a tela mostra da consulta antiga de uma remarcacao da IA. */
+export type AntigaDaRemarcacao = {
+  id: string;
+  starts_at: string;
+  ends_at: string;
+  status: AppointmentStatus;
+  professional_id: string;
 };
 
 export type BloqueioDaAgenda = {
@@ -158,8 +189,18 @@ export async function fetchConsentimentoDoContato(
   return maisRecente.revoked_at === null ? "autorizado" : "revogado";
 }
 
+// AG4: remarcacao_de e so a COLUNA (a ligacao com a antiga). A antiga em si
+// nao vem embutida aqui (revisao da AG4, achado 1): esta leitura abre o dia
+// da Agenda, o "Pendente de voce" e o tempo real, e um embutido que o
+// PostgREST recusasse (a relacao da tabela com ela mesma fora do cache do
+// esquema, por exemplo) derrubaria a Agenda inteira em toda clinica. A
+// antiga vem numa leitura a parte, so na lista das pendencias
+// (comAsAntigas), e a falha dela fica na remarcacao.
 const CONSULTA_SELECT =
-  "id, unit_id, contact_id, professional_id, service_link_id, resource_id, starts_at, ends_at, status, confirmation_channel, is_overbooking, created_by, approval_status, send_confirmation, notes, contact:contact_id (id, name, phone_e164), service_link:service_link_id (id, duration_min, procedure:procedure_id (id, name), insurance:insurance_id (id, name))";
+  "id, unit_id, contact_id, professional_id, service_link_id, resource_id, starts_at, ends_at, status, confirmation_channel, is_overbooking, created_by, approval_status, send_confirmation, notes, remarcacao_de, contact:contact_id (id, name, phone_e164), service_link:service_link_id (id, duration_min, procedure:procedure_id (id, name), insurance:insurance_id (id, name))";
+
+/** As colunas da antiga que o cartao e os dialogos da remarcacao usam. */
+const ANTIGA_SELECT = "id, starts_at, ends_at, status, professional_id";
 
 function normalizarConsulta(row: Record<string, unknown>): ConsultaDaAgenda {
   const contact = Array.isArray(row.contact) ? row.contact[0] : row.contact;
@@ -175,7 +216,13 @@ function normalizarConsulta(row: Record<string, unknown>): ConsultaDaAgenda {
       insurance: Array.isArray(v.insurance) ? v.insurance[0] : v.insurance,
     } as ConsultaDaAgenda["service_link"];
   }
-  return { ...row, contact, service_link } as ConsultaDaAgenda;
+  return {
+    ...row,
+    contact,
+    service_link,
+    remarcacao_de:
+      typeof row.remarcacao_de === "string" ? row.remarcacao_de : null,
+  } as ConsultaDaAgenda;
 }
 
 /** Busca uma consulta so, com os joins (usada pelo tempo real em INSERT). */
@@ -268,6 +315,74 @@ export function ehConsultaDaIa(consulta: {
 }
 
 /**
+ * AG4 (D-10): a consulta nova que a IA criou para remarcar outra (a antiga
+ * em remarcacao_de). E uma consulta da IA (ehConsultaDaIa) com a ligacao: o
+ * painel e o menu mostram "Remarcação pela IA", e aprovar ou recusar passa
+ * pelos dialogos proprios. Modulo comum, como ehConsultaDaIa.
+ */
+export function ehRemarcacaoDaIa(consulta: {
+  created_by: string;
+  is_overbooking: boolean;
+  remarcacao_de?: string | null;
+}): boolean {
+  return (
+    ehConsultaDaIa(consulta) &&
+    typeof consulta.remarcacao_de === "string" &&
+    consulta.remarcacao_de !== ""
+  );
+}
+
+/** A remarcacao da IA ainda esperando a equipe (pendente e nao cancelada). */
+function remarcacaoPendenteViva(
+  consulta: ConsultaDaAgenda,
+): consulta is ConsultaDaAgenda & { remarcacao_de: string } {
+  return (
+    ehRemarcacaoDaIa(consulta) &&
+    consulta.approval_status === "pendente" &&
+    !STATUS_DE_CANCELAMENTO.includes(consulta.status)
+  );
+}
+
+/**
+ * As remarcacoes da IA que ainda esperam a equipe, pela consulta ANTIGA
+ * (D-32: a antiga nao se move enquanto a remarcacao estiver pendente). Sai
+ * da lista do "Pendente de voce" (fetchPendencias: toda pendente viva da
+ * clinica, ja recortada pela RLS), sem outra ida ao banco: o tempo real
+ * renova a lista a cada mudanca de consulta. O banco recusa de novo
+ * (23514 remarcacao_pendente) para qualquer caminho.
+ */
+export function remarcacoesPendentesPorAntiga(
+  pendencias: readonly ConsultaDaAgenda[],
+): ReadonlyMap<string, ConsultaDaAgenda> {
+  const mapa = new Map<string, ConsultaDaAgenda>();
+  for (const consulta of pendencias) {
+    if (remarcacaoPendenteViva(consulta)) {
+      mapa.set(consulta.remarcacao_de, consulta);
+    }
+  }
+  return mapa;
+}
+
+/**
+ * As mesmas remarcacoes, pela consulta NOVA, com a antiga lida a parte
+ * (revisao da AG4, achados 1 e 3): o menu da consulta nova abre os dialogos
+ * com esta, e nao com a consulta do dia (que nao traz a antiga). A lista se
+ * renova a cada mudanca de consulta, entao a antiga cancelada ou atendida
+ * nesse meio chega ao dialogo.
+ */
+export function remarcacoesPendentesPorNova(
+  pendencias: readonly ConsultaDaAgenda[],
+): ReadonlyMap<string, ConsultaDaAgenda> {
+  const mapa = new Map<string, ConsultaDaAgenda>();
+  for (const consulta of pendencias) {
+    if (remarcacaoPendenteViva(consulta)) {
+      mapa.set(consulta.id, consulta);
+    }
+  }
+  return mapa;
+}
+
+/**
  * Cancelar pela Agenda uma pendencia da IA (criada pela IA e ainda pendente:
  * a consulta que ela marcou ou o encaixe) conta como recusar (decisao do
  * dono de 20/10/2026): mudarStatusAction grava o resultado do Recusar, que
@@ -290,6 +405,8 @@ export function cancelarContaComoRecusa(consulta: {
  * painel usa para dizer qual e qual. A pendente CANCELADA (o paciente
  * cancelou pelo WhatsApp; ela continua 'pendente') nao entra: conta como
  * recusada e nao espera mais ninguem (aguardaAprovacao; revisao da onda 2).
+ * AG4: a remarcacao que a IA pediu (ehRemarcacaoDaIa) vem com a antiga, lida
+ * a parte (comAsAntigas), para o cartao dizer "De ... Para ...".
  */
 export async function fetchPendencias(
   supabase: SupabaseClient,
@@ -305,7 +422,68 @@ export async function fetchPendencias(
   if (error) {
     throw new Error(error.message);
   }
-  return ((data ?? []) as Record<string, unknown>[]).map(normalizarConsulta);
+  return comAsAntigas(
+    supabase,
+    clinicId,
+    ((data ?? []) as Record<string, unknown>[]).map(normalizarConsulta),
+  );
+}
+
+/**
+ * AG4 (revisao, achado 1): a antiga de cada remarcacao da IA da lista, numa
+ * leitura so, por id e com colunas simples (nada embutido; a RLS recorta como
+ * em toda leitura). So acontece quando ha remarcacao na lista. Se ela falhar,
+ * so as remarcacoes ficam com erroNaAntiga (o cartao e os dialogos dizem que
+ * a antiga nao carregou): a lista, o painel e a pagina abrem do mesmo jeito,
+ * e o servidor le a antiga de novo ao aprovar ou recusar. A antiga que nao
+ * volta (a RLS nao deixou ler, ou foi apagada) fica nula, como antes.
+ */
+async function comAsAntigas(
+  supabase: SupabaseClient,
+  clinicId: string,
+  pendencias: ConsultaDaAgenda[],
+): Promise<ConsultaDaAgenda[]> {
+  const ids = [
+    ...new Set(
+      pendencias
+        .filter(ehRemarcacaoDaIa)
+        .map((consulta) => consulta.remarcacao_de)
+        .filter((id): id is string => typeof id === "string"),
+    ),
+  ];
+  if (ids.length === 0) {
+    return pendencias;
+  }
+  let antigas: Map<string, AntigaDaRemarcacao> | null = null;
+  try {
+    const { data, error } = await supabase
+      .from("appointment")
+      .select(ANTIGA_SELECT)
+      .eq("clinic_id", clinicId)
+      .in("id", ids);
+    if (!error) {
+      antigas = new Map(
+        ((data ?? []) as AntigaDaRemarcacao[]).map((antiga) => [
+          antiga.id,
+          antiga,
+        ]),
+      );
+    }
+  } catch {
+    antigas = null;
+  }
+  return pendencias.map((consulta) => {
+    if (!ehRemarcacaoDaIa(consulta) || !consulta.remarcacao_de) {
+      return consulta;
+    }
+    if (antigas === null) {
+      return { ...consulta, antiga: null, erroNaAntiga: true };
+    }
+    return {
+      ...consulta,
+      antiga: antigas.get(consulta.remarcacao_de) ?? null,
+    };
+  });
 }
 
 const HISTORICO_SELECT =

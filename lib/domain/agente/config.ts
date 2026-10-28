@@ -144,7 +144,11 @@ export const INSTRUCAO_DO_EMOJI = {
  * agendamento completo): consultar_cadastro_do_contato (so sinais do
  * cadastro da pessoa) e registrar_dados_do_paciente (os dados para marcar;
  * o CPF e a carteirinha o servidor le do texto original), na habilidade
- * "Agendar consulta".
+ * "Agendar consulta". AG4 (27/10/2026, remarcar e cancelar):
+ * consultar_minhas_consultas (as consultas futuras do contato, so dia, hora e
+ * situacao), pedir_cancelamento e cancelar_consulta (duas fases, como reservar
+ * e agendar) e buscar_horario_para_remarcar (o mesmo profissional, o mesmo
+ * procedimento e o mesmo pagamento da consulta, fixados no servidor).
  */
 export const FERRAMENTAS_DO_AGENTE = [
   "fora_do_assunto",
@@ -158,6 +162,10 @@ export const FERRAMENTAS_DO_AGENTE = [
   "reservar_horario",
   "registrar_dados_do_paciente",
   "agendar",
+  "consultar_minhas_consultas",
+  "pedir_cancelamento",
+  "cancelar_consulta",
+  "buscar_horario_para_remarcar",
   "confirmar_presenca",
   "escalar_humano",
 ] as const;
@@ -165,9 +173,11 @@ export type FerramentaDoAgente = (typeof FERRAMENTAS_DO_AGENTE)[number];
 
 /**
  * As ferramentas de agenda: gravam (reservar_horario, agendar,
- * confirmar_presenca e, desde a AG3, registrar_dados_do_paciente) ou leem
+ * confirmar_presenca e, desde a AG3, registrar_dados_do_paciente; desde a
+ * AG4, pedir_cancelamento arma o pedido e cancelar_consulta cancela) ou leem
  * pelo servidor (buscar_horario e, desde a AG3,
- * consultar_cadastro_do_contato), pela porta da agenda do turno. O laco da
+ * consultar_cadastro_do_contato; desde a AG4, consultar_minhas_consultas e
+ * buscar_horario_para_remarcar), pela porta da agenda do turno. O laco da
  * mais rodadas ao turno que usa uma delas.
  */
 export const FERRAMENTAS_DE_AGENDA = [
@@ -177,6 +187,10 @@ export const FERRAMENTAS_DE_AGENDA = [
   "confirmar_presenca",
   "registrar_dados_do_paciente",
   "consultar_cadastro_do_contato",
+  "consultar_minhas_consultas",
+  "pedir_cancelamento",
+  "cancelar_consulta",
+  "buscar_horario_para_remarcar",
 ] as const satisfies readonly FerramentaDoAgente[];
 export type FerramentaDeAgenda = (typeof FERRAMENTAS_DE_AGENDA)[number];
 
@@ -202,6 +216,22 @@ export function ehFerramentaDoCadastro(
   return (FERRAMENTAS_DO_CADASTRO as readonly string[]).includes(nome);
 }
 
+/** A dica da chave "Agendar consulta" enquanto a agenda nao esta completa. */
+export const DICA_DA_AGENDA_INCOMPLETA =
+  "Preencha a antecedência e o horizonte em Regras e limites.";
+
+/** AG4: a dica da chave "Cancelar consulta" enquanto falta o prazo. */
+export const DICA_DO_PRAZO_DE_CANCELAR =
+  "Preencha o prazo para cancelar em Regras e limites.";
+
+/**
+ * AG4: a dica da chave "Remarcar consulta" enquanto "Agendar consulta" nao
+ * vale ou falta o prazo de remarcar (o mesmo texto nos dois casos, desenho da
+ * AG4, secao 5).
+ */
+export const DICA_DA_REMARCACAO_INCOMPLETA =
+  "Ligue Agendar consulta e preencha o prazo para remarcar em Regras e limites.";
+
 export type HabilidadeDoAgente = {
   chave: string;
   titulo: string;
@@ -222,12 +252,34 @@ export type HabilidadeDoAgente = {
    * motor e no banco (reservar_horario_da_ia recusa).
    */
   precisaDaAgenda: boolean;
+  /**
+   * AG4: outra habilidade que precisa VALER DE FATO para esta valer
+   * ("Remarcar consulta" precisa de "Agendar consulta": a remarcacao reserva
+   * e marca pelas ferramentas dela). Sempre uma habilidade que vem ANTES na
+   * lista (um teste confere). Ligar esta com a outra desligada nao e erro da
+   * Server Action: a escolha fica gravada e vale desligada enquanto a outra
+   * nao valer, como o prazo vazio (a pessoa precisa conseguir desligar
+   * "Agendar consulta" com "Remarcar consulta" ligada).
+   */
+  precisaDaHabilidade: string | null;
+  /**
+   * AG4 (decisao D-24, recomendacao): o prazo de Regras e limites que precisa
+   * estar preenchido. Sem ele, ninguem inventa valor e a habilidade fica
+   * desligada, na tela, na Server Action, no motor e no banco (as RPCs
+   * recusam com cancelamento_desligado ou remarcacao_desligada).
+   */
+  precisaDoPrazo: AcaoComPrazo | null;
+  /**
+   * A dica da chave enquanto falta uma dependencia (agenda, prazo ou outra
+   * habilidade). Nula na habilidade sem dependencia.
+   */
+  dicaDaDependencia: string | null;
 };
 
 /**
- * Lista FECHADA. Habilidade que o motor nao faz nao aparece na tela:
- * remarcar, cancelar, lista de espera e encaixe continuam com a equipe (o
- * pedido passa com o motivo pedido_de_agenda).
+ * Lista FECHADA. Habilidade que o motor nao faz nao aparece na tela: lista de
+ * espera e encaixe continuam com a equipe (o pedido passa com o motivo
+ * pedido_de_agenda).
  *
  * "Informar preco e convenio" nasce ligada: o preco vem do Cadastro, nunca
  * de texto livre, e a spec 2.3 diz que procedimento cadastrado com preco a
@@ -237,6 +289,13 @@ export type HabilidadeDoAgente = {
  * E4 (20/10/2026): "Agendar consulta" (buscar, reservar e marcar; a consulta
  * nasce pendente da aprovacao da equipe, D12) e "Confirmar presenca" nascem
  * desligadas. A primeira so liga com a antecedencia e o horizonte (D13).
+ *
+ * AG4 (27/10/2026): "Cancelar consulta" (D-9: confirmacao numa mensagem nova
+ * e o prazo da clinica) e "Remarcar consulta" (D-10: consulta nova pendente,
+ * ligada a antiga, que vale ate a aprovacao) nascem desligadas. Cancelar so
+ * liga com o prazo de cancelar; remarcar, com "Agendar consulta" valendo e o
+ * prazo de remarcar (D-24 e D-26, recomendacao). As duas dividem
+ * consultar_minhas_consultas (ferramentasDoAgente nao repete).
  */
 export const HABILIDADES_DO_AGENTE = [
   {
@@ -255,6 +314,9 @@ export const HABILIDADES_DO_AGENTE = [
     ],
     padrao: true,
     precisaDaAgenda: false,
+    precisaDaHabilidade: null,
+    precisaDoPrazo: null,
+    dicaDaDependencia: null,
   },
   {
     chave: "informar_preco_e_convenio",
@@ -265,6 +327,9 @@ export const HABILIDADES_DO_AGENTE = [
     ferramentas: ["buscar_procedimento"],
     padrao: true,
     precisaDaAgenda: false,
+    precisaDaHabilidade: null,
+    precisaDoPrazo: null,
+    dicaDaDependencia: null,
   },
   {
     chave: "agendar",
@@ -282,6 +347,41 @@ export const HABILIDADES_DO_AGENTE = [
     ],
     padrao: false,
     precisaDaAgenda: true,
+    precisaDaHabilidade: null,
+    precisaDoPrazo: null,
+    dicaDaDependencia: DICA_DA_AGENDA_INCOMPLETA,
+  },
+  {
+    chave: "cancelar",
+    titulo: "Cancelar consulta",
+    descricao:
+      "Cancela a consulta quando o paciente pede e confirma numa mensagem nova, até o prazo da clínica. Dentro do prazo, passa para a equipe.",
+    travada: false,
+    ferramentas: [
+      "consultar_minhas_consultas",
+      "pedir_cancelamento",
+      "cancelar_consulta",
+    ],
+    padrao: false,
+    precisaDaAgenda: false,
+    precisaDaHabilidade: null,
+    precisaDoPrazo: "cancelar",
+    dicaDaDependencia: DICA_DO_PRAZO_DE_CANCELAR,
+  },
+  {
+    chave: "remarcar",
+    titulo: "Remarcar consulta",
+    descricao:
+      "Pede a remarcação para um horário livre da Agenda, com o mesmo profissional. A nova fica pendente até a equipe aprovar, e a antiga continua valendo até lá.",
+    travada: false,
+    // A busca e daqui; reservar e marcar sao as ferramentas de "Agendar
+    // consulta", que precisa valer (precisaDaHabilidade).
+    ferramentas: ["consultar_minhas_consultas", "buscar_horario_para_remarcar"],
+    padrao: false,
+    precisaDaAgenda: false,
+    precisaDaHabilidade: "agendar",
+    precisaDoPrazo: "remarcar",
+    dicaDaDependencia: DICA_DA_REMARCACAO_INCOMPLETA,
   },
   {
     chave: "confirmar_presenca",
@@ -292,6 +392,9 @@ export const HABILIDADES_DO_AGENTE = [
     ferramentas: ["confirmar_presenca"],
     padrao: false,
     precisaDaAgenda: false,
+    precisaDaHabilidade: null,
+    precisaDoPrazo: null,
+    dicaDaDependencia: null,
   },
   {
     chave: "passar_para_equipe",
@@ -302,6 +405,9 @@ export const HABILIDADES_DO_AGENTE = [
     ferramentas: ["escalar_humano"],
     padrao: true,
     precisaDaAgenda: false,
+    precisaDaHabilidade: null,
+    precisaDoPrazo: null,
+    dicaDaDependencia: null,
   },
 ] as const satisfies readonly HabilidadeDoAgente[];
 
@@ -336,24 +442,28 @@ export function habilidadesEfetivas(valor: unknown): HabilidadesDoAgente {
  * As ferramentas que o modelo recebe, na ordem da lista (estavel para o
  * cache). escalar_humano sempre vem: a habilidade e travada. A habilidade
  * que precisa da agenda (agendar) so entra com a antecedencia e o horizonte
- * preenchidos (agendaCompleta): sem eles, falha fechada, mesmo que o jsonb
- * diga ligada.
+ * preenchidos (agendaCompleta); a que precisa de prazo (cancelar e remarcar,
+ * AG4) so entra com ele; remarcar so entra com agendar valendo. Sem isso,
+ * falha fechada, mesmo que o jsonb diga ligada (habilidadesComAgenda). A
+ * ferramenta que duas habilidades dividem (consultar_minhas_consultas) vai
+ * uma vez so, na posicao da primeira.
  */
 export function ferramentasDoAgente(
   habilidades: Readonly<Record<string, boolean>>,
   agenda: AgendaDoAgente,
+  prazos: PrazosDoAgente | null | undefined,
 ): FerramentaDoAgente[] {
-  const efetivas = habilidadesEfetivas(habilidades);
-  const comAgenda = agendaCompleta(agenda);
+  const valem = habilidadesComAgenda(habilidades, agenda, prazos);
   const ferramentas: FerramentaDoAgente[] = [];
   for (const habilidade of HABILIDADES_DO_AGENTE) {
-    if (!efetivas[habilidade.chave]) {
+    if (!valem[habilidade.chave]) {
       continue;
     }
-    if (habilidade.precisaDaAgenda && !comAgenda) {
-      continue;
+    for (const ferramenta of habilidade.ferramentas) {
+      if (!ferramentas.includes(ferramenta)) {
+        ferramentas.push(ferramenta);
+      }
     }
-    ferramentas.push(...habilidade.ferramentas);
   }
   return ferramentas;
 }
@@ -419,10 +529,6 @@ export function agendaCompleta(
     inteiroNaFaixa(agenda.horizonteDias, HORIZONTE_DA_AGENDA) !== null
   );
 }
-
-/** A dica da chave "Agendar consulta" enquanto a agenda nao esta completa. */
-export const DICA_DA_AGENDA_INCOMPLETA =
-  "Preencha a antecedência e o horizonte em Regras e limites.";
 
 const ERRO_DA_ANTECEDENCIA = `Use um número inteiro de ${ANTECEDENCIA_DA_AGENDA.minimo} a ${ANTECEDENCIA_DA_AGENDA.maximo} horas.`;
 const ERRO_DO_HORIZONTE = `Use um número inteiro de ${HORIZONTE_DA_AGENDA.minimo} a ${HORIZONTE_DA_AGENDA.maximo} dias.`;
@@ -491,22 +597,59 @@ export function agendaParaOBanco(agenda: AgendaDoAgente): {
   };
 }
 
+type HabilidadeDaLista = (typeof HABILIDADES_DO_AGENTE)[number];
+
 /**
- * As habilidades que valem DE FATO com a agenda: a que precisa da agenda
- * fica desligada enquanto ela nao estiver completa, mesmo que o jsonb diga
- * ligada (a clinica apagou um dos campos depois de ligar). E o que a tela
- * mostra, o que o "o que mudou" compara e o que o motor usa.
+ * Os campos de Regras e limites de que a habilidade depende (a agenda e o
+ * prazo) estao preenchidos. Nao olha a outra habilidade (precisaDaHabilidade):
+ * isso e de habilidadesComAgenda.
+ */
+function camposDaHabilidadePreenchidos(
+  habilidade: HabilidadeDaLista,
+  agenda: AgendaDoAgente,
+  prazos: PrazosDoAgente | null | undefined,
+): boolean {
+  if (habilidade.precisaDaAgenda && !agendaCompleta(agenda)) {
+    return false;
+  }
+  if (
+    habilidade.precisaDoPrazo !== null &&
+    prazoDaAcao(prazos, habilidade.precisaDoPrazo) === null
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * As habilidades que valem DE FATO com a agenda e os prazos: a que precisa
+ * da agenda fica desligada enquanto ela nao estiver completa, a que precisa
+ * de prazo (AG4: cancelar e remarcar) enquanto ele estiver vazio e a que
+ * precisa de outra habilidade (AG4: remarcar precisa de agendar) enquanto a
+ * outra nao valer, mesmo que o jsonb diga ligada (a clinica apagou um dos
+ * campos, ou desligou a outra, depois de ligar). E o que a tela mostra, o
+ * que o "o que mudou" compara e o que o motor usa.
+ *
+ * `prazos` ausente ou nulo vale os dois vazios: cancelar e remarcar ficam
+ * desligadas (falha fechada para quem ainda nao le os prazos).
  */
 export function habilidadesComAgenda(
   habilidades: unknown,
   agenda: AgendaDoAgente,
+  prazos?: PrazosDoAgente | null,
 ): HabilidadesDoAgente {
   const efetivas = habilidadesEfetivas(habilidades);
-  if (agendaCompleta(agenda)) {
-    return efetivas;
-  }
+  // Na ordem da lista: a habilidade de que outra depende vem antes dela, ja
+  // decidida.
   for (const habilidade of HABILIDADES_DO_AGENTE) {
-    if (habilidade.precisaDaAgenda) {
+    if (!efetivas[habilidade.chave]) {
+      continue;
+    }
+    const outra = habilidade.precisaDaHabilidade as ChaveDaHabilidade | null;
+    if (
+      !camposDaHabilidadePreenchidos(habilidade, agenda, prazos) ||
+      (outra !== null && !efetivas[outra])
+    ) {
       efetivas[habilidade.chave] = false;
     }
   }
@@ -514,27 +657,202 @@ export function habilidadesComAgenda(
 }
 
 /**
- * A entrada da aba Habilidades conferida contra a agenda do rascunho: ligar
- * "Agendar consulta" sem a antecedencia e o horizonte e erro, com a mesma
- * dica da tela. A Server Action le a agenda do rascunho no servidor e usa
- * este schema no lugar de habilidadesSchema.
+ * Por que a chave da habilidade nao liga agora (a dica da tela, ao lado da
+ * chave e embaixo da descricao), ou nulo quando nada falta. Olha a agenda, o
+ * prazo e a outra habilidade (como vale de fato): sem permissao e outra
+ * dica, de quem chama.
  */
-export function habilidadesComAgendaSchema(agenda: AgendaDoAgente) {
+export function dicaDaHabilidade(
+  chave: string,
+  contexto: {
+    habilidades: unknown;
+    agenda: AgendaDoAgente;
+    prazos?: PrazosDoAgente | null;
+  },
+): string | null {
+  const habilidade = HABILIDADES_DO_AGENTE.find((h) => h.chave === chave);
+  if (habilidade === undefined || habilidade.dicaDaDependencia === null) {
+    return null;
+  }
+  const outra = habilidade.precisaDaHabilidade as ChaveDaHabilidade | null;
+  const outraVale =
+    outra === null ||
+    habilidadesComAgenda(
+      contexto.habilidades,
+      contexto.agenda,
+      contexto.prazos,
+    )[outra];
+  return camposDaHabilidadePreenchidos(
+    habilidade,
+    contexto.agenda,
+    contexto.prazos,
+  ) && outraVale
+    ? null
+    : habilidade.dicaDaDependencia;
+}
+
+/**
+ * A entrada da aba Habilidades conferida contra a agenda e os prazos do
+ * rascunho: ligar "Agendar consulta" sem a antecedencia e o horizonte, ou
+ * (AG4) "Cancelar consulta" ou "Remarcar consulta" sem o prazo, e erro, com
+ * a dica da tela. A Server Action le a agenda e os prazos do rascunho no
+ * servidor e usa este schema no lugar de habilidadesSchema.
+ *
+ * A dependencia de outra habilidade (remarcar precisa de agendar) NAO e erro
+ * aqui: a tela manda o objeto inteiro a cada toque, e desligar "Agendar
+ * consulta" com "Remarcar consulta" ligada precisa passar. A escolha fica
+ * gravada e vale desligada enquanto a outra nao valer (habilidadesComAgenda),
+ * como o prazo que a clinica apaga depois de ligar.
+ *
+ * `prazos` ausente ou nulo vale os dois vazios (ligar cancelar ou remarcar e
+ * recusado).
+ */
+export function habilidadesComAgendaSchema(
+  agenda: AgendaDoAgente,
+  prazos?: PrazosDoAgente | null,
+) {
   return habilidadesSchema.superRefine((habilidades, ctx) => {
-    if (agendaCompleta(agenda)) {
-      return;
-    }
     for (const habilidade of HABILIDADES_DO_AGENTE) {
-      if (habilidade.precisaDaAgenda && habilidades[habilidade.chave]) {
+      if (
+        habilidades[habilidade.chave] &&
+        !camposDaHabilidadePreenchidos(habilidade, agenda, prazos)
+      ) {
         ctx.addIssue({
           code: "custom",
           path: [habilidade.chave],
-          message: DICA_DA_AGENDA_INCOMPLETA,
+          message: habilidade.dicaDaDependencia ?? DICA_DA_AGENDA_INCOMPLETA,
         });
       }
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// Prazos para cancelar e remarcar (AG4, decisao D-24, recomendacao)
+// ---------------------------------------------------------------------------
+
+/**
+ * As duas acoes da IA que tem prazo da clinica (colunas
+ * cancelar_antecedencia_horas e remarcar_antecedencia_horas de
+ * ai_agent_config).
+ */
+export const ACOES_COM_PRAZO = ["cancelar", "remarcar"] as const;
+export type AcaoComPrazo = (typeof ACOES_COM_PRAZO)[number];
+
+/**
+ * Espelho dos CHECK das duas colunas (migration da AG4,
+ * 20261028100000_remarcar_e_cancelar_pela_ia.sql): inteiros de 0 a 720,
+ * nulos enquanto a clinica nao preencher.
+ */
+export const PRAZO_DA_IA = { minimo: 0, maximo: 720 } as const;
+
+/**
+ * Ate quantas horas antes da consulta a IA cancela ou remarca (D-24): a IA
+ * age se o inicio da consulta for >= agora + prazo; com menos tempo, passa o
+ * pedido para a equipe (motivo fora_do_prazo). Na remarcacao o prazo conta do
+ * inicio da consulta ANTIGA; o horario novo segue a antecedencia e o
+ * horizonte da agenda. Versionados como a agenda: gravam no rascunho, valem
+ * ao publicar e voltam no restaurar. Nulo = nao preenchido, e a habilidade
+ * nao liga. O numero e da clinica: ninguem inventa valor.
+ */
+export type PrazosDoAgente = {
+  /** Cancelar pelo assistente ate X horas antes. Nulo = nao preenchido. */
+  cancelarHoras: number | null;
+  /** Remarcar pelo assistente ate X horas antes. Nulo = nao preenchido. */
+  remarcarHoras: number | null;
+};
+
+/** Os padroes do banco (as duas colunas nulas). */
+export function prazosPadrao(): PrazosDoAgente {
+  return { cancelarHoras: null, remarcarHoras: null };
+}
+
+/**
+ * O prazo de uma acao, ou nulo quando nao preenchido (ou fora da faixa do
+ * CHECK, ou `prazos` ausente): a IA nao age (falha fechada).
+ */
+export function prazoDaAcao(
+  prazos: PrazosDoAgente | null | undefined,
+  acao: AcaoComPrazo,
+): number | null {
+  if (prazos === null || prazos === undefined) {
+    return null;
+  }
+  return inteiroNaFaixa(
+    acao === "cancelar" ? prazos.cancelarHoras : prazos.remarcarHoras,
+    PRAZO_DA_IA,
+  );
+}
+
+/** O erro dos dois campos (o mesmo texto da tela). */
+export const ERRO_DO_PRAZO = `Use um número inteiro de ${PRAZO_DA_IA.minimo} a ${PRAZO_DA_IA.maximo} horas.`;
+
+/**
+ * Entrada do cartao "Prazos para cancelar e remarcar" (aba Regras e
+ * limites): inteiros de 0 a 720, ou nulo (campo vazio; a habilidade
+ * desliga). Quem monta o formulario converte o campo vazio em nulo. A Server
+ * Action usa com .strict().
+ */
+export const prazosDoAgenteSchema = z.object({
+  cancelarHoras: z
+    .number({ error: ERRO_DO_PRAZO })
+    .int({ error: ERRO_DO_PRAZO })
+    .min(PRAZO_DA_IA.minimo, { error: ERRO_DO_PRAZO })
+    .max(PRAZO_DA_IA.maximo, { error: ERRO_DO_PRAZO })
+    .nullable(),
+  remarcarHoras: z
+    .number({ error: ERRO_DO_PRAZO })
+    .int({ error: ERRO_DO_PRAZO })
+    .min(PRAZO_DA_IA.minimo, { error: ERRO_DO_PRAZO })
+    .max(PRAZO_DA_IA.maximo, { error: ERRO_DO_PRAZO })
+    .nullable(),
+});
+
+/**
+ * As duas colunas para os prazos. Valor fora da faixa, nao inteiro ou
+ * ausente (coluna fora do select, ou antes da migration) vira nulo: falha
+ * fechada, a IA nao cancela nem remarca. Nunca lanca.
+ */
+export function prazosDoBanco(linha: {
+  cancelar_antecedencia_horas?: unknown;
+  remarcar_antecedencia_horas?: unknown;
+}): PrazosDoAgente {
+  return {
+    cancelarHoras: inteiroNaFaixa(
+      linha.cancelar_antecedencia_horas,
+      PRAZO_DA_IA,
+    ),
+    remarcarHoras: inteiroNaFaixa(
+      linha.remarcar_antecedencia_horas,
+      PRAZO_DA_IA,
+    ),
+  };
+}
+
+/** Os prazos nas colunas do banco (o inverso de prazosDoBanco). */
+export function prazosParaOBanco(prazos: PrazosDoAgente): {
+  cancelar_antecedencia_horas: number | null;
+  remarcar_antecedencia_horas: number | null;
+} {
+  return {
+    cancelar_antecedencia_horas: prazos.cancelarHoras,
+    remarcar_antecedencia_horas: prazos.remarcarHoras,
+  };
+}
+
+/**
+ * Os textos do cartao da aba Regras e limites (desenho da AG4, secao 5) e do
+ * "o que mudou" ("Prazo para cancelar pelo assistente: 24 horas").
+ */
+export const ROTULO_DOS_PRAZOS = {
+  titulo: "Prazos para cancelar e remarcar",
+  cancelarHoras: "Cancelar pelo assistente até (horas antes da consulta)",
+  remarcarHoras: "Remarcar pelo assistente até (horas antes da consulta)",
+  ajuda:
+    "Com menos tempo do que isso, o assistente passa o pedido para a equipe.",
+  mudancaCancelar: "Prazo para cancelar pelo assistente",
+  mudancaRemarcar: "Prazo para remarcar pelo assistente",
+} as const;
 
 // ---------------------------------------------------------------------------
 // Publico (onda 2, item 4): leads, pacientes ou os dois
@@ -1081,6 +1399,11 @@ export function fimDoExpedienteAgora(
  * mesmo procedimento (ja_tem_consulta) e quando faltaram os dados que a
  * clinica exige para marcar (faltam_dados). Quais deles o modelo pode dar e
  * decisao do motor (lib/agente), nao desta lista.
+ *
+ * AG4, remarcar e cancelar (migration 20261028100000, que redefine o CHECK de
+ * novo): fora_do_prazo, o pedido de cancelar ou remarcar ficou dentro do
+ * prazo da clinica (D-24). E motivo do SISTEMA (a ferramenta e o banco
+ * decidem pelo prazo), nunca do modelo: fica fora de MOTIVOS_DO_AGENTE.
  */
 export const MOTIVOS_DE_ESCALONAMENTO = [
   "sintoma",
@@ -1104,6 +1427,7 @@ export const MOTIVOS_DE_ESCALONAMENTO = [
   "consulta_para_outra_pessoa",
   "ja_tem_consulta",
   "faltam_dados",
+  "fora_do_prazo",
 ] as const;
 export type MotivoDeEscalonamento = (typeof MOTIVOS_DE_ESCALONAMENTO)[number];
 
@@ -1140,6 +1464,9 @@ export const ROTULO_DO_MOTIVO_DE_ESCALONAMENTO: Readonly<
   consulta_para_outra_pessoa: "a consulta é para outra pessoa",
   ja_tem_consulta: "o paciente já tem consulta marcada deste procedimento",
   faltam_dados: "faltaram dados do paciente para marcar",
+  // AG4 (migration 20261028100000): o rotulo de rotulo_do_motivo_da_ia.
+  fora_do_prazo:
+    "o pedido de cancelar ou remarcar ficou dentro do prazo da clínica",
 };
 
 /**
@@ -1185,7 +1512,8 @@ function passagemDaIa(motivo: MotivoDeEscalonamento): string {
  * define (a 20261019120000 trocou o texto de 'parada'; a da onda 2,
  * 20261022110000, traz no_expediente, retomou_no_horario, fora_do_assunto e
  * o texto novo de horario_nao_suportado; a da AG3, 20261027120000, traz
- * consulta_para_outra_pessoa, ja_tem_consulta e faltam_dados): um teste
+ * consulta_para_outra_pessoa, ja_tem_consulta e faltam_dados; a da AG4,
+ * 20261028100000, traz fora_do_prazo): um teste
  * cruza os dois (tests/unit/ia-whatsapp/espelhos.test.ts). O banco grava o
  * evento; este espelho existe para o teste e para quem precisar mostrar o
  * mesmo texto sem ir ao banco.
@@ -1213,6 +1541,7 @@ export const TEXTO_DO_EVENTO_DA_IA: Readonly<
   consulta_para_outra_pessoa: passagemDaIa("consulta_para_outra_pessoa"),
   ja_tem_consulta: passagemDaIa("ja_tem_consulta"),
   faltam_dados: passagemDaIa("faltam_dados"),
+  fora_do_prazo: passagemDaIa("fora_do_prazo"),
   nao_individual:
     "Chegou uma mensagem de grupo ou de status. A conversa voltou para a equipe.",
   fora_do_horario: `${PASSAGEM_DA_IA}agora está fora do horário escolhido para o assistente.`,
@@ -1739,7 +2068,9 @@ export type ConfigDoAgente = {
   encerramento: string | null;
   /**
    * Ja efetivas (habilidadesComAgenda): travadas ligadas, chaves conhecidas,
-   * e "agendar" desligada enquanto a agenda nao estiver completa.
+   * "agendar" desligada enquanto a agenda nao estiver completa e (AG4)
+   * "cancelar" e "remarcar" desligadas enquanto o prazo estiver vazio
+   * ("remarcar" tambem enquanto "agendar" nao valer).
    */
   habilidades: Record<string, boolean>;
   horario: HorarioDeOperacao;
@@ -1760,6 +2091,13 @@ export type ConfigDoAgente = {
    * select le falso (dadosExigidosDoBanco).
    */
   dadosExigidos: DadosExigidos;
+  /**
+   * Ate quantas horas antes da consulta a IA cancela e remarca (AG4, D-24;
+   * colunas cancelar_antecedencia_horas e remarcar_antecedencia_horas).
+   * Nulos = a clinica nao preencheu, e a habilidade nao liga. Coluna fora do
+   * select le nulo (prazosDoBanco).
+   */
+  prazos: PrazosDoAgente;
   /**
    * So no servidor (motor) e para o super admin. Para os outros papeis chega
    * nulo: a sessao nao tem grant na coluna.
@@ -1782,11 +2120,12 @@ export function configPadraoDoAgente(): ConfigDoAgente {
     usarEmoji: false,
     saudacao: null,
     encerramento: null,
-    habilidades: habilidadesComAgenda({}, agendaPadrao()),
+    habilidades: habilidadesComAgenda({}, agendaPadrao(), prazosPadrao()),
     horario: horarioPadrao(),
     agenda: agendaPadrao(),
     publico: null,
     dadosExigidos: dadosExigidosPadrao(),
+    prazos: prazosPadrao(),
     instrucoes: null,
     base: [],
   };
@@ -1843,6 +2182,13 @@ export type LinhaDaConfigDoAgente = {
   exige_nome_completo?: boolean | null;
   exige_nascimento?: boolean | null;
   exige_cpf?: boolean | null;
+  /**
+   * AG4 (migration 20261028100000): os prazos para cancelar e remarcar.
+   * Opcionais pelo mesmo motivo: fora do select (ou antes da migration)
+   * leem nulo, e as duas habilidades nao ligam.
+   */
+  cancelar_antecedencia_horas?: number | null;
+  remarcar_antecedencia_horas?: number | null;
 };
 
 function ehTom(valor: unknown): valor is TomDoAgente {
@@ -2000,6 +2346,7 @@ export function configDaLinha(
 ): ConfigDoAgente {
   const padrao = configPadraoDoAgente();
   const agenda = agendaDoBanco(linha);
+  const prazos = prazosDoBanco(linha);
   return {
     versao: linha.version,
     status: linha.status === "publicada" ? "publicada" : "rascunho",
@@ -2008,11 +2355,12 @@ export function configDaLinha(
     usarEmoji: linha.use_emoji === true,
     saudacao: textoOuNulo(linha.greeting),
     encerramento: textoOuNulo(linha.closing),
-    habilidades: habilidadesComAgenda(linha.skills, agenda),
+    habilidades: habilidadesComAgenda(linha.skills, agenda, prazos),
     horario: horarioDoBanco(linha),
     agenda,
     publico: publicoDoBanco(linha.publico_atendido),
     dadosExigidos: dadosExigidosDoBanco(linha),
+    prazos,
     instrucoes: textoOuNulo(extras.instrucoes),
     base: extras.base,
   };
@@ -2172,6 +2520,7 @@ export type CampoDaMudanca =
   | "agenda"
   | "publico"
   | "dados_exigidos"
+  | "prazos"
   | "instrucoes"
   | "base"
   | "primeira_publicacao";
@@ -2375,12 +2724,47 @@ function mudancasDosDadosExigidos(
   return mudancas;
 }
 
+function textoDoPrazo(horas: number | null): string {
+  if (horas === null) {
+    return "não preenchido";
+  }
+  return horas === 1 ? "1 hora" : `${horas} horas`;
+}
+
+/**
+ * AG4: cada prazo que mudou conta uma vez ("Prazo para cancelar pelo
+ * assistente: 24 horas", ou "não preenchido"). Ausente num lado (uma
+ * configuracao montada a mao) vale os dois vazios, que e o padrao das
+ * colunas e o que as versoes de antes da migration leem.
+ */
+function mudancasDosPrazos(
+  rascunho: PrazosDoAgente | undefined,
+  publicada: PrazosDoAgente | undefined,
+): Mudanca[] {
+  const novo = rascunho ?? prazosPadrao();
+  const antigo = publicada ?? prazosPadrao();
+  const mudancas: Mudanca[] = [];
+  if (novo.cancelarHoras !== antigo.cancelarHoras) {
+    mudancas.push({
+      campo: "prazos",
+      rotulo: `${ROTULO_DOS_PRAZOS.mudancaCancelar}: ${textoDoPrazo(novo.cancelarHoras)}`,
+    });
+  }
+  if (novo.remarcarHoras !== antigo.remarcarHoras) {
+    mudancas.push({
+      campo: "prazos",
+      rotulo: `${ROTULO_DOS_PRAZOS.mudancaRemarcar}: ${textoDoPrazo(novo.remarcarHoras)}`,
+    });
+  }
+  return mudancas;
+}
+
 /**
  * O que o rascunho muda em relacao a versao publicada, para "N alterações
  * não publicadas" e para o "o que mudou" das Versões. Cada habilidade, cada
- * dia do expediente, cada campo da agenda, o publico (onda 2), cada dado
- * exigido para marcar (AG3, so contra uma versao publicada) e cada item da
- * base conta como uma mudanca. As habilidades sao comparadas como valem de fato
+ * dia do expediente, cada campo da agenda, cada prazo (AG4), o publico
+ * (onda 2), cada dado exigido para marcar (AG3, so contra uma versao
+ * publicada) e cada item da base conta como uma mudanca. As habilidades sao comparadas como valem de fato
  * (habilidadesComAgenda). A base e comparada pelo snapshot da publicada:
  * item criado, reativado, editado, desativado ou excluido conta uma vez.
  *
@@ -2421,13 +2805,17 @@ export function diferencasDoRascunho(
   }
   const agendaNova = rascunho.agenda;
   const agendaAntiga = referencia.agenda;
+  const prazosNovos = rascunho.prazos ?? prazosPadrao();
+  const prazosAntigos = referencia.prazos ?? prazosPadrao();
   const habilidadesNovas = habilidadesComAgenda(
     rascunho.habilidades,
     agendaNova,
+    prazosNovos,
   );
   const habilidadesAntigas = habilidadesComAgenda(
     referencia.habilidades,
     agendaAntiga,
+    prazosAntigos,
   );
   for (const habilidade of HABILIDADES_DO_AGENTE) {
     const ligada = habilidadesNovas[habilidade.chave];
@@ -2440,6 +2828,8 @@ export function diferencasDoRascunho(
   }
   mudancas.push(...mudancasDoHorario(rascunho.horario, referencia.horario));
   mudancas.push(...mudancasDaAgenda(agendaNova, agendaAntiga));
+  // AG4: os prazos para cancelar e remarcar.
+  mudancas.push(...mudancasDosPrazos(rascunho.prazos, referencia.prazos));
   // Onda 2 (item 4): quem o assistente atende. Nulo nos dois lados (ou
   // ausente numa configuracao montada a mao) nao conta.
   const publicoNovo = rascunho.publico ?? null;

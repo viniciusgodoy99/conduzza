@@ -93,9 +93,8 @@ vi.mock("@/lib/auth/active-clinic", () => ({
   getSessionContext: async () => (semSessao ? null : sessao),
 }));
 
-const { lerDadosInformadosAction, revelarDadoInformadoAction } = await import(
-  "@/app/(app)/agenda/actions"
-);
+const { lerDadosInformadosAction, revelarDadoInformadoAction } =
+  await import("@/app/(app)/agenda/actions");
 const { lerDadosInformadosNaMarcacao } =
   await import("@/lib/queries/dados-da-marcacao");
 
@@ -361,12 +360,19 @@ describe("os erros do banco, em texto de recepcionista", () => {
 });
 
 describe("revisão final da AG3: revelar o CPF ou a carteirinha", () => {
-  it("relê pela RPC (a trilha de novo) e devolve só o campo pedido", async () => {
-    estado.rpc = { data: { dados: linhaDoBanco() }, error: null };
+  // AG4 (33.14, ponto 2; contrato do banco, item 7): a RPC recebe o campo
+  // (p_campo), devolve so a chave pedida e a trilha
+  // (revelou_dado_da_marcacao) diz qual dado foi visto.
+  it("relê pela RPC com o campo pedido (a trilha diz qual) e devolve só ele", async () => {
+    estado.rpc = { data: { dados: { cpf: "12345678909" } }, error: null };
     expect(await revelarDadoInformadoAction(CONSULTA, "cpf")).toEqual({
       ok: true,
       valor: "12345678909",
     });
+    estado.rpc = {
+      data: { dados: { carteirinha: "0001 2345 6789" } },
+      error: null,
+    };
     expect(await revelarDadoInformadoAction(CONSULTA, "carteirinha")).toEqual({
       ok: true,
       valor: "0001 2345 6789",
@@ -374,13 +380,71 @@ describe("revisão final da AG3: revelar o CPF ou a carteirinha", () => {
     expect(estado.rpcs).toEqual([
       {
         nome: "ler_dados_informados_na_marcacao",
-        args: { p_clinic_id: CLINICA, p_appointment_id: CONSULTA },
+        args: {
+          p_clinic_id: CLINICA,
+          p_appointment_id: CONSULTA,
+          p_campo: "cpf",
+        },
       },
       {
         nome: "ler_dados_informados_na_marcacao",
-        args: { p_clinic_id: CLINICA, p_appointment_id: CONSULTA },
+        args: {
+          p_clinic_id: CLINICA,
+          p_appointment_id: CONSULTA,
+          p_campo: "carteirinha",
+        },
       },
     ]);
+  });
+
+  it("o campo que o paciente não informou volta nulo; a chave que não é a pedida é descartada", async () => {
+    estado.rpc = { data: { dados: { cpf: null } }, error: null };
+    expect(await revelarDadoInformadoAction(CONSULTA, "cpf")).toEqual({
+      ok: true,
+      valor: null,
+    });
+    // Mesmo se o banco mandar mais do que a chave pedida, so ela sai.
+    estado.rpc = { data: { dados: linhaDoBanco() }, error: null };
+    expect(await revelarDadoInformadoAction(CONSULTA, "carteirinha")).toEqual({
+      ok: true,
+      valor: "0001 2345 6789",
+    });
+  });
+
+  it("retorno fora da forma é erro (nunca o valor errado), e os erros do banco são os da leitura", async () => {
+    for (const data of [
+      { dados: { cpf: "123" } },
+      { dados: { carteirinha: 7 } },
+      { outra: true },
+      null,
+    ]) {
+      estado.rpc = { data, error: null };
+      expect(
+        await revelarDadoInformadoAction(
+          CONSULTA,
+          JSON.stringify(data).includes("carteirinha") ? "carteirinha" : "cpf",
+        ),
+        JSON.stringify(data),
+      ).toEqual({
+        ok: false,
+        error: "Não foi possível mostrar o dado. Tente de novo.",
+        transitorio: true,
+      });
+    }
+    estado.rpc = { data: null, error: { code: "42501" } };
+    expect(await revelarDadoInformadoAction(CONSULTA, "cpf")).toEqual({
+      ok: false,
+      error: "Seu perfil não vê os dados que o paciente informou.",
+      transitorio: false,
+    });
+    estado.rpc = { data: null, error: { code: "P0002" } };
+    expect(await revelarDadoInformadoAction(CONSULTA, "cpf")).toEqual({
+      ok: false,
+      error: "Esta consulta não está mais na agenda. Atualize a página.",
+      transitorio: false,
+    });
+    // O log leva so ids e o codigo, nunca o dado.
+    expect(logs.join("")).not.toContain("12345678909");
   });
 
   it("a mesma guarda: sessão, papel, id e campo antes do banco", async () => {

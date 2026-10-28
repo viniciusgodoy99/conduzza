@@ -52,10 +52,14 @@ export default async function AgendaPage({
     entity: "agenda_dia",
   });
 
+  // A lista do "Pendente de você" que falha nao derruba a Agenda (revisao
+  // curta da AG4): sem ela (null), o cliente le de novo, e so o painel diz
+  // que esta carregando ou que nao carregou. Nada e registrado aqui: o erro
+  // nao vai para log nenhum.
   const [catalogo, dia, pendencias, membroProfissional] = await Promise.all([
     fetchCatalogo(supabase, active.clinicId),
     fetchAgendaDia(supabase, active.clinicId, hoje, active.timezone),
-    fetchPendencias(supabase, active.clinicId),
+    fetchPendencias(supabase, active.clinicId).catch(() => null),
     active.role === "profissional"
       ? supabase
           .from("clinic_member")

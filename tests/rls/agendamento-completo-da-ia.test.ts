@@ -307,6 +307,39 @@ async function jobEmExecucao(conversa: string): Promise<string> {
   });
 }
 
+/**
+ * [revisao curta da AG4] O job leu a conversa, como o motor antes de chamar
+ * o modelo: as mensagens do paciente (nao apagadas) vao para
+ * ai_turno.mensagens_lidas da linha do turno do job. Desde a migration
+ * 20261028100000 (B3), o agendar so marca com o "sim" que o job leu
+ * (senao, mensagem_nova_do_paciente). Devolve o job.
+ */
+async function leu(jobId: string, conversa: string): Promise<string> {
+  const { data } = await admin
+    .from("message")
+    .select("id")
+    .eq("conversation_id", conversa)
+    .eq("direction", "entrada")
+    .eq("author", "paciente")
+    .is("deleted_at", null)
+    .order("created_at")
+    .throwOnError();
+  await admin
+    .from("ai_turno")
+    .upsert(
+      {
+        job_id: jobId,
+        clinic_id: clinicaA,
+        conversation_id: conversa,
+        estado: "reservado",
+        mensagens_lidas: (data as { id: string }[]).map((m) => m.id),
+      },
+      { onConflict: "job_id" },
+    )
+    .throwOnError();
+  return jobId;
+}
+
 /** A IA marca pelo caminho de verdade: os dados, a reserva, a confirmacao e o agendar. */
 async function marcarPelaIa(params: {
   conversa: string;
@@ -343,7 +376,7 @@ async function marcarPelaIa(params: {
   const marcada = await rpcOk<Resposta>("agendar_pela_ia", {
     p_clinic_id: clinicaA,
     p_conversation_id: params.conversa,
-    p_job_id: crypto.randomUUID(),
+    p_job_id: await leu(crypto.randomUUID(), params.conversa),
   });
   expect(marcada, "agendar").toMatchObject({ ok: true, reutilizado: false });
   return marcada.appointment_id!;
