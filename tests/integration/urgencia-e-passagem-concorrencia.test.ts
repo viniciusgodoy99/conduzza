@@ -4,10 +4,12 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { criarNumeroDeTeste } from "../rls/numeros";
 import { adminClient, anonClient } from "../rls/stack";
 
-// Urgencia e passagem da IA (AG6a, migration 20261029120000) com chamadas AO
-// MESMO TEMPO, contra o banco REAL: a passagem pelo servidor (como o motor da
-// IA) e o Assumir ou o Resolver pela sessao de quem atende (o update
-// condicional das Server Actions do Atendimento).
+// Urgencia e passagem da IA (AG6a, migration 20261029120000, com a revisao
+// de 28/10/2026: a atribuicao e a RPC atribuir_conversa_passada_pela_ia,
+// DEPOIS da passagem e da frase) com chamadas AO MESMO TEMPO, contra o banco
+// REAL: a passagem e a atribuicao pelo servidor (como o motor da IA) e o
+// Assumir ou o Resolver pela sessao de quem atende (o update condicional
+// das Server Actions do Atendimento).
 //
 // LIMITE (o mesmo de ia-agenda-concorrencia.test.ts): os casos "ao mesmo
 // tempo" disparam as chamadas por HTTP (Promise.all) e NAO forcam a
@@ -15,13 +17,17 @@ import { adminClient, anonClient } from "../rls/stack";
 // real, em qualquer ordem que o PostgREST executar, nunca a trava. A prova
 // deterministica das travas (uma sessao segura a transacao aberta e a outra
 // TEM de esperar, nas duas ordens) e da migration contra sessoes segurando
-// conversation e ai_decision_log (R5: sem 40P01; 55P03 depois de 3 s) esta
+// conversation e ai_decision_log (S5: sem 40P01; 55P03 depois de 3 s) esta
 // no harness local (~/.claude/plans/agente-completo/ag6/banco/travas),
 // nunca na producao.
-// - R1, a atribuicao contra o Assumir: a conversa termina com UMA pessoa
-//   (o responsavel do lead, se a passagem veio antes; quem assumiu, se o
-//   Assumir veio antes) e nunca com o evento da atribuicao sem a conversa
-//   estar com o responsavel;
+// - R0, a passagem contra o Assumir de quem viu a conversa na IA: a passagem
+//   nunca atribui; ou ela veio antes (a conversa na fila, o Assumir nao acha
+//   a linha) ou o Assumir veio antes (ja_fora_da_ia);
+// - R1, a atribuicao (com a passagem ja feita) contra o Assumir de quem viu
+//   a conversa na fila: a conversa termina com UMA pessoa (o responsavel do
+//   lead, se a atribuicao veio antes; quem assumiu, se o Assumir veio antes,
+//   e a atribuicao devolve fora_da_fila) e nunca com o evento da atribuicao
+//   sem a conversa estar com o responsavel;
 // - R2, a urgencia contra o Assumir (e contra o Resolver): a marca nunca
 //   fica ABERTA com a conversa fora de "Aguardando voce";
 // - nenhuma chamada devolve 40P01 nem 40001.
@@ -51,7 +57,11 @@ type Passagem = {
   passou: boolean;
   codigo: string;
   urgente: boolean;
+};
+
+type Atribuicao = {
   atribuida: boolean;
+  codigo: string;
 };
 
 let clinica = "";
@@ -120,13 +130,30 @@ async function jobEmExecucao(conversa: string): Promise<string> {
   });
 }
 
+/** A decisao do job (escalou, com o motivo), como o motor grava antes da passagem. */
+async function decidir(conversa: string, job: string, motivo: string): Promise<void> {
+  await admin
+    .from("ai_decision_log")
+    .insert({
+      clinic_id: clinica,
+      conversation_id: conversa,
+      job_id: job,
+      desfecho: "escalou",
+      escalation_reason: motivo,
+    })
+    .throwOnError();
+}
+
 async function passar(job: string, motivo: string) {
   return admin.rpc("passar_conversa_da_ia_para_equipe", {
     p_job_id: job,
     p_worker: WORKER,
     p_motivo: motivo,
-    p_atribuir: true,
   });
+}
+
+async function atribuir(job: string) {
+  return admin.rpc("atribuir_conversa_passada_pela_ia", { p_job_id: job, p_worker: WORKER });
 }
 
 /** O Assumir da tela, a partir do estado que ela viu. */
@@ -225,27 +252,63 @@ afterAll(async () => {
   }
 }, 120_000);
 
-describe("R1: a atribuicao contra o Assumir, ao mesmo tempo", () => {
-  it("a conversa termina com UMA pessoa, e o evento da atribuicao so com o responsavel", async () => {
+describe("R0: a passagem contra o Assumir de quem viu a conversa na IA, ao mesmo tempo", () => {
+  it("a passagem nunca atribui: a conversa na fila sem ninguem, ou com quem assumiu", async () => {
     for (let i = 0; i < RODADAS; i += 1) {
       const conversa = await naIa(pessoa("dona"));
       const job = await jobEmExecucao(conversa);
+      await decidir(conversa, job, "sintoma");
       const [p, a] = await Promise.all([passar(job, "sintoma"), assumir(conversa, "ia_atendendo")]);
       semCicloNemSerializacao(p.error, a.error);
       expect(p.error).toBeNull();
       expect(a.error).toBeNull();
       const r = p.data as Passagem;
       const s = await situacao(conversa);
+      expect(s.eventosDaAtribuicao).toBe(0);
+      if (r.passou) {
+        // A passagem veio antes: na fila, sem ninguem (a atribuicao e outra
+        // chamada); o Assumir da tela (que viu "na IA") nao achou a linha.
+        expect(r).toEqual({ passou: true, codigo: "passou", urgente: false });
+        expect(s.conversa).toEqual({ status: "aguardando_humano", assignee_user_id: null });
+        expect(a.data).toHaveLength(0);
+      } else {
+        // O Assumir veio antes: a passagem nao achou a conversa na IA.
+        expect(r).toEqual({ passou: false, codigo: "ja_fora_da_ia", urgente: false });
+        expect(s.conversa).toEqual({ status: "em_atendimento", assignee_user_id: pessoa("recepcao") });
+        expect(a.data).toHaveLength(1);
+      }
+      await admin.rpc("concluir_job", { p_id: job, p_worker: WORKER });
+    }
+  }, 120_000);
+});
+
+describe("R1: a atribuicao contra o Assumir, ao mesmo tempo", () => {
+  it("a conversa termina com UMA pessoa, e o evento da atribuicao so com o responsavel", async () => {
+    for (let i = 0; i < RODADAS; i += 1) {
+      const conversa = await naIa(pessoa("dona"));
+      const job = await jobEmExecucao(conversa);
+      await decidir(conversa, job, "sintoma");
+      // A passagem ja feita (o motor passa, manda a frase e so depois atribui).
+      const p = await passar(job, "sintoma");
+      expect(p.error).toBeNull();
+      expect(p.data).toEqual({ passou: true, codigo: "passou", urgente: false });
+      const [t, a] = await Promise.all([atribuir(job), assumir(conversa, "aguardando_humano")]);
+      semCicloNemSerializacao(t.error, a.error);
+      expect(t.error).toBeNull();
+      expect(a.error).toBeNull();
+      const r = t.data as Atribuicao;
+      const s = await situacao(conversa);
       expect(s.conversa.status).toBe("em_atendimento");
       if (r.atribuida) {
-        // A passagem veio antes: o Assumir da tela (que viu "na IA") nao achou
-        // a linha e nao roubou do responsavel.
+        // A atribuicao veio antes: o Assumir da tela (que viu a conversa na
+        // fila) nao achou a linha e nao roubou do responsavel.
+        expect(r).toEqual({ atribuida: true, codigo: "atribuida" });
         expect(s.conversa.assignee_user_id).toBe(pessoa("dona"));
         expect(a.data).toHaveLength(0);
         expect(s.eventosDaAtribuicao).toBe(1);
       } else {
-        // O Assumir veio antes: a passagem nao achou a conversa na IA.
-        expect(r).toEqual({ passou: false, codigo: "ja_fora_da_ia", urgente: false, atribuida: false });
+        // O Assumir veio antes: a atribuicao nao rouba (fora_da_fila).
+        expect(r).toEqual({ atribuida: false, codigo: "fora_da_fila" });
         expect(s.conversa.assignee_user_id).toBe(pessoa("recepcao"));
         expect(a.data).toHaveLength(1);
         expect(s.eventosDaAtribuicao).toBe(0);
@@ -268,7 +331,7 @@ describe("R2: a urgencia contra quem pega a conversa, ao mesmo tempo", () => {
       expect(p.error).toBeNull();
       expect(a.error).toBeNull();
       const r = p.data as Passagem;
-      expect(r).toMatchObject({ passou: true, urgente: true, atribuida: false });
+      expect(r).toEqual({ passou: true, codigo: "passou", urgente: true });
       const s = await situacao(conversa);
       if (s.conversa.status === "em_atendimento") {
         expect(s.marca).toMatchObject({ encerrada_como: "assumida" });
@@ -298,7 +361,7 @@ describe("R2: a urgencia contra quem pega a conversa, ao mesmo tempo", () => {
         expect(s.marca).toMatchObject({ encerrada_como: "resolvida" });
       } else {
         // O Resolver veio antes: a conversa saiu da IA e nada foi marcado.
-        expect(r).toEqual({ passou: false, codigo: "ja_fora_da_ia", urgente: false, atribuida: false });
+        expect(r).toEqual({ passou: false, codigo: "ja_fora_da_ia", urgente: false });
         expect(s.conversa.status).toBe("resolvida");
         expect(s.marca).toBeNull();
       }

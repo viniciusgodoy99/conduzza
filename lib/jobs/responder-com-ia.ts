@@ -42,6 +42,12 @@ import {
 // [AG6 passagem] fim
 import { VERSAO_DO_PROMPT } from "@/lib/agente/prompt";
 import { lerPrecos } from "@/lib/agente/uso";
+// [AG6 passagem] início
+import {
+  atribuirConversaPassadaPelaIa,
+  PRAZO_DA_TRAVA_MS,
+} from "@/lib/agente/whatsapp";
+// [AG6 passagem] fim
 import {
   anotarPassagemParaAEquipe,
   conferirTravaDoWhatsapp,
@@ -177,6 +183,12 @@ import type { Job, ResultadoDeJob } from "./worker";
 //     passagem para a equipe e a frase fixa (tentativa unica), ou nada.
 //     Erro na passagem nunca e engolido: o turno fica onde esta e o job
 //     tenta de novo (a retentativa passa e manda a frase).
+// 13b. [AG6 passagem] Depois da tentativa da frase (saiu ou nao), a conversa
+//     que este job passou COM a frase vai ao responsavel do lead quando a
+//     regra da versao publicada pede e o motivo pode atribuir
+//     (atribuir_conversa_passada_pela_ia; contrato do banco, Revisao R1.3).
+//     Nunca antes da frase: a guarda do envio so deixa a frase sair com a
+//     conversa na fila sem responsavel. Recusa ou erro: a fila, so o log.
 //
 // REGRA ABSOLUTA: nenhum texto (do paciente, da resposta, do rascunho) em
 // log. So ids, codigos e medidas.
@@ -305,8 +317,9 @@ type Contexto = {
   // [AG6 passagem] início
   /**
    * AG6a: para quem vai a conversa, da versao publicada que este turno leu
-   * (passo 6). Ausente: ainda nao lida (a retomada le na hora da passagem
-   * com a frase). Nulo: a leitura falhou (a fila, o lado seguro).
+   * (passo 6). Ausente: ainda nao lida (a retomada le depois da frase, so
+   * quando o motivo pode atribuir). Nulo: a leitura falhou (a fila, o lado
+   * seguro).
    */
   regras?: RegrasDaPassagem | null;
   // [AG6 passagem] fim
@@ -444,7 +457,9 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
 
   // Retomadas que nao chamam o modelo.
   if (turnoAtual?.estado === "passou_para_equipe") {
-    return retomarAvisoDaFrase(c);
+    // [AG6 passagem] início
+    return retomarAPassagem(c, turnoAtual);
+    // [AG6 passagem] fim
   }
   if (turnoAtual?.estado === "decidido") {
     return retomarDecidido(c, turnoAtual, conversa);
@@ -1536,7 +1551,7 @@ async function passarPorUrgencia(
  * AG6a: as regras da passagem para pedir a atribuicao. O turno que leu a
  * versao publicada ja as tem (passo 6); a retomada le agora (a ultima
  * publicada, a mesma que o banco confere). Leitura que falha: a fila (o lado
- * seguro; a passagem e a frase seguem), com o log.
+ * seguro; a frase ja foi tentada), com o log.
  */
 async function regrasParaAPassagem(
   c: Contexto,
@@ -1553,6 +1568,87 @@ async function regrasParaAPassagem(
   }
   return c.regras;
 }
+
+/**
+ * Abaixo disto de prazo depois da frase, a atribuicao nem e tentada: a
+ * conversa fica na fila (o lado seguro), com o log "sem_tempo".
+ */
+export const PRAZO_MINIMO_DA_ATRIBUICAO_MS = 1_000;
+
+/**
+ * AG6a (contrato do banco, Revisao R1.3): DEPOIS da tentativa da frase (saiu
+ * ou nao, inclusive depois do evento "O aviso automático ao contato não foi
+ * enviado."), a conversa que este job passou COM a frase vai ao responsavel
+ * do lead: so quando o motivo pode atribuir (nunca a urgencia nem o fora do
+ * horario) e a regra da versao publicada e "responsavel_do_lead"
+ * (pedirAtribuicaoNaPassagem). Quem chama garante que a passagem deste job
+ * devolveu "passou" com a frase (passarEAvisar, os tetos e a falha sem
+ * modelo) ou que o turno ja esta 'passou_para_equipe' com a saida 'frase'
+ * (a retomada); nunca na passagem sem frase nem no "ja_fora_da_ia" (outro
+ * caminho tirou a conversa da IA). O banco confere tudo de novo
+ * (atribuir_conversa_passada_pela_ia). Nunca lanca e nunca muda o resultado
+ * do job: recusa, erro, rede, prazo ou a funcao ausente (PGRST202) so
+ * deixam o log com ids e o codigo, e a conversa fica na fila.
+ */
+async function atribuirDepoisDaFrase(
+  c: Contexto,
+  motivo: MotivoDoEventoDaIa,
+): Promise<void> {
+  if (!motivoPodeAtribuir(motivo)) {
+    return;
+  }
+  if (!pedirAtribuicaoNaPassagem(motivo, await regrasParaAPassagem(c))) {
+    return;
+  }
+  const restante = restanteMs(c);
+  if (restante < PRAZO_MINIMO_DA_ATRIBUICAO_MS) {
+    log.warn("ia_atribuicao_falhou", {
+      ...idsDoLog(c),
+      error_code: "sem_tempo",
+    });
+    return;
+  }
+  await atribuirConversaPassadaPelaIa(c.admin, {
+    clinicId: c.clinicId,
+    conversationId: c.conversationId,
+    jobId: c.job.id,
+    workerId: c.workerId,
+    prazoMs: Math.min(PRAZO_DA_TRAVA_MS, restante),
+  });
+}
+
+/**
+ * AG6a: a retomada do turno 'passou_para_equipe' (a passagem ja aconteceu e
+ * a frase nao se repete). Sem a frase deste job na conversa, o evento do
+ * aviso nao enviado, como antes, e nada de atribuicao: o turno tambem fica
+ * 'passou_para_equipe' quando a passagem devolveu "ja_fora_da_ia" (outro
+ * caminho tirou a conversa da IA) e a tentativa caiu antes de concluir, e
+ * so a frase que saiu prova que a passagem foi DESTE job (ela so sai depois
+ * de "passou"). Com a frase que saiu e a saida 'frase', a atribuicao que a
+ * tentativa anterior pode nao ter feito (caiu entre a frase e a
+ * atribuicao). A saida 'resposta' (a retomada recusada, passada sem frase)
+ * nunca atribui. Leitura do motivo que falha: a fila, so o log.
+ */
+async function retomarAPassagem(
+  c: Contexto,
+  turno: TurnoDaIa,
+): Promise<ResultadoDeJob> {
+  if (!(await avisoDaFraseNaRetomada(c)) || turno.saida !== "frase") {
+    return CONCLUIR;
+  }
+  let motivo: MotivoDoEventoDaIa;
+  try {
+    motivo = await motivoDaDecisao(c, turno.decisionId);
+  } catch {
+    log.warn("ia_atribuicao_falhou", {
+      ...idsDoLog(c),
+      error_code: "motivo_nao_lido",
+    });
+    return CONCLUIR;
+  }
+  await atribuirDepoisDaFrase(c, motivo);
+  return CONCLUIR;
+}
 // [AG6 passagem] fim
 
 /**
@@ -1561,38 +1657,25 @@ async function regrasParaAPassagem(
  * passagem. Lanca ErroComCodigoDeJob se a janela nao puder ser lida (o job
  * tenta de novo; o turno continua onde estava).
  *
- * [AG6 passagem] AG6a: `comFrase` (so passarEAvisar) deixa pedir a
- * atribuicao ao responsavel do lead, com a regra ligada na versao publicada
- * e fora da urgencia e do fora do horario (pedirAtribuicaoNaPassagem). As
- * passagens sem frase nunca pedem.
+ * [AG6 passagem] AG6a (Revisao R1.1): sempre os tres parametros; a passagem
+ * nunca atribui (a atribuicao vem depois da frase, atribuirDepoisDaFrase).
  */
 async function passarDoJob(
   c: Contexto,
   motivo: MotivoDoEventoDaIa,
-  // [AG6 passagem] início
-  comFrase = false,
-  // [AG6 passagem] fim
 ): Promise<ResultadoDaPassagem> {
   const janela = await lerJanela(c.admin, c.clinicId, c.conversationId);
   if (jobAnteriorAJanela(janela, c.job.created_at)) {
     log.info("ia_job_anterior_a_janela", idsDoLog(c));
     return "job_antigo";
   }
-  // [AG6 passagem] início
-  // A regra so e lida (na retomada) quando a passagem pode atribuir.
-  const atribuir =
-    comFrase &&
-    motivoPodeAtribuir(motivo) &&
-    pedirAtribuicaoNaPassagem(motivo, await regrasParaAPassagem(c));
   const passagem = await passarParaAEquipe(c.admin, {
     clinicId: c.clinicId,
     jobId: c.job.id,
     workerId: c.workerId,
     motivo,
-    atribuir,
   });
   return passagem.resultado;
-  // [AG6 passagem] fim
 }
 
 /**
@@ -1602,6 +1685,10 @@ async function passarDoJob(
  * ja saiu da IA). Na RETOMADA de um turno 'decidido' com a frase, a
  * conversa ja fora da IA pode ser a passagem da tentativa que caiu antes de
  * fechar o turno: sem a frase na linha do job, fica o evento do aviso.
+ *
+ * [AG6 passagem] AG6a: so a passagem que aconteceu AGORA ("passou"), depois
+ * da tentativa da frase, pode levar a conversa ao responsavel do lead
+ * (atribuirDepoisDaFrase). O "ja_fora_da_ia" nunca atribui.
  */
 async function passarEAvisar(
   c: Contexto,
@@ -1614,10 +1701,7 @@ async function passarEAvisar(
    */
   nota: string | null = null,
 ): Promise<ResultadoDeJob> {
-  // [AG6 passagem] início
-  // A passagem COM a frase: a unica que pode pedir a atribuicao.
-  const passagem = await passarDoJob(c, motivo, true);
-  // [AG6 passagem] fim
+  const passagem = await passarDoJob(c, motivo);
   if (passagem === "sem_posse") {
     return { ok: false, erro: "sem_posse" };
   }
@@ -1657,7 +1741,13 @@ async function passarEAvisar(
       texto: nota,
     });
   }
-  return enviarAFrase(c, destino);
+  const resultado = await enviarAFrase(c, destino);
+  // [AG6 passagem] início
+  // A frase primeiro (a guarda do envio exige a conversa na fila sem
+  // responsavel), a atribuicao depois (R1.3).
+  await atribuirDepoisDaFrase(c, motivo);
+  // [AG6 passagem] fim
+  return resultado;
 }
 
 async function enviarAFrase(
@@ -2006,8 +2096,17 @@ async function fecharDepoisDeJaEnviado(c: Contexto): Promise<ResultadoDeJob> {
  * se repete. Se ela nao saiu, fica o evento do aviso nao enviado.
  */
 async function retomarAvisoDaFrase(c: Contexto): Promise<ResultadoDeJob> {
+  await avisoDaFraseNaRetomada(c);
+  return CONCLUIR;
+}
+
+/**
+ * O aviso da retomada: a frase deste job saiu (true), ou o evento "O aviso
+ * automático ao contato não foi enviado." foi pedido (false). Nunca lanca.
+ */
+async function avisoDaFraseNaRetomada(c: Contexto): Promise<boolean> {
   if (await fraseJaSaiu(c)) {
-    return CONCLUIR;
+    return true;
   }
   await gravarEventoDaIa(c.admin, {
     clinicId: c.clinicId,
@@ -2015,7 +2114,7 @@ async function retomarAvisoDaFrase(c: Contexto): Promise<ResultadoDeJob> {
     workerId: c.workerId,
     motivo: "aviso_nao_enviado",
   });
-  return CONCLUIR;
+  return false;
 }
 
 /** O motivo da passagem gravado na decisao (para retomar a frase). */

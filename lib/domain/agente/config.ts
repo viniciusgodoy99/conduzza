@@ -1669,14 +1669,17 @@ export const GATILHOS_OBRIGATORIOS = [
 // escalation_rules.passagem_para e "fila" (o padrao: "Aguardando você", sem
 // responsavel) ou "responsavel_do_lead" (a conversa vai para o responsavel do
 // lead, contact.owner_user_id, ativo e com papel que atende conversa). Quem
-// atribui e o banco, na mesma transacao da passagem
-// (passar_conversa_da_ia_para_equipe com p_atribuir, migration
-// 20261029120000), conferindo de novo a ULTIMA versao publicada; o motor so
-// pede (p_atribuir) na passagem com a frase e com a regra ligada na versao
-// que leu. Nunca atribuem: a urgencia (D-54, sempre a fila), o "fora do
-// horario" (a retomada no horario so pega conversa sem responsavel) e as
-// passagens sem frase (liberacao perdida, autorizacao revogada, versao sem
-// publicacao, numero desconectado, envio incerto).
+// atribui e o banco, numa RPC propria chamada DEPOIS da tentativa da frase
+// (atribuir_conversa_passada_pela_ia, migration 20261029120000; Revisao R1
+// do contrato do banco, 28/10/2026: a guarda do envio so deixa a frase sair
+// com a conversa na fila sem responsavel, entao a passagem,
+// passar_conversa_da_ia_para_equipe, nunca atribui), conferindo de novo a
+// ULTIMA versao publicada; o motor so chama na passagem com a frase que
+// passou agora e com a regra ligada na versao que leu. Nunca atribuem: a
+// urgencia (D-54, sempre a fila), o "fora do horario" (a retomada no horario
+// so pega conversa sem responsavel) e as passagens sem frase (liberacao
+// perdida, autorizacao revogada, versao sem publicacao, numero
+// desconectado, envio incerto).
 
 /** Os dois destinos da passagem (escalation_rules.passagem_para). */
 export const PASSAGENS_DA_CONVERSA = ["fila", "responsavel_do_lead"] as const;
@@ -1772,11 +1775,12 @@ export function motivoPodeAtribuir(motivo: MotivoDoEventoDaIa): boolean {
 }
 
 /**
- * O motor pede a atribuicao (p_atribuir) so quando: a passagem e com a
- * frase (quem chama diz), o motivo pode atribuir e a regra da versao
- * publicada que ele leu e "responsavel_do_lead". Sem as regras (nao lidas):
- * a fila. O banco decide de novo pela ultima versao publicada e pelo
- * responsavel (ativo, com papel que atende conversa).
+ * O motor pede a atribuicao (atribuir_conversa_passada_pela_ia, depois da
+ * frase) so quando: a passagem e com a frase (quem chama diz), o motivo pode
+ * atribuir e a regra da versao publicada que ele leu e
+ * "responsavel_do_lead". Sem as regras (nao lidas): a fila. O banco decide
+ * de novo pela ultima versao publicada e pelo responsavel (ativo, com papel
+ * que atende conversa).
  */
 export function pedirAtribuicaoNaPassagem(
   motivo: MotivoDoEventoDaIa,

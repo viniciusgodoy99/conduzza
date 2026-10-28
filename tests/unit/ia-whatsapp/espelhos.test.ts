@@ -5,11 +5,16 @@ import { describe, expect, it } from "vitest";
 import { MOTIVOS_DO_AGENTE } from "@/lib/agente/ferramentas/escalar-humano";
 import type { FalhaDoAgente } from "@/lib/agente/laco";
 import { TEXTO_FIXO_DO_AGENTE } from "@/lib/agente/prompt";
+import { CODIGOS_DA_ATRIBUICAO } from "@/lib/agente/whatsapp";
 import {
+  LIMITE_DO_NOME_NA_ATRIBUICAO,
   MOTIVOS_DE_ESCALONAMENTO,
   MOTIVOS_DE_SISTEMA_DA_IA,
+  MOTIVOS_QUE_NUNCA_ATRIBUEM,
   ROTULO_DO_MOTIVO_DE_ESCALONAMENTO,
   TEXTO_DO_EVENTO_DA_IA,
+  textoDaAtribuicaoDaIa,
+  type PassagemDaConversa,
 } from "@/lib/domain/agente/config";
 import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
 import {
@@ -309,8 +314,9 @@ describe("espelhos do E3 com as migrations", () => {
 
 // [AG6 urgência] início
 // AG6a (migration 20261029120000): o motivo urgencia e do sistema (so o
-// portao deterministico decide, D-52), com o evento do banco, e a passagem
-// com p_atribuir (o contrato da AG6a, secao 2).
+// portao deterministico decide, D-52), com o evento do banco, a passagem de
+// tres parametros e a atribuicao depois da frase (Revisao R1 do contrato da
+// frente de banco, que substituiu a secao 2).
 describe("AG6a: os espelhos da urgência e da passagem", () => {
   it("urgencia é do sistema: o modelo nunca escolhe", () => {
     expect(MOTIVOS_DO_AGENTE as readonly string[]).not.toContain("urgencia");
@@ -335,33 +341,97 @@ describe("AG6a: os espelhos da urgência e da passagem", () => {
     expect(FRASE_DE_ESCALONAMENTO).not.toMatch(/192|samu|188|cvv/i);
   });
 
-  it("a passagem da migration mais nova recebe p_atribuir e devolve as quatro chaves", () => {
-    const definicao =
-      /create (?:or replace )?function public\.passar_conversa_da_ia_para_equipe\(([\s\S]*?)\)\s*returns jsonb[\s\S]*?\$function\$([\s\S]*?)\$function\$/gi;
-    let achado: { arquivo: string; parametros: string; corpo: string } | null =
-      null;
+  /** Os parametros e o corpo da definicao MAIS NOVA de uma funcao. */
+  function definicaoMaisNova(nome: string): {
+    arquivo: string;
+    parametros: string;
+    corpo: string;
+  } | null {
+    const definicao = new RegExp(
+      `create (?:or replace )?function public\\.${nome}\\(([\\s\\S]*?)\\)\\s*returns jsonb[\\s\\S]*?\\$function\\$([\\s\\S]*?)\\$function\\$`,
+      "gi",
+    );
     for (const arquivo of [...MIGRATIONS].reverse()) {
       const sql = readFileSync(`${PASTA_DAS_MIGRATIONS}/${arquivo}`, "utf-8");
       const ultimo = [...sql.matchAll(definicao)].at(-1);
       if (ultimo !== undefined) {
-        achado = {
+        return {
           arquivo,
-          parametros: ultimo[1] ?? "",
+          parametros: (ultimo[1] ?? "").replace(/\s+/g, " ").trim(),
           corpo: ultimo[2] ?? "",
         };
-        break;
       }
     }
-    expect(achado?.arquivo).toBe("20261029120000_urgencia_e_passagem_da_ia.sql");
-    expect(achado?.parametros.replace(/\s+/g, " ").trim()).toBe(
-      "p_job_id uuid, p_worker text, p_motivo text, p_atribuir boolean default false",
+    return null;
+  }
+
+  // Revisao R1 do contrato do banco (28/10/2026): a passagem volta aos tres
+  // parametros e nunca atribui; a atribuicao e a RPC nova, chamada DEPOIS
+  // da frase.
+  it("a passagem da migration mais nova tem os três parâmetros de sempre, devolve {passou, codigo, urgente} e nunca atribui", () => {
+    const achado = definicaoMaisNova("passar_conversa_da_ia_para_equipe");
+    expect(achado?.arquivo).toBe(
+      "20261029120000_urgencia_e_passagem_da_ia.sql",
     );
-    for (const chave of ["'passou'", "'codigo'", "'urgente'", "'atribuida'"]) {
+    expect(achado?.parametros).toBe(
+      "p_job_id uuid, p_worker text, p_motivo text",
+    );
+    for (const chave of ["'passou'", "'codigo'", "'urgente'"]) {
       expect(achado?.corpo).toContain(chave);
     }
-    // Os motivos que nunca atribuem sao os mesmos do motor.
-    expect(achado?.corpo).toContain(
-      "array['urgencia', 'fora_do_horario']",
+    expect(achado?.corpo).not.toContain("'atribuida'");
+    expect(achado?.corpo).not.toContain("p_atribuir");
+    expect(achado?.corpo).not.toMatch(/assignee_user_id\s*=/);
+  });
+
+  it("a atribuição (atribuir_conversa_passada_pela_ia) tem os parâmetros, os códigos e as listas do motor", () => {
+    const achado = definicaoMaisNova("atribuir_conversa_passada_pela_ia");
+    expect(achado?.arquivo).toBe(
+      "20261029120000_urgencia_e_passagem_da_ia.sql",
+    );
+    expect(achado?.parametros).toBe("p_job_id uuid, p_worker text");
+    const corpo = achado?.corpo ?? "";
+    // Cada codigo que o motor conhece sai do banco, e nenhum outro.
+    const devolvidos = new Set(
+      [...corpo.matchAll(/'codigo', '([a-z_]+)'/g)].map((m) => m[1]),
+    );
+    expect(devolvidos).toEqual(new Set(CODIGOS_DA_ATRIBUICAO));
+    // As listas do banco sao as do motor.
+    const lista = (constante: string) =>
+      literais(
+        corpo.match(
+          new RegExp(
+            `${constante} constant text\\[\\] := array\\[([^\\]]*)\\]`,
+          ),
+        )?.[1] ?? "",
+      );
+    expect(lista("c_motivos_que_nunca_atribuem")).toEqual([
+      ...MOTIVOS_QUE_NUNCA_ATRIBUEM,
+    ]);
+    expect(lista("c_desfechos_que_passam")).toEqual([
+      "escalou",
+      "bloqueou",
+      "falhou",
+    ]);
+    expect(lista("c_papeis_que_recebem")).toEqual([
+      "admin",
+      "gestor",
+      "recepcao",
+      "profissional",
+    ]);
+    expect(corpo).toContain(
+      `c_regra_do_responsavel constant text := '${"responsavel_do_lead" satisfies PassagemDaConversa}'`,
+    );
+    expect(corpo).toContain(
+      `c_limite_do_nome constant integer := ${LIMITE_DO_NOME_NA_ATRIBUICAO}`,
+    );
+    // O evento da atribuicao e o espelho do motor.
+    expect(corpo).toContain(`'${textoDaAtribuicaoDaIa(null)}'`);
+    expect(corpo).toContain(
+      "'A conversa ficou com ' || v_nome || ', responsável pelo lead.'",
+    );
+    expect(textoDaAtribuicaoDaIa("Ana")).toBe(
+      "A conversa ficou com Ana, responsável pelo lead.",
     );
   });
 });

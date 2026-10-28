@@ -1,6 +1,6 @@
 -- Rollback manual da migration 20261029120000_urgencia_e_passagem_da_ia.sql
 -- (urgencia e passagem da IA ao responsavel do lead, AG6a, parte de banco;
--- 28/10/2026).
+-- 28/10/2026, com a revisao de 28/10/2026: a atribuicao fora da passagem).
 --
 -- Corpos de ANTES da migration: o modelo local (a producao de 28/10/2026,
 -- lida com q.js e fndef.js, so leitura, mais a AG4 e a AG5, que vao antes
@@ -18,26 +18,28 @@
 -- cada); o rotulo de urgencia; a tabela conversa_urgente (o indice, a RLS,
 -- a policy, os grants e a publicacao do Realtime); o gatilho
 -- urgencia_sai_quando_alguem_pega em conversation (com a funcao); a
--- passagem com p_atribuir (DROP e CREATE: a de 3 parametros deixou de
--- existir); a poda com a marca.
+-- passagem (CREATE OR REPLACE, a mesma assinatura e os mesmos grants) com a
+-- marca de urgencia e um comentario; a RPC nova
+-- atribuir_conversa_passada_pela_ia; a poda com a marca.
 --
 -- O QUE ESTE ARQUIVO FAZ: pega as travas (abaixo); avisa (NOTICE, so
 -- contagens) quantas marcas saem e quantas decisoes com urgencia ficam; tira
--- a tabela da publicacao; tira o gatilho e a funcao dele; devolve a
--- passagem de 3 parametros (o corpo e os grants de antes, sem comentario,
--- como antes), o rotulo e a poda de antes (com o comentario de antes da
--- poda; os grants nao mudaram: CREATE OR REPLACE mantem) ANTES de apagar a
--- tabela que a poda e a passagem de agora leem; apaga a tabela; devolve os
+-- a tabela da publicacao; tira o gatilho e a funcao dele; tira a RPC da
+-- atribuicao; devolve o corpo de antes da passagem (CREATE OR REPLACE, os
+-- grants de antes, sem comentario, como antes), o rotulo e a poda de antes
+-- (com o comentario de antes da poda; os grants nao mudaram: CREATE OR
+-- REPLACE mantem) ANTES de apagar a tabela que a poda, a passagem e a
+-- atribuicao de agora leem; apaga a tabela; devolve os
 -- CHECKs de antes (NOT VALID e, sem decisao com urgencia, VALIDATE: com
 -- decisao com urgencia, o CHECK de antes fica NOT VALID e a decisao fica);
 -- confere no fim os tres md5, os comentarios, os grants, os CHECKs e que
 -- nada novo ficou (com qualquer diferenca, falha e desfaz tudo). Sem IF
 -- EXISTS: com qualquer objeto faltando ou diferente, falha e desfaz tudo.
 --
--- ORDEM: PRIMEIRO voltar o codigo (o da AG6a chama a passagem com
--- p_atribuir, grava urgencia na decisao e le conversa_urgente), DEPOIS este
--- arquivo. O codigo de antes da AG6a (o main com a AG5) funciona antes e
--- depois deste arquivo.
+-- ORDEM: PRIMEIRO voltar o codigo (o da AG6a chama
+-- atribuir_conversa_passada_pela_ia, grava urgencia na decisao e le
+-- conversa_urgente), DEPOIS este arquivo. O codigo de antes da AG6a (o main
+-- com a AG5) funciona antes e depois deste arquivo.
 --
 -- O QUE SE PERDE: as marcas (abertas e encerradas): a conversa urgente
 -- continua na fila, sem o destaque. FICAM: as decisoes com urgencia, os
@@ -113,13 +115,13 @@ begin
 end;
 $realtime$;
 
--- 3. O gatilho que fecha a marca e a funcao dele.
+-- 3. O gatilho que fecha a marca e a funcao dele, e a RPC da atribuicao.
 drop trigger urgencia_sai_quando_alguem_pega on public.conversation;
 drop function public.urgencia_sai_quando_alguem_pega();
+drop function public.atribuir_conversa_passada_pela_ia(uuid, text);
 
--- 4. A passagem de 3 parametros: o corpo de antes (o de producao, M1), com
---    os grants de antes; sem comentario, como antes.
-drop function public.passar_conversa_da_ia_para_equipe(uuid, text, text, boolean);
+-- 4. A passagem: o corpo de antes (o de producao, M1; a mesma assinatura),
+--    com os grants de antes; sem comentario, como antes.
 CREATE OR REPLACE FUNCTION public.passar_conversa_da_ia_para_equipe(p_job_id uuid, p_worker text, p_motivo text)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -174,6 +176,7 @@ revoke execute on function public.passar_conversa_da_ia_para_equipe(uuid, text, 
   from public, anon, authenticated;
 grant execute on function public.passar_conversa_da_ia_para_equipe(uuid, text, text)
   to service_role;
+comment on function public.passar_conversa_da_ia_para_equipe(uuid, text, text) is null;
 
 -- 5. O rotulo (o da AG4) e a poda (o da AG5) de antes; os grants nao
 --    mudaram (CREATE OR REPLACE mantem). O rotulo nao tinha comentario; a
@@ -398,7 +401,11 @@ begin
     end if;
   end loop;
   if to_regclass('public.conversa_urgente') is not null
-     or to_regprocedure('public.passar_conversa_da_ia_para_equipe(uuid,text,text,boolean)') is not null
+     or to_regprocedure('public.atribuir_conversa_passada_pela_ia(uuid,text)') is not null
+     or exists (select 1 from pg_proc p
+                 where p.pronamespace = 'public'::regnamespace
+                   and p.proname in ('passar_conversa_da_ia_para_equipe', 'atribuir_conversa_passada_pela_ia')
+                   and p.oid <> 'public.passar_conversa_da_ia_para_equipe(uuid,text,text)'::regprocedure)
      or exists (select 1 from pg_proc p
                  where p.pronamespace = 'public'::regnamespace
                    and p.proname = 'urgencia_sai_quando_alguem_pega')

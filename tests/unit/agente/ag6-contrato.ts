@@ -10,23 +10,25 @@ import type {
   Resposta,
 } from "../ia-whatsapp/banco-em-memoria";
 
-// O CONTRATO da passagem da AG6a (migration 20261029120000_urgencia_e_
-// passagem_da_ia.sql; o contrato da frente de banco, ag6/contrato.md, secao
+// O CONTRATO da passagem e da atribuicao da AG6a (migration
+// 20261029120000_urgencia_e_passagem_da_ia.sql; o contrato da frente de
+// banco, ag6/contrato.md, REVISAO R1 de 28/10/2026, que substituiu a secao
 // 2) em memoria, para os testes do executor:
-//  - passar_conversa_da_ia_para_equipe(p_job_id, p_worker, p_motivo,
-//    p_atribuir default false): as recusas na ORDEM (22023 motivo_invalido;
-//    sem_posse; job_antigo; ja_fora_da_ia), a passagem ("Aguardando você", o
-//    evento do motivo);
-//  - a URGENCIA: a marca em conversa_urgente (upsert por conversa, reabre a
-//    encerrada), NUNCA atribui, com ou sem p_atribuir;
-//  - a ATRIBUICAO (D-15 e D-55): so com p_atribuir verdadeiro, fora de
-//    urgencia e fora_do_horario, com a ULTIMA versao publicada da clinica
-//    com escalation_rules.passagem_para = 'responsavel_do_lead' e o
-//    owner_user_id do contato membro ATIVO da clinica com papel admin,
-//    gestor, recepcao ou profissional; o update so de "Aguardando você" sem
-//    responsavel (nunca rouba) e o evento "A conversa ficou com {nome},
-//    responsável pelo lead.";
-//  - devolve SEMPRE {passou, codigo, urgente, atribuida}.
+//  - passar_conversa_da_ia_para_equipe(p_job_id, p_worker, p_motivo), a
+//    assinatura de sempre (R1.1; chamar com p_atribuir da PGRST202): as
+//    recusas na ORDEM (22023 motivo_invalido; sem_posse; job_antigo;
+//    ja_fora_da_ia), a passagem ("Aguardando você", o evento do motivo) e,
+//    na URGENCIA, a marca em conversa_urgente (upsert por conversa, reabre a
+//    encerrada). NUNCA atribui. Devolve SEMPRE {passou, codigo, urgente};
+//  - atribuir_conversa_passada_pela_ia(p_job_id, p_worker) (R1.2), que o
+//    motor chama DEPOIS da frase: as recusas na ORDEM (sem_posse; job_antigo;
+//    sem_passagem, pela ULTIMA decisao do job; motivo_nao_atribui;
+//    fora_da_fila; com_responsavel; urgente, pela marca aberta; regra_fila,
+//    pela ULTIMA versao publicada; sem_responsavel; responsavel_inapto) e a
+//    atribuicao (D-15 e D-55): o update so de "Aguardando você" sem
+//    responsavel (nunca rouba; sem achar, fora_da_fila) e o evento "A
+//    conversa ficou com {nome}, responsável pelo lead.". Devolve SEMPRE
+//    {atribuida, codigo}.
 // A RPC de verdade e provada nas suites de integracao, de concorrencia e de
 // RLS, pela frente de banco.
 
@@ -47,6 +49,25 @@ export const MOTIVOS_QUE_NUNCA_ATRIBUEM_NO_BANCO = [
 /** O valor de escalation_rules.passagem_para que liga a atribuicao. */
 export const REGRA_DO_RESPONSAVEL = "responsavel_do_lead";
 
+/** Os desfechos da decisao que passam a conversa (R1.2, recusa 4). */
+export const DESFECHOS_QUE_PASSAM = ["escalou", "bloqueou", "falhou"] as const;
+
+/** Os codigos da atribuicao (R1.2), na ordem das recusas do banco. */
+export const CODIGOS_DA_ATRIBUICAO_NO_BANCO = [
+  "atribuida",
+  "sem_posse",
+  "job_antigo",
+  "sem_passagem",
+  "motivo_nao_atribui",
+  "fora_da_fila",
+  "com_responsavel",
+  "urgente",
+  "regra_fila",
+  "sem_responsavel",
+  "responsavel_inapto",
+  "erro",
+] as const;
+
 export type OpcoesDaPassagemDaAg6 = {
   /** A conversa da clinica que o job passa (o payload do job). */
   conversationId: string;
@@ -57,13 +78,23 @@ export type OpcoesDaPassagemDaAg6 = {
   jobAntigo?: () => boolean;
   /** Um erro forcado do banco (error.code), antes de tudo. */
   erro?: () => string | null;
+  /** Um erro HTTP forcado na ATRIBUICAO (error.code, como PGRST202). */
+  erroDaAtribuicao?: () => string | null;
   /**
-   * Roda entre a passagem e a atribuicao (a corrida: alguem assume no mesmo
-   * instante). Nunca na urgencia.
+   * Roda na atribuicao, depois das conferencias e antes do update
+   * condicional (a corrida: alguem assume no mesmo instante; nunca rouba).
    */
   noMeio?: () => void;
   /** Cada passagem respondida (para conferir o que o banco fez). */
   respostas?: Record<string, unknown>[];
+  /** Cada atribuicao respondida. */
+  atribuicoes?: Record<string, unknown>[];
+  /**
+   * A ordem do que aconteceu, para provar a frase ANTES da atribuicao: a
+   * passagem grava "passagem", a atribuicao "atribuicao:{codigo}" (quem
+   * testa grava a frase no mesmo vetor).
+   */
+  ordem?: string[];
 };
 
 /** A ultima versao publicada da clinica (a maior version). */
@@ -116,13 +147,8 @@ export function responsavelElegivel(
     );
 }
 
-function resposta(
-  passou: boolean,
-  codigo: string,
-  urgente = false,
-  atribuida = false,
-): Resposta {
-  return { data: { passou, codigo, urgente, atribuida }, error: null };
+function resposta(passou: boolean, codigo: string, urgente = false): Resposta {
+  return { data: { passou, codigo, urgente }, error: null };
 }
 
 function evento(
@@ -147,12 +173,38 @@ function evento(
   });
 }
 
-/** Registra a passagem da AG6a no banco em memoria. */
+/** A conversa do job (a do payload, da clinica do job), ou undefined. */
+function conversaDoJob(
+  banco: BancoEmMemoria,
+  opcoes: OpcoesDaPassagemDaAg6,
+): Linha | undefined {
+  return banco
+    .linhas("conversation")
+    .find(
+      (c) => c.id === opcoes.conversationId && c.clinic_id === opcoes.clinicId,
+    );
+}
+
+/** Os parametros da passagem de sempre (R1.1). */
+const PARAMETROS_DA_PASSAGEM: ReadonlySet<string> = new Set([
+  "p_job_id",
+  "p_worker",
+  "p_motivo",
+]);
+
+/** Registra a passagem da AG6a (R1.1, a assinatura de sempre) em memoria. */
 export function rpcDaPassagemDaAg6(
   banco: BancoEmMemoria,
   opcoes: OpcoesDaPassagemDaAg6,
 ): void {
   banco.rpc("passar_conversa_da_ia_para_equipe", (args) => {
+    // R1.1: nao existe p_atribuir (a funcao com ele nao existe: PGRST202).
+    if (Object.keys(args).some((chave) => !PARAMETROS_DA_PASSAGEM.has(chave))) {
+      return {
+        data: null,
+        error: { code: "PGRST202", message: "funcao nao encontrada" },
+      };
+    }
     const forcado = opcoes.erro?.() ?? null;
     if (forcado !== null) {
       return { data: null, error: { code: forcado } };
@@ -170,12 +222,7 @@ export function rpcDaPassagemDaAg6(
     if (opcoes.jobAntigo?.() === true) {
       return resposta(false, "job_antigo");
     }
-    const conversa = banco
-      .linhas("conversation")
-      .find(
-        (c) =>
-          c.id === opcoes.conversationId && c.clinic_id === opcoes.clinicId,
-      );
+    const conversa = conversaDoJob(banco, opcoes);
     if (conversa === undefined || conversa.status !== "ia_atendendo") {
       return resposta(false, "ja_fora_da_ia");
     }
@@ -184,7 +231,6 @@ export function rpcDaPassagemDaAg6(
     evento(banco, opcoes, TEXTO_DO_EVENTO_DA_IA[motivo]);
 
     let urgente = false;
-    let atribuida = false;
     if (motivo === "urgencia") {
       const marcas = banco.linhas("conversa_urgente");
       const marca = marcas.find(
@@ -205,46 +251,148 @@ export function rpcDaPassagemDaAg6(
         Object.assign(marca, nova);
       }
       urgente = true;
-    } else if (
-      args.p_atribuir === true &&
-      !(MOTIVOS_QUE_NUNCA_ATRIBUEM_NO_BANCO as readonly string[]).includes(
-        motivo,
-      ) &&
-      regraDaUltimaPublicada(banco, opcoes.clinicId) === REGRA_DO_RESPONSAVEL
-    ) {
-      const contato = banco
-        .linhas("contact")
-        .find(
-          (k) =>
-            k.id === conversa.contact_id && k.clinic_id === opcoes.clinicId,
-        );
-      const responsavel = contato?.owner_user_id as string | null | undefined;
-      if (responsavelElegivel(banco, opcoes.clinicId, responsavel)) {
-        opcoes.noMeio?.();
-        // Nunca rouba: so de "Aguardando você" sem responsavel.
-        if (
-          conversa.status === "aguardando_humano" &&
-          (conversa.assignee_user_id ?? null) === null
-        ) {
-          conversa.status = "em_atendimento";
-          conversa.assignee_user_id = responsavel;
-          const perfil = banco
-            .linhas("profile")
-            .find((p) => p.user_id === responsavel);
-          evento(
-            banco,
-            opcoes,
-            textoDaAtribuicaoDaIa(
-              typeof perfil?.name === "string" ? perfil.name : null,
-            ),
-          );
-          atribuida = true;
-        }
-      }
     }
-    const feita = { passou: true, codigo: "passou", urgente, atribuida };
+    const feita = { passou: true, codigo: "passou", urgente };
     opcoes.respostas?.push(feita);
+    opcoes.ordem?.push("passagem");
     return { data: feita, error: null };
+  });
+}
+
+/** A marca de urgencia ABERTA da conversa (encerrada_em nulo). */
+function temMarcaAberta(
+  banco: BancoEmMemoria,
+  conversationId: string,
+): boolean {
+  return banco
+    .linhas("conversa_urgente")
+    .some(
+      (m) =>
+        m.conversation_id === conversationId &&
+        (m.encerrada_em ?? null) === null,
+    );
+}
+
+/**
+ * A ULTIMA decisao do job (R1.2, recusa 4): a mais recente de
+ * ai_decision_log com o job, a conversa e a clinica (a ordem de insercao, no
+ * banco em memoria).
+ */
+export function ultimaDecisaoDoJob(
+  banco: BancoEmMemoria,
+  opcoes: OpcoesDaPassagemDaAg6,
+  jobId: unknown,
+): Linha | null {
+  const doJob = banco
+    .linhas("ai_decision_log")
+    .filter(
+      (d) =>
+        d.job_id === jobId &&
+        d.clinic_id === opcoes.clinicId &&
+        d.conversation_id === opcoes.conversationId,
+    );
+  return doJob[doJob.length - 1] ?? null;
+}
+
+/** Registra a atribuicao da AG6a (R1.2) em memoria. */
+export function rpcDaAtribuicaoDaAg6(
+  banco: BancoEmMemoria,
+  opcoes: OpcoesDaPassagemDaAg6,
+): void {
+  banco.rpc("atribuir_conversa_passada_pela_ia", (args) => {
+    const forcado = opcoes.erroDaAtribuicao?.() ?? null;
+    if (forcado !== null) {
+      return { data: null, error: { code: forcado } };
+    }
+    const devolver = (
+      codigo: (typeof CODIGOS_DA_ATRIBUICAO_NO_BANCO)[number],
+    ) => {
+      const feita = { atribuida: codigo === "atribuida", codigo };
+      opcoes.atribuicoes?.push(feita);
+      opcoes.ordem?.push(`atribuicao:${codigo}`);
+      return { data: feita, error: null };
+    };
+    // 1. A posse e a conversa do job.
+    const conversa = conversaDoJob(banco, opcoes);
+    if (
+      (opcoes.posse !== undefined && !opcoes.posse()) ||
+      conversa === undefined
+    ) {
+      return devolver("sem_posse");
+    }
+    // 3. D-A.
+    if (opcoes.jobAntigo?.() === true) {
+      return devolver("job_antigo");
+    }
+    // 4 e 5. A ultima decisao do job passou a conversa, e por motivo que
+    // atribui.
+    const decisao = ultimaDecisaoDoJob(banco, opcoes, args.p_job_id);
+    if (
+      decisao === null ||
+      !(DESFECHOS_QUE_PASSAM as readonly unknown[]).includes(
+        decisao.desfecho,
+      ) ||
+      typeof decisao.escalation_reason !== "string"
+    ) {
+      return devolver("sem_passagem");
+    }
+    if (
+      (MOTIVOS_QUE_NUNCA_ATRIBUEM_NO_BANCO as readonly string[]).includes(
+        decisao.escalation_reason,
+      )
+    ) {
+      return devolver("motivo_nao_atribui");
+    }
+    // 6 a 8. A conversa na fila, sem responsavel e sem a marca aberta.
+    if (conversa.status !== "aguardando_humano") {
+      return devolver("fora_da_fila");
+    }
+    if ((conversa.assignee_user_id ?? null) !== null) {
+      return devolver("com_responsavel");
+    }
+    if (temMarcaAberta(banco, opcoes.conversationId)) {
+      return devolver("urgente");
+    }
+    // 9. A regra da ULTIMA versao publicada.
+    if (
+      regraDaUltimaPublicada(banco, opcoes.clinicId) !== REGRA_DO_RESPONSAVEL
+    ) {
+      return devolver("regra_fila");
+    }
+    // 10 e 11. O responsavel do lead, apto.
+    const contato = banco
+      .linhas("contact")
+      .find(
+        (k) => k.id === conversa.contact_id && k.clinic_id === opcoes.clinicId,
+      );
+    const responsavel = contato?.owner_user_id as string | null | undefined;
+    if (typeof responsavel !== "string") {
+      return devolver("sem_responsavel");
+    }
+    if (!responsavelElegivel(banco, opcoes.clinicId, responsavel)) {
+      return devolver("responsavel_inapto");
+    }
+    opcoes.noMeio?.();
+    // O update condicional: nunca rouba (sem achar a linha, fora_da_fila).
+    if (
+      conversa.status !== "aguardando_humano" ||
+      (conversa.assignee_user_id ?? null) !== null
+    ) {
+      return devolver("fora_da_fila");
+    }
+    conversa.status = "em_atendimento";
+    conversa.assignee_user_id = responsavel;
+    const perfil = banco
+      .linhas("profile")
+      .find((p) => p.user_id === responsavel);
+    evento(
+      banco,
+      opcoes,
+      textoDaAtribuicaoDaIa(
+        typeof perfil?.name === "string" ? perfil.name : null,
+      ),
+    );
+    return devolver("atribuida");
   });
 }
 
@@ -296,7 +444,8 @@ export const PARA_O_RESPONSAVEL = {
  * O banco do cenario: a conversa na IA com UMA mensagem pendente do
  * paciente (`texto`), o contato com o responsavel Ana (membro ativo,
  * recepcao, com perfil) e a ultima versao publicada com a regra
- * (`passagemPara`). As RPCs de trava, consentimento, gasto e evento.
+ * (`passagemPara`). As RPCs de trava, consentimento, gasto e evento, a
+ * passagem (R1.1) e a atribuicao (R1.2).
  */
 export function bancoDaAg6(
   banco: BancoEmMemoria,
@@ -309,6 +458,10 @@ export function bancoDaAg6(
       reservas: (string | null)[];
       eventos: string[];
       respostas: Record<string, unknown>[];
+      /** As atribuicoes respondidas (R1.2). */
+      atribuicoes?: Record<string, unknown>[];
+      /** A ordem: "passagem", "frase" (quem testa) e "atribuicao:{codigo}". */
+      ordem?: string[];
     };
   },
 ): void {
@@ -400,11 +553,15 @@ export function bancoDaAg6(
     e.estado.eventos.push(String(args.p_motivo));
     return { data: true, error: null };
   });
-  rpcDaPassagemDaAg6(banco, {
+  const opcoes: OpcoesDaPassagemDaAg6 = {
     conversationId: CONVERSA,
     clinicId: CLINICA,
     respostas: e.estado.respostas,
-  });
+    atribuicoes: e.estado.atribuicoes,
+    ordem: e.estado.ordem,
+  };
+  rpcDaPassagemDaAg6(banco, opcoes);
+  rpcDaAtribuicaoDaAg6(banco, opcoes);
 }
 
 /** A conversa do cenario. */

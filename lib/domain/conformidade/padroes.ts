@@ -646,6 +646,26 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
     // do Hospital X" e "a Dra. Ana esta no plantao" sao recepcao.
     "\\b(?:pronto[ -]?socorro|pronto[ -]?atendimento|upa\\b|emergencia|samu\\b|(?<![\\d.,$])192\\b(?![.,]\\d)|ambulancia)|\\b(?:na|pra|para a|numa|caso de|sala de|servico de|atendimento de|ir a|va a|vai a|corra a|corre a|liga pra|ligue para a|procure a|procura a) urgencia\\b|\\b(?:ao|pro|para o|pra o|num|para um|pra um|a um|ir no|va no|vai no|corre no|corra no) (?:hospital|posto de saude|plantao|ps)\\b(?!:)",
   ),
+  // [AG6 urgência] início
+  // AG6a (revisao de 28/10/2026, caso AG6-S11): o CVV e o 188 escritos pela
+  // IA, como o SAMU e o 192 acima. Mandar a pessoa a um servico de
+  // emergencia ou de crise e decidir pelo que ela contou (teletriagem, CFM
+  // 2.314/2022): so o SISTEMA manda o aviso aprovado pelo RT (AG6c, D-63),
+  // nunca a IA. O CVV em qualquer lugar (o "CVV do cartao" tambem barra: a
+  // IA nunca pede dado de cartao). O 188 so com quem liga, disca, telefona,
+  // contata ou aciona antes, na mesma frase ("ligue para o 188", "disque
+  // 188", "pode ligar, o numero e 188"): sozinho ele e numero de endereco
+  // ("Rua das Flores, n 188", que o Cadastro manda ao agente) ou preco ("R$
+  // 188"), e o ramal e a sala nao contam. O 188 e o 192 por extenso ("cento
+  // e oitenta e oito", "um nove dois") tambem barram, e o mandar procurar
+  // ajuda profissional, especializada ou psicologica (na recepcao, "procure
+  // a recepcao" e "se precisar de ajuda, e so chamar" passam).
+  p(
+    "triagem",
+    "servico_de_emergencia",
+    "\\bcvv\\b|\\bcentro de valorizacao da vida\\b|\\b(?:ligue|ligar|liga|ligando|ligacao|disque|discar|disca|discando|telefone para|telefonar|telefona|contate|contatar|acione|acionar)\\b(?:,? [a-z]+){0,4}? (?<!\\b(?:ramal|sala|apartamento|apto|bloco|loja) )188\\b(?![.,]\\d)|\\b(?:(?:um )?cento e (?:oitenta e oito|noventa e dois)|um oito oito|um nove dois)\\b|\\b(?:procure|procura|procurar|busque|busca|buscar) (?:uma )?ajuda (?:profissional|especializada|psicologica|imediata|urgente|de emergencia)\\b",
+  ),
+  // [AG6 urgência] fim
   p(
     "triagem",
     "procure_medico",
@@ -839,6 +859,38 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
     "cuidados_do_procedimento",
     "\\bcuidados? (?:pos|pre|antes|depois|apos|com a pele|com o local|com a regiao|especiais)",
   ),
+  // [AG6 urgência] início
+  // AG6a (revisao de 28/10/2026, caso AG6-S12): a conduta com o corpo e os
+  // primeiros socorros. A IA nunca diz o que fazer com o corpo, nem para
+  // acalmar (orientar e ato medico, CFM 2.314/2022): respirar de um jeito
+  // ("calma, respira"), ficar sentada ou deitada (ou deixar a pessoa
+  // assim), levantar as pernas, a posicao de seguranca, pressionar o
+  // ferimento, afrouxar a roupa, nao se mexer, nao ficar sozinha. So o
+  // imperativo (ou "tente", "procure", "continue") COM o complemento que
+  // faz a instrucao; o "fica" de quem descreve ("voce fica sentada a maior
+  // parte da consulta") nao entra. Por isso passam "respire aliviada, sua
+  // consulta esta confirmada", "fique tranquila, a equipe ja vai te
+  // responder", "fique a vontade", "fique de olho nas mensagens", "pode
+  // ficar sentada na recepcao", "fique sentada na sala de espera", "venha
+  // acompanhada" e "antes que a reserva expire". O gelo, a compressa e a
+  // agua (cuidado_citado, aplicar_algo, beber_liquido) e o remedio
+  // (medicamento) ja eram barrados.
+  p(
+    "orientacao_clinica",
+    "respiracao_guiada",
+    "\\b(?:respire|respira|respirar|respirem|respirando|inspire|inspira|inspirar|expire|expira|expirar|puxe o ar|puxa o ar|solte o ar|solta o ar)\\b(?: [a-z]+){0,2}? (?:fundo|fundinho|devagar|devagarinho|calmamente|com calma|lentamente|profundamente|pausadamente|profundo|hondo|despacio|pelo nariz|pela boca|num saco|em um saco|dentro de um saco|contando ate)\\b|\\b(?:tente|tenta|procure|procura|continue|continua) respirar\\b|\\brespiracao (?:profunda|lenta|controlada|pausada|diafragmatica|quadrada)\\b|\\bexercicios? (?:de|da) respiracao\\b|\\b(?:prenda|prende|segure|segura) (?:a respiracao|o folego)\\b|\\bcalma,? (?:e )?(?:respire|respira)\\b|\\b(?:take a deep breath|breathe (?:slowly|deeply|in|out))\\b",
+  ),
+  p(
+    "orientacao_clinica",
+    "postura_do_corpo",
+    "\\b(?:fique|fiquem|permaneca|permanecam|continue|continuem|mantenha-?se|se mantenha|procure ficar|tente ficar|quedese)\\b(?: [a-z]+){0,2}? (?:sentad(?:inh)?[oa]s?|deitad(?:inh)?[oa]s?|acostad[oa]s?|recostad[oa]s?|reclinad[oa]s?|de lado|de barriga (?:para|pra) (?:cima|baixo)|de costas|imove(?:l|is)|com (?:as pernas|os pes|a cabeca) (?:para|pra) (?:cima|baixo)|com (?:as pernas|os pes) (?:elevad[oa]s|levantad[oa]s|no alto))\\b(?! (?:na|no) (?:recepcao|sala de espera|area de espera|sofa da recepcao)\\b)|\\b(?:deite|deita|deitem|sente|senta|sentem)-?se\\b(?! a vontade)|\\bdeite\\b|\\b(?:deita|senta) (?:ai|ali|aqui|um pouco|um pouquinho|de lado|no chao)\\b|\\b(?:deixe|deixa|mantenha|coloque|coloca|ponha|poe)\\b (?:a pessoa|ela|ele|o paciente|a paciente|a crianca|sua mae|seu pai|seu filho|sua filha)(?: [a-z]+){0,2}? (?:sentad|deitad|recostad|reclinad|de lado\\b|de barriga\\b|de costas\\b)|\\b(?:levante|levanta|eleve|eleva|erga|ergue)\\b (?:as |suas |os |seus )(?:pernas|pes)\\b|\\b(?:pernas|pes) (?:para|pra) (?:cima|o alto)\\b|\\bcabeca entre (?:os|as) (?:joelhos|pernas)\\b|\\bposicao (?:lateral|de seguranca|de recuperacao)\\b|\\bvir(?:e|a) (?:a pessoa|ela|ele|o paciente|a paciente|a crianca|o corpo)(?: [a-z]+)? de lado\\b|\\bnao se (?:levante|levanta|mexa|mexe|movimente|movimenta|mova)\\b|\\b(?:sit down|lie down|stay (?:seated|lying down)|sientese|acuestese)\\b",
+  ),
+  p(
+    "orientacao_clinica",
+    "primeiros_socorros",
+    "\\b(?:pressione|pressiona|pressionar|comprima|comprime|comprimir|faca pressao|faz pressao|fazer pressao|mantenha pressao|mantenha a pressao)\\b(?: [a-z]+){0,3}? (?:local|ferida|ferimento|corte|machucado|sangramento|regiao|pano|gaze|toalha|algodao|curativo|peito|torax)\\b|\\b(?:estanque|estanca|estancar) (?:o )?sang\\w*|\\b(?:torniquete|garrote)\\b|\\b(?:massagem cardiaca|compressoes (?:no peito|toracicas)|reanimacao|ressuscitacao|respiracao boca a boca|manobra de heimlich|heimlich)\\b|\\b(?:afrouxe|afrouxa|afrouxar|desabotoe|desabotoa|desaperte|desaperta)\\b(?: [a-z]+){0,2}? (?:roupa|roupas|cinto|gravata|colarinho|sutia|blusa|camisa)\\b|\\b(?:coloque|coloca|ponha|poe|use|usa|aplique|aplica|passe|passa)\\b(?: [a-z]+){0,3}? (?:bolsa (?:de agua quente|termica|quente)|agua quente|pano (?:umido|molhado|frio|gelado|quente))\\b|\\blav(?:e|a|ar)\\b(?: [a-z]+){0,2}? com (?:agua|soro|sabao|sabonete)\\b|\\bnao fique sozinh[oa]s?\\b(?! (?:nessa|nisso|com essa|com isso)\\b)|\\b(?:fique|fica) (?:perto|junto) de alguem\\b|\\b(?:peca|pede|chame|chama) (?:para |pra )?alguem (?:para |pra )?ficar (?:com voce|com a senhora|com o senhor|perto)\\b",
+  ),
+  // [AG6 urgência] fim
   // en
   p(
     "orientacao_clinica",
@@ -860,6 +912,16 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
     "liberar_tomar",
     "\\b(?:pode|podera|deve|devera|precisa|tem que|e so|basta)\\b (?:\\w+ )?(?:tomar|ingerir)\\b",
   ),
+  // [AG6 urgência] início
+  // AG6a (revisao de 28/10/2026): "tome alguma coisa para aliviar", "tome
+  // algo pra dormir": o remedio sem o nome ("tome um antialergico" ja barra
+  // pelo nome da classe, classe_de_remedio).
+  p(
+    "medicamento",
+    "tomar_algo_para",
+    "\\b(?:tome|toma|tomar)\\b (?:alguma coisa|algo)\\b(?: [a-z]+){0,2}? (?:para|pra) (?:aliviar|melhorar|passar|baixar|acalmar|dormir|relaxar|a dor|a febre|a alergia|o enjoo)\\b",
+  ),
+  // [AG6 urgência] fim
   p(
     "medicamento",
     "tomar_en_es",
@@ -1326,6 +1388,30 @@ export const NEUTRALIZACOES_DE_SAIDA: readonly Neutralizacao[] = [
       "(?<=\\b(?:lado|frente|perto|proxim[oa]|vizinh[oa]|esquina|em cima|embaixo|atras|junto|colad[oa]|depois|antes|rua|predio|galeria|quadra|referencia:?(?: e)?) (?:d[aoe]s? |a |ao |as )?(?:uma |um )?)farmacias?\\b",
     troca: "loja",
   },
+  // [AG6 urgência] início
+  {
+    // AG6a (revisao de 28/10/2026, decisao desta frente): o servico de saude
+    // citado como REFERENCIA DE ENDERECO nao e instrucao, como a farmacia:
+    // "a clinica fica perto da UPA", "em frente ao Pronto-Socorro
+    // Municipal", "ao lado da base do SAMU", "proximo ao Hospital Sao
+    // Jose". E o ponto de referencia da unidade que o Cadastro manda ao
+    // agente (cadastro-do-agente.ts confere com estas regras e descartava o
+    // ponto de referencia perto de uma UPA ou "proximo ao hospital"). So
+    // DEPOIS da palavra de lugar ("perto", "ao lado", "em frente", "atras",
+    // "esquina", "proximo") e sem verbo de ir na mesma oracao: "va a UPA",
+    // "procure a UPA mais perto", "a UPA mais proxima fica ao lado", "va
+    // ate a frente da UPA", "siga para perto do pronto-socorro", "ligue
+    // para o SAMU" e o 192 continuam barrados (pronto_socorro). A
+    // "emergencia" fica de fora de proposito (o lado conservador): "perto
+    // da emergencia" continua barrado; a referencia diz o hospital. Na
+    // mensagem do paciente com sintoma, nada passa (CONTEXTO_CLINICO); e a
+    // urgencia passa a conversa antes do modelo.
+    nome: "servico_de_saude_de_referencia",
+    fonte:
+      "(?<!\\b(?:va|vai|ir|ida|corra|corre|correr|siga|segue|seguir|dirija|dirija-se|dirigir|procure|procura|procurar|busque|buscar|leve|leva|levar|encaminhe|encaminhar)\\b[^.!?;,]{0,30})(?<=\\b(?:lado|frente|perto|proxim[oa]s?|vizinh[oa]s?|esquina|em cima|embaixo|atras|junto|colad[oa]s?|depois|antes|rua|predio|galeria|quadra|referencia:?(?: e)?) (?:d[aoe]s? |a |ao |as )?(?:uma |um |base d[oa] |entrada d[oa] )?)(?:upa|pronto[ -]?socorro|pronto[ -]?atendimento|samu|hospital|posto de saude)\\b",
+    troca: "loja",
+  },
+  // [AG6 urgência] fim
   {
     // "Pra cancelar sem custo pedimos aviso", "pode remarcar sim, sem
     // custo": politica da fase controlada.

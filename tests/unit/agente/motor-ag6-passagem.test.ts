@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import type { ClienteDoAgente, ResultadoDoTurno } from "@/lib/agente/laco";
-import { passarParaAEquipe } from "@/lib/agente/whatsapp";
+import {
+  atribuirConversaPassadaPelaIa,
+  CODIGOS_DA_ATRIBUICAO,
+  passarParaAEquipe,
+} from "@/lib/agente/whatsapp";
 import {
   configPadraoDoAgente,
   expedientePadrao,
@@ -14,7 +18,7 @@ import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
 import type { DependenciasDoExecutorDaIa } from "@/lib/jobs/responder-com-ia";
 import type { Job } from "@/lib/jobs/worker";
 
-import { BancoEmMemoria } from "../ia-whatsapp/banco-em-memoria";
+import { BancoEmMemoria, type Resposta } from "../ia-whatsapp/banco-em-memoria";
 import { aprovarParaTeste } from "../ia-whatsapp/texto-aprovado-de-teste";
 import {
   AGORA,
@@ -22,6 +26,7 @@ import {
   bancoDaAg6,
   BIA,
   CLINICA,
+  CODIGOS_DA_ATRIBUICAO_NO_BANCO,
   CONVERSA,
   conversaDoCenario,
   CRIADO,
@@ -36,14 +41,17 @@ import {
 } from "./ag6-contrato";
 
 // AG6a, a ATRIBUICAO ao responsavel do lead (D-15 e D-55, PENDENTES,
-// construidas com a recomendacao): o motor pede (p_atribuir) so na passagem
-// COM a frase (passarEAvisar: o turno que escalou, bloqueou ou falhou, os
-// tetos e a falha sem modelo) e so com a regra "responsavel_do_lead" na
-// versao publicada que ele leu; nunca na urgencia, no fora do horario nem nas
-// passagens sem frase. O banco decide de novo (a ultima publicada, o
-// responsavel ativo com papel que atende, nunca rouba). A retomada le a
-// regra na hora; leitura que falha e a fila. O retorno novo da passagem:
-// {resultado, atribuida, urgente}. Nenhum teste chama a OpenAI.
+// construidas com a recomendacao), na Revisao R1 do contrato do banco (28/10/
+// 2026): a passagem (passar_conversa_da_ia_para_equipe) volta aos tres
+// parametros e NUNCA atribui; a conversa que a IA passou COM a frase vai ao
+// responsavel DEPOIS da tentativa da frase, pela RPC nova
+// atribuir_conversa_passada_pela_ia, porque a guarda do envio
+// (ia_pode_enviar_agora com 'frase') so deixa a frase sair com a conversa em
+// "Aguardando você" sem responsavel. O motor chama so na passagem COM a
+// frase que devolveu "passou" e com a regra "responsavel_do_lead" na versao
+// publicada que ele leu; nunca na urgencia, no fora do horario, nas
+// passagens sem frase nem no "ja_fora_da_ia". O banco decide de novo. Erro
+// da RPC: a fila, so o log com ids e o codigo. Nenhum teste chama a OpenAI.
 
 const estado = vi.hoisted(() => ({
   config: null as unknown,
@@ -72,6 +80,11 @@ const { executarRespostaComIa } = await import("@/lib/jobs/responder-com-ia");
 const PERGUNTA = "Tem desconto se eu pagar à vista?";
 const RESPOSTA = "A consulta custa R$ 150,00.";
 const RESPOSTA_APROVADA = await aprovarParaTeste(RESPOSTA, [15_000]);
+const ATRIBUIR = "atribuir_conversa_passada_pela_ia";
+
+type EnvioDaFrase = Awaited<
+  ReturnType<DependenciasDoExecutorDaIa["enviarFrase"]>
+>;
 
 let banco: BancoEmMemoria;
 let marcas: {
@@ -80,8 +93,12 @@ let marcas: {
   reservas: (string | null)[];
   eventos: string[];
   respostas: Record<string, unknown>[];
+  atribuicoes: Record<string, unknown>[];
+  ordem: string[];
 };
 let logs: string[];
+/** O que cada tentativa da frase devolveu (o espelho da guarda do envio). */
+let frases: EnvioDaFrase[];
 let turno: ReturnType<
   typeof vi.fn<DependenciasDoExecutorDaIa["executarTurno"]>
 >;
@@ -144,8 +161,29 @@ function configPublicada(extra: Partial<ConfigDoAgente> = {}): ConfigDoAgente {
 }
 
 /**
+ * O espelho da guarda do envio da frase (ia_pode_enviar_agora com 'frase',
+ * migration 20261013100000): a frase so sai com a conversa em "Aguardando
+ * você" e SEM responsavel; senao, fora_da_ia e nada sai.
+ */
+function guardaDaFrase(): EnvioDaFrase {
+  const conversa = conversaDoCenario(banco);
+  if (
+    conversa.status !== "aguardando_humano" ||
+    (conversa.assignee_user_id ?? null) !== null
+  ) {
+    return {
+      ok: false,
+      reason: "falha_envio",
+      code: "fora_da_ia",
+      message: "x",
+    };
+  }
+  return { ok: true, messageId: "msg-frase" };
+}
+
+/**
  * O cenario: `motor` e a regra da versao que o executor le; `banco` a da
- * ultima publicada que a passagem confere.
+ * ultima publicada que a atribuicao confere.
  */
 function montar(
   e: {
@@ -155,12 +193,15 @@ function montar(
   } = {},
 ) {
   banco = new BancoEmMemoria();
+  frases = [];
   marcas = {
     podeFalar: [],
     consentimento: true,
     reservas: [],
     eventos: [],
     respostas: [],
+    atribuicoes: [],
+    ordem: [],
   };
   estado.falharALeitura = false;
   estado.leituras = 0;
@@ -176,10 +217,12 @@ function montar(
   turno = vi.fn<DependenciasDoExecutorDaIa["executarTurno"]>(
     async () => resultado,
   );
-  enviarFrase = vi.fn<DependenciasDoExecutorDaIa["enviarFrase"]>(async () => ({
-    ok: true,
-    messageId: "msg-frase",
-  }));
+  enviarFrase = vi.fn<DependenciasDoExecutorDaIa["enviarFrase"]>(async () => {
+    marcas.ordem.push("frase");
+    const saida = guardaDaFrase();
+    frases.push(saida);
+    return saida;
+  });
   enviarResposta = vi.fn<DependenciasDoExecutorDaIa["enviarResposta"]>(
     async () => ({ ok: true, messageId: "msg-1" }),
   );
@@ -239,6 +282,10 @@ function passagens() {
   return banco.chamadasDe("passar_conversa_da_ia_para_equipe");
 }
 
+function atribuicoes() {
+  return banco.chamadasDe(ATRIBUIR);
+}
+
 const EVENTO_DA_ANA = "A conversa ficou com Ana Lima, responsável pelo lead.";
 
 beforeEach(() => {
@@ -258,9 +305,10 @@ afterEach(() => {
   expect(tudo).not.toContain(TELEFONE);
   expect(tudo).not.toContain(NOME_DO_CONTATO);
   expect(tudo).not.toContain("Ana Lima");
+  expect(tudo).not.toContain(ANA);
 });
 
-describe("passarParaAEquipe: o pedido e o retorno novo", () => {
+describe("passarParaAEquipe: a passagem de sempre (Revisão R1.1)", () => {
   function bancoQueResponde(data: unknown, erro: string | null = null) {
     const b = new BancoEmMemoria();
     b.rpc("passar_conversa_da_ia_para_equipe", () => ({
@@ -271,138 +319,179 @@ describe("passarParaAEquipe: o pedido e o retorno novo", () => {
   }
   const BASE = { clinicId: CLINICA, jobId: JOB, workerId: EXECUTOR };
 
-  it("sem pedir: os três parâmetros de antes; a resposta de antes da migration lê os dois falsos", async () => {
+  it("sempre os três parâmetros; a resposta sem a chave urgente lê falso", async () => {
     const b = bancoQueResponde({ passou: true, codigo: "passou" });
     expect(
       await passarParaAEquipe(b.cliente(), {
         ...BASE,
         motivo: "valor_fora_da_tabela",
       }),
-    ).toEqual({ resultado: "passou", atribuida: false, urgente: false });
+    ).toEqual({ resultado: "passou", urgente: false });
     expect(b.chamadasDe("passar_conversa_da_ia_para_equipe")).toEqual([
       { p_job_id: JOB, p_worker: EXECUTOR, p_motivo: "valor_fora_da_tabela" },
     ]);
   });
 
-  it("pedindo: p_atribuir e o que o banco fez", async () => {
+  it("a urgência: o que o banco marcou, com o log só com códigos", async () => {
     const b = bancoQueResponde({
       passou: true,
       codigo: "passou",
-      urgente: false,
-      atribuida: true,
+      urgente: true,
     });
     expect(
-      await passarParaAEquipe(b.cliente(), {
-        ...BASE,
-        motivo: "valor_fora_da_tabela",
-        atribuir: true,
-      }),
-    ).toEqual({ resultado: "passou", atribuida: true, urgente: false });
+      await passarParaAEquipe(b.cliente(), { ...BASE, motivo: "urgencia" }),
+    ).toEqual({ resultado: "passou", urgente: true });
     expect(b.chamadasDe("passar_conversa_da_ia_para_equipe")).toEqual([
-      {
-        p_job_id: JOB,
-        p_worker: EXECUTOR,
-        p_motivo: "valor_fora_da_tabela",
-        p_atribuir: true,
-      },
+      { p_job_id: JOB, p_worker: EXECUTOR, p_motivo: "urgencia" },
     ]);
-    expect(logs.join("")).toContain('"kind":"atribuida"');
+    expect(logs.join("")).toContain('"kind":"urgente"');
   });
 
-  it.each(["urgencia", "fora_do_horario"] as const)(
-    "%s nunca leva p_atribuir, mesmo pedido",
-    async (motivo) => {
-      const b = bancoQueResponde({
-        passou: true,
-        codigo: "passou",
-        urgente: motivo === "urgencia",
-        atribuida: false,
-      });
-      expect(
-        await passarParaAEquipe(b.cliente(), {
-          ...BASE,
-          motivo,
-          atribuir: true,
-        }),
-      ).toEqual({
-        resultado: "passou",
-        atribuida: false,
-        urgente: motivo === "urgencia",
-      });
-      expect(b.chamadasDe("passar_conversa_da_ia_para_equipe")).toEqual([
-        { p_job_id: JOB, p_worker: EXECUTOR, p_motivo: motivo },
-      ]);
-    },
-  );
-
   it.each([
+    [{ passou: false, codigo: "sem_posse", urgente: false }, "sem_posse"],
+    [{ passou: false, codigo: "job_antigo", urgente: false }, "job_antigo"],
     [
-      { passou: false, codigo: "sem_posse", urgente: false, atribuida: false },
-      "sem_posse",
-    ],
-    [
-      { passou: false, codigo: "job_antigo", urgente: false, atribuida: false },
-      "job_antigo",
-    ],
-    [
-      {
-        passou: false,
-        codigo: "ja_fora_da_ia",
-        urgente: false,
-        atribuida: false,
-      },
+      { passou: false, codigo: "ja_fora_da_ia", urgente: false },
       "ja_fora_da_ia",
     ],
     [null, "ja_fora_da_ia"],
-  ] as const)(
-    "recusa %j: %s, sem marca nem atribuição",
-    async (data, resultado) => {
-      const b = bancoQueResponde(data);
-      expect(
-        await passarParaAEquipe(b.cliente(), {
-          ...BASE,
-          motivo: "sintoma",
-          atribuir: true,
-        }),
-      ).toEqual({ resultado, atribuida: false, urgente: false });
-    },
-  );
+  ] as const)("recusa %j: %s, sem marca", async (data, resultado) => {
+    const b = bancoQueResponde(data);
+    expect(
+      await passarParaAEquipe(b.cliente(), { ...BASE, motivo: "sintoma" }),
+    ).toEqual({ resultado, urgente: false });
+  });
 
   it("erro do banco e exceção: erro (o job tenta de novo)", async () => {
     const b = bancoQueResponde(null, "PGRST202");
     expect(
       await passarParaAEquipe(b.cliente(), { ...BASE, motivo: "sintoma" }),
-    ).toEqual({ resultado: "erro", atribuida: false, urgente: false });
+    ).toEqual({ resultado: "erro", urgente: false });
     const lanca = new BancoEmMemoria();
     lanca.rpc("passar_conversa_da_ia_para_equipe", () => {
       throw new Error("rede");
     });
     expect(
       await passarParaAEquipe(lanca.cliente(), { ...BASE, motivo: "sintoma" }),
-    ).toEqual({ resultado: "erro", atribuida: false, urgente: false });
-  });
-
-  it("o banco atribuiu sem o pedido (nunca deveria): fica o aviso no log, só com códigos", async () => {
-    const b = bancoQueResponde({
-      passou: true,
-      codigo: "passou",
-      urgente: false,
-      atribuida: true,
-    });
-    expect(
-      await passarParaAEquipe(b.cliente(), { ...BASE, motivo: "sintoma" }),
-    ).toEqual({ resultado: "passou", atribuida: true, urgente: false });
-    expect(logs.join("")).toContain("ia_passagem_incoerente");
+    ).toEqual({ resultado: "erro", urgente: false });
   });
 });
 
-describe("AG6a: a passagem COM a frase pede a atribuição só com a regra ligada", () => {
-  it("fila (o padrão): os três parâmetros de antes e a conversa na fila", async () => {
+describe("atribuirConversaPassadaPelaIa: a RPC nova (Revisão R1.2)", () => {
+  const BASE = {
+    clinicId: CLINICA,
+    conversationId: CONVERSA,
+    jobId: JOB,
+    workerId: EXECUTOR,
+  };
+
+  function bancoQueResponde(responder: () => unknown) {
+    const b = new BancoEmMemoria();
+    b.rpc(ATRIBUIR, () => responder() as { data: unknown; error: null });
+    return b;
+  }
+
+  it("os códigos do motor são os do contrato do banco, na mesma ordem", () => {
+    expect([...CODIGOS_DA_ATRIBUICAO]).toEqual([
+      ...CODIGOS_DA_ATRIBUICAO_NO_BANCO,
+    ]);
+  });
+
+  it("chama só com o job e o executor (nada da conversa nem do paciente)", async () => {
+    const b = bancoQueResponde(() => ({
+      data: { atribuida: true, codigo: "atribuida" },
+      error: null,
+    }));
+    expect(await atribuirConversaPassadaPelaIa(b.cliente(), BASE)).toEqual({
+      tipo: "resposta",
+      codigo: "atribuida",
+    });
+    expect(b.chamadasDe(ATRIBUIR)).toEqual([
+      { p_job_id: JOB, p_worker: EXECUTOR },
+    ]);
+    const linha = logs.join("");
+    expect(linha).toContain('"evento":"ia_atribuicao_da_ia"');
+    expect(linha).toContain('"status":"atribuida"');
+    expect(linha).toContain(`"job_id":"${JOB}"`);
+  });
+
+  it.each(CODIGOS_DA_ATRIBUICAO.filter((c) => c !== "atribuida"))(
+    "a recusa %s: a fila, com o código no log",
+    async (codigo) => {
+      const b = bancoQueResponde(() => ({
+        data: { atribuida: false, codigo },
+        error: null,
+      }));
+      expect(await atribuirConversaPassadaPelaIa(b.cliente(), BASE)).toEqual({
+        tipo: "resposta",
+        codigo,
+      });
+      const linha = logs.join("");
+      if (codigo === "erro") {
+        expect(linha).toContain('"nivel":"warn"');
+        expect(linha).toContain('"error_code":"erro"');
+      } else {
+        expect(linha).toContain(`"status":"${codigo}"`);
+      }
+    },
+  );
+
+  it.each(["PGRST202", "42501", "57014"])(
+    "o erro HTTP %s (a função ausente antes da migration, a permissão, o corte): falha, só o código no log",
+    async (codigo) => {
+      const b = new BancoEmMemoria();
+      b.rpc(ATRIBUIR, () => ({ data: null, error: { code: codigo } }));
+      expect(await atribuirConversaPassadaPelaIa(b.cliente(), BASE)).toEqual({
+        tipo: "falha",
+        codigo,
+      });
+      expect(logs.join("")).toContain(`"error_code":"${codigo}"`);
+    },
+  );
+
+  it("a exceção e o prazo: falha, nunca lança", async () => {
+    const lanca = new BancoEmMemoria();
+    lanca.rpc(ATRIBUIR, () => {
+      throw new Error("rede");
+    });
+    expect(await atribuirConversaPassadaPelaIa(lanca.cliente(), BASE)).toEqual({
+      tipo: "falha",
+      codigo: "excecao",
+    });
+    const parado = new BancoEmMemoria();
+    parado.rpc(ATRIBUIR, () => new Promise<Resposta>(() => undefined));
+    expect(
+      await atribuirConversaPassadaPelaIa(parado.cliente(), {
+        ...BASE,
+        prazoMs: 20,
+      }),
+    ).toEqual({ tipo: "falha", codigo: "prazo" });
+  });
+
+  it.each([
+    [null],
+    [{ atribuida: true }],
+    [{ atribuida: "sim", codigo: "atribuida" }],
+    [{ atribuida: true, codigo: "fora_da_fila" }],
+    [{ atribuida: false, codigo: "atribuida" }],
+    [{ atribuida: false, codigo: "inventado" }],
+  ])("a resposta fora do formato %j: falha", async (data) => {
+    const b = bancoQueResponde(() => ({ data, error: null }));
+    expect(await atribuirConversaPassadaPelaIa(b.cliente(), BASE)).toEqual({
+      tipo: "falha",
+      codigo: "resposta_fora_do_formato",
+    });
+  });
+});
+
+describe("AG6a: a passagem COM a frase, e a atribuição DEPOIS da frase", () => {
+  it("fila (o padrão): os três parâmetros, a frase e nenhuma atribuição", async () => {
     montar();
     expect(await rodar()).toEqual({ ok: true });
     expect(passagens()).toEqual([
       { p_job_id: JOB, p_worker: EXECUTOR, p_motivo: "valor_fora_da_tabela" },
     ]);
+    expect(atribuicoes()).toEqual([]);
     expect(conversaDoCenario(banco)).toMatchObject({
       status: "aguardando_humano",
       assignee_user_id: null,
@@ -410,20 +499,20 @@ describe("AG6a: a passagem COM a frase pede a atribuição só com a regra ligad
     expect(eventosDoFio(banco)).toEqual([
       TEXTO_DO_EVENTO_DA_IA.valor_fora_da_tabela,
     ]);
-    expect(enviarFrase).toHaveBeenCalledTimes(1);
+    expect(frases).toEqual([{ ok: true, messageId: "msg-frase" }]);
   });
 
-  it("responsável do lead: a conversa fica com a Ana, com o evento do nome (D-55)", async () => {
+  it("responsável do lead: a frase SAI (a guarda vê a fila) e só DEPOIS a conversa fica com a Ana", async () => {
     montar({ motor: "responsavel_do_lead" });
     expect(await rodar()).toEqual({ ok: true });
+    // A ORDEM: a passagem, a frase, a atribuicao.
+    expect(marcas.ordem).toEqual(["passagem", "frase", "atribuicao:atribuida"]);
+    // A frase saiu: a guarda viu a conversa na fila, sem responsavel.
+    expect(frases).toEqual([{ ok: true, messageId: "msg-frase" }]);
     expect(passagens()).toEqual([
-      {
-        p_job_id: JOB,
-        p_worker: EXECUTOR,
-        p_motivo: "valor_fora_da_tabela",
-        p_atribuir: true,
-      },
+      { p_job_id: JOB, p_worker: EXECUTOR, p_motivo: "valor_fora_da_tabela" },
     ]);
+    expect(atribuicoes()).toEqual([{ p_job_id: JOB, p_worker: EXECUTOR }]);
     expect(conversaDoCenario(banco)).toMatchObject({
       status: "em_atendimento",
       assignee_user_id: ANA,
@@ -432,11 +521,32 @@ describe("AG6a: a passagem COM a frase pede a atribuição só com a regra ligad
       TEXTO_DO_EVENTO_DA_IA.valor_fora_da_tabela,
       EVENTO_DA_ANA,
     ]);
+    // Nada de "aviso nao enviado".
+    expect(marcas.eventos).toEqual([]);
     expect(banco.linhas("conversa_urgente")).toEqual([]);
-    // A frase e tentada como em toda passagem com frase (a guarda do envio
-    // de verdade e do banco; ver o relatorio da AG6a).
-    expect(enviarFrase).toHaveBeenCalledTimes(1);
-    expect(logs.join("")).toContain('"kind":"atribuida"');
+    expect(logs.join("")).toContain('"status":"atribuida"');
+  });
+
+  it("o achado que motivou a revisão: atribuída ANTES da frase, a guarda recusa e o contato fica sem aviso", async () => {
+    // A passagem antiga (atribuia na mesma transacao): a guarda ve a
+    // conversa com a Ana e recusa a frase. E o que a ordem nova evita.
+    montar({ motor: "responsavel_do_lead" });
+    const original = banco.manipuladores.get(
+      "passar_conversa_da_ia_para_equipe",
+    );
+    banco.rpc("passar_conversa_da_ia_para_equipe", async (args) => {
+      const r = await (original?.(args) ?? { data: null, error: null });
+      Object.assign(conversaDoCenario(banco), {
+        status: "em_atendimento",
+        assignee_user_id: ANA,
+      });
+      return r;
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(frases).toEqual([
+      { ok: false, reason: "falha_envio", code: "fora_da_ia", message: "x" },
+    ]);
+    expect(marcas.eventos).toEqual(["aviso_nao_enviado"]);
   });
 
   it.each<[string, ResultadoDoTurno["desfecho"]]>([
@@ -468,14 +578,15 @@ describe("AG6a: a passagem COM a frase pede a atribuição só com a regra ligad
       },
     ],
     ["falha técnica do turno", { tipo: "falhou", motivo: "desconhecida" }],
-  ])("%s: pede (é passagem com a frase)", async (_nome, desfecho) => {
+  ])("%s: a frase e depois a Ana", async (_nome, desfecho) => {
     montar({ motor: "responsavel_do_lead", resultado: frase(desfecho) });
     expect(await rodar()).toEqual({ ok: true });
-    expect(passagens()[0]).toMatchObject({ p_atribuir: true });
+    expect(passagens()[0]).not.toHaveProperty("p_atribuir");
+    expect(marcas.ordem).toEqual(["passagem", "frase", "atribuicao:atribuida"]);
     expect(conversaDoCenario(banco).assignee_user_id).toBe(ANA);
   });
 
-  it("o teto de respostas (escalarSemModelo): pede", async () => {
+  it("o teto de respostas (escalarSemModelo): a frase e depois a Ana", async () => {
     montar({ motor: "responsavel_do_lead" });
     for (let i = 0; i < 20; i += 1) {
       banco.linhas("message").push({
@@ -499,48 +610,53 @@ describe("AG6a: a passagem COM a frase pede a atribuição só com a regra ligad
     expect(await rodar()).toEqual({ ok: true });
     expect(turno).not.toHaveBeenCalled();
     expect(passagens()).toEqual([
-      {
-        p_job_id: JOB,
-        p_worker: EXECUTOR,
-        p_motivo: "teto_de_respostas",
-        p_atribuir: true,
-      },
+      { p_job_id: JOB, p_worker: EXECUTOR, p_motivo: "teto_de_respostas" },
     ]);
+    expect(marcas.ordem).toEqual(["passagem", "frase", "atribuicao:atribuida"]);
     expect(conversaDoCenario(banco).assignee_user_id).toBe(ANA);
   });
 
-  it("o teto de gasto (escalarSemModelo): pede", async () => {
+  it("o teto de gasto (escalarSemModelo): a frase e depois a Ana", async () => {
     montar({ motor: "responsavel_do_lead" });
     marcas.reservas = [null];
     expect(await rodar()).toEqual({ ok: true });
     expect(passagens()).toEqual([
-      {
-        p_job_id: JOB,
-        p_worker: EXECUTOR,
-        p_motivo: "teto_atingido",
-        p_atribuir: true,
-      },
+      { p_job_id: JOB, p_worker: EXECUTOR, p_motivo: "teto_atingido" },
     ]);
+    expect(marcas.ordem).toEqual(["passagem", "frase", "atribuicao:atribuida"]);
   });
 
-  it("a falha sem modelo (a exceção do turno, falharSemModelo): pede", async () => {
+  it("a falha sem modelo (a exceção do turno, falharSemModelo): a frase e depois a Ana", async () => {
     montar({ motor: "responsavel_do_lead" });
     turno.mockImplementation(async () => {
       throw new Error("excecao inesperada do turno");
     });
     expect(await rodar()).toEqual({ ok: true });
     expect(passagens()).toEqual([
-      {
-        p_job_id: JOB,
-        p_worker: EXECUTOR,
-        p_motivo: "falha_tecnica",
-        p_atribuir: true,
-      },
+      { p_job_id: JOB, p_worker: EXECUTOR, p_motivo: "falha_tecnica" },
     ]);
+    expect(marcas.ordem).toEqual(["passagem", "frase", "atribuicao:atribuida"]);
     expect(conversaDoCenario(banco).assignee_user_id).toBe(ANA);
   });
 
-  it("a urgência que o laço achou (a segunda trava): nunca pede", async () => {
+  it("a frase que não saiu (o número caiu no envio): o aviso não enviado e, depois, a Ana (R1.3)", async () => {
+    montar({ motor: "responsavel_do_lead" });
+    enviarFrase.mockImplementation(async () => {
+      marcas.ordem.push("frase");
+      return {
+        ok: false,
+        reason: "desconectado",
+        code: "desconectado",
+        message: "x",
+      };
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(marcas.eventos).toEqual(["aviso_nao_enviado"]);
+    expect(marcas.ordem).toEqual(["passagem", "frase", "atribuicao:atribuida"]);
+    expect(conversaDoCenario(banco).assignee_user_id).toBe(ANA);
+  });
+
+  it("a urgência que o laço achou (a segunda trava): nunca chama a atribuição", async () => {
     montar({
       motor: "responsavel_do_lead",
       resultado: frase({
@@ -554,14 +670,20 @@ describe("AG6a: a passagem COM a frase pede a atribuição só com a regra ligad
     expect(passagens()).toEqual([
       { p_job_id: JOB, p_worker: EXECUTOR, p_motivo: "urgencia" },
     ]);
+    expect(atribuicoes()).toEqual([]);
+    expect(frases).toEqual([{ ok: true, messageId: "msg-frase" }]);
     expect(conversaDoCenario(banco).assignee_user_id).toBeNull();
     expect(banco.linhas("conversa_urgente")).toHaveLength(1);
   });
 
-  it("a regra só no motor e o banco com a fila (a versão mudou depois da leitura): a fila", async () => {
+  it("a regra só no motor e o banco com a fila (a versão mudou depois da leitura): chama, e o banco deixa na fila", async () => {
     montar({ motor: "responsavel_do_lead", banco: "fila" });
     expect(await rodar()).toEqual({ ok: true });
-    expect(passagens()[0]).toMatchObject({ p_atribuir: true });
+    expect(marcas.ordem).toEqual([
+      "passagem",
+      "frase",
+      "atribuicao:regra_fila",
+    ]);
     expect(conversaDoCenario(banco)).toMatchObject({
       status: "aguardando_humano",
       assignee_user_id: null,
@@ -569,18 +691,60 @@ describe("AG6a: a passagem COM a frase pede a atribuição só com a regra ligad
     expect(eventosDoFio(banco)).not.toContain(EVENTO_DA_ANA);
   });
 
-  it("a regra só no banco e o motor com a fila: não pede (os dois têm de concordar)", async () => {
+  it("a regra só no banco e o motor com a fila: o motor nem chama (os dois têm de concordar)", async () => {
     montar({ motor: "fila", banco: "responsavel_do_lead" });
     expect(await rodar()).toEqual({ ok: true });
-    expect(passagens()[0]).not.toHaveProperty("p_atribuir");
+    expect(atribuicoes()).toEqual([]);
     expect(conversaDoCenario(banco).assignee_user_id).toBeNull();
+  });
+
+  it.each(["PGRST202", "42501"])(
+    "a atribuição com o erro %s: o job conclui igual, a conversa na fila, só o código no log",
+    async (codigo) => {
+      montar({ motor: "responsavel_do_lead" });
+      banco.rpc(ATRIBUIR, () => ({ data: null, error: { code: codigo } }));
+      expect(await rodar()).toEqual({ ok: true });
+      expect(frases).toEqual([{ ok: true, messageId: "msg-frase" }]);
+      expect(conversaDoCenario(banco)).toMatchObject({
+        status: "aguardando_humano",
+        assignee_user_id: null,
+      });
+      expect(logs.join("")).toContain(`"error_code":"${codigo}"`);
+      expect(logs.join("")).toContain('"evento":"ia_atribuicao_falhou"');
+    },
+  );
+
+  it("a atribuição que lança: o job conclui igual, a conversa na fila", async () => {
+    montar({ motor: "responsavel_do_lead" });
+    banco.rpc(ATRIBUIR, () => {
+      throw new Error("rede");
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(frases).toEqual([{ ok: true, messageId: "msg-frase" }]);
+    expect(conversaDoCenario(banco).assignee_user_id).toBeNull();
+  });
+
+  it("sem tempo depois da frase: nem tenta, a fila com o log sem_tempo", async () => {
+    montar({ motor: "responsavel_do_lead" });
+    let agora = AGORA;
+    enviarFrase.mockImplementation(async () => {
+      marcas.ordem.push("frase");
+      // A frase gastou quase todo o prazo da invocacao.
+      agora = AGORA + 54_500;
+      return guardaDaFrase();
+    });
+    expect(await rodar({ agora: () => agora })).toEqual({ ok: true });
+    expect(atribuicoes()).toEqual([]);
+    expect(conversaDoCenario(banco).assignee_user_id).toBeNull();
+    expect(logs.join("")).toContain('"error_code":"sem_tempo"');
   });
 });
 
-describe("AG6a: o banco decide quem recebe (o espelho do contrato)", () => {
-  it.each<[string, () => void]>([
+describe("AG6a: o banco decide quem recebe (o espelho do contrato R1.2)", () => {
+  it.each<[string, string, () => void]>([
     [
       "responsável inativo",
+      "responsavel_inapto",
       () => {
         const ana = banco
           .linhas("clinic_member")
@@ -590,6 +754,7 @@ describe("AG6a: o banco decide quem recebe (o espelho do contrato)", () => {
     ],
     [
       "responsável pendente",
+      "responsavel_inapto",
       () => {
         const ana = banco
           .linhas("clinic_member")
@@ -599,6 +764,7 @@ describe("AG6a: o banco decide quem recebe (o espelho do contrato)", () => {
     ],
     [
       "responsável Somente leitura",
+      "responsavel_inapto",
       () => {
         const ana = banco
           .linhas("clinic_member")
@@ -608,6 +774,7 @@ describe("AG6a: o banco decide quem recebe (o espelho do contrato)", () => {
     ],
     [
       "responsável de outra clínica",
+      "responsavel_inapto",
       () => {
         const ana = banco
           .linhas("clinic_member")
@@ -617,23 +784,35 @@ describe("AG6a: o banco decide quem recebe (o espelho do contrato)", () => {
     ],
     [
       "sem responsável",
+      "sem_responsavel",
       () => {
         const contato = banco.linhas("contact")[0];
         if (contato !== undefined) contato.owner_user_id = null;
       },
     ],
-  ])("%s: a fila", async (_nome, mudar) => {
+    [
+      "a marca de urgência aberta (de uma passagem anterior)",
+      "urgente",
+      () => {
+        banco.linhas("conversa_urgente").push({
+          conversation_id: CONVERSA,
+          clinic_id: CLINICA,
+          desde: "2026-10-13T14:00:00.000Z",
+          job_id: "10000000-0000-4000-8000-000000000009",
+          encerrada_em: null,
+        });
+      },
+    ],
+  ])("%s: a fila (%s)", async (_nome, codigo, mudar) => {
     montar({ motor: "responsavel_do_lead" });
     mudar();
     expect(await rodar()).toEqual({ ok: true });
-    expect(passagens()[0]).toMatchObject({ p_atribuir: true });
+    expect(frases).toEqual([{ ok: true, messageId: "msg-frase" }]);
+    expect(marcas.atribuicoes).toEqual([{ atribuida: false, codigo }]);
     expect(conversaDoCenario(banco)).toMatchObject({
       status: "aguardando_humano",
       assignee_user_id: null,
     });
-    expect(marcas.respostas).toEqual([
-      { passou: true, codigo: "passou", urgente: false, atribuida: false },
-    ]);
   });
 
   it("o profissional responsável recebe (o recorte de Transferir)", async () => {
@@ -653,40 +832,60 @@ describe("AG6a: o banco decide quem recebe (o espelho do contrato)", () => {
     );
   });
 
-  it("alguém assumiu no meio: nunca rouba", async () => {
+  it("alguém assumiu entre a frase e a atribuição: nunca rouba (fora_da_fila)", async () => {
     montar({ motor: "responsavel_do_lead" });
-    const original = banco.manipuladores.get(
-      "passar_conversa_da_ia_para_equipe",
-    );
-    banco.rpc("passar_conversa_da_ia_para_equipe", async (args) => {
-      // A Bia assume no instante entre a passagem e a atribuicao: o espelho
-      // roda a passagem e, antes do update condicional, a conversa ja e dela.
-      const conversa = conversaDoCenario(banco);
-      const resposta = await (original?.({ ...args, p_atribuir: false }) ?? {
-        data: null,
-        error: null,
-      });
-      Object.assign(conversa, {
+    enviarFrase.mockImplementation(async () => {
+      marcas.ordem.push("frase");
+      const saida = guardaDaFrase();
+      // A Bia assume logo depois de a frase sair.
+      Object.assign(conversaDoCenario(banco), {
         status: "em_atendimento",
         assignee_user_id: BIA,
       });
-      return resposta;
+      return saida;
     });
     expect(await rodar()).toEqual({ ok: true });
+    expect(marcas.ordem).toEqual([
+      "passagem",
+      "frase",
+      "atribuicao:fora_da_fila",
+    ]);
     expect(conversaDoCenario(banco)).toMatchObject({
       status: "em_atendimento",
       assignee_user_id: BIA,
     });
     expect(eventosDoFio(banco)).not.toContain(EVENTO_DA_ANA);
   });
+
+  it("a resposta aprovada que o banco recusou (ia_sem_aprovacao): a frase, e o banco não atribui (sem_passagem, R1.3)", async () => {
+    montar({ motor: "responsavel_do_lead", resultado: respondeu() });
+    enviarResposta.mockImplementation(async () => ({
+      ok: false,
+      reason: "falha_envio",
+      code: "ia_sem_aprovacao",
+      message: "x",
+    }));
+    expect(await rodar()).toEqual({ ok: true });
+    expect(passagens()).toEqual([
+      { p_job_id: JOB, p_worker: EXECUTOR, p_motivo: "falha_tecnica" },
+    ]);
+    expect(frases).toEqual([{ ok: true, messageId: "msg-frase" }]);
+    expect(marcas.ordem).toEqual([
+      "passagem",
+      "frase",
+      "atribuicao:sem_passagem",
+    ]);
+    expect(conversaDoCenario(banco).assignee_user_id).toBeNull();
+  });
 });
 
-describe("AG6a: as passagens SEM frase nunca pedem", () => {
-  function semPedido() {
+describe("AG6a: as passagens SEM frase, o ja_fora_da_ia e o job antigo nunca atribuem", () => {
+  function semAtribuicao() {
     for (const chamada of passagens()) {
       expect(chamada).not.toHaveProperty("p_atribuir");
     }
-    expect(conversaDoCenario(banco).assignee_user_id).toBeNull();
+    expect(atribuicoes()).toEqual([]);
+    expect(conversaDoCenario(banco).assignee_user_id).not.toBe(ANA);
   }
 
   it("liberação perdida", async () => {
@@ -696,7 +895,7 @@ describe("AG6a: as passagens SEM frase nunca pedem", () => {
     expect(passagens()).toEqual([
       { p_job_id: JOB, p_worker: EXECUTOR, p_motivo: "liberacao_perdida" },
     ]);
-    semPedido();
+    semAtribuicao();
   });
 
   it("autorização revogada", async () => {
@@ -704,7 +903,7 @@ describe("AG6a: as passagens SEM frase nunca pedem", () => {
     marcas.consentimento = false;
     expect(await rodar()).toEqual({ ok: true });
     expect(passagens()[0]).toMatchObject({ p_motivo: "sem_autorizacao" });
-    semPedido();
+    semAtribuicao();
   });
 
   it("fora do horário (a retomada no horário só pega conversa sem responsável)", async () => {
@@ -721,7 +920,7 @@ describe("AG6a: as passagens SEM frase nunca pedem", () => {
     });
     expect(await rodar()).toEqual({ ok: true });
     expect(passagens()[0]).toMatchObject({ p_motivo: "fora_do_horario" });
-    semPedido();
+    semAtribuicao();
   });
 
   it("modo de horário não suportado", async () => {
@@ -736,7 +935,7 @@ describe("AG6a: as passagens SEM frase nunca pedem", () => {
     });
     expect(await rodar()).toEqual({ ok: true });
     expect(passagens()[0]).toMatchObject({ p_motivo: "horario_nao_suportado" });
-    semPedido();
+    semAtribuicao();
   });
 
   it("a liberação caiu no meio do turno (liberacao_suspensa)", async () => {
@@ -746,7 +945,7 @@ describe("AG6a: as passagens SEM frase nunca pedem", () => {
     });
     expect(await rodar()).toEqual({ ok: true });
     expect(passagens()[0]).toMatchObject({ p_motivo: "liberacao_perdida" });
-    semPedido();
+    semAtribuicao();
     expect(enviarFrase).not.toHaveBeenCalled();
   });
 
@@ -777,17 +976,37 @@ describe("AG6a: as passagens SEM frase nunca pedem", () => {
     enviarResposta.mockImplementation(async () => falha);
     await rodar();
     expect(passagens()[0]).toMatchObject({ p_motivo: motivo });
-    semPedido();
+    semAtribuicao();
+  });
+
+  it("alguém tirou a conversa da IA antes da passagem (ja_fora_da_ia): nem frase nem atribuição", async () => {
+    montar({ motor: "responsavel_do_lead" });
+    banco.aoInserir = (tabela) => {
+      if (tabela === "ai_decision_log") {
+        // Outro caminho (o desligar, a resposta pelo celular) tirou a
+        // conversa da IA, para a fila, entre a decisao e a passagem.
+        Object.assign(conversaDoCenario(banco), {
+          status: "aguardando_humano",
+          assignee_user_id: null,
+        });
+      }
+      return null;
+    };
+    expect(await rodar()).toEqual({ ok: true });
+    expect(enviarFrase).not.toHaveBeenCalled();
+    semAtribuicao();
+    expect(conversaDoCenario(banco).assignee_user_id).toBeNull();
   });
 });
 
-describe("AG6a: a retomada lê a regra na hora", () => {
+describe("AG6a: a retomada", () => {
   function decidido(motivo: string) {
     banco.linhas("ai_decision_log").push({
       id: "d1",
       clinic_id: CLINICA,
       conversation_id: CONVERSA,
       job_id: JOB,
+      desfecho: "escalou",
       escalation_reason: motivo,
     });
     banco.linhas("ai_turno").push({
@@ -805,36 +1024,82 @@ describe("AG6a: a retomada lê a regra na hora", () => {
     });
   }
 
-  it("com a regra ligada na publicada: pede, e a conversa fica com a Ana", async () => {
+  /** A tentativa anterior passou e caiu depois de fechar o turno. */
+  function passouAntes(e: {
+    motivo: string;
+    saida: "frase" | "resposta";
+    fraseSaiu: boolean;
+  }) {
+    banco.linhas("ai_decision_log").push({
+      id: "d1",
+      clinic_id: CLINICA,
+      conversation_id: CONVERSA,
+      job_id: JOB,
+      desfecho: e.saida === "frase" ? "escalou" : "respondeu",
+      escalation_reason: e.saida === "frase" ? e.motivo : null,
+    });
+    banco.linhas("ai_turno").push({
+      job_id: JOB,
+      clinic_id: CLINICA,
+      conversation_id: CONVERSA,
+      estado: "passou_para_equipe",
+      reserva_id: null,
+      reservas_perdidas: [],
+      saida: e.saida,
+      texto: null,
+      texto_sha256: null,
+      decision_id: "d1",
+      mensagens_lidas: ["m1"],
+    });
+    Object.assign(conversaDoCenario(banco), {
+      status: "aguardando_humano",
+      assignee_user_id: null,
+    });
+    if (e.fraseSaiu) {
+      banco.linhas("message").push({
+        id: "msg-frase",
+        clinic_id: CLINICA,
+        conversation_id: CONVERSA,
+        job_id: JOB,
+        author: "sistema",
+        direction: "saida",
+        content_type: "texto",
+        body: FRASE_DE_ESCALONAMENTO,
+        delivery_status: "enviada",
+        media_url: null,
+        deleted_at: null,
+        is_internal_note: false,
+        pelo_celular: false,
+        created_at: "2026-10-13T14:59:10.000Z",
+      });
+    }
+  }
+
+  it("em 'decidido' com a regra ligada: passa, a frase e depois a Ana (a regra lida uma vez, depois da frase)", async () => {
     montar({ motor: "responsavel_do_lead" });
     decidido("valor_fora_da_tabela");
     expect(await rodar()).toEqual({ ok: true });
     expect(turno).not.toHaveBeenCalled();
     expect(estado.leituras).toBe(1);
     expect(passagens()).toEqual([
-      {
-        p_job_id: JOB,
-        p_worker: EXECUTOR,
-        p_motivo: "valor_fora_da_tabela",
-        p_atribuir: true,
-      },
+      { p_job_id: JOB, p_worker: EXECUTOR, p_motivo: "valor_fora_da_tabela" },
     ]);
+    expect(marcas.ordem).toEqual(["passagem", "frase", "atribuicao:atribuida"]);
     expect(conversaDoCenario(banco).assignee_user_id).toBe(ANA);
-    expect(enviarFrase).toHaveBeenCalledTimes(1);
   });
 
-  it("a leitura da regra falhou: a fila (o lado seguro), a passagem e a frase seguem", async () => {
+  it("em 'decidido', a leitura da regra falhou: a fila (o lado seguro), a frase saiu", async () => {
     montar({ motor: "responsavel_do_lead" });
     decidido("valor_fora_da_tabela");
     estado.falharALeitura = true;
     expect(await rodar()).toEqual({ ok: true });
-    expect(passagens()[0]).not.toHaveProperty("p_atribuir");
+    expect(atribuicoes()).toEqual([]);
     expect(conversaDoCenario(banco).assignee_user_id).toBeNull();
-    expect(enviarFrase).toHaveBeenCalledTimes(1);
+    expect(frases).toEqual([{ ok: true, messageId: "msg-frase" }]);
     expect(logs.join("")).toContain("ia_regra_da_passagem_nao_lida");
   });
 
-  it("a retomada da urgência nem lê a regra (nunca atribui)", async () => {
+  it("em 'decidido' com urgência: nem lê a regra, nunca atribui", async () => {
     montar({ motor: "responsavel_do_lead" });
     decidido("urgencia");
     expect(await rodar()).toEqual({ ok: true });
@@ -842,6 +1107,82 @@ describe("AG6a: a retomada lê a regra na hora", () => {
     expect(passagens()).toEqual([
       { p_job_id: JOB, p_worker: EXECUTOR, p_motivo: "urgencia" },
     ]);
+    expect(atribuicoes()).toEqual([]);
     expect(banco.linhas("conversa_urgente")).toHaveLength(1);
+  });
+
+  it("em 'decidido', a passagem da tentativa anterior já aconteceu (ja_fora_da_ia): o aviso, sem atribuição", async () => {
+    montar({ motor: "responsavel_do_lead" });
+    decidido("valor_fora_da_tabela");
+    Object.assign(conversaDoCenario(banco), {
+      status: "aguardando_humano",
+      assignee_user_id: null,
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(enviarFrase).not.toHaveBeenCalled();
+    expect(marcas.eventos).toEqual(["aviso_nao_enviado"]);
+    expect(atribuicoes()).toEqual([]);
+    expect(conversaDoCenario(banco).assignee_user_id).toBeNull();
+  });
+
+  it("em 'passou_para_equipe' com a frase que saiu: a atribuição que a tentativa anterior não fez", async () => {
+    montar({ motor: "responsavel_do_lead" });
+    passouAntes({
+      motivo: "valor_fora_da_tabela",
+      saida: "frase",
+      fraseSaiu: true,
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(passagens()).toEqual([]);
+    expect(enviarFrase).not.toHaveBeenCalled();
+    expect(marcas.eventos).toEqual([]);
+    expect(atribuicoes()).toEqual([{ p_job_id: JOB, p_worker: EXECUTOR }]);
+    expect(conversaDoCenario(banco).assignee_user_id).toBe(ANA);
+    expect(eventosDoFio(banco)).toEqual([EVENTO_DA_ANA]);
+  });
+
+  it("em 'passou_para_equipe' sem a frase deste job: o aviso não enviado e nada de atribuição", async () => {
+    montar({ motor: "responsavel_do_lead" });
+    passouAntes({
+      motivo: "valor_fora_da_tabela",
+      saida: "frase",
+      fraseSaiu: false,
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(marcas.eventos).toEqual(["aviso_nao_enviado"]);
+    expect(atribuicoes()).toEqual([]);
+    expect(conversaDoCenario(banco).assignee_user_id).toBeNull();
+  });
+
+  it("em 'passou_para_equipe' com a urgência: nunca atribui", async () => {
+    montar({ motor: "responsavel_do_lead" });
+    passouAntes({ motivo: "urgencia", saida: "frase", fraseSaiu: true });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(atribuicoes()).toEqual([]);
+    expect(estado.leituras).toBe(0);
+  });
+
+  it("em 'passou_para_equipe' com a saída 'resposta' (a retomada recusada, sem frase): nunca atribui", async () => {
+    montar({ motor: "responsavel_do_lead" });
+    passouAntes({
+      motivo: "valor_fora_da_tabela",
+      saida: "resposta",
+      fraseSaiu: true,
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(atribuicoes()).toEqual([]);
+  });
+
+  it("em 'passou_para_equipe', o motivo não lido: a fila, só o log", async () => {
+    montar({ motor: "responsavel_do_lead" });
+    passouAntes({
+      motivo: "valor_fora_da_tabela",
+      saida: "frase",
+      fraseSaiu: true,
+    });
+    banco.erros.set("ai_decision_log:select", { code: "57014" });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(atribuicoes()).toEqual([]);
+    expect(logs.join("")).toContain('"error_code":"motivo_nao_lido"');
   });
 });

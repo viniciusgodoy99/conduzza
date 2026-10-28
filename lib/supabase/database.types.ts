@@ -5621,6 +5621,10 @@ export type Database = {
         }
         Returns: undefined
       }
+      atribuir_conversa_passada_pela_ia: {
+        Args: { p_job_id: string; p_worker: string }
+        Returns: Json
+      }
       automacao_fecha_ciclo: {
         Args: {
           p_clinic_id: string
@@ -6474,12 +6478,7 @@ export type Database = {
         Returns: undefined
       }
       passar_conversa_da_ia_para_equipe: {
-        Args: {
-          p_atribuir?: boolean
-          p_job_id: string
-          p_motivo: string
-          p_worker: string
-        }
+        Args: { p_job_id: string; p_motivo: string; p_worker: string }
         Returns: Json
       }
       pedido_da_ia_na_conversa: {

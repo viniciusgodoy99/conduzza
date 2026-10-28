@@ -1,7 +1,7 @@
 -- ---------------------------------------------------------------------------
 -- Urgencia e passagem da IA ao responsavel do lead (AG6a, parte de banco):
 -- o motivo urgencia, a marca de conversa urgente (com o gatilho que a fecha)
--- e a atribuicao da conversa passada ao responsavel do lead
+-- e a atribuicao ao responsavel do lead DEPOIS da frase (RPC propria)
 -- ---------------------------------------------------------------------------
 -- Pedido do dono em 26/10/2026: a IA faz todo o atendimento. D-5 (urgencia
 -- com o 192: a frase do 192 e da AG6c, depois da AG7; aqui o contato recebe
@@ -9,8 +9,20 @@
 -- se houver; senao, a fila). Esta migration e o BANCO da etapa AG6a; o
 -- codigo do agente (lib/agente, a lista de urgencia, o audio) e as telas
 -- (Atendimento e Tela 6) vem em outras frentes, lendo este contrato
--- (~/.claude/plans/agente-completo/ag6/contrato.md). O audio (a
--- transcricao) nao tem nada de banco.
+-- (~/.claude/plans/agente-completo/ag6/contrato.md, com a revisao R1). O
+-- audio (a transcricao) nao tem nada de banco.
+--
+-- REVISAO DE 28/10/2026 (antes de aplicar; achado da frente do motor): a
+-- atribuicao ao responsavel era feita DENTRO da passagem, na mesma
+-- transacao. Quando o motor mandava a frase de sempre, a conversa ja estava
+-- "Em atendimento" com o responsavel, e a guarda do envio
+-- (ia_pode_enviar_agora com p_tipo 'frase', 20261013100000: a frase so sai
+-- com a conversa em aguardando_humano e sem responsavel) devolvia
+-- fora_da_ia: o contato ficava sem a frase e o fio com "O aviso automatico
+-- ao contato nao foi enviado.". Agora a passagem volta a assinatura de hoje
+-- (3 parametros, o corpo de producao mais a marca de urgencia) e NUNCA
+-- atribui; a atribuicao e a RPC nova atribuir_conversa_passada_pela_ia, que
+-- o motor chama DEPOIS da tentativa da frase, numa transacao propria.
 --
 -- DECISOES DO DONO QUE VALEM: D-5, D-15, D-2, D-4 (opcao A), D-8. DECISOES
 -- AINDA PENDENTES, construidas com a recomendacao do desenho (cada uma e uma
@@ -21,19 +33,27 @@
 --   D-53 a conversa urgente fica marcada ate alguem assumir, transferir ou
 --        resolver (o gatilho urgencia_sai_quando_alguem_pega);
 --   D-54 urgente vai sempre para a fila, nunca para o responsavel
---        (c_motivos_que_nunca_atribuem em passar_conversa_da_ia_para_equipe);
+--        (c_motivos_que_nunca_atribuem e a marca aberta, em
+--        atribuir_conversa_passada_pela_ia);
 --   D-55 a atribuicao e opcao da clinica (escalation_rules.passagem_para,
 --        fila por padrao), so para responsavel ativo com papel que atende
 --        conversa (c_papeis_que_recebem), como a mensagem agendada; a etapa
 --        do lead fica em Aguardando resposta.
 -- DECISOES DESTA FRENTE (fora do texto do desenho, faceis de trocar):
---   - a marca e a atribuicao rodam cada uma num begin ... exception: erro
---     vira WARNING e a passagem continua valendo (o desenho pedia isso so
---     para a atribuicao; na urgencia, falhar a passagem inteira atrasaria a
---     equipe, que e o mais importante; o evento ja diz "pode ser uma
---     emergencia");
---   - fora_do_horario tambem nunca atribui, no banco (o desenho, 1.3: a
---     retomada no horario so pega conversa sem responsavel);
+--   - a marca (na passagem) e a atribuicao inteira (na RPC nova) rodam cada
+--     uma num begin ... exception: erro vira WARNING (so a clinica e o
+--     SQLSTATE) e nada derruba quem chama (a passagem vale sem marca; a
+--     atribuicao devolve o codigo erro e a conversa fica na fila);
+--   - fora_do_horario tambem nunca atribui (o desenho, 1.3: a retomada no
+--     horario so pega conversa sem responsavel);
+--   - a atribuicao confere que a passagem foi do job pela ULTIMA decisao
+--     dele (ai_decision_log.job_id): escalou, bloqueou (conformidade) ou
+--     falhou (falha tecnica), com o motivo da passagem em escalation_reason
+--     (c_desfechos_que_passam). O desenho atribui nas passagens com a frase,
+--     e a conformidade e a falha tecnica tambem tem frase. A resposta e a
+--     falha sem passagem nao atribuem;
+--   - a atribuicao trava a conversa ANTES de ler a janela e o estado (a
+--     ordem da passagem, D-A) e devolve um codigo por recusa;
 --   - clinic entra no bloco de travas (SHARE ROW EXCLUSIVE: a FK da tabela
 --     nova para clinic pede essa trava; fora do bloco, ela seria pedida com
 --     as outras na mao);
@@ -46,8 +66,8 @@
 --     grava pela API;
 --   - em_atendimento sem responsavel fecha como outra; o sistema (sem sessao)
 --     pondo a conversa com alguem fecha como transferida;
---   - a passagem devolve sempre as quatro chaves (nas recusas, urgente e
---     atribuida falsos); p_atribuir nulo vale como falso.
+--   - a passagem devolve sempre as tres chaves (nas recusas, urgente falso)
+--     e a atribuicao sempre as duas.
 --
 -- O QUE MUDA:
 --   1. ai_decision_log: os CHECKs ai_decision_log_escalation_reason_valida
@@ -65,21 +85,32 @@
 --      conversation, so na saida de aguardando_humano): fecha a marca aberta
 --      com quem tirou e como (assumida, transferida, resolvida, outra). A
 --      transicao nunca falha por causa da marca.
---   5. passar_conversa_da_ia_para_equipe ganha p_atribuir (DROP e CREATE com
---      os grants de antes: so service role; o codigo de hoje chama por nome
---      com 3 parametros e continua igual, sem atribuir). Com urgencia, a
---      marca (nunca atribui); senao, com p_atribuir e a regra da clinica, a
---      conversa fica com o responsavel do lead (update condicional: nunca
---      rouba). Devolve {passou, codigo, urgente, atribuida}.
---   6. podar_agendamento_da_ia (CREATE OR REPLACE do corpo vigente, o da
+--   5. passar_conversa_da_ia_para_equipe (CREATE OR REPLACE: a mesma
+--      assinatura, a mesma linguagem e os mesmos grants, so service role): o
+--      corpo de producao mais a marca, com urgencia. Devolve {passou,
+--      codigo, urgente}. NUNCA atribui. Ganha o comentario (o contrato).
+--   6. atribuir_conversa_passada_pela_ia (nova, so service role): o motor a
+--      chama DEPOIS da tentativa da frase. Com a posse do job, D-A, a
+--      passagem do job (a ultima decisao), a conversa na fila sem
+--      responsavel e sem marca aberta, a regra da ultima versao publicada e
+--      o responsavel apto, a conversa fica com o responsavel do lead (update
+--      condicional: nunca rouba) e o evento no fio. Devolve {atribuida,
+--      codigo}.
+--   7. podar_agendamento_da_ia (CREATE OR REPLACE do corpo vigente, o da
 --      AG5): mais a marca encerrada ha mais de 30 dias; chave urgencias.
 --   Sem mudanca: mensagem_ia_exige_aprovacao, frase_de_escalonamento_da_ia
---   (a frase de sempre), ia_tirar_conversa, ai_agent_config (a regra mora em
+--   (a frase de sempre), ia_tirar_conversa, ia_pode_enviar_agora (a guarda:
+--   a frase so sai com a conversa na fila e sem responsavel, por isso a
+--   atribuicao vem depois), ai_agent_config (a regra mora em
 --   escalation_rules, jsonb que a Tela 6 ja grava por coluna), ia_uso.
 --
 -- AS RECUSAS da passagem (iguais as de hoje, na mesma ordem): 22023
 -- motivo_invalido -> sem_posse -> (trava da conversa) -> job_antigo (D-A) ->
--- ja_fora_da_ia. Depois de passar: a marca (urgencia) ou a atribuicao.
+-- ja_fora_da_ia. Depois de passar, com urgencia: a marca.
+-- AS RECUSAS da atribuicao, na ordem: sem_posse -> (trava da conversa) ->
+-- job_antigo (D-A) -> sem_passagem -> motivo_nao_atribui -> fora_da_fila ->
+-- com_responsavel -> urgente -> regra_fila -> sem_responsavel ->
+-- responsavel_inapto; qualquer erro: erro (nada muda).
 --
 -- Producao em 28/10/2026 (q.js, so leitura): a ultima migration aplicada e a
 -- 20261027120000 (a AG4, 20261028100000, e a AG5, 20261029100000, vao antes
@@ -117,28 +148,30 @@
 -- (lib/supabase/database.types.ts foi escrito a mao no formato do gerador;
 -- regenerar depois de aplicar); as provas de banco na producao (clinicas
 -- e_de_teste); e SO DEPOIS o codigo da AG6a. Esta migration com o codigo de
--- hoje: nada muda (a passagem chamada com 3 parametros nao atribui e devolve
--- o passou e o codigo de hoje, com duas chaves a mais que ninguem le; o
--- codigo de hoje nunca manda urgencia; os CHECKs so acrescentam; a tabela
--- nova fica vazia; o gatilho novo so roda na saida de "Aguardando voce" e
--- nao acha linha; a poda devolve uma chave a mais). O codigo da AG6a antes
--- desta migration (NUNCA): p_atribuir da PGRST202 e toda passagem com frase
--- falha (o job tenta de novo e a varredura de 3 minutos devolve a conversa
--- sem frase); urgencia da 23514 na decisao e 22023 no rotulo; a lista do
--- Atendimento com o embutido de conversa_urgente cai no erro. Os espelhos
--- (tests/unit/ia-whatsapp/espelhos.test.ts e tests/unit/agente/config.test.ts)
--- leem o CHECK e o rotulo DESTA migration: urgencia entra em
--- MOTIVOS_DE_ESCALONAMENTO e em TEXTO_DO_EVENTO_DA_IA no mesmo commit.
+-- hoje: nada muda (a passagem de 3 parametros devolve o passou e o codigo
+-- de hoje, com a chave urgente falsa a mais, que ninguem le; o codigo de
+-- hoje nunca manda urgencia nem chama a atribuicao; os CHECKs so
+-- acrescentam; a tabela nova fica vazia; o gatilho novo so roda na saida de
+-- "Aguardando voce" e nao acha linha; a poda devolve uma chave a mais). O
+-- codigo da AG6a antes desta migration (NUNCA): urgencia da 23514 na
+-- decisao e 22023 no rotulo (a passagem por urgencia falha; o job tenta de
+-- novo); atribuir_conversa_passada_pela_ia da PGRST202 (so log; a conversa
+-- fica na fila); a lista do Atendimento com o embutido de conversa_urgente
+-- cai no erro. Os espelhos (tests/unit/ia-whatsapp/espelhos.test.ts e
+-- tests/unit/agente/config.test.ts) leem o CHECK e o rotulo DESTA
+-- migration: urgencia entra em MOTIVOS_DE_ESCALONAMENTO e em
+-- TEXTO_DO_EVENTO_DA_IA no mesmo commit.
 --
 -- ROLLBACK (manual), ORDEM: PRIMEIRO voltar o codigo da AG6a; DEPOIS, numa
 -- transacao, no SQL editor,
 -- supabase/operacao/rollback/20261029120000-corpos-anteriores.sql (a
--- passagem de 3 parametros e os corpos de antes do rotulo e da poda, com os
--- comentarios e os grants; o gatilho, a funcao dele e a tabela saem, a
--- tabela antes tirada da publicacao; os CHECKs de antes, NOT VALID se ja
--- houver decisao com urgencia; confere no fim). SE PERDE: as marcas
--- (abertas e encerradas). Ficam: as decisoes com urgencia, os eventos no fio
--- e as conversas que ja ficaram com o responsavel.
+-- passagem com o corpo de antes, sem comentario; os corpos de antes do
+-- rotulo e da poda, com os comentarios e os grants; a atribuicao, o
+-- gatilho, a funcao dele e a tabela saem, a tabela antes tirada da
+-- publicacao; os CHECKs de antes, NOT VALID se ja houver decisao com
+-- urgencia; confere no fim). SE PERDE: as marcas (abertas e encerradas).
+-- Ficam: as decisoes com urgencia, os eventos no fio e as conversas que ja
+-- ficaram com o responsavel.
 -- ---------------------------------------------------------------------------
 
 set local lock_timeout = '3s';
@@ -418,18 +451,18 @@ comment on trigger urgencia_sai_quando_alguem_pega on public.conversation is
   'AG6a (D-53): a marca de urgencia sai quando alguem pega a conversa (Assumir, Transferir, Resolver, ou ela volta para a IA). So na saida de aguardando_humano; um update com a marca de uma linha (indice da PK). Roda depois de passagem_da_ia_move_o_lead (ordem alfabetica), que tem outro WHEN. A transicao nunca falha por causa da marca.';
 
 -- ---------------------------------------------------------------------------
--- 5) A passagem: a marca de urgencia e a atribuicao ao responsavel do lead
+-- 5) A passagem: a marca de urgencia (nunca atribui)
 -- ---------------------------------------------------------------------------
--- DROP e CREATE (o parametro novo muda a assinatura). O codigo de hoje chama
--- por nome com 3 parametros: cai nesta, com p_atribuir falso, e le so passou
--- e codigo. O corpo de antes (M1, 20261013100000, igual ao de producao lido
--- com fndef.js em 28/10/2026, md5 bc305ae8af0f10c98e2f181c5aa72d30) inteiro,
--- com as chaves novas no retorno e o trecho [AG6 passagem] depois de passar.
+-- CREATE OR REPLACE: a mesma assinatura, a mesma linguagem e os mesmos
+-- grants (so service role); o codigo de hoje chama por nome com os mesmos 3
+-- parametros e le so passou e codigo. O corpo de antes (M1, 20261013100000,
+-- igual ao de producao lido com fndef.js em 28/10/2026, md5
+-- bc305ae8af0f10c98e2f181c5aa72d30) inteiro, com a chave urgente em cada
+-- retorno e o trecho [AG6 urgencia] depois de passar. A atribuicao NAO fica
+-- aqui (revisao de 28/10/2026, cabecalho): ela e a secao 6.
 
-drop function public.passar_conversa_da_ia_para_equipe(uuid, text, text);
-
-create function public.passar_conversa_da_ia_para_equipe(
-  p_job_id uuid, p_worker text, p_motivo text, p_atribuir boolean default false
+create or replace function public.passar_conversa_da_ia_para_equipe(
+  p_job_id uuid, p_worker text, p_motivo text
 )
 returns jsonb
 language plpgsql
@@ -437,25 +470,11 @@ security definer
 set search_path to ''
 as $function$
 declare
-  -- D-54 (urgente vai sempre para a fila) e a retomada no horario (so pega
-  -- conversa sem responsavel): estes motivos nunca atribuem.
-  c_motivos_que_nunca_atribuem constant text[] := array['urgencia', 'fora_do_horario'];
-  -- D-55: o recorte de Transferir e da mensagem agendada (Somente leitura
-  -- nao atende conversa).
-  c_papeis_que_recebem constant text[] := array['admin', 'gestor', 'recepcao', 'profissional'];
-  -- O valor de escalation_rules.passagem_para que liga a atribuicao
-  -- (qualquer outro, ou a chave ausente, e a fila).
-  c_regra_do_responsavel constant text := 'responsavel_do_lead';
-  -- O nome no evento: uma linha, ate 80 caracteres.
-  c_limite_do_nome constant integer := 80;
   v_conversa uuid;
   v_clinica uuid;
   v_criado timestamptz;
+  -- [AG6 urgencia]
   v_urgente boolean := false;
-  v_atribuida boolean := false;
-  v_regra text;
-  v_responsavel uuid;
-  v_nome text;
 begin
   if public.rotulo_do_motivo_da_ia(p_motivo) is null then
     raise exception using errcode = '22023', message = 'motivo_invalido';
@@ -473,7 +492,7 @@ begin
     select 1 from public.conversation c
      where c.id = v_conversa and c.clinic_id = v_clinica
   ) then
-    return jsonb_build_object('passou', false, 'codigo', 'sem_posse', 'urgente', false, 'atribuida', false);
+    return jsonb_build_object('passou', false, 'codigo', 'sem_posse', 'urgente', false);
   end if;
 
   -- D-A: trava a conversa ANTES de ler a janela (o Devolver trava a
@@ -485,108 +504,234 @@ begin
      where w.conversation_id = v_conversa
        and v_criado < w.desde
   ) then
-    return jsonb_build_object('passou', false, 'codigo', 'job_antigo', 'urgente', false, 'atribuida', false);
+    return jsonb_build_object('passou', false, 'codigo', 'job_antigo', 'urgente', false);
   end if;
 
-  if not public.ia_tirar_conversa(v_conversa, p_motivo, true) then
-    return jsonb_build_object('passou', false, 'codigo', 'ja_fora_da_ia', 'urgente', false, 'atribuida', false);
+  if public.ia_tirar_conversa(v_conversa, p_motivo, true) then
+    -- [AG6 urgencia] inicio
+    -- A conversa passou ("Aguardando voce", o evento do motivo, os pendentes
+    -- cancelados, o gatilho do funil) e segue travada por esta transacao.
+    -- Com urgencia, a marca (D-53): nasce, ou reabre a encerrada de antes.
+    -- Erro vira WARNING (a clinica e o SQLSTATE) e a passagem vale, sem
+    -- marca. Nunca atribui (D-54; a atribuicao e a secao 6, depois da frase).
+    if p_motivo = 'urgencia' then
+      begin
+        insert into public.conversa_urgente as u (conversation_id, clinic_id, desde, job_id)
+        values (v_conversa, v_clinica, now(), p_job_id)
+        on conflict (conversation_id) do update
+           set clinic_id = excluded.clinic_id,
+               desde = excluded.desde,
+               job_id = excluded.job_id,
+               encerrada_em = null,
+               encerrada_por = null,
+               encerrada_como = null;
+        v_urgente := true;
+      exception when others then
+        v_urgente := false;
+        raise warning 'a passagem por urgencia nao marcou a conversa (clinic %): %', v_clinica, sqlstate;
+      end;
+    end if;
+    -- [AG6 urgencia] fim
+    return jsonb_build_object('passou', true, 'codigo', 'passou', 'urgente', v_urgente);
   end if;
-
-  -- [AG6 passagem] inicio
-  -- A conversa passou ("Aguardando voce", o evento do motivo, os pendentes
-  -- cancelados, o gatilho do funil) e segue travada por esta transacao.
-  -- Depois disso, so leituras (configuracao, contato, membro, perfil) e as
-  -- escritas da marca ou da atribuicao. Nenhuma das duas derruba a passagem:
-  -- erro vira WARNING (a clinica e o SQLSTATE) e a conversa fica na fila.
-  if p_motivo = 'urgencia' then
-    -- A marca (D-53): nasce, ou reabre a encerrada de antes. Nunca atribui.
-    begin
-      insert into public.conversa_urgente as u (conversation_id, clinic_id, desde, job_id)
-      values (v_conversa, v_clinica, now(), p_job_id)
-      on conflict (conversation_id) do update
-         set clinic_id = excluded.clinic_id,
-             desde = excluded.desde,
-             job_id = excluded.job_id,
-             encerrada_em = null,
-             encerrada_por = null,
-             encerrada_como = null;
-      v_urgente := true;
-    exception when others then
-      v_urgente := false;
-      raise warning 'a passagem por urgencia nao marcou a conversa (clinic %): %', v_clinica, sqlstate;
-    end;
-  elsif coalesce(p_atribuir, false) and not (p_motivo = any (c_motivos_que_nunca_atribuem)) then
-    -- D-15 e D-55: a conversa fica com o responsavel do lead, como a
-    -- mensagem agendada (so a conversa aguardando e sem atendente: nunca
-    -- rouba de quem pegou no meio).
-    begin
-      -- A regra da ULTIMA versao publicada (a que o agente le no WhatsApp).
-      select a.escalation_rules ->> 'passagem_para' into v_regra
-        from public.ai_agent_config a
-       where a.clinic_id = v_clinica
-         and a.status = 'publicada'
-       order by a.version desc
-       limit 1;
-      if v_regra is not distinct from c_regra_do_responsavel then
-        select k.owner_user_id into v_responsavel
-          from public.conversation c
-          join public.contact k on k.id = c.contact_id and k.clinic_id = c.clinic_id
-         where c.id = v_conversa;
-        if v_responsavel is not null and exists (
-             select 1 from public.clinic_member m
-              where m.clinic_id = v_clinica
-                and m.user_id = v_responsavel
-                and m.status = 'ativo'
-                and m.role = any (c_papeis_que_recebem))
-        then
-          update public.conversation c
-             set status = 'em_atendimento',
-                 assignee_user_id = v_responsavel
-           where c.id = v_conversa
-             and c.clinic_id = v_clinica
-             and c.status = 'aguardando_humano'
-             and c.assignee_user_id is null;
-          if found then
-            -- O nome em uma linha (espacos, tabulacoes e quebras viram um
-            -- espaco), ate c_limite_do_nome; sem perfil ou vazio, o generico.
-            select btrim(regexp_replace(p.name, '\s+', ' ', 'g')) into v_nome
-              from public.profile p
-             where p.user_id = v_responsavel;
-            v_nome := btrim(left(coalesce(v_nome, ''), c_limite_do_nome));
-            insert into public.message (
-              clinic_id, conversation_id, direction, author, content_type, body,
-              billable, cost_cents
-            ) values (
-              v_clinica, v_conversa, 'saida', 'sistema', 'evento',
-              case when v_nome = '' then 'A conversa ficou com o responsável pelo lead.'
-                   else 'A conversa ficou com ' || v_nome || ', responsável pelo lead.' end,
-              false, 0
-            );
-            v_atribuida := true;
-          end if;
-        end if;
-      end if;
-    exception when others then
-      v_atribuida := false;
-      raise warning 'a passagem nao atribuiu ao responsavel (clinic %): %', v_clinica, sqlstate;
-    end;
-  end if;
-  -- [AG6 passagem] fim
-
-  return jsonb_build_object('passou', true, 'codigo', 'passou', 'urgente', v_urgente, 'atribuida', v_atribuida);
+  return jsonb_build_object('passou', false, 'codigo', 'ja_fora_da_ia', 'urgente', false);
 end;
 $function$;
 
-revoke execute on function public.passar_conversa_da_ia_para_equipe(uuid, text, text, boolean)
-  from public, anon, authenticated;
-grant execute on function public.passar_conversa_da_ia_para_equipe(uuid, text, text, boolean)
-  to service_role;
-
-comment on function public.passar_conversa_da_ia_para_equipe(uuid, text, text, boolean) is
-  'So o servidor (service_role; o executor da IA). O job (com posse) passa a conversa para a equipe ("Aguardando voce", o evento do motivo, os pendentes cancelados). Recusas na ordem: 22023 motivo_invalido; {passou:false, codigo:sem_posse}; (trava da conversa) {codigo:job_antigo} (D-A: job de antes da janela atual); {codigo:ja_fora_da_ia}. AG6a: com p_motivo urgencia, a marca em conversa_urgente (nasce ou reabre; nunca atribui). Senao, com p_atribuir verdadeiro (nulo = falso), motivo fora de urgencia e fora_do_horario, a ULTIMA versao publicada com escalation_rules ->> passagem_para = responsavel_do_lead e o owner_user_id do contato membro ativo da clinica com papel admin, gestor, recepcao ou profissional: a conversa vira em_atendimento com ele (update so de aguardando_humano sem responsavel: nunca rouba) e o evento "A conversa ficou com {nome}, responsavel pelo lead." (profile.name em uma linha, ate 80; sem nome, "A conversa ficou com o responsavel pelo lead."). A marca e a atribuicao nunca derrubam a passagem (erro vira WARNING). Devolve sempre {passou, codigo, urgente, atribuida}. Chamar por nome; com 3 parametros (o codigo de antes da AG6a), nunca atribui.';
+comment on function public.passar_conversa_da_ia_para_equipe(uuid, text, text) is
+  'So o servidor (service_role; o executor da IA). O job (com posse) passa a conversa para a equipe ("Aguardando voce", o evento do motivo, os pendentes cancelados, o gatilho do funil). Recusas na ordem: 22023 motivo_invalido; {passou:false, codigo:sem_posse}; (trava da conversa) {codigo:job_antigo} (D-A: job de antes da janela atual); {codigo:ja_fora_da_ia}. AG6a: com p_motivo urgencia, a marca em conversa_urgente (nasce ou reabre; a falha vira WARNING e a passagem vale). NUNCA atribui: a conversa fica na fila, e a atribuicao ao responsavel do lead e atribuir_conversa_passada_pela_ia, que o motor chama DEPOIS da tentativa da frase (a guarda ia_pode_enviar_agora so deixa a frase sair com a conversa na fila e sem responsavel). Devolve sempre {passou, codigo, urgente}.';
 
 -- ---------------------------------------------------------------------------
--- 6) A poda, com a marca de urgencia encerrada
+-- 6) A atribuicao ao responsavel do lead, DEPOIS da frase (D-15, D-55)
+-- ---------------------------------------------------------------------------
+-- O motor passa a conversa (secao 5), tenta a frase de sempre (a guarda a
+-- deixa sair: a conversa esta na fila, sem responsavel) e SO DEPOIS chama
+-- esta funcao, numa transacao propria. Ela confere de novo tudo o que o
+-- banco consegue conferir (a posse, D-A, que a passagem foi do job, a fila,
+-- a marca, a regra e o responsavel), trava a conversa antes de ler o estado
+-- e nunca rouba de quem pegou a conversa no meio. Um codigo por recusa;
+-- nada aqui derruba quem chama.
+
+create function public.atribuir_conversa_passada_pela_ia(p_job_id uuid, p_worker text)
+returns jsonb
+language plpgsql
+security definer
+set search_path to ''
+as $function$
+declare
+  -- A decisao que passou a conversa para a equipe (as saidas com a frase):
+  -- escalou (o motivo), bloqueou (conformidade) ou falhou (falha_tecnica),
+  -- sempre com o motivo da passagem em escalation_reason. A resposta e a
+  -- falha sem passagem (liberacao_suspensa, sem_mensagem) nao atribuem.
+  c_desfechos_que_passam constant text[] := array['escalou', 'bloqueou', 'falhou'];
+  -- D-54 (urgente vai sempre para a fila) e a retomada no horario (so pega
+  -- conversa sem responsavel): estes motivos nunca atribuem.
+  c_motivos_que_nunca_atribuem constant text[] := array['urgencia', 'fora_do_horario'];
+  -- D-55: o recorte de Transferir e da mensagem agendada (Somente leitura
+  -- nao atende conversa).
+  c_papeis_que_recebem constant text[] := array['admin', 'gestor', 'recepcao', 'profissional'];
+  -- O valor de escalation_rules.passagem_para que liga a atribuicao
+  -- (qualquer outro, ou a chave ausente, e a fila).
+  c_regra_do_responsavel constant text := 'responsavel_do_lead';
+  -- O nome no evento: uma linha, ate 80 caracteres.
+  c_limite_do_nome constant integer := 80;
+  v_conversa uuid;
+  v_clinica uuid;
+  v_criado timestamptz;
+  v_status text;
+  v_atendente uuid;
+  v_contato uuid;
+  v_desfecho text;
+  v_motivo text;
+  v_regra text;
+  v_responsavel uuid;
+  v_nome text;
+begin
+  -- Qualquer erro desfaz o que esta chamada fez, vira WARNING (a clinica e
+  -- o SQLSTATE, nenhum dado de paciente) e devolve o codigo erro: a conversa
+  -- fica na fila.
+  begin
+    -- O CHECK job_queue_ia_tem_conversa garante o uuid no payload do kind.
+    select (j.payload ->> 'conversation_id')::uuid, j.clinic_id, j.created_at
+      into v_conversa, v_clinica, v_criado
+      from public.job_queue j
+     where j.id = p_job_id
+       and j.kind = 'responder_com_ia'
+       and j.status = 'executando'
+       and j.locked_by = p_worker;
+    if v_conversa is null or not exists (
+      select 1 from public.conversation c
+       where c.id = v_conversa and c.clinic_id = v_clinica
+    ) then
+      return jsonb_build_object('atribuida', false, 'codigo', 'sem_posse');
+    end if;
+
+    -- A trava da conversa ANTES de ler a janela e o estado (a ordem de
+    -- passar_conversa_da_ia_para_equipe): um Devolver, um Assumir ou um
+    -- Resolver que comitou antes ja aparece aqui; um que vem depois espera
+    -- esta transacao.
+    select c.status, c.assignee_user_id, c.contact_id
+      into v_status, v_atendente, v_contato
+      from public.conversation c
+     where c.id = v_conversa
+       for no key update;
+
+    -- D-A: o job de antes da janela atual nao mexe na sessao nova.
+    if exists (
+      select 1 from public.ia_janela_da_conversa w
+       where w.conversation_id = v_conversa
+         and v_criado < w.desde
+    ) then
+      return jsonb_build_object('atribuida', false, 'codigo', 'job_antigo');
+    end if;
+
+    -- A passagem foi deste job: a ULTIMA decisao dele passou a conversa
+    -- para a equipe, com um motivo que pode atribuir.
+    select d.desfecho, d.escalation_reason
+      into v_desfecho, v_motivo
+      from public.ai_decision_log d
+     where d.job_id = p_job_id
+       and d.clinic_id = v_clinica
+       and d.conversation_id = v_conversa
+     order by d.created_at desc, d.id desc
+     limit 1;
+    if v_motivo is null or not coalesce(v_desfecho = any (c_desfechos_que_passam), false) then
+      return jsonb_build_object('atribuida', false, 'codigo', 'sem_passagem');
+    end if;
+    if v_motivo = any (c_motivos_que_nunca_atribuem) then
+      return jsonb_build_object('atribuida', false, 'codigo', 'motivo_nao_atribui');
+    end if;
+
+    -- A conversa na fila, sem responsavel e sem a marca de urgencia aberta.
+    if v_status is distinct from 'aguardando_humano' then
+      return jsonb_build_object('atribuida', false, 'codigo', 'fora_da_fila');
+    end if;
+    if v_atendente is not null then
+      return jsonb_build_object('atribuida', false, 'codigo', 'com_responsavel');
+    end if;
+    if exists (
+      select 1 from public.conversa_urgente u
+       where u.conversation_id = v_conversa
+         and u.encerrada_em is null
+    ) then
+      return jsonb_build_object('atribuida', false, 'codigo', 'urgente');
+    end if;
+
+    -- A regra da ULTIMA versao publicada (a que o agente le no WhatsApp).
+    select a.escalation_rules ->> 'passagem_para' into v_regra
+      from public.ai_agent_config a
+     where a.clinic_id = v_clinica
+       and a.status = 'publicada'
+     order by a.version desc
+     limit 1;
+    if v_regra is distinct from c_regra_do_responsavel then
+      return jsonb_build_object('atribuida', false, 'codigo', 'regra_fila');
+    end if;
+
+    -- O responsavel do lead: membro ativo desta clinica com papel que atende.
+    select k.owner_user_id into v_responsavel
+      from public.contact k
+     where k.id = v_contato
+       and k.clinic_id = v_clinica;
+    if v_responsavel is null then
+      return jsonb_build_object('atribuida', false, 'codigo', 'sem_responsavel');
+    end if;
+    if not exists (
+      select 1 from public.clinic_member m
+       where m.clinic_id = v_clinica
+         and m.user_id = v_responsavel
+         and m.status = 'ativo'
+         and m.role = any (c_papeis_que_recebem)
+    ) then
+      return jsonb_build_object('atribuida', false, 'codigo', 'responsavel_inapto');
+    end if;
+
+    -- Nunca rouba: so a conversa ainda na fila e sem responsavel (com a
+    -- trava, e a mesma linha que as conferencias viram).
+    update public.conversation c
+       set status = 'em_atendimento',
+           assignee_user_id = v_responsavel
+     where c.id = v_conversa
+       and c.clinic_id = v_clinica
+       and c.status = 'aguardando_humano'
+       and c.assignee_user_id is null;
+    if not found then
+      return jsonb_build_object('atribuida', false, 'codigo', 'fora_da_fila');
+    end if;
+
+    -- O nome em uma linha (espacos, tabulacoes e quebras viram um espaco),
+    -- ate c_limite_do_nome; sem perfil ou vazio, o generico.
+    select btrim(regexp_replace(p.name, '\s+', ' ', 'g')) into v_nome
+      from public.profile p
+     where p.user_id = v_responsavel;
+    v_nome := btrim(left(coalesce(v_nome, ''), c_limite_do_nome));
+    insert into public.message (
+      clinic_id, conversation_id, direction, author, content_type, body,
+      billable, cost_cents
+    ) values (
+      v_clinica, v_conversa, 'saida', 'sistema', 'evento',
+      case when v_nome = '' then 'A conversa ficou com o responsável pelo lead.'
+           else 'A conversa ficou com ' || v_nome || ', responsável pelo lead.' end,
+      false, 0
+    );
+    return jsonb_build_object('atribuida', true, 'codigo', 'atribuida');
+  exception when others then
+    raise warning 'a atribuicao da conversa passada pela IA nao aconteceu (clinic %): %', v_clinica, sqlstate;
+    return jsonb_build_object('atribuida', false, 'codigo', 'erro');
+  end;
+end;
+$function$;
+
+revoke execute on function public.atribuir_conversa_passada_pela_ia(uuid, text)
+  from public, anon, authenticated;
+grant execute on function public.atribuir_conversa_passada_pela_ia(uuid, text)
+  to service_role;
+
+comment on function public.atribuir_conversa_passada_pela_ia(uuid, text) is
+  'So o servidor (service_role; o executor da IA), DEPOIS da tentativa da frase de sempre (AG6a, D-15, D-55; revisao de 28/10/2026): a conversa que o job passou para a equipe fica com o responsavel do lead. Recusas na ordem, {atribuida:false, codigo}: sem_posse (o job nao e responder_com_ia em executando com o worker, ou a conversa nao e da clinica do job); (trava da conversa) job_antigo (D-A: job de antes da janela atual); sem_passagem (a ultima decisao do job, em ai_decision_log, nao e escalou, bloqueou ou falhou com escalation_reason); motivo_nao_atribui (urgencia ou fora_do_horario); fora_da_fila (a conversa nao esta em aguardando_humano); com_responsavel; urgente (a marca aberta em conversa_urgente); regra_fila (a ultima versao publicada sem escalation_rules ->> passagem_para = responsavel_do_lead); sem_responsavel (o contato sem owner_user_id); responsavel_inapto (sem clinic_member ativo da clinica com papel admin, gestor, recepcao ou profissional). Atribuiu, {atribuida:true, codigo:atribuida}: o update so de aguardando_humano sem responsavel para em_atendimento com ele (nunca rouba) e o evento "A conversa ficou com {nome}, responsavel pelo lead." (profile.name em uma linha, ate 80; sem nome, "A conversa ficou com o responsavel pelo lead."). Qualquer erro: WARNING com a clinica e o SQLSTATE, nada muda, {atribuida:false, codigo:erro}. Idempotente: a segunda chamada devolve fora_da_fila.';
+
+-- ---------------------------------------------------------------------------
+-- 7) A poda, com a marca de urgencia encerrada
 -- ---------------------------------------------------------------------------
 -- O corpo vigente (o da AG5, 20261029100000), com o trecho [AG6 urgencia].
 

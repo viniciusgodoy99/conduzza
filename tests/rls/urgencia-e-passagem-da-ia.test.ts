@@ -5,10 +5,13 @@ import { criarNumeroDeTeste } from "./numeros";
 import { adminClient, anonClient } from "./stack";
 
 // Urgencia e passagem da IA ao responsavel do lead (AG6a, parte de banco:
-// migration 20261029120000_urgencia_e_passagem_da_ia.sql), pela API com JWT
-// real de cada papel. O que esta em jogo:
-// - passar_conversa_da_ia_para_equipe (com e sem p_atribuir): 42501 para
-//   toda sessao e para anon; o servidor recebe resposta de negocio;
+// migration 20261029120000_urgencia_e_passagem_da_ia.sql, com a revisao de
+// 28/10/2026: a atribuicao saiu da passagem e virou a RPC
+// atribuir_conversa_passada_pela_ia, chamada depois da frase), pela API com
+// JWT real de cada papel. O que esta em jogo:
+// - passar_conversa_da_ia_para_equipe e atribuir_conversa_passada_pela_ia:
+//   42501 para toda sessao e para anon; o servidor recebe resposta de
+//   negocio;
 // - conversa_urgente (a marca): a clinica A le as suas e nao a da B; o
 //   profissional so a da conversa que esta com ele; anon nao le (42501); o
 //   contador do menu (as abertas pela RLS); o embutido 1 para 1 na lista do
@@ -65,7 +68,11 @@ type Passagem = {
   passou: boolean;
   codigo: string;
   urgente: boolean;
+};
+
+type Atribuicao = {
   atribuida: boolean;
+  codigo: string;
 };
 
 let clinicaA = "";
@@ -183,9 +190,8 @@ async function conversaUrgente(clinica: string, numero: string): Promise<string>
     p_job_id: job,
     p_worker: WORKER,
     p_motivo: "urgencia",
-    p_atribuir: true,
   });
-  expect(r).toEqual({ passou: true, codigo: "passou", urgente: true, atribuida: false });
+  expect(r).toEqual({ passou: true, codigo: "passou", urgente: true });
   await rpcOk("concluir_job", { p_id: job, p_worker: WORKER });
   return conversa;
 }
@@ -250,24 +256,35 @@ afterAll(async () => {
   }
 }, 120_000);
 
-describe("a passagem: so o servidor", () => {
-  it("toda sessao e anon recebem 42501 (com e sem p_atribuir); o servidor recebe resposta de negocio", async () => {
+describe("a passagem e a atribuicao: so o servidor", () => {
+  it("toda sessao e anon recebem 42501 nas duas; o servidor recebe resposta de negocio", async () => {
     const conversa = await conversaNaIa(clinicaA, numeroA);
     const job = await jobEmExecucao(clinicaA, numeroA, conversa);
-    const comTres = { p_job_id: job, p_worker: WORKER, p_motivo: "urgencia" };
-    const comQuatro = { ...comTres, p_atribuir: true };
+    const daPassagem = { p_job_id: job, p_worker: WORKER, p_motivo: "urgencia" };
+    const daAtribuicao = { p_job_id: job, p_worker: WORKER };
     for (const cliente of [anonClient(), ...SESSOES.map(como)]) {
-      for (const args of [comTres, comQuatro]) {
-        const { error } = await cliente.rpc("passar_conversa_da_ia_para_equipe", args);
-        expect(error?.code).toBe(PERMISSAO_NEGADA);
-      }
+      const { error: erroDaPassagem } = await cliente.rpc("passar_conversa_da_ia_para_equipe", daPassagem);
+      expect(erroDaPassagem?.code).toBe(PERMISSAO_NEGADA);
+      const { error: erroDaAtribuicao } = await cliente.rpc("atribuir_conversa_passada_pela_ia", daAtribuicao);
+      expect(erroDaAtribuicao?.code).toBe(PERMISSAO_NEGADA);
     }
-    // A conversa continua na IA, sem marca: nenhuma sessao passou.
+    // A conversa continua na IA, sem marca nem responsavel: nenhuma sessao
+    // passou nem atribuiu.
     expect(await marca(conversa)).toBeNull();
-    // O servidor: outro worker nao tem a posse (resposta de negocio).
+    const { data: naIa } = await admin
+      .from("conversation")
+      .select("status, assignee_user_id")
+      .eq("id", conversa)
+      .single()
+      .throwOnError();
+    expect(naIa).toEqual({ status: "ia_atendendo", assignee_user_id: null });
+    // O servidor: outro worker nao tem a posse (resposta de negocio, nas duas).
     expect(
-      await rpcOk<Passagem>("passar_conversa_da_ia_para_equipe", { ...comQuatro, p_worker: "outro" }),
-    ).toEqual({ passou: false, codigo: "sem_posse", urgente: false, atribuida: false });
+      await rpcOk<Passagem>("passar_conversa_da_ia_para_equipe", { ...daPassagem, p_worker: "outro" }),
+    ).toEqual({ passou: false, codigo: "sem_posse", urgente: false });
+    expect(
+      await rpcOk<Atribuicao>("atribuir_conversa_passada_pela_ia", { ...daAtribuicao, p_worker: "outro" }),
+    ).toEqual({ atribuida: false, codigo: "sem_posse" });
     await rpcOk("concluir_job", { p_id: job, p_worker: WORKER });
   });
 });

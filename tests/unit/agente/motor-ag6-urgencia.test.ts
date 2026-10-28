@@ -38,10 +38,11 @@ import {
 // de emergencia nos textos originais das pendentes passa a conversa ANTES do
 // teto de respostas, da reserva do gasto e de qualquer modelo; a decisao
 // (escalou, urgencia, gatilho urgencia, origem portao, sem uso) e gravada
-// antes da passagem; a passagem NUNCA atribui (mesmo com a regra do
-// responsavel ligada) e o banco marca a conversa; o contato recebe a frase
-// de SEMPRE. A retomada passa do mesmo jeito. Nenhum teste chama a OpenAI
-// (o turno e falso e, na urgencia, nunca e chamado).
+// antes da passagem; a passagem NUNCA atribui e a atribuicao depois da
+// frase nunca e chamada (mesmo com a regra do responsavel ligada; Revisao
+// R1 do contrato do banco) e o banco marca a conversa; o contato recebe a
+// frase de SEMPRE. A retomada passa do mesmo jeito. Nenhum teste chama a
+// OpenAI (o turno e falso e, na urgencia, nunca e chamado).
 
 const estado = vi.hoisted(() => ({ config: null as unknown }));
 
@@ -196,10 +197,13 @@ function passouComoUrgencia() {
     decisoes()[0]?.context_read as { trilha: { texto: string }[] }
   ).trilha;
   expect(trilha.map((p) => p.texto)).toContain(PASSO_DA_URGENCIA);
-  // A passagem SEM atribuir (so os tres parametros de sempre).
+  // A passagem SEM atribuir (so os tres parametros de sempre) e, mesmo com
+  // a regra do responsavel ligada, nenhuma chamada da atribuicao depois da
+  // frase (Revisao R1 do contrato do banco).
   expect(banco.chamadasDe("passar_conversa_da_ia_para_equipe")).toEqual([
     { p_job_id: JOB, p_worker: EXECUTOR, p_motivo: "urgencia" },
   ]);
+  expect(banco.chamadasDe("atribuir_conversa_passada_pela_ia")).toEqual([]);
   // O banco marcou e nao atribuiu: a fila de todos.
   expect(conversaDoCenario(banco)).toMatchObject({
     status: "aguardando_humano",
@@ -459,6 +463,7 @@ describe("AG6a: a urgência na retomada e na corrida", () => {
     ]);
     expect(banco.linhas("conversa_urgente")).toHaveLength(1);
     expect(conversaDoCenario(banco).assignee_user_id).toBeNull();
+    expect(banco.chamadasDe("atribuir_conversa_passada_pela_ia")).toEqual([]);
     expect(enviarFrase).toHaveBeenCalledTimes(1);
   });
 
