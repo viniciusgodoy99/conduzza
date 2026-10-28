@@ -674,9 +674,13 @@ async function tentarMarcar(
  * recomendacao, pendente do dono): o SIM ou o NAO QUERO da oferta da lista
  * de espera, a mensagem que recebeu (ou que ficou coberta pelo) lembrete da
  * oferta e a resposta ao toque de confirmacao (Confirmar, Cancelar,
- * Remarcar). Ela nao vira turno da IA (o interceptador ja respondeu) e,
- * marcada aqui, deixa de voltar como pendente no turno seguinte: antes, a IA
- * lia o "SIM" ja tratado no fim do historico e reagia a ele. O banco confere
+ * Remarcar). Ela nao vira turno da IA (o interceptador ja respondeu, ou pos
+ * o lembrete na fila) e, marcada aqui, deixa de voltar como pendente no turno
+ * seguinte: antes, a IA lia o "SIM" ja tratado no fim do historico e reagia
+ * a ele. A marca nao mexe no contador do Atendimento: com o lembrete na
+ * fila, a conversa fica nele ate o lembrete sair (lib/jobs/worker.ts), e se
+ * ele morrer sem sair a varredura de 3 minutos passa a conversa para a
+ * equipe (revisao da AG5). O banco confere
  * tudo (a mensagem e do paciente, desta conversa, e a conversa esta com a
  * IA) e e idempotente, o que permite a nova tentativa (TENTATIVAS_DA_
  * MARCACAO). Nunca lanca e nunca derruba o 200; log so com ids e codigos.
@@ -829,7 +833,8 @@ async function encaminharParaAIa(
   // lembrete da oferta ou o lembrete que ainda esta na fila e cobre esta
   // mensagem) ou viu que nao ha nada a fazer (o vencedor agradecendo, o NAO
   // QUERO da oferta encerrada): sem turno da IA, e a mensagem sai das
-  // pendentes.
+  // pendentes. O contador fica com o interceptador e o executor: a mensagem
+  // do lembrete continua nele ate o lembrete sair.
   if (desfecho === "tratou_com_eco") {
     await marcarComoTratadaPeloSistema(admin, {
       clinicId,

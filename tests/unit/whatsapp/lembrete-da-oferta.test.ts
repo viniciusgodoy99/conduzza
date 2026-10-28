@@ -8,9 +8,12 @@ import { idsRespondidos, montarHistorico } from "@/lib/agente/historico";
 import {
   CHAVE_DO_LEMBRETE,
   LEMBRETE_DA_OFERTA,
+  lembreteDeixaSemResposta,
+  MOTIVO_DO_LEMBRETE_DISPENSADO,
   ofertaDePeParaOContato,
   situacaoDoLembrete,
   textoDoLembreteDaOferta,
+  type SituacaoDoLembrete,
 } from "@/lib/domain/lembrete-da-oferta";
 import {
   RESPOSTA_CONFIRMADA,
@@ -33,7 +36,8 @@ import { esperar } from "@/lib/utils/esperar";
 //   "se for outro assunto, e so escrever de novo" (revisao da AG5, achado 4);
 // - a oferta como a pergunta respondida (a mais recente ou a citada) e sem
 //   intencao: o lembrete UMA vez por oferta e contato, pela fila, com o
-//   numero que recebeu, sem offer_id, e a conversa fora do contador;
+//   numero que recebeu, sem offer_id, e a conversa NO contador ate ele sair
+//   (revisao da AG5, o lembrete que morre sem sair);
 // - so na conversa com a IA (fora dela, nada muda: nenhuma leitura) e com a
 //   autorizacao para receber mensagens (achado 3);
 // - outra pergunta mais recente (toque, fala da equipe ou da IA), a oferta
@@ -51,7 +55,17 @@ import { esperar } from "@/lib/utils/esperar";
 //   marcada como tratada pelo sistema e sai das pendentes do historico (o
 //   toque que hoje volta pendente para a IA tambem), com nova tentativa curta
 //   e prazo (achado 6) e o fora_da_ia em info (achado 7); fora da IA, nada;
-//   o log so com ids.
+//   o log so com ids;
+// - revisao da AG5, o lembrete que morre sem sair: (a) o SIM chega antes de
+//   ele sair e o aceite o cancela; (b) a mensagem coberta e outro candidato,
+//   a expiracao, o cancelamento, a guarda do executor, a autorizacao, o
+//   numero ou a falha o matam: a conversa fica no contador e o predicado da
+//   varredura de 3 minutos a passa para a equipe; o SIM e o NAO QUERO dessa
+//   oferta nao a tiram do contador (a leitura que falha tambem nao); o
+//   lembrete que sai pelo executor DE VERDADE (so o envio dublado) tira a
+//   conversa do contador, so com a IA;
+// - o BAIXO: o aceite recusado com a oferta aberta grava o lembrete ja
+//   cancelado (dispensado), e a mensagem seguinte vai para a IA sem ele.
 
 // ---------------------------------------------------------------------------
 // Banco em memoria
@@ -114,6 +128,17 @@ class Banco {
   readonly manipuladores = new Map<string, Manipulador>();
   /** Erro de um insert, decidido na hora (a corrida com outra mensagem). */
   aoInserir: ((tabela: string, linha: Linha) => Erro | null) | null = null;
+  /**
+   * Erro de qualquer operacao, decidido na hora pela tabela, pela operacao e
+   * pelos filtros de igualdade (so uma das leituras).
+   */
+  aoExecutar:
+    | ((
+        tabela: string,
+        operacao: string,
+        igualdades: readonly [string, unknown][],
+      ) => Erro | null)
+    | null = null;
 
   linhas(tabela: string): Linha[] {
     let linhas = this.tabelas.get(tabela);
@@ -152,6 +177,8 @@ class Consulta implements PromiseLike<Resposta> {
   private operacao: "select" | "insert" | "update" = "select";
   private valores: Linha | Linha[] | null = null;
   private readonly filtros: Filtro[] = [];
+  /** Os filtros de igualdade, como dados (para aoExecutar). */
+  private readonly igualdades: [string, unknown][] = [];
   private readonly ordem: { coluna: string; ascendente: boolean }[] = [];
   private limite: number | null = null;
 
@@ -175,6 +202,7 @@ class Consulta implements PromiseLike<Resposta> {
   }
   eq(coluna: string, valor: unknown): this {
     this.filtros.push((l) => iguais(valorDe(l, coluna), valor));
+    this.igualdades.push([coluna, valor]);
     return this;
   }
   neq(coluna: string, valor: unknown): this {
@@ -254,7 +282,10 @@ class Consulta implements PromiseLike<Resposta> {
       tabela: this.tabela,
       operacao: this.operacao,
     });
-    const erro = this.banco.erros.get(`${this.tabela}:${this.operacao}`);
+    const erro =
+      this.banco.erros.get(`${this.tabela}:${this.operacao}`) ??
+      this.banco.aoExecutar?.(this.tabela, this.operacao, this.igualdades) ??
+      null;
     if (erro) {
       return { data: null, error: erro };
     }
@@ -348,7 +379,9 @@ function montar(
     contact_id: CONTATO,
     status: opcoes.status ?? "ia_atendendo",
     whatsapp_account_id: NUMERO,
+    // A ingestao da mensagem que o teste interpreta acabou de acontecer.
     awaiting_reply: true,
+    last_inbound_at: new Date().toISOString(),
     created_at: atras(2 * HORA),
   });
   const criadaEm = atras(10 * MINUTO);
@@ -589,13 +622,120 @@ function awaitingReply(): unknown {
     ?.awaiting_reply;
 }
 
-/** A ingestao da mensagem seguinte poe a conversa de volta no contador. */
+/**
+ * A ingestao da mensagem seguinte poe a conversa de volta no contador (e
+ * carimba last_inbound_at, como ingest_inbound_message).
+ */
 function voltarAoContador(): void {
   for (const c of banco.linhas("conversation")) {
     if (c.id === CONVERSA) {
       c.awaiting_reply = true;
+      c.last_inbound_at = new Date().toISOString();
     }
   }
+}
+
+const TRES_MINUTOS = 3 * MINUTO;
+
+/**
+ * A varredura de 3 minutos da IA (motor_manutencao, o bloco [resposta da
+ * ia]), so o predicado de sem_resposta: a conversa com a IA, no contador e
+ * sem mensagem nova ha mais de 3 minutos passa para a equipe. `daquiA` e o
+ * tempo que passa ate a varredura rodar. (A varredura de verdade, contra o
+ * banco, esta em tests/integration/lembrete-da-oferta.test.ts.)
+ */
+function varreduraPassaParaAEquipe(daquiA: number): boolean {
+  const conversa = banco.linhas("conversation").find((c) => c.id === CONVERSA);
+  return (
+    conversa?.status === "ia_atendendo" &&
+    conversa.awaiting_reply === true &&
+    Date.parse(String(conversa.last_inbound_at)) <
+      Date.now() + daquiA - TRES_MINUTOS
+  );
+}
+
+/**
+ * encerrar_envios_da_oferta e o trecho da expiracao, como o banco faz
+ * (migration 20261029100000, item 11): os envios PENDENTES da oferta, a
+ * mensagem dela e o lembrete, morrem cancelados. O que executa nao e tocado.
+ */
+function encerrarEnviosDaOferta(): void {
+  for (const job of banco.linhas("job_queue")) {
+    const payload = (job.payload ?? {}) as Linha;
+    if (
+      job.kind === "enviar_mensagem_ativa" &&
+      job.status === "pendente" &&
+      (payload.offer_id === OFERTA || payload[CHAVE_DO_LEMBRETE] === OFERTA)
+    ) {
+      job.status = "cancelado";
+      job.last_error = "oferta_encerrada";
+    }
+  }
+}
+
+/** A oferta fecha (o banco carimba updated_at) e os envios dela morrem. */
+function fecharAOferta(mudancas: Linha): void {
+  for (const o of banco.linhas("waitlist_offer")) {
+    if (o.id === OFERTA) {
+      Object.assign(o, { updated_at: new Date().toISOString() }, mudancas);
+    }
+  }
+  encerrarEnviosDaOferta();
+}
+
+/** O aceite que da certo e, como aceitar_oferta_de_espera, encerra os envios. */
+function aceiteQueEncerra(): void {
+  banco.rpc("aceitar_oferta_de_espera", () => {
+    fecharAOferta({ status: "preenchida", responded_by: CONTATO });
+    return {
+      data: {
+        ok: true,
+        starts_at: HORARIO,
+        profissional: "Dra. Ana Lima",
+        timezone: FUSO,
+      },
+      error: null,
+    };
+  });
+}
+
+/**
+ * O executor desiste do lembrete sem envia-lo (falhar_job definitivo): a
+ * guarda da oferta, a autorizacao revogada, o numero removido ou a falha do
+ * envio (com a linha que falhou).
+ */
+function executorDesisteDoLembrete(
+  erro: string,
+  opcoes: { mensagemQueFalhou?: boolean } = {},
+): void {
+  const id = idDoJobDoLembrete(OFERTA, CONTATO);
+  for (const job of banco.linhas("job_queue")) {
+    if (job.id === id) {
+      job.status = "falhou";
+      job.last_error = erro;
+    }
+  }
+  if (opcoes.mensagemQueFalhou) {
+    banco.linhas("message").push({
+      id: randomUUID(),
+      clinic_id: CLINICA,
+      conversation_id: CONVERSA,
+      direction: "saida",
+      author: "sistema",
+      is_internal_note: false,
+      job_id: id,
+      delivery_status: "falhou",
+      whatsapp_account_id: NUMERO,
+      created_at: new Date().toISOString(),
+    });
+  }
+}
+
+/** O job do lembrete desta oferta para o contato, como esta no banco. */
+function jobDoLembrete(): Linha | undefined {
+  return banco
+    .linhas("job_queue")
+    .find((j) => j.id === idDoJobDoLembrete(OFERTA, CONTATO));
 }
 
 function mudarStatusDaConversa(status: string): void {
@@ -713,6 +853,50 @@ describe("o texto do lembrete (T-E4)", () => {
         situacaoDoLembrete({ status }, [{ delivery_status: "falhou" }]),
       ).toBe("morto");
     }
+    // O cancelado pelo banco (a oferta fechou) continua morto.
+    expect(
+      situacaoDoLembrete(
+        { status: "cancelado", last_error: "oferta_encerrada" },
+        [],
+      ),
+    ).toBe("morto");
+  });
+
+  it("o lembrete dispensado (gravado já cancelado depois da recusa educada do aceite): nem na fila nem morto", () => {
+    expect(MOTIVO_DO_LEMBRETE_DISPENSADO).toBe("lembrete_dispensado");
+    expect(
+      situacaoDoLembrete(
+        { status: "cancelado", last_error: MOTIVO_DO_LEMBRETE_DISPENSADO },
+        [],
+      ),
+    ).toBe("dispensado");
+    // O job vivo e a mensagem que saiu vencem a marca (nunca acontece: o
+    // dispensado nasce cancelado e nunca executa).
+    expect(
+      situacaoDoLembrete(
+        { status: "pendente", last_error: MOTIVO_DO_LEMBRETE_DISPENSADO },
+        [],
+      ),
+    ).toBe("na_fila");
+    expect(
+      situacaoDoLembrete(
+        { status: "cancelado", last_error: MOTIVO_DO_LEMBRETE_DISPENSADO },
+        [{ delivery_status: "enviada" }],
+      ),
+    ).toBe("saiu");
+  });
+
+  it("o lembrete que deixa mensagem sem resposta: o que existe e não saiu (na fila ou morto)", () => {
+    const casos: [SituacaoDoLembrete, boolean][] = [
+      ["nenhum", false],
+      ["na_fila", true],
+      ["saiu", false],
+      ["morto", true],
+      ["dispensado", false],
+    ];
+    for (const [situacao, deixa] of casos) {
+      expect(lembreteDeixaSemResposta(situacao), situacao).toBe(deixa);
+    }
   });
 
   it("o id do job do lembrete: o mesmo para a mesma oferta e contato, um UUID", () => {
@@ -754,8 +938,9 @@ describe("o lembrete na conversa com a IA", () => {
     });
     // Nao e a mensagem da oferta: sem offer_id.
     expect(lembrete?.payload).not.toHaveProperty("offer_id");
-    // O sistema respondeu: a conversa sai do contador do Atendimento.
-    expect(awaitingReply()).toBe(false);
+    // A conversa FICA no contador do Atendimento ate o lembrete sair (quem a
+    // tira e o executor; revisao da AG5, o lembrete que morre sem sair).
+    expect(awaitingReply()).toBe(true);
     // Conferiu a autorizacao (achado 3); nem aceita nem recusa.
     expect(banco.chamadasDe("consentimento_vigente")).toEqual([
       { p_clinic_id: CLINICA, p_contact_id: CONTATO, p_channel: "whatsapp" },
@@ -912,7 +1097,8 @@ describe("o lembrete na conversa com a IA", () => {
       "tratou_com_eco",
     );
     expect(lembretes()).toHaveLength(1);
-    expect(awaitingReply()).toBe(false);
+    // No contador ate o lembrete sair.
+    expect(awaitingReply()).toBe(true);
   });
 
   it("a corrida em que a releitura não acha o lembrete (ou falha): nada coberto, a mensagem fica com a IA", async () => {
@@ -979,7 +1165,7 @@ describe("o lembrete na conversa com a IA", () => {
 describe("o lembrete na fila cobre a mensagem seguinte (revisão da AG5, achado 1)", () => {
   beforeEach(() => montar());
 
-  it("a primeira pede o lembrete; a segunda, com ele ainda na fila, fica coberta: sem segundo lembrete, sem turno, fora do contador", async () => {
+  it("a primeira pede o lembrete; a segunda, com ele ainda na fila, fica coberta: sem segundo lembrete, sem turno, e no contador até ele sair", async () => {
     expect(await interceptar(entrada("Oi, que horário é esse?"))).toBe(
       "tratou_com_eco",
     );
@@ -989,7 +1175,7 @@ describe("o lembrete na fila cobre a mensagem seguinte (revisão da AG5, achado 
     );
     expect(lembretes()).toHaveLength(1);
     expect(ecos()).toHaveLength(1);
-    expect(awaitingReply()).toBe(false);
+    expect(awaitingReply()).toBe(true);
     // Nem aceita nem recusa: so a autorizacao, uma vez por mensagem.
     expect(nomesDasChamadas()).toEqual([
       "consentimento_vigente",
@@ -1006,13 +1192,13 @@ describe("o lembrete na fila cobre a mensagem seguinte (revisão da AG5, achado 
     expect(banco.chamadasDe("aceitar_oferta_de_espera")).toHaveLength(1);
   });
 
-  it("a mensagem do lembrete que falhou e espera nova tentativa: ainda na fila, cobre", async () => {
+  it("a mensagem do lembrete que falhou e espera nova tentativa: ainda na fila, cobre (e a conversa fica no contador)", async () => {
     lembreteNaFila({ mensagemQueFalhou: true });
     expect(await interceptar(entrada("E onde fica a clínica?"))).toBe(
       "tratou_com_eco",
     );
     expect(lembretes()).toHaveLength(1);
-    expect(awaitingReply()).toBe(false);
+    expect(awaitingReply()).toBe(true);
   });
 
   it("o job em execução, sem mensagem ainda: cobre", async () => {
@@ -1341,6 +1527,343 @@ describe("os botões de hoje não mudam (Confirmar, Cancelar, Remarcar)", () => 
 });
 
 // ---------------------------------------------------------------------------
+// O lembrete que morre sem sair (revisao da AG5): a conversa fica no contador
+// ---------------------------------------------------------------------------
+
+const SEGUNDO = 1_000;
+
+describe("o lembrete que morre sem sair deixa a conversa no contador, e a varredura a passa para a equipe (revisão da AG5)", () => {
+  beforeEach(() => montar());
+
+  it("(a) 'Qual o endereço?' pede o lembrete; o SIM chega antes de ele sair: aceita, o aceite cancela o lembrete, e a pergunta fica no contador para a varredura", async () => {
+    aceiteQueEncerra();
+    expect(await interceptar(entrada("Qual o endereço?"))).toBe(
+      "tratou_com_eco",
+    );
+    expect(jobDoLembrete()).toMatchObject({ status: "pendente" });
+    expect(awaitingReply()).toBe(true);
+
+    voltarAoContador();
+    expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
+    expect(banco.chamadasDe("aceitar_oferta_de_espera")).toHaveLength(1);
+    expect(String((ecos().at(-1)?.payload as Linha).body)).toContain(
+      "O horário é seu! Ficou marcado para 03/11/2026 às 09:00",
+    );
+    // O aceite cancelou o lembrete (encerrar_envios_da_oferta): a pergunta do
+    // endereco nunca vai ser respondida por ele.
+    expect(jobDoLembrete()).toMatchObject({
+      status: "cancelado",
+      last_error: "oferta_encerrada",
+    });
+    // Fica no contador; a varredura de 3 minutos passa a conversa para a
+    // equipe, que ve a pergunta.
+    expect(awaitingReply()).toBe(true);
+    expect(varreduraPassaParaAEquipe(TRES_MINUTOS - SEGUNDO)).toBe(false);
+    expect(varreduraPassaParaAEquipe(TRES_MINUTOS + SEGUNDO)).toBe(true);
+  });
+
+  it("(a) depois do aceite, o vencedor agradece ('ok') ou repete o SIM: o lembrete morreu sem sair, e a conversa continua no contador", async () => {
+    aceiteQueEncerra();
+    await interceptar(entrada("Qual o endereço?"));
+    voltarAoContador();
+    await interceptar(entrada("SIM"));
+    for (const body of ["ok", "SIM"]) {
+      voltarAoContador();
+      expect(await interceptar(entrada(body)), body).toBe("tratou_com_eco");
+      expect(awaitingReply(), body).toBe(true);
+    }
+    expect(banco.chamadasDe("aceitar_oferta_de_espera")).toHaveLength(1);
+    expect(varreduraPassaParaAEquipe(TRES_MINUTOS + SEGUNDO)).toBe(true);
+  });
+
+  it("(a) o SIM duplo (o outro SIM do mesmo contato ganhou no meio) com o lembrete na fila: continua no contador", async () => {
+    await interceptar(entrada("Qual o endereço?"));
+    banco.rpc("aceitar_oferta_de_espera", () => {
+      fecharAOferta({ status: "preenchida", responded_by: CONTATO });
+      return { data: { ok: false, erro: "ja_tratado" }, error: null };
+    });
+    voltarAoContador();
+    expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
+    expect(awaitingReply()).toBe(true);
+  });
+
+  it.each([
+    [
+      "outro candidato ganha",
+      () => fecharAOferta({ status: "preenchida", responded_by: OUTRO_CONTATO }),
+      "cancelado",
+    ],
+    [
+      "a oferta vence",
+      () => fecharAOferta({ status: "expirada", expires_at: atras(SEGUNDO) }),
+      "cancelado",
+    ],
+    [
+      "a reoferta é cancelada",
+      () => fecharAOferta({ status: "cancelada" }),
+      "cancelado",
+    ],
+    [
+      "a guarda do executor (a oferta fechou com ele executando)",
+      () => executorDesisteDoLembrete("oferta_encerrada"),
+      "falhou",
+    ],
+    [
+      "a autorização revogada antes do envio",
+      () => executorDesisteDoLembrete("sem_consentimento"),
+      "falhou",
+    ],
+    [
+      "o número removido",
+      () => executorDesisteDoLembrete("numero_removido"),
+      "falhou",
+    ],
+    [
+      "a falha definitiva do envio",
+      () =>
+        executorDesisteDoLembrete("envio_incerto", { mensagemQueFalhou: true }),
+      "falhou",
+    ],
+  ])(
+    "(b) 'Qual o endereço?' e 'Aceita Unimed?' (coberta); %s antes de o lembrete sair: as duas ficam no contador, e a varredura passa a conversa para a equipe",
+    async (_nome, morte, status) => {
+      expect(await interceptar(entrada("Qual o endereço?"))).toBe(
+        "tratou_com_eco",
+      );
+      voltarAoContador();
+      expect(await interceptar(entrada("Aceita Unimed?"))).toBe(
+        "tratou_com_eco",
+      );
+      expect(lembretes()).toHaveLength(1);
+      expect(awaitingReply()).toBe(true);
+
+      morte();
+      expect(jobDoLembrete()).toMatchObject({ status });
+      // Nada saiu e ninguem respondeu: no contador, e a varredura de 3
+      // minutos tira a conversa da IA (sem_resposta) para a equipe.
+      expect(ecos()).toHaveLength(1);
+      expect(awaitingReply()).toBe(true);
+      expect(varreduraPassaParaAEquipe(TRES_MINUTOS - SEGUNDO)).toBe(false);
+      expect(varreduraPassaParaAEquipe(TRES_MINUTOS + SEGUNDO)).toBe(true);
+    },
+  );
+
+  it("(b) a oferta fechou por outro candidato e a pessoa responde NÃO QUERO: nada a fazer, mas as perguntas sem resposta seguram o contador", async () => {
+    await interceptar(entrada("Qual o endereço?"));
+    fecharAOferta({ status: "preenchida", responded_by: OUTRO_CONTATO });
+    voltarAoContador();
+    expect(await interceptar(entrada("Não quero"))).toBe("tratou_com_eco");
+    expect(nomesDasChamadas()).toEqual(["consentimento_vigente"]);
+    expect(awaitingReply()).toBe(true);
+  });
+
+  it("(b) a oferta fechou por outro candidato e a pessoa responde SIM: a recusa educada, e as perguntas sem resposta seguram o contador", async () => {
+    await interceptar(entrada("Qual o endereço?"));
+    fecharAOferta({ status: "preenchida", responded_by: OUTRO_CONTATO });
+    voltarAoContador();
+    expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
+    expect((ecos().at(-1)?.payload as Linha).body).toBe(
+      RESPOSTA_OFERTA_PERDIDA,
+    );
+    expect(awaitingReply()).toBe(true);
+  });
+
+  it("a recusa (NÃO QUERO) com o lembrete na fila: a recusa de sempre, e a pergunta que pediu o lembrete segura o contador", async () => {
+    banco.rpc("recusar_oferta_de_espera", () => ({
+      data: { ok: true },
+      error: null,
+    }));
+    await interceptar(entrada("Qual o endereço?"));
+    voltarAoContador();
+    expect(await interceptar(entrada("Não quero"))).toBe("tratou_com_eco");
+    expect((ecos().at(-1)?.payload as Linha).body).toBe(
+      RESPOSTA_OFERTA_RECUSADA,
+    );
+    expect(awaitingReply()).toBe(true);
+  });
+
+  it("o lembrete que SAIU não segura nada: o SIM aceito tira a conversa do contador, como antes", async () => {
+    aceiteQueDaCerto();
+    lembreteJaEnviado(MINUTO);
+    expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
+    expect(banco.chamadasDe("aceitar_oferta_de_espera")).toHaveLength(1);
+    expect(awaitingReply()).toBe(false);
+  });
+
+  it("sem lembrete nenhum: o SIM aceito e o NÃO QUERO tiram a conversa do contador, como antes", async () => {
+    aceiteQueDaCerto();
+    expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
+    expect(awaitingReply()).toBe(false);
+
+    montar();
+    banco.rpc("recusar_oferta_de_espera", () => ({
+      data: { ok: true },
+      error: null,
+    }));
+    expect(await interceptar(entrada("Não quero"))).toBe("tratou_com_eco");
+    expect(awaitingReply()).toBe(false);
+  });
+
+  it("a leitura do lembrete falha: o SIM é aceito, e na dúvida a conversa fica no contador", async () => {
+    aceiteQueDaCerto();
+    let leiturasDoLembrete = 0;
+    // So a leitura do job do lembrete (pelo id por nome), antes da RPC.
+    banco.aoExecutar = (tabela, operacao, filtros) => {
+      if (
+        tabela === "job_queue" &&
+        operacao === "select" &&
+        filtros.some(
+          ([coluna, valor]) =>
+            coluna === "id" && valor === idDoJobDoLembrete(OFERTA, CONTATO),
+        )
+      ) {
+        leiturasDoLembrete += 1;
+        return { code: "57014" };
+      }
+      return null;
+    };
+    expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
+    expect(leiturasDoLembrete).toBe(1);
+    expect(banco.chamadasDe("aceitar_oferta_de_espera")).toHaveLength(1);
+    expect(awaitingReply()).toBe(true);
+  });
+});
+
+describe("o aceite recusado com a oferta aberta dispensa o lembrete (revisão da AG5, BAIXO)", () => {
+  beforeEach(() => montar());
+
+  function aceiteRecusado(resposta: Linha): void {
+    banco.rpc("aceitar_oferta_de_espera", () => ({
+      data: { ok: false, ...resposta },
+      error: null,
+    }));
+  }
+
+  it.each([
+    ["sem_vinculo (o catálogo mudou)", { erro: "sem_vinculo" }],
+    [
+      "sem_vinculo com ja_tem_consulta",
+      { erro: "sem_vinculo", motivo: "ja_tem_consulta" },
+    ],
+    ["nao_cabe", { erro: "nao_cabe" }],
+    [
+      "horario_ocupado pelo recurso",
+      { erro: "horario_ocupado", motivo: "recurso_ocupado" },
+    ],
+  ])(
+    "%s: a recusa educada, o lembrete gravado já cancelado, e o 'Como assim?' seguinte vai para a IA sem o lembrete",
+    async (_nome, resposta) => {
+      aceiteRecusado(resposta);
+      expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
+      expect((ecos()[0]?.payload as Linha).body).toBe(RESPOSTA_OFERTA_PERDIDA);
+      expect(jobDoLembrete()).toMatchObject({
+        clinic_id: CLINICA,
+        kind: "enviar_mensagem_ativa",
+        status: "cancelado",
+        last_error: MOTIVO_DO_LEMBRETE_DISPENSADO,
+        whatsapp_account_id: NUMERO,
+        payload: {
+          contact_id: CONTATO,
+          resposta_ao_paciente: true,
+          [CHAVE_DO_LEMBRETE]: OFERTA,
+        },
+      });
+      expect(jobDoLembrete()?.payload).not.toHaveProperty("body");
+      // A recusa educada respondeu o SIM: fora do contador, como antes.
+      expect(awaitingReply()).toBe(false);
+
+      // A oferta continua aberta para ela, mas o lembrete nunca sai: a
+      // mensagem seguinte e da IA (tres leituras, nenhuma escrita).
+      voltarAoContador();
+      banco.operacoes.length = 0;
+      expect(await interceptar(entrada("Como assim?"))).toBe("sem_intencao");
+      expect(banco.escritas()).toEqual([]);
+      expect(lembretes()).toHaveLength(1);
+      expect(awaitingReply()).toBe(true);
+    },
+  );
+
+  it("a mensagem com o vocabulário do menu depois da recusa (o caminho dos fatos): também sem lembrete", async () => {
+    aceiteRecusado({ erro: "sem_vinculo", motivo: "ja_tem_consulta" });
+    await interceptar(entrada("SIM"));
+    voltarAoContador();
+    expect(await interceptar(entrada("Remarcar"))).toBe("alvo_nenhum");
+    expect(lembretes()).toHaveLength(1);
+    expect(jobDoLembrete()).toMatchObject({ status: "cancelado" });
+  });
+
+  it("depois do lembrete dispensado, o NÃO QUERO recusa e sai do contador como antes (o dispensado não segura nada)", async () => {
+    aceiteRecusado({ erro: "sem_vinculo" });
+    banco.rpc("recusar_oferta_de_espera", () => ({
+      data: { ok: true },
+      error: null,
+    }));
+    await interceptar(entrada("SIM"));
+    voltarAoContador();
+    expect(await interceptar(entrada("Não quero"))).toBe("tratou_com_eco");
+    expect(banco.chamadasDe("recusar_oferta_de_espera")).toHaveLength(1);
+    expect((ecos().at(-1)?.payload as Linha).body).toBe(
+      RESPOSTA_OFERTA_RECUSADA,
+    );
+    expect(awaitingReply()).toBe(false);
+  });
+
+  it("com o lembrete já na fila, o aceite recusado o cancela (não sai depois da recusa educada) e a pergunta que ele cobria fica no contador", async () => {
+    aceiteRecusado({ erro: "sem_vinculo", motivo: "ja_tem_consulta" });
+    expect(await interceptar(entrada("Qual o endereço?"))).toBe(
+      "tratou_com_eco",
+    );
+    voltarAoContador();
+    expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
+    expect((ecos().at(-1)?.payload as Linha).body).toBe(
+      RESPOSTA_OFERTA_PERDIDA,
+    );
+    // Continua morto (cobriu a pergunta), nao dispensado.
+    expect(jobDoLembrete()).toMatchObject({
+      status: "cancelado",
+      last_error: "aceite_recusado",
+    });
+    expect(lembretes()).toHaveLength(1);
+    expect(awaitingReply()).toBe(true);
+    expect(varreduraPassaParaAEquipe(TRES_MINUTOS + SEGUNDO)).toBe(true);
+  });
+
+  it("o lembrete executando não é tocado (o executor confere a oferta)", async () => {
+    aceiteRecusado({ erro: "sem_vinculo" });
+    lembreteNaFila({ status: "executando" });
+    await interceptar(entrada("SIM"));
+    expect(jobDoLembrete()).toMatchObject({ status: "executando" });
+    expect(awaitingReply()).toBe(true);
+  });
+
+  it("a gravação do lembrete dispensado falha: o desfecho não muda", async () => {
+    aceiteRecusado({ erro: "sem_vinculo" });
+    banco.aoInserir = (tabela, linha) =>
+      tabela === "job_queue" && linha.id === idDoJobDoLembrete(OFERTA, CONTATO)
+        ? { code: "57014" }
+        : null;
+    expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
+    expect((ecos()[0]?.payload as Linha).body).toBe(RESPOSTA_OFERTA_PERDIDA);
+    expect(jobDoLembrete()).toBeUndefined();
+    expect(awaitingReply()).toBe(false);
+  });
+
+  it("o aceite que dá certo e o vencedor: nada dispensado", async () => {
+    aceiteQueDaCerto();
+    await interceptar(entrada("SIM"));
+    expect(jobDoLembrete()).toBeUndefined();
+
+    montar();
+    banco.rpc("aceitar_oferta_de_espera", () => {
+      fecharAOferta({ status: "preenchida", responded_by: CONTATO });
+      return { data: { ok: false, erro: "ja_tratado" }, error: null };
+    });
+    await interceptar(entrada("SIM"));
+    expect(jobDoLembrete()).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A rota do webhook
 // ---------------------------------------------------------------------------
 
@@ -1571,7 +2094,7 @@ describe("a rota: a mensagem tratada pelo sistema", () => {
     expect(logs.join("")).toContain("webhook_ia_tratada_pelo_sistema");
   });
 
-  it("a mensagem coberta pelo lembrete na fila (achado 1b): sem turno, sem segundo lembrete, fora das pendentes", async () => {
+  it("a mensagem coberta pelo lembrete na fila (achado 1b): sem turno, sem segundo lembrete, fora das pendentes, e no contador até o lembrete sair", async () => {
     montar();
     lembreteNaFila();
     prepararRota();
@@ -1582,7 +2105,7 @@ describe("a rota: a mensagem tratada pelo sistema", () => {
       banco.chamadasDe("marcar_mensagem_tratada_pelo_sistema"),
     ).toHaveLength(1);
     expect(pendentesParaAIa()).toEqual([]);
-    expect(awaitingReply()).toBe(false);
+    expect(awaitingReply()).toBe(true);
   });
 
   it("sem a autorização (achado 3): o turno da IA de sempre, sem lembrete e nada marcado", async () => {
@@ -1912,5 +2435,180 @@ describe("a rota: a marcação tenta de novo, com prazo (revisão da AG5, achado
       }),
     ]);
     expect(linhasDeLog().filter((l) => l.nivel === "warn")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O executor: o lembrete que SAI tira a conversa do contador (revisao da AG5)
+// ---------------------------------------------------------------------------
+
+// O executor de verdade (executarJobComPosse) sobre o mesmo banco em memoria:
+// a guarda da oferta, a autorizacao, o numero e a conversa vem do banco; so
+// o envio e dublado, gravando a linha da mensagem como send.ts (com o job_id).
+vi.mock("@/lib/integrations/whatsapp/provider", () => ({
+  getWhatsAppProvider: () => ({ isOfficialChannel: false }),
+}));
+vi.mock("@/lib/integrations/whatsapp/send", () => ({
+  carregarInstancia: vi.fn(),
+  falhaPermiteRetry: () => false,
+  sendWhatsAppMedia: vi.fn(),
+  sendWhatsAppMenu: vi.fn(),
+  sendWhatsAppText: vi.fn(),
+}));
+
+const { executarJobComPosse } = await import("@/lib/jobs/worker");
+const { sendWhatsAppText } = await import("@/lib/integrations/whatsapp/send");
+
+const EXECUTOR = "executor-de-teste";
+
+/**
+ * O motor reivindica e executa o lembrete que esta na fila: a posse, o
+ * numero (numero_do_job), a conversa (garantir_conversa_aberta), concluir e
+ * falhar como o banco. O envio dublado grava a mensagem do lembrete.
+ */
+async function motorExecutaOLembrete(): Promise<string> {
+  const linha = jobDoLembrete();
+  if (!linha) {
+    throw new Error("nenhum lembrete na fila");
+  }
+  linha.status = "executando";
+  linha.locked_by = EXECUTOR;
+  banco.rpc("confirmar_posse_job", () => ({ data: true, error: null }));
+  banco.rpc("numero_do_job", () => ({
+    data: { estado: "ok", whatsapp_account_id: NUMERO },
+    error: null,
+  }));
+  banco.rpc("garantir_conversa_aberta", () => ({
+    data: CONVERSA,
+    error: null,
+  }));
+  banco.rpc("concluir_job", () => {
+    linha.status = "concluido";
+    return { data: null, error: null };
+  });
+  banco.rpc("falhar_job", (args) => {
+    linha.status = args.p_definitivo === true ? "falhou" : "pendente";
+    linha.last_error = args.p_erro;
+    return { data: null, error: null };
+  });
+  vi.mocked(sendWhatsAppText).mockImplementation(async (_admin, envio) => {
+    banco.linhas("message").push({
+      id: randomUUID(),
+      clinic_id: envio.clinicId,
+      conversation_id: envio.conversationId,
+      direction: "saida",
+      author: "sistema",
+      is_internal_note: false,
+      job_id: envio.jobId ?? null,
+      wa_message_id: "wa-lembrete",
+      delivery_status: "enviada",
+      whatsapp_account_id: NUMERO,
+      created_at: new Date().toISOString(),
+    });
+    return { ok: true, messageId: "m-lembrete" };
+  });
+  return executarJobComPosse(banco.cliente(), EXECUTOR, {
+    id: String(linha.id),
+    clinic_id: CLINICA,
+    kind: "enviar_mensagem_ativa",
+    payload: linha.payload as Record<string, unknown>,
+    attempts: 1,
+    max_attempts: 5,
+    whatsapp_account_id: String(linha.whatsapp_account_id),
+    created_at: String(linha.created_at),
+  });
+}
+
+describe("o executor: o lembrete que sai tira a conversa do contador (revisão da AG5)", () => {
+  beforeEach(() => {
+    capturarLogs();
+    montar();
+  });
+
+  afterEach(() => {
+    vi.mocked(sendWhatsAppText).mockReset();
+    vi.restoreAllMocks();
+    semDadoDoPacienteNoLog();
+    // O texto do lembrete tambem nunca vai para o log.
+    expect(logs.join("")).not.toContain("Sobre o horário");
+  });
+
+  it("a pergunta pede o lembrete (no contador); o motor o manda: o contador cai, e a varredura não tira a conversa da IA", async () => {
+    expect(await interceptar(entrada("Qual o endereço?"))).toBe(
+      "tratou_com_eco",
+    );
+    expect(awaitingReply()).toBe(true);
+    expect(await motorExecutaOLembrete()).toBe("concluido");
+    expect(sendWhatsAppText).toHaveBeenCalledTimes(1);
+    expect(jobDoLembrete()).toMatchObject({ status: "concluido" });
+    expect(awaitingReply()).toBe(false);
+    expect(varreduraPassaParaAEquipe(TRES_MINUTOS + SEGUNDO)).toBe(false);
+  });
+
+  it("duas perguntas (a segunda coberta) e o lembrete sai: as duas respondidas por ele, o contador cai; a mensagem seguinte é da IA", async () => {
+    await interceptar(entrada("Qual o endereço?"));
+    voltarAoContador();
+    await interceptar(entrada("Aceita Unimed?"));
+    expect(await motorExecutaOLembrete()).toBe("concluido");
+    expect(awaitingReply()).toBe(false);
+
+    // Depois que ele saiu, a mensagem seguinte vai para a IA (no contador
+    // ate a IA responder), sem segundo lembrete.
+    voltarAoContador();
+    expect(await interceptar(entrada("E o preço?"))).toBe("sem_intencao");
+    expect(lembretes()).toHaveLength(1);
+    expect(awaitingReply()).toBe(true);
+  });
+
+  it("alguém assumiu a conversa antes de o lembrete sair: ele sai, e a conversa continua no contador da equipe", async () => {
+    await interceptar(entrada("Qual o endereço?"));
+    mudarStatusDaConversa("em_atendimento");
+    expect(await motorExecutaOLembrete()).toBe("concluido");
+    expect(sendWhatsAppText).toHaveBeenCalledTimes(1);
+    expect(awaitingReply()).toBe(true);
+  });
+
+  it("o efeito aceito: o lembrete que demora mais de 3 minutos deixa a varredura passar a conversa para a equipe antes de ele sair", async () => {
+    await interceptar(entrada("Qual o endereço?"));
+    expect(varreduraPassaParaAEquipe(TRES_MINUTOS - SEGUNDO)).toBe(false);
+    expect(varreduraPassaParaAEquipe(TRES_MINUTOS + SEGUNDO)).toBe(true);
+    // A varredura tirou a conversa da IA; o lembrete sai depois, e o
+    // contador continua com a equipe.
+    mudarStatusDaConversa("aguardando_humano");
+    expect(await motorExecutaOLembrete()).toBe("concluido");
+    expect(awaitingReply()).toBe(true);
+  });
+
+  it("a guarda do executor (outro candidato ganhou com o lembrete executando): nada sai, e a conversa fica no contador para a varredura", async () => {
+    await interceptar(entrada("Qual o endereço?"));
+    // Executando nao e cancelado pelo banco: so a guarda o pega.
+    for (const o of banco.linhas("waitlist_offer")) {
+      Object.assign(o, {
+        status: "preenchida",
+        responded_by: OUTRO_CONTATO,
+        updated_at: new Date().toISOString(),
+      });
+    }
+    expect(await motorExecutaOLembrete()).toBe("falhou");
+    expect(sendWhatsAppText).not.toHaveBeenCalled();
+    expect(jobDoLembrete()).toMatchObject({
+      status: "falhou",
+      last_error: "oferta_encerrada",
+    });
+    expect(awaitingReply()).toBe(true);
+    expect(varreduraPassaParaAEquipe(TRES_MINUTOS + SEGUNDO)).toBe(true);
+  });
+
+  it("a autorização revogada antes do envio: nada sai, e a conversa fica no contador para a varredura", async () => {
+    await interceptar(entrada("Qual o endereço?"));
+    banco.rpc("consentimento_vigente", () => ({ data: false, error: null }));
+    expect(await motorExecutaOLembrete()).toBe("falhou");
+    expect(sendWhatsAppText).not.toHaveBeenCalled();
+    expect(jobDoLembrete()).toMatchObject({
+      status: "falhou",
+      last_error: "sem_consentimento",
+    });
+    expect(awaitingReply()).toBe(true);
+    expect(varreduraPassaParaAEquipe(TRES_MINUTOS + SEGUNDO)).toBe(true);
   });
 });

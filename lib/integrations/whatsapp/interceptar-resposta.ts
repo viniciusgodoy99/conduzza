@@ -8,6 +8,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { passoCondizComAgenda } from "@/lib/domain/cadence";
 import {
   CHAVE_DO_LEMBRETE,
+  lembreteDeixaSemResposta,
+  MOTIVO_DO_LEMBRETE_DISPENSADO,
   ofertaDePeParaOContato,
   situacaoDoLembrete,
   textoDoLembreteDaOferta,
@@ -84,6 +86,21 @@ import {
 //    respondida e a mesma conta de sempre (qualPerguntaFoiRespondida, sem
 //    mudar a funcao pura): a oferta e a pergunta quando a conta daria a
 //    oferta para um SIM. Fora da conversa com a IA, nada muda: a recepcao le.
+//
+//    O CONTADOR (revisao da AG5, o lembrete que morre sem sair): a mensagem
+//    que pediu o lembrete e as que ele cobriu ficam no contador do
+//    Atendimento (awaiting_reply) ate ele SAIR; quem tira e o executor, no
+//    envio (lib/jobs/worker.ts). O lembrete morre sem sair quando a oferta
+//    fecha (o aceite, outro candidato, o "Cancelar reoferta", a vaga que
+//    sumiu, a expiracao: encerrar_envios_da_oferta e expirar_ofertas_de_
+//    espera o cancelam, ou a guarda do executor), sem a autorizacao, com o
+//    numero removido ou numa falha definitiva: nada disso tira a conversa do
+//    contador, e a varredura de 3 minutos a passa para a equipe
+//    (sem_resposta), que ve as mensagens. Pelo mesmo motivo o SIM e o NAO
+//    QUERO dessa oferta nao tiram a conversa do contador enquanto o lembrete
+//    existir sem ter saido (tratarRespostaDeOferta). O efeito aceito: o
+//    lembrete que demora mais de 3 minutos para sair (numero caido, fila do
+//    numero cheia) tambem leva a conversa para a equipe.
 //
 //    O que continua indo para a IA (e, pelo prompt, para a equipe): o SIM
 //    sem citar a oferta nem o lembrete que chega depois de uma fala da IA (ou
@@ -984,7 +1001,9 @@ async function tirarDoContadorDeAtendimento(
  * eco nenhum (a rota a marca e nao chama a IA) nao pode deixar awaiting_reply
  * de pe, senao a varredura de 3 minutos tira a conversa da IA como
  * sem_resposta. Fora da IA (ou se alguem assumiu no meio), nada muda: a
- * recepcao ve a mensagem, como sempre.
+ * recepcao ve a mensagem, como sempre. Excecao de quem chama: com o lembrete
+ * da oferta sem ter saido, a conversa fica no contador DE PROPOSITO
+ * (tratarRespostaDeOferta, revisao da AG5).
  */
 async function tirarDoContadorNaConversaComAIa(
   admin: SupabaseClient,
@@ -1040,6 +1059,31 @@ async function tratarRespostaDeOferta(
     new Date(oferta.expires_at).getTime() > Date.now() &&
     !oferta.declined_by.includes(entrada.contactId);
 
+  // Revisao da AG5 (o lembrete que morre sem sair): o lembrete desta oferta,
+  // lido ANTES da RPC (o aceite o cancela, encerrar_envios_da_oferta). Na
+  // fila ou morto, a mensagem que o pediu e as que ele cobriu estao sem
+  // resposta: nenhum desfecho daqui tira a conversa do contador, e a
+  // varredura de 3 minutos a passa para a equipe. A leitura que falha e
+  // duvida: fica no contador (o lado seguro).
+  const lembrete = await lerLembrete(
+    admin,
+    entrada.clinicId,
+    entrada.contactId,
+    oferta.id,
+  );
+  const podeSairDoContador =
+    lembrete !== null && !lembreteDeixaSemResposta(lembrete.situacao);
+  const sairDoContador = async (): Promise<void> => {
+    if (podeSairDoContador) {
+      await tirarDoContadorDeAtendimento(admin, entrada);
+    }
+  };
+  const sairDoContadorNaConversaComAIa = async (): Promise<void> => {
+    if (podeSairDoContador) {
+      await tirarDoContadorNaConversaComAIa(admin, entrada);
+    }
+  };
+
   if (!aberta) {
     if (oferta.responded_by === entrada.contactId) {
       // Revisao da AG5 (achado 5): o VENCEDOR dizendo NAO QUERO desiste de
@@ -1053,7 +1097,7 @@ async function tratarRespostaDeOferta(
       // que perdeu: o horario E dele. Silencio. Fora da IA a recepcao ve a
       // mensagem; na conversa com a IA (marcada, sem turno), ela sai do
       // contador: nada a fazer, e a varredura nao tira a conversa da IA.
-      await tirarDoContadorNaConversaComAIa(admin, entrada);
+      await sairDoContadorNaConversaComAIa();
       return "tratou";
     }
     // Respondeu tarde querendo a vaga: recusa educada. So chega aqui quando
@@ -1061,13 +1105,13 @@ async function tratarRespostaDeOferta(
     // confirmacao depois dela, o "Confirmar" e do toque, nunca desta recusa.
     if (intencao === "aceitar") {
       await responder(admin, entrada, RESPOSTA_OFERTA_PERDIDA);
-      await tirarDoContadorDeAtendimento(admin, entrada);
+      await sairDoContador();
       return "tratou";
     }
     // NAO QUERO para a oferta encerrada (ou que a pessoa ja recusou): nada a
     // fazer, ela segue na lista. Silencio; na conversa com a IA, fora do
     // contador (achado 5).
-    await tirarDoContadorNaConversaComAIa(admin, entrada);
+    await sairDoContadorNaConversaComAIa();
     return "tratou";
   }
 
@@ -1133,16 +1177,76 @@ async function tratarRespostaDeOferta(
       if (await venceuAOferta(admin, entrada, oferta.id)) {
         // O eco do aceite ja foi pela outra resposta. Na conversa com a IA,
         // fora do contador (achado 5): nada a fazer.
-        await tirarDoContadorNaConversaComAIa(admin, entrada);
+        await sairDoContadorNaConversaComAIa();
         return "tratou";
       }
-      // O segundo a responder: a recusa educada do aceite da 4.9.
+      // O segundo a responder: a recusa educada do aceite da 4.9. Tambem o
+      // aceite recusado com a oferta ainda aberta para ela (sem_vinculo,
+      // inclusive ja_tem_consulta; nao_cabe; recurso_ocupado): a pessoa ouve
+      // que o horario nao esta mais disponivel, entao o lembrete desta
+      // oferta nunca sai para ela (revisao da AG5).
       await responder(admin, entrada, RESPOSTA_OFERTA_PERDIDA);
+      await dispensarLembrete(admin, entrada, oferta.id);
     }
   }
 
-  await tirarDoContadorDeAtendimento(admin, entrada);
+  await sairDoContador();
   return "tratou";
+}
+
+/**
+ * Revisao da AG5: depois da recusa educada do aceite (RESPOSTA_OFERTA_
+ * PERDIDA), o lembrete desta oferta (T-E4, "para ficar com ele, responda
+ * SIM") nunca sai para esta pessoa. Sem isto, o aceite recusado com a oferta
+ * ainda aberta (sem_vinculo, inclusive motivo ja_tem_consulta) fazia a
+ * mensagem seguinte ("Como assim?") receber o lembrete de uma oferta que ela
+ * nao pode aceitar.
+ *
+ * O job do id por nome (idDoJobDoLembrete) e gravado JA cancelado, com
+ * MOTIVO_DO_LEMBRETE_DISPENSADO: a chave impede que outro nasca, e a
+ * situacao dele e 'dispensado' (nenhuma mensagem esperava por ele: a
+ * conversa sai do contador como antes). Se o lembrete ja existe e ainda esta
+ * pendente, ele e cancelado (o update condicional, como encerrar_envios_da_
+ * oferta); esse continua 'morto', porque cobriu mensagens que agora ficam sem
+ * resposta e no contador. O que ja esta executando nao e tocado.
+ *
+ * Nunca lanca e nunca muda o desfecho: falha aqui so deixa o lembrete
+ * possivel, o comportamento de antes.
+ */
+async function dispensarLembrete(
+  admin: SupabaseClient,
+  entrada: EntradaDaResposta,
+  offerId: string,
+): Promise<void> {
+  const id = idDoJobDoLembrete(offerId, entrada.contactId);
+  try {
+    const { error } = await admin.from("job_queue").insert({
+      id,
+      clinic_id: entrada.clinicId,
+      kind: "enviar_mensagem_ativa",
+      status: "cancelado",
+      last_error: MOTIVO_DO_LEMBRETE_DISPENSADO,
+      // Sem body: este job nunca executa. A oferta e o contato, como no
+      // lembrete de verdade.
+      payload: {
+        contact_id: entrada.contactId,
+        resposta_ao_paciente: true,
+        [CHAVE_DO_LEMBRETE]: offerId,
+      },
+      whatsapp_account_id: entrada.whatsappAccountId ?? null,
+    });
+    if (error?.code !== "23505") {
+      return;
+    }
+    await admin
+      .from("job_queue")
+      .update({ status: "cancelado", last_error: "aceite_recusado" })
+      .eq("clinic_id", entrada.clinicId)
+      .eq("id", id)
+      .eq("status", "pendente");
+  } catch {
+    // Sem efeito no desfecho: o lembrete continua possivel, como antes.
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1198,7 +1302,7 @@ async function lerLembrete(
   const [job, mensagens] = await Promise.all([
     admin
       .from("job_queue")
-      .select("id, status, whatsapp_account_id")
+      .select("id, status, last_error, whatsapp_account_id")
       .eq("clinic_id", clinicId)
       .eq("id", id)
       .limit(1),
@@ -1215,6 +1319,7 @@ async function lerLembrete(
   const linha =
     ((job.data ?? []) as {
       status: string | null;
+      last_error: string | null;
       whatsapp_account_id: string | null;
     }[])[0] ?? null;
   return {
@@ -1231,8 +1336,9 @@ async function lerLembrete(
  * so vale juntar os fatos quando ha uma oferta de pe para o contato cujo
  * lembrete ainda nao foi para a fila (o lembrete) ou ainda esta nela sem ter
  * saido (a mensagem fica coberta por ele, revisao da AG5, achado 1). Com o
- * lembrete que ja saiu (ou que morreu sem sair), a mensagem segue para a IA
- * como antes, com tres leituras e nenhuma escrita.
+ * lembrete que ja saiu (ou que morreu sem sair, ou que foi dispensado depois
+ * da recusa educada do aceite), a mensagem segue para a IA como antes, com
+ * tres leituras e nenhuma escrita.
  */
 async function vaJuntarOsFatosParaOLembrete(
   admin: SupabaseClient,
@@ -1293,7 +1399,11 @@ async function fusoDaClinica(
  * autorizacao para receber mensagens e grava o custo, como em todo eco, e so
  * o deixa sair com a oferta ainda de pe para o contato (lib/jobs/worker.ts);
  * a oferta que fecha cancela o lembrete pendente (encerrar_envios_da_oferta
- * e expirar_ofertas_de_espera, no banco).
+ * e expirar_ofertas_de_espera, no banco). Pela chave, o executor o manda
+ * como RESPOSTA 1:1 (sem o slot de massa, com o intervalo curto do numero):
+ * ele tem prazo, porque a conversa fica no contador ate ele sair. Na fila
+ * ele nasce com a prioridade padrao (0, a dos toques de confirmacao): o
+ * CHECK job_queue_prioridade_valida so aceita 0 e 1.
  */
 async function enfileirarLembrete(
   admin: SupabaseClient,
@@ -1347,14 +1457,16 @@ async function autorizacaoVigente(
  * - tratou_com_eco: o lembrete foi para a fila agora, ou JA ESTA nela sem ter
  *   saido e cobre esta mensagem tambem (revisao da AG5, achado 1: sem turno
  *   da IA, sem segundo lembrete). A IA nao responde esta mensagem (a rota a
- *   marca como tratada pelo sistema) e a conversa sai do contador do
- *   Atendimento, como depois de todo eco.
+ *   marca como tratada pelo sistema). A conversa FICA no contador do
+ *   Atendimento: quem a tira e o executor, quando o lembrete sai (revisao da
+ *   AG5, o lembrete que morre sem sair). Se ele morrer sem sair, a varredura
+ *   de 3 minutos passa a conversa para a equipe.
  * - alvo_nenhum: nada a lembrar (a conversa saiu da IA; a oferta nao esta de
  *   pe para esta pessoa; a pessoa nao tem a autorizacao para receber
  *   mensagens, e a IA passa para a equipe com sem_autorizacao; o lembrete
- *   desta oferta ja saiu, morreu sem sair ou esta na fila de outro numero). A
- *   mensagem fica com a IA, que nunca aceita, recusa nem fala do horario
- *   oferecido.
+ *   desta oferta ja saiu, morreu sem sair, foi dispensado ou esta na fila de
+ *   outro numero). A mensagem fica com a IA, que nunca aceita, recusa nem
+ *   fala do horario oferecido.
  * - fatos_ilegiveis: uma leitura ou a fila falhou. A mensagem tambem fica
  *   com a IA (falha nunca vira lembrete duvidoso).
  */
@@ -1393,7 +1505,7 @@ async function lembrarDaOferta(
   if (!autorizada) {
     return "alvo_nenhum";
   }
-  const jaExiste = await cobrirPeloLembrete(admin, entrada, lembrete);
+  const jaExiste = cobrirPeloLembrete(entrada, lembrete);
   if (jaExiste !== null) {
     return jaExiste;
   }
@@ -1428,9 +1540,9 @@ async function lembrarDaOferta(
     if (relido === null) {
       return "fatos_ilegiveis";
     }
-    return (await cobrirPeloLembrete(admin, entrada, relido)) ?? "alvo_nenhum";
+    return cobrirPeloLembrete(entrada, relido) ?? "alvo_nenhum";
   }
-  await tirarDoContadorDeAtendimento(admin, entrada);
+  // A conversa fica no contador ate o lembrete sair (o executor a tira).
   return "tratou_com_eco";
 }
 
@@ -1439,15 +1551,17 @@ async function lembrarDaOferta(
  * ainda nao existe (quem chama o poe na fila).
  * - na_fila, pelo numero que recebeu esta mensagem: ele ainda vai sair e
  *   responde esta tambem ("se for outro assunto, e so escrever de novo"):
- *   tratou_com_eco, sem segundo lembrete, e a conversa fora do contador. Na
- *   fila de outro numero, ele nao chega a esta conversa: alvo_nenhum.
- * - saiu ou morto: uma vez por oferta e contato; a mensagem fica com a IA.
+ *   tratou_com_eco, sem segundo lembrete. A conversa fica no contador ate ele
+ *   sair (revisao da AG5, o lembrete que morre sem sair): se ele morrer sem
+ *   sair, esta mensagem tambem vai para a equipe pela varredura. Na fila de
+ *   outro numero, ele nao chega a esta conversa: alvo_nenhum.
+ * - saiu, morto ou dispensado: uma vez por oferta e contato; a mensagem fica
+ *   com a IA.
  */
-async function cobrirPeloLembrete(
-  admin: SupabaseClient,
+function cobrirPeloLembrete(
   entrada: EntradaDaResposta,
   lembrete: LembreteLido,
-): Promise<"tratou_com_eco" | "alvo_nenhum" | null> {
+): "tratou_com_eco" | "alvo_nenhum" | null {
   if (lembrete.situacao === "nenhum") {
     return null;
   }
@@ -1457,7 +1571,6 @@ async function cobrirPeloLembrete(
   ) {
     return "alvo_nenhum";
   }
-  await tirarDoContadorNaConversaComAIa(admin, entrada);
   return "tratou_com_eco";
 }
 
