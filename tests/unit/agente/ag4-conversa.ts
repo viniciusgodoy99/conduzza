@@ -249,7 +249,21 @@ export type Fala = {
    * ferramenta): por exemplo, a pessoa mandando outra mensagem.
    */
   durante?: (cenario: CenarioDaAg4) => void;
+  /**
+   * Revisao da revisao final da AG4 (o toque atrasado): a mensagem da
+   * pessoa cita (ou toca o botao de) outra mensagem.
+   */
+  citacao?: Citacao;
 };
+
+/**
+ * Revisao da revisao final da AG4 (o toque atrasado): a citacao de uma
+ * mensagem do paciente, como o webhook grava: `mensagem`, o id da mensagem
+ * citada que o banco achou (reply_to_message_id); `doWhatsapp`, o id do
+ * WhatsApp que veio na citacao ou no botao (reply_to_wa_message_id; sem a
+ * mensagem, a citada que o banco nao achou).
+ */
+export type Citacao = { mensagem?: string; doWhatsapp?: string };
 
 /**
  * O cenario: o banco com as jornadas e o contato, as RPCs da AG4 sobre o
@@ -288,6 +302,12 @@ export class CenarioDaAg4 {
    * mensagem_nova_do_paciente.
    */
   readonly estadoDoTurnoPorJob = new Map<string, string>();
+  /**
+   * Revisao da revisao final da AG4 (o toque atrasado): o id (e o id do
+   * WhatsApp) da ultima resposta que a conversa mandou (a resposta da IA ou
+   * a frase fixa), para a pessoa citar.
+   */
+  ultimaResposta: { id: string; waMessageId: string } | null = null;
 
   constructor(
     e: {
@@ -382,6 +402,10 @@ export class CenarioDaAg4 {
     apagada?: boolean;
     /** O job que escreveu a resposta (R8: message.job_id). */
     job?: string;
+    /** Revisao da revisao final da AG4: a citacao (so do paciente). */
+    citacao?: Citacao;
+    /** Revisao da revisao final da AG4: o id do WhatsApp (so da saida). */
+    waMessageId?: string;
   }): string {
     const id = randomUUID();
     this.banco.inserir("message", {
@@ -398,6 +422,9 @@ export class CenarioDaAg4 {
       deleted_at: m.apagada === true ? new Date(m.em).toISOString() : null,
       created_at: new Date(m.em).toISOString(),
       job_id: m.job ?? null,
+      wa_message_id: m.waMessageId ?? null,
+      reply_to_message_id: m.citacao?.mensagem ?? null,
+      reply_to_wa_message_id: m.citacao?.doWhatsapp ?? null,
     });
     return id;
   }
@@ -422,18 +449,21 @@ export class CenarioDaAg4 {
     texto: string,
     autoria: "sistema" | "usuario" | "ia" = "sistema",
     falhou = false,
-  ): void {
+  ): string {
     this.mensagens.push({
       autor: "assistente",
       autoria,
       texto: mascararNome(texto, this.nomeDoContato),
     });
-    this.registrar({
+    // Revisao da revisao final da AG4 (o toque atrasado): o id, para a
+    // pessoa citar (ou tocar o botao de) esta mensagem depois.
+    return this.registrar({
       direcao: "saida",
       autor: autoria,
       texto,
       em: this.instante(this.agora),
       falhou,
+      waMessageId: `wa-${randomUUID()}`,
     });
   }
 
@@ -462,7 +492,7 @@ export class CenarioDaAg4 {
    * turno): no historico e no banco. `em`: o instante (padrao: logo depois
    * da ultima mensagem). Devolve o id da mensagem.
    */
-  escreve(texto: string, em?: number): string {
+  escreve(texto: string, em?: number, citacao?: Citacao): string {
     this.mensagens.push({
       autor: "paciente",
       texto: mascararNome(texto, this.nomeDoContato),
@@ -473,18 +503,19 @@ export class CenarioDaAg4 {
       autor: "paciente",
       texto,
       em: em ?? this.instante(this.agora),
+      citacao,
     });
   }
 
   /** Uma fala do paciente: um turno inteiro, dois minutos depois do outro. */
   async fala(
-    { texto, roteiro, durante }: Fala,
+    { texto, roteiro, durante, citacao }: Fala,
     extra: Partial<EntradaDoTurno> = {},
   ): Promise<ResultadoDoTurno> {
     if (this.jobs.length > 0) {
       this.agora += 2 * 60_000;
     }
-    this.escreve(texto);
+    this.escreve(texto, undefined, citacao);
     return this.turno(roteiro, durante, extra);
   }
 
@@ -548,6 +579,9 @@ export class CenarioDaAg4 {
         contactId: CONTATO,
         jobId: job,
         agora: () => momento,
+        // Revisao da revisao final da AG4 (o toque atrasado): as lidas do
+        // job, como lib/jobs/responder-com-ia.ts.
+        mensagensLidas: [...(this.lidasPorJob.get(job) ?? [])],
       }),
       atendimento: this.atendimento,
       agora: () => momento,
@@ -576,14 +610,17 @@ export class CenarioDaAg4 {
         autoria,
         texto: mascararNome(r.resposta, this.nomeDoContato),
       });
-      this.registrar({
+      const waMessageId = `wa-${randomUUID()}`;
+      const id = this.registrar({
         direcao: "saida",
         autor: autoria,
         texto: r.resposta,
         em: this.instante(momento + 1),
         // A resposta da IA sai com o job do turno (R8).
         ...(autoria === "ia" ? { job } : {}),
+        waMessageId,
       });
+      this.ultimaResposta = { id, waMessageId };
     }
     if (r.atendimento && r.mensagemNova !== true) {
       // O executor grava o estado (gravar_atendimento_da_ia): o banco

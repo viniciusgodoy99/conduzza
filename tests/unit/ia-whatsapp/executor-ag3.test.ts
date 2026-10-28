@@ -614,7 +614,7 @@ describe("revisao final da AG4 (M1 e B1): a mensagem nova da pessoa no meio do t
     return banco.linhas("ai_turno").find((t) => t.job_id === JOB);
   }
 
-  it("pelo webhook (o job da mensagem nova ja esta na fila): junta com ele e marca a contagem; o estado NAO e gravado (B1); nada sai, nada passa, a espera continua", async () => {
+  it("pelo webhook (o job da mensagem nova ja esta na fila): junta com ele SEM marcar a contagem (a pessoa escreveu de novo); o estado NAO e gravado (B1); nada sai, nada passa, a espera continua", async () => {
     filaDoBanco();
     banco.linhas("message").push(mensagem("m2"));
     const doWebhook = randomUUID();
@@ -639,15 +639,22 @@ describe("revisao final da AG4 (M1 e B1): a mensagem nova da pessoa no meio do t
       },
     ]);
     expect(banco.linhas("job_queue")).toHaveLength(1);
-    expect(banco.linhas("job_queue")[0]).toMatchObject({
-      id: doWebhook,
-      status: "pendente",
-      payload: {
-        conversation_id: CONVERSA,
-        ultima_mensagem_id: "m2",
-        [CHAVE_DAS_CONTINUACOES]: 1,
-      },
-    });
+    // Revisao da revisao final da AG4: o job do webhook fica como o webhook
+    // o deixou (sem a contagem): a pessoa escreveu de novo, nao e o laco.
+    expect(banco.linhas("job_queue")[0]).toEqual(
+      expect.objectContaining({
+        id: doWebhook,
+        status: "pendente",
+        payload: { conversation_id: CONVERSA, ultima_mensagem_id: "m2" },
+      }),
+    );
+    expect(
+      banco.operacoes.filter(
+        (o) => o.tabela === "job_queue" && o.operacao === "update",
+      ),
+    ).toEqual([]);
+    expect(logs.join("")).toContain("ia_mensagem_nova_continua");
+    expect(logs.join("")).not.toContain("ia_mensagem_nova_contagem_nao_marcada");
     // B1: o estado do comeco nao e regravado (o pedido nao e recarimbado).
     expect(banco.chamadasDe("gravar_atendimento_da_ia")).toEqual([]);
     expect(enviarResposta).not.toHaveBeenCalled();
@@ -809,6 +816,60 @@ describe("revisao final da AG4 (M1 e B1): a mensagem nova da pessoa no meio do t
     expect(enviarFrase).toHaveBeenCalledTimes(1);
   });
 
+  it("revisao da revisao final: a contagem do job que parou NAO passa para o job do webhook (juntou); so o enfileirado sobe, e a pessoa que escreve de novo nunca leva a conversa ao limite", async () => {
+    // O job que parou ja era a continuacao 1 (o enfileirado de antes). A
+    // pessoa escreveu de novo pelo webhook: o job dela ja esta na fila.
+    filaDoBanco();
+    banco.linhas("message").push(mensagem("m2"));
+    const doWebhook = randomUUID();
+    banco.linhas("job_queue").push({
+      id: doWebhook,
+      clinic_id: CLINICA,
+      kind: "responder_com_ia",
+      status: "pendente",
+      attempts: 0,
+      devolucoes: 0,
+      payload: { conversation_id: CONVERSA, ultima_mensagem_id: "m2" },
+      updated_at: "2026-10-13T14:59:31.000001+00:00",
+    });
+    turno.mockImplementation(async () => paradoPelaMensagemNova());
+    const continuacao = {
+      payload: {
+        conversation_id: CONVERSA,
+        ultima_mensagem_id: "m1",
+        [CHAVE_DAS_CONTINUACOES]: 1,
+      },
+    };
+    expect(await rodar({}, continuacao)).toEqual({ ok: true });
+    expect(banco.linhas("job_queue")).toEqual([
+      expect.objectContaining({
+        id: doWebhook,
+        payload: { conversation_id: CONVERSA, ultima_mensagem_id: "m2" },
+      }),
+    ]);
+    expect(enviarFrase).not.toHaveBeenCalled();
+    expect(passagens).toEqual([]);
+
+    // O job do webhook (sem a contagem) para de novo e a fila cria o
+    // seguinte (nenhum job da pessoa na fila): a contagem recomeca em 1,
+    // nunca 2 (o limite).
+    montar();
+    filaDoBanco();
+    turno.mockImplementation(async () => paradoPelaMensagemNova());
+    expect(
+      await rodar({}, {
+        payload: { conversation_id: CONVERSA, ultima_mensagem_id: "m2" },
+      }),
+    ).toEqual({ ok: true });
+    expect(banco.linhas("job_queue")).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({ [CHAVE_DAS_CONTINUACOES]: 1 }),
+      }),
+    ]);
+    expect(enviarFrase).not.toHaveBeenCalled();
+    expect(passagens).toEqual([]);
+  });
+
   it("o que o gravar conferia: sem a posse do job, nada decidido nem enfileirado (o job volta); o job anterior a janela (Assumir e Devolver no meio) so conclui, sem fila na sessao nova", async () => {
     filaDoBanco();
     banco.rpc("confirmar_posse_job", () => ({ data: false, error: null }));
@@ -881,6 +942,75 @@ describe("revisao final da AG4 (M1 e B1): a mensagem nova da pessoa no meio do t
         "20000000-0000-4000-8000-000000000002",
       ).has("m1"),
     ).toBe(false);
+  });
+});
+
+describe("revisao da revisao final da AG4 (o toque atrasado): a porta le a citacao so nas mensagens que o job leu", () => {
+  /** Uma saida da clinica na conversa (a pergunta da IA, o lembrete). */
+  function saida(id: string, author: string, criadaEm: string): Linha {
+    return {
+      id,
+      clinic_id: CLINICA,
+      conversation_id: CONVERSA,
+      author,
+      direction: "saida",
+      content_type: "texto",
+      body: author === "ia" ? "Confirma o cancelamento?" : "Lembrete.",
+      media_url: null,
+      deleted_at: null,
+      is_internal_note: false,
+      pelo_celular: false,
+      wa_message_id: `wa-${id}`,
+      created_at: criadaEm,
+    };
+  }
+
+  it("a resposta lida que toca o botao do lembrete cita outra; a mensagem nova (que o job nao leu) nao entra na conta", async () => {
+    banco.linhas("message").unshift(
+      saida("lembrete", "sistema", "2026-10-13T14:58:05.000Z"),
+      saida("pergunta", "ia", "2026-10-13T14:58:10.000Z"),
+    );
+    // A mensagem que o job le (m1) toca o botao do lembrete.
+    banco.linhas("message").find((m) => m.id === "m1")!.reply_to_message_id =
+      "lembrete";
+    let lida: unknown = null;
+    turno.mockImplementation(async (entrada) => {
+      lida = await entrada.agenda?.lerSaidaAntesDaResposta?.();
+      return respondeu();
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(lida).toMatchObject({ autoria: "ia", citaOutraMensagem: true });
+
+    // m1 sem citacao; a pessoa toca o botao do lembrete NO MEIO do turno
+    // (a mensagem nova, que o job nao leu: o banco recusa por
+    // mensagem_nova_do_paciente). A porta so conta as lidas do job.
+    montar();
+    banco.linhas("message").unshift(
+      saida("lembrete", "sistema", "2026-10-13T14:58:05.000Z"),
+      saida("pergunta", "ia", "2026-10-13T14:58:10.000Z"),
+    );
+    lida = null;
+    turno.mockImplementation(async (entrada) => {
+      banco.linhas("message").push({
+        id: "m-nova",
+        clinic_id: CLINICA,
+        conversation_id: CONVERSA,
+        author: "paciente",
+        direction: "entrada",
+        content_type: "texto",
+        body: "Cancelar",
+        media_url: null,
+        deleted_at: null,
+        is_internal_note: false,
+        pelo_celular: false,
+        reply_to_message_id: "lembrete",
+        created_at: "2026-10-13T14:59:50.000Z",
+      });
+      lida = await entrada.agenda?.lerSaidaAntesDaResposta?.();
+      return respondeu();
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(lida).toMatchObject({ autoria: "ia", citaOutraMensagem: false });
   });
 });
 

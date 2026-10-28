@@ -1189,12 +1189,56 @@ export async function cancelarConsultaPelaIa(
 }
 
 type LinhaDaSaida = {
+  id?: unknown;
+  wa_message_id?: unknown;
   author?: unknown;
   content_type?: unknown;
   body?: unknown;
   delivery_status?: unknown;
   created_at?: unknown;
 };
+
+/**
+ * Revisao da revisao final da AG4 (o toque atrasado): a citacao de uma
+ * mensagem do paciente que responde a pergunta (message.reply_to_message_id,
+ * a mensagem citada que o banco achou; reply_to_wa_message_id, o id do
+ * WhatsApp que veio na citacao ou no botao tocado).
+ */
+export type CitacaoDaResposta = {
+  reply_to_message_id?: unknown;
+  reply_to_wa_message_id?: unknown;
+};
+
+/** O texto nao vazio, ou null. */
+function textoPreenchido(valor: unknown): string | null {
+  return typeof valor === "string" && valor.trim() !== "" ? valor : null;
+}
+
+/**
+ * Revisao da revisao final da AG4 (o toque atrasado): alguma das respostas
+ * da pessoa cita (ou toca o botao de) OUTRA mensagem que nao a pergunta? A
+ * citacao que o banco achou vale pelo id da mensagem; a que o banco nao
+ * achou (a mensagem citada nao esta no banco, ou o vinculo falhou) so vale
+ * com o id do WhatsApp DA pergunta. Sem citacao: a resposta e a pergunta
+ * de sempre (a logo antes). A pergunta sem id e a citacao que nao confere
+ * contam como outra (falha fechada). PURA.
+ */
+export function respostaCitaOutraMensagem(
+  pergunta: { id: string | null; waMessageId: string | null },
+  respostas: readonly CitacaoDaResposta[],
+): boolean {
+  return respostas.some((resposta) => {
+    const citada = textoPreenchido(resposta.reply_to_message_id);
+    if (citada !== null) {
+      return pergunta.id === null || citada !== pergunta.id;
+    }
+    const doWhatsapp = textoPreenchido(resposta.reply_to_wa_message_id);
+    return (
+      doWhatsapp !== null &&
+      (pergunta.waMessageId === null || doWhatsapp !== pergunta.waMessageId)
+    );
+  });
+}
 
 const INSTANTE_DO_BANCO =
   /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}(?::?\d{2})?)?$/i;
@@ -1244,11 +1288,22 @@ export function instanteExatoDoBanco(valor: unknown): string | null {
  * outra no meio); revisao final (B4): o instante exato, com os
  * microssegundos (instanteExatoDoBanco). null: sem mensagem do paciente, ou
  * sem saida antes dela.
+ *
+ * Revisao da revisao final da AG4 (o toque atrasado): tambem diz se a
+ * resposta da pessoa cita OUTRA mensagem (citaOutraMensagem): as mensagens
+ * do paciente DEPOIS dessa saida, nao apagadas, e so as que o job leu
+ * (`mensagensLidas`, ai_turno.mensagens_lidas; ausente, todas depois
+ * dela), filtradas pela clinica e pela conversa, so com as colunas da
+ * citacao (nenhum texto). O botao tocado numa mensagem antiga ("Cancelar"
+ * do lembrete de outra consulta) chega como resposta citando a mensagem do
+ * botao: nao e o "sim" da pergunta logo antes. O banco ainda nao confere a
+ * citacao (limite conhecido: vai para a proxima migration).
  * Lanca na leitura que falha ou passa do prazo.
  */
 export async function lerSaidaAntesDaRespostaDaIa(
   admin: Cliente,
   ids: IdsDoTurno,
+  mensagensLidas?: readonly string[],
 ): Promise<SaidaAntesDaResposta | null> {
   const corrida = await correrComPrazo(async () => {
     const ultima = await admin
@@ -1270,7 +1325,9 @@ export async function lerSaidaAntesDaRespostaDaIa(
     }
     const saidas = await admin
       .from("message")
-      .select("author, content_type, body, delivery_status, created_at")
+      .select(
+        "id, wa_message_id, author, content_type, body, delivery_status, created_at",
+      )
       .eq("clinic_id", ids.clinicId)
       .eq("conversation_id", ids.conversationId)
       .eq("direction", "saida")
@@ -1283,12 +1340,40 @@ export async function lerSaidaAntesDaRespostaDaIa(
     if (saidas.error) {
       throw new Error("leitura");
     }
-    return (saidas.data ?? []) as LinhaDaSaida[];
+    const linhasDaSaida = (saidas.data ?? []) as LinhaDaSaida[];
+    // Revisao da revisao final da AG4 (o toque atrasado): a citacao das
+    // respostas da pessoa a essa saida (so as colunas da citacao).
+    const pergunta = linhasDaSaida[0]?.created_at;
+    let respostas: CitacaoDaResposta[] = [];
+    if (
+      typeof pergunta === "string" &&
+      (mensagensLidas === undefined || mensagensLidas.length > 0)
+    ) {
+      let consulta = admin
+        .from("message")
+        .select("reply_to_message_id, reply_to_wa_message_id")
+        .eq("clinic_id", ids.clinicId)
+        .eq("conversation_id", ids.conversationId)
+        .eq("direction", "entrada")
+        .eq("author", "paciente")
+        .is("deleted_at", null)
+        .gt("created_at", pergunta);
+      if (mensagensLidas !== undefined) {
+        consulta = consulta.in("id", [...mensagensLidas]);
+      }
+      const lidas = await consulta;
+      if (lidas.error) {
+        throw new Error("leitura");
+      }
+      respostas = (lidas.data ?? []) as CitacaoDaResposta[];
+    }
+    return { linhas: linhasDaSaida, respostas };
   }, PRAZO_DA_AGENDA_MS);
   if (corrida.tipo !== "resultado") {
     return falhou(ids, "saida_antes_da_resposta", corrida.tipo);
   }
-  const linhas = corrida.valor;
+  const linhas = corrida.valor?.linhas ?? null;
+  const respostas = corrida.valor?.respostas ?? [];
   const primeira = linhas?.[0];
   if (linhas === null || primeira === undefined) {
     return null;
@@ -1327,16 +1412,29 @@ export async function lerSaidaAntesDaRespostaDaIa(
       Number.isFinite(Date.parse(primeira.created_at))
         ? primeira.created_at
         : null,
+    // Revisao da revisao final da AG4 (o toque atrasado).
+    citaOutraMensagem: respostaCitaOutraMensagem(
+      {
+        id: textoPreenchido(primeira.id),
+        waMessageId: textoPreenchido(primeira.wa_message_id),
+      },
+      respostas,
+    ),
   };
 }
 
 /**
  * A porta do turno do WhatsApp (lib/jobs/responder-com-ia.ts): a Agenda de
- * verdade e as RPCs com o job_id do turno.
+ * verdade e as RPCs com o job_id do turno. Revisao da revisao final da AG4
+ * (o toque atrasado): `mensagensLidas`, as mensagens do paciente que o job
+ * leu (as pendentes do historico): a citacao da resposta e lida so nelas.
  */
 export function portaDaAgendaDoWhatsapp(
   admin: Cliente,
-  ids: IdsDoTurno & { agora: () => number },
+  ids: IdsDoTurno & {
+    agora: () => number;
+    mensagensLidas?: readonly string[];
+  },
 ): PortaDaAgenda {
   return {
     simulada: false,
@@ -1365,7 +1463,10 @@ export function portaDaAgendaDoWhatsapp(
     cancelarConsulta: (appointmentId) =>
       cancelarConsultaPelaIa(admin, ids, appointmentId),
     // Revisao curta das correcoes da AG4 (achados 2 e 8).
-    lerSaidaAntesDaResposta: () => lerSaidaAntesDaRespostaDaIa(admin, ids),
+    // Revisao da revisao final da AG4 (o toque atrasado): com as lidas do
+    // job, a citacao da resposta.
+    lerSaidaAntesDaResposta: () =>
+      lerSaidaAntesDaRespostaDaIa(admin, ids, ids.mensagensLidas),
   };
 }
 

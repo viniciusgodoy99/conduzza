@@ -3138,6 +3138,94 @@ const NEGA = "(?:nao|nem|nunca|jamais)";
 const SEM_NEGACAO_COLADA = `(?<!\\b(?:nao|nem|nunca|jamais|ninguem)\\s(?:(?:a|o|as|os|lhe|te|me|ainda)\\s)?)`;
 
 /**
+ * Revisao da revisao final da AG4 (27/10/2026, falsos positivos do
+ * participio sem o auxiliar): ate dois artigos, possessivos ou adverbios
+ * entre o que vem antes e o nome ("o", "a sua", "ainda o").
+ */
+const DETERMINANTES_DO_PARTICIPIO =
+  "(?:(?:a|o|as|os|sua|seu|suas|seus|essa|esse|nova|novo|ja|ainda|mais)\\s){0,2}";
+
+/**
+ * Revisao da revisao final da AG4: o verbo da hipotese que vem antes do
+ * nome ("assim que ESTIVER tudo aprovado", "quando TIVER a consulta
+ * aprovada", "espero que ESTEJA tudo aprovado"): o futuro e o presente do
+ * subjuntivo nunca afirmam.
+ */
+const VERBO_DA_HIPOTESE =
+  "(?:estiver|estiverem|estivermos|estivesse|estivessem|esteja|estejam|estejamos|tiver|tiverem|tivermos|tivesse|tivessem|tenha|tenham|tenhamos|houver|houvesse|haja|for|forem|formos|fosse|fossem|seja|sejam)";
+
+/**
+ * Revisao da revisao final da AG4: o infinitivo antes do nome ("ate ESTAR
+ * tudo aprovado", "para TER a consulta aprovada", e o futuro do subjuntivo
+ * igual a ele, "quando a equipe DEIXAR tudo aprovado") tambem nao afirma,
+ * menos depois do verbo que promete ou supoe ("VAI estar tudo aprovado",
+ * "DEVE estar tudo aprovado", "vou DEIXAR tudo aprovado"), que continua
+ * barrando.
+ */
+const INFINITIVO_SEM_PROMESSA =
+  "(?<!\\b(?:vai|vao|vou|vamos|ira|irao|deve|devem|deveria|deveriam|pode|podem|costuma|costumam)\\s)(?:estar|estarem|ter|terem|ficar|ficarem|deixar|deixarem)";
+
+/**
+ * Revisao da revisao final da AG4: a conjuncao de tempo com o presente do
+ * habito ("QUANDO TEM tudo aprovado, a de antes e cancelada", "assim que
+ * esta tudo aprovado"). Sem o "se": "se ja esta tudo aprovado? Esta!" e o
+ * eco da pergunta, e continua barrando como "se ja esta aprovado".
+ */
+const TEMPO_COM_O_PRESENTE =
+  "(?:quando|assim\\s+que|logo\\s+que|depois\\s+que|sempre\\s+que)\\s(?:ja\\s)?(?:tem|temos|esta|estao|ta|fica|ficam|ha)";
+
+/**
+ * Revisao da revisao final da AG4 (falsos positivos novos de
+ * remarcacao_sem_pendencia): o que vem antes do participio sem o auxiliar e
+ * tira a afirmacao ("tudo aprovado", "o horario aprovado"):
+ *  - a condicao e o tempo, como antes ("com a remarcacao aprovada", "se
+ *    tudo aprovado");
+ *  - o verbo da hipotese e o infinitivo sem promessa ("assim que estiver
+ *    tudo aprovado", "quando tiver a consulta aprovada");
+ *  - a conjuncao de tempo com o presente do habito ("quando tem tudo
+ *    aprovado, a de antes e cancelada");
+ *  - a negacao COLADA no verbo que vem antes do nome ("ainda nao esta tudo
+ *    aprovado", "ainda nao temos o horario aprovado"), no maximo um verbo
+ *    no meio (a negacao solta, "nao se preocupe, tudo aprovado", afirma);
+ *  - a negacao do nome ("nenhum horario aprovado ainda", "sem a consulta
+ *    aprovada"); "nenhum tudo" nao existe, entao "problema nenhum tudo
+ *    aprovado" continua barrando.
+ * O indicativo sem negacao ("esta tudo aprovado", "temos o horario
+ * aprovado", "ja tem tudo aprovado"), a promessa ("vai estar tudo
+ * aprovado") e a pergunta indireta ("vou ver se ja esta tudo aprovado",
+ * como "vou ver se ja esta aprovado" no auxiliar) continuam barrando.
+ */
+const PARTICIPIO_QUE_NAO_AFIRMA_ANTES = `(?<!\\b(?:(?:com|quando|apos|se|depois\\s+de|depois\\s+da|depois\\s+do)\\s${DETERMINANTES_DO_PARTICIPIO}|${VERBO_DA_HIPOTESE}\\s${DETERMINANTES_DO_PARTICIPIO}|${INFINITIVO_SEM_PROMESSA}\\s${DETERMINANTES_DO_PARTICIPIO}|${TEMPO_COM_O_PRESENTE}\\s${DETERMINANTES_DO_PARTICIPIO}|(?:nao|nem|nunca|jamais)\\s(?:(?:ainda|mais)\\s)?(?:\\w+\\s)?${DETERMINANTES_DO_PARTICIPIO}|(?:nenhum|nenhuma)\\s(?!tudo\\b)${DETERMINANTES_DO_PARTICIPIO}|sem\\s${DETERMINANTES_DO_PARTICIPIO}))`;
+
+/**
+ * Revisao da revisao final da AG4: a palavra de duracao depois do verbo da
+ * espera ("nao vai precisar esperar MUITO pela aprovacao", "nao precisa
+ * esperar TANTO tempo"): a negacao fala do tempo da espera, que continua,
+ * e nao da aprovacao.
+ */
+const SEM_PALAVRA_DE_DURACAO =
+  "(?!(?:muito|muita|tanto|tanta|demais|bastante|longo|longa|tempo|dias?|horas?|semanas?)\\b)";
+
+/**
+ * Revisao da revisao final da AG4: o que pode ficar entre a negacao e o
+ * verbo da pendencia negada (a negacao COLADA, como em SEM_NEGACAO_COLADA):
+ * o auxiliar ("nao ESTA mais aguardando", "nao VAI precisar de aprovacao",
+ * "nao FICA esperando"), um pronome, "mais" e "ainda". Outro verbo no meio
+ * ("nao ESQUECA QUE depende da aprovacao") nega outra coisa.
+ */
+const ENTRE_A_NEGACAO_E_A_PENDENCIA =
+  "(?:(?:esta|estao|ta|fica|ficam|ficou|ficara|ficar|estar|vai|vao|vou|vamos|ira|irao|precisa|precisam|precisar|precisou|tem|tera|teria|mais|ainda|se|me|te|lhe|a|o|voce|voces)\\s+){0,2}?";
+
+/**
+ * Revisao da revisao final da AG4 (lacunas que o verificador cobria): o
+ * participio sozinho no comeco da frase ("Aprovada!", "Oba, aprovado.",
+ * "Remarcacao: aprovada!"), sem a pergunta ("Aprovada?") e sem o aposto da
+ * condicao ("Aprovada, a consulta de quinta e cancelada sozinha").
+ */
+const INTERJEICAO_ANTES_DO_PARTICIPIO =
+  "(?:ok|okay|oba|eba|opa|pronto|prontinho|otimo|perfeito|maravilha|show|isso|sim|legal|certo|entao|boa noticia|boas noticias)";
+
+/**
  * Revisao da AG4 (achado 5): a frase que AFIRMA a aprovacao ou nega a
  * pendencia ("a aprovacao ja saiu", "ja aprovada", "a equipe aprovou",
  * "nao precisa de aprovacao", "sem pendencia"). Com a remarcacao pendente,
@@ -3160,10 +3248,21 @@ const SEM_NEGACAO_COLADA = `(?<!\\b(?:nao|nem|nunca|jamais|ninguem)\\s(?:(?:a|o|
  * "sem precisar aguardar aprovacao", "nenhuma aprovacao pendente"), que
  * tambem deixa de contar como a pendencia da frase; e a aprovacao dita sem
  * o verbo auxiliar ("remarcacao aprovada", "aprovaram", "aprovou").
+ *
+ * Revisao da revisao final da AG4 (27/10/2026): o participio sem o auxiliar
+ * nao barra a hipotese, o habito nem a negacao
+ * (PARTICIPIO_QUE_NAO_AFIRMA_ANTES: "assim que estiver tudo aprovado", "ainda
+ * nao temos o horario aprovado", "nenhum horario aprovado ainda"); a
+ * pendencia negada so com a negacao colada no verbo e sem a palavra de
+ * duracao ("nao esqueca que depende da aprovacao" e "nao vai precisar
+ * esperar muito pela aprovacao" passam); e as lacunas que o verificador
+ * cobria barram tambem aqui: "Aprovamos!" (menos o do habito,
+ * "normalmente aprovamos"), "Ta aprovado!" e o participio sozinho no comeco
+ * da frase ("Aprovada! Pode ir na terca"), e "liberaram a sua remarcacao".
  */
 const APROVACAO_AFIRMADA = new RegExp(
   [
-    "\\bja\\s+(?:foi\\s+|foram\\s+|esta\\s+|estao\\s+|ficou\\s+|ficaram\\s+)?aprovad[oa]s?\\b",
+    "\\bja\\s+(?:foi\\s+|foram\\s+|esta\\s+|estao\\s+|ta\\s+|ficou\\s+|ficaram\\s+)?aprovad[oa]s?\\b",
     // "a aprovacao (da equipe) ja saiu": sem negacao COLADA no verbo ("a
     // aprovacao ainda nao saiu" nao afirma; "nem demorou e ja saiu", sim).
     `\\baprovacao\\s+(?:\\w+\\s+){0,3}?${SEM_NEGACAO_COLADA}(?:ja\\s+)?(?:saiu|veio|chegou|foi dada|foi feita|aconteceu)\\b`,
@@ -3174,11 +3273,25 @@ const APROVACAO_AFIRMADA = new RegExp(
     // Revisao final (M2): "aprovaram", "aprovou", "aprovei" sem a negacao
     // colada ("ainda nao aprovaram" e "nao a aprovou" sao a pendencia).
     `${SEM_NEGACAO_COLADA}\\baprov(?:ou|aram|ei)\\b`,
-    `(?<!\\b${NEGA}\\s)\\b(?:foi|foram|esta|estao|ficou|ficaram|sido)\\s+aprovad[oa]s?\\b`,
+    // Revisao da revisao final: "Aprovamos!" (o preterito), menos o presente
+    // do habito e da condicao ("normalmente aprovamos no mesmo dia", "quando
+    // aprovamos, a de antes e cancelada").
+    `${SEM_NEGACAO_COLADA}(?<!\\b(?:normalmente|geralmente|sempre|so|somente|apenas|costumeiramente|habitualmente|quando|se|assim\\s+que|logo\\s+que|depois\\s+que)\\s)\\baprovamos\\b`,
+    // Revisao da revisao final: "ta" ("Ta aprovado!") entre os auxiliares.
+    `(?<!\\b${NEGA}\\s)\\b(?:foi|foram|esta|estao|ta|ficou|ficaram|sido)\\s+aprovad[oa]s?\\b`,
     // Revisao final (M2): o participio sem o auxiliar ("Remarcacao
     // aprovada!", "tudo aprovado"), menos o da condicao ("com a remarcacao
-    // aprovada, ...").
-    "(?<!\\b(?:com|quando|apos|se|depois\\s+de|depois\\s+da)\\s(?:a\\s|o\\s|sua\\s|seu\\s)?)\\b(?:remarcacao|remarcacoes|reagendamento|consulta|horario|pedido|solicitacao|troca|mudanca|alteracao|tudo)\\s+(?:ja\\s+)?aprovad[oa]s?\\b",
+    // aprovada, ..."). Revisao da revisao final: tambem menos o da hipotese,
+    // do habito e da negacao (PARTICIPIO_QUE_NAO_AFIRMA_ANTES).
+    `${PARTICIPIO_QUE_NAO_AFIRMA_ANTES}\\b(?:remarcacao|remarcacoes|reagendamento|consulta|horario|pedido|solicitacao|troca|mudanca|alteracao|tudo)\\s+(?:ja\\s+)?aprovad[oa]s?\\b`,
+    // Revisao da revisao final: o participio sozinho no comeco da frase
+    // ("Aprovada! Pode ir na terca", "Oba, aprovado.").
+    `(?:^|[.!?;:]\\s*)(?:${INTERJEICAO_ANTES_DO_PARTICIPIO}\\s*[,!.]*\\s+)*aprovad[oa]s?\\s*(?:[!.;:]|,(?!\\s*(?:a|o|as|os|sua|seu|suas|seus)\\s)|$)`,
+    // Revisao da revisao final: "liberaram a sua remarcacao" (a aprovacao
+    // por outro verbo), so com a remarcacao como objeto: "liberou um
+    // horario" (a vaga) nao. "Aceitou" fica com o verificador: "o pedido foi
+    // aceito" tambem e o registro do pedido, que e verdade.
+    `${SEM_NEGACAO_COLADA}\\bliber(?:ou|aram|amos|ei)\\s+(?:(?:a|o|sua|seu)\\s+){0,2}(?:remarcacao|reagendamento|troca\\s+de\\s+horario|mudanca\\s+de\\s+horario)\\b`,
     // Nega a pendencia: "nao esta (mais) pendente", "nao tem nada pendente",
     // "nao ha nenhuma aprovacao pendente", "nao tem pendencia". "Nao tem a
     // aprovacao" e "nao ha aprovacao" (sem "pendente") NAO: e a pendencia.
@@ -3199,13 +3312,18 @@ const APROVACAO_AFIRMADA = new RegExp(
     `\\b(?:${NEGA}|sem)\\s+(?:(?:ha|tem|existe|existem)\\s+)?(?:mais\\s+)?(?:nenhuma\\s+)?(?:necessidade|exigencia|obrigacao|obrigatoriedade|etapa|processo)\\s+de\\s+(?:\\w+\\s+)?aprov`,
     // Nega a necessidade: "nao precisa de aprovacao", "nao precisa ser
     // aprovada", "nao e preciso aprovar", "nao depende da equipe" (revisao
-    // final: tambem com "nem", "nunca" e "jamais").
-    `\\b${NEGA}\\s+(?:precisa|precisam|e preciso|e necessari[oa]|tem que|tem de)\\s+(?:mais\\s+)?(?:\\w+\\s+){0,3}?aprov`,
+    // final: tambem com "nem", "nunca" e "jamais"). Revisao da revisao
+    // final: sem a palavra de duracao ("nao precisa esperar muito pela
+    // aprovacao" fala do tempo da espera).
+    `\\b${NEGA}\\s+(?:precisa|precisam|e preciso|e necessari[oa]|tem que|tem de)\\s+(?:mais\\s+)?(?:${SEM_PALAVRA_DE_DURACAO}\\w+\\s+){0,3}?aprov`,
     "\\bnao\\s+(?:depende|dependem)\\s+(?:mais\\s+)?(?:de\\s+|da\\s+|do\\s+)?(?:nenhuma\\s+)?(?:\\w+\\s+)?(?:aprov|equipe\\b)",
     // Revisao final (M2): a pendencia NEGADA ("nao esta mais aguardando
     // aprovacao", "nem precisa de aprovacao", "sem precisar aguardar
-    // aprovacao", "nao fica esperando a equipe").
-    `\\b(?:${NEGA}|sem)\\s+(?:\\w+\\s+){0,2}?(?:aguardando|esperando|aguardar|esperar|aguarda|espera|precisa|precisar|precisou|precisam|depende|dependem|dependendo)\\s+(?:\\w+\\s+){0,2}?(?:aprov|equipe\\b)`,
+    // aprovacao", "nao fica esperando a equipe"). Revisao da revisao final:
+    // a negacao COLADA no verbo (ENTRE_A_NEGACAO_E_A_PENDENCIA: "nao
+    // esqueca que depende da aprovacao" passa) e sem a palavra de duracao
+    // ("nao vai precisar esperar muito pela aprovacao" passa).
+    `\\b(?:${NEGA}|sem)\\s+${ENTRE_A_NEGACAO_E_A_PENDENCIA}(?:aguardando|esperando|aguardar|esperar|aguarda|espera|precisa|precisar|precisou|precisam|depende|dependem|dependendo)\\s+(?:${SEM_PALAVRA_DE_DURACAO}\\w+\\s+){0,2}?(?:aprov|equipe\\b)`,
     "\\b(?:sem|nenhuma)\\s+pendencias?\\b",
     "\\bsem\\s+(?:necessidade|precisar)\\s+de\\s+(?:\\w+\\s+)?aprov",
   ].join("|"),
@@ -5657,6 +5775,14 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   // deixou de existir, a pendencia negada e o participio sem o auxiliar.
   SEM_NEGACAO_COLADA,
   "aprovacao afirmada (revisao final): a negacao so vale colada no verbo; nao ter mais a aprovacao, a clinica sem a aprovacao, a necessidade negada, a pendencia negada (que tambem nao sustenta a remarcacao) e o participio sem o auxiliar barram",
+  // Revisao da revisao final da AG4 (27/10/2026): os falsos positivos do
+  // participio e da pendencia negada, e as lacunas que o verificador cobria.
+  PARTICIPIO_QUE_NAO_AFIRMA_ANTES,
+  TEMPO_COM_O_PRESENTE,
+  SEM_PALAVRA_DE_DURACAO,
+  ENTRE_A_NEGACAO_E_A_PENDENCIA,
+  INTERJEICAO_ANTES_DO_PARTICIPIO,
+  "aprovacao afirmada (revisao da revisao final): o participio sem o auxiliar nao barra a hipotese, o infinitivo sem promessa, o habito depois da conjuncao de tempo nem a negacao colada; a pendencia negada so com a negacao colada no verbo e sem a palavra de duracao; aprovamos (menos o do habito), ta aprovado, o participio sozinho no comeco da frase e liberaram a remarcacao barram",
   "remarcou: tambem a remarcacao pedida nesta conversa e ja aprovada, relida, com o par dela e sem a pendencia",
   "cancelou: tambem a consulta cancelada nesta conversa num turno anterior, relida e ainda cancelada, com o par dela; nunca consulta lida",
   "acao com horario: o anterior so na remarcacao",

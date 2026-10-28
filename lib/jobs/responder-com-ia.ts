@@ -688,6 +688,9 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
         contactId: conversa.contact_id,
         jobId: c.job.id,
         agora: c.deps.agora,
+        // Revisao da revisao final da AG4 (o toque atrasado): as mensagens
+        // que o job leu (a citacao da resposta e lida so nelas).
+        mensagensLidas: historico.pendentes,
       }),
       atendimento,
       nascimentoInformado,
@@ -890,6 +893,13 @@ async function concluirJobAntigo(
  * contagem vai no payload do job seguinte (CHAVE_DAS_CONTINUACOES); no
  * limite, a falha normal (a frase fixa e a equipe), nunca um laco de jobs
  * que nao respondem.
+ *
+ * Revisao da revisao final da AG4 (27/10/2026): so conta a continuacao em
+ * que a fila CRIOU o job seguinte (enfileirado: nenhum job da mensagem nova
+ * pelo webhook, o laco que pode girar sem nada da pessoa, como a mensagem
+ * que o interceptador tratou). No "juntou" a pessoa escreveu de novo pelo
+ * webhook (atividade dela): o job dela fica como o webhook o deixou, sem a
+ * contagem herdada.
  */
 export const MAXIMO_DE_CONTINUACOES_DA_MENSAGEM_NOVA = 2;
 
@@ -995,10 +1005,12 @@ async function continuarDepoisDaMensagemNova(
       ? { tipo: "fora_da_ia", codigo: "janela_invalida" }
       : await garantirOJobSeguinte(c, janela, feitas + 1);
   if (seguinte.tipo === "garantido") {
+    // Revisao da revisao final da AG4: a contagem so sobe quando a fila
+    // criou o job (enfileirado); no "juntou" o job e o da pessoa (webhook).
     log.info("ia_mensagem_nova_continua", {
       ...idsDoLog(c),
       status: seguinte.codigo,
-      count: feitas + 1,
+      count: seguinte.codigo === "enfileirado" ? feitas + 1 : 0,
     });
     return decidirEEnviar(c, turno, destino, config, resultado, latenciaMs);
   }
@@ -1075,6 +1087,12 @@ async function ultimaMensagemDoPaciente(
  * Pede o job seguinte a enfileirar_resposta_da_ia com a ultima mensagem do
  * paciente e marca a contagem nele. A mensagem apagada entre a leitura e a
  * fila (mensagem_invalida) e lida de novo uma vez. Nunca lanca.
+ *
+ * Revisao da revisao final da AG4: so o job que a fila criou (enfileirado)
+ * leva a contagem. O "juntou" e o job pendente da mensagem nova que veio
+ * pelo webhook (a pessoa escreveu de novo): ele fica sem a marca, e a
+ * contagem recomeca nele (o laco sem nada da pessoa so existe no
+ * enfileirado).
  */
 async function garantirOJobSeguinte(
   c: Contexto,
@@ -1112,7 +1130,9 @@ async function garantirOJobSeguinte(
       typeof dados?.job_id === "string" &&
       UUID.test(dados.job_id)
     ) {
-      await marcarAsContinuacoes(c, dados.job_id, continuacoes);
+      if (codigo === "enfileirado") {
+        await marcarAsContinuacoes(c, dados.job_id, continuacoes);
+      }
       return { tipo: "garantido", codigo };
     }
     if (codigo === "mensagem_invalida") {
@@ -1127,13 +1147,14 @@ async function garantirOJobSeguinte(
 }
 
 /**
- * Grava a contagem no payload do job seguinte (o que a fila acabou de criar
- * ou o pendente com que juntou). Concorrencia otimista pelo updated_at: o
- * webhook pode juntar outra mensagem no meio (ele so troca a
- * ultima_mensagem_id); a gravacao que nao acha a linha le de novo. O maior
- * valor fica. O job seguinte nao roda enquanto este executa
- * (ia_jobs_devidos: um por conversa). Nunca lanca: sem a marca, fica o log
- * (a contagem recomeca no job seguinte, o lado do atendimento).
+ * Grava a contagem no payload do job seguinte (o que a fila acabou de criar;
+ * revisao da revisao final da AG4: nunca o pendente com que juntou).
+ * Concorrencia otimista pelo updated_at: o webhook pode juntar outra
+ * mensagem no meio (ele so troca a ultima_mensagem_id); a gravacao que nao
+ * acha a linha le de novo. O maior valor fica. O job seguinte nao roda
+ * enquanto este executa (ia_jobs_devidos: um por conversa). Nunca lanca:
+ * sem a marca, fica o log (a contagem recomeca no job seguinte, o lado do
+ * atendimento).
  */
 async function marcarAsContinuacoes(
   c: Contexto,

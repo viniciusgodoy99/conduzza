@@ -403,6 +403,15 @@ export type SaidaAntesDaResposta = {
    * dela), nao do instante do pedido. null: nao veio.
    */
   criadaEm: string | null;
+  /**
+   * Revisao da revisao final da AG4 (o toque atrasado): alguma resposta da
+   * pessoa (as mensagens dela depois desta saida que o job leu) cita, ou
+   * toca o botao de, OUTRA mensagem que nao esta saida (o "Cancelar" do
+   * lembrete de outra consulta, o "Confirmar" de uma mensagem antiga).
+   * Entao ela nao responde a pergunta: nunca e o "sim" dela. Ausente: sem
+   * citacao (a porta de antes, os testes).
+   */
+  citaOutraMensagem?: boolean;
 };
 
 export type ResultadoDaFerramentaDeAgenda =
@@ -871,6 +880,15 @@ const DESFEITO_QUE_E_FALHA: ReadonlySet<MotivoDoPedidoDesfeito> = new Set([
 ]);
 
 /**
+ * Revisao da revisao final da AG4 (o toque atrasado): o passo da trilha
+ * quando a resposta da pessoa cita (ou toca o botao de) outra mensagem e
+ * nao a pergunta que esta sendo confirmada (T1, T3 ou o "Confirma ...?" da
+ * marcacao). Sem texto do paciente.
+ */
+const PASSO_DA_RESPOSTA_A_OUTRA_MENSAGEM =
+  "a resposta da pessoa citou outra mensagem (um botão tocado ou a resposta a uma mensagem antiga), e não a pergunta de confirmação";
+
+/**
  * Revisao curta das correcoes da AG4 (achados 1, 2 e 6): o resultado da
  * conferencia da pergunta do turno anterior contra a saida logo antes da
  * resposta da pessoa.
@@ -1090,9 +1108,15 @@ export function criarAgendaDoTurno(entrada: {
    * nao conferiu (outra saida no meio, ou nada lido), ou conferiu com a
    * consulta antiga em outro horario (a recepcao a mudou no meio: so
    * consulta_mudou, sem falha). Nulo: conferiu, ou nao era o caso.
+   * Revisao da revisao final da AG4 (o toque atrasado): ou conferiu, mas a
+   * resposta da pessoa cita outra mensagem ("citou_outra_mensagem": como a
+   * que nao conferiu, conta falha).
    */
-  let recusaDaPerguntaDaRemarcacao: "nao_conferida" | "consulta_mudou" | null =
-    null;
+  let recusaDaPerguntaDaRemarcacao:
+    | "nao_conferida"
+    | "consulta_mudou"
+    | "citou_outra_mensagem"
+    | null = null;
   /**
    * Revisao curta das correcoes da AG4 (achados 2 e 8): a saida que o banco
    * ve logo antes da resposta da pessoa, lida pela porta no preparo (so com
@@ -1417,6 +1441,23 @@ export function criarAgendaDoTurno(entrada: {
   }
 
   /**
+   * Revisao da revisao final da AG4 (o toque atrasado): a resposta da pessoa
+   * cita (ou toca o botao de) OUTRA mensagem que nao a pergunta logo antes
+   * dela (a leitura da porta no preparo). O interceptador ignora o toque
+   * num botao antigo quando a IA falou depois dele, e o texto do botao
+   * ("Cancelar", "Confirmar") chega aqui como se respondesse a T1 de outra
+   * consulta ou ao "Confirma ...?" da marcacao: nao e o "sim" dela. Sem a
+   * leitura (o simulador) ou sem citacao: nao.
+   */
+  function respostaCitaOutraMensagem(): boolean {
+    return (
+      saidaAntes?.tipo === "lida" &&
+      saidaAntes.saida !== null &&
+      saidaAntes.saida.citaOutraMensagem === true
+    );
+  }
+
+  /**
    * A saida logo antes da resposta da pessoa e a frase fixa da IA? O
    * historico mostra a IA, a equipe e o sistema todos como "assistente":
    * vale a autoria real. Sem a mensagem, sem a autoria ou com outro texto:
@@ -1545,9 +1586,15 @@ export function criarAgendaDoTurno(entrada: {
               }),
               T3_DE_QUALQUER_HORARIO,
             );
-      perguntaDaRemarcacaoConferida = conferida === "conferida";
-      recusaDaPerguntaDaRemarcacao =
-        conferida === "conferida"
+      // Revisao da revisao final da AG4 (o toque atrasado): a T3 logo antes
+      // confere, mas a resposta cita outra mensagem (o botao de uma
+      // mensagem antiga): nao e o "sim" da T3, como a que nao confere.
+      const citouOutra =
+        conferida === "conferida" && respostaCitaOutraMensagem();
+      perguntaDaRemarcacaoConferida = conferida === "conferida" && !citouOutra;
+      recusaDaPerguntaDaRemarcacao = citouOutra
+        ? "citou_outra_mensagem"
+        : conferida === "conferida"
           ? null
           : conferida === "consulta_mudou"
             ? "consulta_mudou"
@@ -1700,9 +1747,11 @@ export function criarAgendaDoTurno(entrada: {
     // Revisao curta das correcoes da AG4 (achados 2 e 8): a saida logo antes
     // da resposta da pessoa, como o banco conta, so quando ha uma pergunta
     // do turno anterior a conferir (a leitura que falha nao confere).
+    // Revisao da revisao final da AG4 (o toque atrasado): tambem com o
+    // "Confirma ...?" da marcacao (a etapa aguardando_confirmacao sem a
+    // remarcacao), so pela citacao da resposta (o agendar confere).
     const temPerguntaAConferir =
-      modoInicial === "cancelar" ||
-      (modoInicial === "remarcar" && etapaInicial === "aguardando_confirmacao");
+      modoInicial === "cancelar" || etapaInicial === "aguardando_confirmacao";
     if (temPerguntaAConferir && porta.lerSaidaAntesDaResposta !== undefined) {
       try {
         saidaAntes = {
@@ -2556,11 +2605,40 @@ export function criarAgendaDoTurno(entrada: {
       // Revisao curta das correcoes da AG4 (achado 2): a recusa da T3 conta
       // falha MESMO com o reservar de novo no mesmo turno (a pergunta que
       // nunca confere passa para a equipe na segunda vez, nunca um laco).
+      // Revisao da revisao final da AG4 (o toque atrasado): tambem a
+      // resposta que cita outra mensagem (o mesmo caminho).
       resultados.push("sem_confirmacao_do_paciente", "resposta_fora_da_pergunta");
       return saida(
         "sem_confirmacao_do_paciente",
         {},
-        `Tentou marcar a consulta: ${ROTULO_DO_MOTIVO_DA_AGENDA.sem_confirmacao_do_paciente}`,
+        `Tentou marcar a consulta: ${
+          recusaDaPerguntaDaRemarcacao === "citou_outra_mensagem"
+            ? PASSO_DA_RESPOSTA_A_OUTRA_MENSAGEM
+            : ROTULO_DO_MOTIVO_DA_AGENDA.sem_confirmacao_do_paciente
+        }`,
+      );
+    }
+    // Revisao da revisao final da AG4 (o toque atrasado): na marcacao (o
+    // "Confirma ...?" da AG3), a resposta que cita (ou toca o botao de)
+    // outra mensagem nao e o "sim" dele: o "Confirmar" de uma mensagem
+    // antiga marcava a consulta que a pessoa nao confirmou. A leitura que
+    // falhou nao diz: falha fechada. As duas como a resposta fora da
+    // pergunta (pergunte de novo o "Confirma ...?", conta falha mesmo com
+    // avanco no turno), sem a RPC (o banco ainda nao confere a citacao).
+    if (
+      remarcarId === null &&
+      comEstado &&
+      (saidaAntes?.tipo === "falhou" || respostaCitaOutraMensagem())
+    ) {
+      resultados.push("sem_confirmacao_do_paciente", "resposta_fora_da_pergunta");
+      return saida(
+        "sem_confirmacao_do_paciente",
+        {},
+        `Tentou marcar a consulta: ${
+          saidaAntes?.tipo === "falhou"
+            ? "não deu para conferir a que mensagem a pessoa respondeu (a conversa não foi lida)"
+            : PASSO_DA_RESPOSTA_A_OUTRA_MENSAGEM
+        }`,
       );
     }
     chamouAgendar = true;
@@ -3272,9 +3350,13 @@ export function criarAgendaDoTurno(entrada: {
     ) {
       chamouCancelamento = true;
       pedidoDaNota = { acao: "cancelar", consulta: focoInativo };
-      const respostaDaPessoa = interpretarRespostaAoCancelamento(
-        (entrada.mensagens?.pendentes ?? []).map((m) => m.original),
-      );
+      // Revisao da revisao final da AG4 (o toque atrasado): a resposta que
+      // cita outra mensagem nunca e o "sim".
+      const respostaDaPessoa = respostaCitaOutraMensagem()
+        ? "nao_reconhecida"
+        : interpretarRespostaAoCancelamento(
+            (entrada.mensagens?.pendentes ?? []).map((m) => m.original),
+          );
       if (respostaDaPessoa !== "sim") {
         return (
           recusaDoPedido(
@@ -3331,10 +3413,18 @@ export function criarAgendaDoTurno(entrada: {
       pedidoDaNota = { acao: "cancelar", consulta: foco };
     }
     // D-30: o "sim" numa lista fechada, nas mensagens da pessoa depois da
-    // pergunta (o texto original, que nao sai daqui).
-    const resposta = interpretarRespostaAoCancelamento(
-      (entrada.mensagens?.pendentes ?? []).map((m) => m.original),
-    );
+    // pergunta (o texto original, que nao sai daqui). Revisao da revisao
+    // final da AG4 (o toque atrasado): a resposta que cita (ou toca o botao
+    // de) OUTRA mensagem nao responde a T1: o "Cancelar" do lembrete de
+    // outra consulta cancelava esta. Nem "sim" nem "nao": a resposta fora
+    // da pergunta, pelo caminho do "sim" que nao foi claro (a T1 volta e
+    // conta falha, mesmo com avanco no turno).
+    const citouOutra = respostaCitaOutraMensagem();
+    const resposta = citouOutra
+      ? "nao_reconhecida"
+      : interpretarRespostaAoCancelamento(
+          (entrada.mensagens?.pendentes ?? []).map((m) => m.original),
+        );
     if (resposta === "nao") {
       resultados.push("paciente_nao_confirmou");
       desarmarPedido();
@@ -3352,13 +3442,21 @@ export function criarAgendaDoTurno(entrada: {
         };
       }
       // Nao e um sim claro: a pergunta fixa volta e conta uma falha.
+      // Revisao da revisao final da AG4 (o toque atrasado): a resposta que
+      // cita outra mensagem e a resposta fora da pergunta (a falha que o
+      // avanco do turno nao apaga, como a T1 que nao confere).
       perguntaArmada = "cancelar";
+      if (citouOutra) {
+        resultados.push("resposta_fora_da_pergunta");
+      }
       resultados.push("sem_confirmacao_clara");
       const quando = diaEHora(new Date(foco.inicio), fuso, agoraMs);
       return frase(
         perguntaDoCancelamento(quando),
         { consulta: quando },
-        `A resposta não foi um sim claro: perguntou de novo se a pessoa confirma o cancelamento da consulta ${descricao}`,
+        citouOutra
+          ? `Não cancelou: ${PASSO_DA_RESPOSTA_A_OUTRA_MENSAGEM}; perguntou de novo se a pessoa confirma o cancelamento da consulta ${descricao}`
+          : `A resposta não foi um sim claro: perguntou de novo se a pessoa confirma o cancelamento da consulta ${descricao}`,
         "sem_confirmacao_clara",
         {
           consultaLida: true,

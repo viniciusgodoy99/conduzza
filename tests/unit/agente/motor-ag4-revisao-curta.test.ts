@@ -912,6 +912,8 @@ describe("achado 8: a conferencia pela ordem real e pelas mesmas saidas que o ba
       falhou: false,
       empate: false,
       criadaEm: new Date(AGORA - 5_000).toISOString(),
+      // Revisao da revisao final da AG4 (o toque atrasado): sem citacao.
+      citaOutraMensagem: false,
     });
     // A apagada conta (o banco conta).
     cenario.soNoBanco("usuario", { em: AGORA - 3_000, apagada: true, texto: "Oi" });

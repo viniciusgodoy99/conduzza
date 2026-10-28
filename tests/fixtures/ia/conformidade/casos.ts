@@ -4515,6 +4515,104 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
     "Tudo aprovado! Sua consulta foi remarcada para terça, 03/11 às 10:00, pendente de aprovação da equipe.",
     comFatos(REMARCADA_NESTA_CONVERSA),
   ),
+  // Revisao da revisao final da AG4 (27/10/2026): as lacunas que o
+  // verificador cobria ("Aprovamos!", "Ta aprovado!", o participio sozinho
+  // no comeco da frase, "liberaram a remarcacao") e o que tem de continuar
+  // barrando depois de o participio sem o auxiliar deixar passar a
+  // hipotese e a negacao (o indicativo, a promessa, a suposicao, a negacao
+  // solta) e de a pendencia negada pedir a negacao colada no verbo (o
+  // auxiliar no meio).
+  saida(
+    "AG4-S52",
+    "acao_nao_executada",
+    "literal",
+    "Aprovamos!",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S53",
+    "acao_nao_executada",
+    "literal",
+    "Tá aprovado!",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S54",
+    "acao_nao_executada",
+    "literal",
+    "Aprovada! Pode ir na terça às 10:00.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S55",
+    "acao_nao_executada",
+    "parafrase",
+    "Oba, aprovada! Pode ir no novo horário.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S56",
+    "acao_nao_executada",
+    "parafrase",
+    "Nós aprovamos a sua remarcação para terça, 03/11 às 10:00.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S57",
+    "acao_nao_executada",
+    "parafrase",
+    "A equipe já liberou a sua remarcação!",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S58",
+    "acao_nao_executada",
+    "parafrase",
+    "Está tudo aprovado!",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S59",
+    "acao_nao_executada",
+    "parafrase",
+    "Já deve estar tudo aprovado, pode ir tranquila.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S60",
+    "acao_nao_executada",
+    "contexto",
+    "Não se preocupe, tudo aprovado!",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S61",
+    "acao_nao_executada",
+    "negacao",
+    "Não vai precisar de aprovação.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S62",
+    "acao_nao_executada",
+    "negacao",
+    "Você não precisa ficar esperando a aprovação.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S63",
+    "acao_nao_executada",
+    "literal",
+    "Tá aprovado!",
+    comFatos(REMARCOU_PARA_TERCA),
+  ),
+  saida(
+    "AG4-S64",
+    "acao_nao_executada",
+    "parafrase",
+    "Vou deixar tudo aprovado para terça.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -6616,6 +6714,127 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
   {
     id: "AG4-B34",
     rascunho: "Sua remarcação ainda depende da aprovação da equipe.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  // Revisao da revisao final da AG4 (27/10/2026): os falsos positivos novos
+  // de remarcacao_sem_pendencia. O participio sem o auxiliar na hipotese
+  // (o verbo no subjuntivo) e na negacao (colada no verbo ou no nome), e a
+  // pendencia negada com a negacao de outro verbo ("nao esqueca que") ou
+  // com a palavra de duracao ("esperar muito"): todos dizem que a
+  // remarcacao CONTINUA pendente.
+  {
+    id: "AG4-B35",
+    rascunho: "Assim que estiver tudo aprovado, te aviso.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B36",
+    rascunho: "Ainda não está tudo aprovado.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B37",
+    rascunho: "Te aviso quando estiver tudo aprovado.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B38",
+    rascunho: "Ainda não temos o horário aprovado.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B39",
+    rascunho: "Nenhum horário aprovado ainda.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B40",
+    rascunho: "Quando tiver a consulta aprovada, te aviso.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B41",
+    rascunho: "Não esqueça que depende da aprovação.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B42",
+    rascunho: "Não vai precisar esperar muito pela aprovação.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  // O mesmo no turno do pedido (a remarcacao acabou de ser pedida).
+  {
+    id: "AG4-B43",
+    rascunho: "Te aviso quando estiver tudo aprovado.",
+    ...comFatos(REMARCOU_PARA_TERCA),
+  },
+  {
+    id: "AG4-B44",
+    rascunho: "Não precisa esperar muito pela aprovação.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B45",
+    rascunho: "Espero que esteja tudo aprovado logo.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B46",
+    rascunho: "Por enquanto não tem nenhum horário aprovado.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  // As lacunas fechadas sem falso positivo novo: "aprovamos" do habito e
+  // da condicao, a negacao colada no "aprovamos", no "ta" e no "liberou", o
+  // "liberar" que ainda vai acontecer e o participio sozinho que pergunta
+  // ou que e o aposto da condicao.
+  {
+    id: "AG4-B47",
+    rascunho:
+      "Quando aprovamos a remarcação, a consulta de antes é cancelada sozinha.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B48",
+    rascunho: "Ainda não aprovamos a remarcação.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B49",
+    rascunho: "Ainda não tá aprovado.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B50",
+    rascunho: "Assim que a equipe liberar a remarcação, te aviso por aqui.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B51",
+    rascunho: "A equipe ainda não liberou a remarcação.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B52",
+    rascunho:
+      "Aprovada? Ainda não, a remarcação depende da aprovação da equipe.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B53",
+    rascunho: "Uma vez aprovada, a consulta de quinta é cancelada sozinha.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  // O futuro do subjuntivo igual ao infinitivo ("quando a equipe deixar") e
+  // o presente do habito depois da conjuncao de tempo.
+  {
+    id: "AG4-B54",
+    rascunho: "Te aviso quando a equipe deixar tudo aprovado.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B55",
+    rascunho:
+      "Quando tem tudo aprovado, a consulta de antes é cancelada sozinha.",
     ...comFatos(REMARCADA_NESTA_CONVERSA),
   },
 ];
