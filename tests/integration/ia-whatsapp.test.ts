@@ -1254,7 +1254,8 @@ describe("varredura e frase que nao sai", () => {
         p_worker: worker,
         p_motivo: "sintoma",
       }),
-    ).toEqual({ passou: true, codigo: "passou" });
+      // [AG6 passagem] a resposta ganhou urgente e atribuida (20261029120000).
+    ).toEqual({ passou: true, codigo: "passou", urgente: false, atribuida: false });
     expect(
       await rpcOk("gravar_evento_da_ia", {
         p_job_id: jobId,
@@ -1616,7 +1617,8 @@ describe("D-A: job de antes do Devolver nao mexe na sessao nova", () => {
         p_worker: worker,
         p_motivo: "liberacao_perdida",
       }),
-    ).toEqual({ passou: false, codigo: "job_antigo" });
+      // [AG6 passagem] nas recusas, urgente e atribuida falsas.
+    ).toEqual({ passou: false, codigo: "job_antigo", urgente: false, atribuida: false });
     expect(
       await rpcOk("gravar_evento_da_ia", {
         p_job_id: velho,

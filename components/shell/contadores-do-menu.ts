@@ -33,6 +33,29 @@ export async function contarConversasAguardando(
   return error ? null : (count ?? 0);
 }
 
+// [AG6 urgência] início
+/**
+ * Conversas marcadas como urgentes AGORA (conversa_urgente aberta; D-53 e
+ * contrato da frente de banco, secao 3): o contador do Atendimento fica em
+ * alerta enquanto houver alguma. A RLS recorta o papel (o profissional so
+ * conta a da conversa com ele, e a urgente vai sempre para a fila); a
+ * clinica vem no filtro porque a pessoa pode ser membro de mais de uma.
+ * Falha devolve null: o contador fica no tom de sempre, nunca num alerta
+ * inventado.
+ */
+export async function contarConversasUrgentes(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<number | null> {
+  const { count, error } = await supabase
+    .from("conversa_urgente")
+    .select("conversation_id", { count: "exact", head: true })
+    .eq("clinic_id", clinicId)
+    .is("encerrada_em", null);
+  return error ? null : (count ?? 0);
+}
+// [AG6 urgência] fim
+
 /**
  * Confirmacoes pendentes de amanha, no fuso da CLINICA: o mesmo recorte que
  * a Tela 2 abre por padrao. `agora` entra de fora para o dia civil ser

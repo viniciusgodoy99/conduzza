@@ -30,6 +30,9 @@ import {
   NEUTRALIZACOES_DE_ENTRADA,
   PADROES_DE_ENTRADA,
 } from "@/lib/domain/conformidade/padroes";
+// [AG6 urgência] início
+import { detectarUrgencia } from "@/lib/domain/conformidade/urgencia";
+// [AG6 urgência] fim
 
 /** Texto acima disso escala (plano de seguranca, secao 3). */
 export const LIMITE_DE_MENSAGEM = 1000;
@@ -207,6 +210,15 @@ export function detectarGatilhosDeEntrada(
     for (const gatilho of gatilhosDoTexto(texto)) {
       achados.add(gatilho);
     }
+    // [AG6 urgência] início
+    // O sinal de emergencia da lista deterministica (urgencia.ts, D-51):
+    // "urgencia" e o primeiro gatilho (categorias.ts). No WhatsApp o
+    // executor ja passou a conversa antes do teto e da reserva (passo 7c);
+    // aqui e a segunda trava e o caminho do simulador.
+    if (detectarUrgencia([texto]) !== null) {
+      achados.add("urgencia");
+    }
+    // [AG6 urgência] fim
   }
   if (total > LIMITE_DA_RAJADA) {
     achados.add("mensagem_longa");

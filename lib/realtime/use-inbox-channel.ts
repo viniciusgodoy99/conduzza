@@ -5,12 +5,16 @@ import { useEffect } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { agendadasKeys } from "@/lib/domain/mensagem-agendada";
-import { recencia } from "@/lib/domain/filtros-da-conversa";
 import {
   aplicarLinhaAosNumeros,
   type LinhaDoNumeroNoInbox,
 } from "@/lib/domain/numeros-do-inbox";
 import {
+  // [AG6 urgência] início
+  aplicarMarcaNaLista,
+  marcaDeUrgenciaDaLinha,
+  ordemDoAtendimento,
+  // [AG6 urgência] fim
   conversationKeys,
   numerosKeys,
   type ConversationListItem,
@@ -41,6 +45,15 @@ import { assinarComSessao } from "@/lib/realtime/assinar-com-sessao";
 // conversa afetada. A invalidacao completa fica para os casos raros em que a
 // linha nova nao esta na lista (conversa nova ou reaberta), que precisam do
 // join de contato que o payload do evento nao traz.
+//
+// [AG6 urgência] início A MARCA DE URGENCIA (conversa_urgente, D-53): so ids e
+// instantes, na publicacao do tempo real. O evento dela atualiza so a marca
+// da conversa na lista (e a ordem: a urgente aberta vem primeiro). A
+// conversa que sai de "Aguardando você" perde a marca no proprio evento da
+// conversa: o gatilho do banco fecha a marca na mesma transacao, e uma
+// marca velha (evento perdido) nunca volta a marcar a conversa que alguem
+// ja pegou. DELETE (a poda da marca encerrada) nao muda a tela.
+// [AG6 urgência] fim
 
 type ConversationRow = {
   id: string;
@@ -70,6 +83,29 @@ type ConversationRow = {
 function colunaOu<T>(novo: T | undefined, atual: T): T {
   return novo !== undefined ? novo : atual;
 }
+
+// [AG6 urgência] início
+/** A linha de conversa_urgente como o evento entrega (a linha inteira). */
+type LinhaDaMarca = {
+  conversation_id?: unknown;
+  clinic_id?: unknown;
+  desde?: unknown;
+  encerrada_em?: unknown;
+};
+
+/**
+ * A marca da conversa depois de um evento DELA (conversation): fica so em
+ * "Aguardando você". Qualquer outro status quer dizer que alguem assumiu,
+ * transferiu ou resolveu (ou a IA voltou), e o gatilho do banco ja fechou a
+ * marca na mesma transacao.
+ */
+export function marcaDepoisDoEvento(
+  status: string,
+  marca: ConversationListItem["urgente"],
+): ConversationListItem["urgente"] {
+  return status === "aguardando_humano" ? (marca ?? null) : null;
+}
+// [AG6 urgência] fim
 
 /**
  * Janela que junta as releituras das agendadas: uma mensagem gera varios
@@ -288,14 +324,40 @@ export function useInboxChannel(
           row.whatsapp_account_id,
           existente.whatsapp_account_id,
         ),
+        // [AG6 urgência] início A marca so vale em "Aguardando você" (ver o topo).
+        urgente: marcaDepoisDoEvento(row.status, existente.urgente),
+        // [AG6 urgência] fim
       };
       const proxima = atual
         .map((c) => (c.id === row.id ? atualizada : c))
-        // A mesma ordem da lista: a mensagem mais recente, enviada ou
-        // recebida, primeiro (recencia, como no WhatsApp).
-        .sort((a, b) => recencia(b) - recencia(a));
+        // A mesma ordem da lista: a urgente aberta primeiro e, depois, a
+        // mensagem mais recente, enviada ou recebida (recencia, como no
+        // WhatsApp). [AG6 urgência]
+        .sort(ordemDoAtendimento);
       queryClient.setQueryData<ConversationListItem[]>(listKey, proxima);
     };
+
+    // [AG6 urgência] início A marca nova, reaberta ou encerrada: so a marca da
+    // conversa muda, em todas as listas sob a chave-mae (a ativa, o arquivo
+    // e a conversa do link). A marca aberta de uma conversa que a lista
+    // ativa ainda nao tem (a conversa nova da mesma transacao) relê a
+    // lista, como a linha desconhecida acima.
+    const aplicarMarca = (linha: LinhaDaMarca) => {
+      queryClient.setQueriesData<ConversationListItem[]>(
+        { queryKey: listKey },
+        (lista) =>
+          Array.isArray(lista) ? aplicarMarcaNaLista(lista, linha) : lista,
+      );
+      const ativa = queryClient.getQueryData<ConversationListItem[]>(listKey);
+      if (
+        ativa &&
+        marcaDeUrgenciaDaLinha(linha) !== null &&
+        !ativa.some((c) => c.id === linha.conversation_id)
+      ) {
+        void queryClient.invalidateQueries({ queryKey: listKey, exact: true });
+      }
+    };
+    // [AG6 urgência] fim
 
     // Numeros da clinica (docs/07, achado 6). Toda reserva de slot de envio
     // faz UPDATE em whatsapp_account, e antes cada mudanca de status chamava
@@ -406,7 +468,28 @@ export function useInboxChannel(
             aplicarNumero(linha);
           }
         },
+      )
+      // [AG6 urgência] início A marca de urgencia (INSERT e UPDATE; a RLS do tempo
+      // real recorta por assinante, como a de conversation).
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "conversa_urgente",
+          filter: `clinic_id=eq.${clinicId}`,
+        },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            return;
+          }
+          const linha = payload.new as LinhaDaMarca | null;
+          if (typeof linha?.conversation_id === "string") {
+            aplicarMarca(linha);
+          }
+        },
       );
+    // [AG6 urgência] fim
     const parar = assinarComSessao(supabase, channel, (status) => {
       // Catch-up: o que chegou entre a busca do servidor e o canal ficar de
       // pe (ou durante uma queda de conexao) nao gerou evento para esta

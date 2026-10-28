@@ -24,6 +24,22 @@ import {
   type FalhaDoAgente,
   type ResultadoDoTurno,
 } from "@/lib/agente/laco";
+// [AG6 urgência] início
+import {
+  mensagensPendentes,
+  PASSO_DA_CONFERENCIA_DA_ENTRADA,
+  PASSO_DA_URGENCIA,
+  type MensagemDaConversa,
+} from "@/lib/agente/laco";
+import { detectarUrgencia } from "@/lib/domain/conformidade/urgencia";
+// [AG6 urgência] fim
+// [AG6 passagem] início
+import {
+  motivoPodeAtribuir,
+  pedirAtribuicaoNaPassagem,
+  type RegrasDaPassagem,
+} from "@/lib/domain/agente/config";
+// [AG6 passagem] fim
 import { VERSAO_DO_PROMPT } from "@/lib/agente/prompt";
 import { lerPrecos } from "@/lib/agente/uso";
 import {
@@ -127,6 +143,10 @@ import type { Job, ResultadoDeJob } from "./worker";
 //     Onda 2: quantas vezes a IA ja respondeu fora do assunto na janela
 //     (P5b) e se ela ja respondeu na janela (o aviso de assistente virtual,
 //     P11a); o tipo do contato (lead ou paciente, item 4) vai ao prompt.
+//  7c. [AG6 urgência] A urgencia (AG6a, D-51 e D-52): o sinal de emergencia
+//     da lista deterministica nos textos originais das pendentes, ANTES do
+//     teto e da reserva: decisao, passagem sem atribuir (a marca Urgente) e
+//     a frase de sempre, sem modelo nenhum.
 //  8. Teto de respostas da conversa na ultima hora.
 //  9. Reserva do custo maximo do turno (origem whatsapp).
 //  8b. (AG3) O estado do atendimento (ler_atendimento_da_ia, pelo job):
@@ -282,6 +302,14 @@ type Contexto = {
   workerId: string;
   clinicId: string;
   conversationId: string;
+  // [AG6 passagem] início
+  /**
+   * AG6a: para quem vai a conversa, da versao publicada que este turno leu
+   * (passo 6). Ausente: ainda nao lida (a retomada le na hora da passagem
+   * com a frase). Nulo: a leitura falhou (a fila, o lado seguro).
+   */
+  regras?: RegrasDaPassagem | null;
+  // [AG6 passagem] fim
 };
 
 const CONCLUIR: ResultadoDeJob = { ok: true };
@@ -488,6 +516,11 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
   if (config === null) {
     return passarSemFrase(c, turnoAtual, "sem_versao_publicada");
   }
+  // [AG6 passagem] início
+  // A regra da passagem da versao publicada lida agora (a atribuicao so
+  // vale nas passagens com a frase; o banco confere de novo).
+  c.regras = config.regras;
+  // [AG6 passagem] fim
   const agoraMs = c.deps.agora();
   if (config.horario.modo === "fallback") {
     return passarSemFrase(c, turnoAtual, "horario_nao_suportado");
@@ -540,6 +573,17 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
     contactId: conversa.contact_id,
     whatsappAccountId: conversa.whatsapp_account_id,
   };
+
+  // [AG6 urgência] início
+  // 7c. A urgencia (AG6a, D-51 e D-52): a lista deterministica de sinais de
+  // emergencia nos textos ORIGINAIS das pendentes, ANTES do teto de
+  // respostas, da reserva do gasto e de qualquer modelo. Achou: a decisao
+  // (escalou, urgencia, origem portao, sem uso), a passagem SEM atribuir (o
+  // banco marca a conversa como Urgente) e a frase de sempre.
+  if (urgenciaNasPendentes(historico.mensagens)) {
+    return passarPorUrgencia(c, base, destino, config);
+  }
+  // [AG6 urgência] fim
 
   // 8. Teto de respostas da conversa na ultima hora.
   const teto = await tetoDeRespostasPorHora(admin, clinicId);
@@ -1418,27 +1462,137 @@ async function falharSemModelo(
   return passarEAvisar(c, destino, "falha_tecnica");
 }
 
+// [AG6 urgência] início
+/**
+ * AG6a (7c): algum texto ORIGINAL das pendentes (o texto do paciente, sem a
+ * mascara do nome) traz um sinal de emergencia da lista deterministica
+ * (urgencia.ts). Local, sem rede; nada vai para log.
+ */
+function urgenciaNasPendentes(
+  mensagens: readonly MensagemDaConversa[],
+): boolean {
+  return (
+    detectarUrgencia(
+      mensagensPendentes(mensagens)
+        .filter((m) => (m.tipo ?? "texto") === "texto")
+        .map((m) => m.textoOriginal ?? m.texto),
+    ) !== null
+  );
+}
+
+/**
+ * AG6a (7c): a urgencia, sem modelo nenhum e antes do teto e da reserva. A
+ * decisao (escalou, motivo e gatilho urgencia, origem portao, sem uso) e
+ * gravada ANTES da passagem, como em toda frase; a passagem nunca atribui
+ * (D-54: a fila de todos) e o banco marca a conversa (conversa_urgente). O
+ * contato recebe a frase de SEMPRE (a do 192 e da AG6c). A retomada em
+ * 'decidido' le o motivo urgencia da decisao e passa do mesmo jeito.
+ */
+async function passarPorUrgencia(
+  c: Contexto,
+  turno: TurnoDaIa,
+  destino: Destino,
+  config: ConfigDoAgente,
+): Promise<ResultadoDeJob> {
+  const decisionId = await gravarDecisao(c.admin, {
+    clinicId: c.clinicId,
+    conversationId: c.conversationId,
+    jobId: c.job.id,
+    desfecho: {
+      tipo: "escalou",
+      motivo: "urgencia",
+      gatilho: "urgencia",
+      origem: "portao",
+    },
+    textoSha256: null,
+    filtro: null,
+    trilha: [
+      { tipo: "outro", texto: PASSO_DA_CONFERENCIA_DA_ENTRADA },
+      { tipo: "equipe", texto: PASSO_DA_URGENCIA },
+    ],
+    uso: [],
+    versaoDoPrompt: VERSAO_DO_PROMPT,
+    configVersion: config.versao,
+    latenciaMs: null,
+  });
+  await salvarTurno(c.admin, {
+    ...turno,
+    estado: "decidido",
+    saida: "frase",
+    decisionId,
+  });
+  log.info("ia_turno_decidido", {
+    ...idsDoLog(c),
+    status: "escalou",
+    kind: "urgencia",
+    count: 0,
+  });
+  return passarEAvisar(c, destino, "urgencia");
+}
+// [AG6 urgência] fim
+
+// [AG6 passagem] início
+/**
+ * AG6a: as regras da passagem para pedir a atribuicao. O turno que leu a
+ * versao publicada ja as tem (passo 6); a retomada le agora (a ultima
+ * publicada, a mesma que o banco confere). Leitura que falha: a fila (o lado
+ * seguro; a passagem e a frase seguem), com o log.
+ */
+async function regrasParaAPassagem(
+  c: Contexto,
+): Promise<RegrasDaPassagem | null> {
+  if (c.regras !== undefined) {
+    return c.regras;
+  }
+  try {
+    const publicada = await carregarConfigPublicada(c.admin, c.clinicId);
+    c.regras = publicada?.regras ?? null;
+  } catch {
+    c.regras = null;
+    log.warn("ia_regra_da_passagem_nao_lida", idsDoLog(c));
+  }
+  return c.regras;
+}
+// [AG6 passagem] fim
+
 /**
  * A passagem do job, com D-A conferido aqui tambem (o banco confere de
  * novo): job anterior a janela atual devolve "job_antigo" sem chamar a
  * passagem. Lanca ErroComCodigoDeJob se a janela nao puder ser lida (o job
  * tenta de novo; o turno continua onde estava).
+ *
+ * [AG6 passagem] AG6a: `comFrase` (so passarEAvisar) deixa pedir a
+ * atribuicao ao responsavel do lead, com a regra ligada na versao publicada
+ * e fora da urgencia e do fora do horario (pedirAtribuicaoNaPassagem). As
+ * passagens sem frase nunca pedem.
  */
 async function passarDoJob(
   c: Contexto,
   motivo: MotivoDoEventoDaIa,
+  // [AG6 passagem] início
+  comFrase = false,
+  // [AG6 passagem] fim
 ): Promise<ResultadoDaPassagem> {
   const janela = await lerJanela(c.admin, c.clinicId, c.conversationId);
   if (jobAnteriorAJanela(janela, c.job.created_at)) {
     log.info("ia_job_anterior_a_janela", idsDoLog(c));
     return "job_antigo";
   }
-  return passarParaAEquipe(c.admin, {
+  // [AG6 passagem] início
+  // A regra so e lida (na retomada) quando a passagem pode atribuir.
+  const atribuir =
+    comFrase &&
+    motivoPodeAtribuir(motivo) &&
+    pedirAtribuicaoNaPassagem(motivo, await regrasParaAPassagem(c));
+  const passagem = await passarParaAEquipe(c.admin, {
     clinicId: c.clinicId,
     jobId: c.job.id,
     workerId: c.workerId,
     motivo,
+    atribuir,
   });
+  return passagem.resultado;
+  // [AG6 passagem] fim
 }
 
 /**
@@ -1460,7 +1614,10 @@ async function passarEAvisar(
    */
   nota: string | null = null,
 ): Promise<ResultadoDeJob> {
-  const passagem = await passarDoJob(c, motivo);
+  // [AG6 passagem] início
+  // A passagem COM a frase: a unica que pode pedir a atribuicao.
+  const passagem = await passarDoJob(c, motivo, true);
+  // [AG6 passagem] fim
   if (passagem === "sem_posse") {
     return { ok: false, erro: "sem_posse" };
   }

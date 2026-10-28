@@ -58,6 +58,9 @@ import {
   resumirFatosDoTurno,
 } from "@/lib/domain/conformidade/resumo-dos-fatos";
 import type { TextoAprovado } from "@/lib/domain/conformidade/texto-aprovado";
+// [AG6 urgência] início
+import { FONTES_DA_URGENCIA } from "@/lib/domain/conformidade/urgencia";
+// [AG6 urgência] fim
 import {
   EsquemaDoVeredicto,
   ehMotivoDaFalha,
@@ -157,6 +160,11 @@ export function fontesDoPortao() {
     idades: [...IDADES_POR_EXTENSO],
     codigo: FONTES_DO_PORTAO_EM_CODIGO,
     normalizacao: FONTES_DA_NORMALIZACAO,
+    // [AG6 urgência] início
+    // AG6a (D-51): a lista dos sinais de emergencia, a negacao e as
+    // excecoes. Mudar um sinal muda a versao do portao.
+    urgencia: FONTES_DA_URGENCIA,
+    // [AG6 urgência] fim
   };
 }
 

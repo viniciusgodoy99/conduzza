@@ -150,6 +150,19 @@ export const CENARIOS_DO_SIMULADOR = [
     rotulo: "Paciente querendo remarcar",
     mensagem: "Oi, queria remarcar a minha consulta para outro dia.",
   },
+  // [AG6 urgência] início
+  // AG6a (desenho, secao 6): o sinal de emergencia. O simulador passa para a
+  // equipe com a frase de sempre (no WhatsApp, a conversa ainda ganha a
+  // marca Urgente); nada e gravado. A chave tambem entra no enum CENARIOS de
+  // app/(app)/agente/actions.ts (um teste confere os dois). Antes da lista
+  // de espera, que continua a ultima (o teste da AG5 confere).
+  {
+    chave: "urgencia",
+    rotulo: "Paciente com sinal de emergência",
+    mensagem:
+      "Fiz o preenchimento ontem e agora estou com falta de ar e a garganta fechando.",
+  },
+  // [AG6 urgência] fim
   // AG5 (desenho, secao 6): a IA coloca o paciente na lista de espera. No
   // simulador as duas fases (a pergunta e a entrada) so simulam, e nada e
   // gravado. A chave tambem entra no enum CENARIOS de
@@ -450,3 +463,53 @@ export const TEXTOS_DO_AGENTE = {
     "A conversa passou para a equipe. Reinicie para testar de novo.",
   paciente: "Paciente",
 } as const;
+
+// [AG6 passagem] início
+// AG6a (desenho, secao 6; D-15, e D-54 e D-55 pela recomendacao, pendentes
+// do dono): o cartao "Para quem vai a conversa" da aba Regras e limites. A
+// regra mora em escalation_rules.passagem_para (lib/domain/agente/config.ts,
+// PASSAGENS_DA_CONVERSA), grava no rascunho e vale ao publicar; quem
+// atribui e o banco, na passagem com a frase fixa, pela ultima versao
+// publicada. O "o que mudou" usa ROTULO_DO_CAMPO_DA_PASSAGEM e
+// ROTULO_DA_PASSAGEM da configuracao.
+export const TEXTOS_DA_PASSAGEM = {
+  titulo: "Para quem vai a conversa",
+  descricao:
+    "Salvo no rascunho, vale ao publicar. Conta quando o assistente passa a conversa para a equipe e o contato recebe a frase fixa.",
+  opcoes: {
+    fila: {
+      rotulo: "Para a fila (Sem atendente)",
+      descricao:
+        "A conversa fica em Aguardando você, para quem estiver no Atendimento assumir.",
+    },
+    responsavel_do_lead: {
+      rotulo: "Para o responsável do lead, quando houver",
+      descricao:
+        "A conversa já fica em atendimento com o responsável, em Minhas, com um aviso na tela.",
+    },
+  },
+  ajuda:
+    "O responsável é o do lead em Leads. Sem responsável, ou com ele fora da equipe ou só com leitura, a conversa vai para a fila. Conversa urgente vai sempre para a fila.",
+  salvar: "Salvar regra",
+  salvando: "Salvando...",
+  salva: "Regra salva no rascunho.",
+  semMudanca: "Escolha outra opção para salvar.",
+  naoSalva: "Alterações ainda não salvas.",
+} as const;
+// [AG6 passagem] fim
+
+// [AG6 urgência] início
+// AG6a (desenho, secao 6; D-52 e D-53 pela recomendacao, pendentes do
+// dono): o cartao "Urgência" da aba Regras e limites, so o texto nesta
+// rodada (a chave do aviso do SAMU, 192, e da AG6c, com a aprovacao do
+// responsavel tecnico). O exemplo do chip e o do Atendimento
+// (URGENCIA_DA_CONVERSA, lib/design/status.ts).
+export const TEXTOS_DA_URGENCIA = {
+  titulo: "Urgência",
+  descricao: "Sempre ligada: não pode ser desligada.",
+  texto:
+    "Quando a pessoa descreve algo que pode ser uma emergência, a conversa passa para a equipe marcada como Urgente, no topo do Atendimento.",
+  marca: "A marca sai quando alguém assume, transfere ou resolve a conversa.",
+  exemplo: "No Atendimento, a conversa aparece com:",
+} as const;
+// [AG6 urgência] fim

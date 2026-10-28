@@ -26,6 +26,9 @@ import {
 import {
   CONVERSATION_STATUS,
   STATUS_TONE_VARS,
+  // [AG6 urgência] início
+  URGENCIA_DA_CONVERSA,
+  // [AG6 urgência] fim
   estadoVisualDaConversa,
   type StatusDefinition,
 } from "@/lib/design/status";
@@ -40,7 +43,6 @@ import {
   casaSituacao,
   casaTipo,
   filtroDeTipoGuardado,
-  recencia,
   type FiltroDeSituacao,
   type FiltroDeTipo,
 } from "@/lib/domain/filtros-da-conversa";
@@ -54,6 +56,10 @@ import {
 } from "@/lib/domain/numeros-do-inbox";
 import {
   CONVERSATIONS_ATIVAS_LIMIT,
+  // [AG6 urgência] início
+  ordemDoAtendimento,
+  urgenteAberta,
+  // [AG6 urgência] fim
   RESOLVIDAS_LIMIT,
   type ConversationListItem,
 } from "@/lib/queries/conversations";
@@ -96,16 +102,51 @@ const TIPOS: { value: FiltroDeTipo; label: string }[] = [
   { value: "pacientes", label: "Pacientes" },
 ];
 
+// [AG6 urgência] início
+/**
+ * Os chips de situacao da lista: os do dominio (FiltroDeSituacao) mais
+ * "Urgentes" (D-53), a conversa com a marca de urgencia aberta. Fica aqui,
+ * e nao no dominio, porque so a lista filtra por ela (o link do Inicio
+ * continua com os filtros da URL).
+ */
+export type SituacaoDaLista = FiltroDeSituacao | "urgentes";
+
+/** O chip filtra exatamente o que ele conta (as duas usam esta regra). */
+export function casaSituacaoDaLista(
+  conversa: ConversationListItem,
+  alvo: SituacaoDaLista,
+  agora: number,
+): boolean {
+  return alvo === "urgentes"
+    ? urgenteAberta(conversa)
+    : casaSituacao(conversa, alvo, agora);
+}
+
+/** O chip "Urgentes": a forma, o tom e o icone do "Urgente", no plural. */
+const URGENTES: StatusDefinition = {
+  ...URGENCIA_DA_CONVERSA,
+  label: "Urgentes",
+};
+// [AG6 urgência] fim
+
 // Ordem dos chips de situacao. "IA atendendo" so aparece quando existe
 // conversa com a IA (o Agente e da Fase 3; hoje o chip viraria um zero
-// permanente na tela da recepcao).
-const SITUACOES: FiltroDeSituacao[] = [
+// permanente na tela da recepcao). [AG6 urgência] "Urgentes" abre a fileira
+// e, como "IA atendendo", so aparece com alguma urgente aberta (ou ligado).
+const SITUACOES: SituacaoDaLista[] = [
+  "urgentes",
   "ia_atendendo",
   "aguardando_humano",
   "sem_resposta_24h",
   "em_atendimento",
   "resolvida",
 ];
+
+/** Os chips que somem quando nao contam nada (e nao estao ligados). */
+const SO_COM_CONVERSA: ReadonlySet<SituacaoDaLista> = new Set([
+  "urgentes",
+  "ia_atendendo",
+]);
 
 // O recorte de urgencia do Inicio ("Sem resposta ha mais de 24h"), com o
 // mesmo icone e o mesmo tom do item de Proximas acoes que leva ate aqui.
@@ -115,7 +156,10 @@ const SEM_RESPOSTA_24H: StatusDefinition = {
   icon: AlarmClock,
 };
 
-function definicaoDaSituacao(situacao: FiltroDeSituacao): StatusDefinition {
+function definicaoDaSituacao(situacao: SituacaoDaLista): StatusDefinition {
+  if (situacao === "urgentes") {
+    return URGENTES;
+  }
   return situacao === "sem_resposta_24h"
     ? SEM_RESPOSTA_24H
     : CONVERSATION_STATUS[situacao];
@@ -239,7 +283,7 @@ export function ConversationList({
       // sem storage: vale so nesta aba
     }
   };
-  const [situacao, setSituacao] = useState<FiltroDeSituacao | null>(
+  const [situacao, setSituacao] = useState<SituacaoDaLista | null>(
     filtroInicial,
   );
   const [search, setSearch] = useState("");
@@ -280,7 +324,7 @@ export function ConversationList({
       ? numeroEscolhido
       : null;
 
-  const escolherSituacao = (proxima: FiltroDeSituacao | null) => {
+  const escolherSituacao = (proxima: SituacaoDaLista | null) => {
     const anterior = situacao;
     setSituacao(proxima);
     // O arquivo de resolvidas so e buscado com o chip ligado.
@@ -288,7 +332,7 @@ export function ConversationList({
       onResolvedRequested?.(proxima === "resolvida");
     }
   };
-  const alternarSituacao = (alvo: FiltroDeSituacao) =>
+  const alternarSituacao = (alvo: SituacaoDaLista) =>
     escolherSituacao(situacao === alvo ? null : alvo);
 
   const counts = useMemo(() => {
@@ -300,9 +344,9 @@ export function ConversationList({
     const porSituacao = Object.fromEntries(
       SITUACOES.map((alvo) => [
         alvo,
-        conversations.filter((c) => casaSituacao(c, alvo, agora)).length,
+        conversations.filter((c) => casaSituacaoDaLista(c, alvo, agora)).length,
       ]),
-    ) as Record<FiltroDeSituacao, number>;
+    ) as Record<SituacaoDaLista, number>;
     // O tipo conta como os outros filtros: o lote carregado inteiro, com a
     // MESMA regra que filtra (casaTipo), sem depender dos outros filtros.
     const porTipo = Object.fromEntries(
@@ -338,7 +382,7 @@ export function ConversationList({
           }
           // O chip filtra o mesmo conjunto que ele conta: número e lista têm
           // de dizer a mesma coisa.
-          if (situacao && !casaSituacao(conversation, situacao, agora)) {
+          if (situacao && !casaSituacaoDaLista(conversation, situacao, agora)) {
             return false;
           }
           if (!casaNumero(conversation, numeroAtivo)) {
@@ -352,16 +396,21 @@ export function ConversationList({
           // o 9, com e sem mascara): lib/domain/filtros-da-conversa.ts.
           return casaBusca(conversation.contact, search);
         })
-        // ORDEM DA ÚLTIMA MENSAGEM, uma regra só: a conversa com a mensagem
-        // mais recente, enviada ou recebida, primeiro (recencia), como no
-        // WhatsApp. Antes a chave primária era o booleano "esperando
-        // resposta", o que empilhava a lista em dois blocos e fazia a coluna
-        // de horários parecer embaralhada sem motivo visível.
+        // ORDEM DA ÚLTIMA MENSAGEM: a conversa com a mensagem mais recente,
+        // enviada ou recebida, primeiro (recencia), como no WhatsApp. Antes a
+        // chave primária era o booleano "esperando resposta", o que empilhava
+        // a lista em dois blocos e fazia a coluna de horários parecer
+        // embaralhada sem motivo visível.
+        //
+        // [AG6 urgência] início A única exceção (D-53): a conversa marcada como
+        // urgente, enquanto aberta, vem antes de todas, e entre elas pela
+        // chegada. O chip "Urgente" no cartão diz por que ela está no topo.
+        // [AG6 urgência] fim
         //
         // Quem espera resposta nunca fica fora do lote: fetchConversations
         // junta as 300 mais recentes com as que aguardam resposta, e o chip
         // "Aguardando você" filtra só elas.
-        .sort((a, b) => recencia(b) - recencia(a))
+        .sort(ordemDoAtendimento)
     );
   }, [
     conversations,
@@ -554,7 +603,7 @@ export function ConversationList({
           {SITUACOES.map((alvo) => {
             const ativo = situacao === alvo;
             const n = counts.porSituacao[alvo];
-            if (alvo === "ia_atendendo" && n === 0 && !ativo) {
+            if (SO_COM_CONVERSA.has(alvo) && n === 0 && !ativo) {
               return null;
             }
             const definicao = definicaoDaSituacao(alvo);

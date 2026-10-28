@@ -1464,6 +1464,15 @@ export const MOTIVOS_DE_ESCALONAMENTO = [
   "ja_tem_consulta",
   "faltam_dados",
   "fora_do_prazo",
+  // [AG6 urgência] início
+  // AG6a (migration 20261029120000, que redefine o CHECK com a lista da AG4
+  // mais este): a pessoa descreveu algo que pode ser uma emergencia (a lista
+  // deterministica de lib/domain/conformidade/urgencia.ts, D-51 e D-52). A
+  // conversa passa marcada como Urgente (conversa_urgente), nunca atribuida
+  // (D-54), com a frase de sempre. Motivo do SISTEMA (so o portao
+  // deterministico decide): fica fora de MOTIVOS_DO_AGENTE.
+  "urgencia",
+  // [AG6 urgência] fim
 ] as const;
 export type MotivoDeEscalonamento = (typeof MOTIVOS_DE_ESCALONAMENTO)[number];
 
@@ -1503,6 +1512,10 @@ export const ROTULO_DO_MOTIVO_DE_ESCALONAMENTO: Readonly<
   // AG4 (migration 20261028100000): o rotulo de rotulo_do_motivo_da_ia.
   fora_do_prazo:
     "o pedido de cancelar ou remarcar ficou dentro do prazo da clínica",
+  // [AG6 urgência] início
+  // AG6a (migration 20261029120000): o rotulo de rotulo_do_motivo_da_ia.
+  urgencia: "a pessoa descreveu algo que pode ser uma emergência",
+  // [AG6 urgência] fim
 };
 
 /**
@@ -1578,6 +1591,10 @@ export const TEXTO_DO_EVENTO_DA_IA: Readonly<
   ja_tem_consulta: passagemDaIa("ja_tem_consulta"),
   faltam_dados: passagemDaIa("faltam_dados"),
   fora_do_prazo: passagemDaIa("fora_do_prazo"),
+  // [AG6 urgência] início
+  // AG6a (migration 20261029120000).
+  urgencia: passagemDaIa("urgencia"),
+  // [AG6 urgência] fim
   nao_individual:
     "Chegou uma mensagem de grupo ou de status. A conversa voltou para a equipe.",
   fora_do_horario: `${PASSAGEM_DA_IA}agora está fora do horário escolhido para o assistente.`,
@@ -1629,10 +1646,170 @@ export const GATILHOS_OBRIGATORIOS = [
     rotulo: "O assunto envolve valor fora da tabela",
   },
   { chave: "menor_de_idade", rotulo: "O paciente é menor de idade" },
+  // [AG6 urgência] início
+  // AG6a (desenho, secao 6): o sinal de emergencia passa sempre, marcado.
+  {
+    chave: "urgencia",
+    rotulo: "Algo que pode ser uma emergência (passa como Urgente)",
+  },
+  // [AG6 urgência] fim
 ] as const satisfies readonly {
   chave: MotivoDeEscalonamento;
   rotulo: string;
 }[];
+
+// [AG6 passagem] início
+// ---------------------------------------------------------------------------
+// Para quem vai a conversa que a IA passa (AG6a; D-15, e D-54 e D-55
+// PENDENTES, construidas com a recomendacao)
+// ---------------------------------------------------------------------------
+//
+// A regra mora em ai_agent_config.escalation_rules (jsonb que existe desde o
+// E0 e que a Tela 6 grava por coluna no rascunho; vale ao publicar):
+// escalation_rules.passagem_para e "fila" (o padrao: "Aguardando você", sem
+// responsavel) ou "responsavel_do_lead" (a conversa vai para o responsavel do
+// lead, contact.owner_user_id, ativo e com papel que atende conversa). Quem
+// atribui e o banco, na mesma transacao da passagem
+// (passar_conversa_da_ia_para_equipe com p_atribuir, migration
+// 20261029120000), conferindo de novo a ULTIMA versao publicada; o motor so
+// pede (p_atribuir) na passagem com a frase e com a regra ligada na versao
+// que leu. Nunca atribuem: a urgencia (D-54, sempre a fila), o "fora do
+// horario" (a retomada no horario so pega conversa sem responsavel) e as
+// passagens sem frase (liberacao perdida, autorizacao revogada, versao sem
+// publicacao, numero desconectado, envio incerto).
+
+/** Os dois destinos da passagem (escalation_rules.passagem_para). */
+export const PASSAGENS_DA_CONVERSA = ["fila", "responsavel_do_lead"] as const;
+export type PassagemDaConversa = (typeof PASSAGENS_DA_CONVERSA)[number];
+
+export type RegrasDaPassagem = {
+  /** Para quem vai a conversa que a IA passa com a frase. */
+  passagemPara: PassagemDaConversa;
+  /**
+   * AG6c (o aviso do SAMU, 192, aprovado pelo responsavel tecnico): so lido
+   * de escalation_rules.aviso_de_urgencia. Nesta rodada (AG6a) o motor nunca
+   * usa (a urgencia recebe a frase de sempre) e nenhuma tela grava
+   * (regrasDaPassagemSchema nao o aceita).
+   */
+  avisoDeUrgencia: boolean;
+};
+
+/** O padrao: a fila, sem o aviso (escalation_rules = '{}'). */
+export function regrasDaPassagemPadrao(): RegrasDaPassagem {
+  return { passagemPara: "fila", avisoDeUrgencia: false };
+}
+
+/**
+ * escalation_rules para as regras (o mesmo criterio do banco: so o texto
+ * exato "responsavel_do_lead" atribui; qualquer outro valor, ausente ou fora
+ * do formato e a fila). Nunca lanca.
+ */
+export function regrasDaPassagemDoBanco(valor: unknown): RegrasDaPassagem {
+  if (!ehObjeto(valor)) {
+    return regrasDaPassagemPadrao();
+  }
+  return {
+    passagemPara:
+      valor.passagem_para === "responsavel_do_lead"
+        ? "responsavel_do_lead"
+        : "fila",
+    // O banco (AG6c) le escalation_rules ->> 'aviso_de_urgencia' = 'true':
+    // o booleano e o texto "true" valem.
+    avisoDeUrgencia:
+      valor.aviso_de_urgencia === true || valor.aviso_de_urgencia === "true",
+  };
+}
+
+/**
+ * A regra no jsonb do banco, PRESERVANDO as outras chaves que ja estao la
+ * (o aviso da AG6c, chaves de versoes futuras): o rascunho grava a coluna
+ * inteira.
+ */
+export function regrasDaPassagemParaOBanco(
+  regras: Pick<RegrasDaPassagem, "passagemPara">,
+  atual: unknown = {},
+): { escalation_rules: Record<string, unknown> } {
+  return {
+    escalation_rules: {
+      ...(ehObjeto(atual) ? atual : {}),
+      passagem_para: regras.passagemPara,
+    },
+  };
+}
+
+/**
+ * Entrada do cartao "Para quem vai a conversa" (aba Regras e limites). So a
+ * passagem: o aviso do SAMU e da AG6c.
+ */
+export const regrasDaPassagemSchema = z.object({
+  passagemPara: z.enum(PASSAGENS_DA_CONVERSA, {
+    error: "Escolha para quem vai a conversa.",
+  }),
+});
+
+/** O titulo do campo no "o que mudou" das Versoes. */
+export const ROTULO_DO_CAMPO_DA_PASSAGEM = "Passar a conversa para";
+
+/** Cada destino no "o que mudou" ("Passar a conversa para: a fila"). */
+export const ROTULO_DA_PASSAGEM: Readonly<Record<PassagemDaConversa, string>> =
+  {
+    fila: "a fila",
+    responsavel_do_lead: "o responsável do lead",
+  };
+
+/**
+ * Os motivos que nunca atribuem, com ou sem a regra (o banco confere de
+ * novo): a urgencia (D-54) e o fora do horario.
+ */
+export const MOTIVOS_QUE_NUNCA_ATRIBUEM = [
+  "urgencia",
+  "fora_do_horario",
+] as const satisfies readonly MotivoDoEventoDaIa[];
+
+/** O motivo pode levar a conversa ao responsavel (fora da urgencia e do horario). */
+export function motivoPodeAtribuir(motivo: MotivoDoEventoDaIa): boolean {
+  return !(MOTIVOS_QUE_NUNCA_ATRIBUEM as readonly string[]).includes(motivo);
+}
+
+/**
+ * O motor pede a atribuicao (p_atribuir) so quando: a passagem e com a
+ * frase (quem chama diz), o motivo pode atribuir e a regra da versao
+ * publicada que ele leu e "responsavel_do_lead". Sem as regras (nao lidas):
+ * a fila. O banco decide de novo pela ultima versao publicada e pelo
+ * responsavel (ativo, com papel que atende conversa).
+ */
+export function pedirAtribuicaoNaPassagem(
+  motivo: MotivoDoEventoDaIa,
+  regras: RegrasDaPassagem | null | undefined,
+): boolean {
+  return (
+    regras?.passagemPara === "responsavel_do_lead" && motivoPodeAtribuir(motivo)
+  );
+}
+
+/** O teto do nome no evento da atribuicao (o do banco). */
+export const LIMITE_DO_NOME_NA_ATRIBUICAO = 80;
+
+/**
+ * Espelho do evento que o banco grava na atribuicao (contrato da AG6a,
+ * secao 5): "A conversa ficou com {nome}, responsável pelo lead.", com o
+ * nome do perfil numa linha e ate 80 caracteres; sem nome, "A conversa ficou
+ * com o responsável pelo lead.". O banco grava; isto e para o teste e para
+ * quem precisar do mesmo texto sem ir ao banco.
+ */
+export function textoDaAtribuicaoDaIa(nome: string | null | undefined): string {
+  const limpo = (nome ?? "").replace(/\s+/g, " ").trim();
+  if (limpo === "") {
+    return "A conversa ficou com o responsável pelo lead.";
+  }
+  // Como o banco: btrim(left(nome numa linha, 80)).
+  const cortado = Array.from(limpo)
+    .slice(0, LIMITE_DO_NOME_NA_ATRIBUICAO)
+    .join("")
+    .trim();
+  return `A conversa ficou com ${cortado}, responsável pelo lead.`;
+}
+// [AG6 passagem] fim
 
 // ---------------------------------------------------------------------------
 // Conformidade (caixa travada da aba Regras e limites)
@@ -2134,6 +2311,14 @@ export type ConfigDoAgente = {
    * select le nulo (prazosDoBanco).
    */
   prazos: PrazosDoAgente;
+  // [AG6 passagem] início
+  /**
+   * Para quem vai a conversa que a IA passa (AG6a, D-15 e D-55; coluna
+   * escalation_rules, jsonb). Coluna fora do select le a fila
+   * (regrasDaPassagemDoBanco).
+   */
+  regras: RegrasDaPassagem;
+  // [AG6 passagem] fim
   /**
    * So no servidor (motor) e para o super admin. Para os outros papeis chega
    * nulo: a sessao nao tem grant na coluna.
@@ -2162,6 +2347,9 @@ export function configPadraoDoAgente(): ConfigDoAgente {
     publico: null,
     dadosExigidos: dadosExigidosPadrao(),
     prazos: prazosPadrao(),
+    // [AG6 passagem] início
+    regras: regrasDaPassagemPadrao(),
+    // [AG6 passagem] fim
     instrucoes: null,
     base: [],
   };
@@ -2225,6 +2413,13 @@ export type LinhaDaConfigDoAgente = {
    */
   cancelar_antecedencia_horas?: number | null;
   remarcar_antecedencia_horas?: number | null;
+  // [AG6 passagem] início
+  /**
+   * AG6a: para quem vai a conversa (escalation_rules, jsonb que existe desde
+   * o E0: entra nos selects sem 42703). Fora do select le a fila.
+   */
+  escalation_rules?: unknown;
+  // [AG6 passagem] fim
 };
 
 function ehTom(valor: unknown): valor is TomDoAgente {
@@ -2397,6 +2592,9 @@ export function configDaLinha(
     publico: publicoDoBanco(linha.publico_atendido),
     dadosExigidos: dadosExigidosDoBanco(linha),
     prazos,
+    // [AG6 passagem] início
+    regras: regrasDaPassagemDoBanco(linha.escalation_rules),
+    // [AG6 passagem] fim
     instrucoes: textoOuNulo(extras.instrucoes),
     base: extras.base,
   };
@@ -2557,6 +2755,9 @@ export type CampoDaMudanca =
   | "publico"
   | "dados_exigidos"
   | "prazos"
+  // [AG6 passagem] início
+  | "passagem"
+  // [AG6 passagem] fim
   | "instrucoes"
   | "base"
   | "primeira_publicacao";
@@ -2879,6 +3080,21 @@ export function diferencasDoRascunho(
       }`,
     });
   }
+  // [AG6 passagem] início
+  // AG6a: para quem vai a conversa ("Passar a conversa para: o responsável
+  // do lead", ou "a fila"). Ausente num lado (uma configuracao montada a
+  // mao) vale a fila, o padrao da coluna.
+  const passagemNova = (rascunho.regras ?? regrasDaPassagemPadrao())
+    .passagemPara;
+  const passagemAntiga = (referencia.regras ?? regrasDaPassagemPadrao())
+    .passagemPara;
+  if (passagemNova !== passagemAntiga) {
+    mudancas.push({
+      campo: "passagem",
+      rotulo: `${ROTULO_DO_CAMPO_DA_PASSAGEM}: ${ROTULO_DA_PASSAGEM[passagemNova]}`,
+    });
+  }
+  // [AG6 passagem] fim
   // AG3: os dados para marcar consulta so contam contra uma versao
   // publicada de verdade. Contra os padroes nao: as versoes de antes da
   // migration leem os tres falsos e o padrao da primeira versao e outro

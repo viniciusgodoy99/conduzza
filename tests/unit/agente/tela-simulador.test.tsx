@@ -145,6 +145,9 @@ describe("cenários", () => {
       "Paciente irritado",
       "Paciente querendo cancelar",
       "Paciente querendo remarcar",
+      // [AG6 urgência] início
+      "Paciente com sinal de emergência",
+      // [AG6 urgência] fim
       "Paciente querendo lista de espera",
     ]);
     expect(ehCenario("preco")).toBe(true);

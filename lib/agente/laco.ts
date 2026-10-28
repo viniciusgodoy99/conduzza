@@ -567,7 +567,28 @@ const MOTIVO_DO_GATILHO: Readonly<
   // Sem codigo proprio em escalation_reason: o gatilho_entrada guarda
   // "mensagem_longa" e o motivo e o generico.
   mensagem_longa: "agente_pediu",
+  // [AG6 urgência] início
+  // AG6a: o sinal de emergencia (urgencia.ts) passa com o motivo proprio.
+  urgencia: "urgencia",
+  // [AG6 urgência] fim
 };
+
+// [AG6 urgência] início
+/**
+ * AG6a: o passo da conferencia da entrada (o mesmo texto dos outros
+ * gatilhos do portao), para o executor do WhatsApp repetir na urgencia que
+ * ele passa antes do teto e da reserva.
+ */
+export const PASSO_DA_CONFERENCIA_DA_ENTRADA =
+  "A mensagem foi conferida antes de chegar ao assistente.";
+
+/**
+ * AG6a (desenho 5.3): o passo da urgencia na trilha ("Por que a IA
+ * respondeu isso"). Nunca cita o sinal nem o texto do paciente.
+ */
+export const PASSO_DA_URGENCIA =
+  "A mensagem descreve algo que pode ser uma emergência: passou para a equipe como urgente.";
+// [AG6 urgência] fim
 
 function textoDoGatilho(gatilho: GatilhoDeEntrada): string {
   return gatilho === "mensagem_longa"
@@ -1345,6 +1366,21 @@ async function turnoDoAgente(
         tipo: "outro",
         texto: "A mensagem foi conferida antes de chegar ao assistente.",
       });
+      // [AG6 urgência] início
+      // AG6a: o sinal de emergencia vem primeiro na ordem dos gatilhos. A
+      // conversa passa com o motivo urgencia (o banco marca como Urgente e
+      // nunca atribui) e a frase de sempre. No WhatsApp o executor ja passou
+      // antes do teto e da reserva; aqui e a segunda trava e o simulador.
+      if (gatilho === "urgencia") {
+        trilha.push({ tipo: "equipe", texto: PASSO_DA_URGENCIA });
+        return fraseFixa({
+          tipo: "escalou",
+          motivo: "urgencia",
+          gatilho,
+          origem: "portao",
+        });
+      }
+      // [AG6 urgência] fim
       return escalar(
         MOTIVO_DO_GATILHO[gatilho],
         "portao",

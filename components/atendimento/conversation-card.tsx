@@ -15,14 +15,21 @@ import { ContactAvatar } from "@/components/atendimento/contact-avatar";
 import { SeloDoNumero } from "@/components/atendimento/selo-do-numero";
 import { ChipDeEtiqueta } from "@/components/shared/chip-de-etiqueta";
 import { StatusChip } from "@/components/shared/status-chip";
-import type { EstadoVisualDaConversa } from "@/lib/design/status";
+import {
+  // [AG6 urgência] início o chip "Urgente" e a dica dele.
+  DICA_DA_URGENCIA,
+  URGENCIA_DA_CONVERSA,
+  // [AG6 urgência] fim
+  type EstadoVisualDaConversa,
+} from "@/lib/design/status";
 import type { ChipDeEtiquetaDados } from "@/lib/domain/etiquetas-de-conversa";
 import { diaCivil } from "@/lib/domain/horarios";
 import type { NumeroDaConversa } from "@/lib/domain/numeros-do-inbox";
 import { formatarTelefone } from "@/lib/domain/telefone";
-import type {
-  ConversationListItem,
-  TipoDaPrevia,
+import {
+  urgenteAberta,
+  type ConversationListItem,
+  type TipoDaPrevia,
 } from "@/lib/queries/conversations";
 import { cn } from "@/lib/utils";
 
@@ -108,6 +115,17 @@ export function rotuloDaHora(hora: string): string {
   return `Última mensagem ${quando}`;
 }
 
+// [AG6 urgência] início
+/**
+ * Quantas etiquetas cabem na linha 3 do cartao antes do "+N": duas sem
+ * nada; uma com o selo do numero ou com o chip "Urgente"; nenhuma com os
+ * dois (o resto vira o "+N", com os nomes para o leitor de tela).
+ */
+export function etiquetasNaLinha(comNumero: boolean, urgente: boolean): number {
+  return 2 - (comNumero ? 1 : 0) - (urgente ? 1 : 0);
+}
+// [AG6 urgência] fim
+
 function Previa({
   conversation,
   reserva,
@@ -180,8 +198,12 @@ export function ConversationCard({
 }) {
   const naoLidas = conversation.unread_count;
   const prefixo = prefixoDaPrevia(conversation, viewerId);
+  // [AG6 urgência] início A conversa marcada como urgente (D-53): o chip "Urgente"
+  // abre a linha 3, antes do estado, e a linha cede uma etiqueta para ele.
+  const urgente = urgenteAberta(conversation);
+  // [AG6 urgência] fim
   // Com o selo do numero na linha 3, cabe uma etiqueta so antes do "+N".
-  const etiquetasVisiveis = numero ? 1 : 2;
+  const etiquetasVisiveis = etiquetasNaLinha(Boolean(numero), urgente);
   // A hora exibida e a MESMA que ordena a lista (recencia): a ultima
   // mensagem, enviada ou recebida, como no WhatsApp. O prefixo da previa diz
   // quem escreveu.
@@ -256,6 +278,20 @@ export function ConversationCard({
           ) : null}
         </span>
         <span className="mt-px flex min-w-0 items-center gap-[5px] overflow-hidden">
+          {/* [AG6 urgência] início Primeiro na linha (nunca cortado pela rolagem
+              lateral escondida). A dica vai no title para o mouse; o leitor
+              de tela ouve "Urgente" no nome do cartao e a dica inteira no
+              cabecalho do fio, onde ela e focavel. */}
+          {urgente ? (
+            <span title={DICA_DA_URGENCIA} className="inline-flex shrink-0">
+              <StatusChip
+                size="sm"
+                definition={URGENCIA_DA_CONVERSA}
+                className="shrink-0"
+              />
+            </span>
+          ) : null}
+          {/* [AG6 urgência] fim */}
           <StatusChip
             size="sm"
             definition={estado.definition}

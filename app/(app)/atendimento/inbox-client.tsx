@@ -40,6 +40,9 @@ import { ResolverConversasParadas } from "@/components/atendimento/resolver-conv
 import { Thread } from "@/components/atendimento/thread";
 import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
+// [AG6 urgência e passagem] início
+import { ouvirPedidosDeAbrirConversa } from "@/components/shell/avisos-da-conversa";
+// [AG6 urgência e passagem] fim
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import {
   filtroDeSituacaoDaUrl,
@@ -655,6 +658,22 @@ export function InboxClient({
     }
     handleSelect(id);
   };
+
+  // [AG6 urgência e passagem] início O "Abrir" dos avisos na tela ("Conversa
+  // urgente de ...", "A IA passou para você ...") com o Atendimento ja
+  // aberto: o link so vale na montagem, entao o aviso pede pela janela
+  // (components/shell/avisos-da-conversa.ts) e a tela abre a conversa como o
+  // historico do fio abre (irParaConversa). A referencia leva sempre a versao
+  // atual da funcao, sem refazer a escuta a cada desenho.
+  const irParaConversaAtual = useRef(irParaConversa);
+  useEffect(() => {
+    irParaConversaAtual.current = irParaConversa;
+  });
+  useEffect(
+    () => ouvirPedidosDeAbrirConversa((id) => irParaConversaAtual.current(id)),
+    [],
+  );
+  // [AG6 urgência e passagem] fim
 
   // Zera a nao lida em TODAS as listas sob a chave-mae (ativa, resolvidas e a
   // conversa do link) e grava no banco.

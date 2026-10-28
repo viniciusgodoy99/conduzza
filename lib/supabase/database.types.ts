@@ -1903,6 +1903,51 @@ export type Database = {
           },
         ]
       }
+      conversa_urgente: {
+        Row: {
+          clinic_id: string
+          conversation_id: string
+          desde: string
+          encerrada_como: string | null
+          encerrada_em: string | null
+          encerrada_por: string | null
+          job_id: string
+        }
+        Insert: {
+          clinic_id: string
+          conversation_id: string
+          desde: string
+          encerrada_como?: string | null
+          encerrada_em?: string | null
+          encerrada_por?: string | null
+          job_id: string
+        }
+        Update: {
+          clinic_id?: string
+          conversation_id?: string
+          desde?: string
+          encerrada_como?: string | null
+          encerrada_em?: string | null
+          encerrada_por?: string | null
+          job_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversa_urgente_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversa_urgente_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: true
+            referencedRelation: "conversation"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversation_tag_def: {
         Row: {
           chave: string
@@ -6420,7 +6465,12 @@ export type Database = {
         Returns: undefined
       }
       passar_conversa_da_ia_para_equipe: {
-        Args: { p_job_id: string; p_motivo: string; p_worker: string }
+        Args: {
+          p_atribuir?: boolean
+          p_job_id: string
+          p_motivo: string
+          p_worker: string
+        }
         Returns: Json
       }
       pedido_da_ia_na_conversa: {

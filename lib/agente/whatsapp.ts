@@ -1,6 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { MotivoDoEventoDaIa } from "@/lib/domain/agente/config";
+// [AG6 passagem] início
+import { motivoPodeAtribuir } from "@/lib/domain/agente/config";
+// [AG6 passagem] fim
 import type {
   DecisaoDoFiltro,
   DecisaoParaRetomar,
@@ -324,11 +327,37 @@ export async function conferirTravaDoWhatsapp(
 export type ResultadoDaPassagem =
   "passou" | "ja_fora_da_ia" | "job_antigo" | "sem_posse" | "erro";
 
+// [AG6 passagem] início
+/**
+ * AG6a (contrato da AG6a, secao 2): o que a passagem fez. `atribuida`: a
+ * conversa ficou com o responsavel do lead ("Em atendimento" com ele);
+ * `urgente`: passou pela urgencia e a marca gravou. Os dois so podem ser
+ * verdadeiros com "passou"; a resposta de antes da migration (sem as chaves)
+ * le os dois falsos.
+ */
+export type PassagemDaIa = {
+  resultado: ResultadoDaPassagem;
+  atribuida: boolean;
+  urgente: boolean;
+};
+
+function passagemSem(resultado: ResultadoDaPassagem): PassagemDaIa {
+  return { resultado, atribuida: false, urgente: false };
+}
+// [AG6 passagem] fim
+
 /**
  * passar_conversa_da_ia_para_equipe: com a posse do job, a conversa vai para
  * "Aguardando voce" com o evento do motivo e o pendente cancelado. A frase
  * fixa so sai quando devolve "passou". "job_antigo" (D-A): o job e anterior
  * a janela atual e o banco nao mexeu em nada.
+ *
+ * [AG6 passagem] AG6a: `atribuir` pede ao banco a conversa para o
+ * responsavel do lead (p_atribuir; so na passagem com a frase e com a regra
+ * ligada, pedirAtribuicaoNaPassagem). Nunca vai na urgencia nem no fora do
+ * horario, mesmo pedido (o banco confere de novo). Sem pedir, a chamada e a
+ * de antes, com os tres parametros. A urgencia: o banco marca a conversa
+ * (conversa_urgente) e devolve `urgente`.
  */
 export async function passarParaAEquipe(
   admin: SupabaseClient,
@@ -337,12 +366,25 @@ export async function passarParaAEquipe(
     jobId: string;
     workerId: string;
     motivo: MotivoDoEventoDaIa;
+    // [AG6 passagem] início
+    atribuir?: boolean;
+    // [AG6 passagem] fim
   },
-): Promise<ResultadoDaPassagem> {
+): Promise<PassagemDaIa> {
+  // [AG6 passagem] início
+  const atribuir = e.atribuir === true && motivoPodeAtribuir(e.motivo);
+  // [AG6 passagem] fim
   try {
     const { data, error } = await admin.rpc(
       "passar_conversa_da_ia_para_equipe",
-      { p_job_id: e.jobId, p_worker: e.workerId, p_motivo: e.motivo },
+      {
+        p_job_id: e.jobId,
+        p_worker: e.workerId,
+        p_motivo: e.motivo,
+        // [AG6 passagem] início
+        ...(atribuir ? { p_atribuir: true } : {}),
+        // [AG6 passagem] fim
+      },
     );
     if (error) {
       log.warn("ia_passagem_falhou", {
@@ -351,16 +393,46 @@ export async function passarParaAEquipe(
         status: e.motivo,
         error_code: (error as { code?: string }).code ?? null,
       });
-      return "erro";
+      return passagemSem("erro");
     }
-    const resposta = data as { passou?: unknown; codigo?: unknown } | null;
+    const resposta = data as {
+      passou?: unknown;
+      codigo?: unknown;
+      // [AG6 passagem] início
+      urgente?: unknown;
+      atribuida?: unknown;
+      // [AG6 passagem] fim
+    } | null;
     if (resposta?.passou === true) {
-      return "passou";
+      // [AG6 passagem] início
+      const atribuida = resposta.atribuida === true;
+      const urgente = resposta.urgente === true;
+      if (atribuida && (!atribuir || urgente)) {
+        // O banco atribuiu sem o pedido, ou a urgencia (nunca deveria): fica
+        // o aviso para a equipe Conduzza, so com ids e codigos.
+        log.warn("ia_passagem_incoerente", {
+          clinic_id: e.clinicId,
+          job_id: e.jobId,
+          status: e.motivo,
+        });
+      }
+      if (atribuida || urgente) {
+        log.info("ia_passagem_da_ia", {
+          clinic_id: e.clinicId,
+          job_id: e.jobId,
+          status: e.motivo,
+          kind: atribuida ? "atribuida" : "urgente",
+        });
+      }
+      return { resultado: "passou", atribuida, urgente };
+      // [AG6 passagem] fim
     }
     if (resposta?.codigo === "sem_posse") {
-      return "sem_posse";
+      return passagemSem("sem_posse");
     }
-    return resposta?.codigo === "job_antigo" ? "job_antigo" : "ja_fora_da_ia";
+    return passagemSem(
+      resposta?.codigo === "job_antigo" ? "job_antigo" : "ja_fora_da_ia",
+    );
   } catch {
     log.warn("ia_passagem_falhou", {
       clinic_id: e.clinicId,
@@ -368,7 +440,7 @@ export async function passarParaAEquipe(
       status: e.motivo,
       error_code: "excecao",
     });
-    return "erro";
+    return passagemSem("erro");
   }
 }
 

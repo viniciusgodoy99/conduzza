@@ -41,9 +41,13 @@ import { fetchProfileNames } from "@/lib/queries/profiles";
  * a aba nao carrega). Os dois prazos da IA (AG4: cancelar_antecedencia_horas
  * e remarcar_antecedencia_horas) tem o mesmo grant desde a migration
  * 20261028100000, com a mesma regra: a migration vai primeiro.
+ * [AG6 passagem] início escalation_rules (para quem vai a conversa que a IA passa,
+ * AG6a) existe desde o E0, com o grant de select e de update da sessao
+ * (migration 20261006150000): entra aqui sem migration nova e sem 42703.
+ * [AG6 passagem] fim
  */
 export const COLUNAS_DA_CONFIG_DO_AGENTE =
-  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, publico_atendido, exige_nome_completo, exige_nascimento, exige_cpf, cancelar_antecedencia_horas, remarcar_antecedencia_horas, conhecimento, published_at, published_by";
+  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, publico_atendido, exige_nome_completo, exige_nascimento, exige_cpf, cancelar_antecedencia_horas, remarcar_antecedencia_horas, escalation_rules, conhecimento, published_at, published_by";
 
 type LinhaDaSessao = LinhaDaConfigDoAgente & {
   id: string;

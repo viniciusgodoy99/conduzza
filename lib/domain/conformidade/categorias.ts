@@ -92,6 +92,15 @@ export type CamadaDoFiltro = (typeof CAMADAS_DO_FILTRO)[number];
  * seguranca, secao 3). A ordem tambem e a prioridade.
  */
 export const GATILHOS_DE_ENTRADA = [
+  // [AG6 urgência] início
+  // AG6a (D-51 e D-52; migration 20261029120000, que acrescenta "urgencia"
+  // ao CHECK de gatilho_entrada): o sinal de emergencia da lista
+  // deterministica (urgencia.ts). PRIMEIRO na ordem: quando ele aparece, o
+  // motivo e "urgencia" (a conversa passa marcada como Urgente), mesmo com
+  // sintoma, menor ou midia junto. Fica fora de GATILHOS_DO_CLASSIFICADOR:
+  // so o portao deterministico decide urgencia.
+  "urgencia",
+  // [AG6 urgência] fim
   "sintoma",
   "menor_de_idade",
   "assunto_clinico",
@@ -108,7 +117,8 @@ export type GatilhoDeEntrada = (typeof GATILHOS_DE_ENTRADA)[number];
 /**
  * O que o classificador por modelo sabe apontar na entrada. Midia e mensagem
  * longa sao so deterministicas (o modelo nunca ve midia, e texto longo nem
- * chega ao modelo).
+ * chega ao modelo). AG6a (D-52): urgencia tambem (so a lista deterministica
+ * decide; o modelo continua so com sintoma, que passa sem a marca).
  */
 export const GATILHOS_DO_CLASSIFICADOR = [
   "sintoma",

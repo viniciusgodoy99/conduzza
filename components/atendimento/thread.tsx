@@ -31,20 +31,36 @@ import { Aviso } from "@/components/shared/aviso";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+// [AG6 urgência] início
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+// [AG6 urgência] fim
 import {
   AUTOR_DA_NOTA_DA_PASSAGEM,
   ehNotaDaPassagemDaIa,
 } from "@/lib/agente/nota-da-passagem";
-import { estadoVisualDaConversa } from "@/lib/design/status";
+import {
+  // [AG6 urgência] início
+  DICA_DA_URGENCIA,
+  URGENCIA_DA_CONVERSA,
+  // [AG6 urgência] fim
+  estadoVisualDaConversa,
+} from "@/lib/design/status";
 import type { EnvioEmVoo } from "@/lib/domain/envios-em-voo";
 import type { AgendadasDoFio } from "@/lib/domain/mensagem-agendada";
 import type { NumeroDaConversa } from "@/lib/domain/numeros-do-inbox";
 import type { Role } from "@/lib/domain/permissions";
 import { formatarTelefone } from "@/lib/domain/telefone";
-import type {
-  ComplianceDecision,
-  ConversationListItem,
-  MessageItem,
+import {
+  // [AG6 urgência] início
+  urgenteAberta,
+  // [AG6 urgência] fim
+  type ComplianceDecision,
+  type ConversationListItem,
+  type MessageItem,
 } from "@/lib/queries/conversations";
 import { cn } from "@/lib/utils";
 
@@ -132,6 +148,30 @@ export function autorDaBolha(
   }
   return null;
 }
+
+// [AG6 urgência] início
+/**
+ * O chip "Urgente" do cabecalho (D-53), com a dica que diz o que fazer.
+ * Focavel (o padrao do DisabledWithHint): a dica abre no foco do teclado e
+ * no mouse, e o leitor de tela ouve o chip e a dica. Nunca escondido pela
+ * largura do fio, como o estado: e o que mais importa nesta conversa.
+ */
+export function ChipDaUrgencia() {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          tabIndex={0}
+          className="hit-40 inline-flex shrink-0 rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
+        >
+          <StatusChip definition={URGENCIA_DA_CONVERSA} />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{DICA_DA_URGENCIA}</TooltipContent>
+    </Tooltip>
+  );
+}
+// [AG6 urgência] fim
 
 function quandoDo(item: ThreadItem): string {
   return item.type === "message"
@@ -464,6 +504,9 @@ export function Thread({
           </span>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {/* [AG6 urgência] início */}
+          {urgenteAberta(conversation) ? <ChipDaUrgencia /> : null}
+          {/* [AG6 urgência] fim */}
           <StatusChip
             className="@max-[599px]/fio:hidden"
             definition={estado.definition}

@@ -7,7 +7,12 @@ import { useState } from "react";
 
 import { signOutAction } from "@/app/(auth)/actions";
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
-import { NavBadge } from "@/components/shell/nav-badge";
+import {
+  NavBadge,
+  // [AG6 urgência] início
+  type AlertaDoContador,
+  // [AG6 urgência] fim
+} from "@/components/shell/nav-badge";
 import type { ContadoresDoMenu, ViewerDoShell } from "@/components/shell/tipos";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,7 +44,10 @@ import { cn } from "@/lib/utils";
 // 1600px, aberto em 248px; abaixo de 1024px vira gaveta. Quem decide a
 // largura e o CSS, pela variante rail-aberto (data-rail na raiz do shell).
 
-type Contagem = keyof ContadoresDoMenu;
+// [AG6 urgência] início Os itens com contador (as urgentes nao sao item: sao o
+// alerta do contador do Atendimento).
+type Contagem = NonNullable<NavItem["badge"]>;
+// [AG6 urgência] fim
 
 // O que cada contador conta, para o leitor de tela (singular e plural).
 const DESCRICAO_DO_CONTADOR: Record<Contagem, [string, string]> = {
@@ -49,6 +57,27 @@ const DESCRICAO_DO_CONTADOR: Record<Contagem, [string, string]> = {
     "confirmações pendentes para amanhã",
   ],
 };
+
+// [AG6 urgência] início
+/**
+ * O alerta do contador do item (D-53): so o do Atendimento, e so com
+ * urgentes abertas contadas (> 0). Sem a contagem (null ou ausente), o tom
+ * de sempre: nunca um alerta inventado.
+ */
+export function alertaDoItem(
+  badge: NavItem["badge"],
+  contadores: ContadoresDoMenu,
+): AlertaDoContador | null {
+  const quantas = contadores.urgentes;
+  if (badge !== "conversas" || typeof quantas !== "number" || quantas <= 0) {
+    return null;
+  }
+  return {
+    quantas,
+    descricao: quantas === 1 ? "conversa urgente" : "conversas urgentes",
+  };
+}
+// [AG6 urgência] fim
 
 export type PropsDoRail = {
   viewer: ViewerDoShell;
@@ -100,6 +129,7 @@ function ItemDoMenu({
   rotulo,
   ativo,
   contagem,
+  alerta = null,
   recolhido,
   aoNavegar,
 }: {
@@ -107,6 +137,10 @@ function ItemDoMenu({
   rotulo: string;
   ativo: boolean;
   contagem: number | null;
+  // [AG6 urgência] início
+  /** As urgentes abertas: o contador do Atendimento em alerta. */
+  alerta?: AlertaDoContador | null;
+  // [AG6 urgência] fim
   recolhido: boolean;
   aoNavegar?: () => void;
 }) {
@@ -140,6 +174,7 @@ function ItemDoMenu({
           count={contagem}
           ativo={ativo}
           descricao={contagem === 1 ? descricoes[0] : descricoes[1]}
+          alerta={alerta}
         />
       ) : null}
     </Link>
@@ -249,6 +284,7 @@ export function Rail({
                 rotulo={rotuloDoItem(item, t)}
                 ativo={item.href === itemAtivo}
                 contagem={item.badge ? contadores[item.badge] : null}
+                alerta={alertaDoItem(item.badge, contadores)}
                 recolhido={recolhido}
                 aoNavegar={aoNavegar}
               />

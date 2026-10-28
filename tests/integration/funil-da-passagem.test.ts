@@ -300,7 +300,9 @@ describe("a passagem leva o lead para Aguardando resposta (D1 = A)", () => {
         p_worker: worker,
         p_motivo: "agente_pediu",
       }),
-    ).toEqual({ passou: true, codigo: "passou" });
+      // [AG6 passagem] a resposta ganhou urgente e atribuida (20261029120000);
+      // com 3 parametros, as duas falsas.
+    ).toEqual({ passou: true, codigo: "passou", urgente: false, atribuida: false });
     expect(await conversa(id)).toEqual({
       status: "aguardando_humano",
       awaiting_reply: true,

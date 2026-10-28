@@ -152,13 +152,20 @@ describe("espelhos do E3 com as migrations", () => {
     // a 20261028100000, com fora_do_prazo (22). O E3 (M1) tinha 17.
     expect(arquivo >= "20261028100000").toBe(true);
     expect(motivos.sort()).toEqual([...MOTIVOS_DE_ESCALONAMENTO].sort());
-    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(22);
+    // [AG6 urgência] início
+    // AG6a: a 20261029120000, com urgencia (23).
+    expect(arquivo >= "20261029120000").toBe(true);
+    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(23);
+    // [AG6 urgência] fim
     for (const motivo of [
       "fora_do_assunto",
       "consulta_para_outra_pessoa",
       "ja_tem_consulta",
       "faltam_dados",
       "fora_do_prazo",
+      // [AG6 urgência] início
+      "urgencia",
+      // [AG6 urgência] fim
     ]) {
       expect(MOTIVOS_DE_ESCALONAMENTO).toContain(motivo);
     }
@@ -186,6 +193,9 @@ describe("espelhos do E3 com as migrations", () => {
       "ja_tem_consulta",
       "faltam_dados",
       "fora_do_prazo",
+      // [AG6 urgência] início
+      "urgencia",
+      // [AG6 urgência] fim
     ];
     expect(literais(bloco ?? "").sort()).toEqual(
       MOTIVOS_DE_ESCALONAMENTO.filter((m) => !depoisDoE3.includes(m)).sort(),
@@ -296,3 +306,63 @@ describe("espelhos do E3 com as migrations", () => {
     );
   });
 });
+
+// [AG6 urgência] início
+// AG6a (migration 20261029120000): o motivo urgencia e do sistema (so o
+// portao deterministico decide, D-52), com o evento do banco, e a passagem
+// com p_atribuir (o contrato da AG6a, secao 2).
+describe("AG6a: os espelhos da urgência e da passagem", () => {
+  it("urgencia é do sistema: o modelo nunca escolhe", () => {
+    expect(MOTIVOS_DO_AGENTE as readonly string[]).not.toContain("urgencia");
+  });
+
+  it("o evento da urgência é o do rótulo da migration da AG6a", () => {
+    const { arquivo, corpo } = corpoMaisNovo("rotulo_do_motivo_da_ia");
+    expect(arquivo >= "20261029120000").toBe(true);
+    expect(corpo).toContain(
+      "when 'urgencia' then 'A IA passou a conversa para a equipe: a pessoa descreveu algo que pode ser uma emergência.'",
+    );
+    expect(TEXTO_DO_EVENTO_DA_IA.urgencia).toBe(
+      "A IA passou a conversa para a equipe: a pessoa descreveu algo que pode ser uma emergência.",
+    );
+  });
+
+  it("a frase ao contato não muda na AG6a (a do 192 é da AG6c)", () => {
+    const { corpo } = corpoMaisNovo("frase_de_escalonamento_da_ia");
+    expect(corpo.match(/select '([^']*)'::text/)?.[1]).toBe(
+      FRASE_DE_ESCALONAMENTO,
+    );
+    expect(FRASE_DE_ESCALONAMENTO).not.toMatch(/192|samu|188|cvv/i);
+  });
+
+  it("a passagem da migration mais nova recebe p_atribuir e devolve as quatro chaves", () => {
+    const definicao =
+      /create (?:or replace )?function public\.passar_conversa_da_ia_para_equipe\(([\s\S]*?)\)\s*returns jsonb[\s\S]*?\$function\$([\s\S]*?)\$function\$/gi;
+    let achado: { arquivo: string; parametros: string; corpo: string } | null =
+      null;
+    for (const arquivo of [...MIGRATIONS].reverse()) {
+      const sql = readFileSync(`${PASTA_DAS_MIGRATIONS}/${arquivo}`, "utf-8");
+      const ultimo = [...sql.matchAll(definicao)].at(-1);
+      if (ultimo !== undefined) {
+        achado = {
+          arquivo,
+          parametros: ultimo[1] ?? "",
+          corpo: ultimo[2] ?? "",
+        };
+        break;
+      }
+    }
+    expect(achado?.arquivo).toBe("20261029120000_urgencia_e_passagem_da_ia.sql");
+    expect(achado?.parametros.replace(/\s+/g, " ").trim()).toBe(
+      "p_job_id uuid, p_worker text, p_motivo text, p_atribuir boolean default false",
+    );
+    for (const chave of ["'passou'", "'codigo'", "'urgente'", "'atribuida'"]) {
+      expect(achado?.corpo).toContain(chave);
+    }
+    // Os motivos que nunca atribuem sao os mesmos do motor.
+    expect(achado?.corpo).toContain(
+      "array['urgencia', 'fora_do_horario']",
+    );
+  });
+});
+// [AG6 urgência] fim

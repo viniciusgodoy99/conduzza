@@ -400,3 +400,61 @@ describe("cancelar ou remarcar a consulta de outra pessoa adulta", () => {
     ).toBe(true);
   });
 });
+
+// [AG6 urgência] início
+// AG6a (D-51 e D-52): o sinal de emergencia (urgencia.ts) e o primeiro
+// gatilho do portao. Os casos de cada sinal estao em bateria-ag6.test.ts.
+describe("AG6a: a urgência no portão", () => {
+  it("vem antes do sintoma e de todos os outros gatilhos", () => {
+    expect(
+      detectarGatilhosDeEntrada({
+        mensagens: [
+          { tipo: "texto", texto: "estou com dor no peito, o que pode ser" },
+        ],
+      }),
+    ).toEqual(["urgencia", "sintoma", "assunto_clinico"]);
+    expect(
+      detectarGatilhosDeEntrada({
+        mensagens: [
+          { tipo: "texto", texto: "quero falar com um atendente" },
+          { tipo: "texto", texto: "e a garganta ta fechando" },
+        ],
+      })[0],
+    ).toBe("urgencia");
+  });
+
+  it("os casos de sintoma da bateria de sempre continuam com o sintoma (a urgência só vem antes)", () => {
+    for (const caso of deterministicos.filter((c) => c.gatilho === "sintoma")) {
+      const gatilhos = detectarGatilhosDeEntrada({ mensagens: caso.mensagens });
+      expect(gatilhos, caso.id).toContain("sintoma");
+    }
+  });
+
+  it("nenhum controle de entrada da bateria de sempre vira urgência", () => {
+    for (const caso of CONTROLES_DE_ENTRADA) {
+      expect(
+        detectarGatilhosDeEntrada({ mensagens: caso.mensagens }),
+        caso.id,
+      ).not.toContain("urgencia");
+    }
+  });
+
+  it("áudio, mesmo transcrito com um sinal, continua mídia nesta rodada", () => {
+    expect(
+      detectarGatilhosDeEntrada({
+        mensagens: [{ tipo: "audio", texto: "socorro, to com falta de ar" }],
+      }),
+    ).toEqual(["midia"]);
+  });
+
+  it("o nascimento de menor não esconde a urgência", () => {
+    expect(
+      detectarGatilhosDeEntrada({
+        mensagens: [{ tipo: "texto", texto: "ela desmaiou" }],
+        dataDeNascimento: "2015-01-01",
+        hojeNaClinica: "2026-10-28",
+      }),
+    ).toEqual(["urgencia", "sintoma", "menor_de_idade"]);
+  });
+});
+// [AG6 urgência] fim

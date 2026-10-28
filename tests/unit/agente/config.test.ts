@@ -96,6 +96,20 @@ import {
   prazosParaOBanco,
   ROTULO_DOS_PRAZOS,
   TEXTO_DO_EVENTO_DA_IA,
+  // [AG6 passagem] início
+  LIMITE_DO_NOME_NA_ATRIBUICAO,
+  motivoPodeAtribuir,
+  MOTIVOS_QUE_NUNCA_ATRIBUEM,
+  PASSAGENS_DA_CONVERSA,
+  pedirAtribuicaoNaPassagem,
+  regrasDaPassagemDoBanco,
+  regrasDaPassagemPadrao,
+  regrasDaPassagemParaOBanco,
+  regrasDaPassagemSchema,
+  ROTULO_DA_PASSAGEM,
+  ROTULO_DO_CAMPO_DA_PASSAGEM,
+  textoDaAtribuicaoDaIa,
+  // [AG6 passagem] fim
   type ConfigDoAgente,
   type HorarioDeOperacao,
   type ItemDaBase,
@@ -939,7 +953,11 @@ describe("escalonamento e conformidade", () => {
     expect([...MOTIVOS_DE_ESCALONAMENTO].sort()).toEqual(doBanco.sort());
     // AG4 (migration 20261028100000): fora_do_prazo.
     expect((arquivoDoCheck ?? "") >= "20261028100000").toBe(true);
-    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(22);
+    // [AG6 urgência] início
+    // AG6a (migration 20261029120000): urgencia (23).
+    expect((arquivoDoCheck ?? "") >= "20261029120000").toBe(true);
+    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(23);
+    // [AG6 urgência] fim
   });
 
   it("AG4: fora_do_prazo tem o rótulo do banco e o texto do evento", () => {
@@ -971,6 +989,10 @@ describe("escalonamento e conformidade", () => {
       "falhas_seguidas",
       "valor_fora_da_tabela",
       "menor_de_idade",
+      // [AG6 urgência] início
+      // AG6a (desenho, secao 6): o setimo, a urgencia.
+      "urgencia",
+      // [AG6 urgência] fim
     ]);
     for (const gatilho of GATILHOS_OBRIGATORIOS) {
       expect(MOTIVOS_DE_ESCALONAMENTO).toContain(gatilho.chave);
@@ -1564,6 +1586,10 @@ describe("leitura do banco", () => {
       dadosExigidos: { nomeCompleto: false, nascimento: false, cpf: false },
       // AG4: colunas fora do select (ou antes da migration) leem nulo.
       prazos: { cancelarHoras: null, remarcarHoras: null },
+      // [AG6 passagem] início
+      // AG6a: escalation_rules fora do select le a fila.
+      regras: { passagemPara: "fila", avisoDeUrgencia: false },
+      // [AG6 passagem] fim
       instrucoes: "Seja breve.",
       base,
     });
@@ -1642,6 +1668,10 @@ describe("leitura do banco", () => {
       dadosExigidos: { nomeCompleto: true, nascimento: true, cpf: false },
       // AG4 (D-24): os prazos nascem vazios.
       prazos: { cancelarHoras: null, remarcarHoras: null },
+      // [AG6 passagem] início
+      // AG6a (D-55): a fila por padrao (escalation_rules = '{}').
+      regras: { passagemPara: "fila", avisoDeUrgencia: false },
+      // [AG6 passagem] fim
       instrucoes: null,
       base: [],
     });
@@ -2550,6 +2580,229 @@ describe("AG5: a lista de espera pela IA (D-36, recomendação)", () => {
   });
 
   it("os motivos de escalonamento não mudam (a passagem usa os que existem)", () => {
-    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(22);
+    // [AG6 urgência] início
+    // A AG5 nao muda os motivos; a AG6a acrescenta urgencia (22 + 1).
+    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(23);
+    expect(MOTIVOS_DE_ESCALONAMENTO.at(-1)).toBe("urgencia");
+    // [AG6 urgência] fim
   });
 });
+
+// [AG6 urgência] início
+// AG6a (D-51 e D-52): o motivo urgencia, do sistema, com o rotulo e o evento
+// do banco (migration 20261029120000).
+describe("AG6a: a urgência", () => {
+  it("o motivo urgencia tem o rótulo e o evento do banco", () => {
+    expect(MOTIVOS_DE_ESCALONAMENTO).toContain("urgencia");
+    expect(ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.urgencia).toBe(
+      "a pessoa descreveu algo que pode ser uma emergência",
+    );
+    expect(TEXTO_DO_EVENTO_DA_IA.urgencia).toBe(
+      "A IA passou a conversa para a equipe: a pessoa descreveu algo que pode ser uma emergência.",
+    );
+  });
+
+  it("o gatilho obrigatório da urgência vem por último, com o rótulo do desenho", () => {
+    expect(GATILHOS_OBRIGATORIOS.at(-1)).toEqual({
+      chave: "urgencia",
+      rotulo: "Algo que pode ser uma emergência (passa como Urgente)",
+    });
+    for (const { rotulo } of GATILHOS_OBRIGATORIOS) {
+      expect(rotulo).not.toMatch(TRAVESSAO);
+      expect(rotulo).not.toMatch(JARGAO);
+    }
+  });
+});
+// [AG6 urgência] fim
+
+// [AG6 passagem] início
+// AG6a (D-15, D-54 e D-55): para quem vai a conversa que a IA passa, na
+// coluna escalation_rules (jsonb) da versao.
+describe("AG6a: para quem vai a conversa", () => {
+  it("os dois destinos, a fila por padrão", () => {
+    expect(PASSAGENS_DA_CONVERSA).toEqual(["fila", "responsavel_do_lead"]);
+    expect(regrasDaPassagemPadrao()).toEqual({
+      passagemPara: "fila",
+      avisoDeUrgencia: false,
+    });
+    expect(configPadraoDoAgente().regras).toEqual(regrasDaPassagemPadrao());
+  });
+
+  it("do banco: só o texto exato atribui; o resto é a fila (o critério do banco)", () => {
+    expect(
+      regrasDaPassagemDoBanco({ passagem_para: "responsavel_do_lead" }),
+    ).toEqual({ passagemPara: "responsavel_do_lead", avisoDeUrgencia: false });
+    for (const valor of [
+      undefined,
+      null,
+      "responsavel_do_lead",
+      [],
+      {},
+      { passagem_para: "fila" },
+      { passagem_para: "Responsavel_do_lead" },
+      { passagem_para: ["responsavel_do_lead"] },
+      { passagem_para: true },
+    ]) {
+      expect(regrasDaPassagemDoBanco(valor).passagemPara).toBe("fila");
+    }
+  });
+
+  it("o aviso da AG6c só é lido (o booleano e o texto true, como o ->> do banco)", () => {
+    expect(
+      regrasDaPassagemDoBanco({ aviso_de_urgencia: true }).avisoDeUrgencia,
+    ).toBe(true);
+    expect(
+      regrasDaPassagemDoBanco({ aviso_de_urgencia: "true" }).avisoDeUrgencia,
+    ).toBe(true);
+    expect(
+      regrasDaPassagemDoBanco({ aviso_de_urgencia: 1 }).avisoDeUrgencia,
+    ).toBe(false);
+    expect(regrasDaPassagemDoBanco({}).avisoDeUrgencia).toBe(false);
+  });
+
+  it("para o banco: grava a passagem e preserva as outras chaves do jsonb", () => {
+    expect(
+      regrasDaPassagemParaOBanco({ passagemPara: "responsavel_do_lead" }),
+    ).toEqual({
+      escalation_rules: { passagem_para: "responsavel_do_lead" },
+    });
+    expect(
+      regrasDaPassagemParaOBanco(
+        { passagemPara: "fila" },
+        { aviso_de_urgencia: true, passagem_para: "responsavel_do_lead" },
+      ),
+    ).toEqual({
+      escalation_rules: { aviso_de_urgencia: true, passagem_para: "fila" },
+    });
+    expect(
+      regrasDaPassagemParaOBanco({ passagemPara: "fila" }, "lixo"),
+    ).toEqual({
+      escalation_rules: { passagem_para: "fila" },
+    });
+  });
+
+  it("o schema da tela aceita só os dois destinos e nunca o aviso (AG6c)", () => {
+    expect(
+      regrasDaPassagemSchema.safeParse({ passagemPara: "responsavel_do_lead" })
+        .success,
+    ).toBe(true);
+    const lido = regrasDaPassagemSchema.safeParse({
+      passagemPara: "fila",
+      avisoDeUrgencia: true,
+    });
+    expect(lido.success).toBe(true);
+    expect(lido.success ? lido.data : null).toEqual({ passagemPara: "fila" });
+    const errado = regrasDaPassagemSchema.safeParse({ passagemPara: "equipe" });
+    expect(errado.success).toBe(false);
+    expect(errado.success ? "" : errado.error.issues[0]?.message).toBe(
+      "Escolha para quem vai a conversa.",
+    );
+  });
+
+  it("configDaLinha lê escalation_rules (e sem a coluna, a fila)", () => {
+    const linha: LinhaDaConfigDoAgente = {
+      version: 4,
+      status: "publicada",
+      agent_name: "Ana",
+      tone: "cordial",
+      use_emoji: false,
+      greeting: null,
+      closing: null,
+      skills: {},
+      operating_mode: "24h",
+      fallback_minutes: 5,
+      operating_hours: null,
+      agenda_antecedencia_horas: null,
+      agenda_horizonte_dias: null,
+      escalation_rules: { passagem_para: "responsavel_do_lead" },
+    };
+    expect(configDaLinha(linha, { base: [] }).regras.passagemPara).toBe(
+      "responsavel_do_lead",
+    );
+    const semColuna = { ...linha } as Partial<LinhaDaConfigDoAgente>;
+    delete semColuna.escalation_rules;
+    expect(
+      configDaLinha(semColuna as LinhaDaConfigDoAgente, { base: [] }).regras
+        .passagemPara,
+    ).toBe("fila");
+  });
+
+  it("o que mudou: Passar a conversa para (o responsável do lead ou a fila)", () => {
+    const fila = config({ status: "publicada" });
+    const responsavel = config({
+      regras: { passagemPara: "responsavel_do_lead", avisoDeUrgencia: false },
+    });
+    expect(diferencasDoRascunho(responsavel, fila)).toEqual([
+      {
+        campo: "passagem",
+        rotulo: "Passar a conversa para: o responsável do lead",
+      },
+    ]);
+    expect(
+      diferencasDoRascunho(config(), { ...responsavel, status: "publicada" }),
+    ).toEqual([
+      { campo: "passagem", rotulo: "Passar a conversa para: a fila" },
+    ]);
+    // Igual nos dois lados: nada a publicar; sem publicada, contra o padrao.
+    expect(diferencasDoRascunho(config(), fila)).toEqual([]);
+    expect(diferencasDoRascunho(responsavel, null).map((m) => m.campo)).toEqual(
+      ["passagem"],
+    );
+    // Ausente num lado (configuracao montada a mao): a fila.
+    const semRegras = { ...config() } as Partial<ConfigDoAgente>;
+    delete semRegras.regras;
+    expect(diferencasDoRascunho(semRegras as ConfigDoAgente, fila)).toEqual([]);
+    for (const texto of [
+      ROTULO_DO_CAMPO_DA_PASSAGEM,
+      ...Object.values(ROTULO_DA_PASSAGEM),
+    ]) {
+      expect(texto).not.toMatch(TRAVESSAO);
+      expect(texto).not.toMatch(JARGAO);
+    }
+  });
+
+  it("o motor pede a atribuição só com a regra ligada e fora da urgência e do horário", () => {
+    const ligada = {
+      passagemPara: "responsavel_do_lead",
+      avisoDeUrgencia: false,
+    } as const;
+    const fila = regrasDaPassagemPadrao();
+    expect(MOTIVOS_QUE_NUNCA_ATRIBUEM).toEqual(["urgencia", "fora_do_horario"]);
+    expect(motivoPodeAtribuir("urgencia")).toBe(false);
+    expect(motivoPodeAtribuir("fora_do_horario")).toBe(false);
+    expect(pedirAtribuicaoNaPassagem("valor_fora_da_tabela", ligada)).toBe(
+      true,
+    );
+    expect(pedirAtribuicaoNaPassagem("sintoma", ligada)).toBe(true);
+    expect(pedirAtribuicaoNaPassagem("teto_atingido", ligada)).toBe(true);
+    expect(pedirAtribuicaoNaPassagem("falha_tecnica", ligada)).toBe(true);
+    expect(pedirAtribuicaoNaPassagem("urgencia", ligada)).toBe(false);
+    expect(pedirAtribuicaoNaPassagem("fora_do_horario", ligada)).toBe(false);
+    expect(pedirAtribuicaoNaPassagem("valor_fora_da_tabela", fila)).toBe(false);
+    expect(pedirAtribuicaoNaPassagem("valor_fora_da_tabela", null)).toBe(false);
+    expect(pedirAtribuicaoNaPassagem("valor_fora_da_tabela", undefined)).toBe(
+      false,
+    );
+  });
+
+  it("o evento da atribuição espelha o do banco (nome numa linha, até 80, ou sem nome)", () => {
+    expect(textoDaAtribuicaoDaIa("Ana Lima")).toBe(
+      "A conversa ficou com Ana Lima, responsável pelo lead.",
+    );
+    expect(textoDaAtribuicaoDaIa("  Ana \n\t Lima  ")).toBe(
+      "A conversa ficou com Ana Lima, responsável pelo lead.",
+    );
+    expect(textoDaAtribuicaoDaIa(null)).toBe(
+      "A conversa ficou com o responsável pelo lead.",
+    );
+    expect(textoDaAtribuicaoDaIa("   ")).toBe(
+      "A conversa ficou com o responsável pelo lead.",
+    );
+    const longo = "a".repeat(LIMITE_DO_NOME_NA_ATRIBUICAO + 20);
+    expect(textoDaAtribuicaoDaIa(longo)).toBe(
+      `A conversa ficou com ${"a".repeat(LIMITE_DO_NOME_NA_ATRIBUICAO)}, responsável pelo lead.`,
+    );
+    expect(textoDaAtribuicaoDaIa("Ana")).not.toMatch(TRAVESSAO);
+  });
+});
+// [AG6 passagem] fim

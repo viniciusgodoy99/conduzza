@@ -71,7 +71,121 @@ export type ConversationListItem = {
    */
   whatsapp_account_id?: string | null;
   contact: ContactSummary;
+  // [AG6 urgência] início
+  /**
+   * A marca de urgencia ABERTA da conversa (conversa_urgente, AG6a, D-53):
+   * a IA passou a conversa porque a pessoa descreveu algo que pode ser uma
+   * emergencia. Nula sem marca ou com a marca encerrada (alguem assumiu,
+   * transferiu ou resolveu). So o instante, nenhum dado de paciente. Vem
+   * embutida no select da lista e o tempo real a mantem viva
+   * (lib/realtime/use-inbox-channel.ts). Opcional so para os testes que
+   * montam a conversa na mao; o select traz sempre.
+   */
+  urgente?: MarcaDeUrgencia | null;
+  // [AG6 urgência] fim
 };
+
+// [AG6 urgência] início
+/** A marca aberta: desde quando a conversa e urgente (a ultima passagem). */
+export type MarcaDeUrgencia = { desde: string };
+
+/**
+ * A marca de urgencia ABERTA de uma linha de conversa_urgente, venha do
+ * embutido da lista (objeto ou lista de um item, conforme o PostgREST prova
+ * a relacao um para um) ou do evento do tempo real (a linha inteira). Marca
+ * encerrada, sem o instante ou fora do formato: nula. Nunca lanca.
+ */
+export function marcaDeUrgenciaDaLinha(valor: unknown): MarcaDeUrgencia | null {
+  const linha: unknown = Array.isArray(valor) ? valor[0] : valor;
+  if (typeof linha !== "object" || linha === null) {
+    return null;
+  }
+  const { desde, encerrada_em } = linha as {
+    desde?: unknown;
+    encerrada_em?: unknown;
+  };
+  if (typeof desde !== "string" || Number.isNaN(Date.parse(desde))) {
+    return null;
+  }
+  // Ausente conta como aberta: esconder uma urgencia de verdade custa mais do
+  // que mostrar uma ja encerrada (que o status, abaixo, ainda filtra).
+  return encerrada_em === null || encerrada_em === undefined ? { desde } : null;
+}
+
+/**
+ * A conversa esta marcada como urgente AGORA: a marca aberta e o status
+ * "Aguardando você". O gatilho do banco (urgencia_sai_quando_alguem_pega)
+ * fecha a marca na mesma transacao em que a conversa sai de "Aguardando
+ * você" (assumir, transferir, resolver): olhar o status tambem tira o chip
+ * no mesmo evento da conversa, sem esperar o evento da marca, e nunca deixa
+ * uma marca velha (evento perdido) marcar a conversa que alguem ja pegou.
+ */
+export function urgenteAberta(
+  conversa: Pick<ConversationListItem, "status"> & {
+    urgente?: MarcaDeUrgencia | null;
+  },
+): boolean {
+  return conversa.status === "aguardando_humano" && Boolean(conversa.urgente);
+}
+
+function instanteDaMarca(conversa: { urgente?: MarcaDeUrgencia | null }) {
+  const ms = conversa.urgente ? Date.parse(conversa.urgente.desde) : Number.NaN;
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+/**
+ * A ordem da lista do Atendimento (D-53, a excecao a "ordem da ultima
+ * mensagem"): as urgentes abertas primeiro, entre elas pela chegada (a mais
+ * antiga em cima: espera ha mais tempo); depois, a ordem de sempre, a
+ * mensagem mais recente primeiro (recencia).
+ */
+export function ordemDoAtendimento(
+  a: ConversationListItem,
+  b: ConversationListItem,
+): number {
+  const urgenteA = urgenteAberta(a);
+  const urgenteB = urgenteAberta(b);
+  if (urgenteA !== urgenteB) {
+    return urgenteA ? -1 : 1;
+  }
+  if (urgenteA) {
+    const chegada = instanteDaMarca(a) - instanteDaMarca(b);
+    if (chegada !== 0) {
+      return chegada;
+    }
+  }
+  return recencia(b) - recencia(a);
+}
+
+/**
+ * Aplica uma linha de conversa_urgente (evento do tempo real) a uma lista de
+ * conversas: so a conversa dela muda, e a lista volta na ordem do
+ * Atendimento. Devolve a MESMA lista quando nada mudou (a conversa nao esta
+ * nela, ou a marca e a mesma), para o cache nao redesenhar a toa.
+ */
+export function aplicarMarcaNaLista(
+  lista: ConversationListItem[],
+  linha: { conversation_id?: unknown; desde?: unknown; encerrada_em?: unknown },
+): ConversationListItem[] {
+  const id = linha.conversation_id;
+  if (typeof id !== "string") {
+    return lista;
+  }
+  const atual = lista.find((conversa) => conversa.id === id);
+  if (!atual) {
+    return lista;
+  }
+  const marca = marcaDeUrgenciaDaLinha(linha);
+  if ((atual.urgente?.desde ?? null) === (marca?.desde ?? null)) {
+    return lista;
+  }
+  return lista
+    .map((conversa) =>
+      conversa.id === id ? { ...conversa, urgente: marca } : conversa,
+    )
+    .sort(ordemDoAtendimento);
+}
+// [AG6 urgência] fim
 
 /** Os mesmos valores de message.author. */
 export type AutorDaPrevia = "paciente" | "usuario" | "ia" | "sistema";
@@ -188,8 +302,15 @@ export function estadoDoConsentimento(
   return consent.revoked_at ? "revogado" : "autorizado";
 }
 
+// [AG6 urgência] início No fim do select, a marca de urgencia embutida
+// (urgencia:conversa_urgente, uma linha por conversa pela FK
+// conversa_urgente_conversation_id_fkey, RLS igual a de conversation): so o
+// instante e se esta encerrada. Este codigo so vai ao ar DEPOIS da migration
+// 20261029120000 (antes, o embutido de uma tabela que nao existe derruba a
+// lista; desenho da AG6, secao 9). Uma string so: a concatenacao tira o tipo
+// literal que o supabase-js le. [AG6 urgência] fim
 const CONVERSATION_SELECT =
-  "id, status, assignee_user_id, unread_count, awaiting_reply, last_message_at, last_inbound_at, last_preview, last_preview_kind, last_preview_author, last_preview_author_user_id, tags, whatsapp_account_id, contact:contact_id (id, clinic_id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, source_origin, source_medium, source_method, source_ad_id, source_google_campaign_id, first_contact_at)";
+  "id, status, assignee_user_id, unread_count, awaiting_reply, last_message_at, last_inbound_at, last_preview, last_preview_kind, last_preview_author, last_preview_author_user_id, tags, whatsapp_account_id, contact:contact_id (id, clinic_id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, source_origin, source_medium, source_method, source_ad_id, source_google_campaign_id, first_contact_at), urgencia:conversa_urgente (desde, encerrada_em)";
 
 export const conversationKeys = {
   list: (clinicId: string) => ["conversations", clinicId] as const,
@@ -210,7 +331,14 @@ function normalizeConversation(
   row: Record<string, unknown>,
 ): ConversationListItem {
   const contact = Array.isArray(row.contact) ? row.contact[0] : row.contact;
-  return { ...row, contact } as ConversationListItem;
+  // [AG6 urgência] início O embutido cru (urgencia) vira a marca aberta (urgente).
+  const { urgencia, ...resto } = row;
+  return {
+    ...resto,
+    contact,
+    urgente: marcaDeUrgenciaDaLinha(urgencia),
+  } as ConversationListItem;
+  // [AG6 urgência] fim
 }
 
 // Teto da lista ativa. O Inbox mostra conversas em andamento; resolvida e
@@ -272,7 +400,12 @@ export async function fetchConversations(
       porId.set(conversa.id, conversa);
     }
   }
-  return [...porId.values()].sort((a, b) => recencia(b) - recencia(a));
+  // [AG6 urgência] início A ordem do Atendimento: as urgentes abertas primeiro
+  // (D-53), depois a recencia. A passagem por urgencia deixa a conversa
+  // esperando resposta e com a mensagem mais recente: ela entra no lote
+  // pelas duas buscas.
+  return [...porId.values()].sort(ordemDoAtendimento);
+  // [AG6 urgência] fim
 }
 
 // Teto do arquivo de resolvidas carregado de uma vez. A lista precisa dele

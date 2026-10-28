@@ -12,6 +12,9 @@ import {
   salvarPersonaAction,
   salvarPrazosAction,
   salvarPublicoAction,
+  // [AG6 passagem] início
+  salvarPassagemAction,
+  // [AG6 passagem] fim
   simularAction,
 } from "@/app/(app)/agente/actions";
 import type { EntradaDaSimulacao } from "@/components/agente/simulador";
@@ -27,6 +30,9 @@ import type {
   HorarioDeOperacao,
   InstrucoesEntrada,
   ItemDaBaseEntrada,
+  // [AG6 passagem] início
+  PassagemDaConversa,
+  // [AG6 passagem] fim
   PersonaDoAgente,
   PrazosDoAgente,
   ProblemaDaPublicacao,
@@ -55,6 +61,12 @@ export type AcoesDoAgente = {
   salvarDadosExigidos: (dados: DadosExigidos) => Promise<ResultadoDaAcao>;
   /** Os prazos para cancelar e remarcar pelo assistente (AG4, D-24). */
   salvarPrazos: (prazos: PrazosDoAgente) => Promise<ResultadoDaAcao>;
+  // [AG6 passagem] início
+  /** Para quem vai a conversa que a IA passa (AG6a, D-15 e D-55). */
+  salvarPassagem: (
+    passagemPara: PassagemDaConversa,
+  ) => Promise<ResultadoDaAcao>;
+  // [AG6 passagem] fim
   salvarItemDaBase: (item: ItemDaBaseEntrada) => Promise<ResultadoDaAcao>;
   ativarItemDaBase: (id: string, ativo: boolean) => Promise<ResultadoDaAcao>;
   excluirItemDaBase: (id: string) => Promise<ResultadoDaAcao>;
@@ -84,6 +96,10 @@ export const acoesDoAgente: AcoesDoAgente = {
   salvarDadosExigidos: async (dados) =>
     resultado(await salvarDadosExigidosAction(dados)),
   salvarPrazos: async (prazos) => resultado(await salvarPrazosAction(prazos)),
+  // [AG6 passagem] início
+  salvarPassagem: async (passagemPara) =>
+    resultado(await salvarPassagemAction({ passagemPara })),
+  // [AG6 passagem] fim
   salvarItemDaBase: async (item) =>
     resultado(await salvarItemDaBaseAction(item)),
   ativarItemDaBase: async (id, ativo) =>

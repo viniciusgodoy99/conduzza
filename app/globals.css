@@ -372,6 +372,11 @@
   --sidebar-ring: var(--cz-lime-400);
   --sidebar-badge: var(--cz-ink-800);
   --sidebar-badge-text: var(--cz-ink-200);
+  /* [AG6 urgência] início O contador em alerta (conversa urgente, D-53): o
+     "vencido" da 5.1, danger-050 com danger-700, opaco e igual nos dois
+     temas, como a sidebar. [AG6 urgência] fim */
+  --sidebar-badge-alerta: var(--cz-danger-050);
+  --sidebar-badge-alerta-text: var(--cz-danger-700);
 }
 
 /*
