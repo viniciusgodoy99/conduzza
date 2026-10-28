@@ -278,6 +278,97 @@ async function carregarSlot(
   return { ok: true, slot: null };
 }
 
+type LinhaDoVinculo = {
+  id: string;
+  procedure_id: string;
+  insurance_id: string | null;
+  duration_min: number;
+  bookable_by_ai?: boolean | null;
+  procedure:
+    | ProcedimentoDoVinculo[]
+    | ProcedimentoDoVinculo
+    | null;
+  insurance?: { active?: boolean | null }[] | { active?: boolean | null } | null;
+};
+
+type ProcedimentoDoVinculo = {
+  name: string;
+  resource_id: string | null;
+  active: boolean;
+  bookable_by_ai?: boolean | null;
+};
+
+/**
+ * Os vinculos ativos do profissional da vaga, de procedimento ativo, como a
+ * onda os casa (PURO; o job e os testes usam o mesmo). AG5 (D-37): daIa e o
+ * vinculo que a IA marca, a mesma regra de aceitar_oferta_de_espera: o
+ * vinculo e o procedimento com "IA pode agendar" e, com convenio, o
+ * convenio ativo. Leitura defensiva: sem o campo, falso.
+ */
+export function vinculosDaVaga(
+  linhas: readonly unknown[],
+): (VinculoDaVaga & { nomeDoProcedimento: string })[] {
+  const vinculos: (VinculoDaVaga & { nomeDoProcedimento: string })[] = [];
+  for (const linha of linhas as LinhaDoVinculo[]) {
+    const procedimento = Array.isArray(linha.procedure)
+      ? linha.procedure[0]
+      : linha.procedure;
+    if (!procedimento || procedimento.active === false) {
+      continue;
+    }
+    const convenio = Array.isArray(linha.insurance)
+      ? linha.insurance[0]
+      : linha.insurance;
+    const insuranceId = linha.insurance_id ?? null;
+    vinculos.push({
+      id: linha.id,
+      procedureId: linha.procedure_id,
+      insuranceId,
+      durationMin: linha.duration_min,
+      resourceId: procedimento.resource_id ?? null,
+      daIa:
+        linha.bookable_by_ai === true &&
+        procedimento.bookable_by_ai === true &&
+        (insuranceId === null || convenio?.active === true),
+      nomeDoProcedimento: procedimento.name,
+    });
+  }
+  return vinculos;
+}
+
+/**
+ * As entradas ativas da fila como a onda as le (PURO). AG5 (D-37): a origem
+ * ("equipe" quando falta ou e outro valor) e o pagamento declarado
+ * (particular nulo = nao declarado; o convenio declarado so com particular
+ * false), alem do convenio do contato (a regra de antes).
+ */
+export function entradasDaFila(linhas: readonly unknown[]): EntradaDaFila[] {
+  return (linhas as Record<string, unknown>[]).map((linha) => {
+    const contato = (
+      Array.isArray(linha.contact) ? linha.contact[0] : linha.contact
+    ) as { insurance_id?: string | null } | null | undefined;
+    const particular =
+      typeof linha.particular === "boolean" ? linha.particular : null;
+    return {
+      id: linha.id as string,
+      contactId: linha.contact_id as string,
+      procedureId: (linha.procedure_id as string | null) ?? null,
+      professionalId: (linha.professional_id as string | null) ?? null,
+      preferredShifts: (linha.preferred_shifts as string[] | null) ?? [],
+      preferredWeekdays: (linha.preferred_weekdays as number[] | null) ?? [],
+      priority: linha.priority as number,
+      createdAt: linha.created_at as string,
+      insuranceId: contato?.insurance_id ?? null,
+      origem: linha.origem === "ia" ? "ia" : "equipe",
+      particularDeclarado: particular,
+      insuranceIdDeclarado:
+        particular === false
+          ? ((linha.insurance_id as string | null | undefined) ?? null)
+          : null,
+    };
+  });
+}
+
 export async function executarOfertaDeEspera(
   admin: SupabaseClient,
   job: Job,
@@ -440,12 +531,15 @@ export async function executarOfertaDeEspera(
   ]);
 
   // A FILA e o casamento. A fila vem na ordem de chegada (a ordem entre
-  // grupos); a ordem dentro do grupo quem aplica e montarOnda.
+  // grupos); a ordem dentro do grupo quem aplica e montarOnda. AG5 (D-37):
+  // a origem e o pagamento declarado da entrada, e o "IA pode agendar" do
+  // vinculo e do procedimento e o convenio ativo do vinculo (o vinculo que a
+  // IA marca), na MESMA regra de aceitar_oferta_de_espera.
   const [filaResult, vinculosResult] = await Promise.all([
     admin
       .from("waitlist")
       .select(
-        "id, contact_id, procedure_id, professional_id, preferred_shifts, preferred_weekdays, priority, created_at, contact:contact_id ( insurance_id )",
+        "id, contact_id, procedure_id, professional_id, preferred_shifts, preferred_weekdays, priority, created_at, origem, insurance_id, particular, contact:contact_id ( insurance_id )",
       )
       .eq("clinic_id", job.clinic_id)
       .eq("active", true)
@@ -455,7 +549,7 @@ export async function executarOfertaDeEspera(
     admin
       .from("service_link")
       .select(
-        "id, procedure_id, insurance_id, duration_min, procedure:procedure_id ( name, resource_id, active )",
+        "id, procedure_id, insurance_id, duration_min, bookable_by_ai, procedure:procedure_id ( name, resource_id, active, bookable_by_ai ), insurance:insurance_id ( active )",
       )
       .eq("clinic_id", job.clinic_id)
       .eq("professional_id", slot.professionalId)
@@ -464,33 +558,10 @@ export async function executarOfertaDeEspera(
   if (filaResult.error || vinculosResult.error) {
     return { ok: false, erro: "leitura_falhou" };
   }
-  const vinculos: VinculoDaVaga[] = [];
-  const nomeDoProcedimento = new Map<string, string>();
-  for (const linha of (vinculosResult.data ?? []) as {
-    id: string;
-    procedure_id: string;
-    insurance_id: string | null;
-    duration_min: number;
-    procedure:
-      | { name: string; resource_id: string | null; active: boolean }[]
-      | { name: string; resource_id: string | null; active: boolean }
-      | null;
-  }[]) {
-    const procedimento = Array.isArray(linha.procedure)
-      ? linha.procedure[0]
-      : linha.procedure;
-    if (!procedimento || procedimento.active === false) {
-      continue;
-    }
-    vinculos.push({
-      id: linha.id,
-      procedureId: linha.procedure_id,
-      insuranceId: linha.insurance_id ?? null,
-      durationMin: linha.duration_min,
-      resourceId: procedimento.resource_id ?? null,
-    });
-    nomeDoProcedimento.set(linha.procedure_id, procedimento.name);
-  }
+  const vinculos = vinculosDaVaga(vinculosResult.data ?? []);
+  const nomeDoProcedimento = new Map<string, string>(
+    vinculos.map((vinculo) => [vinculo.procedureId, vinculo.nomeDoProcedimento]),
+  );
 
   // Sala ou equipamento que algum procedimento exige e que ja esta ocupado
   // neste horario (por QUALQUER profissional): quem precisa dele nao entra
@@ -522,24 +593,7 @@ export async function executarOfertaDeEspera(
     }
   }
 
-  const entradas: EntradaDaFila[] = (
-    (filaResult.data ?? []) as Record<string, unknown>[]
-  ).map((linha) => {
-    const contato = (
-      Array.isArray(linha.contact) ? linha.contact[0] : linha.contact
-    ) as { insurance_id?: string | null } | null | undefined;
-    return {
-      id: linha.id as string,
-      contactId: linha.contact_id as string,
-      procedureId: (linha.procedure_id as string | null) ?? null,
-      professionalId: (linha.professional_id as string | null) ?? null,
-      preferredShifts: (linha.preferred_shifts as string[] | null) ?? [],
-      preferredWeekdays: (linha.preferred_weekdays as number[] | null) ?? [],
-      priority: linha.priority as number,
-      createdAt: linha.created_at as string,
-      insuranceId: contato?.insurance_id ?? null,
-    };
-  });
+  const entradas = entradasDaFila(filaResult.data ?? []);
   const inicio = new Date(slot.startsAt);
   const slotVago: SlotVago = {
     professionalId: slot.professionalId,

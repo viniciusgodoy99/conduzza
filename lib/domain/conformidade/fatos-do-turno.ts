@@ -242,6 +242,39 @@ export type ConsultaDoFato = HorarioDoFato & {
   remarcacaoAprovada?: boolean;
 };
 
+/**
+ * AG5 (27/10/2026): uma entrada da lista de espera que o turno conhece: a
+ * que a IA criou neste turno (T-E2), a que ela criou nesta conversa num turno
+ * anterior (relida) ou a que ja existia no mesmo grupo (ja_na_lista). O
+ * procedimento e o profissional sao os nomes do Cadastro (nulo: qualquer
+ * profissional) e a preferencia e a da entrada (vazio: qualquer). So nas
+ * regras deterministicas: o resumo do verificador diz so que a pessoa esta
+ * na lista (minimizacao), nunca o procedimento nem o profissional.
+ */
+export type EntradaDaEsperaDoFato = {
+  procedimento: string;
+  profissional: string | null;
+  /** manha, tarde, noite; vazio = qualquer periodo. */
+  turnos: readonly string[];
+  /** 0 (domingo) a 6 (sabado); vazio = qualquer dia. */
+  dias: readonly number[];
+  /**
+   * "turno": criada neste turno; "conversa": criada pela IA nesta conversa
+   * num turno anterior, relida e ainda ativa; "existente": ja estava na
+   * lista no mesmo grupo (ja_na_lista; de qualquer origem). So a do turno e
+   * a da conversa sustentam "coloquei voce na lista"; as tres sustentam
+   * "voce esta na lista".
+   */
+  origem: "turno" | "conversa" | "existente";
+};
+
+/** As origens de uma entrada da lista de espera nos fatos. */
+export const ORIGENS_DA_ENTRADA_DA_ESPERA = [
+  "turno",
+  "conversa",
+  "existente",
+] as const;
+
 /** O que uma ferramenta acrescenta aos fatos, alem da propria saida. */
 export type FatosDaFerramenta = {
   coberturas?: readonly CoberturaDoTurno[];
@@ -292,6 +325,12 @@ export type FatosDaFerramenta = {
    * modelo continua lendo a saida inteira.
    */
   saidaSemEco?: string;
+  /**
+   * AG5: as entradas da lista de espera que a ferramenta (ou o estado)
+   * conhece: a criada no turno, a desta conversa relida e a que ja existia
+   * (ja_na_lista).
+   */
+  entradasDaEspera?: readonly EntradaDaEsperaDoFato[];
 };
 
 export type FatosDoTurno = {
@@ -381,6 +420,20 @@ export type FatosDoTurno = {
    */
   profissionais?: readonly string[];
   unidades?: readonly string[];
+  /**
+   * AG5: as entradas da lista de espera que o turno conhece (a criada no
+   * turno, a desta conversa relida, a que ja existia no grupo). "Voce esta
+   * na lista de espera" vale com uma delas; a frase da lista que cita outro
+   * profissional, outro procedimento ou outra preferencia barra
+   * (espera_fora_da_entrada). Ausente: nenhuma.
+   */
+  entradasDaEspera?: readonly EntradaDaEsperaDoFato[];
+  /**
+   * AG5: a habilidade "Lista de espera" vale na versao do turno. So com ela,
+   * "vaga" numa condicao futura sem dia nem hora ("se abrir uma vaga",
+   * "quando surgir uma vaga") nao e horario livre. Ausente: desligada.
+   */
+  listaDeEsperaLigada?: boolean;
 };
 
 export type AchadoDosFatos = { categoria: CategoriaDosFatos; regra: string };
@@ -506,6 +559,34 @@ function consultaDoFatoValida(valor: unknown): boolean {
   );
 }
 
+/** AG5: a lista opcional das entradas da lista de espera. */
+function entradasDaEsperaValidas(valor: unknown): boolean {
+  return (
+    valor === undefined ||
+    (Array.isArray(valor) &&
+      valor.every((e) => {
+        if (typeof e !== "object" || e === null) {
+          return false;
+        }
+        const entrada = e as Record<string, unknown>;
+        return (
+          typeof entrada.procedimento === "string" &&
+          (entrada.profissional === null ||
+            typeof entrada.profissional === "string") &&
+          Array.isArray(entrada.turnos) &&
+          entrada.turnos.every(
+            (t) => t === "manha" || t === "tarde" || t === "noite",
+          ) &&
+          Array.isArray(entrada.dias) &&
+          entrada.dias.every((d) => inteiroEntre(d, 0, 6)) &&
+          (ORIGENS_DA_ENTRADA_DA_ESPERA as readonly unknown[]).includes(
+            entrada.origem,
+          )
+        );
+      }))
+  );
+}
+
 /** Revisao da AG4 (achado 7): a lista opcional das consultas canceladas. */
 function consultasCanceladasValidas(valor: unknown): boolean {
   return (
@@ -581,7 +662,11 @@ export function fatosValidos(valor: unknown): valor is FatosDoTurno {
     listaDeTextos(f.respostasDaBase) &&
     // Revisao curta das correcoes da AG3: os nomes do Cadastro, opcionais.
     listaDeTextosOpcional(f.profissionais) &&
-    listaDeTextosOpcional(f.unidades)
+    listaDeTextosOpcional(f.unidades) &&
+    // AG5: as entradas da lista de espera e a habilidade, opcionais.
+    entradasDaEsperaValidas(f.entradasDaEspera) &&
+    (f.listaDeEsperaLigada === undefined ||
+      typeof f.listaDeEsperaLigada === "boolean")
   );
 }
 
@@ -2722,6 +2807,13 @@ type PadraoDeAcao = {
    * "Separei quarta as 14h" afirma; "Separei as informacoes" nao.
    */
   soComAgendaNaFrase: boolean;
+  /**
+   * AG5: o ESTADO de quem esta na lista de espera ("voce esta na lista de
+   * espera"), e nao a acao de colocar: vale tambem com a entrada que ja
+   * existia no grupo (ja_na_lista), e a pergunta de verdade ("Voce ja esta
+   * na lista de espera?") nao afirma.
+   */
+  estadoDaEspera?: true;
 };
 
 function padraoDeAcao(
@@ -2729,12 +2821,14 @@ function padraoDeAcao(
   alvo: AcaoDoTurno | null,
   fonte: string,
   soComAgendaNaFrase = false,
+  estadoDaEspera = false,
 ): PadraoDeAcao {
   return {
     nome,
     acao: alvo,
     regex: new RegExp(fonte, "g"),
     soComAgendaNaFrase,
+    ...(estadoDaEspera ? { estadoDaEspera: true as const } : {}),
   };
 }
 
@@ -2903,10 +2997,19 @@ const PADROES_DE_ACAO: readonly PadraoDeAcao[] = [
     "lista_de_espera",
     "\\b(?:coloquei|inclui|adicionei|botei|anotei|cadastrei|inscrevi|registrei|pus|incluimos|colocamos|adicionamos|anotamos|cadastramos)\\s+(?:\\S+\\s+){0,3}?(?:na|em)\\s+(?:nossa\\s+|a\\s+)?lista de espera\\b",
   ),
+  // AG5: a acao ("entrou", "ficou", "foi incluida") e o estado ("esta",
+  // "continua") separados: o estado vale tambem com a entrada que ja existia.
   padraoDeAcao(
     "lista_de_espera",
     "lista_de_espera",
-    "\\b(?:esta|estao|ta|ficou|ja esta|entrou|entrei|foi (?:incluid|colocad|adicionad|anotad)[oa])\\s+(?:\\S+\\s+){0,2}?(?:na|para a)\\s+(?:nossa\\s+)?lista de espera\\b",
+    "\\b(?:ficou|entrou|entrei|foi (?:incluid|colocad|adicionad|anotad)[oa])\\s+(?:\\S+\\s+){0,2}?(?:na|para a)\\s+(?:nossa\\s+)?lista de espera\\b",
+  ),
+  padraoDeAcao(
+    "lista_de_espera",
+    "lista_de_espera",
+    "\\b(?:esta|estao|ta|ja esta|ja estao|continua|continuam|segue|seguem)\\s+(?:\\S+\\s+){0,2}?(?:na|para a)\\s+(?:nossa\\s+)?lista de espera\\b",
+    false,
+    true,
   ),
   // Revisao 2 da AG2: as formas que passavam.
   // "Sua consulta foi para a lista de espera", "vai para a lista de espera".
@@ -5041,6 +5144,253 @@ function negaConvenio(frase: string, nomes: readonly string[] = []): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// AG5 (27/10/2026): a lista de espera
+// ---------------------------------------------------------------------------
+
+/**
+ * A condicao futura logo antes da "vaga" ("se abrir uma", "quando surgir
+ * uma", "caso apareca", "assim que vagar um"), na mesma oracao.
+ */
+const CONDICAO_FUTURA_DA_VAGA =
+  /\b(?:se|quando|assim que|caso|logo que|sempre que)\s+(?:(?:abrir|abrirem|abra|abram|surgir|surgirem|surja|surjam|aparecer|aparecerem|apareca|aparecam|vagar|vagarem|vague|vaguem|liberar|liberarem|libere|liberem|houver|haja|tiver|tenha|sobrar|sobrarem|sobre|sobrem)\s+)(?:(?:uma|um|alguma|algum|outra|outro|nova|novo|mais|essa|esse)\s+){0,2}$/;
+
+/** A oferta que e so a "vaga" (sem verbo de oferta). */
+const SO_A_VAGA = new RegExp(`^${VAGA_DA_AGENDA}`);
+
+/**
+ * AG5 (a excecao estreita do desenho, 4.5): todas as ofertas de
+ * disponibilidade da frase sao a "vaga" numa condicao futura ("se abrir uma
+ * vaga, voce recebe uma mensagem por aqui"). Quem chama confere que a frase
+ * nao tem dia nem hora (so a preferencia: dia da semana e periodo) e que a
+ * lista de espera esta ligada.
+ */
+function soVagaEmCondicaoFutura(frase: string): boolean {
+  const ofertas = ofertasDaFrase(frase);
+  return (
+    ofertas.length > 0 &&
+    ofertas.every(
+      (oferta) =>
+        SO_A_VAGA.test(oferta.texto) &&
+        CONDICAO_FUTURA_DA_VAGA.test(frase.slice(0, oferta.indice)),
+    )
+  );
+}
+
+/**
+ * AG5: o par que e so a PREFERENCIA da lista de espera (o dia da semana e o
+ * periodo, sem data e sem hora: "de manha, as segundas"), nunca um horario.
+ */
+function parDaPreferencia(par: ParDaOferta): boolean {
+  if (par.hora !== null) {
+    return false;
+  }
+  if (par.data === null) {
+    return par.periodo !== null;
+  }
+  return (
+    par.data.dia === null &&
+    par.data.mes === null &&
+    par.data.ano === null &&
+    par.data.semana !== null &&
+    !par.data.impossivel
+  );
+}
+
+/** AG5: o par da preferencia cabe na da entrada (vazio = qualquer). */
+function parNaPreferencia(
+  par: ParDaOferta,
+  entrada: EntradaDaEsperaDoFato,
+): boolean {
+  const semana = par.data?.semana ?? null;
+  return (
+    (semana === null ||
+      entrada.dias.length === 0 ||
+      entrada.dias.includes(semana)) &&
+    (par.periodo === null ||
+      entrada.turnos.length === 0 ||
+      entrada.turnos.includes(par.periodo))
+  );
+}
+
+/**
+ * AG5: as palavras genericas que tambem sao nome de procedimento ("Consulta",
+ * "Avaliacao"): sozinhas, a regra da entrada nao le (a frase "a consulta fica
+ * pendente" nao cita o procedimento).
+ */
+const PROCEDIMENTO_GENERICO: ReadonlySet<string> = new Set([
+  "consulta",
+  "consultas",
+  "avaliacao",
+  "retorno",
+  "sessao",
+  "procedimento",
+  "atendimento",
+  "exame",
+  "exames",
+]);
+
+/** As palavras do nome do procedimento, ja sem acento. */
+function palavrasDoProcedimento(nome: string): string[] {
+  return normalizarBase(nome)
+    .split(/[^a-z0-9]+/)
+    .filter((p) => p !== "");
+}
+
+/**
+ * AG5: os procedimentos do Cadastro que a frase (ja normalizada, sem a
+ * mascara) cita, pelo nome inteiro; o mais longo primeiro, sem sobrepor. O
+ * nome de uma palavra so generica ("Consulta") nao conta.
+ */
+function procedimentosCitados(
+  frase: string,
+  nomes: readonly string[],
+): MencaoNaFrase[] {
+  const chaves = [
+    ...new Set(nomes.map((nome) => palavrasDoProcedimento(nome).join(" "))),
+  ]
+    .filter(
+      (chave) =>
+        chave !== "" &&
+        !(chave.split(" ").length === 1 && PROCEDIMENTO_GENERICO.has(chave)),
+    )
+    .sort((a, b) => b.length - a.length);
+  const mencoes: MencaoNaFrase[] = [];
+  for (const chave of chaves) {
+    for (const m of frase.matchAll(regexDasPalavras(chave.split(" ")))) {
+      const inicio = m.index ?? 0;
+      const fim = inicio + m[0].length;
+      if (!sobrepoe(mencoes, inicio, fim)) {
+        mencoes.push({ inicio, fim, chaves: new Set([chave]) });
+      }
+    }
+  }
+  return mencoes;
+}
+
+/**
+ * AG5 (espera_fora_da_entrada): a frase que diz que a pessoa esta (ou
+ * entrou) na lista de espera tem de caber numa entrada que o turno conhece:
+ * o profissional citado e o da entrada (a entrada com qualquer profissional
+ * nao libera nome nenhum), o procedimento citado e o dela e o dia da semana
+ * e o periodo citados cabem na preferencia dela. Sem entrada conhecida (a
+ * acao sem a entrada), nao se sabe: nao barra.
+ */
+function esperaForaDaEntrada(
+  frase: string,
+  preferencia: readonly ParDaOferta[],
+  entradas: readonly EntradaDaEsperaDoFato[],
+  fatos: FatosDoTurno,
+): boolean {
+  if (entradas.length === 0) {
+    return false;
+  }
+  const profissionais = profissionaisCitados(frase, [
+    ...(fatos.profissionais ?? []),
+    ...entradas.flatMap((e) => (e.profissional === null ? [] : [e.profissional])),
+  ]);
+  const procedimentos = procedimentosCitados(frase, [
+    ...fatos.procedimentos,
+    ...entradas.map((e) => e.procedimento),
+  ]);
+  return !entradas.some((entrada) => {
+    const profissional =
+      entrada.profissional === null
+        ? null
+        : palavrasDoNomeDaPessoa(entrada.profissional).join(" ");
+    const procedimento = palavrasDoProcedimento(entrada.procedimento).join(" ");
+    return (
+      profissionais.every(
+        (m) => profissional !== null && m.chaves.has(profissional),
+      ) &&
+      procedimentos.every((m) => m.chaves.has(procedimento)) &&
+      preferencia.every((par) => parNaPreferencia(par, entrada))
+    );
+  });
+}
+
+/**
+ * AG5 (vaga_prometida, horario_nao_verificado): a promessa de vaga, de prazo
+ * ou de posicao na lista de espera. Nenhum fato a libera: a IA nunca sabe se
+ * um horario vai abrir, quando, nem quem fica com ele (a reoferta oferece a
+ * todos do grupo de uma vez). Lista FECHADA; parafrase nova fica com o
+ * verificador ("a lista costuma andar rapido").
+ */
+const PROMESSAS_DA_ESPERA: readonly { nome: string; regex: RegExp }[] = [
+  {
+    // "Voce e a primeira da fila", "a proxima da lista", "sua posicao na
+    // lista", "ha duas pessoas na sua frente", "ninguem na sua frente".
+    nome: "posicao",
+    regex:
+      /\b(?:primeir[oa]|segund[oa]|terceir[oa]|proxim[oa]|ultim[oa])\s+(?:(?:pessoa|paciente|lugar|nome|a ser chamad[oa])\s+)?(?:da|na|de|do)\s+(?:fila|lista)\b|\b(?:sua|tua|seu|teu)\s+(?:posicao|colocacao|vez|lugar)\s+(?:na|da)\s+(?:fila|lista)\b|\b(?:posicao|lugar|numero)\s+(?:\d+|um|uma|dois|duas|tres)\s+(?:na|da)\s+(?:fila|lista)\b|\b(?:\d+|uma|duas|tres|poucas|poucos|algumas|alguns|ninguem|nenhuma pessoa|nenhum paciente)\s+(?:(?:pessoas?|pacientes?)\s+)?(?:na|a)\s+(?:sua\s+)?frente\b|\bfura(?:r)?\s+a\s+fila\b|\bprioridade\s+(?:na|da)\s+(?:fila|lista)\b/,
+  },
+  {
+    // "Assim que abrir uma vaga, ela e sua", "o horario fica com voce".
+    nome: "vaga_da_pessoa",
+    regex:
+      /\b(?:ela|ele|a vaga|o horario|essa vaga|esse horario|a primeira vaga|o primeiro horario|o encaixe)\s+(?:ja\s+)?(?:e|eh|sera|fica|ficara|vai ser|vai ficar)\s+(?:sua|seu|tua|teu|de voce|para voce|pra voce|com voce)\b/,
+  },
+  {
+    // "Logo abre um horario", "em breve surge uma vaga", "nos proximos
+    // dias abre", "com certeza vai abrir".
+    nome: "prazo",
+    regex:
+      /\b(?:logo|em breve|rapidinho|ja ja|daqui a pouco|nos proximos dias|em poucos dias|em alguns dias|ainda (?:esta|essa|nesta|nessa) semana|com certeza|certamente|sem duvida)\s+(?:\S+\s+){0,2}?(?:abre|abrem|abrira|abrirao|vai abrir|vao abrir|surge|surgem|surgira|vai surgir|vao surgir|aparece|aparecem|aparecera|vai aparecer|libera|liberam|liberara|vai liberar|vaga|vagam|vagara|vai vagar)\b/,
+  },
+  {
+    // "Vai abrir um horario em breve", "abre vaga com certeza".
+    nome: "prazo",
+    regex:
+      /\b(?:abre|abrem|abrira|vai abrir|vao abrir|surge|surgem|surgira|vai surgir|aparece|aparecem|aparecera|vai aparecer|libera|liberam|vai liberar|vaga|vagam|vai vagar)\s+(?:\S+\s+){0,3}?(?:logo|em breve|rapidinho|ja ja|daqui a pouco|nos proximos dias|em poucos dias|em alguns dias|com certeza|certamente|sem duvida)\b/,
+  },
+  {
+    // "Vai surgir uma vaga para voce", "vai abrir um horario pra voce".
+    nome: "prazo",
+    regex:
+      /\b(?:vai|vao|ira|irao)\s+(?:abrir|surgir|aparecer|liberar|vagar)\s+(?:(?:um|uma|outro|outra|novo|nova|algum|alguma)\s+)?(?:vagas?|horarios?|encaixes?)\s+(?:para|pra)\s+(?:voce|vc|a senhora|o senhor)\b/,
+  },
+];
+
+/** A frase da promessa fala da agenda (sem isso, "logo abre" e outra coisa). */
+const AGENDA_DA_PROMESSA =
+  /\b(?:vagas?|horarios?|encaixes?|lista|fila|agenda|desistencias?)\b/;
+
+/**
+ * A negacao da promessa antes dela, na mesma oracao (depois da ultima
+ * virgula, ponto e virgula ou dois pontos): "nao da para garantir que ...",
+ * "nao sei quando ...", "ninguem consegue prever ...", ou colada ("nao e a
+ * primeira da fila"). "Nao se preocupe, logo abre" nao nega: a virgula
+ * fecha a oracao.
+ */
+const NEGACAO_DA_PROMESSA =
+  /\b(?:nao|nem|nunca|jamais|ninguem)\s+(?:\S+\s+){0,6}?(?:garantir|garante|garanto|garantimos|dizer|digo|dizemos|prometer|prometo|prometemos|saber|sei|sabemos|prever|prevejo|afirmar|afirmo|informar|confirmar)\b[^,;:.!?]*$|\b(?:nao|nem|nunca)\s+(?:\S+\s+){0,2}$/;
+
+/** A oracao da promessa: o que vem depois da ultima virgula (ou ; e :). */
+const FIM_DA_ORACAO_ANTERIOR = /^[\s\S]*[,;:]/;
+
+/** As promessas de vaga, de prazo e de posicao no rascunho (os nomes). */
+function promessasDaEspera(frases: readonly Frase[]): string[] {
+  const achadas = new Set<string>();
+  for (const frase of frases) {
+    if (ehPerguntaDeVerdade(frase.texto) || !AGENDA_DA_PROMESSA.test(frase.texto)) {
+      continue;
+    }
+    for (const promessa of PROMESSAS_DA_ESPERA) {
+      const m = promessa.regex.exec(frase.texto);
+      if (m === null) {
+        continue;
+      }
+      const antes = frase.texto
+        .slice(0, m.index)
+        .replace(FIM_DA_ORACAO_ANTERIOR, "");
+      if (!NEGACAO_DA_PROMESSA.test(antes)) {
+        achadas.add(promessa.nome);
+      }
+    }
+  }
+  return [...achadas];
+}
+
+// ---------------------------------------------------------------------------
 // A regra
 // ---------------------------------------------------------------------------
 
@@ -5160,6 +5510,20 @@ export function regrasDosFatos(
     }
     frasesQueOferecem.add(indice);
     const pares = paresDaOferta(partesDaOferta(mascarada, frase, fatos.hoje));
+    // AG5 (a excecao estreita, com a lista de espera ligada): a "vaga" numa
+    // condicao futura, sem dia nem hora (so a preferencia: o dia da semana e
+    // o periodo), nao e horario livre ("se abrir uma vaga de manha, voce
+    // recebe uma mensagem por aqui"). A promessa de vaga e outra regra
+    // (vaga_prometida), que nenhum fato libera.
+    if (
+      fatos.listaDeEsperaLigada === true &&
+      afirmaAqui &&
+      pares.every(parDaPreferencia) &&
+      soVagaEmCondicaoFutura(frase.texto)
+    ) {
+      ofertaAnterior = false;
+      return;
+    }
     ofertaAnterior =
       pares.length === 0 && afirmaAqui && FALA_DE_AGENDA.test(frase.texto);
     if (pares.length === 0) {
@@ -5281,6 +5645,12 @@ export function regrasDosFatos(
     (c) => c.remarcacaoAprovada === true,
   );
   const canceladas = fatos.consultasCanceladas ?? [];
+  // AG5: as entradas da lista de espera que o turno conhece. "Coloquei voce
+  // na lista" vale com a acao do turno ou com a entrada que a IA criou nesta
+  // conversa (relida); "voce esta na lista" vale tambem com a que ja existia
+  // no grupo (ja_na_lista).
+  const entradasDaEspera = fatos.entradasDaEspera ?? [];
+  const esperaDaConversa = entradasDaEspera.some((e) => e.origem !== "existente");
   const acoesSemFerramenta = new Set<string>();
   const semDiminutivo = semFlexaoDoParticipio(mascarada);
   const frasesSemDiminutivo = frasesComPosicao(semDiminutivo);
@@ -5305,8 +5675,10 @@ export function regrasDosFatos(
         (f) => inicio >= f.inicio && inicio < f.fim,
       );
       const frase = frasesSemDiminutivo[indiceDaFrase];
+      // AG5: tambem o estado da lista de espera ("Voce ja esta na lista de
+      // espera?").
       if (
-        padrao.acao === null &&
+        (padrao.acao === null || padrao.estadoDaEspera === true) &&
         frase !== undefined &&
         ehPerguntaDeVerdade(frase.texto)
       ) {
@@ -5329,7 +5701,11 @@ export function regrasDosFatos(
             (padrao.acao === "marcou" && marcadaNestaConversa) ||
             (padrao.acao === "remarcou" &&
               (remarcadaNestaConversa || remarcacaoAprovada)) ||
-            (padrao.acao === "cancelou" && canceladas.length > 0);
+            (padrao.acao === "cancelou" && canceladas.length > 0) ||
+            (padrao.acao === "lista_de_espera" &&
+              (esperaDaConversa ||
+                (padrao.estadoDaEspera === true &&
+                  entradasDaEspera.length > 0)));
       if (!sustentada) {
         acoesSemFerramenta.add(padrao.nome);
         continue;
@@ -5413,6 +5789,13 @@ export function regrasDosFatos(
   const fatosDaFrase = new Map<number, FatoDaAgendaLido[]>();
   const juntarFatos = (indice: number, lista: readonly FatoDaAgendaLido[]) =>
     fatosDaFrase.set(indice, [...(fatosDaFrase.get(indice) ?? []), ...lista]);
+  /**
+   * AG5: as frases da lista de espera (a alegacao sustentada) e a
+   * preferencia que cada uma cita (o dia da semana e o periodo, sem data e
+   * sem hora): nao e horario da acao, e sim a preferencia da entrada
+   * (espera_fora_da_entrada confere).
+   */
+  const frasesDaEspera = new Map<number, ParDaOferta[]>();
   for (const [indice, daFrase] of alegadas) {
     const frase = frasesSemDiminutivo[indice];
     if (frase === undefined) {
@@ -5420,9 +5803,16 @@ export function regrasDosFatos(
     }
     const permitidos = [...daFrase].flatMap(permitidosDaAlegacao);
     juntarFatos(indice, permitidos);
-    const pares = paresDaOferta(
+    const todosOsPares = paresDaOferta(
       partesDaOferta(semDiminutivo, frase, fatos.hoje),
     );
+    const daEspera = daFrase.has("lista_de_espera");
+    if (daEspera) {
+      frasesDaEspera.set(indice, todosOsPares.filter(parDaPreferencia));
+    }
+    const pares = daEspera
+      ? todosOsPares.filter((par) => !parDaPreferencia(par))
+      : todosOsPares;
     if (pares.length === 0) {
       continue;
     }
@@ -5465,11 +5855,22 @@ export function regrasDosFatos(
     const paresDaReserva = daAcao("reservou");
     let semLicenca = false;
     let foraDoPar = false;
-    for (const fechamento of fechamentosDasFrases(
+    for (const lido of fechamentosDasFrases(
       semDiminutivo,
       frasesSemDiminutivo,
       fatos.hoje,
     )) {
+      // AG5: na frase da lista de espera, o dia da semana e o periodo sao a
+      // preferencia da entrada, nao o dia da consulta ("Pronto, voce entrou
+      // na lista de espera ... de manha, as segundas"). Sem outro par, a
+      // frase nao fecha horario nenhum.
+      const daEspera = frasesDaEspera.has(lido.indice);
+      const fechamento = daEspera
+        ? { ...lido, pares: lido.pares.filter((par) => !parDaPreferencia(par)) }
+        : lido;
+      if (daEspera && fechamento.pares.length === 0) {
+        continue;
+      }
       const daFrase = alegadas.get(fechamento.indice) ?? new Set();
       const reservaNaFrase =
         fechamento.tipos.has("reserva") && acoes.has("reservou");
@@ -5620,6 +6021,42 @@ export function regrasDosFatos(
     }
   }
 
+  // AG5 (espera_fora_da_entrada): a frase que diz que a pessoa esta (ou
+  // entrou) na lista de espera so com o profissional, o procedimento e a
+  // preferencia de uma entrada que o turno conhece ("Voce esta na lista da
+  // Dra. Bruna", com a entrada da Dra. Ana, barra). O nome so aparece no
+  // texto sem a mascara do catalogo: a frase e a mesma pela posicao (sem o
+  // mesmo numero de frases, a regra le a frase mascarada, sem os nomes).
+  if (frasesDaEspera.size > 0) {
+    const frasesSemMascara = frasesComPosicao(semFlexaoDoParticipio(base));
+    const mesmas = frasesSemMascara.length === frasesSemDiminutivo.length;
+    for (const [indice, preferencia] of frasesDaEspera) {
+      const frase = mesmas
+        ? frasesSemMascara[indice]
+        : frasesSemDiminutivo[indice];
+      if (
+        frase !== undefined &&
+        esperaForaDaEntrada(frase.texto, preferencia, entradasDaEspera, fatos)
+      ) {
+        achados.push({
+          categoria: "acao_nao_executada",
+          regra: "espera_fora_da_entrada",
+        });
+        break;
+      }
+    }
+  }
+
+  // AG5 (vaga_prometida): prometer vaga, prazo ou posicao na lista de
+  // espera. Nenhum fato libera; a negacao ("nao da para garantir quando
+  // abre") nao promete.
+  if (promessasDaEspera(frasesSemDiminutivo).length > 0) {
+    achados.push({
+      categoria: "horario_nao_verificado",
+      regra: "vaga_prometida",
+    });
+  }
+
   // Convenio.
   for (const regra of regraDaCobertura(base, fatos, contexto)) {
     achados.push({ categoria: "cobertura_nao_verificada", regra });
@@ -5697,8 +6134,21 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   PALAVRAS_CLINICAS_DE_NOME_DE_LUGAR.join(","),
   ...PADROES_DE_ACAO.map(
     (p) =>
-      `${p.nome} ${p.acao ?? "estado"} ${p.regex.source}${p.soComAgendaNaFrase ? " so com agenda na frase" : ""}`,
+      `${p.nome} ${p.acao ?? "estado"} ${p.regex.source}${p.soComAgendaNaFrase ? " so com agenda na frase" : ""}${p.estadoDaEspera === true ? " estado da lista de espera" : ""}`,
   ),
+  // AG5 (27/10/2026): a lista de espera pela IA.
+  "lista de espera: a acao com a acao do turno ou a entrada desta conversa; o estado tambem com a entrada que ja existia; a pergunta de verdade nao afirma o estado",
+  CONDICAO_FUTURA_DA_VAGA.source,
+  SO_A_VAGA.source,
+  "vaga em condicao futura sem dia nem hora (so a preferencia) nao e horario livre, so com a lista de espera ligada",
+  "par da preferencia: dia da semana e periodo, sem data e sem hora, na frase da lista de espera, nao e horario da acao nem fecha horario",
+  [...PROCEDIMENTO_GENERICO].join(","),
+  "espera_fora_da_entrada: o profissional, o procedimento e a preferencia citados na frase da lista cabem numa entrada conhecida; a entrada com qualquer profissional nao libera nome; sem entrada, nao barra",
+  ...PROMESSAS_DA_ESPERA.map((p) => `${p.nome} ${p.regex.source}`),
+  AGENDA_DA_PROMESSA.source,
+  NEGACAO_DA_PROMESSA.source,
+  FIM_DA_ORACAO_ANTERIOR.source,
+  "vaga_prometida: nenhum fato libera; a pergunta de verdade e a negacao nao prometem",
   NEGACAO_ANTES.source,
   PARTICIPIO_NO_DIMINUTIVO.source,
   RESERVA_QUE_E_REGRA,

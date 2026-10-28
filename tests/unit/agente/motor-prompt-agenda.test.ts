@@ -142,10 +142,14 @@ describe("texto fixo: o fluxo de marcar", () => {
     );
   });
 
-  it("remarcar, cancelar, lista de espera e encaixe continuam com a equipe", () => {
+  it("encaixe continua com a equipe (AG5: a lista de espera tem ferramenta)", () => {
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
-      // AG4: remarcar e cancelar sairam desta linha (tem ferramenta).
-      'Lista de espera e encaixe continuam com a equipe: passe com o motivo "pedido_de_agenda".',
+      // AG4: remarcar e cancelar sairam desta linha (tem ferramenta). AG5:
+      // a lista de espera tambem.
+      'Encaixe continua com a equipe: nunca ofereça, sugira nem prometa encaixe; se a pessoa pedir um encaixe, passe para a equipe com o motivo "pedido_de_agenda".',
+    );
+    expect(TEXTO_FIXO_DO_AGENTE).not.toContain(
+      "Lista de espera e encaixe continuam com a equipe",
     );
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
       'Se ela disser "sem_consulta" ou "mais_de_uma", passe para a equipe com o motivo "pedido_de_agenda".',
@@ -174,7 +178,8 @@ describe("bloco <atendimento> e <profissionais>", () => {
     // AG3: e os dados que a clinica pede para marcar (D-6, o padrao da
     // primeira versao: nome completo e nascimento).
     // AG4: e as linhas de cancelar e remarcar (desligadas sem os prazos).
-    expect(linhas.slice(-7)).toEqual([
+    // AG5: e a da lista de espera (desligada por padrao).
+    expect(linhas.slice(-8)).toEqual([
       "Marcar consulta: ligado.",
       "Antecedência mínima para marcar: 2 horas.",
       "Marcar até quantos dias à frente: 14 dias.",
@@ -182,6 +187,7 @@ describe("bloco <atendimento> e <profissionais>", () => {
       "Confirmar presença: ligado.",
       FRASES_DO_ATENDIMENTO.cancelarDesligado,
       FRASES_DO_ATENDIMENTO.remarcarDesligado,
+      FRASES_DO_ATENDIMENTO.listaDeEsperaDesligada,
     ]);
     const semDados = blocoEm(
       instrucoes(
@@ -388,6 +394,9 @@ describe("ferramentas e versão", () => {
       "pedir_cancelamento",
       "cancelar_consulta",
       "buscar_horario_para_remarcar",
+      // AG5: a lista de espera.
+      "pedir_lista_de_espera",
+      "entrar_na_lista_de_espera",
       "confirmar_presenca",
       "escalar_humano",
     ]);

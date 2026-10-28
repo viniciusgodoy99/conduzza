@@ -355,11 +355,11 @@ describe("recepção", () => {
 
   it("as chaves livres de habilidade ficam desabilitadas; os formulários, travados", () => {
     // Informar preço e convênio, Agendar consulta e Confirmar presença (E4);
-    // Cancelar consulta e Remarcar consulta (AG4).
+    // Cancelar consulta e Remarcar consulta (AG4); Lista de espera (AG5).
     const livre = tags(html, "switch").filter(
       (tag) => !tag.includes('aria-disabled="true"'),
     );
-    expect(livre).toHaveLength(5);
+    expect(livre).toHaveLength(6);
     for (const tag of livre) {
       expect(tag).toContain('disabled=""');
     }
@@ -408,8 +408,8 @@ describe("travas da Conformidade e dos gatilhos (C24)", () => {
       (tag) => !tag.includes('aria-disabled="true"'),
     );
     // Informar preço e convênio, Agendar consulta e Confirmar presença (E4);
-    // Cancelar consulta e Remarcar consulta (AG4).
-    expect(livre).toHaveLength(5);
+    // Cancelar consulta e Remarcar consulta (AG4); Lista de espera (AG5).
+    expect(livre).toHaveLength(6);
     const preco = livre.find((tag) =>
       tag.includes(
         'aria-labelledby="agente-habilidade-informar_preco_e_convenio"',

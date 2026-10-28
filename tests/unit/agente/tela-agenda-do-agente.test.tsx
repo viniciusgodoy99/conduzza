@@ -173,12 +173,12 @@ describe("Habilidades: Agendar consulta e Confirmar presença", () => {
       'aria-checked="false"',
     );
     // A descricao da aba nao diz mais que so a equipe agenda. AG4: nem que
-    // so a equipe remarca e cancela.
+    // so a equipe remarca e cancela. AG5: nem que a lista de espera e da
+    // equipe (so o encaixe continua com ela).
     expect(visivel).not.toContain("quem agenda, remarca e cancela");
     expect(visivel).not.toContain("Remarcar, cancelar");
-    expect(visivel).toContain(
-      "Lista de espera e encaixe continuam com a equipe.",
-    );
+    expect(visivel).not.toContain("Lista de espera e encaixe");
+    expect(visivel).toContain("Encaixe continua com a equipe.");
   });
 
   it("sem a antecedência e o horizonte, Agendar fica desabilitada com a dica, escrita e no cursor", () => {
@@ -619,9 +619,10 @@ describe("simulador: o cenário de agendar", () => {
   });
 
   it("a descrição diz que reservar e marcar no simulador não gravam nada", () => {
-    // AG4: cancelar e remarcar tambem so simulam.
+    // AG4: cancelar e remarcar tambem so simulam. AG5: a lista de espera
+    // tambem.
     expect(TEXTOS_DO_AGENTE.simuladorDescricao).toContain(
-      "os horários vêm da Agenda, mas reservar, marcar, cancelar e remarcar aqui não gravam nada",
+      "os horários vêm da Agenda, mas reservar, marcar, cancelar, remarcar e colocar na lista de espera aqui não gravam nada",
     );
   });
 

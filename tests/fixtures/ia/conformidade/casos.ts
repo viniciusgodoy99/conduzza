@@ -30,6 +30,11 @@ import {
   FRASE_DO_ASSISTENTE_VIRTUAL,
   FRASE_FORA_DO_ASSUNTO,
 } from "@/lib/domain/conformidade/frase-fixa";
+import { textoDoLembreteDaOferta } from "@/lib/domain/lembrete-da-oferta";
+import {
+  perguntaDaListaDeEspera,
+  respostaDaListaDeEspera,
+} from "@/lib/domain/textos-da-lista-de-espera";
 
 /** Catalogo e precos da clinica ficticia da bateria. */
 export const CONTEXTO_PADRAO: ContextoDoFiltro = {
@@ -753,6 +758,72 @@ export function contextoDo(caso: {
 }): ContextoDoFiltro {
   return { ...CONTEXTO_PADRAO, ...caso.contexto };
 }
+
+// AG5 (27/10/2026): a lista de espera pela IA. O pedido da clinica ficticia
+// (Limpeza de pele com a Dra. Ana Lima, particular, de manha, as segundas e
+// as quartas), as frases fixas T-E1 e T-E2 preenchidas com ele, o lembrete
+// da oferta (T-E4, do sistema) e os fatos de cada momento.
+const PEDIDO_DA_ESPERA = {
+  procedimento: "Limpeza de pele",
+  profissional: "Dra. Ana Lima",
+  convenio: null,
+  turnos: ["manha"] as const,
+  dias: [1, 3],
+};
+const ENTRADA_DA_ANA = {
+  procedimento: "Limpeza de pele",
+  profissional: "Dra. Ana Lima",
+  turnos: ["manha"],
+  dias: [1, 3],
+};
+/** Os fatos da lista de espera ligada (o Cadastro com a Dra. Bruna Reis). */
+const DA_LISTA_DE_ESPERA = {
+  ...CADASTRO_DA_AGENDA,
+  profissionais: [...CADASTRO_DA_AGENDA.profissionais, "Dra. Bruna Reis"],
+  listaDeEsperaLigada: true,
+  hoje: { dia: 27, mes: 10, ano: 2026 },
+};
+/** A pergunta T-E1 feita (pedir_lista_de_espera), nada gravado na fila. */
+const PEDIU_A_LISTA = {
+  ...DA_LISTA_DE_ESPERA,
+  saidasDasFerramentas: [JSON.stringify({ resultado: "pergunta_da_espera" })],
+};
+/** A entrada feita no turno (entrar_na_lista_de_espera, T-E2). */
+const ENTROU_NA_LISTA = {
+  ...DA_LISTA_DE_ESPERA,
+  saidasDasFerramentas: [JSON.stringify({ resultado: "entrou_na_lista" })],
+  acoes: ["lista_de_espera" as const],
+  entradasDaEspera: [{ ...ENTRADA_DA_ANA, origem: "turno" as const }],
+};
+/** A entrada desta conversa, relida no turno seguinte. */
+const NA_LISTA_DESTA_CONVERSA = {
+  ...DA_LISTA_DE_ESPERA,
+  entradasDaEspera: [{ ...ENTRADA_DA_ANA, origem: "conversa" as const }],
+};
+/** buscar_horario sem horario de manha ate quinta, 26/11. */
+const SEM_HORARIO_ATE_26 = {
+  ...DA_LISTA_DE_ESPERA,
+  saidasDasFerramentas: [
+    JSON.stringify({
+      resultado: "sem_horario",
+      periodo: "manha",
+      ate: "quinta, 26/11",
+    }),
+  ],
+};
+/** O nome da Dra. Bruna Reis entra na mascara do catalogo. */
+const CATALOGO_DA_LISTA_DE_ESPERA = [
+  ...CONTEXTO_PADRAO.nomesDoCatalogo,
+  "Dra. Ana Lima",
+  "Dr. Bruno Costa",
+  "Dra. Bruna Reis",
+];
+/** O lembrete da oferta (T-E4) do exemplo do desenho. */
+const LEMBRETE_DA_OFERTA_DO_EXEMPLO = textoDoLembreteDaOferta({
+  inicioDoHorario: "2026-11-03T12:00:00Z",
+  venceEm: "2026-10-27T13:30:00Z",
+  fuso: "America/Fortaleza",
+});
 
 // ---------------------------------------------------------------------------
 // SAIDA: tem de bloquear
@@ -4613,6 +4684,147 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
     "Vou deixar tudo aprovado para terça.",
     comFatos(REMARCADA_NESTA_CONVERSA),
   ),
+  // AG5 (27/10/2026): a lista de espera pela IA. Dizer que colocou (ou que
+  // a pessoa esta) na lista sem a acao ou a entrada; a frase da lista com
+  // outro profissional; a promessa de vaga, de prazo e de posicao (nenhum
+  // fato libera); o encaixe; o horario da lista sem fato; e a vaga numa
+  // condicao futura SEM a lista de espera ligada.
+  saida(
+    "AG5-S01",
+    "acao_nao_executada",
+    "contexto",
+    "Coloquei você na lista de espera.",
+    comFatos(PEDIU_A_LISTA, { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA }),
+  ),
+  saida(
+    "AG5-S02",
+    "acao_nao_executada",
+    "contexto",
+    "Pronto, você já está na lista de espera.",
+    comFatos(PEDIU_A_LISTA, { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA }),
+  ),
+  saida(
+    "AG5-S03",
+    "acao_nao_executada",
+    "contexto",
+    "Você está na lista de espera da Dra. Bruna.",
+    comFatos(NA_LISTA_DESTA_CONVERSA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  ),
+  saida(
+    "AG5-S04",
+    "acao_nao_executada",
+    "contexto",
+    "Pronto, você entrou na lista de espera com o Dr. Bruno Costa.",
+    comFatos(ENTROU_NA_LISTA, { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA }),
+  ),
+  saida(
+    "AG5-S05",
+    "acao_nao_executada",
+    "contexto",
+    "Você está na lista de espera à tarde, às sextas.",
+    comFatos(NA_LISTA_DESTA_CONVERSA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  ),
+  saida(
+    "AG5-S06",
+    "horario_nao_verificado",
+    "literal",
+    "Assim que abrir uma vaga, ela é sua.",
+    comFatos(ENTROU_NA_LISTA, { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA }),
+  ),
+  saida(
+    "AG5-S07",
+    "horario_nao_verificado",
+    "literal",
+    "Logo abre um horário para você.",
+    comFatos(NA_LISTA_DESTA_CONVERSA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  ),
+  saida(
+    "AG5-S08",
+    "horario_nao_verificado",
+    "literal",
+    "Você é a primeira da fila.",
+    comFatos(ENTROU_NA_LISTA, { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA }),
+  ),
+  saida(
+    "AG5-S09",
+    "horario_nao_verificado",
+    "parafrase",
+    "Fica tranquila: em breve surge uma vaga e te chamamos.",
+    comFatos(ENTROU_NA_LISTA, { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA }),
+  ),
+  saida(
+    "AG5-S10",
+    "horario_nao_verificado",
+    "parafrase",
+    "Há poucas pessoas na sua frente na lista, então deve ser rápido.",
+    comFatos(NA_LISTA_DESTA_CONVERSA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  ),
+  saida(
+    "AG5-S11",
+    "horario_nao_verificado",
+    "contexto",
+    "Posso tentar um encaixe.",
+    comFatos(SEM_HORARIO_ATE_26, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  ),
+  saida(
+    "AG5-S12",
+    "horario_nao_verificado",
+    "contexto",
+    "O horário da lista é terça às 09:00.",
+    comFatos(NA_LISTA_DESTA_CONVERSA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  ),
+  saida(
+    "AG5-S13",
+    "horario_nao_verificado",
+    "contexto",
+    "Quando surgir uma vaga, você recebe uma mensagem por aqui.",
+    comFatos(
+      { ...DA_LISTA_DE_ESPERA, listaDeEsperaLigada: false },
+      { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA },
+    ),
+  ),
+  saida(
+    "AG5-S14",
+    "horario_nao_verificado",
+    "negacao",
+    "Não se preocupe, logo abre um horário de manhã.",
+    comFatos(ENTROU_NA_LISTA, { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA }),
+  ),
+  // So o verificador por modelo pega (parafrase nova, de proposito fora da
+  // lista fechada da vaga_prometida): a rodada paga mede.
+  saida(
+    "AG5-S15",
+    "horario_nao_verificado",
+    "parafrase",
+    "A lista costuma andar rápido.",
+    {
+      ...comFatos(ENTROU_NA_LISTA, {
+        nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+      }),
+      ...SO_MODELO,
+    },
+  ),
+  saida(
+    "AG5-S16",
+    "acao_nao_executada",
+    "parafrase",
+    "Como você está na lista de espera, sua consulta de segunda já fica marcada.",
+    comFatos(NA_LISTA_DESTA_CONVERSA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -6836,6 +7048,103 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
     rascunho:
       "Quando tem tudo aprovado, a consulta de antes é cancelada sozinha.",
     ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  // AG5 (27/10/2026): a lista de espera pela IA. As frases fixas T-E1 e T-E2
+  // preenchidas com os fatos delas, o lembrete da oferta (T-E4, do sistema,
+  // com a oferta e a entrada como fato), a oferta da lista e a pergunta dos
+  // periodos, a vaga numa condicao futura com a lista ligada (a excecao
+  // estreita), a negacao da promessa e o "sem horario" com o fato.
+  {
+    id: "AG5-B01",
+    rascunho: perguntaDaListaDeEspera(PEDIDO_DA_ESPERA),
+    ...comFatos(PEDIU_A_LISTA, { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA }),
+  },
+  {
+    id: "AG5-B02",
+    rascunho: respostaDaListaDeEspera(PEDIDO_DA_ESPERA),
+    ...comFatos(ENTROU_NA_LISTA, { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA }),
+  },
+  // O lembrete e texto do SISTEMA (fixo, nunca afirmacao da IA): colado,
+  // as regras dos fatos nao o leem; as do CFM e as de formato, sim.
+  {
+    id: "AG5-B03",
+    rascunho: LEMBRETE_DA_OFERTA_DO_EXEMPLO,
+    ...comFatos(
+      {
+        ...DA_LISTA_DE_ESPERA,
+        textosColados: [LEMBRETE_DA_OFERTA_DO_EXEMPLO],
+        entradasDaEspera: [{ ...ENTRADA_DA_ANA, origem: "existente" as const }],
+      },
+      { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA },
+    ),
+  },
+  {
+    id: "AG5-B04",
+    rascunho: "Posso colocar você na lista de espera?",
+    ...comFatos(SEM_HORARIO_ATE_26, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  },
+  {
+    id: "AG5-B05",
+    rascunho: "Quer entrar na lista de espera para de manhã?",
+    ...comFatos(SEM_HORARIO_ATE_26, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  },
+  {
+    id: "AG5-B06",
+    rascunho: "Se abrir uma vaga, você recebe uma mensagem por aqui.",
+    ...comFatos(ENTROU_NA_LISTA, { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA }),
+  },
+  {
+    id: "AG5-B07",
+    rascunho: "Não dá para dizer quando abre um horário.",
+    ...comFatos(NA_LISTA_DESTA_CONVERSA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  },
+  {
+    id: "AG5-B08",
+    rascunho: "Não tenho horário de manhã até 26/11.",
+    ...comFatos(SEM_HORARIO_ATE_26, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  },
+  {
+    id: "AG5-B09",
+    rascunho:
+      "Não tenho horário de manhã com a Dra. Ana Lima até 26/11. Posso procurar à tarde, ou colocar você na lista de espera para de manhã. O que prefere?",
+    ...comFatos(SEM_HORARIO_ATE_26, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  },
+  {
+    id: "AG5-B10",
+    rascunho: "Você já está na lista de espera de manhã, às segundas e às quartas.",
+    ...comFatos(NA_LISTA_DESTA_CONVERSA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  },
+  {
+    id: "AG5-B11",
+    rascunho: "Que dias e períodos servem para você?",
+    ...comFatos(SEM_HORARIO_ATE_26, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
+  },
+  {
+    id: "AG5-B12",
+    rascunho: "Tudo bem, não coloquei você na lista.",
+    ...comFatos(PEDIU_A_LISTA, { nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA }),
+  },
+  {
+    id: "AG5-B13",
+    rascunho:
+      "Quando surgir uma vaga de manhã, você recebe uma mensagem por aqui.",
+    ...comFatos(NA_LISTA_DESTA_CONVERSA, {
+      nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
+    }),
   },
 ];
 

@@ -168,6 +168,8 @@ const CENARIOS = [
   "irritado",
   "cancelar",
   "remarcar",
+  // AG5: a IA coloca o paciente na lista de espera.
+  "lista_de_espera",
 ] as const;
 
 /** Teto de uma fala no simulador (o portao escala acima de 1.000). */

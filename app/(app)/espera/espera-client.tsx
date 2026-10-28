@@ -44,6 +44,8 @@ export function EsperaClient({
   ehAdmin,
   podeEditar,
   dicaSemPermissao,
+  podeAbrirConversa,
+  dicaAbrirConversa,
   podeRegistrarAutorizacao,
   dicaAutorizacao,
   filaInicial,
@@ -59,6 +61,13 @@ export function EsperaClient({
   ehAdmin: boolean;
   podeEditar: boolean;
   dicaSemPermissao: string;
+  /**
+   * AG5: "Abrir conversa" da entrada que a IA criou, pelo papel no
+   * Atendimento (acessoAConversaDaEspera): quem ve todas as conversas abre;
+   * o profissional ve o botao desabilitado, com a dica.
+   */
+  podeAbrirConversa: boolean;
+  dicaAbrirConversa: string;
   /** Registrar a autorizacao de mensagens (chave de leads e pacientes). */
   podeRegistrarAutorizacao: boolean;
   dicaAutorizacao: string;
@@ -189,6 +198,8 @@ export function EsperaClient({
             timezone={timezone}
             podeEditar={podeEditar}
             dicaSemPermissao={dicaSemPermissao}
+            podeAbrirConversa={podeAbrirConversa}
+            dicaAbrirConversa={dicaAbrirConversa}
             aoMudar={invalidar}
           />
         </div>

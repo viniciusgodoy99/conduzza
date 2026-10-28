@@ -148,7 +148,10 @@ export const INSTRUCAO_DO_EMOJI = {
  * consultar_minhas_consultas (as consultas futuras do contato, so dia, hora e
  * situacao), pedir_cancelamento e cancelar_consulta (duas fases, como reservar
  * e agendar) e buscar_horario_para_remarcar (o mesmo profissional, o mesmo
- * procedimento e o mesmo pagamento da consulta, fixados no servidor).
+ * procedimento e o mesmo pagamento da consulta, fixados no servidor). AG5
+ * (27/10/2026, D-11): pedir_lista_de_espera e entrar_na_lista_de_espera, em
+ * duas fases como cancelar (o procedimento, o profissional e o pagamento do
+ * estado do atendimento; o "sim" numa mensagem nova).
  */
 export const FERRAMENTAS_DO_AGENTE = [
   "fora_do_assunto",
@@ -166,6 +169,9 @@ export const FERRAMENTAS_DO_AGENTE = [
   "pedir_cancelamento",
   "cancelar_consulta",
   "buscar_horario_para_remarcar",
+  // AG5: a lista de espera pela IA.
+  "pedir_lista_de_espera",
+  "entrar_na_lista_de_espera",
   "confirmar_presenca",
   "escalar_humano",
 ] as const;
@@ -178,7 +184,8 @@ export type FerramentaDoAgente = (typeof FERRAMENTAS_DO_AGENTE)[number];
  * pelo servidor (buscar_horario e, desde a AG3,
  * consultar_cadastro_do_contato; desde a AG4, consultar_minhas_consultas e
  * buscar_horario_para_remarcar), pela porta da agenda do turno. O laco da
- * mais rodadas ao turno que usa uma delas.
+ * mais rodadas ao turno que usa uma delas. AG5: pedir_lista_de_espera grava
+ * o pedido (a pergunta T-E1) e entrar_na_lista_de_espera, a entrada.
  */
 export const FERRAMENTAS_DE_AGENDA = [
   "buscar_horario",
@@ -191,6 +198,8 @@ export const FERRAMENTAS_DE_AGENDA = [
   "pedir_cancelamento",
   "cancelar_consulta",
   "buscar_horario_para_remarcar",
+  "pedir_lista_de_espera",
+  "entrar_na_lista_de_espera",
 ] as const satisfies readonly FerramentaDoAgente[];
 export type FerramentaDeAgenda = (typeof FERRAMENTAS_DE_AGENDA)[number];
 
@@ -231,6 +240,13 @@ export const DICA_DO_PRAZO_DE_CANCELAR =
  */
 export const DICA_DA_REMARCACAO_INCOMPLETA =
   "Ligue Agendar consulta e preencha o prazo para remarcar em Regras e limites.";
+
+/**
+ * AG5 (D-36, recomendacao): a dica da chave "Lista de espera" enquanto
+ * "Agendar consulta" nao vale (a lista usa a busca de horario dela).
+ */
+export const DICA_DA_LISTA_DE_ESPERA_INCOMPLETA =
+  "Ligue Agendar consulta para usar a lista de espera.";
 
 export type HabilidadeDoAgente = {
   chave: string;
@@ -277,9 +293,8 @@ export type HabilidadeDoAgente = {
 };
 
 /**
- * Lista FECHADA. Habilidade que o motor nao faz nao aparece na tela: lista de
- * espera e encaixe continuam com a equipe (o pedido passa com o motivo
- * pedido_de_agenda).
+ * Lista FECHADA. Habilidade que o motor nao faz nao aparece na tela: encaixe
+ * continua com a equipe (o pedido passa com o motivo pedido_de_agenda).
  *
  * "Informar preco e convenio" nasce ligada: o preco vem do Cadastro, nunca
  * de texto livre, e a spec 2.3 diz que procedimento cadastrado com preco a
@@ -296,6 +311,12 @@ export type HabilidadeDoAgente = {
  * liga com o prazo de cancelar; remarcar, com "Agendar consulta" valendo e o
  * prazo de remarcar (D-24 e D-26, recomendacao). As duas dividem
  * consultar_minhas_consultas (ferramentasDoAgente nao repete).
+ *
+ * AG5 (27/10/2026, D-11; D-36 pendente, construida com a recomendacao): "Lista
+ * de espera" nasce desligada e so vale com "Agendar consulta" valendo (a
+ * lista usa a busca de horario: o procedimento, o profissional e o pagamento
+ * vem da ultima busca). Sem campo novo em Regras e limites. A oferta de um
+ * horario que vagou continua da reoferta automatica (o sistema), nunca da IA.
  */
 export const HABILIDADES_DO_AGENTE = [
   {
@@ -382,6 +403,21 @@ export const HABILIDADES_DO_AGENTE = [
     precisaDaHabilidade: "agendar",
     precisaDoPrazo: "remarcar",
     dicaDaDependencia: DICA_DA_REMARCACAO_INCOMPLETA,
+  },
+  {
+    // AG5 (D-36, recomendacao): o contrato com a frente das telas (a chave,
+    // o titulo, a descricao e a dica moram aqui; a tela so renderiza).
+    chave: "lista_de_espera",
+    titulo: "Lista de espera",
+    descricao:
+      "Coloca o paciente na lista de espera quando não há horário que sirva, com a confirmação dele numa mensagem nova. Quando um horário assim vagar, a oferta sai pela reoferta automática da Lista de espera.",
+    travada: false,
+    ferramentas: ["pedir_lista_de_espera", "entrar_na_lista_de_espera"],
+    padrao: false,
+    precisaDaAgenda: false,
+    precisaDaHabilidade: "agendar",
+    precisaDoPrazo: null,
+    dicaDaDependencia: DICA_DA_LISTA_DE_ESPERA_INCOMPLETA,
   },
   {
     chave: "confirmar_presenca",

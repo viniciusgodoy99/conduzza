@@ -38,6 +38,15 @@ import {
   type RespostaDoCancelamento,
 } from "./ferramentas/cancelar-consulta";
 import {
+  lerRespostaDaEntradaNaEspera,
+  lerRespostaDoPedidoDeEspera,
+  pedidoDeEsperaLido,
+  type EsperaDaConversa,
+  type PedidoDeEsperaLido,
+  type RespostaDaEntradaNaEspera,
+  type RespostaDoPedidoDeEspera,
+} from "./ferramentas/lista-de-espera";
+import {
   conferirConsultaDaIa,
   consultaListavel,
   emOrdem,
@@ -1423,6 +1432,177 @@ export async function lerSaidaAntesDaRespostaDaIa(
   };
 }
 
+// ---------------------------------------------------------------------------
+// AG5 (27/10/2026): a lista de espera pela IA
+// ---------------------------------------------------------------------------
+
+/** O pedido da porta (o do estado do atendimento e a preferencia). */
+type PedidoDaPorta = Parameters<NonNullable<PortaDaAgenda["pedirListaDeEspera"]>>[0];
+
+/**
+ * AG5: pedir_lista_de_espera_pela_ia com o job_id do turno (desenho da AG5,
+ * 3.3 b): o pedido do ESTADO do atendimento (procedimento, profissional ou
+ * qualquer, pagamento) e a preferencia que a pessoa disse. Repetir o job
+ * devolve o mesmo pedido. Lanca no erro (inclusive os 22023 de quem chama),
+ * no prazo e na resposta fora do formato.
+ */
+export async function pedirListaDeEsperaPelaIa(
+  admin: Cliente,
+  ids: IdsDoTurno,
+  pedido: PedidoDaPorta,
+): Promise<RespostaDoPedidoDeEspera> {
+  const corrida = await rpcComPrazo(admin, "pedir_lista_de_espera_pela_ia", {
+    p_clinic_id: ids.clinicId,
+    p_conversation_id: ids.conversationId,
+    p_job_id: ids.jobId,
+    p_procedure_id: pedido.procedimentoId,
+    p_professional_id: pedido.profissionalId,
+    p_insurance_id: pedido.convenioId,
+    p_particular: pedido.particular,
+    p_turnos: [...pedido.turnos],
+    p_dias: [...pedido.dias],
+  });
+  if (corrida.tipo !== "resultado") {
+    return falhou(ids, "pedir_lista_de_espera", corrida.tipo);
+  }
+  const lida = lerRespostaDoPedidoDeEspera(corrida.valor);
+  if (lida === null) {
+    return falhou(ids, "pedir_lista_de_espera", "resposta_fora_do_formato");
+  }
+  log.info(lida.ok ? "ia_espera_pediu" : "ia_espera_pedido_recusado", {
+    clinic_id: ids.clinicId,
+    conversation_id: ids.conversationId,
+    job_id: ids.jobId,
+    ...(lida.ok
+      ? { status: lida.reutilizado ? "reutilizado" : "nova" }
+      : { error_code: lida.motivo }),
+  });
+  return lida;
+}
+
+/**
+ * AG5: entrar_na_lista_de_espera_pela_ia com o job_id do turno (desenho da
+ * AG5, 3.3 c): o banco confere de novo, ancora o "sim" na pergunta escrita
+ * pelo job do pedido e cria a entrada. Repetir o job devolve a mesma
+ * entrada. Lanca no erro, no prazo e na resposta fora do formato.
+ */
+export async function entrarNaListaDeEsperaPelaIa(
+  admin: Cliente,
+  ids: IdsDoTurno,
+): Promise<RespostaDaEntradaNaEspera> {
+  const corrida = await rpcComPrazo(admin, "entrar_na_lista_de_espera_pela_ia", {
+    p_clinic_id: ids.clinicId,
+    p_conversation_id: ids.conversationId,
+    p_job_id: ids.jobId,
+  });
+  if (corrida.tipo !== "resultado") {
+    return falhou(ids, "entrar_na_lista_de_espera", corrida.tipo);
+  }
+  const lida = lerRespostaDaEntradaNaEspera(corrida.valor);
+  if (lida === null) {
+    return falhou(ids, "entrar_na_lista_de_espera", "resposta_fora_do_formato");
+  }
+  log.info(lida.ok ? "ia_espera_entrou" : "ia_espera_entrada_recusada", {
+    clinic_id: ids.clinicId,
+    conversation_id: ids.conversationId,
+    job_id: ids.jobId,
+    ...(lida.ok
+      ? { status: lida.reutilizado ? "reutilizado" : "nova" }
+      : { error_code: lida.motivo }),
+  });
+  return lida;
+}
+
+/** Os pedidos da conversa lidos de uma vez (o vivo e os consumidos). */
+const PEDIDOS_DA_CONVERSA = 20;
+
+/**
+ * AG5: o pedido da lista de espera desta conversa, na janela ATUAL da IA
+ * (ia_janela_da_conversa.desde e o contato dela, como as RPCs conferem), e
+ * os consumidos nesta janela cuja entrada continua ativa (waitlist.active).
+ * Service role com o clinic_id explicito; so ids, listas fechadas e
+ * instantes (nunca texto do paciente). O instante da janela e comparado
+ * exato (os microssegundos, instanteExatoDoBanco). Sem janela: nada. Lanca
+ * na leitura que falha ou passa do prazo.
+ */
+export async function lerPedidoDeEsperaDaIa(
+  admin: Cliente,
+  ids: IdsDoTurno,
+): Promise<EsperaDaConversa> {
+  const corrida = await correrComPrazo(async (): Promise<EsperaDaConversa> => {
+    const janela = await admin
+      .from("ia_janela_da_conversa")
+      .select("desde, contact_id")
+      .eq("clinic_id", ids.clinicId)
+      .eq("conversation_id", ids.conversationId)
+      .maybeSingle();
+    if (janela.error) {
+      throw new Error("leitura");
+    }
+    const linhaDaJanela = janela.data as {
+      desde?: unknown;
+      contact_id?: unknown;
+    } | null;
+    const desde = instanteExatoDoBanco(linhaDaJanela?.desde);
+    const contato = linhaDaJanela?.contact_id;
+    if (desde === null || typeof contato !== "string") {
+      return { vivo: null, entradas: [] };
+    }
+    const pedidos = await admin
+      .from("ia_pedido_de_espera")
+      .select(
+        "id, job_id, contact_id, janela_desde, procedure_id, professional_id, insurance_id, particular, preferred_shifts, preferred_weekdays, created_at, consumido_em, waitlist_id",
+      )
+      .eq("clinic_id", ids.clinicId)
+      .eq("conversation_id", ids.conversationId)
+      .order("created_at", { ascending: false })
+      .limit(PEDIDOS_DA_CONVERSA);
+    if (pedidos.error) {
+      throw new Error("leitura");
+    }
+    type Linha = Record<string, unknown>;
+    const daJanela = ((pedidos.data ?? []) as Linha[]).filter(
+      (l) =>
+        l.contact_id === contato &&
+        instanteExatoDoBanco(l.janela_desde) === desde,
+    );
+    const linhaViva = daJanela.find((l) => l.consumido_em === null);
+    const vivo = linhaViva === undefined ? null : pedidoDeEsperaLido(linhaViva);
+    const consumidos = daJanela.filter(
+      (l) => l.consumido_em !== null && typeof l.waitlist_id === "string",
+    );
+    let entradas: PedidoDeEsperaLido[] = [];
+    if (consumidos.length > 0) {
+      const ativas = await admin
+        .from("waitlist")
+        .select("id")
+        .eq("clinic_id", ids.clinicId)
+        .eq("active", true)
+        .in(
+          "id",
+          consumidos.map((l) => String(l.waitlist_id)),
+        );
+      if (ativas.error) {
+        throw new Error("leitura");
+      }
+      const idsAtivos = new Set(
+        ((ativas.data ?? []) as { id?: unknown }[]).map((r) => r.id),
+      );
+      entradas = consumidos
+        .filter((l) => idsAtivos.has(l.waitlist_id))
+        .flatMap((l) => {
+          const lido = pedidoDeEsperaLido(l);
+          return lido === null ? [] : [lido];
+        });
+    }
+    return { vivo, entradas };
+  }, PRAZO_DA_AGENDA_MS);
+  if (corrida.tipo !== "resultado") {
+    return falhou(ids, "ler_pedido_de_espera", corrida.tipo);
+  }
+  return corrida.valor;
+}
+
 /**
  * A porta do turno do WhatsApp (lib/jobs/responder-com-ia.ts): a Agenda de
  * verdade e as RPCs com o job_id do turno. Revisao da revisao final da AG4
@@ -1467,6 +1647,10 @@ export function portaDaAgendaDoWhatsapp(
     // job, a citacao da resposta.
     lerSaidaAntesDaResposta: () =>
       lerSaidaAntesDaRespostaDaIa(admin, ids, ids.mensagensLidas),
+    // AG5: a lista de espera.
+    pedirListaDeEspera: (pedido) => pedirListaDeEsperaPelaIa(admin, ids, pedido),
+    entrarNaListaDeEspera: () => entrarNaListaDeEsperaPelaIa(admin, ids),
+    lerPedidoDeEspera: () => lerPedidoDeEsperaDaIa(admin, ids),
   };
 }
 
@@ -1511,6 +1695,15 @@ export type MemoriaDoSimulador = {
    * como a RPC. Ausente no pacote de antes: nao recusa.
    */
   consulta: (ConsultaSimulada & { remarcacaoDe?: ConsultaSimulada }) | null;
+  /**
+   * AG5: a lista de espera SIMULADA (ids inventados, nada gravado): o pedido
+   * vivo (a pergunta T-E1 feita) e as entradas feitas na conversa de teste.
+   * Ausente no pacote de antes: nada.
+   */
+  espera?: {
+    pedido: PedidoDeEsperaLido | null;
+    entradas: PedidoDeEsperaLido[];
+  };
 };
 
 /**
@@ -1609,6 +1802,96 @@ export function portaDaAgendaDoSimulador(
         c !== null && consultaListavel(c, e.agora()),
     );
   };
+  /**
+   * AG5: as conferencias do banco para a lista de espera que o simulador
+   * sabe fazer (na ordem do banco): a unidade, o vinculo que a IA marca, a
+   * entrada no mesmo grupo, a consulta para outra pessoa e a consulta do
+   * mesmo procedimento (a simulada). A autorizacao e a idade nao (o contato
+   * do simulador nao existe).
+   */
+  const conferirEsperaSimulada = (
+    pedido: Pick<
+      PedidoDeEsperaLido,
+      "procedimentoId" | "profissionalId" | "convenioId"
+    >,
+  ): RespostaDoPedidoDeEspera | null => {
+    const catalogo = e.catalogo;
+    if (catalogo === undefined) {
+      return { ok: false, motivo: "so_com_a_equipe" };
+    }
+    if ((catalogo.unidades ?? []).length > 1) {
+      return { ok: false, motivo: "mais_de_uma_unidade" };
+    }
+    if (
+      !catalogo.vinculos.some(
+        (v) =>
+          v.id !== null &&
+          v.procedimentoId === pedido.procedimentoId &&
+          v.convenioId === pedido.convenioId &&
+          (pedido.profissionalId === null ||
+            v.profissionalId === pedido.profissionalId),
+      )
+    ) {
+      return { ok: false, motivo: "so_com_a_equipe" };
+    }
+    const noGrupo = (memoria?.espera?.entradas ?? []).find(
+      (p) =>
+        p.procedimentoId === pedido.procedimentoId &&
+        p.profissionalId === pedido.profissionalId,
+    );
+    if (noGrupo !== undefined) {
+      return {
+        ok: false,
+        motivo: "ja_na_lista",
+        entrada: {
+          profissional: nomeDoProfissionalSimulado(noGrupo.profissionalId),
+          turnos: [...noGrupo.turnos],
+          dias: [...noGrupo.dias],
+        },
+      };
+    }
+    if (dadosAtuais.para_o_titular === false) {
+      return { ok: false, motivo: "consulta_para_outra_pessoa" };
+    }
+    const consulta = memoria?.consulta ?? null;
+    const procedimentoDaConsulta =
+      consulta?.serviceLinkId === undefined
+        ? undefined
+        : vinculoDe(consulta.serviceLinkId)?.procedimentoId;
+    if (
+      consulta !== null &&
+      Date.parse(consulta.inicio) > e.agora() &&
+      procedimentoDaConsulta === pedido.procedimentoId
+    ) {
+      return { ok: false, motivo: "ja_tem_consulta", inicio: consulta.inicio };
+    }
+    return null;
+  };
+  /** AG5: o nome do profissional simulado (null: qualquer). */
+  const nomeDoProfissionalSimulado = (id: string | null): string | null =>
+    id === null
+      ? null
+      : ((e.catalogo?.profissionais ?? []).find((p) => p.id === id)?.nome ??
+        e.catalogo?.vinculos.find((v) => v.profissionalId === id)?.profissional ??
+        null);
+  /** AG5: os nomes do pedido simulado, como a RPC devolve. */
+  const nomesDoPedidoSimulado = (
+    p: Pick<PedidoDeEsperaLido, "procedimentoId" | "profissionalId" | "convenioId">,
+  ) => {
+    const convenio = [
+      ...(e.catalogo?.conveniosDoCadastro ?? []),
+      ...(e.catalogo?.convenios ?? []),
+    ].find((c) => c.id === p.convenioId);
+    return {
+      procedimento:
+        e.catalogo?.procedimentos.find((x) => x.id === p.procedimentoId)?.nome ??
+        null,
+      profissional: nomeDoProfissionalSimulado(p.profissionalId),
+      convenio: convenio?.nome ?? null,
+      plano: convenio?.plano ?? null,
+    };
+  };
+
   /** AG4: a conferencia do banco, sobre a consulta simulada. */
   const conferirSimulada = (
     id: string,
@@ -1995,6 +2278,74 @@ export function portaDaAgendaDoSimulador(
       return {
         consultas: lista.slice(0, MAXIMO_DE_CONSULTAS_NA_LISTA),
         haMais: lista.length > MAXIMO_DE_CONSULTAS_NA_LISTA,
+      };
+    },
+    // AG5: a lista de espera simulada, com as conferencias do banco que o
+    // simulador sabe fazer. Nada gravado: so a memoria assinada do
+    // simulador guarda o pedido e a entrada.
+    lerPedidoDeEspera: async () => ({
+      vivo: memoria?.espera?.pedido ?? null,
+      entradas: [...(memoria?.espera?.entradas ?? [])],
+    }),
+    pedirListaDeEspera: async (pedido) => {
+      const recusa = conferirEsperaSimulada(pedido);
+      if (recusa !== null) {
+        return recusa;
+      }
+      // A preferencia normalizada como o banco: em ordem, sem repetir, e os
+      // tres periodos ou os sete dias viram "qualquer" (vazio).
+      const turnos = (["manha", "tarde", "noite"] as const).filter((t) =>
+        pedido.turnos.includes(t),
+      );
+      const dias = [...new Set(pedido.dias)].sort((a, b) => a - b);
+      const simulado: PedidoDeEsperaLido = {
+        id: randomUUID(),
+        jobId: randomUUID(),
+        procedimentoId: pedido.procedimentoId,
+        profissionalId: pedido.profissionalId,
+        convenioId: pedido.convenioId,
+        particular: pedido.particular,
+        turnos: turnos.length === 3 ? [] : [...turnos],
+        dias: dias.length === 7 ? [] : dias,
+        criadoEm: new Date(e.agora()).toISOString(),
+      };
+      if (memoria !== undefined) {
+        memoria.espera = {
+          pedido: simulado,
+          entradas: [...(memoria.espera?.entradas ?? [])],
+        };
+      }
+      return {
+        ok: true,
+        reutilizado: false,
+        ...nomesDoPedidoSimulado(simulado),
+        particular: simulado.particular,
+        turnos: [...simulado.turnos],
+        dias: [...simulado.dias],
+      };
+    },
+    entrarNaListaDeEspera: async () => {
+      const pedido = memoria?.espera?.pedido ?? null;
+      if (memoria === undefined || pedido === null) {
+        return { ok: false, motivo: "sem_pedido_de_espera" };
+      }
+      const recusa = conferirEsperaSimulada(pedido);
+      if (recusa !== null) {
+        return recusa.ok
+          ? { ok: false, motivo: "sem_pedido_de_espera" }
+          : recusa;
+      }
+      memoria.espera = {
+        pedido: null,
+        entradas: [...(memoria.espera?.entradas ?? []), pedido],
+      };
+      return {
+        ok: true,
+        reutilizado: false,
+        ...nomesDoPedidoSimulado(pedido),
+        particular: pedido.particular,
+        turnos: [...pedido.turnos],
+        dias: [...pedido.dias],
       };
     },
     // AG4: o cancelamento simulado, com a conferencia do banco. Nada

@@ -6,6 +6,7 @@ import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import {
+  acessoAConversaDaEspera,
   fetchConfigDaEspera,
   fetchFilaDeEspera,
   fetchMetricasDaEspera,
@@ -88,6 +89,9 @@ export default async function EsperaPage({
   // ficha (concederConsentimentoAction), guardada pela chave de leads e
   // pacientes: a permissao vem resolvida daqui, com a dica do mesmo modulo.
   const podeRegistrarAutorizacao = canEdit(active.role, "leads_pacientes");
+  // AG5: o "Abrir conversa" da entrada que a IA criou, pelo papel no
+  // Atendimento (o profissional so le a conversa atribuida a ele).
+  const conversa = acessoAConversaDaEspera(active.role);
 
   return (
     <div className="flex flex-col gap-3.5 p-6">
@@ -104,6 +108,8 @@ export default async function EsperaPage({
         dicaSemPermissao={
           "Seu perfil vê a lista de espera, sem alterar (quem altera é a recepção e a gestão)"
         }
+        podeAbrirConversa={conversa.pode}
+        dicaAbrirConversa={conversa.dica}
         podeRegistrarAutorizacao={podeRegistrarAutorizacao}
         dicaAutorizacao={
           permissionHint(active.role, "leads_pacientes") ??

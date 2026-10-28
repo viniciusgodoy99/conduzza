@@ -344,9 +344,10 @@ describe("Agendar consulta só liga com a agenda do rascunho (salvarHabilidadesA
 
   it("com os dois preenchidos, liga e grava junto do que já estava", async () => {
     // A chave que esta tela nao conhece fica gravada (AG4: "remarcar" virou
-    // habilidade conhecida; a desconhecida agora e "lista_de_espera").
+    // habilidade conhecida; AG5: "lista_de_espera" tambem; a desconhecida
+    // agora e "encaixe", que nunca e da IA).
     banco.rascunho = {
-      skills: { lista_de_espera: true },
+      skills: { encaixe: true },
       agenda_antecedencia_horas: 2,
       agenda_horizonte_dias: 30,
     };
@@ -361,7 +362,7 @@ describe("Agendar consulta só liga com a agenda do rascunho (salvarHabilidadesA
       banco.escritas()[0]?.dados as { skills: Record<string, boolean> }
     ).skills;
     expect(skills).toMatchObject({
-      lista_de_espera: true,
+      encaixe: true,
       agendar: true,
       confirmar_presenca: true,
       informar_preco_e_convenio: true,

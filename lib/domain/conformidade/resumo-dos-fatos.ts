@@ -38,7 +38,11 @@
 //    da pessoa nunca entram;
 //  - os textos publicados pela clinica: as frases com endereco, as
 //    respostas da base que o modelo disse ter usado e os textos fixos
-//    colados na resposta (saudacao, aviso, encerramento).
+//    colados na resposta (saudacao, aviso, encerramento);
+//  - AG5 (27/10/2026): se a pessoa esta na lista de espera (a entrada criada
+//    nesta conversa, relida, ou a que ja existia), SEM o procedimento, o
+//    profissional e a preferencia (minimizacao); a acao do turno continua
+//    sendo "colocou a pessoa na lista de espera".
 // As mensagens do paciente nunca entram (o verificador ja as recebe,
 // minimizadas, em bloco proprio) e o rascunho so escolhe quais textos fixos
 // estao colados nele. Quem chama (filtro.ts) bloqueia quando o resumo nao
@@ -82,7 +86,9 @@ const ROTULO_DA_ACAO: Readonly<Record<AcaoDoTurno, string>> = {
   // AG4: a remarcacao fica pendente da aprovacao da equipe (D-10).
   remarcou:
     "pediu a remarcação da consulta, pendente da aprovação da equipe; a consulta de antes continua marcada até lá",
-  lista_de_espera: "colocou a pessoa na lista de espera",
+  // AG5: a lista nao marca consulta nem promete horario.
+  lista_de_espera:
+    "colocou a pessoa na lista de espera (nenhum horário marcado; se abrir um horário, a pessoa recebe uma mensagem)",
 };
 
 /**
@@ -109,6 +115,19 @@ const ROTULO_DA_REMARCACAO_COM_A_ANTIGA =
 
 /** O que segue a acao que nao tem o horario dela no turno. */
 const SEM_HORARIO_DA_ACAO = "(sem dia e hora informados)";
+
+/**
+ * AG5: a pessoa esta na lista de espera, lido pelo sistema nesta resposta (a
+ * entrada que a assistente criou nesta conversa, relida e ativa, ou a que ja
+ * existia no mesmo pedido). Sem o procedimento, o profissional e a
+ * preferencia (minimizacao).
+ */
+const ROTULO_DA_LISTA_DE_ESPERA = {
+  conversa:
+    "A pessoa está na lista de espera (entrada feita pela assistente nesta conversa, relida pelo sistema nesta resposta; nenhum horário marcado).",
+  existente:
+    "A pessoa já estava na lista de espera para este pedido (lido pelo sistema nesta resposta; nenhum horário marcado).",
+} as const;
 
 const ROTULO_DO_ESTADO: Readonly<Record<EstadoDaCobertura, string>> = {
   coberto: "cobre",
@@ -291,8 +310,9 @@ export function resumirFatosDoTurno(
   for (const acao of new Set(fatos.acoes)) {
     const comHorario = fatos.horariosDasAcoes.filter((h) => h.acao === acao);
     if (comHorario.length === 0) {
+      // AG5: a lista de espera nunca tem dia e hora (nao e consulta).
       acoes.push(
-        acao === "confirmou_presenca"
+        acao === "confirmou_presenca" || acao === "lista_de_espera"
           ? ROTULO_DA_ACAO[acao]
           : `${ROTULO_DA_ACAO[acao]} ${SEM_HORARIO_DA_ACAO}`,
       );
@@ -406,6 +426,15 @@ export function resumirFatosDoTurno(
     (colado) => colado.trim() !== "" && rascunho.includes(colado.trim()),
   );
 
+  // AG5: a pessoa esta na lista de espera (a entrada desta conversa ou a que
+  // ja existia), so isso (minimizacao).
+  const entradas = fatos.entradasDaEspera ?? [];
+  const naLista = entradas.some((e) => e.origem === "conversa")
+    ? ROTULO_DA_LISTA_DE_ESPERA.conversa
+    : entradas.some((e) => e.origem === "existente")
+      ? ROTULO_DA_LISTA_DE_ESPERA.existente
+      : null;
+
   const resumo = [
     `Hoje na clínica: ${hoje}.`,
     secao(
@@ -413,6 +442,7 @@ export function resumirFatosDoTurno(
       acoes,
       "nenhuma",
     ),
+    ...(naLista === null ? [] : [naLista]),
     consultaLida,
     ...(canceladas.length === 0
       ? []
@@ -490,4 +520,7 @@ export const FONTES_DO_RESUMO: readonly string[] = [
   // nesta conversa.
   "resumo: a remarcacao pedida nesta conversa e ja aprovada avisada como aprovada",
   "resumo: as consultas canceladas pela assistente nesta conversa, relidas, numa secao propria so quando ha",
+  // AG5: a lista de espera.
+  JSON.stringify(ROTULO_DA_LISTA_DE_ESPERA),
+  "resumo: a lista de espera sem dia e hora; a pessoa na lista sem o procedimento, o profissional e a preferencia",
 ];

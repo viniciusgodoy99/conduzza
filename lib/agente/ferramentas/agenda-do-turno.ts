@@ -141,6 +141,12 @@
 // conta a leu, e a conferencia vem antes das recusas que dependem do que a
 // pessoa disse (faltam_dados, consulta_mudou, pedido_vencido): com
 // mensagem nova, nada daqui pergunta de novo nem pede dado.
+// AG5 (27/10/2026), a lista de espera pela IA: pedir_lista_de_espera e
+// entrar_na_lista_de_espera moram em ferramentas/espera-do-turno.ts (o
+// executor, o preparo, os fatos, o bloco e a nota); daqui so o despacho, a
+// porta (pedirListaDeEspera, entrarNaListaDeEspera e lerPedidoDeEspera) e a
+// costura do preparo (a pergunta T-E1 do turno anterior e conferida pela
+// mesma saida antes da resposta da AG4), do bloco, dos fatos e da nota.
 // Nada daqui tem texto do paciente: a trilha cita nomes do Cadastro, dias,
 // horas e os nomes dos campos. O "sim" do cancelamento e lido do texto
 // original da mensagem (sem sair do turno, nunca para log).
@@ -232,6 +238,17 @@ import {
   respostaDaRemarcacao,
   respostaDoCancelamento,
 } from "./frases-da-agenda";
+import {
+  criarEsperaDoTurno,
+  PAROU_EM_DA_ESPERA,
+  type ListaDeEsperaParaOModelo,
+} from "./espera-do-turno";
+import type {
+  EsperaDaConversa,
+  PeriodoDaEspera,
+  RespostaDaEntradaNaEspera,
+  RespostaDoPedidoDeEspera,
+} from "./lista-de-espera";
 import {
   conferirConsultaDaIa,
   emOrdem,
@@ -379,6 +396,30 @@ export type PortaDaAgenda = {
    * antes das pendentes do historico.
    */
   lerSaidaAntesDaResposta?: () => Promise<SaidaAntesDaResposta | null>;
+  /**
+   * AG5: pedir_lista_de_espera_pela_ia com o job_id do turno (o pedido do
+   * estado do atendimento e a preferencia que a pessoa disse). Lanca no
+   * erro, no prazo e na resposta fora do formato.
+   */
+  pedirListaDeEspera?: (pedido: {
+    procedimentoId: string;
+    /** null: qualquer profissional. */
+    profissionalId: string | null;
+    /** null: particular. */
+    convenioId: string | null;
+    particular: boolean;
+    turnos: PeriodoDaEspera[];
+    /** 0 (domingo) a 6 (sabado). */
+    dias: number[];
+  }) => Promise<RespostaDoPedidoDeEspera>;
+  /** AG5: entrar_na_lista_de_espera_pela_ia com o job_id do turno. */
+  entrarNaListaDeEspera?: () => Promise<RespostaDaEntradaNaEspera>;
+  /**
+   * AG5: o pedido vivo da lista de espera desta conversa (na janela atual) e
+   * os consumidos nesta janela com a entrada ainda ativa. Lanca na leitura
+   * que falha.
+   */
+  lerPedidoDeEspera?: () => Promise<EsperaDaConversa>;
 };
 
 /**
@@ -485,7 +526,14 @@ export const ROTULO_DO_MOTIVO_DA_AGENDA: Readonly<
     | MotivoDaReserva
     | MotivoDoAgendar
     | MotivoDoCancelamento
-    | MotivoDaConferenciaDaConsulta,
+    | MotivoDaConferenciaDaConsulta
+    // AG5: os motivos novos da lista de espera (os de nome repetido tem o
+    // texto da lista em ROTULO_DO_MOTIVO_DA_ESPERA, espera-do-turno.ts).
+    | "ja_na_lista"
+    | "mais_de_uma_unidade"
+    | "sem_autorizacao"
+    | "lista_de_espera_desligada"
+    | "sem_pedido_de_espera",
     string
   >
 > = {
@@ -536,6 +584,14 @@ export const ROTULO_DO_MOTIVO_DA_AGENDA: Readonly<
   // Revisao curta das correcoes da AG4 (achado 1).
   mensagem_nova_do_paciente:
     "a pessoa mandou outra mensagem enquanto o assistente respondia",
+  // AG5: a lista de espera.
+  ja_na_lista: "a pessoa já está na lista de espera para esse pedido",
+  mais_de_uma_unidade:
+    "a clínica tem mais de uma unidade, e a lista de espera ainda não guarda a unidade",
+  sem_autorizacao: "o contato não tem autorização para receber mensagens",
+  lista_de_espera_desligada:
+    "a lista de espera não está ligada, ou Agendar consulta não vale, na versão publicada",
+  sem_pedido_de_espera: "não havia pedido de lista de espera nesta conversa",
 };
 
 /** O passo da trilha de cada motivo de confirmar_presenca. */
@@ -587,6 +643,8 @@ const PAROU_EM: Readonly<Record<string, string>> = {
   menor_de_idade: "o paciente é menor de idade",
   cpf_invalido: "o CPF informado não confere",
   dados_invalidos: "um dado informado não está no formato",
+  // AG5: a lista de espera.
+  ...PAROU_EM_DA_ESPERA,
 };
 
 const SIMULADO = "No simulador, nada foi gravado.";
@@ -668,6 +726,11 @@ export type AtendimentoParaOModelo = {
     para: { dia: string; hora: string };
     pendente: boolean;
   } | null;
+  /**
+   * AG5: a lista de espera nesta conversa (a pergunta em andamento e as
+   * entradas feitas nesta conversa, relidas).
+   */
+  listaDeEspera?: ListaDeEsperaParaOModelo | null;
 };
 
 export type FechamentoDoTurno = {
@@ -702,6 +765,13 @@ export type AgendaDoTurno = {
   }) => FechamentoDoTurno;
   /** AG3: a nota para a equipe na passagem (null: nada a contar). */
   nota: (motivo: string) => string | null;
+  /**
+   * AG5: le a lista de espera desta conversa so para a nota, quando o turno
+   * passou para a equipe antes do preparo (o portao de entrada, o
+   * classificador): o pedido e a entrada moram fora do estado. Nunca lanca;
+   * ja lida no preparo, nada faz.
+   */
+  lerParaANota: () => Promise<void>;
   /**
    * Revisao final da AG3 (LGPD): os nomes completos que o modelo mandou
    * registrar neste turno (como ele copiou, sem a marca do contato e como o
@@ -1249,6 +1319,28 @@ export function criarAgendaDoTurno(entrada: {
     prazoDaAcao(entrada.config.prazos ?? null, acao);
 
   /**
+   * AG5: a lista de espera do turno (o executor das duas ferramentas, o
+   * preparo, o bloco, os fatos e a nota). Le o estado e o catalogo do
+   * turno, e a pergunta do turno anterior e conferida pelos mecanismos da
+   * AG4 (conferirAPergunta, a citacao e o instante da saida lida).
+   */
+  const espera = criarEsperaDoTurno({
+    porta,
+    catalogo,
+    ligada: ferramentasLigadas.includes("pedir_lista_de_espera"),
+    estado,
+    agoraMs,
+    fuso,
+    relogio,
+    pendentes: entrada.mensagens?.pendentes ?? [],
+    resultados,
+    conferirAPergunta: (frase, molde) => conferirAPergunta(frase, molde),
+    respostaCitaOutraMensagem: () => respostaCitaOutraMensagem(),
+    instanteDaPergunta: () => instanteDaPergunta(),
+    nomeDoProfissional: (id) => nomeDoProfissional(id),
+  });
+
+  /**
    * AG4: uma consulta como fato do turno (o dia, a hora, a unidade e o
    * profissional do Cadastro). "marcada": a IA marcou nesta conversa;
    * "remarcada": e a remarcacao pedida nesta conversa, ainda pendente.
@@ -1750,8 +1842,13 @@ export function criarAgendaDoTurno(entrada: {
     // Revisao da revisao final da AG4 (o toque atrasado): tambem com o
     // "Confirma ...?" da marcacao (a etapa aguardando_confirmacao sem a
     // remarcacao), so pela citacao da resposta (o agendar confere).
+    // AG5: o pedido e a entrada da lista de espera desta conversa (so com a
+    // habilidade ligada); o pedido vivo e uma pergunta a conferir (T-E1).
+    await espera.ler();
     const temPerguntaAConferir =
-      modoInicial === "cancelar" || etapaInicial === "aguardando_confirmacao";
+      modoInicial === "cancelar" ||
+      etapaInicial === "aguardando_confirmacao" ||
+      espera.temPerguntaAConferir();
     if (temPerguntaAConferir && porta.lerSaidaAntesDaResposta !== undefined) {
       try {
         saidaAntes = {
@@ -1763,8 +1860,9 @@ export function criarAgendaDoTurno(entrada: {
       }
     }
     // Revisao da AG4 (achado 1): a pergunta do turno anterior (T1 ou T3) so
-    // vale para a resposta que veio logo depois dela.
+    // vale para a resposta que veio logo depois dela. AG5: a T-E1 tambem.
     conferirAPerguntaDoTurnoAnterior();
+    espera.conferir();
     // Os horarios oferecidos e, revisao final da AG3, o horario da reserva
     // viva: continuam livres? (A reserva desta conversa nao ocupa o horario
     // dela.)
@@ -4021,7 +4119,11 @@ export function criarAgendaDoTurno(entrada: {
     if (!comEstado) {
       return null;
     }
+    // AG5: a lista de espera nesta conversa (a pergunta e as entradas).
+    const listaDeEspera = espera.paraOModelo();
+    const comAEspera = listaDeEspera === null ? {} : { listaDeEspera };
     const nada =
+      listaDeEspera === null &&
       estado.etapa === "informacao" &&
       estado.intencao === null &&
       estado.procedure_id === null &&
@@ -4043,7 +4145,7 @@ export function criarAgendaDoTurno(entrada: {
     // pagamento dela (e dos horarios da remarcacao, que sao os mesmos) ficam
     // no servidor.
     if (modoInicial === "cancelar" || modoInicial === "remarcar" || modoInicial === "remarcou") {
-      return paraOModeloNaConsulta();
+      return { ...paraOModeloNaConsulta(), ...comAEspera };
     }
     const procedimento = procedimentoDe(estado.procedure_id ?? undefined);
     const profissionalDoIndice = (catalogo.profissionais ?? []).find(
@@ -4137,6 +4239,7 @@ export function criarAgendaDoTurno(entrada: {
       ...(canceladaLida === null
         ? {}
         : { cancelada: { dia: canceladaLida.dia, hora: canceladaLida.hora } }),
+      ...comAEspera,
     };
   }
 
@@ -4296,12 +4399,15 @@ export function criarAgendaDoTurno(entrada: {
       estado.horarios_oferecidos.some((e) => e.codigo === h.codigo),
     );
     const r = reservaLegivel();
+    // AG5: as entradas da lista de espera desta conversa, relidas.
+    const daEspera = espera.fatosDoEstado();
     if (
       oferecidos.length === 0 &&
       r === null &&
       consultaLida === null &&
       doPedido.fatos.length === 0 &&
-      doPedido.canceladas.length === 0
+      doPedido.canceladas.length === 0 &&
+      daEspera === null
     ) {
       return null;
     }
@@ -4356,6 +4462,10 @@ export function criarAgendaDoTurno(entrada: {
       ...(doPedido.canceladas.length === 0
         ? {}
         : { consultasCanceladas: doPedido.canceladas }),
+      // AG5: a pessoa esta na lista de espera (a entrada desta conversa).
+      ...(daEspera?.entradasDaEspera === undefined
+        ? {}
+        : { entradasDaEspera: daEspera.entradasDaEspera }),
     };
     return {
       saida: JSON.stringify({
@@ -4654,6 +4764,8 @@ export function criarAgendaDoTurno(entrada: {
       parouEm,
       pedidoDaConsulta,
       remarcacao,
+      // AG5: a lista de espera (o pedido e a situacao).
+      listaDeEspera: espera.nota(),
     });
   }
 
@@ -4680,6 +4792,17 @@ export function criarAgendaDoTurno(entrada: {
           return cancelarConsulta(argumentos);
         case "buscar_horario_para_remarcar":
           return buscarParaRemarcar(argumentos);
+        // AG5: a lista de espera (espera-do-turno.ts). A mensagem nova da
+        // pessoa (mensagem_nova_do_paciente da fase 2) para o turno como no
+        // cancelamento: o fechamento devolve o estado do comeco.
+        case "pedir_lista_de_espera":
+        case "entrar_na_lista_de_espera":
+          return espera.executar(nome, argumentos).then((r) => {
+            if (r.tipo === "mensagem_nova") {
+              mensagemNova = true;
+            }
+            return r;
+          });
       }
     },
     preparar,
@@ -4689,6 +4812,7 @@ export function criarAgendaDoTurno(entrada: {
     falhasDepois,
     fechar,
     nota,
+    lerParaANota: () => (comEstado ? espera.ler() : Promise.resolve()),
     nomesValidados: () => [...nomesValidados],
   };
 }

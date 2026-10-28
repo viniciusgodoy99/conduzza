@@ -2652,6 +2652,78 @@ export type Database = {
           },
         ]
       }
+      ia_pedido_de_espera: {
+        Row: {
+          clinic_id: string
+          consumido_em: string | null
+          contact_id: string
+          conversation_id: string
+          created_at: string
+          id: string
+          insurance_id: string | null
+          janela_desde: string
+          job_id: string
+          job_id_da_entrada: string | null
+          particular: boolean
+          preferred_shifts: string[]
+          preferred_weekdays: number[]
+          procedure_id: string
+          professional_id: string | null
+          waitlist_id: string | null
+        }
+        Insert: {
+          clinic_id: string
+          consumido_em?: string | null
+          contact_id: string
+          conversation_id: string
+          created_at?: string
+          id?: string
+          insurance_id?: string | null
+          janela_desde: string
+          job_id: string
+          job_id_da_entrada?: string | null
+          particular: boolean
+          preferred_shifts?: string[]
+          preferred_weekdays?: number[]
+          procedure_id: string
+          professional_id?: string | null
+          waitlist_id?: string | null
+        }
+        Update: {
+          clinic_id?: string
+          consumido_em?: string | null
+          contact_id?: string
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          insurance_id?: string | null
+          janela_desde?: string
+          job_id?: string
+          job_id_da_entrada?: string | null
+          particular?: boolean
+          preferred_shifts?: string[]
+          preferred_weekdays?: number[]
+          procedure_id?: string
+          professional_id?: string | null
+          waitlist_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ia_pedido_de_espera_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ia_pedido_de_espera_waitlist_id_fkey"
+            columns: ["waitlist_id"]
+            isOneToOne: false
+            referencedRelation: "waitlist"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ia_requisito_da_producao: {
         Row: {
           chave: string
@@ -5000,8 +5072,13 @@ export type Database = {
           active: boolean
           clinic_id: string
           contact_id: string
+          conversation_id: string | null
           created_at: string
+          ia_job_id: string | null
           id: string
+          insurance_id: string | null
+          origem: string
+          particular: boolean | null
           preferred_shifts: string[]
           preferred_weekdays: number[]
           priority: number
@@ -5013,8 +5090,13 @@ export type Database = {
           active?: boolean
           clinic_id: string
           contact_id: string
+          conversation_id?: string | null
           created_at?: string
+          ia_job_id?: string | null
           id?: string
+          insurance_id?: string | null
+          origem?: string
+          particular?: boolean | null
           preferred_shifts?: string[]
           preferred_weekdays?: number[]
           priority?: number
@@ -5026,8 +5108,13 @@ export type Database = {
           active?: boolean
           clinic_id?: string
           contact_id?: string
+          conversation_id?: string | null
           created_at?: string
+          ia_job_id?: string | null
           id?: string
+          insurance_id?: string | null
+          origem?: string
+          particular?: boolean | null
           preferred_shifts?: string[]
           preferred_weekdays?: number[]
           priority?: number
@@ -5048,6 +5135,13 @@ export type Database = {
             columns: ["contact_id"]
             isOneToOne: false
             referencedRelation: "contact"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "waitlist_insurance_id_fkey"
+            columns: ["insurance_id"]
+            isOneToOne: false
+            referencedRelation: "insurance"
             referencedColumns: ["id"]
           },
           {
@@ -5691,6 +5785,18 @@ export type Database = {
         }
         Returns: Record<string, unknown>
       }
+      conferir_pedido_de_espera_da_ia: {
+        Args: {
+          p_clinic_id: string
+          p_contato: string
+          p_conversation_id: string
+          p_insurance_id: string
+          p_janela_desde: string
+          p_procedure_id: string
+          p_professional_id: string
+        }
+        Returns: Record<string, unknown>
+      }
       confirmar_pelo_paciente: {
         Args: {
           p_appointment_id: string
@@ -5834,6 +5940,10 @@ export type Database = {
         Args: { p_clinic_id: string; p_papel_novo: string; p_user_id: string }
         Returns: undefined
       }
+      descrever_preferencia_da_espera: {
+        Args: { p_dias: number[]; p_turnos: string[] }
+        Returns: string
+      }
       devolver_conversa_da_consulta_recusada: {
         Args: { p_appointment_id: string; p_clinic_id: string }
         Returns: boolean
@@ -5896,6 +6006,19 @@ export type Database = {
           email: string
           user_id: string
         }[]
+      }
+      entrada_da_espera_no_grupo: {
+        Args: {
+          p_clinic_id: string
+          p_contato: string
+          p_procedure_id: string
+          p_professional_id: string
+        }
+        Returns: Json
+      }
+      entrar_na_lista_de_espera_pela_ia: {
+        Args: { p_clinic_id: string; p_conversation_id: string; p_job_id: string }
+        Returns: Json
       }
       entrar_como_implementador: {
         Args: {
@@ -6197,6 +6320,10 @@ export type Database = {
         Returns: Json
       }
       limpar_holds_vencidos: { Args: never; Returns: number }
+      lista_de_espera_da_ia_ligada: {
+        Args: { p_clinic_id: string }
+        Returns: boolean
+      }
       marcar_aguardando_confirmacao: {
         Args: { p_appointment_id: string; p_clinic_id: string }
         Returns: Json
@@ -6204,6 +6331,14 @@ export type Database = {
       marcar_eco_para_termo: {
         Args: { p_clinic_id: string; p_wa_message_id: string }
         Returns: boolean
+      }
+      marcar_mensagem_tratada_pelo_sistema: {
+        Args: {
+          p_clinic_id: string
+          p_conversation_id: string
+          p_message_id: string
+        }
+        Returns: Json
       }
       metricas_da_espera: {
         Args: { p_clinic_id: string }
@@ -6295,6 +6430,20 @@ export type Database = {
           p_job_id: string
         }
         Returns: Record<string, unknown>
+      }
+      pedir_lista_de_espera_pela_ia: {
+        Args: {
+          p_clinic_id: string
+          p_conversation_id: string
+          p_dias: number[]
+          p_insurance_id: string
+          p_job_id: string
+          p_particular: boolean
+          p_procedure_id: string
+          p_professional_id: string
+          p_turnos: string[]
+        }
+        Returns: Json
       }
       pedir_remarcacao_pelo_paciente: {
         Args: {
@@ -6391,6 +6540,10 @@ export type Database = {
       pode_apagar_mensagem: {
         Args: { p_escopo: string; p_message_id: string }
         Returns: Json
+      }
+      preferencia_da_espera_valida: {
+        Args: { p_dias: number[]; p_turnos: string[] }
+        Returns: boolean
       }
       reagendar_job: {
         Args: {

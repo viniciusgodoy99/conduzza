@@ -1,9 +1,20 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { can, type Role } from "@/lib/domain/permissions";
+
 // Tipos e fetchers da Tela 10 (Lista de espera). Isomorficos, como Agenda e
 // Confirmacoes: rodam no servidor (carga inicial) e no browser (TanStack +
 // tempo real). A RLS recorta por clinica; a leitura humana da tela (nome e
 // telefone de paciente) passa por auditarLeituraDePaciente na page.
+//
+// AG5 (a IA coloca o paciente na lista de espera; desenho, secao 6): a
+// entrada guarda QUEM a criou (origem 'equipe' ou 'ia'), a conversa da IA e
+// o pagamento declarado (particular, ou o convenio). As da recepcao seguem
+// sem pagamento declarado (a oferta usa a regra de antes). As colunas vem da
+// migration 20261029100000: o codigo antes dela cai no erro (42703).
+
+/** Quem criou a entrada (waitlist.origem, CHECK do banco). */
+export type OrigemDaEntrada = "equipe" | "ia";
 
 export type EntradaDaEspera = {
   id: string;
@@ -14,10 +25,60 @@ export type EntradaDaEspera = {
   preferred_weekdays: number[];
   priority: number;
   created_at: string;
+  /** AG5: 'ia' quando a IA colocou a pessoa na lista pela conversa. */
+  origem: OrigemDaEntrada;
+  /** AG5: a conversa em que a IA criou a entrada (so na origem 'ia'). */
+  conversation_id: string | null;
+  /** AG5: o convenio declarado (nulo com particular nulo: nao declarado). */
+  insurance_id: string | null;
+  /** AG5: true particular, false convenio, nulo nao declarado. */
+  particular: boolean | null;
   contact: { id: string; name: string | null; phone_e164: string } | null;
   procedure: { id: string; name: string } | null;
   professional: { id: string; name: string } | null;
+  insurance: { id: string; name: string; plan_name: string | null } | null;
 };
+
+/**
+ * O pagamento que a entrada declarou, como a recepcao le: "Particular" ou
+ * "Unimed, Plano Ouro". Nulo quando a entrada nao declarou (as da recepcao):
+ * a tela nao mostra nada, e a oferta usa a regra de antes.
+ */
+export function pagamentoDaEntrada(
+  entrada: Pick<EntradaDaEspera, "particular" | "insurance">,
+): string | null {
+  if (entrada.particular === true) {
+    return "Particular";
+  }
+  if (entrada.particular === false) {
+    const convenio = entrada.insurance;
+    if (!convenio) {
+      // O convenio existe (FK sem cascata), mas a leitura nao o trouxe.
+      return "Convênio";
+    }
+    const plano = convenio.plan_name?.trim();
+    return plano ? `${convenio.name}, ${plano}` : convenio.name;
+  }
+  return null;
+}
+
+/**
+ * "Abrir conversa" da entrada da IA respeita o papel (desenho, secao 6): so
+ * quem ve TODAS as conversas do Atendimento (tudo ou ver). O profissional so
+ * le a conversa atribuida a ele (RLS de conversation), e a conversa da IA nao
+ * tem responsavel: o botao fica visivel, desabilitado e com a dica.
+ */
+export const DICA_CONVERSA_SO_ATRIBUIDA =
+  "Seu perfil só abre as conversas atribuídas a você no Atendimento";
+
+export function acessoAConversaDaEspera(role: Role): {
+  pode: boolean;
+  dica: string;
+} {
+  const acesso = can(role, "atendimento");
+  const pode = acesso === "tudo" || acesso === "ver";
+  return { pode, dica: pode ? "" : DICA_CONVERSA_SO_ATRIBUIDA };
+}
 
 export type DestinatarioDaOferta = {
   contactId: string;
@@ -124,15 +185,20 @@ function primeiro<T>(valor: T | T[] | null | undefined): T | null {
   return valor ?? null;
 }
 
+/**
+ * As colunas da fila. AG5: a origem, a conversa e o pagamento, com o
+ * convenio pela FK nova (waitlist_insurance_id_fkey).
+ */
+const COLUNAS_DA_FILA =
+  "id, contact_id, procedure_id, professional_id, preferred_shifts, preferred_weekdays, priority, created_at, origem, conversation_id, insurance_id, particular, contact:contact_id (id, name, phone_e164), procedure:procedure_id (id, name), professional:professional_id (id, name), insurance:insurance_id (id, name, plan_name)";
+
 export async function fetchFilaDeEspera(
   supabase: SupabaseClient,
   clinicId: string,
 ): Promise<EntradaDaEspera[]> {
   const { data, error } = await supabase
     .from("waitlist")
-    .select(
-      "id, contact_id, procedure_id, professional_id, preferred_shifts, preferred_weekdays, priority, created_at, contact:contact_id (id, name, phone_e164), procedure:procedure_id (id, name), professional:professional_id (id, name)",
-    )
+    .select(COLUNAS_DA_FILA)
     .eq("clinic_id", clinicId)
     .eq("active", true)
     .order("priority")
@@ -143,9 +209,18 @@ export async function fetchFilaDeEspera(
   }
   return ((data ?? []) as Record<string, unknown>[]).map((linha) => ({
     ...(linha as object),
+    // Valor fora do CHECK (ou ausente) le como da equipe: o selo da IA so
+    // aparece com a origem que o servidor gravou.
+    origem: linha.origem === "ia" ? "ia" : "equipe",
+    conversation_id:
+      typeof linha.conversation_id === "string" ? linha.conversation_id : null,
+    insurance_id:
+      typeof linha.insurance_id === "string" ? linha.insurance_id : null,
+    particular: typeof linha.particular === "boolean" ? linha.particular : null,
     contact: primeiro(linha.contact),
     procedure: primeiro(linha.procedure),
     professional: primeiro(linha.professional),
+    insurance: primeiro(linha.insurance),
   })) as EntradaDaEspera[];
 }
 

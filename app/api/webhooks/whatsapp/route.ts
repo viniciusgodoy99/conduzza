@@ -578,6 +578,77 @@ async function moverPorTermoDoCelular(
 }
 
 /**
+ * A mensagem que o SISTEMA tratou numa conversa da IA (AG5, decisao D-39 pela
+ * recomendacao, pendente do dono): o SIM ou o NAO QUERO da oferta da lista
+ * de espera, a mensagem que recebeu o lembrete da oferta e a resposta ao
+ * toque de confirmacao (Confirmar, Cancelar, Remarcar). Ela nao vira turno
+ * da IA (o interceptador ja respondeu) e, marcada aqui, deixa de voltar como
+ * pendente no turno seguinte: antes, a IA lia o "SIM" ja tratado no fim do
+ * historico e reagia a ele. O banco confere tudo (a mensagem e do paciente,
+ * desta conversa, e a conversa esta com a IA) e e idempotente. Nunca lanca e
+ * nunca derruba o 200; log so com ids e codigos.
+ */
+async function marcarComoTratadaPeloSistema(
+  admin: SupabaseClient,
+  alvo: {
+    clinicId: string;
+    accountId: string;
+    conversationId: string;
+    messageId: string;
+  },
+): Promise<void> {
+  const ids = {
+    clinic_id: alvo.clinicId,
+    whatsapp_account_id: alvo.accountId,
+    conversation_id: alvo.conversationId,
+    message_id: alvo.messageId,
+  };
+  try {
+    const { data: resposta, error } = await admin.rpc(
+      "marcar_mensagem_tratada_pelo_sistema",
+      {
+        p_clinic_id: alvo.clinicId,
+        p_conversation_id: alvo.conversationId,
+        p_message_id: alvo.messageId,
+      },
+    );
+    if (error) {
+      log.warn("webhook_ia_tratada_nao_marcada", {
+        ...ids,
+        error_code: error.code ?? null,
+      });
+      return;
+    }
+    const resultado = resposta as {
+      ok?: unknown;
+      marcada?: unknown;
+      motivo?: unknown;
+    } | null;
+    if (resultado?.ok === true) {
+      log.info("webhook_ia_tratada_pelo_sistema", {
+        ...ids,
+        status: resultado.marcada === true ? "marcada" : "ja_respondida",
+      });
+      return;
+    }
+    // fora_da_ia (a conversa saiu da IA no meio) ou resposta inesperada: nada
+    // a marcar, quem le e a equipe.
+    log.warn("webhook_ia_tratada_nao_marcada", {
+      ...ids,
+      status:
+        typeof resultado?.motivo === "string"
+          ? resultado.motivo
+          : "desconhecido",
+    });
+  } catch {
+    log.warn("webhook_ia_tratada_nao_marcada", {
+      ...ids,
+      error_code: "excecao",
+    });
+  }
+}
+
+/**
  * A mensagem recebida numa conversa da IA (E3): enfileira o turno, ou tira a
  * conversa da IA. Decide pelo que a ingestao devolveu (ia_atendendo), pelo
  * parser (individual) e pelo interceptador (desfecho). O banco confere tudo
@@ -585,6 +656,10 @@ async function moverPorTermoDoCelular(
  * service role). Nunca lanca e nunca derruba o 200: a mensagem ja esta
  * salva, e a varredura de 3 minutos (motor_manutencao) e a rede de
  * seguranca. Log so com ids e codigos.
+ *
+ * AG5 (D-39): o desfecho "tratou_com_eco" continua sem turno e, desde
+ * agora, marca a mensagem como tratada pelo sistema
+ * (marcarComoTratadaPeloSistema).
  */
 async function encaminharParaAIa(
   admin: SupabaseClient,
@@ -640,12 +715,18 @@ async function encaminharParaAIa(
     await tirar("falha_tecnica");
     return;
   }
-  if (
-    !data.inserted ||
-    data.ignorada ||
-    !data.message_id ||
-    desfecho === "tratou_com_eco"
-  ) {
+  if (!data.inserted || data.ignorada || !data.message_id) {
+    return;
+  }
+  // O interceptador respondeu (eco, recusa educada, pedido de remarcacao ou
+  // o lembrete da oferta): sem turno da IA, e a mensagem sai das pendentes.
+  if (desfecho === "tratou_com_eco") {
+    await marcarComoTratadaPeloSistema(admin, {
+      clinicId,
+      accountId,
+      conversationId: data.conversation_id,
+      messageId: data.message_id,
+    });
     return;
   }
   try {
@@ -809,6 +890,11 @@ export async function POST(request: NextRequest) {
           // O numero que recebeu delimita o contexto (D2) e e por ele que o
           // eco sai (D4). Sem ele o interceptador usaria o da conversa.
           whatsappAccountId: accountId,
+          // AG5 (D-39): na conversa com a IA, a mensagem que nao responde a
+          // oferta de pe recebe o lembrete fixo do sistema. Grupo, status e
+          // canal nunca contam: a conversa sai da IA logo abaixo.
+          conversaComAIa:
+            data.ia_atendendo === true && event.individual === true,
         });
       } catch {
         desfecho = "erro";

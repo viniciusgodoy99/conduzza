@@ -692,11 +692,15 @@ const PESO_DA_FERRAMENTA: readonly string[] = [
   "agendar",
   // AG4: cancelar grava (a consulta cancelada); o pedido arma a pergunta.
   "cancelar_consulta",
+  // AG5: a entrada na lista de espera grava (waitlist); o pedido grava a
+  // pergunta (ia_pedido_de_espera), junto do pedido de cancelar.
+  "entrar_na_lista_de_espera",
   "confirmar_presenca",
   "reservar_horario",
   // AG3: os dados para marcar gravam (dados_informados_na_marcacao).
   "registrar_dados_do_paciente",
   "pedir_cancelamento",
+  "pedir_lista_de_espera",
   "escalar_humano",
   "fora_do_assunto",
   "sou_assistente_virtual",

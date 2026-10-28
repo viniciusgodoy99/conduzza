@@ -1,9 +1,16 @@
+import { createHash } from "node:crypto";
+
 import { TZDate } from "@date-fns/tz";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { passoCondizComAgenda } from "@/lib/domain/cadence";
+import {
+  CHAVE_DO_LEMBRETE,
+  ofertaDePeParaOContato,
+  textoDoLembreteDaOferta,
+} from "@/lib/domain/lembrete-da-oferta";
 import {
   interpretarRespostaDeOferta,
   REPOUSO_POS_OFERTA_MS,
@@ -59,6 +66,19 @@ import {
 //    em que a resposta chegou (decisao D2): o "sim" dito ao numero B nao
 //    confirma o toque que saiu pelo numero A. E o eco sai pelo mesmo numero
 //    que recebeu, mesmo com as automaticas presas a um numero fixo (D4).
+// 6. A OFERTA NA CONVERSA COM A IA (AG5, decisao D-39 pela recomendacao,
+//    pendente do dono). Aceitar e recusar a oferta da lista de espera
+//    continua sendo SO daqui (SIM e NAO QUERO), tambem na conversa com a IA:
+//    a IA nunca aceita, recusa nem fala do horario oferecido. Na conversa com
+//    a IA (conversaComAIa), a mensagem que nao e SIM nem NAO QUERO, com a
+//    oferta de pe como a pergunta que ela responde (a mais recente, pelo
+//    numero que recebeu, ou a citada), recebe UMA vez por oferta e contato o
+//    lembrete fixo do sistema (T-E4, lib/domain/lembrete-da-oferta.ts), e a
+//    IA nao responde aquela mensagem. Depois do lembrete, a mensagem seguinte
+//    vai para a IA. A pergunta respondida e a mesma conta de sempre
+//    (qualPerguntaFoiRespondida, sem mudar a funcao pura): a oferta e a
+//    pergunta quando a conta daria a oferta para um SIM. Fora da conversa
+//    com a IA, nada muda: a recepcao le.
 //
 // Regra 3.1 do CLAUDE.md: este arquivo nao loga nada. O corpo da mensagem do
 // paciente entra aqui e nao sai em lugar nenhum.
@@ -96,6 +116,13 @@ export type EntradaDaResposta = {
    * numero dela; diferente do dela, o interceptador se cala (duvida).
    */
   whatsappAccountId?: string | null;
+  /**
+   * AG5 (D-39): a conversa esta com a IA, como a ingestao a deixou
+   * (ia_atendendo). So nela a mensagem que nao responde a oferta recebe o
+   * lembrete fixo; ausente ou falso, nada muda. O status da conversa e
+   * conferido de novo antes do lembrete.
+   */
+  conversaComAIa?: boolean;
 };
 
 /** O recorte de numero de uma resposta (decisao D2). */
@@ -336,10 +363,16 @@ async function resolverCitacao(
       .select("id")
       .eq("clinic_id", entrada.clinicId)
       .contains("offered_to", [entrada.contactId]);
+    // AG5: o lembrete da oferta (T-E4) pede o SIM; quem responde citando o
+    // lembrete responde a oferta dele (o payload diz qual). O lembrete nao
+    // leva offer_id: ele nao e a mensagem da oferta.
+    const lembrete = payload[CHAVE_DO_LEMBRETE];
     const { data: oferta, error: erroOferta } = await (
-      typeof payload.offer_id === "string"
-        ? consulta.eq("id", payload.offer_id)
-        : consulta.eq("created_at", job.created_at as string)
+      typeof lembrete === "string"
+        ? consulta.eq("id", lembrete)
+        : typeof payload.offer_id === "string"
+          ? consulta.eq("id", payload.offer_id)
+          : consulta.eq("created_at", job.created_at as string)
     )
       .limit(1)
       .maybeSingle();
@@ -389,10 +422,12 @@ type OfertaDoContato = {
   declined_by: string[];
   responded_by: string | null;
   created_at: string;
+  /** O horario oferecido (AG5: a data e a hora do lembrete). */
+  slot_starts_at: string;
 };
 
 const SELECT_DA_OFERTA =
-  "id, status, expires_at, declined_by, responded_by, created_at, updated_at";
+  "id, status, expires_at, declined_by, responded_by, created_at, updated_at, slot_starts_at";
 
 /**
  * A oferta de espera mais recente que PERGUNTOU algo a este contato: aberta
@@ -757,6 +792,11 @@ async function reunirFatos(
   oferta: OfertaDoContato | null;
   /** O numero que recebeu: o do eco (D4). */
   numero: string | null;
+  /**
+   * AG5: o status da conversa em que a mensagem caiu, como esta agora. O
+   * lembrete da oferta so sai com ela ainda com a IA (ia_atendendo).
+   */
+  statusDaConversa: string | null;
 } | null> {
   const agora = Date.now();
   const { data: conversas, error: erroConversas } = await admin
@@ -885,6 +925,7 @@ async function reunirFatos(
     },
     oferta: achada.oferta,
     numero,
+    statusDaConversa: atual?.status ?? null,
   };
 }
 
@@ -994,6 +1035,218 @@ async function tratarRespostaDeOferta(
   await tirarDoContadorDeAtendimento(admin, entrada);
 }
 
+// ---------------------------------------------------------------------------
+// O lembrete da oferta na conversa com a IA (AG5, D-39; cuidado 6)
+// ---------------------------------------------------------------------------
+
+/**
+ * O id do job do lembrete: o MESMO para a mesma oferta e o mesmo contato (um
+ * UUID de versao 5, do SHA-1 das duas chaves). A chave primaria de job_queue
+ * e quem garante o "uma vez por oferta e contato": duas mensagens ao mesmo
+ * tempo nao mandam dois lembretes, porque a segunda bate na chave (23505).
+ * Quem decide e o banco (cuidado 3).
+ */
+export function idDoJobDoLembrete(offerId: string, contactId: string): string {
+  const bytes = createHash("sha1")
+    .update(`${CHAVE_DO_LEMBRETE}:${offerId}:${contactId}`)
+    .digest()
+    .subarray(0, 16);
+  // Versao 5 e a variante do RFC 4122, como um UUID gerado por nome.
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20, 32),
+  ].join("-");
+}
+
+/**
+ * O lembrete desta oferta ja foi para a fila deste contato (pela chave do
+ * job, indexada). Null quando a leitura falhou: duvida.
+ */
+async function lembreteJaSaiu(
+  admin: SupabaseClient,
+  clinicId: string,
+  contactId: string,
+  offerId: string,
+): Promise<boolean | null> {
+  const { data, error } = await admin
+    .from("job_queue")
+    .select("id")
+    .eq("clinic_id", clinicId)
+    .eq("id", idDoJobDoLembrete(offerId, contactId))
+    .limit(1);
+  if (error) {
+    return null;
+  }
+  return (data ?? []).length > 0;
+}
+
+/**
+ * A leitura leve da mensagem comum na conversa com a IA (desenho, secao 5):
+ * so vale juntar os fatos quando ha uma oferta de pe para o contato cujo
+ * lembrete ainda nao saiu. Sem isso, a mensagem segue para a IA como antes,
+ * com uma consulta a mais e nenhuma escrita.
+ */
+async function vaJuntarOsFatosParaOLembrete(
+  admin: SupabaseClient,
+  entrada: EntradaDaResposta,
+): Promise<"juntar" | "sem_intencao" | "fatos_ilegiveis"> {
+  const achada = await acharOfertaDoContato(
+    admin,
+    entrada.clinicId,
+    entrada.contactId,
+  );
+  if (achada.erro) {
+    return "fatos_ilegiveis";
+  }
+  if (
+    !achada.oferta ||
+    !ofertaDePeParaOContato(achada.oferta, entrada.contactId, Date.now())
+  ) {
+    return "sem_intencao";
+  }
+  const jaSaiu = await lembreteJaSaiu(
+    admin,
+    entrada.clinicId,
+    entrada.contactId,
+    achada.oferta.id,
+  );
+  if (jaSaiu === null) {
+    return "fatos_ilegiveis";
+  }
+  return jaSaiu ? "sem_intencao" : "juntar";
+}
+
+/** O fuso da clinica, para a data e a hora do lembrete. Null se falhou. */
+async function fusoDaClinica(
+  admin: SupabaseClient,
+  clinicId: string,
+): Promise<string | null> {
+  const { data, error } = await admin
+    .from("clinic")
+    .select("timezone")
+    .eq("id", clinicId)
+    .maybeSingle();
+  if (error || !data) {
+    return null;
+  }
+  const fuso = (data as { timezone?: unknown }).timezone;
+  // O padrao da clinica (CLAUDE.md 3.6) quando a coluna vier vazia.
+  return typeof fuso === "string" && fuso.trim() !== ""
+    ? fuso
+    : "America/Fortaleza";
+}
+
+/**
+ * Enfileira o T-E4 como eco (enviar_mensagem_ativa, resposta_ao_paciente,
+ * pelo numero que recebeu, D4), com a oferta no payload (CHAVE_DO_LEMBRETE)
+ * e SEM offer_id: ele nao e a mensagem da oferta. O executor reconfere a
+ * autorizacao para receber mensagens e grava o custo, como em todo eco.
+ */
+async function enfileirarLembrete(
+  admin: SupabaseClient,
+  entrada: EntradaDaResposta,
+  oferta: OfertaDoContato,
+  body: string,
+): Promise<"enfileirado" | "ja_saiu" | "erro"> {
+  const { error } = await admin.from("job_queue").insert({
+    id: idDoJobDoLembrete(oferta.id, entrada.contactId),
+    clinic_id: entrada.clinicId,
+    kind: "enviar_mensagem_ativa",
+    payload: {
+      contact_id: entrada.contactId,
+      body,
+      resposta_ao_paciente: true,
+      [CHAVE_DO_LEMBRETE]: oferta.id,
+    },
+    whatsapp_account_id: entrada.whatsappAccountId ?? null,
+  });
+  if (!error) {
+    return "enfileirado";
+  }
+  // A chave do job: outra mensagem acabou de mandar o lembrete desta oferta.
+  return error.code === "23505" ? "ja_saiu" : "erro";
+}
+
+/**
+ * O lembrete da oferta (T-E4) para a mensagem que nao responde a oferta de
+ * pe, na conversa com a IA. So chega aqui quando a conta da pergunta daria a
+ * oferta para um SIM (a oferta e a pergunta que esta mensagem responde).
+ *
+ * - tratou_com_eco: o lembrete foi para a fila; a IA nao responde esta
+ *   mensagem (a rota a marca como tratada pelo sistema) e a conversa sai do
+ *   contador do Atendimento, como depois de todo eco.
+ * - alvo_nenhum: nada a lembrar (a conversa saiu da IA, a oferta nao esta de
+ *   pe para esta pessoa ou o lembrete desta oferta ja saiu). A mensagem fica
+ *   com a IA, que nunca aceita, recusa nem fala do horario oferecido.
+ * - fatos_ilegiveis: uma leitura ou a fila falhou. A mensagem tambem fica
+ *   com a IA (falha nunca vira lembrete duvidoso).
+ */
+async function lembrarDaOferta(
+  admin: SupabaseClient,
+  entrada: EntradaDaResposta,
+  coletado: {
+    oferta: OfertaDoContato | null;
+    statusDaConversa: string | null;
+  },
+  offerId: string,
+): Promise<DesfechoDoInterceptador> {
+  if (coletado.statusDaConversa !== "ia_atendendo") {
+    return "alvo_nenhum";
+  }
+  const oferta =
+    coletado.oferta?.id === offerId
+      ? coletado.oferta
+      : await buscarOferta(admin, entrada.clinicId, offerId);
+  if (
+    !oferta ||
+    !ofertaDePeParaOContato(oferta, entrada.contactId, Date.now())
+  ) {
+    return "alvo_nenhum";
+  }
+  const jaSaiu = await lembreteJaSaiu(
+    admin,
+    entrada.clinicId,
+    entrada.contactId,
+    oferta.id,
+  );
+  if (jaSaiu === null) {
+    return "fatos_ilegiveis";
+  }
+  if (jaSaiu) {
+    return "alvo_nenhum";
+  }
+  const fuso = await fusoDaClinica(admin, entrada.clinicId);
+  if (fuso === null) {
+    return "fatos_ilegiveis";
+  }
+  let body: string;
+  try {
+    body = textoDoLembreteDaOferta({
+      inicioDoHorario: oferta.slot_starts_at,
+      venceEm: oferta.expires_at,
+      fuso,
+    });
+  } catch {
+    // Data ou fuso que nao formata: nenhum texto pela metade sai.
+    return "fatos_ilegiveis";
+  }
+  const enfileirado = await enfileirarLembrete(admin, entrada, oferta, body);
+  if (enfileirado === "erro") {
+    return "fatos_ilegiveis";
+  }
+  if (enfileirado === "ja_saiu") {
+    return "alvo_nenhum";
+  }
+  await tirarDoContadorDeAtendimento(admin, entrada);
+  return "tratou_com_eco";
+}
+
 const RPC_DA_INTENCAO = {
   confirmar: "confirmar_pelo_paciente",
   cancelar: "cancelar_pelo_paciente",
@@ -1009,8 +1262,11 @@ const ECO_DA_INTENCAO = {
 /**
  * O que o interceptador fez com a mensagem (E3). A rota so enfileira o turno
  * da IA quando ele NAO respondeu nada ao paciente: "tratou_com_eco" (mudou a
- * agenda ou a oferta e mandou o eco, ou pediu remarcacao) fica sem turno.
- * Os outros desfechos deixam a mensagem para quem atende (a IA ou a equipe).
+ * agenda ou a oferta e mandou o eco, ou pediu remarcacao; desde a AG5,
+ * tambem o lembrete da oferta) fica sem turno, e na conversa com a IA a rota
+ * marca a mensagem como tratada pelo sistema (ela nao volta como pendente
+ * para a IA). Os outros desfechos deixam a mensagem para quem atende (a IA
+ * ou a equipe).
  */
 export type DesfechoDoInterceptador =
   | "nao_texto"
@@ -1042,7 +1298,17 @@ export async function interceptarRespostaDePaciente(
     intencao === "nao_reconhecida" &&
     intencaoDeOferta === "nao_reconhecida"
   ) {
-    return "sem_intencao";
+    // Fora da conversa com a IA, a mensagem comum sai aqui, como sempre.
+    if (!entrada.conversaComAIa) {
+      return "sem_intencao";
+    }
+    // AG5 (D-39): na conversa com a IA, a leitura leve decide se a oferta
+    // de pe pede o lembrete. Sem oferta, ou com o lembrete ja enviado, a
+    // mensagem segue para a IA.
+    const vale = await vaJuntarOsFatosParaOLembrete(admin, entrada);
+    if (vale !== "juntar") {
+      return vale;
+    }
   }
 
   const coletado = await reunirFatos(admin, entrada);
@@ -1062,6 +1328,19 @@ export async function interceptarRespostaDePaciente(
   );
 
   if (pergunta.alvo === "nenhum") {
+    // AG5 (D-39): na conversa com a IA, a mensagem que nao e SIM nem NAO
+    // QUERO, respondendo a oferta de pe (a conta daria a oferta para um
+    // SIM), recebe o lembrete fixo, uma vez por oferta e contato.
+    if (entrada.conversaComAIa && intencaoDeOferta === "nao_reconhecida") {
+      const comoOferta = qualPerguntaFoiRespondida(
+        coletado.fatos,
+        intencao,
+        "aceitar",
+      );
+      if (comoOferta.alvo === "oferta") {
+        return lembrarDaOferta(admin, daResposta, coletado, comoOferta.offerId);
+      }
+    }
     // A conversa ja esta esperando a recepcao (a ingestao marcou), e e ela
     // quem le e decide.
     return "alvo_nenhum";
