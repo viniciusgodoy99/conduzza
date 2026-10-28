@@ -5,6 +5,8 @@ import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { idsRespondidos, montarHistorico } from "@/lib/agente/historico";
+import { mensagensPendentes } from "@/lib/agente/laco";
+import { detectarUrgencia } from "@/lib/domain/conformidade/urgencia";
 import {
   CHAVE_DO_LEMBRETE,
   LEMBRETE_DA_OFERTA,
@@ -15,6 +17,8 @@ import {
   textoDoLembreteDaOferta,
   type SituacaoDoLembrete,
 } from "@/lib/domain/lembrete-da-oferta";
+import { interpretarRespostaDeOferta } from "@/lib/domain/lista-espera";
+import { interpretarResposta } from "@/lib/domain/resposta-paciente";
 import {
   RESPOSTA_CONFIRMADA,
   RESPOSTA_OFERTA_PERDIDA,
@@ -65,7 +69,13 @@ import { esperar } from "@/lib/utils/esperar";
 //   lembrete que sai pelo executor DE VERDADE (so o envio dublado) tira a
 //   conversa do contador, so com a IA;
 // - o BAIXO: o aceite recusado com a oferta aberta grava o lembrete ja
-//   cancelado (dispensado), e a mensagem seguinte vai para a IA sem ele.
+//   cancelado (dispensado), e a mensagem seguinte vai para a IA sem ele;
+// - a urgencia (AG6a) com a oferta de pe: na conversa com a IA, a mensagem
+//   com sinal de emergencia nao recebe o lembrete, nao fica coberta pelo da
+//   fila, nao e marcada e vai para o turno da IA, cujo passo 7c a ve (com o
+//   lembrete ainda nao enfileirado, na fila ou ja enviado); a mensagem comum
+//   continua lembrada e coberta; os botoes nao mudam e o texto urgente que
+//   comeca como eles nunca e absorvido; o log, sem nada dela.
 
 // ---------------------------------------------------------------------------
 // Banco em memoria
@@ -1864,6 +1874,155 @@ describe("o aceite recusado com a oferta aberta dispensa o lembrete (revisão da
 });
 
 // ---------------------------------------------------------------------------
+// A urgencia (AG6a) com a oferta de pe (AG5): na conversa com a IA, a
+// mensagem com sinal de emergencia nunca e tratada pelo sistema
+// ---------------------------------------------------------------------------
+
+/**
+ * Textos com sinal de emergencia da lista da AG6a (urgencia.ts): o fisico e
+ * o risco de vida. Os dois ultimos comecam como o SIM e como o botao, mas
+ * sao texto livre (nenhuma frase fechada do toque ou da oferta e urgencia).
+ */
+const URGENTES = [
+  "estou com falta de ar e a garganta fechando",
+  "quero morrer",
+  "Sim, mas estou com muita falta de ar",
+  "Confirmar, mas to com dor no peito",
+];
+const URGENTE = "estou com falta de ar e a garganta fechando";
+
+describe("a urgência com a oferta de pé nunca é tratada pelo sistema na conversa com a IA (AG6a com a AG5)", () => {
+  beforeEach(() => montar());
+
+  it("os textos são urgência para a AG6a (física e risco de vida), e nenhum é SIM, NÃO QUERO ou botão", () => {
+    for (const texto of URGENTES) {
+      expect(detectarUrgencia([texto]), texto).not.toBeNull();
+      expect(interpretarResposta(texto), texto).toBe("nao_reconhecida");
+      expect(interpretarRespostaDeOferta(texto), texto).toBe("nao_reconhecida");
+    }
+    expect(detectarUrgencia([URGENTE])?.tipo).toBe("fisica");
+    expect(detectarUrgencia(["quero morrer"])?.tipo).toBe("risco_de_vida");
+  });
+
+  it.each(URGENTES)(
+    "o lembrete ainda não foi para a fila (%s): sem lembrete, nada interpretado nem escrito, e a mensagem segue para a IA no contador",
+    async (texto) => {
+      expect(await interceptar(entrada(texto))).toBe("sem_intencao");
+      expect(ecos()).toEqual([]);
+      // Nem a autorizacao do lembrete, nem o aceite da oferta.
+      expect(banco.chamadas).toEqual([]);
+      expect(banco.escritas()).toEqual([]);
+      // O turno da IA passa a conversa para a equipe com a marca Urgente.
+      expect(awaitingReply()).toBe(true);
+    },
+  );
+
+  it("citando a oferta: a mensagem urgente também segue para a IA, sem lembrete", async () => {
+    expect(
+      await interceptar(entrada(URGENTE, { quotedWaMessageId: "wa-oferta" })),
+    ).toBe("sem_intencao");
+    expect(ecos()).toEqual([]);
+    expect(banco.chamadas).toEqual([]);
+  });
+
+  it.each(URGENTES)(
+    "o lembrete na fila (%s): a mensagem não fica coberta, sem segundo lembrete, e o da fila não é tocado",
+    async (texto) => {
+      lembreteNaFila();
+      expect(await interceptar(entrada(texto))).toBe("sem_intencao");
+      expect(lembretes()).toHaveLength(1);
+      expect(jobDoLembrete()?.status).toBe("pendente");
+      expect(banco.chamadas).toEqual([]);
+      expect(banco.escritas()).toEqual([]);
+      expect(awaitingReply()).toBe(true);
+    },
+  );
+
+  it("a cobertura pelo caminho real: a mensagem comum acabou de pôr o lembrete na fila, e a urgente, logo depois, segue para a IA", async () => {
+    expect(await interceptar(entrada("Que horas mesmo?"))).toBe(
+      "tratou_com_eco",
+    );
+    voltarAoContador();
+    for (const texto of URGENTES) {
+      expect(await interceptar(entrada(texto)), texto).toBe("sem_intencao");
+    }
+    expect(lembretes()).toHaveLength(1);
+    expect(awaitingReply()).toBe(true);
+  });
+
+  it("o lembrete já enviado: a mensagem urgente segue para a IA, como já seguia", async () => {
+    lembreteJaEnviado(MINUTO);
+    for (const texto of URGENTES) {
+      expect(await interceptar(entrada(texto)), texto).toBe("sem_intencao");
+    }
+    expect(lembretes()).toHaveLength(1);
+    expect(banco.chamadas).toEqual([]);
+    expect(banco.escritas()).toEqual([]);
+  });
+
+  it("lida antes de qualquer consulta ao banco: o destino da mensagem urgente não depende de leitura nenhuma (nem do lembrete na fila)", async () => {
+    lembreteNaFila();
+    expect(await interceptar(entrada(URGENTE))).toBe("sem_intencao");
+    expect(banco.operacoes).toEqual([]);
+  });
+
+  it("o controle: a mensagem comum continua lembrada e, com o lembrete na fila, coberta (a negação é da AG6a: 'não é emergência' não é urgência)", async () => {
+    expect(await interceptar(entrada("Que horas mesmo?"))).toBe(
+      "tratou_com_eco",
+    );
+    expect(lembretes()).toHaveLength(1);
+    voltarAoContador();
+    expect(await interceptar(entrada("E onde fica a clínica?"))).toBe(
+      "tratou_com_eco",
+    );
+    voltarAoContador();
+    expect(
+      await interceptar(entrada("Não é emergência, só queria saber o preço")),
+    ).toBe("tratou_com_eco");
+    expect(lembretes()).toHaveLength(1);
+    expect(awaitingReply()).toBe(true);
+  });
+
+  it("os botões de hoje não mudam, e o texto urgente que começa como eles (citando o toque) não confirma, não cancela, não pede remarcação nem é absorvido", async () => {
+    toqueDeConfirmacao(5 * MINUTO);
+    for (const [texto, rpc] of [
+      ["Confirmar, mas to com dor no peito", "confirmar_pelo_paciente"],
+      [
+        "Cancelar, estou passando mal com dor no peito",
+        "cancelar_pelo_paciente",
+      ],
+      ["Remarcar, to sem conseguir respirar", "pedir_remarcacao_pelo_paciente"],
+    ] as const) {
+      expect(detectarUrgencia([texto]), texto).not.toBeNull();
+      expect(
+        await interceptar(entrada(texto, { quotedWaMessageId: "wa-toque" })),
+        texto,
+      ).not.toBe("tratou_com_eco");
+      expect(banco.chamadasDe(rpc), texto).toEqual([]);
+    }
+    expect(ecos()).toEqual([]);
+    // O botao (frase fechada, sem texto livre) continua com o toque.
+    expect(
+      await interceptar(entrada("Cancelar", { quotedWaMessageId: "wa-toque" })),
+    ).toBe("tratou_com_eco");
+    expect(banco.chamadasDe("cancelar_pelo_paciente")).toHaveLength(1);
+    expect(ecos()).toHaveLength(1);
+    expect(lembretes()).toEqual([]);
+  });
+
+  it("fora da conversa com a IA nada muda: sem_intencao sem tocar no banco (a recepção lê a mensagem)", async () => {
+    lembreteNaFila();
+    for (const texto of URGENTES) {
+      expect(
+        await interceptar(entrada(texto, { conversaComAIa: false })),
+        texto,
+      ).toBe("sem_intencao");
+    }
+    expect(banco.operacoes).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A rota do webhook
 // ---------------------------------------------------------------------------
 
@@ -1995,8 +2154,8 @@ function pedido(body: string, extra: Record<string, unknown> = {}) {
   );
 }
 
-/** As mensagens do paciente que ainda voltariam como pendentes para a IA. */
-function pendentesParaAIa(): string[] {
+/** O historico que o proximo turno da IA leria (as pendentes por ultimo). */
+function historicoParaAIa(): ReturnType<typeof montarHistorico> {
   const turnos = banco.linhas("ai_turno") as {
     job_id: string;
     estado: string;
@@ -2017,7 +2176,38 @@ function pendentesParaAIa(): string[] {
     mensagens,
     idsRespondidos(turnos, "job-do-proximo-turno"),
     null,
-  ).pendentes;
+  );
+}
+
+/** As mensagens do paciente que ainda voltariam como pendentes para a IA. */
+function pendentesParaAIa(): string[] {
+  return historicoParaAIa().pendentes;
+}
+
+/**
+ * O que o passo 7c do executor (lib/jobs/responder-com-ia.ts, AG6a) veria:
+ * sem pendente nao ha turno (nulo); com pendentes, o sinal de emergencia nos
+ * textos ORIGINAIS delas, como urgenciaNasPendentes.
+ */
+function urgenciaQueOTurnoVe(): ReturnType<typeof detectarUrgencia> {
+  const historico = historicoParaAIa();
+  if (historico.pendentes.length === 0) {
+    return null;
+  }
+  return detectarUrgencia(
+    mensagensPendentes(historico.mensagens)
+      .filter((m) => (m.tipo ?? "texto") === "texto")
+      .map((m) => m.textoOriginal ?? m.texto),
+  );
+}
+
+/** O texto da mensagem que chega, como a ingestao (dublada) o gravou. */
+function mensagemNovaDiz(texto: string): void {
+  for (const m of banco.linhas("message")) {
+    if (m.id === MENSAGEM_NOVA) {
+      m.body = texto;
+    }
+  }
 }
 
 type LinhaDeLog = Record<string, unknown> & { nivel?: string; evento?: string };
@@ -2060,6 +2250,12 @@ function semDadoDoPacienteNoLog(): void {
     "Bom dia",
     "onde fica",
     "corpo do paciente",
+    // A mensagem urgente (AG6a): nem o texto, nem o sinal derivado dele.
+    "falta de ar",
+    "garganta",
+    "morrer",
+    "falta_de_ar",
+    "quero_morrer",
   ]) {
     expect(tudo).not.toContain(proibido);
   }
@@ -2251,6 +2447,71 @@ describe("a rota: a mensagem tratada pelo sistema", () => {
       expect(banco.chamadasDe("enfileirar_resposta_da_ia")).toEqual([]);
     },
   );
+});
+
+describe("a rota: a mensagem urgente com a oferta de pé vai para o turno da IA, e o passo 7c a vê (AG6a com a AG5)", () => {
+  beforeEach(capturarLogs);
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    semDadoDoPacienteNoLog();
+  });
+
+  it.each([
+    ["o lembrete ainda não foi para a fila", () => undefined, 0],
+    ["o lembrete na fila (a cobertura)", () => lembreteNaFila(), 1],
+    ["o lembrete já enviado", () => lembreteJaEnviado(MINUTO), 1],
+  ])(
+    "%s: o turno de sempre, nada marcado, nenhum lembrete novo, no contador, e a urgência nas pendentes",
+    async (_nome, antes, lembretesAntes) => {
+      for (const texto of [URGENTE, "quero morrer"]) {
+        montar();
+        antes();
+        prepararRota();
+        mensagemNovaDiz(texto);
+        const resposta = await POST(pedido(texto));
+        expect(resposta.status).toBe(200);
+        expect(await resposta.json()).toEqual({ ok: true });
+        expect(banco.chamadasDe("enfileirar_resposta_da_ia"), texto).toEqual([
+          {
+            p_clinic_id: CLINICA,
+            p_conversation_id: CONVERSA,
+            p_message_id: MENSAGEM_NOVA,
+          },
+        ]);
+        expect(
+          banco.chamadasDe("marcar_mensagem_tratada_pelo_sistema"),
+          texto,
+        ).toEqual([]);
+        expect(lembretes(), texto).toHaveLength(lembretesAntes);
+        expect(awaitingReply(), texto).toBe(true);
+        expect(pendentesParaAIa(), texto).toEqual([MENSAGEM_NOVA]);
+        expect(urgenciaQueOTurnoVe(), texto).toEqual({
+          tipo: texto === URGENTE ? "fisica" : "risco_de_vida",
+          sinal: texto === URGENTE ? "falta_de_ar" : "quero_morrer",
+        });
+      }
+      // Nem a urgencia aparece no log da rota (dado de saude derivado).
+      expect(logs.join("")).not.toMatch(/urgen/i);
+    },
+  );
+
+  it("o controle: a mensagem comum continua com o lembrete (ou coberta pelo da fila), marcada e sem turno", async () => {
+    for (const antes of [() => undefined, () => lembreteNaFila()]) {
+      montar();
+      antes();
+      prepararRota();
+      mensagemNovaDiz("Que horas mesmo?");
+      await POST(pedido("Que horas mesmo?"));
+      expect(banco.chamadasDe("enfileirar_resposta_da_ia")).toEqual([]);
+      expect(
+        banco.chamadasDe("marcar_mensagem_tratada_pelo_sistema"),
+      ).toHaveLength(1);
+      expect(lembretes()).toHaveLength(1);
+      expect(pendentesParaAIa()).toEqual([]);
+      expect(urgenciaQueOTurnoVe()).toBeNull();
+    }
+  });
 });
 
 describe("a rota: a marcação tenta de novo, com prazo (revisão da AG5, achados 6 e 7)", () => {
