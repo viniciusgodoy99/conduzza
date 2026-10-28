@@ -28,6 +28,11 @@ import { adminClient } from "../rls/stack";
 //   cita outra mensagem; a pergunta de novo vale), a mensagem nova (R12: a
 //   que chegou depois da leitura; a lida pelo turno enviado; a de sem_envio)
 //   e ja_na_lista (a recepcao pos no mesmo grupo depois do pedido);
+// - a revisao de 28/10/2026: o ja_na_lista de QUALQUER entrada ativa do
+//   contato do mesmo procedimento (qualquer profissional) ou de qualquer
+//   procedimento, nas duas fases, com a entrada que ja existe
+//   ({procedimento, profissional, turnos, dias}); o mesmo job de novo com a
+//   entrada removida pela recepcao: sem_pedido_de_espera, nada gravado;
 // - marcar_mensagem_tratada_pelo_sistema: 22023, fora_da_ia, marcada e de
 //   novo nada, o turno sintetico.
 // LIMITE (como na AG4): a pergunta vencida (pedido_vencido, 60 minutos) e o
@@ -74,7 +79,12 @@ type Resposta = {
   particular?: boolean;
   turnos?: string[];
   dias?: number[];
-  entrada?: { profissional: string | null; turnos: string[]; dias: number[] } | null;
+  entrada?: {
+    procedimento: string | null;
+    profissional: string | null;
+    turnos: string[];
+    dias: number[];
+  } | null;
   starts_at?: string;
   marcada?: boolean;
 };
@@ -561,9 +571,34 @@ describe("pedir_lista_de_espera_pela_ia: cada recusa, na ordem do contrato", () 
     expect(await pedir(naLista.conversa, await job(naLista.conversa), { profissional: ana })).toEqual({
       ok: false,
       motivo: "ja_na_lista",
-      entrada: { profissional: "Dra. Ana", turnos: ["manha"], dias: [2] },
+      entrada: { procedimento: "Limpeza sintética", profissional: "Dra. Ana", turnos: ["manha"], dias: [2] },
     });
-    expect(await pedir(naLista.conversa, await job(naLista.conversa))).toMatchObject({ ok: true });
+    // (revisao de 28/10/2026) Qualquer entrada do mesmo procedimento: o
+    // pedido de qualquer profissional tambem ouve a da Dra. Ana.
+    expect(await pedir(naLista.conversa, await job(naLista.conversa))).toEqual({
+      ok: false,
+      motivo: "ja_na_lista",
+      entrada: { procedimento: "Limpeza sintética", profissional: "Dra. Ana", turnos: ["manha"], dias: [2] },
+    });
+    // A de outro procedimento nao conta.
+    expect(await pedir(naLista.conversa, await job(naLista.conversa), { procedimento: botox })).toMatchObject({
+      ok: true,
+    });
+    // A de qualquer procedimento (da recepcao) cobre o pedido com a Dra. Ana.
+    const qualquerProcedimento = await conversaNaIa();
+    await inserir("waitlist", {
+      clinic_id: clinica,
+      contact_id: qualquerProcedimento.contato,
+      procedure_id: null,
+      preferred_shifts: ["tarde"],
+    });
+    expect(
+      await pedir(qualquerProcedimento.conversa, await job(qualquerProcedimento.conversa), { profissional: ana }),
+    ).toEqual({
+      ok: false,
+      motivo: "ja_na_lista",
+      entrada: { procedimento: null, profissional: null, turnos: ["tarde"], dias: [] },
+    });
 
     const menor = await conversaNaIa();
     const nascimento = new Date();
@@ -667,6 +702,26 @@ describe("entrar_na_lista_de_espera_pela_ia: de ponta a ponta", () => {
       },
     ]);
     expect(await entrar(c.conversa, j2)).toMatchObject({ ok: true, reutilizado: true, waitlist_id: r.waitlist_id });
+    // (revisao de 28/10/2026, R3) A recepcao removeu a entrada entre as
+    // tentativas do mesmo job: sem_pedido_de_espera, nada gravado; ativa de
+    // novo, reutilizado.
+    await admin.from("waitlist").update({ active: false }).eq("id", r.waitlist_id!).throwOnError();
+    expect(await entrar(c.conversa, j2)).toEqual({ ok: false, motivo: "sem_pedido_de_espera" });
+    const { data: daConversa } = await admin
+      .from("waitlist")
+      .select("id, active")
+      .eq("contact_id", c.contato)
+      .throwOnError();
+    expect(daConversa).toEqual([{ id: r.waitlist_id, active: false }]);
+    const { count: eventosDepois } = await admin
+      .from("message")
+      .select("id", { count: "exact", head: true })
+      .eq("conversation_id", c.conversa)
+      .eq("content_type", "evento")
+      .throwOnError();
+    expect(eventosDepois).toBe(1);
+    await admin.from("waitlist").update({ active: true }).eq("id", r.waitlist_id!).throwOnError();
+    expect(await entrar(c.conversa, j2)).toMatchObject({ ok: true, reutilizado: true, waitlist_id: r.waitlist_id });
     expect(await entrar(c.conversa)).toEqual({ ok: false, motivo: "sem_pedido_de_espera" });
   });
 
@@ -743,8 +798,28 @@ describe("entrar_na_lista_de_espera_pela_ia: de ponta a ponta", () => {
     expect(await entrar(c.conversa)).toEqual({
       ok: false,
       motivo: "ja_na_lista",
-      entrada: { profissional: "Dra. Ana", turnos: [], dias: [] },
+      entrada: { procedimento: "Limpeza sintética", profissional: "Dra. Ana", turnos: [], dias: [] },
     });
+  });
+
+  it("ja_na_lista (revisao): a recepcao pos o mesmo procedimento com OUTRO profissional depois do pedido", async () => {
+    const c = await conversaNaIa();
+    await pedidoEPergunta(c, { profissional: ana });
+    await doPaciente(c.conversa, "sim");
+    const daRecepcao = await inserir("waitlist", {
+      clinic_id: clinica,
+      contact_id: c.contato,
+      procedure_id: limpeza,
+      professional_id: bruno,
+    });
+    expect(await entrar(c.conversa)).toEqual({
+      ok: false,
+      motivo: "ja_na_lista",
+      entrada: { procedimento: "Limpeza sintética", profissional: "Dr. Bruno", turnos: [], dias: [] },
+    });
+    // Removida a da recepcao, a fase 2 entra (o pedido seguiu vivo).
+    await admin.from("waitlist").update({ active: false }).eq("id", daRecepcao).throwOnError();
+    expect(await entrar(c.conversa)).toMatchObject({ ok: true, reutilizado: false });
   });
 });
 

@@ -155,10 +155,16 @@ export type MotivoDaEntradaNaEspera =
   (typeof MOTIVOS_DA_ENTRADA_NA_ESPERA)[number];
 
 /**
- * A entrada que ja existe no mesmo grupo (ja_na_lista): o profissional
- * (nome do Cadastro; null = qualquer) e a preferencia dela.
+ * A entrada que ja existe (ja_na_lista): o profissional (nome do Cadastro;
+ * null = qualquer) e a preferencia dela. Revisao da AG5 (contrato da frente
+ * de banco, C1): ja_na_lista vale para QUALQUER entrada ativa do contato do
+ * mesmo procedimento (de qualquer profissional, ou de outro) ou de qualquer
+ * procedimento; o profissional pode ser outro que o do pedido, e o
+ * procedimento vem tambem (null = qualquer procedimento; ausente = a
+ * resposta de antes, sem o campo).
  */
 export type EntradaQueJaExiste = {
+  procedimento?: string | null;
   profissional: string | null;
   turnos: PeriodoDaEspera[];
   dias: number[];
@@ -274,10 +280,23 @@ function entradaQueJaExiste(valor: unknown): EntradaQueJaExiste | null {
   }
   const turnos = periodosLidos(valor.turnos);
   const dias = diasLidos(valor.dias);
-  if (turnos === null || dias === null) {
+  if (
+    turnos === null ||
+    dias === null ||
+    (valor.procedimento !== undefined &&
+      valor.procedimento !== null &&
+      typeof valor.procedimento !== "string")
+  ) {
     return null;
   }
-  return { profissional: textoOuNulo(valor.profissional), turnos, dias };
+  return {
+    ...(valor.procedimento === undefined
+      ? {}
+      : { procedimento: textoOuNulo(valor.procedimento) }),
+    profissional: textoOuNulo(valor.profissional),
+    turnos,
+    dias,
+  };
 }
 
 function recusaLida<M extends string>(

@@ -244,9 +244,9 @@ function nadaGravado() {
 }
 
 const T_E1 =
-  "Confirma a sua entrada na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à noite, às segundas e às quartas? Se abrir um horário assim, você recebe uma mensagem por aqui para ficar com ele.";
+  "Confirma a sua entrada na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à noite, às segundas e às quartas? Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp para ficar com ele.";
 const T_E2 =
-  "Pronto, você entrou na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à noite, às segundas e às quartas. Se abrir um horário assim, você recebe uma mensagem por aqui.";
+  "Pronto, você entrou na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à noite, às segundas e às quartas. Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp.";
 
 async function ateAPergunta(tela: TelaDoSimulador) {
   const r0 = await tela.envia("Queria limpeza de pele com a Dra. Ana, só à noite.", [
@@ -324,6 +324,46 @@ describe("o simulador põe na lista de espera sem gravar nada", () => {
       resultado: "ja_na_lista",
       preferencia: "à noite, às segundas e às quartas",
     });
+    nadaGravado();
+  });
+
+  it("revisão da AG5 (contrato C1): a entrada simulada do mesmo procedimento com outro profissional também é ja_na_lista, e o fato é o profissional dela", async () => {
+    const tela = new TelaDoSimulador();
+    await ateAPergunta(tela);
+    await tela.envia("Sim", [ferramenta("entrar_na_lista_de_espera", {})]);
+    // A busca de novo com qualquer profissional (o estado muda o
+    // profissional para nulo) e o pedido da lista: a entrada da Dra. Ana, do
+    // mesmo procedimento, ja existe.
+    const t3 = await tela.envia("E com qualquer profissional, à noite?", [
+      ferramenta("buscar_horario", {
+        procedimento: P_LIMPEZA,
+        profissional: null,
+        convenio: null,
+        a_partir_de: null,
+        periodo: "noite",
+        unidade: null,
+        hora: null,
+      }),
+      ferramenta("pedir_lista_de_espera", { periodos: ["noite"], dias: [] }),
+      final("Você já está na lista de espera para esse procedimento, à noite, às segundas e às quartas."),
+    ]);
+    expect(t3).toMatchObject({ ok: true, tipo: "resposta" });
+    const saida = (
+      (tela.corpos.at(-1)?.input as { type?: string; output?: string }[]) ?? []
+    )
+      .filter((i) => i.type === "function_call_output")
+      .map((i) => JSON.parse(i.output ?? "{}") as Record<string, unknown>)
+      .at(-1);
+    expect(saida).toEqual({
+      resultado: "ja_na_lista",
+      preferencia: "à noite, às segundas e às quartas",
+    });
+    if (t3.ok) {
+      expect(t3.trilha.map((p) => p.texto)).toContain(
+        "Não pediu a lista de espera: a pessoa já está na lista de espera para esse pedido (Limpeza de pele, com Dra. Ana Lima, à noite, às segundas e às quartas)",
+      );
+    }
+    expect(tela.pacote().memoria.espera?.pedido ?? null).toBeNull();
     nadaGravado();
   });
 

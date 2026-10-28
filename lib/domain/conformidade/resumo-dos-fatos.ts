@@ -119,14 +119,16 @@ const SEM_HORARIO_DA_ACAO = "(sem dia e hora informados)";
 /**
  * AG5: a pessoa esta na lista de espera, lido pelo sistema nesta resposta (a
  * entrada que a assistente criou nesta conversa, relida e ativa, ou a que ja
- * existia no mesmo pedido). Sem o procedimento, o profissional e a
- * preferencia (minimizacao).
+ * existia). Sem o procedimento, o profissional e a preferencia
+ * (minimizacao). Revisao da AG5 (o contrato da frente de banco, C1): a que
+ * ja existia e do mesmo procedimento (de qualquer profissional, ou de outro)
+ * ou de qualquer procedimento, nao necessariamente do mesmo pedido.
  */
 const ROTULO_DA_LISTA_DE_ESPERA = {
   conversa:
     "A pessoa está na lista de espera (entrada feita pela assistente nesta conversa, relida pelo sistema nesta resposta; nenhum horário marcado).",
   existente:
-    "A pessoa já estava na lista de espera para este pedido (lido pelo sistema nesta resposta; nenhum horário marcado).",
+    "A pessoa já estava na lista de espera para este procedimento, numa entrada que já existia (lido pelo sistema nesta resposta; nenhum horário marcado).",
 } as const;
 
 const ROTULO_DO_ESTADO: Readonly<Record<EstadoDaCobertura, string>> = {

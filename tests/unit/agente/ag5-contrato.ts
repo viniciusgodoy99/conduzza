@@ -176,23 +176,39 @@ export function rpcsDaAg5(banco: AgendaEmMemoria, opcoes: OpcoesDaAg5) {
     if (opcoes.autorizado !== undefined && !opcoes.autorizado()) {
       return { motivo: "sem_autorizacao", daPessoa: null };
     }
-    const noGrupo = banco
+    // Revisao da AG5 (contrato da frente de banco, C1): qualquer entrada
+    // ATIVA do contato do mesmo procedimento (de qualquer profissional, ou
+    // de outro) ou de qualquer procedimento (procedure_id nulo), de qualquer
+    // origem. A entrada devolvida: a do grupo exato primeiro; depois a do
+    // mesmo procedimento com qualquer profissional; a de outro profissional;
+    // a de qualquer procedimento.
+    const ativas = banco
       .linhas("waitlist")
-      .find(
+      .filter(
         (w) =>
           w.clinic_id === CLINICA &&
           w.contact_id === CONTATO &&
           w.active === true &&
-          (w.procedure_id ?? null) === (p.procedure_id ?? null) &&
-          (w.professional_id ?? null) === (p.professional_id ?? null),
+          ((w.procedure_id ?? null) === null ||
+            w.procedure_id === p.procedure_id),
       );
-    if (noGrupo !== undefined) {
+    const ordem = (w: Linha): number =>
+      (w.procedure_id ?? null) === null
+        ? 3
+        : (w.professional_id ?? null) === (p.professional_id ?? null)
+          ? 0
+          : (w.professional_id ?? null) === null
+            ? 1
+            : 2;
+    const existente = [...ativas].sort((a, b) => ordem(a) - ordem(b))[0];
+    if (existente !== undefined) {
       return {
         motivo: "ja_na_lista",
         entrada: {
-          profissional: nomeDoProfissional(noGrupo.professional_id ?? null),
-          turnos: noGrupo.preferred_shifts,
-          dias: noGrupo.preferred_weekdays,
+          procedimento: nomeDoProcedimento(existente.procedure_id ?? null),
+          profissional: nomeDoProfissional(existente.professional_id ?? null),
+          turnos: existente.preferred_shifts,
+          dias: existente.preferred_weekdays,
         },
         daPessoa: null,
       };
@@ -373,6 +389,12 @@ export function rpcsDaAg5(banco: AgendaEmMemoria, opcoes: OpcoesDaAg5) {
     if (feita !== undefined) {
       if (feita.conversation_id !== args.p_conversation_id) {
         return erro("22023");
+      }
+      // Revisao da AG5 (contrato da frente de banco, C4): a entrada do job
+      // fora da fila (a recepcao a removeu entre as tentativas, ou o SIM a
+      // usou) nao e mais pedido a cumprir, na mesma posicao da idempotencia.
+      if (feita.active !== true) {
+        return recusa("sem_pedido_de_espera");
       }
       return {
         data: {

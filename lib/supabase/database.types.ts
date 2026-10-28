@@ -5872,6 +5872,15 @@ export type Database = {
         Args: { p_canal: string; p_status: string }
         Returns: boolean
       }
+      consulta_futura_do_procedimento: {
+        Args: {
+          p_clinic_id: string
+          p_contato: string
+          p_exceto: string
+          p_procedure_id: string
+        }
+        Returns: Record<string, unknown>
+      }
       conta_por_email: {
         Args: { p_email: string }
         Returns: {

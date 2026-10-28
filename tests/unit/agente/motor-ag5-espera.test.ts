@@ -189,7 +189,7 @@ describe("quando a IA oferece a lista (desenho 1.1)", () => {
     });
     // A busca foi sem profissional: qualquer profissional.
     expect(r2.resposta).toBe(
-      "Confirma a sua entrada na lista de espera para Limpeza de pele, com qualquer profissional, no particular, de manhã, às sextas? Se abrir um horário assim, você recebe uma mensagem por aqui para ficar com ele.",
+      "Confirma a sua entrada na lista de espera para Limpeza de pele, com qualquer profissional, no particular, de manhã, às sextas? Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp para ficar com ele.",
     );
     expect(cenario.banco.chamadasDe("pedir_lista_de_espera_pela_ia")).toEqual([
       expect.objectContaining({ p_professional_id: null, p_dias: [5] }),
@@ -218,7 +218,7 @@ describe("quando a IA oferece a lista (desenho 1.1)", () => {
     });
     // Os sete dias viram "qualquer" (o banco normaliza; a T-E1 usa o dele).
     expect(r.resposta).toBe(
-      `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\nConfirma a sua entrada na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à noite, em qualquer dia? Se abrir um horário assim, você recebe uma mensagem por aqui para ficar com ele.`,
+      `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\nConfirma a sua entrada na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à noite, em qualquer dia? Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp para ficar com ele.`,
     );
     expect(cenario.pedidos[0]).toMatchObject({
       preferred_shifts: ["noite"],
@@ -414,7 +414,7 @@ describe("a resposta à pergunta (desenho 1.3)", () => {
       ],
     });
     expect(r2.resposta).toBe(
-      "Confirma a sua entrada na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à tarde ou à noite, às segundas e às quartas? Se abrir um horário assim, você recebe uma mensagem por aqui para ficar com ele.",
+      "Confirma a sua entrada na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à tarde ou à noite, às segundas e às quartas? Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp para ficar com ele.",
     );
   });
 
@@ -432,7 +432,7 @@ describe("a resposta à pergunta (desenho 1.3)", () => {
       resultado: "sem_pergunta_de_espera",
     });
     expect(r.resposta).toBe(
-      "Confirma a sua entrada na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à noite, às segundas? Se abrir um horário assim, você recebe uma mensagem por aqui para ficar com ele.",
+      "Confirma a sua entrada na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à noite, às segundas? Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp para ficar com ele.",
     );
     expect(cenario.banco.chamadasDe("entrar_na_lista_de_espera_pela_ia")).toEqual([]);
     expect(cenario.fila).toEqual([]);
@@ -686,7 +686,7 @@ describe("o que a IA nunca faz (desenho 1.4)", () => {
       texto: "Obrigada! Demora muito?",
       roteiro: [
         final(
-          "Não dá para dizer quando abre um horário. Se abrir uma vaga à noite, você recebe uma mensagem por aqui.",
+          "Não dá para dizer quando abre um horário. Se abrir uma vaga à noite, você recebe uma mensagem pelo WhatsApp.",
         ),
       ],
     });
@@ -748,7 +748,7 @@ describe("o profissional do pedido vem da busca", () => {
       roteiro: [ferramenta("pedir_lista_de_espera", { periodos: ["manha"], dias: [] })],
     });
     expect(r.resposta).toBe(
-      "Confirma a sua entrada na lista de espera para Consulta, com Dr. Bruno Costa, no particular, de manhã, em qualquer dia? Se abrir um horário assim, você recebe uma mensagem por aqui para ficar com ele.",
+      "Confirma a sua entrada na lista de espera para Consulta, com Dr. Bruno Costa, no particular, de manhã, em qualquer dia? Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp para ficar com ele.",
     );
     expect(cenario.banco.chamadasDe("pedir_lista_de_espera_pela_ia")).toEqual([
       expect.objectContaining({
@@ -808,7 +808,7 @@ describe("o horário perdido (desenho 1.1.3)", () => {
       ],
     });
     expect(r3.resposta).toBe(
-      "Confirma a sua entrada na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à tarde, às quartas? Se abrir um horário assim, você recebe uma mensagem por aqui para ficar com ele.",
+      "Confirma a sua entrada na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à tarde, às quartas? Se abrir um horário assim, você recebe uma mensagem pelo WhatsApp para ficar com ele.",
     );
   });
 });

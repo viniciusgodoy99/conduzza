@@ -9,10 +9,12 @@ import {
   montarOnda,
   proximaEsperaPorReconexao,
   proximaTentativaDaVaga,
+  semEntradasDaIaComConsulta,
   temFolgaParaResponder,
   turnoDoInstante,
   vinculoDaEntrada,
   REPOUSO_POS_OFERTA_MS,
+  type ConsultaFuturaDoContato,
   type EntradaDaFila,
   type SlotVago,
   type VinculoDaVaga,
@@ -42,6 +44,20 @@ import type { Job, ResultadoDeJob } from "@/lib/jobs/worker";
 const TETO_DE_CANDIDATOS = 30;
 /** A fila lida por vaga (a mesma ordem de chegada da tela). */
 const TAMANHO_DA_FILA_LIDA = 500;
+/**
+ * AG5 (revisao de 28/10/2026, R1): as situacoes de consulta que NAO contam
+ * como "ja tem consulta" (o predicado de D-41, consulta_futura_do_
+ * procedimento no banco), no formato do filtro not.in do PostgREST.
+ */
+export const SITUACOES_QUE_NAO_CONTAM =
+  "(cancelado_paciente,cancelado_clinica,faltou,compareceu)";
+/** A aprovacao que nao conta (a recusada); nula conta, como no banco. */
+export const APROVACAO_QUE_CONTA = "approval_status.is.null,approval_status.neq.recusado";
+/**
+ * Contatos por leitura das consultas futuras: a lista vai na URL do
+ * PostgREST (in.(...)), e a fila lida tem ate 500 entradas.
+ */
+const CONTATOS_POR_LEITURA = 100;
 /** Motivo gravado em job_queue.ultimo_motivo_devolucao na espera. */
 const MOTIVO_WHATSAPP_DESCONECTADO = "whatsapp_desconectado";
 /** Chave do payload: quantas voltas a vaga ja deu esperando a reconexao. */
@@ -369,6 +385,73 @@ export function entradasDaFila(linhas: readonly unknown[]): EntradaDaFila[] {
   });
 }
 
+/**
+ * As consultas futuras como o job as le (PURO): o contato e o procedimento
+ * do vinculo da consulta. Leitura defensiva: sem o contato ou o
+ * procedimento, a linha nao conta.
+ */
+export function consultasFuturasDaFila(
+  linhas: readonly unknown[],
+): ConsultaFuturaDoContato[] {
+  const consultas: ConsultaFuturaDoContato[] = [];
+  for (const linha of linhas as Record<string, unknown>[]) {
+    const vinculo = (
+      Array.isArray(linha.service_link) ? linha.service_link[0] : linha.service_link
+    ) as { procedure_id?: unknown } | null | undefined;
+    const procedimento = vinculo?.procedure_id;
+    if (typeof linha.contact_id !== "string" || typeof procedimento !== "string") {
+      continue;
+    }
+    consultas.push({ contactId: linha.contact_id, procedureId: procedimento });
+  }
+  return consultas;
+}
+
+/**
+ * AG5 (revisao de 28/10/2026, R1): tira da fila a entrada da IA cujo
+ * contato ja tem consulta futura do MESMO procedimento (o SIM dela seria a
+ * segunda consulta; o aceite recusa com sem_vinculo). O predicado de D-41,
+ * o mesmo de consulta_futura_do_procedimento no banco: o inicio no futuro,
+ * a situacao fora de cancelado_paciente, cancelado_clinica, faltou e
+ * compareceu, a aprovacao diferente de recusado (nula conta). So os
+ * contatos das entradas da IA sao lidos (sem elas, nenhuma leitura); as da
+ * equipe nao mudam. Null quando a leitura falhou: a onda nunca sai sem a
+ * conferencia (o aceite confere de novo de qualquer jeito).
+ */
+async function semSegundaConsultaDaIa(
+  admin: SupabaseClient,
+  clinicId: string,
+  entradas: EntradaDaFila[],
+): Promise<EntradaDaFila[] | null> {
+  const contatos = [
+    ...new Set(
+      entradas
+        .filter((entrada) => entrada.origem === "ia" && entrada.procedureId !== null)
+        .map((entrada) => entrada.contactId),
+    ),
+  ];
+  if (contatos.length === 0) {
+    return entradas;
+  }
+  const agora = new Date(Date.now()).toISOString();
+  const consultas: ConsultaFuturaDoContato[] = [];
+  for (let inicio = 0; inicio < contatos.length; inicio += CONTATOS_POR_LEITURA) {
+    const { data, error } = await admin
+      .from("appointment")
+      .select("contact_id, service_link:service_link_id ( procedure_id )")
+      .eq("clinic_id", clinicId)
+      .in("contact_id", contatos.slice(inicio, inicio + CONTATOS_POR_LEITURA))
+      .gt("starts_at", agora)
+      .not("status", "in", SITUACOES_QUE_NAO_CONTAM)
+      .or(APROVACAO_QUE_CONTA);
+    if (error) {
+      return null;
+    }
+    consultas.push(...consultasFuturasDaFila(data ?? []));
+  }
+  return semEntradasDaIaComConsulta(entradas, consultas);
+}
+
 export async function executarOfertaDeEspera(
   admin: SupabaseClient,
   job: Job,
@@ -593,7 +676,17 @@ export async function executarOfertaDeEspera(
     }
   }
 
-  const entradas = entradasDaFila(filaResult.data ?? []);
+  // AG5 (revisao de 28/10/2026, R1): a entrada da IA de quem ja tem consulta
+  // futura do mesmo procedimento sai antes da onda (e da espera pela vaga
+  // presa: ela nao serve para esta vaga).
+  const entradas = await semSegundaConsultaDaIa(
+    admin,
+    job.clinic_id,
+    entradasDaFila(filaResult.data ?? []),
+  );
+  if (!entradas) {
+    return { ok: false, erro: "leitura_falhou" };
+  }
   const inicio = new Date(slot.startsAt);
   const slotVago: SlotVago = {
     professionalId: slot.professionalId,

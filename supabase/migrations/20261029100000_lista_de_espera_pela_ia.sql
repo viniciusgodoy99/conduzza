@@ -61,9 +61,12 @@
 --      preferencia_da_espera_valida (o CHECK das preferencias do pedido),
 --      descrever_preferencia_da_espera (o texto do evento),
 --      lista_de_espera_da_ia_ligada (a habilidade na versao em uso),
---      entrada_da_espera_no_grupo (a entrada ativa do mesmo grupo do indice
---      waitlist_ativa_unica) e conferir_pedido_de_espera_da_ia (as recusas
---      que as duas fases repetem).
+--      entrada_da_espera_no_grupo (a entrada ativa do contato que ja cobre o
+--      pedido: do mesmo procedimento com qualquer profissional, ou de
+--      qualquer procedimento; a do grupo exato do indice waitlist_ativa_unica
+--      primeiro), consulta_futura_do_procedimento (o predicado de D-41 num
+--      lugar so) e conferir_pedido_de_espera_da_ia (as recusas que as duas
+--      fases repetem).
 --   5. pedir_lista_de_espera_pela_ia (fase 1, so service role): confere e
 --      grava o pedido. Nada mais e gravado.
 --   6. entrar_na_lista_de_espera_pela_ia (fase 2, so service role): confere
@@ -79,13 +82,45 @@
 --   8. aceitar_oferta_de_espera (CREATE OR REPLACE, mesma assinatura e
 --      grants; D-37): o pagamento declarado na entrada e estrito; a entrada
 --      da IA so com o vinculo que a IA marca (vinculo e procedimento com "IA
---      pode agendar", convenio do vinculo ativo) e e lida mesmo inativa (a
---      regra dela vale ate o fim). Entrada sem pagamento declarado e sem
---      origem 'ia' (todas as de hoje): EXATAMENTE o corpo de antes (paridade
---      provada no ensaio).
+--      pode agendar", convenio do vinculo ativo), e lida mesmo inativa (a
+--      regra dela vale ate o fim) e nunca vira a SEGUNDA consulta do mesmo
+--      procedimento (a revisao, abaixo). Entrada sem pagamento declarado e
+--      sem origem 'ia' (todas as de hoje): EXATAMENTE o corpo de antes
+--      (paridade provada no ensaio).
 --   9. podar_agendamento_da_ia (CREATE OR REPLACE): poda tambem o pedido sem
 --      consumo com 7 dias (ou da conversa que sumiu) e o consumido com 30
 --      dias; devolve tambem pedidos_de_espera.
+--  10. encerrar_envios_da_oferta e expirar_ofertas_de_espera (CREATE OR
+--      REPLACE, mesmas assinaturas, linguagem e grants): a oferta que fecha
+--      (o aceite, o "Cancelar reoferta", a vaga que sumiu, a expiracao)
+--      cancela tambem o lembrete dela que esta pendente (T-E4:
+--      enviar_mensagem_ativa com payload.lembrete_da_oferta, nunca
+--      offer_id), inclusive o que voltou a pendente esperando o canal.
+--
+-- A REVISAO INDEPENDENTE (28/10/2026, antes de aplicar), tres achados de
+-- banco corrigidos aqui:
+--   R1 (medio) a segunda consulta ao aceitar a oferta: a pessoa na lista
+--      pela IA marca o mesmo procedimento em outro horario (pela IA ou pela
+--      recepcao); depois a onda a incluia e o SIM criava a segunda consulta.
+--      Agora: o job da reoferta tira da onda a entrada da IA cujo contato
+--      tem consulta futura do MESMO procedimento (lib/jobs/lista-espera.ts,
+--      o predicado de D-41); o aceite da entrada da IA confere de novo
+--      (consulta_futura_do_procedimento) e recusa com sem_vinculo (a oferta
+--      segue para o resto da onda), com a trava da conversa antes e o
+--      contato travado depois do insert (a marcacao ao mesmo tempo, por
+--      qualquer caminho, e vista); a entrada da equipe nao muda (paridade).
+--      E o ja_na_lista das duas fases vale para QUALQUER entrada ativa do
+--      contato do mesmo procedimento (qualquer profissional) ou de qualquer
+--      procedimento: a IA nunca cria uma segunda entrada do mesmo
+--      procedimento ao lado de outra (a que sobrasse, da equipe, levaria a
+--      segunda consulta sem conferencia nenhuma).
+--   R2 (medio, a parte de banco) o lembrete da oferta saia depois de a
+--      oferta fechar: o item 10. A guarda no executor e da frente do
+--      interceptador (lib/jobs/worker.ts).
+--   R3 (baixo) o mesmo job de novo na fase 2 devolvia ok (e a T-E2 "Pronto,
+--      voce entrou...") mesmo com a entrada removida pela recepcao entre as
+--      tentativas: agora a entrada do job fora da fila e sem_pedido_de_espera
+--      (o motor ja trata: falha fechada, nada vai ao paciente).
 --
 -- AS RECUSAS (o contrato para o motor; os COMMENT ON abaixo repetem):
 --   fase 1, pedir: 22004 (nulo fora de profissional e convenio) -> (trava
@@ -93,10 +128,14 @@
 --     22023 job_de_outro_pedido) -> 22023 preferencia_invalida,
 --     pagamento_invalido, cadastro_invalido -> ia_desligada ->
 --     lista_de_espera_desligada -> mais_de_uma_unidade -> so_com_a_equipe ->
---     sem_autorizacao -> ja_na_lista -> consulta_para_outra_pessoa ->
+--     sem_autorizacao -> ja_na_lista (revisao: qualquer entrada ativa do
+--     contato do mesmo procedimento, de qualquer profissional, ou de
+--     qualquer procedimento) -> consulta_para_outra_pessoa ->
 --     menor_de_idade -> ja_tem_consulta -> grava.
 --   fase 2, entrar: 22004 -> (trava da conversa) -> 22023 job_invalido ->
---     idempotencia (reutilizado, ou 22023 job_de_outra_conversa) ->
+--     idempotencia (a entrada do job ativa: reutilizado; fora da fila:
+--     sem_pedido_de_espera, revisao; de outra conversa: 22023
+--     job_de_outra_conversa) ->
 --     ia_desligada -> lista_de_espera_desligada -> sem_pedido_de_espera ->
 --     (pedido travado) mais_de_uma_unidade -> so_com_a_equipe ->
 --     sem_autorizacao -> ja_na_lista -> mensagem_nova_do_paciente ->
@@ -128,25 +167,34 @@
 --
 -- TRAVAS (medidas no Postgres local: pg_locks da transacao depois da
 -- migration). TODAS no comeco, no bloco 0, antes de qualquer mudanca, numa
--- ordem fixa: waitlist e ai_turno em ACCESS EXCLUSIVE (os ALTER, o indice,
--- o gatilho, a FK da tabela nova para a fila), insurance e clinic em SHARE
--- ROW EXCLUSIVE (as FKs novas para elas). Cada tentativa pede as quatro com
--- NOWAIT; com uma ocupada, solta as que pegou (o savepoint do bloco),
--- espera 100 ms SEM trava nenhuma e tenta de novo, ate 30 vezes (uns 3 s);
--- depois falha inteira com 55P03, nada gravado: rodar de novo. Nunca espera
--- trava com outra na mao e nao fecha ciclo (40P01) com sessao nenhuma.
--- Depois do bloco, so pede travas que ja tem (ou mais fracas) e nunca
--- espera; o lock_timeout de 3 s fica de rede. As funcoes sao plpgsql (o
--- corpo nao e validado contra as tabelas no CREATE: nenhuma trava nelas),
--- menos as duas puras em SQL, que nao leem tabela.
+-- ordem fixa: waitlist e ai_turno em ACCESS EXCLUSIVE (os ALTER, o indice, o
+-- gatilho, a FK da tabela nova para a fila), insurance e clinic em SHARE ROW
+-- EXCLUSIVE (as FKs novas para elas), job_queue e waitlist_offer em ROW
+-- EXCLUSIVE (a validacao do corpo das duas funcoes SQL do item 10: a analise
+-- do UPDATE e do INSERT delas pega a trava de quem grava linha). Cada
+-- tentativa pede as seis com NOWAIT; com uma ocupada, solta as que pegou (o
+-- savepoint do bloco), espera 100 ms SEM trava nenhuma e tenta de novo, ate
+-- 30 vezes (uns 3 s); depois falha inteira com 55P03, nada gravado: rodar de
+-- novo. Nunca espera trava com outra na mao e nao fecha ciclo (40P01) com
+-- sessao nenhuma. Depois do bloco, so pede travas que ja tem (ou mais
+-- fracas) e nunca espera; o lock_timeout de 3 s fica de rede. As funcoes sao
+-- plpgsql (o corpo nao e validado contra as tabelas no CREATE: nenhuma trava
+-- nelas), menos as duas puras em SQL, que nao leem tabela, e as duas
+-- trocadas que ja eram SQL e continuam (encerrar_envios_da_oferta e
+-- expirar_ofertas_de_espera, item 10), cuja validacao no CREATE pega ROW
+-- EXCLUSIVE (e ACCESS SHARE) em job_queue e waitlist_offer ate o commit, ja
+-- pegas no bloco: nao barra leitura nem escrita de ninguem (o motor
+-- reivindica e grava jobs, a oferta e aceita ou expira normalmente), so
+-- CREATE INDEX sem CONCURRENTLY, ALTER, DROP, TRUNCATE, VACUUM FULL e LOCK
+-- explicito, que ninguem pede no uso.
 -- Nesse tempo: a Tela 10, o dialogo de cancelar da Agenda (que le a fila) e
 -- o job da reoferta esperam a waitlist; o turno da IA espera ai_turno
 -- (gravar o turno e ler o historico); a gravacao de convenio e a de dados da
 -- clinica esperam; a LEITURA de clinic e de insurance segue (SHARE ROW
--- EXCLUSIVE nao barra leitura nem FK de outras tabelas). Nenhuma trava em
--- message, conversation, contact, appointment, job_queue, ai_agent_config,
--- ai_decision_log, ia_atendimento, waitlist_offer nem audit_log. Horario
--- calmo.
+-- EXCLUSIVE nao barra leitura nem FK de outras tabelas); job_queue e
+-- waitlist_offer seguem inteiras (leitura e escrita). Nenhuma trava em
+-- message, conversation, contact, appointment, ai_agent_config,
+-- ai_decision_log, ia_atendimento nem audit_log. Horario calmo.
 --
 -- ORDEM DE PUBLICACAO: a AG4 (20261028100000) aplicada e publicada antes;
 -- esta migration; os tipos (lib/supabase/database.types.ts foi escrito a mao
@@ -165,7 +213,7 @@
 -- entradas da IA cujo pagamento a regra de antes nao reproduz (o rollback
 -- se recusa com uma ativa; ou desativar todas as da IA, avisando a
 -- clinica); DEPOIS, numa transacao, no SQL editor,
--- supabase/operacao/rollback/20261029100000-corpos-anteriores.sql (os dois
+-- supabase/operacao/rollback/20261029100000-corpos-anteriores.sql (os quatro
 -- corpos de antes, com os comentarios; as funcoes, o gatilho, a tabela, os
 -- indices, os CHECKs e as colunas novas saem; confere no fim). SE PERDE: a
 -- origem, o job, a conversa e o pagamento das entradas (elas ficam, como
@@ -177,10 +225,12 @@ set local lock_timeout = '3s';
 -- ---------------------------------------------------------------------------
 -- 0) As travas, todas aqui, antes de qualquer mudanca (cabecalho, TRAVAS)
 -- ---------------------------------------------------------------------------
--- Ordem fixa, cada tabela ja no modo mais forte que a migration pede nela.
--- NOWAIT: tabela ocupada solta o que esta tentativa pegou (o savepoint do
--- bloco) e espera 100 ms sem trava nenhuma; 30 tentativas, depois 55P03 e
--- nada gravado. Nunca espera com trava na mao: nao fecha ciclo com sessao.
+-- Ordem fixa, cada tabela ja no modo mais forte que a migration pede nela
+-- (job_queue e waitlist_offer: ROW EXCLUSIVE, o que a validacao dos corpos
+-- SQL do item 10 pega na analise do UPDATE e do INSERT deles). NOWAIT: tabela ocupada solta o que esta tentativa pegou (o
+-- savepoint do bloco) e espera 100 ms sem trava nenhuma; 30 tentativas,
+-- depois 55P03 e nada gravado. Nunca espera com trava na mao: nao fecha
+-- ciclo com sessao.
 
 do $travas$
 declare
@@ -190,12 +240,13 @@ begin
     begin
       lock table public.waitlist, public.ai_turno in access exclusive mode nowait;
       lock table public.insurance, public.clinic in share row exclusive mode nowait;
+      lock table public.job_queue, public.waitlist_offer in row exclusive mode nowait;
       exit;
     exception when lock_not_available then
       v_tentativas := v_tentativas + 1;
       if v_tentativas >= 30 then
         raise exception using errcode = 'lock_not_available',
-          message = 'Migration 20261029100000: waitlist, ai_turno, insurance ou clinic seguiu ocupada por 3 s. Nada foi gravado: rode de novo em horario calmo.';
+          message = 'Migration 20261029100000: waitlist, ai_turno, insurance, clinic, job_queue ou waitlist_offer seguiu ocupada por 3 s. Nada foi gravado: rode de novo em horario calmo.';
       end if;
       perform pg_sleep(0.1);
     end;
@@ -510,8 +561,19 @@ revoke execute on function public.lista_de_espera_da_ia_ligada(uuid)
 comment on function public.lista_de_espera_da_ia_ligada(uuid) is
   'Interna (nenhum papel da API executa): a habilidade lista_de_espera ligada na ULTIMA versao publicada do agente (skills ->> ''lista_de_espera'' = ''true'') e, enquanto c_exige_agendar (D-36, a confirmar), Agendar valendo nela (skills.agendar, agenda_antecedencia_horas e agenda_horizonte_dias preenchidos). Sem versao publicada: falso.';
 
--- 5c. A entrada ativa do contato no mesmo grupo do indice waitlist_ativa_unica
--- (procedimento e profissional, nulo casando nulo), para o ja_na_lista.
+-- 5c. A entrada ativa do contato que ja cobre o pedido, para o ja_na_lista
+-- (revisao de 28/10/2026, R1): do MESMO procedimento com qualquer
+-- profissional, ou de qualquer procedimento (procedure_id nulo), de qualquer
+-- origem. Antes, so o grupo exato do indice waitlist_ativa_unica: com a
+-- entrada da recepcao (Limpeza, qualquer profissional), a IA criava outra
+-- (Limpeza, Dra. Ana); depois do SIM de uma, a outra seguia na fila, e a da
+-- equipe nao confere a consulta que a pessoa ja tem (a paridade): a segunda
+-- consulta. A IA nunca cria uma segunda entrada do mesmo procedimento: a
+-- pessoa ouve que ja esta na lista (com a entrada que existe), e mudar a
+-- entrada que existe e da equipe. A ordem: a do grupo exato primeiro (a do
+-- 23505 da fase 2), depois a do mesmo procedimento com qualquer profissional,
+-- a de outro profissional, e as de qualquer procedimento (na mesma ordem de
+-- profissional); por fim a chegada.
 create function public.entrada_da_espera_no_grupo(
   p_clinic_id uuid,
   p_contato uuid,
@@ -526,23 +588,25 @@ as $$
 declare
   v_entrada record;
 begin
-  select pf.name as profissional, w.preferred_shifts, w.preferred_weekdays
+  select pr.name as procedimento, pf.name as profissional, w.preferred_shifts, w.preferred_weekdays
     into v_entrada
     from public.waitlist w
+    left join public.procedure pr on pr.id = w.procedure_id and pr.clinic_id = w.clinic_id
     left join public.professional pf on pf.id = w.professional_id and pf.clinic_id = w.clinic_id
    where w.clinic_id = p_clinic_id
      and w.contact_id = p_contato
      and w.active
-     and coalesce(w.procedure_id, '00000000-0000-0000-0000-000000000000'::uuid)
-         = coalesce(p_procedure_id, '00000000-0000-0000-0000-000000000000'::uuid)
-     and coalesce(w.professional_id, '00000000-0000-0000-0000-000000000000'::uuid)
-         = coalesce(p_professional_id, '00000000-0000-0000-0000-000000000000'::uuid)
-   order by w.created_at, w.id
+     and (w.procedure_id = p_procedure_id or w.procedure_id is null)
+   order by (w.procedure_id is not null) desc,
+            (w.professional_id is not distinct from p_professional_id) desc,
+            (w.professional_id is null) desc,
+            w.created_at, w.id
    limit 1;
   if not found then
     return null;
   end if;
   return jsonb_build_object(
+    'procedimento', v_entrada.procedimento,
     'profissional', v_entrada.profissional,
     'turnos', to_jsonb(v_entrada.preferred_shifts),
     'dias', to_jsonb(v_entrada.preferred_weekdays));
@@ -553,9 +617,50 @@ revoke execute on function public.entrada_da_espera_no_grupo(uuid, uuid, uuid, u
   from public, anon, authenticated, service_role;
 
 comment on function public.entrada_da_espera_no_grupo(uuid, uuid, uuid, uuid) is
-  'Interna (nenhum papel da API executa): a entrada ATIVA do contato no mesmo grupo do indice waitlist_ativa_unica (procedimento e profissional, nulo casando nulo), de qualquer origem: {profissional (nome; nulo = qualquer), turnos, dias} ou nulo.';
+  'Interna (nenhum papel da API executa): a entrada ATIVA do contato que ja cobre o pedido (revisao de 28/10/2026): do mesmo procedimento com QUALQUER profissional, ou de qualquer procedimento (procedure_id nulo), de qualquer origem. A do grupo exato do indice waitlist_ativa_unica primeiro (procedimento e profissional, nulo casando nulo), depois a do mesmo procedimento com qualquer profissional, a de outro profissional e as de qualquer procedimento; por fim a chegada. Devolve {procedimento (nome; nulo = qualquer procedimento), profissional (nome; nulo = qualquer profissional), turnos, dias} ou nulo. O profissional e o da entrada que existe, que pode ser outro que o do pedido.';
 
--- 5d. As conferencias que as duas fases repetem, na ordem do contrato.
+-- 5d. A consulta futura do contato do mesmo procedimento (D-41): o predicado
+-- do ja_tem_consulta da AG3 num lugar so (as duas fases, por
+-- conferir_pedido_de_espera_da_ia, e o aceite da oferta da entrada da IA).
+-- Nao cancelada, nao recusada, nem faltou nem compareceu, no futuro (a
+-- pendente da IA conta; na_recepcao e em_atendimento de consulta futura
+-- tambem). p_exceto: a consulta que o proprio aceite acabou de gravar (a
+-- conferencia depois do insert). A mais proxima.
+create function public.consulta_futura_do_procedimento(
+  p_clinic_id uuid,
+  p_contato uuid,
+  p_procedure_id uuid,
+  p_exceto uuid,
+  out o_consulta uuid,
+  out o_inicio timestamptz
+)
+language plpgsql
+stable
+set search_path = ''
+as $$
+begin
+  select a.id, a.starts_at into o_consulta, o_inicio
+    from public.appointment a
+    join public.service_link sl on sl.id = a.service_link_id and sl.clinic_id = a.clinic_id
+   where a.clinic_id = p_clinic_id
+     and a.contact_id = p_contato
+     and sl.procedure_id = p_procedure_id
+     and a.starts_at > now()
+     and a.status not in ('cancelado_paciente', 'cancelado_clinica', 'faltou', 'compareceu')
+     and a.approval_status is distinct from 'recusado'
+     and a.id is distinct from p_exceto
+   order by a.starts_at, a.id
+   limit 1;
+end;
+$$;
+
+revoke execute on function public.consulta_futura_do_procedimento(uuid, uuid, uuid, uuid)
+  from public, anon, authenticated, service_role;
+
+comment on function public.consulta_futura_do_procedimento(uuid, uuid, uuid, uuid) is
+  'Interna (nenhum papel da API executa; revisao de 28/10/2026): a consulta futura do contato do mesmo procedimento, com qualquer profissional, pelo predicado do ja_tem_consulta da AG3 (D-41): nao cancelada (cancelado_paciente, cancelado_clinica), nao recusada (approval_status), nem faltou nem compareceu, starts_at no futuro; a pendente da IA conta. p_exceto (nulo = nenhuma): a consulta que nao conta (a que o aceite acabou de gravar). Devolve o_consulta e o_inicio da mais proxima, ou nulos. Usada por conferir_pedido_de_espera_da_ia (as duas fases) e por aceitar_oferta_de_espera (a entrada da IA); o job da reoferta (lib/jobs/lista-espera.ts) le o mesmo predicado.';
+
+-- 5e. As conferencias que as duas fases repetem, na ordem do contrato.
 create function public.conferir_pedido_de_espera_da_ia(
   p_clinic_id uuid,
   p_conversation_id uuid,
@@ -669,7 +774,8 @@ begin
     return;
   end if;
 
-  -- 4. Ja esta na lista no mesmo grupo (de qualquer origem).
+  -- 4. Ja esta na lista para o mesmo procedimento (qualquer profissional) ou
+  -- para qualquer procedimento, de qualquer origem (revisao, R1).
   o_entrada := public.entrada_da_espera_no_grupo(p_clinic_id, p_contato, p_procedure_id, p_professional_id);
   if o_entrada is not null then
     o_motivo := 'ja_na_lista';
@@ -711,19 +817,11 @@ begin
   -- (c) D-41: a consulta futura ativa do contato, do mesmo procedimento, com
   -- qualquer profissional (o predicado do ja_tem_consulta da AG3: nao
   -- cancelada, nao recusada, nem faltou nem compareceu; a pendente da IA
-  -- conta). A mais proxima.
+  -- conta). A mais proxima. O predicado mora em
+  -- consulta_futura_do_procedimento (o aceite da entrada da IA usa o mesmo).
   if c_ja_tem_consulta_barra then
-    select a.id, a.starts_at into o_consulta, o_consulta_inicio
-      from public.appointment a
-      join public.service_link sl on sl.id = a.service_link_id and sl.clinic_id = a.clinic_id
-     where a.clinic_id = p_clinic_id
-       and a.contact_id = p_contato
-       and sl.procedure_id = p_procedure_id
-       and a.starts_at > now()
-       and a.status not in ('cancelado_paciente', 'cancelado_clinica', 'faltou', 'compareceu')
-       and a.approval_status is distinct from 'recusado'
-     order by a.starts_at, a.id
-     limit 1;
+    select f.o_consulta, f.o_inicio into o_consulta, o_consulta_inicio
+      from public.consulta_futura_do_procedimento(p_clinic_id, p_contato, p_procedure_id, null) as f;
     if o_consulta is not null then
       o_motivo_da_pessoa := 'ja_tem_consulta';
       return;
@@ -736,7 +834,7 @@ revoke execute on function public.conferir_pedido_de_espera_da_ia(uuid, uuid, ti
   from public, anon, authenticated, service_role;
 
 comment on function public.conferir_pedido_de_espera_da_ia(uuid, uuid, timestamptz, uuid, uuid, uuid, uuid) is
-  'Interna (nenhum papel da API executa): as conferencias da lista de espera pela IA que as duas fases repetem (AG5). Sempre: o_fuso e os nomes (o_procedimento, o_profissional, o_convenio, o_plano; nulos quando o id e nulo ou nao e da clinica). o_motivo, as estruturais, nesta ordem: mais_de_uma_unidade (D-38: mais de c_maximo_de_unidades unidade ativa), so_com_a_equipe (procedimento inativo, sem IA pode agendar ou que nao existe; convenio inativo ou que nao existe; nenhum vinculo ativo com IA pode agendar do procedimento, do pagamento, nulo = particular, e do profissional pedido, ativo, ou de algum profissional ativo com profissional nulo), sem_autorizacao (consentimento_vigente do WhatsApp falso), ja_na_lista (entrada ativa do contato no mesmo grupo do indice waitlist_ativa_unica, de qualquer origem; o_entrada = {profissional, turnos, dias}). Sem o_motivo, o_motivo_da_pessoa, nesta ordem: consulta_para_outra_pessoa (os dados informados da janela p_janela_desde com para_o_titular falso), menor_de_idade (menos de 18 anos hoje, no fuso da clinica, pelo nascimento informado na janela ou pelo do cadastro), ja_tem_consulta (o_consulta e o_consulta_inicio: a consulta futura ativa do mesmo procedimento, a mais proxima). Os dois primeiros enquanto c_d8_na_lista (D-44) e o terceiro enquanto c_ja_tem_consulta_barra (D-41). Nao trava. Parametro nulo (clinica, contato ou procedimento): 22004.';
+  'Interna (nenhum papel da API executa): as conferencias da lista de espera pela IA que as duas fases repetem (AG5). Sempre: o_fuso e os nomes (o_procedimento, o_profissional, o_convenio, o_plano; nulos quando o id e nulo ou nao e da clinica). o_motivo, as estruturais, nesta ordem: mais_de_uma_unidade (D-38: mais de c_maximo_de_unidades unidade ativa), so_com_a_equipe (procedimento inativo, sem IA pode agendar ou que nao existe; convenio inativo ou que nao existe; nenhum vinculo ativo com IA pode agendar do procedimento, do pagamento, nulo = particular, e do profissional pedido, ativo, ou de algum profissional ativo com profissional nulo), sem_autorizacao (consentimento_vigente do WhatsApp falso), ja_na_lista (revisao de 28/10/2026: entrada ativa do contato do mesmo procedimento com qualquer profissional, ou de qualquer procedimento, de qualquer origem, por entrada_da_espera_no_grupo; o_entrada = {procedimento, profissional, turnos, dias} da que ja existe). Sem o_motivo, o_motivo_da_pessoa, nesta ordem: consulta_para_outra_pessoa (os dados informados da janela p_janela_desde com para_o_titular falso), menor_de_idade (menos de 18 anos hoje, no fuso da clinica, pelo nascimento informado na janela ou pelo do cadastro), ja_tem_consulta (o_consulta e o_consulta_inicio: a consulta futura ativa do mesmo procedimento, a mais proxima, por consulta_futura_do_procedimento). Os dois primeiros enquanto c_d8_na_lista (D-44) e o terceiro enquanto c_ja_tem_consulta_barra (D-41). Nao trava. Parametro nulo (clinica, contato ou procedimento): 22004.';
 
 -- ---------------------------------------------------------------------------
 -- 6) A fase 1: o pedido
@@ -940,7 +1038,7 @@ grant execute on function public.pedir_lista_de_espera_pela_ia(uuid, uuid, uuid,
   to service_role;
 
 comment on function public.pedir_lista_de_espera_pela_ia(uuid, uuid, uuid, uuid, uuid, uuid, boolean, text[], smallint[]) is
-  'So o servidor (service_role). A fase 1 da lista de espera pela IA (AG5): confere e grava o PEDIDO (ia_pedido_de_espera) do job p_job_id, que escreve em seguida a pergunta fixa T-E1. p_procedure_id, p_professional_id (nulo = qualquer) e o pagamento (p_particular true e p_insurance_id nulo, ou false com o convenio) vem do ESTADO do atendimento, nunca do texto do modelo; p_turnos (manha, tarde, noite) e p_dias (0 = domingo a 6 = sabado) sem nulo e sem repetir, vazio = qualquer; o banco ordena e os tres periodos ou os sete dias viram vazio. Na ordem: 22004 (nulo fora de profissional e convenio); a trava da conversa; 22023 job_invalido (nao e responder_com_ia desta clinica e conversa, ou e de antes da janela atual); a idempotencia (o pedido deste job, com os mesmos parametros, volta com reutilizado true; com outros, ou de outra conversa, 22023 job_de_outro_pedido); 22023 preferencia_invalida, pagamento_invalido e cadastro_invalido (procedimento, profissional ou convenio que nao e da clinica); ia_desligada (conversa de outra clinica, fora da IA, contato que a IA nao atende, sem janela ou com a janela de outro contato); lista_de_espera_desligada (lista_de_espera_da_ia_ligada); mais_de_uma_unidade, so_com_a_equipe, sem_autorizacao e ja_na_lista (com entrada: {profissional, turnos, dias}), de conferir_pedido_de_espera_da_ia; consulta_para_outra_pessoa, menor_de_idade e ja_tem_consulta (com starts_at, ISO UTC; a IA diz so o dia e a hora). Depois apaga o pedido vivo anterior da conversa e grava o novo (nada mais e gravado). Devolve {ok:true, pedido_id, reutilizado, procedimento, profissional (nulo = qualquer), convenio (nulo = particular), plano, particular, turnos, dias} ou {ok:false, motivo}. Nunca 40001 nem 40P01.';
+  'So o servidor (service_role). A fase 1 da lista de espera pela IA (AG5): confere e grava o PEDIDO (ia_pedido_de_espera) do job p_job_id, que escreve em seguida a pergunta fixa T-E1. p_procedure_id, p_professional_id (nulo = qualquer) e o pagamento (p_particular true e p_insurance_id nulo, ou false com o convenio) vem do ESTADO do atendimento, nunca do texto do modelo; p_turnos (manha, tarde, noite) e p_dias (0 = domingo a 6 = sabado) sem nulo e sem repetir, vazio = qualquer; o banco ordena e os tres periodos ou os sete dias viram vazio. Na ordem: 22004 (nulo fora de profissional e convenio); a trava da conversa; 22023 job_invalido (nao e responder_com_ia desta clinica e conversa, ou e de antes da janela atual); a idempotencia (o pedido deste job, com os mesmos parametros, volta com reutilizado true; com outros, ou de outra conversa, 22023 job_de_outro_pedido); 22023 preferencia_invalida, pagamento_invalido e cadastro_invalido (procedimento, profissional ou convenio que nao e da clinica); ia_desligada (conversa de outra clinica, fora da IA, contato que a IA nao atende, sem janela ou com a janela de outro contato); lista_de_espera_desligada (lista_de_espera_da_ia_ligada); mais_de_uma_unidade, so_com_a_equipe, sem_autorizacao e ja_na_lista (revisao de 28/10/2026: qualquer entrada ativa do contato do mesmo procedimento, de qualquer profissional, ou de qualquer procedimento, de qualquer origem; com entrada: {procedimento, profissional, turnos, dias} da que ja existe, que pode ser de outro profissional que o pedido), de conferir_pedido_de_espera_da_ia; consulta_para_outra_pessoa, menor_de_idade e ja_tem_consulta (com starts_at, ISO UTC; a IA diz so o dia e a hora). Depois apaga o pedido vivo anterior da conversa e grava o novo (nada mais e gravado). Devolve {ok:true, pedido_id, reutilizado, procedimento, profissional (nulo = qualquer), convenio (nulo = particular), plano, particular, turnos, dias} ou {ok:false, motivo}. Nunca 40001 nem 40P01.';
 
 -- ---------------------------------------------------------------------------
 -- 7) A fase 2: a entrada
@@ -999,8 +1097,7 @@ begin
     raise exception using errcode = '22023', message = 'job_invalido';
   end if;
 
-  -- Idempotencia: a entrada deste job volta como esta (mesmo se a recepcao
-  -- a removeu depois).
+  -- Idempotencia: a entrada deste job volta como esta, enquanto ativa.
   select w.* into v_entrada
     from public.waitlist w
    where w.ia_job_id = p_job_id;
@@ -1008,6 +1105,16 @@ begin
     if v_entrada.clinic_id is distinct from p_clinic_id
        or v_entrada.conversation_id is distinct from p_conversation_id then
       raise exception using errcode = '22023', message = 'job_de_outra_conversa';
+    end if;
+    -- (revisao de 28/10/2026, R3) A entrada deste job saiu da fila entre as
+    -- tentativas (a recepcao a removeu, ou o SIM de uma oferta a usou): a
+    -- T-E2 ("Pronto, voce entrou...") diria o que nao e mais verdade. Nao ha
+    -- pedido a cumprir: sem_pedido_de_espera (o pedido foi consumido e a
+    -- entrada dele saiu; o motor ja trata: falha fechada, nada vai ao
+    -- paciente). Nunca segue adiante: o mesmo job nao cria outra entrada
+    -- (o indice waitlist_ia_job_id_unico) nem consome outro pedido.
+    if not v_entrada.active then
+      return jsonb_build_object('ok', false, 'motivo', 'sem_pedido_de_espera');
     end if;
     select * into v_conf
       from public.conferir_pedido_de_espera_da_ia(p_clinic_id, p_conversation_id, null, v_entrada.contact_id,
@@ -1259,7 +1366,7 @@ grant execute on function public.entrar_na_lista_de_espera_pela_ia(uuid, uuid, u
   to service_role;
 
 comment on function public.entrar_na_lista_de_espera_pela_ia(uuid, uuid, uuid) is
-  'So o servidor (service_role). A fase 2 da lista de espera pela IA (AG5): com o "sim" do paciente numa mensagem nova, cria a entrada da fila (waitlist, origem ia, ia_job_id = p_job_id, conversation_id, o procedimento, o profissional, o pagamento e a preferencia do pedido vivo; prioridade padrao, no fim do grupo), consome o pedido (consumido_em, waitlist_id, job_id_da_entrada) e grava o evento no fio ("A IA colocou o paciente na lista de espera: procedimento, profissional ou qualquer profissional, particular ou convênio X (plano). Preferência: períodos; dias."). Nunca a resposta ao paciente (o sistema escreve a T-E2). Na ordem: 22004; a trava da conversa; 22023 job_invalido (nao e responder_com_ia desta clinica e conversa); a idempotencia (a entrada com ia_job_id = p_job_id volta com reutilizado true; de outra clinica ou conversa, 22023 job_de_outra_conversa); ia_desligada (conversa de outra clinica, fora da IA, contato que a IA nao atende, sem janela ou com a janela de outro contato); lista_de_espera_desligada; sem_pedido_de_espera (nenhum pedido vivo desta conversa, da janela atual e do contato de agora, ou o job e de antes da janela; o pedido fica travado); mais_de_uma_unidade, so_com_a_equipe, sem_autorizacao e ja_na_lista (com entrada), com o pedido; mensagem_nova_do_paciente (R12 da AG4: a ultima mensagem do paciente, ou uma dele depois da pergunta, que NENHUM turno leu: fora das lidas do job e das dos turnos desta conversa em enviado ou passou_para_equipe ou em decidido de outro job; ou que o job leu e foi apagada; sem a linha do turno do job, ele nada leu); consulta_para_outra_pessoa, menor_de_idade e ja_tem_consulta (com starts_at); pedido_vencido (a pergunta tem 60 minutos ou mais, c_validade_da_pergunta, D-43); sem_confirmacao_do_paciente (a ancora forte: a pergunta e a mensagem da IA, que nao falhou, escrita pelo job do pedido, message.job_id, gravada depois do pedido e antes da ultima mensagem do paciente; a ultima saida antes dessa mensagem, toda saida que nao e evento nem nota, de qualquer autor e situacao, tem de ser ela, sem empate; nenhuma mensagem do paciente depois dela cita ou responde por botao a outra mensagem, reply_to_message_id, ou a uma que nao e linha nossa, reply_to_wa_message_id); o insert que bate no indice waitlist_ativa_unica (23505, outra entrada ativa no grupo gravada ao mesmo tempo) vira ja_na_lista. Devolve {ok:true, waitlist_id, reutilizado, procedimento, profissional (nulo = qualquer), convenio (nulo = particular), plano, particular, turnos, dias} ou {ok:false, motivo}. Nao grava audit_log (escrita do sistema; a trilha e a linha da fila e o evento). Nunca 40001 nem 40P01.';
+  'So o servidor (service_role). A fase 2 da lista de espera pela IA (AG5): com o "sim" do paciente numa mensagem nova, cria a entrada da fila (waitlist, origem ia, ia_job_id = p_job_id, conversation_id, o procedimento, o profissional, o pagamento e a preferencia do pedido vivo; prioridade padrao, no fim do grupo), consome o pedido (consumido_em, waitlist_id, job_id_da_entrada) e grava o evento no fio ("A IA colocou o paciente na lista de espera: procedimento, profissional ou qualquer profissional, particular ou convênio X (plano). Preferência: períodos; dias."). Nunca a resposta ao paciente (o sistema escreve a T-E2). Na ordem: 22004; a trava da conversa; 22023 job_invalido (nao e responder_com_ia desta clinica e conversa); a idempotencia (a entrada com ia_job_id = p_job_id: de outra clinica ou conversa, 22023 job_de_outra_conversa; fora da fila, removida entre as tentativas, sem_pedido_de_espera, revisao de 28/10/2026; ativa, volta com reutilizado true); ia_desligada (conversa de outra clinica, fora da IA, contato que a IA nao atende, sem janela ou com a janela de outro contato); lista_de_espera_desligada; sem_pedido_de_espera (nenhum pedido vivo desta conversa, da janela atual e do contato de agora, ou o job e de antes da janela; o pedido fica travado); mais_de_uma_unidade, so_com_a_equipe, sem_autorizacao e ja_na_lista (com entrada: {procedimento, profissional, turnos, dias} da que ja existe; qualquer entrada ativa do contato do mesmo procedimento, de qualquer profissional, ou de qualquer procedimento), com o pedido; mensagem_nova_do_paciente (R12 da AG4: a ultima mensagem do paciente, ou uma dele depois da pergunta, que NENHUM turno leu: fora das lidas do job e das dos turnos desta conversa em enviado ou passou_para_equipe ou em decidido de outro job; ou que o job leu e foi apagada; sem a linha do turno do job, ele nada leu); consulta_para_outra_pessoa, menor_de_idade e ja_tem_consulta (com starts_at); pedido_vencido (a pergunta tem 60 minutos ou mais, c_validade_da_pergunta, D-43); sem_confirmacao_do_paciente (a ancora forte: a pergunta e a mensagem da IA, que nao falhou, escrita pelo job do pedido, message.job_id, gravada depois do pedido e antes da ultima mensagem do paciente; a ultima saida antes dessa mensagem, toda saida que nao e evento nem nota, de qualquer autor e situacao, tem de ser ela, sem empate; nenhuma mensagem do paciente depois dela cita ou responde por botao a outra mensagem, reply_to_message_id, ou a uma que nao e linha nossa, reply_to_wa_message_id); o insert que bate no indice waitlist_ativa_unica (23505, outra entrada ativa no grupo gravada ao mesmo tempo) vira ja_na_lista. Devolve {ok:true, waitlist_id, reutilizado, procedimento, profissional (nulo = qualquer), convenio (nulo = particular), plano, particular, turnos, dias} ou {ok:false, motivo}. Nao grava audit_log (escrita do sistema; a trilha e a linha da fila e o evento). Nunca 40001 nem 40P01.';
 
 -- ---------------------------------------------------------------------------
 -- 8) A mensagem tratada pelo sistema (D-39)
@@ -1344,9 +1451,41 @@ comment on function public.marcar_mensagem_tratada_pelo_sistema(uuid, uuid, uuid
 -- 9) O aceite da oferta com a regra da entrada da IA (D-37)
 -- ---------------------------------------------------------------------------
 -- O corpo de producao (20260924104000, lido com fndef.js em 27/10/2026, md5
--- ee00dcac054a8e54129543f567604b38), com os trechos [lista pela IA]. A
--- entrada sem pagamento declarado e sem origem ia (todas as de hoje) segue
--- EXATAMENTE a regra de antes.
+-- ee00dcac054a8e54129543f567604b38; de novo em 28/10/2026, igual), com os
+-- trechos [lista pela IA]. A entrada sem pagamento declarado e sem origem
+-- ia (todas as de hoje) segue EXATAMENTE a regra de antes.
+--
+-- A segunda consulta (revisao de 28/10/2026, R1): a entrada da IA nunca vira
+-- a segunda consulta do mesmo procedimento. A pessoa que ja tem consulta
+-- futura do procedimento da entrada (consulta_futura_do_procedimento, o
+-- predicado de D-41) recebe sem_vinculo, com motivo ja_tem_consulta (a
+-- recusa de "esta pessoa nao tem como ser agendada aqui": a oferta segue
+-- aberta para o resto da onda; o interceptador responde a recusa educada de
+-- sempre; a chave motivo e a mais, para ele distinguir). AS TRAVAS, so na
+-- entrada da IA (a da equipe nao trava nada a mais: a paridade):
+--   1. depois da oferta (FOR UPDATE, a de sempre), a trava da conversa
+--      (slot_hold_conversa, a do reservar, do agendar, do cancelar e das
+--      duas fases) da conversa do SIM e da conversa da entrada, em ordem
+--      fixa: o agendar pela IA nessas conversas espera o aceite (e ve a
+--      consulta dele: ja_tem_consulta), ou o aceite espera o agendar (e ve
+--      a consulta dele). Ninguem que segura a trava da conversa trava a
+--      oferta, a entrada ou o contato antes dela: nao fecha ciclo;
+--   2. a conferencia (antes de conferir a vaga: a pessoa que nao pode e
+--      sem_vinculo mesmo com a vaga ocupada);
+--   3. depois do INSERT da consulta, o contato FOR UPDATE e a conferencia
+--      de novo (sem contar a consulta que acabou de gravar): a marcacao de
+--      outro caminho ainda aberta (a recepcao, a IA em outra conversa)
+--      segura a linha do contato (a FK, KEY SHARE); o aceite espera ela
+--      terminar e a ve; vista, o insert e desfeito (o bloco) e a resposta e
+--      sem_vinculo. DEPOIS do insert de proposito: antes dele, a recepcao
+--      marcando o MESMO horario fecharia ciclo (ela espera o contato na FK,
+--      o aceite espera a exclusion dela: 40P01). Assim, o aceite so espera
+--      o contato depois de passar pela exclusion, e quem espera a exclusion
+--      dele ainda nao chegou a FK.
+-- A marcacao que chega DEPOIS do aceite (a recepcao, que pode marcar duas,
+-- ou a IA em outra conversa do mesmo contato, cujo ja_tem_consulta leu antes
+-- do commit do aceite) nao e desta funcao: a recepcao ve a consulta na
+-- Agenda; a da IA em duas conversas e o limite que a AG3 ja tem.
 
 create or replace function public.aceitar_oferta_de_espera(
   p_clinic_id uuid,
@@ -1388,6 +1527,9 @@ declare
   v_origem text;
   v_particular_declarado boolean;
   v_convenio_declarado uuid;
+  v_conversa_da_entrada uuid;
+  v_entrada_da_ia boolean;
+  v_trava uuid;
   -- [lista pela IA] fim
 begin
   select * into v_oferta
@@ -1415,10 +1557,10 @@ begin
   end if;
   if v_entrada_id is not null then
     select w.id, w.procedure_id
-           -- [lista pela IA] a origem e o pagamento declarado
-           , w.origem, w.particular, w.insurance_id
+           -- [lista pela IA] a origem, o pagamento declarado e a conversa
+           , w.origem, w.particular, w.insurance_id, w.conversation_id
       into v_entrada_ativa, v_procedimento
-           , v_origem, v_particular_declarado, v_convenio_declarado
+           , v_origem, v_particular_declarado, v_convenio_declarado, v_conversa_da_entrada
       from public.waitlist w
      where w.id = v_entrada_id
        and w.clinic_id = p_clinic_id
@@ -1431,10 +1573,10 @@ begin
   -- procedimento atendido pelo profissional na frente.
   if v_entrada_ativa is null then
     select w.id, w.procedure_id
-           -- [lista pela IA] a origem e o pagamento declarado
-           , w.origem, w.particular, w.insurance_id
+           -- [lista pela IA] a origem, o pagamento declarado e a conversa
+           , w.origem, w.particular, w.insurance_id, w.conversation_id
       into v_entrada_ativa, v_procedimento
-           , v_origem, v_particular_declarado, v_convenio_declarado
+           , v_origem, v_particular_declarado, v_convenio_declarado, v_conversa_da_entrada
       from public.waitlist w
      where w.clinic_id = p_clinic_id
        and w.contact_id = p_contact_id
@@ -1453,6 +1595,9 @@ begin
        w.priority, w.created_at, w.id
      limit 1;
   end if;
+  -- [lista pela IA] A entrada e da IA (a origem lida, antes da D-37 abaixo:
+  -- a segunda consulta vale com a D-37 ligada ou nao).
+  v_entrada_da_ia := v_origem is not distinct from 'ia';
   -- [lista pela IA] Sem a regra (c_regra_da_entrada_da_ia false), a de
   -- antes para toda entrada.
   if not c_regra_da_entrada_da_ia then
@@ -1518,6 +1663,31 @@ begin
     return jsonb_build_object('ok', false, 'erro', 'sem_vinculo');
   end if;
 
+  -- [lista pela IA] inicio
+  -- A entrada da IA nunca vira a segunda consulta do mesmo procedimento
+  -- (revisao de 28/10/2026; o comentario da secao): a trava da conversa
+  -- (a do SIM e a da entrada, em ordem fixa) e a conferencia. Ja tem:
+  -- sem_vinculo (esta pessoa nao tem como ser agendada aqui; a oferta segue
+  -- aberta para o resto da onda), com motivo ja_tem_consulta (a chave a
+  -- mais distingue do sem_vinculo do catalogo; quem so le erro nao muda).
+  if v_entrada_da_ia then
+    for v_trava in
+      select distinct x.c
+        from unnest(array[p_conversation_id, v_conversa_da_entrada]) as x(c)
+       where x.c is not null
+       order by x.c
+    loop
+      perform pg_advisory_xact_lock(hashtextextended('slot_hold_conversa:' || v_trava::text, 0));
+    end loop;
+    if (select f.o_consulta
+          from public.consulta_futura_do_procedimento(p_clinic_id, p_contact_id, v_procedimento, null) as f)
+       is not null
+    then
+      return jsonb_build_object('ok', false, 'erro', 'sem_vinculo', 'motivo', 'ja_tem_consulta');
+    end if;
+  end if;
+  -- [lista pela IA] fim
+
   v_fim := v_oferta.slot_starts_at + make_interval(mins => v_duracao);
   if v_fim > v_oferta.slot_ends_at then
     return jsonb_build_object('ok', false, 'erro', 'nao_cabe');
@@ -1553,6 +1723,26 @@ begin
       'agendado', 'sistema', 'interna'
     )
     returning id into v_appointment;
+    -- [lista pela IA] inicio
+    -- A entrada da IA: o contato travado DEPOIS do insert (o comentario da
+    -- secao) e a conferencia de novo, sem a consulta que acabou de gravar.
+    -- Outra consulta futura do mesmo procedimento gravada ao mesmo tempo:
+    -- o insert e desfeito (CZE41, so aqui dentro) e a resposta e
+    -- sem_vinculo.
+    if v_entrada_da_ia then
+      perform 1
+        from public.contact k
+       where k.id = p_contact_id
+         and k.clinic_id = p_clinic_id
+         for update;
+      if (select f.o_consulta
+            from public.consulta_futura_do_procedimento(p_clinic_id, p_contact_id, v_procedimento, v_appointment) as f)
+         is not null
+      then
+        raise exception using errcode = 'CZE41', message = 'consulta_do_mesmo_procedimento';
+      end if;
+    end if;
+    -- [lista pela IA] fim
   exception when exclusion_violation then
     get stacked diagnostics v_restricao = constraint_name;
     if v_restricao = 'sem_sobreposicao_recurso' then
@@ -1569,6 +1759,11 @@ begin
     return jsonb_build_object(
       'ok', false, 'erro', 'horario_ocupado', 'motivo', 'ocupado'
     );
+  -- [lista pela IA] a outra consulta do mesmo procedimento gravada ao mesmo
+  -- tempo (acima): nada fica (o bloco desfaz o insert); a oferta segue
+  -- aberta para o resto da onda.
+  when sqlstate 'CZE41' then
+    return jsonb_build_object('ok', false, 'erro', 'sem_vinculo', 'motivo', 'ja_tem_consulta');
   end;
 
   update public.waitlist_offer
@@ -1614,7 +1809,7 @@ end;
 $$;
 
 comment on function public.aceitar_oferta_de_espera(uuid, uuid, uuid, uuid) is
-  'So o servidor (service_role; o interceptador, no SIM da oferta). O primeiro que responde leva o horario da oferta aberta (FOR UPDATE): a entrada casada pelo job (matched_waitlist_ids), senao a heuristica antiga; o vinculo do procedimento da entrada (ou o da vaga) com o profissional da oferta; a vaga conferida (vaga_de_espera_indisponivel); a consulta agendado, autor sistema (D-45: sem a aprovacao); a entrada sai da fila; o evento na conversa. AG5 (D-37, c_regra_da_entrada_da_ia, a confirmar): o pagamento declarado na entrada (waitlist.particular) e estrito (particular: so o vinculo particular; convenio: so o vinculo do convenio dela); sem declaracao, a regra de antes (o convenio do contato, senao o particular); a entrada de origem ia so com o vinculo que a IA marca (vinculo e procedimento com IA pode agendar, convenio do vinculo ativo) e e lida mesmo inativa (a regra dela vale ate o fim). Entrada sem origem ia e sem pagamento declarado: exatamente o corpo de antes. Devolve {ok:true, appointment_id, starts_at, profissional, timezone} ou {ok:false, erro: ja_tratado | sem_vinculo | nao_cabe | horario_ocupado (com motivo)}.';
+  'So o servidor (service_role; o interceptador, no SIM da oferta). O primeiro que responde leva o horario da oferta aberta (FOR UPDATE): a entrada casada pelo job (matched_waitlist_ids), senao a heuristica antiga; o vinculo do procedimento da entrada (ou o da vaga) com o profissional da oferta; a vaga conferida (vaga_de_espera_indisponivel); a consulta agendado, autor sistema (D-45: sem a aprovacao); a entrada sai da fila; o evento na conversa. AG5 (D-37, c_regra_da_entrada_da_ia, a confirmar): o pagamento declarado na entrada (waitlist.particular) e estrito (particular: so o vinculo particular; convenio: so o vinculo do convenio dela); sem declaracao, a regra de antes (o convenio do contato, senao o particular); a entrada de origem ia so com o vinculo que a IA marca (vinculo e procedimento com IA pode agendar, convenio do vinculo ativo) e e lida mesmo inativa (a regra dela vale ate o fim). Revisao de 28/10/2026: a entrada de origem ia nunca vira a segunda consulta do mesmo procedimento (com a D-37 ligada ou nao): com consulta futura do procedimento da entrada (consulta_futura_do_procedimento, o predicado de D-41), sem_vinculo com motivo ja_tem_consulta (a oferta segue aberta); as travas, so nela: a da conversa (a do SIM e a da entrada, em ordem fixa) depois da oferta, a conferencia, e depois do INSERT o contato FOR UPDATE e a conferencia de novo (a marcacao ao mesmo tempo e vista e o insert e desfeito). Entrada sem origem ia e sem pagamento declarado: exatamente o corpo de antes. Devolve {ok:true, appointment_id, starts_at, profissional, timezone} ou {ok:false, erro: ja_tratado | sem_vinculo (com motivo ja_tem_consulta na segunda consulta da entrada da IA) | nao_cabe | horario_ocupado (com motivo)}.';
 
 -- ---------------------------------------------------------------------------
 -- 10) A poda, com o pedido da lista de espera
@@ -1706,3 +1901,92 @@ $$;
 
 comment on function public.podar_agendamento_da_ia() is
   'Interna (motor_manutencao; nenhum papel da API executa): a poda do agendamento completo pela IA (AG3) e do pedido da lista de espera (AG5). ia_atendimento: conversa que sumiu, resolvida ha mais de 30 dias, janela que nao e mais a da conversa, ou parado ha mais de 90 dias. dados_informados_na_marcacao: a linha aberta 7 dias depois de mexida (ou da conversa que sumiu); a da consulta 30 dias depois de deixar de estar pendente, ou 30 dias depois do dia da consulta. ia_pedido_de_espera: o vivo (sem consumo) com 7 dias ou da conversa que sumiu; o consumido com 30 dias. Ate 1000 linhas de cada por passagem, SKIP LOCKED. Devolve {atendimentos, dados, pedidos_de_espera}.';
+
+-- ---------------------------------------------------------------------------
+-- 11) O lembrete da oferta morre com a oferta (revisao de 28/10/2026, R2)
+-- ---------------------------------------------------------------------------
+-- O lembrete da oferta (T-E4, lib/domain/lembrete-da-oferta.ts) e um
+-- enviar_mensagem_ativa com payload.lembrete_da_oferta = o id da oferta, e
+-- nunca offer_id (ele nao e a mensagem da oferta). As duas funcoes que
+-- cancelam os envios pendentes da oferta que fecha so olhavam offer_id: o
+-- lembrete pendente (inclusive o que voltou a pendente esperando o canal,
+-- reagendar_job com desconectado ou sem_numero: o payload segue com a
+-- chave) saia depois do aceite, do "Cancelar reoferta", da vaga que sumiu
+-- ou da expiracao, pedindo um SIM para uma oferta que ja nao existe. Agora
+-- cancelam os dois. O que ja esta executando nao e tocado (a guarda no
+-- executor e da frente do interceptador, lib/jobs/worker.ts). Os corpos de
+-- producao (20260924104000, lidos com fndef.js em 28/10/2026, sem
+-- comentario), com o trecho [lista pela IA]; SQL como eram (a validacao do
+-- corpo pega ROW EXCLUSIVE em job_queue e waitlist_offer, ja pega no bloco
+-- 0: cabecalho, TRAVAS). Mesmas assinaturas e grants (CREATE OR REPLACE mantem).
+
+-- 11a. Os envios pendentes de uma oferta encerrada (o aceite, o "Cancelar
+-- reoferta" e a vaga que sumiu chamam): md5 de antes
+-- c131b15190b9ae007ad332b15e6cb0f4.
+create or replace function public.encerrar_envios_da_oferta(
+  p_clinic_id uuid,
+  p_offer_id uuid
+)
+returns integer
+language sql
+security definer
+set search_path = ''
+as $$
+  with encerrados as (
+    update public.job_queue
+       set status = 'cancelado',
+           last_error = 'oferta_encerrada'
+     where clinic_id = p_clinic_id
+       and kind = 'enviar_mensagem_ativa'
+       and status = 'pendente'
+       and (payload->>'offer_id' = p_offer_id::text
+            -- [lista pela IA] o lembrete da oferta (T-E4)
+            or payload->>'lembrete_da_oferta' = p_offer_id::text)
+    returning 1
+  )
+  select count(*)::integer from encerrados;
+$$;
+
+comment on function public.encerrar_envios_da_oferta(uuid, uuid) is
+  'So o servidor (service_role; chamada pelo aceite, pelo Cancelar reoferta e quando a vaga sumiu). Os envios da oferta que ainda estao na fila (enviar_mensagem_ativa pendente) morrem com ela: status cancelado, last_error oferta_encerrada. Revisao de 28/10/2026 (AG5): a mensagem da oferta (payload.offer_id) e tambem o lembrete dela (T-E4, payload.lembrete_da_oferta), inclusive o que voltou a pendente esperando o canal. O que ja esta executando nao e tocado (o executor confere a oferta). Devolve quantos cancelou.';
+
+-- 11b. A expiracao (o cron de manutencao, por minuto): fecha a oferta
+-- vencida, enfileira a proxima onda e cancela os envios pendentes dela, com
+-- o lembrete. md5 de antes ba0b3dc29bfb4dbaa986d3987507c52f.
+create or replace function public.expirar_ofertas_de_espera()
+returns integer
+language sql
+security definer
+set search_path = ''
+as $$
+  with vencidas as (
+    update public.waitlist_offer
+       set status = 'expirada'
+     where status = 'aberta' and expires_at < now()
+    returning id, clinic_id
+  ),
+  enfileiradas as (
+    insert into public.job_queue (clinic_id, kind, payload)
+    select clinic_id, 'oferecer_lista_espera',
+           jsonb_build_object('origem_offer_id', id)
+      from vencidas
+    returning 1
+  ),
+  envios_encerrados as (
+    update public.job_queue j
+       set status = 'cancelado',
+           last_error = 'oferta_encerrada'
+      from vencidas v
+     where j.clinic_id = v.clinic_id
+       and j.kind = 'enviar_mensagem_ativa'
+       and j.status = 'pendente'
+       and (j.payload->>'offer_id' = v.id::text
+            -- [lista pela IA] o lembrete da oferta (T-E4)
+            or j.payload->>'lembrete_da_oferta' = v.id::text)
+    returning 1
+  )
+  select count(*)::integer from vencidas;
+$$;
+
+comment on function public.expirar_ofertas_de_espera() is
+  'So o servidor (service_role; o cron de manutencao, por minuto). Fecha as ofertas abertas vencidas (status expirada), enfileira a proxima onda de cada uma (oferecer_lista_espera com origem_offer_id) e cancela os envios dela que ainda estao na fila (enviar_mensagem_ativa pendente: cancelado, oferta_encerrada). Revisao de 28/10/2026 (AG5): a mensagem da oferta (payload.offer_id) e tambem o lembrete dela (T-E4, payload.lembrete_da_oferta), inclusive o que voltou a pendente esperando o canal. Devolve quantas ofertas fechou.';
