@@ -4392,6 +4392,129 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
     "Não, a remarcação não precisa ser aprovada pela equipe.",
     comFatos(REMARCADA_NESTA_CONVERSA),
   ),
+  // Revisao final da AG4 (M2): a negacao so vale colada no verbo (o "nem"
+  // intensificador nao nega o "ja saiu"); a aprovacao que deixou de
+  // existir; a pendencia negada (que tambem nao sustenta a remarcacao na
+  // frase de antes); e a aprovacao dita sem o verbo auxiliar.
+  saida(
+    "AG4-S35",
+    "acao_nao_executada",
+    "negacao",
+    "A aprovação nem demorou e já saiu!",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S36",
+    "acao_nao_executada",
+    "negacao",
+    "Não tem mais aprovação, pode ir direto.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S37",
+    "acao_nao_executada",
+    "negacao",
+    "Não há aprovação nessa clínica, pode ir no novo horário.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S38",
+    "acao_nao_executada",
+    "contexto",
+    "Remarcado para terça, 03/11 às 10:00, pendente de aprovação da equipe. Na verdade não tem mais aprovação, pode ir direto.",
+    comFatos(REMARCOU_PARA_TERCA),
+  ),
+  saida(
+    "AG4-S39",
+    "acao_nao_executada",
+    "negacao",
+    "Sua consulta foi remarcada para terça, 03/11 às 10:00, nem precisa de aprovação.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S40",
+    "acao_nao_executada",
+    "negacao",
+    "Sua consulta foi remarcada para terça, 03/11 às 10:00. Não está mais aguardando aprovação.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S41",
+    "acao_nao_executada",
+    "negacao",
+    "Remarcado para terça, 03/11 às 10:00, sem precisar aguardar aprovação.",
+    comFatos(REMARCOU_PARA_TERCA),
+  ),
+  saida(
+    "AG4-S42",
+    "acao_nao_executada",
+    "contexto",
+    "Pedi a remarcação para terça, 03/11 às 10:00, pendente da aprovação da equipe. Não fica aguardando aprovação.",
+    comFatos(REMARCOU_PARA_TERCA),
+  ),
+  saida(
+    "AG4-S43",
+    "acao_nao_executada",
+    "contexto",
+    "Pedi a remarcação para terça, 03/11 às 10:00, pendente da aprovação da equipe. Nenhuma aprovação pendente.",
+    comFatos(REMARCOU_PARA_TERCA),
+  ),
+  saida(
+    "AG4-S44",
+    "acao_nao_executada",
+    "literal",
+    "Remarcação aprovada!",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S45",
+    "acao_nao_executada",
+    "parafrase",
+    "Aprovaram sua remarcação!",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S46",
+    "acao_nao_executada",
+    "parafrase",
+    "A equipe já aprovou, pode ir no novo horário.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S47",
+    "acao_nao_executada",
+    "literal",
+    "Sua remarcação foi aprovada.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S48",
+    "acao_nao_executada",
+    "parafrase",
+    "Já está aprovada, pode ficar tranquila.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S49",
+    "acao_nao_executada",
+    "parafrase",
+    "Eles aprovaram a remarcação para terça, 03/11 às 10:00.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S50",
+    "acao_nao_executada",
+    "negacao",
+    "Não há necessidade de aprovação para a remarcação.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
+  saida(
+    "AG4-S51",
+    "acao_nao_executada",
+    "contexto",
+    "Tudo aprovado! Sua consulta foi remarcada para terça, 03/11 às 10:00, pendente de aprovação da equipe.",
+    comFatos(REMARCADA_NESTA_CONVERSA),
+  ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -6442,6 +6565,57 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
     id: "AG4-B25",
     rascunho:
       "Sua remarcação para terça, 03/11 às 10:00 ainda não foi aprovada pela equipe.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  // Revisao final da AG4 (M2): a negacao colada no verbo (com um pronome ou
+  // "ainda" no meio) continua sendo a pendencia, e a aprovacao da condicao
+  // ("com a remarcacao aprovada") e do futuro ("assim que a equipe
+  // aprovar") nao afirma nada.
+  {
+    id: "AG4-B26",
+    rascunho: "Ainda não aprovaram. Te aviso por aqui assim que sair.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B27",
+    rascunho: "A equipe ainda não aprovou a remarcação.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B28",
+    rascunho: "A equipe não a aprovou ainda.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B29",
+    rascunho: "A aprovação nem saiu ainda.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B30",
+    rascunho: "A aprovação da equipe ainda não saiu.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B31",
+    rascunho:
+      "Com a remarcação aprovada, a sua consulta de quinta é cancelada sozinha.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B32",
+    rascunho:
+      "Assim que a equipe aprovar, a sua consulta de quinta é cancelada.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B33",
+    rascunho: "Ainda não tem aprovação aqui no sistema.",
+    ...comFatos(REMARCADA_NESTA_CONVERSA),
+  },
+  {
+    id: "AG4-B34",
+    rascunho: "Sua remarcação ainda depende da aprovação da equipe.",
     ...comFatos(REMARCADA_NESTA_CONVERSA),
   },
 ];

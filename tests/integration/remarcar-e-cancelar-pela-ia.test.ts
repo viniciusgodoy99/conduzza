@@ -47,7 +47,14 @@ import { adminClient } from "../rls/stack";
 //   depois da leitura recebe mensagem_nova_do_paciente (nada cancelado nem
 //   pedido) e o turno seguinte le e segue; a pergunta feita de novo por um
 //   job criado depois da mudanca da consulta vale logo depois dela (o
-//   consulta_mudou conta da criacao do job da pergunta respondida).
+//   consulta_mudou conta da criacao do job da pergunta respondida);
+// - [revisao final] a mensagem do paciente so e nova se NENHUM turno a leu:
+//   a duvida que o turno anterior leu e respondeu (enviado) nao barra o
+//   "sim" que o job seguinte leu; com o turno anterior sem_envio, barra (o
+//   job seguinte rele); com mensagem nova, ela responde antes de
+//   consulta_mudou; a pergunta feita de novo so vale com o job dela criado
+//   mais de 5 s depois da mudanca (a folga de c_folga_da_mudanca: o caso
+//   espera 5,5 s).
 // LIMITE (como na E4 e na AG3): os casos "ao mesmo tempo" disparam as RPCs
 // por HTTP e NAO forcam a sobreposicao dentro do Postgres: provam o
 // resultado final no banco real, nao a trava. A prova das travas, com
@@ -349,6 +356,52 @@ async function leu(jobId: string, conversa: string): Promise<void> {
     )
     .throwOnError();
 }
+
+/**
+ * [revisao final] A linha do turno de um job com o estado e as lidas dados,
+ * como o motor deixa: reservado ao ler; enviado, passou_para_equipe,
+ * decidido ou sem_envio depois.
+ */
+async function turno(
+  jobId: string,
+  conversa: string,
+  estadoDoTurno:
+    "reservado" | "decidido" | "enviado" | "passou_para_equipe" | "sem_envio",
+  lidas: string[],
+): Promise<void> {
+  await admin
+    .from("ai_turno")
+    .upsert(
+      {
+        job_id: jobId,
+        clinic_id: clinica,
+        conversation_id: conversa,
+        estado: estadoDoTurno,
+        mensagens_lidas: lidas,
+      },
+      { onConflict: "job_id" },
+    )
+    .throwOnError();
+}
+
+/** [revisao final] A mensagem do paciente mais nova da conversa (o id). */
+async function ultimaDoPaciente(conversa: string): Promise<string> {
+  const { data } = await admin
+    .from("message")
+    .select("id")
+    .eq("conversation_id", conversa)
+    .eq("direction", "entrada")
+    .eq("author", "paciente")
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(1)
+    .single()
+    .throwOnError();
+  return (data as { id: string }).id;
+}
+
+const esperar = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 const PERGUNTA_DO_JOB = "Pergunta sintética da IA, do job";
 
@@ -915,7 +968,7 @@ describe("cancelar_consulta_pela_ia: cada recusa, na ordem do contrato", () => {
     });
   });
 
-  it("[revisão curta, B2] a recepção muda a consulta depois da pergunta: consulta_mudou; a pergunta feita de novo, por um job criado depois da mudança, vale logo depois", async () => {
+  it("[revisão curta, B2; revisão final] a recepção muda a consulta depois da pergunta: consulta_mudou; a pergunta feita de novo, por um job criado mais de 5 s depois da mudança, vale", async () => {
     const { contato, conversa, telefone } = await conversaNaIa();
     const alvo = await consulta(contato, lAna, as("08:30", 5));
     await armar(conversa, "cancelar", alvo);
@@ -928,6 +981,10 @@ describe("cancelar_consulta_pela_ia: cada recusa, na ordem do contrato", () => {
       })
       .eq("id", alvo)
       .throwOnError();
+    // [revisao final] A folga de 5 s (c_folga_da_mudanca): a mudanca com
+    // changed_at ate 5 s antes da criacao do job da pergunta conta. O job do
+    // "sim" (que pergunta de novo) nasce 5,5 s depois da mudanca.
+    await esperar(5_500);
     await mensagem(conversa, "paciente");
     // O job do "sim" nasce depois da mudanca: e ele que pergunta de novo.
     const doSim = await job(conversa);
@@ -944,6 +1001,66 @@ describe("cancelar_consulta_pela_ia: cada recusa, na ordem do contrato", () => {
       reutilizado: false,
     });
     expect((await linha(alvo)).status).toBe("cancelado_paciente");
+  });
+
+  it("[revisão final, M1] a dúvida que o turno anterior leu e respondeu não é mensagem nova: com ele enviado, o sim do job seguinte cancela; com ele sem_envio, não", async () => {
+    const { contato, conversa } = await conversaNaIa();
+    const alvo = await consulta(contato, lAna, as("13:00", 5));
+    await armar(conversa, "cancelar", alvo);
+    // A pergunta; a duvida do paciente ("e presencial?"), que o job J1 le;
+    // o "sim" chega no meio do turno de J1; a resposta de J1 e gravada
+    // depois do "sim"; o job J2 le so o "sim" (a duvida ja foi respondida).
+    await mensagem(conversa, "ia");
+    await mensagem(conversa, "paciente");
+    const duvida = await ultimaDoPaciente(conversa);
+    const j1 = await job(conversa);
+    await turno(j1, conversa, "reservado", [duvida]);
+    await mensagem(conversa, "paciente");
+    const sim = await ultimaDoPaciente(conversa);
+    await mensagem(conversa, "ia");
+    await turno(j1, conversa, "sem_envio", [duvida]);
+    const j2 = await job(conversa);
+    await turno(j2, conversa, "reservado", [sim]);
+    // J1 sem_envio: as lidas dele nao contam (o job seguinte as rele).
+    expect(await cancelar(conversa, alvo, j2, false)).toEqual({
+      ok: false,
+      motivo: "mensagem_nova_do_paciente",
+    });
+    expect((await linha(alvo)).status).toBe("agendado");
+    // J1 enviado: a duvida foi respondida; antes da revisao final, so as
+    // lidas do job contavam e este "sim" ficava sem turno seguinte.
+    await turno(j1, conversa, "enviado", [duvida]);
+    expect(await cancelar(conversa, alvo, j2, false)).toMatchObject({
+      ok: true,
+      reutilizado: false,
+    });
+    expect((await linha(alvo)).status).toBe("cancelado_paciente");
+  });
+
+  it("[revisão final, M1b] com mensagem nova, ela responde antes de consulta_mudou; lida, consulta_mudou", async () => {
+    const { contato, conversa } = await conversaNaIa();
+    const alvo = await consulta(contato, lAna, as("13:30", 5));
+    await prontoParaCancelar(conversa, alvo);
+    const jobId = await job(conversa);
+    await leu(jobId, conversa);
+    await admin
+      .from("appointment")
+      .update({
+        starts_at: as("14:30", 5),
+        ends_at: meiaHoraDepois(as("14:30", 5)),
+      })
+      .eq("id", alvo)
+      .throwOnError();
+    await mensagem(conversa, "paciente");
+    expect(await cancelar(conversa, alvo, jobId, false)).toEqual({
+      ok: false,
+      motivo: "mensagem_nova_do_paciente",
+    });
+    expect(await cancelar(conversa, alvo)).toEqual({
+      ok: false,
+      motivo: "consulta_mudou",
+    });
+    expect((await linha(alvo)).status).toBe("agendado");
   });
 });
 

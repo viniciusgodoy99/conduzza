@@ -29,6 +29,7 @@ import { lerPrecos } from "@/lib/agente/uso";
 import {
   anotarPassagemParaAEquipe,
   conferirTravaDoWhatsapp,
+  confirmarPosse,
   consentimentoVigente,
   fecharTurno,
   foraDoAssuntoNaJanela,
@@ -49,6 +50,7 @@ import {
   salvarTurno,
   tetoDeRespostasPorHora,
   trocarSaidaParaFrase,
+  type JanelaDaConversa,
   type ResultadoDaPassagem,
   type TurnoDaIa,
 } from "@/lib/agente/whatsapp";
@@ -138,6 +140,12 @@ import type { Job, ResultadoDeJob } from "./worker";
 //     (portaDaAgendaDoWhatsapp): repetir o job devolve a mesma reserva e a
 //     mesma consulta, nunca uma segunda.
 // 11. Acerto do gasto, com a conversa e o job.
+// 11a. (Revisao final da AG4, M1 e B1) O turno parado pela mensagem nova da
+//     pessoa (mensagem_nova_do_paciente do banco): o estado NAO e gravado
+//     (nao mudou) e o job seguinte e garantido por enfileirar_resposta_da_ia
+//     (junta com o pendente do webhook, ou cria quando nao ha: a mensagem do
+//     interceptador e a lida que foi apagada), no maximo 2 vezes seguidas
+//     (a contagem no payload); depois disso, ou sem a fila, a falha normal.
 // 11b. (AG3) O estado novo, ANTES de decidir e enviar
 //     (gravar_atendimento_da_ia, com a versao lida: otimista). Recusa ou
 //     erro: a resposta construida sobre o estado velho nunca sai (falha
@@ -712,6 +720,22 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
     return falharSemModelo(c, { ...base, reservaId }, destino, config);
   }
 
+  // 11a. Revisao final da AG4 (M1 e B1): o turno parou pela mensagem nova
+  // da pessoa (mensagem_nova_do_paciente). O estado NAO e gravado (nao
+  // mudou; gravar o do comeco recarimbava o pedido vencido DEPOIS da
+  // pergunta, e o job seguinte recebia sem_confirmacao_do_paciente) e o job
+  // seguinte e garantido antes de fechar sem envio.
+  if (resultado.mensagemNova === true) {
+    return continuarDepoisDaMensagemNova(
+      c,
+      { ...base, reservaId },
+      destino,
+      config,
+      resultado,
+      latenciaMs,
+    );
+  }
+
   // 11b. (AG3) O estado novo, antes de decidir e enviar: o turno que nao
   // devolveu estado (nunca deveria) grava o lido, como esta.
   const gravacao = await gravarAtendimentoDaIa(admin, {
@@ -761,22 +785,30 @@ export const PASSO_DO_ESTADO_NAO_GRAVADO =
 /**
  * AG3: o turno vira falha (a resposta, se havia, nunca sai). Uma passagem
  * que ja ia acontecer (frase fixa) fica como esta: a conversa vai para a
- * equipe do mesmo jeito, com o motivo dela.
+ * equipe do mesmo jeito, com o motivo dela. Revisao final da AG4 (M1):
+ * `forcar` vira falha tambem a frase fixa que nao ia sair (o turno parado
+ * pela mensagem nova da pessoa, sem o job seguinte).
  */
 function comoFalha(
   resultado: ResultadoDoTurno,
   motivo: FalhaDoAgente,
   passo: string,
+  forcar = false,
 ): ResultadoDoTurno {
   const trilha = [
     ...resultado.trilha,
     { tipo: "outro" as const, texto: passo },
   ];
-  if (resultado.tipo === "frase_fixa" && motivo !== "liberacao_suspensa") {
+  if (
+    !forcar &&
+    resultado.tipo === "frase_fixa" &&
+    motivo !== "liberacao_suspensa"
+  ) {
     return { ...resultado, trilha };
   }
   return {
     ...resultado,
+    mensagemNova: undefined,
     tipo: "frase_fixa",
     resposta: FRASE_DE_ESCALONAMENTO,
     rascunhoBloqueado: null,
@@ -846,6 +878,323 @@ async function concluirJobAntigo(
     });
   }
   return CONCLUIR;
+}
+
+// ---------------------------------------------------------------------------
+// A mensagem nova da pessoa (revisao final da AG4, M1 e B1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Revisao final da AG4 (M1): quantas vezes SEGUIDAS o turno pode parar pela
+ * mensagem nova da pessoa e deixar a resposta para o job seguinte. A
+ * contagem vai no payload do job seguinte (CHAVE_DAS_CONTINUACOES); no
+ * limite, a falha normal (a frase fixa e a equipe), nunca um laco de jobs
+ * que nao respondem.
+ */
+export const MAXIMO_DE_CONTINUACOES_DA_MENSAGEM_NOVA = 2;
+
+/** A chave do payload de responder_com_ia com a contagem (M1). */
+export const CHAVE_DAS_CONTINUACOES = "continuacoes_da_mensagem_nova";
+
+/** M1: o passo da trilha quando o limite das continuacoes chegou. */
+export const PASSO_DA_MENSAGEM_NOVA_NO_LIMITE =
+  "A pessoa mandou outra mensagem enquanto o assistente respondia, várias vezes seguidas: a conversa passou para a equipe.";
+
+/** M1: o passo da trilha quando a proxima resposta nao ficou na fila. */
+export const PASSO_DA_MENSAGEM_NOVA_SEM_FILA =
+  "Não foi possível deixar a próxima resposta na fila depois da mensagem nova da pessoa.";
+
+/** M1: o passo da trilha quando a conversa saiu do assistente no meio. */
+export const PASSO_DA_MENSAGEM_NOVA_FORA_DA_IA =
+  "A conversa saiu do assistente antes da próxima resposta.";
+
+/**
+ * Os codigos de enfileirar_resposta_da_ia que dizem que a IA nao pode mais
+ * responder esta conversa: a conversa saiu da IA, a clinica saiu da fase, a
+ * janela nao confere ou a liberacao caiu.
+ */
+const FILA_FORA_DA_IA: ReadonlySet<string> = new Set([
+  "conversa_fora_da_ia",
+  "fora_da_fase",
+  "janela_invalida",
+  "nao_liberada",
+]);
+
+/**
+ * A contagem do job. Sem a chave: 0. Valor que nao e inteiro de 0 em
+ * diante: o limite (falha fechada; so o executor grava a chave).
+ */
+export function continuacoesDoJob(payload: Record<string, unknown>): number {
+  const valor = payload[CHAVE_DAS_CONTINUACOES];
+  if (valor === undefined) {
+    return 0;
+  }
+  return typeof valor === "number" && Number.isInteger(valor) && valor >= 0
+    ? valor
+    : MAXIMO_DE_CONTINUACOES_DA_MENSAGEM_NOVA;
+}
+
+type JobSeguinte =
+  | { tipo: "garantido"; codigo: "enfileirado" | "juntou" }
+  | { tipo: "nada_a_responder" }
+  | { tipo: "fora_da_ia"; codigo: string }
+  | { tipo: "falhou"; codigo: string };
+
+/**
+ * Revisao final da AG4 (M1 e B1): o turno parou pela mensagem nova da
+ * pessoa. Nada sai e o estado nao e gravado (nao mudou). A conversa nunca
+ * fica calada: o job seguinte e garantido pela MESMA RPC do webhook
+ * (enfileirar_resposta_da_ia, que confere a fase, a conversa na IA, a
+ * mensagem, a janela e a liberacao, e junta com o job pendente que ja
+ * existir: o da mensagem nova que veio pelo webhook). Ela cria o job quando
+ * nao ha nenhum: a mensagem que o interceptador tratou (botao ou eco, sem
+ * turno) e a lida que a pessoa apagou. Com a contagem no limite, ou sem
+ * conseguir a fila, a falha normal (a frase fixa e a equipe); com a
+ * conversa fora da IA, a passagem sem frase (como a liberacao que cai).
+ *
+ * Sem o gravar do estado, este caminho confere o que ele conferia: a posse
+ * do job (outro executor com ele: nada decidido, o job volta) e o D-A (o
+ * job anterior a janela atual so conclui: nada de fila na sessao nova).
+ */
+async function continuarDepoisDaMensagemNova(
+  c: Contexto,
+  turno: TurnoDaIa,
+  destino: Destino,
+  config: ConfigDoAgente,
+  resultado: ResultadoDoTurno,
+  latenciaMs: number,
+): Promise<ResultadoDeJob> {
+  if (!(await confirmarPosse(c.admin, c.job.id, c.workerId))) {
+    return { ok: false, erro: "sem_posse" };
+  }
+  let janela: JanelaDaConversa | null = null;
+  let janelaLida = true;
+  try {
+    janela = await lerJanela(c.admin, c.clinicId, c.conversationId);
+  } catch {
+    janelaLida = false;
+  }
+  if (jobAnteriorAJanela(janela, c.job.created_at)) {
+    return concluirJobAntigo(c, turno);
+  }
+  const feitas = continuacoesDoJob(c.job.payload);
+  if (feitas >= MAXIMO_DE_CONTINUACOES_DA_MENSAGEM_NOVA) {
+    log.warn("ia_mensagem_nova_no_limite", { ...idsDoLog(c), count: feitas });
+    return decidirEEnviar(
+      c,
+      turno,
+      destino,
+      config,
+      comoFalha(resultado, "desconhecida", PASSO_DA_MENSAGEM_NOVA_NO_LIMITE, true),
+      latenciaMs,
+    );
+  }
+  const seguinte: JobSeguinte = !janelaLida
+    ? { tipo: "falhou", codigo: "leitura_falhou" }
+    : janela === null
+      ? { tipo: "fora_da_ia", codigo: "janela_invalida" }
+      : await garantirOJobSeguinte(c, janela, feitas + 1);
+  if (seguinte.tipo === "garantido") {
+    log.info("ia_mensagem_nova_continua", {
+      ...idsDoLog(c),
+      status: seguinte.codigo,
+      count: feitas + 1,
+    });
+    return decidirEEnviar(c, turno, destino, config, resultado, latenciaMs);
+  }
+  if (seguinte.tipo === "nada_a_responder") {
+    // A pessoa apagou tudo o que tinha mandado: nada a responder (como o
+    // job sem pendente). Fecha sem envio.
+    log.info("ia_mensagem_nova_continua", {
+      ...idsDoLog(c),
+      status: seguinte.tipo,
+    });
+    return decidirEEnviar(c, turno, destino, config, resultado, latenciaMs);
+  }
+  if (seguinte.tipo === "fora_da_ia") {
+    log.info("ia_mensagem_nova_fora_da_ia", {
+      ...idsDoLog(c),
+      status: seguinte.codigo,
+    });
+    return decidirEEnviar(
+      c,
+      turno,
+      destino,
+      config,
+      comoFalha(resultado, "liberacao_suspensa", PASSO_DA_MENSAGEM_NOVA_FORA_DA_IA),
+      latenciaMs,
+    );
+  }
+  log.warn("ia_mensagem_nova_sem_fila", {
+    ...idsDoLog(c),
+    error_code: seguinte.codigo,
+  });
+  return decidirEEnviar(
+    c,
+    turno,
+    destino,
+    config,
+    comoFalha(resultado, "desconhecida", PASSO_DA_MENSAGEM_NOVA_SEM_FILA, true),
+    latenciaMs,
+  );
+}
+
+/**
+ * A ultima mensagem do paciente da janela (a mesma regra do historico: so
+ * a janela, menos a aberta pela ingestao, que le a conversa inteira), nao
+ * apagada. null: nenhuma (a pessoa apagou tudo: nada a responder). Lanca na
+ * leitura que falha.
+ */
+async function ultimaMensagemDoPaciente(
+  c: Contexto,
+  janela: JanelaDaConversa,
+): Promise<string | null> {
+  let consulta = c.admin
+    .from("message")
+    .select("id")
+    .eq("clinic_id", c.clinicId)
+    .eq("conversation_id", c.conversationId)
+    .eq("direction", "entrada")
+    .eq("author", "paciente")
+    .is("deleted_at", null);
+  if (janela.abertaPor !== "ingestao") {
+    consulta = consulta.gte("created_at", janela.desde);
+  }
+  const { data, error } = await consulta
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(1);
+  if (error) {
+    throw new Error("leitura");
+  }
+  const id = ((data ?? []) as { id?: unknown }[])[0]?.id;
+  return typeof id === "string" ? id : null;
+}
+
+/**
+ * Pede o job seguinte a enfileirar_resposta_da_ia com a ultima mensagem do
+ * paciente e marca a contagem nele. A mensagem apagada entre a leitura e a
+ * fila (mensagem_invalida) e lida de novo uma vez. Nunca lanca.
+ */
+async function garantirOJobSeguinte(
+  c: Contexto,
+  janela: JanelaDaConversa,
+  continuacoes: number,
+): Promise<JobSeguinte> {
+  for (let tentativa = 1; tentativa <= 2; tentativa += 1) {
+    let mensagemId: string | null;
+    try {
+      mensagemId = await ultimaMensagemDoPaciente(c, janela);
+    } catch {
+      return { tipo: "falhou", codigo: "leitura_falhou" };
+    }
+    if (mensagemId === null) {
+      return { tipo: "nada_a_responder" };
+    }
+    let resposta: { data: unknown; error: { code?: string } | null };
+    try {
+      resposta = await c.admin.rpc("enfileirar_resposta_da_ia", {
+        p_clinic_id: c.clinicId,
+        p_conversation_id: c.conversationId,
+        p_message_id: mensagemId,
+        p_incluir_teste: c.deps.incluirClinicasDeTeste === true,
+      });
+    } catch {
+      return { tipo: "falhou", codigo: "excecao" };
+    }
+    if (resposta.error) {
+      return { tipo: "falhou", codigo: resposta.error.code ?? "erro" };
+    }
+    const dados = resposta.data as { codigo?: unknown; job_id?: unknown } | null;
+    const codigo = typeof dados?.codigo === "string" ? dados.codigo : "";
+    if (
+      (codigo === "enfileirado" || codigo === "juntou") &&
+      typeof dados?.job_id === "string" &&
+      UUID.test(dados.job_id)
+    ) {
+      await marcarAsContinuacoes(c, dados.job_id, continuacoes);
+      return { tipo: "garantido", codigo };
+    }
+    if (codigo === "mensagem_invalida") {
+      continue;
+    }
+    if (FILA_FORA_DA_IA.has(codigo)) {
+      return { tipo: "fora_da_ia", codigo };
+    }
+    return { tipo: "falhou", codigo: codigo || "resposta_fora_do_formato" };
+  }
+  return { tipo: "falhou", codigo: "mensagem_invalida" };
+}
+
+/**
+ * Grava a contagem no payload do job seguinte (o que a fila acabou de criar
+ * ou o pendente com que juntou). Concorrencia otimista pelo updated_at: o
+ * webhook pode juntar outra mensagem no meio (ele so troca a
+ * ultima_mensagem_id); a gravacao que nao acha a linha le de novo. O maior
+ * valor fica. O job seguinte nao roda enquanto este executa
+ * (ia_jobs_devidos: um por conversa). Nunca lanca: sem a marca, fica o log
+ * (a contagem recomeca no job seguinte, o lado do atendimento).
+ */
+async function marcarAsContinuacoes(
+  c: Contexto,
+  jobId: string,
+  continuacoes: number,
+): Promise<void> {
+  try {
+    for (let tentativa = 1; tentativa <= 3; tentativa += 1) {
+      const lido = await c.admin
+        .from("job_queue")
+        .select("payload, updated_at")
+        .eq("clinic_id", c.clinicId)
+        .eq("id", jobId)
+        .eq("kind", "responder_com_ia")
+        .eq("status", "pendente")
+        .maybeSingle();
+      const linha = lido.data as {
+        payload?: unknown;
+        updated_at?: unknown;
+      } | null;
+      if (
+        lido.error ||
+        linha === null ||
+        typeof linha.payload !== "object" ||
+        linha.payload === null ||
+        Array.isArray(linha.payload) ||
+        typeof linha.updated_at !== "string"
+      ) {
+        break;
+      }
+      const payload = linha.payload as Record<string, unknown>;
+      const antes = payload[CHAVE_DAS_CONTINUACOES];
+      const novo = {
+        ...payload,
+        [CHAVE_DAS_CONTINUACOES]: Math.max(
+          continuacoes,
+          typeof antes === "number" && Number.isInteger(antes) ? antes : 0,
+        ),
+      };
+      const gravado = await c.admin
+        .from("job_queue")
+        .update({ payload: novo })
+        .eq("clinic_id", c.clinicId)
+        .eq("id", jobId)
+        .eq("status", "pendente")
+        .eq("updated_at", linha.updated_at)
+        .select("id");
+      if (gravado.error) {
+        break;
+      }
+      if (((gravado.data ?? []) as unknown[]).length > 0) {
+        return;
+      }
+    }
+  } catch {
+    // Cai no log abaixo.
+  }
+  log.warn("ia_mensagem_nova_contagem_nao_marcada", {
+    ...idsDoLog(c),
+    count: continuacoes,
+  });
 }
 
 // ---------------------------------------------------------------------------

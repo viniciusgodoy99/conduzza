@@ -37,7 +37,10 @@ import { adminClient, anonClient } from "../rls/stack";
 //   automatica, a equipe) entre a pergunta e o "sim" barra
 //   (sem_confirmacao_do_paciente) e a mensagem do paciente que o job nao leu
 //   tambem (mensagem_nova_do_paciente); o agendar grava antes a linha do
-//   turno do job (ai_turno.mensagens_lidas), como o motor;
+//   turno do job (ai_turno.mensagens_lidas), como o motor; [revisao final
+//   da AG4] a mensagem so e nova se NENHUM turno a leu (a duvida que o turno
+//   anterior leu e respondeu, enviado, nao barra o "sim" que o job seguinte
+//   leu) e, com mensagem nova, ela responde antes de faltam_dados;
 // - a revisao final (27/10/2026): o "sim" para a reserva que outro turno
 //   trocou (agendar com p_slot_hold_id) recusa reserva_diferente sem gravar
 //   nada, e com a reserva viva marca; o reservar ja recusa ja_tem_consulta
@@ -1636,6 +1639,48 @@ describe("[revisão curta da AG4, B3] a marcação com a âncora forte e a mensa
       .throwOnError();
   }
 
+  /**
+   * [revisao final da AG4] A linha do turno de um job com o estado e as
+   * lidas dados, como o motor deixa (reservado ao ler; enviado ou sem_envio
+   * depois).
+   */
+  async function turno(
+    jobId: string,
+    conversa: string,
+    estado: "reservado" | "enviado" | "sem_envio",
+    lidas: string[],
+  ): Promise<void> {
+    await admin
+      .from("ai_turno")
+      .upsert(
+        {
+          job_id: jobId,
+          clinic_id: clinica,
+          conversation_id: conversa,
+          estado,
+          mensagens_lidas: lidas,
+        },
+        { onConflict: "job_id" },
+      )
+      .throwOnError();
+  }
+
+  /** [revisao final da AG4] A mensagem do paciente mais nova (o id). */
+  async function ultimaDoPaciente(conversa: string): Promise<string> {
+    const { data } = await admin
+      .from("message")
+      .select("id")
+      .eq("conversation_id", conversa)
+      .eq("direction", "entrada")
+      .eq("author", "paciente")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(1)
+      .single()
+      .throwOnError();
+    return (data as { id: string }).id;
+  }
+
   async function doPaciente(conversa: string): Promise<void> {
     await admin
       .from("message")
@@ -1713,5 +1758,72 @@ describe("[revisão curta da AG4, B3] a marcação com a âncora forte e a mensa
       ok: true,
       reutilizado: false,
     });
+  });
+
+  it("[revisão final da AG4, M1 e a ordem] a dúvida que o turno anterior leu e respondeu não é nova; com mensagem nova, ela responde antes de faltam_dados; o job seguinte relê, o registrar completa e marca", async () => {
+    const { conversa } = await novaConversa();
+    expect(
+      await registrar(conversa, { nome: "Paciente Integração Onze" }),
+    ).toMatchObject({ ok: true, faltam: ["data_nascimento"] });
+    const reserva = await rpcOk<Resposta>("reservar_horario_da_ia", {
+      p_clinic_id: clinica,
+      p_conversation_id: conversa,
+      p_service_link_id: lAna,
+      p_starts_at: em("15:00"),
+      p_job_id: crypto.randomUUID(),
+    });
+    expect(reserva).toMatchObject({ ok: true });
+    const agendarPeloJob = (jobId: string) =>
+      rpcOk<Resposta>("agendar_pela_ia", {
+        p_clinic_id: clinica,
+        p_conversation_id: conversa,
+        p_job_id: jobId,
+        p_slot_hold_id: reserva.hold_id,
+      });
+    // A pergunta; o nascimento numa mensagem (A), que o job J1 le; o "sim"
+    // (B) chega no meio do turno de J1; a resposta de J1 e gravada depois de
+    // B e J1 fecha enviado; o job J2 le so B (A ja foi respondida).
+    await saida(conversa, "ia");
+    await doPaciente(conversa);
+    const a = await ultimaDoPaciente(conversa);
+    const j1 = crypto.randomUUID();
+    await turno(j1, conversa, "reservado", [a]);
+    await doPaciente(conversa);
+    const b = await ultimaDoPaciente(conversa);
+    await saida(conversa, "ia");
+    await turno(j1, conversa, "enviado", [a]);
+    const j2 = crypto.randomUUID();
+    await turno(j2, conversa, "reservado", [b]);
+    // A nao e nova (o turno enviado a leu): falta o nascimento.
+    expect(await agendarPeloJob(j2)).toEqual({
+      ok: false,
+      motivo: "faltam_dados",
+      faltam: ["data_nascimento"],
+    });
+    // Uma mensagem que nenhum turno leu (C): ela responde antes de
+    // faltam_dados.
+    await doPaciente(conversa);
+    const c = await ultimaDoPaciente(conversa);
+    expect(await agendarPeloJob(j2)).toEqual({
+      ok: false,
+      motivo: "mensagem_nova_do_paciente",
+    });
+    // J2 fecha sem_envio; o job J3 rele B e C; o registrar completa; marca.
+    await turno(j2, conversa, "sem_envio", [b]);
+    const j3 = crypto.randomUUID();
+    await turno(j3, conversa, "reservado", [b, c]);
+    expect(await agendarPeloJob(j3)).toEqual({
+      ok: false,
+      motivo: "faltam_dados",
+      faltam: ["data_nascimento"],
+    });
+    expect(
+      await registrar(conversa, { nascimento: NASCIMENTO_DE_ADULTO }),
+    ).toMatchObject({ ok: true, faltam: [] });
+    expect(await agendarPeloJob(j3)).toMatchObject({
+      ok: true,
+      reutilizado: false,
+    });
+    expect(await marcadasPelaIa(conversa)).toBe(1);
   });
 });

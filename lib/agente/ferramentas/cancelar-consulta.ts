@@ -75,7 +75,10 @@ export const FERRAMENTA_CANCELAR_CONSULTA: FunctionTool = {
  * de ser a pergunta da IA, a ancora forte). Revisao curta das correcoes da
  * AG4: mensagem_nova_do_paciente (a ultima mensagem do paciente nao esta
  * entre as que o job leu, ai_turno.mensagens_lidas): o turno para sem
- * enviar nada e o proximo le a mensagem nova.
+ * enviar nada e o proximo le a mensagem nova. Revisao final da AG4
+ * (contrato-mudancas R12 e R15): a mensagem so e nova se NENHUM turno que
+ * o banco conta a leu, e a conferencia vem logo depois da conferencia da
+ * consulta, ANTES de "a consulta mudou" e do pedido vencido.
  */
 export const MOTIVOS_DO_CANCELAMENTO = [
   "ia_desligada",
@@ -87,9 +90,9 @@ export const MOTIVOS_DO_CANCELAMENTO = [
   "so_com_a_equipe",
   "remarcacao_pendente",
   "fora_do_prazo",
+  "mensagem_nova_do_paciente",
   "consulta_mudou",
   "pedido_vencido",
-  "mensagem_nova_do_paciente",
   "sem_confirmacao_do_paciente",
 ] as const;
 

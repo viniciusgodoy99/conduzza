@@ -3129,6 +3129,15 @@ function pendenciaDaRemarcacao(frase: string): boolean {
 const NEGA = "(?:nao|nem|nunca|jamais)";
 
 /**
+ * Revisao final da AG4 (M2): a negacao COLADA no verbo ("nao saiu", "ainda
+ * nao aprovaram", "nao a aprovaram", "nem veio", "ninguem aprovou"), com no
+ * maximo um pronome ou "ainda" no meio. So ela tira a afirmacao: a negacao
+ * solta antes ("a aprovacao NEM demorou e ja saiu", o "nem" intensificador)
+ * nao nega o verbo que vem depois.
+ */
+const SEM_NEGACAO_COLADA = `(?<!\\b(?:nao|nem|nunca|jamais|ninguem)\\s(?:(?:a|o|as|os|lhe|te|me|ainda)\\s)?)`;
+
+/**
  * Revisao da AG4 (achado 5): a frase que AFIRMA a aprovacao ou nega a
  * pendencia ("a aprovacao ja saiu", "ja aprovada", "a equipe aprovou",
  * "nao precisa de aprovacao", "sem pendencia"). Com a remarcacao pendente,
@@ -3142,26 +3151,61 @@ const NEGA = "(?:nao|nem|nunca|jamais)";
  * pendencia ("nao esta pendente", "nao tem nada pendente", "nao ha
  * pendencia") ou a necessidade da aprovacao ("nao precisa de aprovacao",
  * "nao depende da equipe").
+ *
+ * Revisao final da AG4 (M2): a negacao so vale COLADA no verbo
+ * (SEM_NEGACAO_COLADA: "a aprovacao nem demorou e ja saiu" afirma); a
+ * aprovacao que deixou de existir ("nao tem MAIS aprovacao", "nao ha
+ * aprovacao nessa clinica", "nao ha necessidade de aprovacao"); a pendencia
+ * NEGADA ("nao esta mais aguardando aprovacao", "nem precisa de aprovacao",
+ * "sem precisar aguardar aprovacao", "nenhuma aprovacao pendente"), que
+ * tambem deixa de contar como a pendencia da frase; e a aprovacao dita sem
+ * o verbo auxiliar ("remarcacao aprovada", "aprovaram", "aprovou").
  */
 const APROVACAO_AFIRMADA = new RegExp(
   [
     "\\bja\\s+(?:foi\\s+|foram\\s+|esta\\s+|estao\\s+|ficou\\s+|ficaram\\s+)?aprovad[oa]s?\\b",
-    // "a aprovacao (da equipe) ja saiu": sem negacao entre a aprovacao e o
-    // verbo ("a aprovacao ainda nao saiu" nao afirma).
-    `\\baprovacao\\s+(?:(?!${NEGA}\\b)\\w+\\s+){0,3}?(?:ja\\s+)?(?:saiu|veio|chegou|foi dada|foi feita|aconteceu)\\b`,
+    // "a aprovacao (da equipe) ja saiu": sem negacao COLADA no verbo ("a
+    // aprovacao ainda nao saiu" nao afirma; "nem demorou e ja saiu", sim).
+    `\\baprovacao\\s+(?:\\w+\\s+){0,3}?${SEM_NEGACAO_COLADA}(?:ja\\s+)?(?:saiu|veio|chegou|foi dada|foi feita|aconteceu)\\b`,
     // "ja saiu a aprovacao" (sem negacao antes do verbo).
     `(?<!\\b${NEGA}\\s)\\b(?:ja\\s+)?(?:saiu|veio|chegou)\\s+a\\s+aprovacao\\b`,
     "\\b(?:equipe|clinica|recepcao)\\s+(?:ja\\s+)?(?:aprovou|aprovaram)\\b",
-    "\\bja\\s+(?:aprovou|aprovaram)\\b",
+    "\\bja\\s+(?:aprovou|aprovaram|aprovamos|aprovei)\\b",
+    // Revisao final (M2): "aprovaram", "aprovou", "aprovei" sem a negacao
+    // colada ("ainda nao aprovaram" e "nao a aprovou" sao a pendencia).
+    `${SEM_NEGACAO_COLADA}\\baprov(?:ou|aram|ei)\\b`,
     `(?<!\\b${NEGA}\\s)\\b(?:foi|foram|esta|estao|ficou|ficaram|sido)\\s+aprovad[oa]s?\\b`,
+    // Revisao final (M2): o participio sem o auxiliar ("Remarcacao
+    // aprovada!", "tudo aprovado"), menos o da condicao ("com a remarcacao
+    // aprovada, ...").
+    "(?<!\\b(?:com|quando|apos|se|depois\\s+de|depois\\s+da)\\s(?:a\\s|o\\s|sua\\s|seu\\s)?)\\b(?:remarcacao|remarcacoes|reagendamento|consulta|horario|pedido|solicitacao|troca|mudanca|alteracao|tudo)\\s+(?:ja\\s+)?aprovad[oa]s?\\b",
     // Nega a pendencia: "nao esta (mais) pendente", "nao tem nada pendente",
     // "nao ha nenhuma aprovacao pendente", "nao tem pendencia". "Nao tem a
     // aprovacao" e "nao ha aprovacao" (sem "pendente") NAO: e a pendencia.
     "\\bnao\\s+(?:esta|estao|fica|ficam|ficou|ficaram|tem|ha|existe|existem)\\s+(?:mais\\s+)?(?:(?:nada|nenhuma|nenhum)\\s+)?(?:\\w+\\s+){0,2}?(?:pendentes?|pendencias?)\\b",
+    // Revisao final (M2): "nenhuma aprovacao pendente", "sem aprovacao
+    // pendente".
+    "\\b(?:nenhuma|sem)\\s+aprovac(?:ao|oes)\\s+pendentes?\\b",
+    // Revisao final (M2): a aprovacao que deixou de existir. "Nao tem MAIS
+    // aprovacao" (sem o "mais", "nao tem aprovacao" e a pendencia).
+    "\\bnao\\s+(?:tem|ha|existe|existem)\\s+mais\\s+(?:\\w+\\s+){0,2}?aprov",
+    // Revisao final (M2): a clinica sem a etapa da aprovacao ("nao ha
+    // aprovacao nessa clinica", "aqui nao tem aprovacao"); com "ainda" na
+    // frase e a pendencia ("ainda nao tem aprovacao aqui").
+    "(?<!\\b(?:ainda|enquanto)\\s)\\bnao\\s+(?:tem|ha|existe|existem)\\s+(?:a\\s+|nenhuma\\s+)?aprovac(?:ao|oes)\\s+(?:nesta|nessa|neste|nesse|aqui|na\\s+clinica)\\b(?![^.!?]*\\bainda\\b)",
+    "\\b(?:aqui|nesta\\s+clinica|nessa\\s+clinica|na\\s+clinica)\\s+nao\\s+(?:tem|ha|existe|existem)\\s+(?:a\\s+|nenhuma\\s+)?aprovac(?:ao|oes)\\b(?![^.!?]*\\bainda\\b)",
+    // Revisao final (M2): "nao ha necessidade de aprovacao", "nao existe
+    // etapa de aprovacao".
+    `\\b(?:${NEGA}|sem)\\s+(?:(?:ha|tem|existe|existem)\\s+)?(?:mais\\s+)?(?:nenhuma\\s+)?(?:necessidade|exigencia|obrigacao|obrigatoriedade|etapa|processo)\\s+de\\s+(?:\\w+\\s+)?aprov`,
     // Nega a necessidade: "nao precisa de aprovacao", "nao precisa ser
-    // aprovada", "nao e preciso aprovar", "nao depende da equipe".
-    "\\bnao\\s+(?:precisa|precisam|e preciso|e necessari[oa]|tem que|tem de)\\s+(?:mais\\s+)?(?:\\w+\\s+){0,3}?aprov",
+    // aprovada", "nao e preciso aprovar", "nao depende da equipe" (revisao
+    // final: tambem com "nem", "nunca" e "jamais").
+    `\\b${NEGA}\\s+(?:precisa|precisam|e preciso|e necessari[oa]|tem que|tem de)\\s+(?:mais\\s+)?(?:\\w+\\s+){0,3}?aprov`,
     "\\bnao\\s+(?:depende|dependem)\\s+(?:mais\\s+)?(?:de\\s+|da\\s+|do\\s+)?(?:nenhuma\\s+)?(?:\\w+\\s+)?(?:aprov|equipe\\b)",
+    // Revisao final (M2): a pendencia NEGADA ("nao esta mais aguardando
+    // aprovacao", "nem precisa de aprovacao", "sem precisar aguardar
+    // aprovacao", "nao fica esperando a equipe").
+    `\\b(?:${NEGA}|sem)\\s+(?:\\w+\\s+){0,2}?(?:aguardando|esperando|aguardar|esperar|aguarda|espera|precisa|precisar|precisou|precisam|depende|dependem|dependendo)\\s+(?:\\w+\\s+){0,2}?(?:aprov|equipe\\b)`,
     "\\b(?:sem|nenhuma)\\s+pendencias?\\b",
     "\\bsem\\s+(?:necessidade|precisar)\\s+de\\s+(?:\\w+\\s+)?aprov",
   ].join("|"),
@@ -5609,6 +5653,10 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   OUTRA_PENDENCIA.source,
   "pendencia da remarcacao: expressao de pendencia, a aprovacao dita na frase, nenhuma outra coisa pendente e nenhuma aprovacao afirmada",
   "aprovacao afirmada: a negacao entre a aprovacao e o verbo nao afirma; nao ter a aprovacao e a pendencia; nao estar pendente e nao precisar da aprovacao barram",
+  // Revisao final da AG4 (M2): a negacao so colada no verbo, a aprovacao que
+  // deixou de existir, a pendencia negada e o participio sem o auxiliar.
+  SEM_NEGACAO_COLADA,
+  "aprovacao afirmada (revisao final): a negacao so vale colada no verbo; nao ter mais a aprovacao, a clinica sem a aprovacao, a necessidade negada, a pendencia negada (que tambem nao sustenta a remarcacao) e o participio sem o auxiliar barram",
   "remarcou: tambem a remarcacao pedida nesta conversa e ja aprovada, relida, com o par dela e sem a pendencia",
   "cancelou: tambem a consulta cancelada nesta conversa num turno anterior, relida e ainda cancelada, com o par dela; nunca consulta lida",
   "acao com horario: o anterior so na remarcacao",

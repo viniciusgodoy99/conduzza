@@ -279,6 +279,15 @@ export class CenarioDaAg4 {
    * (job_queue.created_at): o comeco do turno.
    */
   readonly jobCriadoEm = new Map<string, number>();
+  /**
+   * Revisao final da AG4 (R12): o estado de ai_turno de cada job, como o
+   * executor fecha: 'reservado' durante o turno; 'enviado' com a resposta;
+   * 'passou_para_equipe' com a frase fixa da passagem; 'sem_envio' sem nada
+   * enviado (a mensagem nova da pessoa, a liberacao que caiu). O contrato
+   * soma as lidas dos que contam (idsRespondidos) no ramo nao apagado de
+   * mensagem_nova_do_paciente.
+   */
+  readonly estadoDoTurnoPorJob = new Map<string, string>();
 
   constructor(
     e: {
@@ -304,6 +313,12 @@ export class CenarioDaAg4 {
       estado: () => this.atendimento.estado,
       conversa: () => this.noBanco,
       lidas: (job) => this.lidasPorJob.get(job),
+      turnos: () =>
+        this.jobs.map((job) => ({
+          job_id: job,
+          estado: this.estadoDoTurnoPorJob.get(job) ?? "reservado",
+          mensagens_lidas: [...(this.lidasPorJob.get(job) ?? [])],
+        })),
       jobCriadoEm: (job) => this.jobCriadoEm.get(job),
       cancelar: {
         ligada: this.config.habilidades.cancelar === true,
@@ -494,6 +509,7 @@ export class CenarioDaAg4 {
     const job = randomUUID();
     this.jobs.push(job);
     this.jobCriadoEm.set(job, this.agora);
+    this.estadoDoTurnoPorJob.set(job, "reservado");
     // As lidas do job: as mensagens do paciente depois da ultima resposta
     // (as pendentes do historico).
     const pendentes = mensagensPendentes(this.mensagens).length;
@@ -543,6 +559,16 @@ export class CenarioDaAg4 {
     // turno sem envio (a mensagem nova da pessoa) nao manda nada.
     const semEnvio =
       r.desfecho.tipo === "falhou" && r.desfecho.motivo === "sem_mensagem";
+    this.estadoDoTurnoPorJob.set(
+      job,
+      semEnvio ||
+        (r.desfecho.tipo === "falhou" &&
+          r.desfecho.motivo === "liberacao_suspensa")
+        ? "sem_envio"
+        : r.tipo === "resposta"
+          ? "enviado"
+          : "passou_para_equipe",
+    );
     if (!semEnvio) {
       const autoria = r.tipo === "resposta" ? "ia" : "sistema";
       this.mensagens.push({
@@ -559,9 +585,10 @@ export class CenarioDaAg4 {
         ...(autoria === "ia" ? { job } : {}),
       });
     }
-    if (r.atendimento) {
+    if (r.atendimento && r.mensagemNova !== true) {
       // O executor grava o estado (gravar_atendimento_da_ia): o banco
-      // carimba o instante do pedido.
+      // carimba o instante do pedido. Revisao final da AG4 (B1): o turno
+      // parado pela mensagem nova NAO grava (o estado nao mudou).
       this.atendimento = {
         estado: comOCarimboDoBanco(
           this.atendimento.estado,

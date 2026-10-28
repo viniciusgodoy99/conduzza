@@ -133,6 +133,14 @@
 //    (idempotente pelo job: reutilizado e a T2; senao, consulta_encerrada);
 //  - o id da consulta cancelada sai do estado quando o estado deixa de ser
 //    o do cancelamento (a nota nunca a chama de "marcada").
+//
+// Revisao final da AG4 (27/10/2026): o turno parado por
+// mensagem_nova_do_paciente sai marcado (mensagemNova, no laco): o executor
+// do WhatsApp nao grava o estado (B1: ele nao mudou) e garante o job
+// seguinte (M1). Para o banco, a mensagem so e nova se NENHUM turno que ele
+// conta a leu, e a conferencia vem antes das recusas que dependem do que a
+// pessoa disse (faltam_dados, consulta_mudou, pedido_vencido): com
+// mensagem nova, nada daqui pergunta de novo nem pede dado.
 // Nada daqui tem texto do paciente: a trilha cita nomes do Cadastro, dias,
 // horas e os nomes dos campos. O "sim" do cancelamento e lido do texto
 // original da mensagem (sem sair do turno, nunca para log).

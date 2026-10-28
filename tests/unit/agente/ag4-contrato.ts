@@ -10,6 +10,7 @@ import {
   ancoraForte,
   mensagemNovaDoPaciente,
   perguntaRespondida,
+  respondidasPelosTurnos,
   rpcsDaAg3,
   type OpcoesDoContrato,
 } from "./ag3-contrato";
@@ -61,12 +62,26 @@ import { CLINICA, CONTATO } from "./agenda-fixtures";
 // A conversa (MensagemNoBanco), a ancora forte, a pergunta respondida e a
 // mensagem nova moram no contrato da AG3 (ag3-contrato.ts), que os dois
 // espelhos usam; daqui sao reexportadas.
+//
+// Revisao final da AG4 (contrato-mudancas R12 a R15, a frente de banco):
+//  - R12: a mensagem do paciente so e "nova" se NENHUM turno a leu: as
+//    lidas do job mais as dos turnos que o banco conta (idsRespondidos dos
+//    `turnos` da conversa); a apagada so conta com as lidas do JOB;
+//  - R13/R15: a mensagem nova vem logo depois das recusas estruturais (no
+//    cancelar, a conferencia da consulta; no agendar com p_remarcar, a
+//    remarcacao_invalida) e ANTES de consulta_mudou, pedido_vencido, das
+//    marcas D-8, de ja_tem_consulta, de faltam_dados e da ancora forte;
+//  - R14: o consulta_mudou com o job (da pergunta ou da reserva) conta da
+//    criacao dele MENOS 5 segundos (FOLGA_DA_MUDANCA_MS); sem o job, a
+//    regra de antes (o pedido, ou a reserva, menos 2 minutos).
 
 export {
   ancoraForte,
   mensagemNovaDoPaciente,
   perguntaRespondida,
+  respondidasPelosTurnos,
   type MensagemNoBanco,
+  type TurnoNoBanco,
 } from "./ag3-contrato";
 
 export type HabilidadeDaVersao = { ligada: boolean; prazoHoras: number | null };
@@ -96,7 +111,15 @@ export type OpcoesDaAg4 = OpcoesDoContrato & {
   };
 };
 
+/** A folga de 2 minutos do consulta_mudou SEM o job (contrato-mudancas, 4). */
 const DUAS_HORAS_DE_FOLGA_MS = 2 * 60_000;
+
+/**
+ * Revisao final da AG4 (R14): a folga do consulta_mudou COM o job (o
+ * changed_at e o comeco da transacao da recepcao: a mudanca comecada ate 5
+ * segundos antes da criacao do job conta). 5 s exatos nao contam (`>`).
+ */
+export const FOLGA_DA_MUDANCA_MS = 5_000;
 
 /** Uma consulta do contato da conversa, como o banco guarda. */
 export function consultaDoContato(e: {
@@ -162,7 +185,8 @@ function recusa(motivo: string) {
  * Revisao curta das correcoes da AG4 (R8): de quando conta o consulta_mudou.
  * O comeco do job que escreveu a pergunta (no agendar com p_remarcar, o da
  * reserva), aceito so se o job e anterior a ela; sem o job, a regra de antes
- * (`semJob`: o pedido, ou a reserva, menos 2 minutos).
+ * (`semJob`: o pedido, ou a reserva, menos 2 minutos). Revisao final da AG4
+ * (R14): com o job, a criacao dele MENOS 5 segundos.
  */
 function pisoDoConsultaMudou(
   opcoes: OpcoesDaAg4,
@@ -171,7 +195,9 @@ function pisoDoConsultaMudou(
   semJob: number,
 ): number {
   const criado = job === undefined ? undefined : opcoes.jobCriadoEm?.(job);
-  return criado !== undefined && criado <= ate ? criado : semJob;
+  return criado !== undefined && criado <= ate
+    ? criado - FOLGA_DA_MUDANCA_MS
+    : semJob;
 }
 
 export function rpcsDaAg4(banco: AgendaEmMemoria, opcoes: OpcoesDaAg4) {
@@ -236,9 +262,6 @@ export function rpcsDaAg4(banco: AgendaEmMemoria, opcoes: OpcoesDaAg4) {
     if (motivo !== null) {
       return recusa(motivo);
     }
-    if (opcoes.forcar?.cancelar) {
-      return recusa(opcoes.forcar.cancelar);
-    }
     const linha = consultaDe(args.p_appointment_id)!;
     const pedidoEm =
       estado.pedido_pendente_em === null
@@ -247,6 +270,23 @@ export function rpcsDaAg4(banco: AgendaEmMemoria, opcoes: OpcoesDaAg4) {
     const conversa = opcoes.conversa?.();
     // Revisao curta das correcoes da AG4 (R8): a pergunta respondida.
     const pergunta = perguntaRespondida(conversa, pedidoEm);
+    // Revisao curta das correcoes da AG4 (R7) e revisao final (R12, R13 e
+    // R15): a pessoa escreveu (ou apagou) depois das mensagens que o job leu
+    // e que nenhum outro turno leu. Logo depois da conferencia da consulta,
+    // ANTES de consulta_mudou, pedido_vencido e da ancora forte.
+    if (
+      mensagemNovaDoPaciente(
+        conversa,
+        opcoes.lidas?.(String(args.p_job_id)),
+        pergunta,
+        respondidasPelosTurnos(opcoes, String(args.p_job_id)),
+      )
+    ) {
+      return recusa("mensagem_nova_do_paciente");
+    }
+    if (opcoes.forcar?.cancelar) {
+      return recusa(opcoes.forcar.cancelar);
+    }
     // "A consulta mudou": a recepcao remarcou depois do comeco do job que
     // escreveu a pergunta (R8); sem o job, depois do pedido menos a folga de
     // 2 minutos (contrato-mudancas item 4).
@@ -270,17 +310,6 @@ export function rpcsDaAg4(banco: AgendaEmMemoria, opcoes: OpcoesDaAg4) {
       pergunta.em <= agora - VALIDADE_DO_PEDIDO_NO_BANCO_MS
     ) {
       return recusa("pedido_vencido");
-    }
-    // Revisao curta das correcoes da AG4 (R7): a pessoa escreveu (ou apagou)
-    // depois das mensagens que o job leu.
-    if (
-      mensagemNovaDoPaciente(
-        conversa,
-        opcoes.lidas?.(String(args.p_job_id)),
-        pergunta,
-      )
-    ) {
-      return recusa("mensagem_nova_do_paciente");
     }
     // Revisao da AG4 (R2): a ancora forte (a pergunta da IA logo antes do
     // "sim", depois do pedido).
@@ -498,11 +527,27 @@ export function rpcsDaAg4(banco: AgendaEmMemoria, opcoes: OpcoesDaAg4) {
     ) {
       return recusa("remarcacao_invalida");
     }
-    // "A consulta mudou": a ancora e a reserva (o T3). Revisao curta das
-    // correcoes da AG4 (R8): do comeco do job da reserva; sem ele, da
-    // reserva menos a folga de 2 minutos.
     const criadaEm =
       typeof viva.created_at === "string" ? Date.parse(viva.created_at) : null;
+    // Revisao curta das correcoes da AG4 (R7) e revisao final (R12, R13 e
+    // R15): a pessoa escreveu (ou apagou) depois das mensagens que o job leu
+    // e que nenhum outro turno leu. Logo depois de remarcacao_invalida (as
+    // estruturais), ANTES de consulta_mudou e da ancora forte.
+    const conversa = opcoes.conversa?.();
+    if (
+      mensagemNovaDoPaciente(
+        conversa,
+        opcoes.lidas?.(String(args.p_job_id)),
+        perguntaRespondida(conversa, criadaEm),
+        respondidasPelosTurnos(opcoes, String(args.p_job_id)),
+      )
+    ) {
+      return recusa("mensagem_nova_do_paciente");
+    }
+    // "A consulta mudou": a ancora e a reserva (o T3). Revisao curta das
+    // correcoes da AG4 (R8): do comeco do job da reserva; sem ele, da
+    // reserva menos a folga de 2 minutos. Revisao final (R14): com o job,
+    // a criacao dele menos 5 segundos.
     if (
       typeof antiga.remarcada_em === "string" &&
       criadaEm !== null &&
@@ -518,18 +563,6 @@ export function rpcsDaAg4(banco: AgendaEmMemoria, opcoes: OpcoesDaAg4) {
     }
     if (opcoes.forcar?.agendar) {
       return recusa(opcoes.forcar.agendar);
-    }
-    // Revisao curta das correcoes da AG4 (R7): a pessoa escreveu (ou apagou)
-    // depois das mensagens que o job leu.
-    const conversa = opcoes.conversa?.();
-    if (
-      mensagemNovaDoPaciente(
-        conversa,
-        opcoes.lidas?.(String(args.p_job_id)),
-        perguntaRespondida(conversa, criadaEm),
-      )
-    ) {
-      return recusa("mensagem_nova_do_paciente");
     }
     // Revisao da AG4 (R3): a ancora forte, depois da reserva (o T3). Sem
     // ja_tem_consulta (R5).

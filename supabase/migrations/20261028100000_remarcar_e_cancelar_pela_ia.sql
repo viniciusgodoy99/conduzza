@@ -83,10 +83,11 @@
 --      pelos gatilhos e pelo executor de sempre) com as travas da IA: a
 --      trava da conversa, o job, a idempotencia pela trilha, a conversa com
 --      a IA, a habilidade e o prazo, o pedido armado, a consulta travada e
---      conferida, a consulta que nao mudou desde a pergunta, a pergunta
---      ainda valida (pedido_vencido, VALIDADE DO PEDIDO abaixo), a
---      mensagem do paciente que o job leu (mensagem_nova_do_paciente,
---      REVISAO CURTA abaixo) e a confirmacao do paciente pela ancora forte:
+--      conferida, a mensagem do paciente que algum turno leu
+--      (mensagem_nova_do_paciente, REVISAO CURTA e REVISAO FINAL abaixo), a
+--      consulta que nao mudou desde a pergunta, a pergunta ainda valida
+--      (pedido_vencido, VALIDADE DO PEDIDO abaixo) e a confirmacao do
+--      paciente pela ancora forte:
 --      a ultima mensagem de saida antes da ultima mensagem do paciente e a
 --      resposta da IA (que nao falhou) gravada depois do pedido; qualquer
 --      outra saida no meio (regua, campanha, agendada, a equipe, o sistema;
@@ -130,12 +131,13 @@
 -- MINUTOS (c_validade_do_pedido). A pergunta respondida e a ultima resposta
 -- da IA (que nao falhou) gravada depois do instante do pedido e antes da
 -- ultima mensagem do paciente; com 60 minutos ou mais,
--- cancelar_consulta_pela_ia recusa pedido_vencido (depois de consulta_mudou,
--- antes de mensagem_nova_do_paciente e de sem_confirmacao_do_paciente), e a
--- IA pergunta de novo: a pergunta nova vale por si. O gravar, com o mesmo
--- pedido e o mesmo foco, carimba o instante do pedido de novo quando ele
--- passa de 60 minutos (a MESMA constante no corpo dele; trocar o valor e
--- trocar nos dois): o instante do pedido so e o piso da pergunta. Por que:
+-- cancelar_consulta_pela_ia recusa pedido_vencido (depois de
+-- mensagem_nova_do_paciente e de consulta_mudou, antes de
+-- sem_confirmacao_do_paciente; REVISAO FINAL), e a IA pergunta de novo: a
+-- pergunta nova vale por si. O gravar, com o mesmo pedido e o mesmo foco,
+-- carimba o instante do pedido de novo quando ele passa de 60 minutos (a
+-- MESMA constante no corpo dele; trocar o valor e trocar nos dois): o
+-- instante do pedido so e o piso da pergunta. Por que:
 -- o "sim" de horas ou dias depois da pergunta pode responder outra coisa. A
 -- remarcacao nao usa a validade: a ancora dela e a reserva, que vence em 10
 -- minutos.
@@ -147,18 +149,19 @@
 --       agendar_pela_ia exigem que a ultima mensagem do paciente e toda
 --       mensagem dele depois da pergunta estejam entre elas (a apagada que
 --       o job nao leu nao conta; a lida que foi apagada depois conta como
---       nova); senao, mensagem_nova_do_paciente (logo antes de
---       sem_confirmacao_do_paciente; o turno acaba sem afirmar nada e o
---       seguinte le a mensagem nova). Sem a linha do turno do job, nada
---       lido. A idempotencia pelo job continua antes.
+--       nova); senao, mensagem_nova_do_paciente (o turno acaba sem afirmar
+--       nada e o seguinte le a mensagem nova). Sem a linha do turno do job,
+--       nada lido. A idempotencia pelo job continua antes. (A REVISAO FINAL
+--       mudou o conjunto das lidas e a ordem: abaixo.)
 --   B2. A validade e o consulta_mudou do cancelar contam da PERGUNTA
 --       respondida, nao do pedido: consulta_mudou e a linha de remarcacao
 --       depois da criacao do job que escreveu a pergunta (message.job_id; o
---       job existe antes de o turno ler a consulta). Sem o job, o instante
---       do pedido menos 2 minutos (a regra de antes). Na remarcacao, o
---       mesmo com o job da reserva (slot_hold.job_id; sem ele, a reserva
---       menos 2 minutos). Assim a pergunta (ou a reserva) feita de novo
---       depois de um consulta_mudou, ou de outra mensagem no meio, vale.
+--       job existe antes de o turno ler a consulta; menos a folga de 5 s da
+--       REVISAO FINAL). Sem o job, o instante do pedido menos 2 minutos (a
+--       regra de antes). Na remarcacao, o mesmo com o job da reserva
+--       (slot_hold.job_id; sem ele, a reserva menos 2 minutos). Assim a
+--       pergunta (ou a reserva) feita de novo depois de um consulta_mudou,
+--       ou de outra mensagem no meio, vale.
 --   B3. ANCORA FORTE NA MARCACAO (DECISAO DO DONO A CONFIRMAR, recomendada
 --       pela frente de banco): agendar_pela_ia SEM p_remarcar (a marcacao
 --       da AG3, ja na producao) passa a exigir a ancora forte e a
@@ -166,6 +169,39 @@
 --       migration com o corpo de agendar_pela_ia desta (ou da que vier
 --       depois) e c_ancora_forte_na_marcacao false (uma palavra; a
 --       remarcacao fica como esta).
+--
+-- REVISAO FINAL (27/10/2026, a revisao final do diff da AG4; contrato R12 a
+-- R15):
+--   M1. A mensagem do paciente so e NOVA se NENHUM turno a leu: contam as
+--       lidas do job MAIS as dos turnos da mesma conversa em enviado ou
+--       passou_para_equipe MAIS as dos turnos em decidido de outro job (o
+--       idsRespondidos do motor, lib/agente/historico.ts; leitura de
+--       ai_turno pela conversa, indice ai_turno_conversa_idx, filtrada pela
+--       clinica). As de sem_envio (o job seguinte as rele), as de reservado
+--       de outro job e as de outra conversa nao contam. A lida e apagada
+--       depois continua so pelas lidas do job. Antes, so as do job: a
+--       duvida que o turno anterior leu e respondeu enquanto o "sim"
+--       chegava (a resposta gravada depois do "sim") dava
+--       mensagem_nova_do_paciente sem haver turno seguinte, e a conversa
+--       saia calada da IA na varredura.
+--   M1b. A ordem: mensagem_nova_do_paciente logo depois das recusas
+--       estruturais (o que nenhuma mensagem da pessoa muda: o job, a
+--       repeticao, a conversa com a IA, a habilidade e o prazo, o pedido, a
+--       reserva e o horario, a consulta ou a antiga travada e conferida,
+--       remarcacao_invalida) e ANTES de tudo o que depende da pessoa:
+--       consulta_mudou, pedido_vencido, consulta_para_outra_pessoa,
+--       menor_de_idade, ja_tem_consulta, faltam_dados e as
+--       sem_confirmacao_do_paciente. Antes dela, so travas e leituras: nada
+--       e gravado.
+--   B2. consulta_mudou com folga de 5 s (c_folga_da_mudanca, a MESMA
+--       constante no cancelar e no agendar): a linha de remarcacao com
+--       changed_at depois da criacao do job da pergunta (ou da reserva)
+--       MENOS 5 s conta. O changed_at e o comeco da transacao da recepcao:
+--       a mudanca comecada antes da criacao do job e confirmada depois (o
+--       turno leu o horario de antes) escapava. A pergunta (ou a reserva)
+--       feita de novo por um job criado ate 5 s depois da mudanca recebe
+--       consulta_mudou de novo (uma rodada a mais, o lado seguro). Sem o
+--       job, a regra de antes (2 minutos).
 --
 -- Producao em 27/10/2026 (q.js, so leitura): a ultima migration aplicada e a
 -- 20261027120000; 15 consultas (nenhuma da IA, nenhuma futura, nenhuma
@@ -210,12 +246,19 @@
 -- agendada, a equipe) ficou entre a pergunta e o "sim" (o codigo de hoje
 -- conhece o motivo: diz ao modelo que falta a confirmacao, conta uma falha
 -- e, na segunda seguida, passa para a equipe), e mensagem_nova_do_paciente
--- quando o paciente escreveu depois de o job ler (o codigo de hoje nao
--- conhece o motivo: resposta fora do formato, o turno falha fechado, com a
--- frase fixa e a equipe). Nos dois, nada e marcado e a reserva vence
--- sozinha. O codigo de hoje grava ai_turno.mensagens_lidas antes do turno
--- (lib/jobs/responder-com-ia.ts, desde o E3): o "sim" lido passa. O codigo
--- da AG4 antes desta migration: 42703 nas colunas novas da configuracao, e
+-- quando o paciente escreveu depois de o job ler e nenhum turno leu a
+-- mensagem (o codigo de hoje nao conhece o motivo: resposta fora do
+-- formato, o turno falha fechado, com a frase fixa e a equipe; REVISAO
+-- FINAL: ela vem antes de consulta_para_outra_pessoa, menor_de_idade,
+-- ja_tem_consulta e faltam_dados, entao, com a mensagem nova, a falha
+-- fechada toma o lugar desses quatro). Nos dois, nada e marcado e a
+-- reserva vence sozinha. O codigo de hoje grava ai_turno.mensagens_lidas
+-- antes do turno e fecha os turnos em enviado, passou_para_equipe e
+-- sem_envio como o codigo da AG4 (lib/jobs/responder-com-ia.ts, desde o
+-- E3; o mesmo idsRespondidos em lib/agente/historico.ts): o "sim" lido
+-- passa, e a mensagem que o turno anterior leu e respondeu tambem (M1). O
+-- codigo da AG4 antes desta migration: 42703 nas colunas novas da
+-- configuracao, e
 -- a IA de todas as clinicas falha fechada. Os testes de unidade dos espelhos
 -- (tests/unit/agente/config.test.ts e tests/unit/ia-whatsapp/espelhos.test.ts)
 -- leem o CHECK de escalation_reason: este arquivo e fora_do_prazo nos
@@ -816,6 +859,12 @@ declare
   -- (revisao curta). A mesma constante esta em gravar_atendimento_da_ia
   -- (o carimbo vencido): trocar o valor e trocar nos dois.
   c_validade_do_pedido constant interval := interval '60 minutes';
+  -- [revisao final] A folga do consulta_mudou (cabecalho, REVISAO FINAL,
+  -- B2): a mudanca da recepcao com changed_at ate 5 s antes da criacao do
+  -- job da pergunta conta (o changed_at e o comeco da transacao dela). A
+  -- mesma constante esta em agendar_pela_ia: trocar o valor e trocar nos
+  -- dois.
+  c_folga_da_mudanca constant interval := interval '5 seconds';
   v_trilha record;
   v_conversa record;
   v_config record;
@@ -829,6 +878,8 @@ declare
   v_desde_da_pergunta timestamptz;
   v_lidas uuid[];
   -- [revisao curta] fim
+  -- [revisao final] as lidas de todo turno que conta (M1)
+  v_respondidas uuid[];
 begin
   if p_clinic_id is null or p_conversation_id is null or p_job_id is null
      or p_appointment_id is null then
@@ -953,13 +1004,65 @@ begin
    order by x.created_at desc, x.id desc
    limit 1;
 
+  -- [revisao curta] Um turno leu o "sim": a ultima mensagem do paciente e
+  -- toda mensagem dele depois da pergunta estao entre as que o job leu
+  -- antes de chamar o modelo (ai_turno.mensagens_lidas, gravadas pelo motor
+  -- antes do turno). A que chegou depois da leitura (o paciente escreveu de
+  -- novo no meio do turno: "nao, espera") e a lida que foi apagada depois
+  -- sao mensagem_nova_do_paciente: o modelo decidiu sem ela, e o turno
+  -- seguinte le de novo. A apagada que o job nao leu nao conta (o historico
+  -- do motor nao a mostra). Sem a linha do turno do job, nada lido.
+  -- [revisao final] M1: so e nova a que NENHUM turno leu: contam as lidas do
+  -- job MAIS as dos turnos desta conversa que ja responderam (enviado,
+  -- passou_para_equipe) e as dos decididos de outro job (o idsRespondidos do
+  -- motor, lib/agente/historico.ts). A duvida que o turno anterior leu e
+  -- respondeu enquanto o "sim" chegava nao e nova: o job seguinte so le as
+  -- pendentes, e recusar deixaria a conversa sem turno seguinte. As de
+  -- sem_envio (o job seguinte as rele), as de reservado de outro job e as de
+  -- outra conversa nao contam. A lida e apagada depois continua so pelas
+  -- lidas do job. M1b: logo depois das recusas estruturais (acima, que
+  -- nenhuma mensagem da pessoa muda) e ANTES de consulta_mudou,
+  -- pedido_vencido e sem_confirmacao_do_paciente: com mensagem nova, nada do
+  -- que depende da pessoa responde antes. Nada foi gravado ate aqui.
+  select t.mensagens_lidas into v_lidas
+    from public.ai_turno t
+   where t.job_id = p_job_id
+     and t.clinic_id = p_clinic_id
+     and t.conversation_id = p_conversation_id;
+  v_lidas := coalesce(v_lidas, '{}'::uuid[]);
+  select coalesce(array_agg(l.id), '{}'::uuid[]) into v_respondidas
+    from public.ai_turno t
+    cross join lateral unnest(t.mensagens_lidas) as l(id)
+   where t.conversation_id = p_conversation_id
+     and t.clinic_id = p_clinic_id
+     and (t.job_id = p_job_id
+          or t.estado in ('enviado', 'passou_para_equipe')
+          or (t.estado = 'decidido' and t.job_id <> p_job_id));
+  if exists (
+    select 1
+      from public.message m
+     where m.conversation_id = p_conversation_id
+       and m.clinic_id = p_clinic_id
+       and m.direction = 'entrada'
+       and m.author = 'paciente'
+       and (m.created_at >= v_sim or m.created_at > v_pergunta)
+       and ((m.deleted_at is null and not (m.id = any (v_respondidas)))
+            or (m.deleted_at is not null and m.id = any (v_lidas)))
+  ) then
+    return jsonb_build_object('ok', false, 'motivo', 'mensagem_nova_do_paciente');
+  end if;
+
   -- [revisao curta] O comeco do turno que escreveu a pergunta: a criacao do
   -- job dela (o job existe antes de o turno ler a consulta; a resposta
   -- reenviada mais tarde sai com o texto ja escrito, e a criacao do job
   -- continua antes da leitura). Sem o job (a pergunta sem job, a fila
   -- podada ou sem pergunta), o instante do pedido menos 2 minutos (a regra
   -- de antes: o carimbo e o fim do turno, que dura no maximo 60 s).
-  select j.created_at into v_desde_da_pergunta
+  -- [revisao final] B2: com o job, menos c_folga_da_mudanca (5 s): o
+  -- changed_at da trilha e o comeco da transacao da recepcao, e a mudanca
+  -- comecada antes da criacao do job e confirmada depois (o turno leu a
+  -- consulta de antes) tambem conta.
+  select j.created_at - c_folga_da_mudanca into v_desde_da_pergunta
     from public.job_queue j
    where j.id = v_job_da_pergunta
      and j.clinic_id = p_clinic_id
@@ -968,7 +1071,7 @@ begin
 
   -- A consulta mudou de horario ou de profissional depois que a pergunta foi
   -- escrita (ela disse o horario de antes): linha kind remarcacao na trilha
-  -- depois do comeco do turno da pergunta.
+  -- depois do comeco do turno da pergunta (menos a folga).
   if exists (
     select 1
       from public.appointment_status_history h
@@ -986,34 +1089,6 @@ begin
   -- abaixo).
   if v_pergunta <= now() - c_validade_do_pedido then
     return jsonb_build_object('ok', false, 'motivo', 'pedido_vencido');
-  end if;
-
-  -- [revisao curta] O job leu o "sim": a ultima mensagem do paciente e toda
-  -- mensagem dele depois da pergunta estao entre as que o job leu antes de
-  -- chamar o modelo (ai_turno.mensagens_lidas, gravadas pelo motor antes do
-  -- turno). A que chegou depois da leitura (o paciente escreveu de novo no
-  -- meio do turno: "nao, espera") e a lida que foi apagada depois sao
-  -- mensagem_nova_do_paciente: o modelo decidiu sem ela, e o turno seguinte
-  -- le de novo. A apagada que o job nao leu nao conta (o historico do motor
-  -- nao a mostra). Sem a linha do turno do job, nada lido.
-  select t.mensagens_lidas into v_lidas
-    from public.ai_turno t
-   where t.job_id = p_job_id
-     and t.clinic_id = p_clinic_id
-     and t.conversation_id = p_conversation_id;
-  v_lidas := coalesce(v_lidas, '{}'::uuid[]);
-  if exists (
-    select 1
-      from public.message m
-     where m.conversation_id = p_conversation_id
-       and m.clinic_id = p_clinic_id
-       and m.direction = 'entrada'
-       and m.author = 'paciente'
-       and (m.created_at >= v_sim or m.created_at > v_pergunta)
-       and ((m.deleted_at is null and not (m.id = any (v_lidas)))
-            or (m.deleted_at is not null and m.id = any (v_lidas)))
-  ) then
-    return jsonb_build_object('ok', false, 'motivo', 'mensagem_nova_do_paciente');
   end if;
 
   -- O "sim" responde a pergunta da IA (a ancora forte): a ULTIMA mensagem
@@ -1086,7 +1161,7 @@ grant execute on function public.cancelar_consulta_pela_ia(uuid, uuid, uuid, uui
   to service_role;
 
 comment on function public.cancelar_consulta_pela_ia(uuid, uuid, uuid, uuid) is
-  'So o servidor (service_role). A IA cancela a consulta p_appointment_id a pedido do paciente (AG4, D-9), com a mesma transicao do botao da confirmacao (cancelar_pelo_paciente: cancelado_paciente pelo mesmo update condicional; reoferta e regua pelos gatilhos e pelo executor de sempre). Na ordem: a trava da conversa (a do reservar e do agendar); o job responder_com_ia desta clinica e conversa (senao 22023 job_invalido); a idempotencia (a linha da trilha com ia_job_id = p_job_id devolve {ok:true, starts_at, reutilizado:true}; de outra consulta, 22023 job_de_outra_consulta); ia_desligada (conversa de outra clinica, fora da IA, ou contato que a IA nao atende); cancelamento_desligado (a ultima versao publicada sem skills.cancelar ou sem cancelar_antecedencia_horas); sem_pedido_de_cancelamento (o estado da janela atual sem o pedido cancelar com o foco nesta consulta, pedido_da_ia_na_conversa); a consulta travada (FOR UPDATE) e os motivos de conferir_consulta_da_ia (consulta_nao_encontrada, consulta_encerrada, encaixe, so_com_a_equipe, remarcacao_pendente, fora_do_prazo); consulta_mudou (linha kind remarcacao na trilha depois do comeco do turno que escreveu a PERGUNTA respondida: a criacao do job dela, message.job_id; sem o job, o instante do pedido menos 2 minutos); pedido_vencido (a PERGUNTA respondida tem 60 minutos ou mais, c_validade_do_pedido; a confirmar com o dono); mensagem_nova_do_paciente (revisao curta: a ultima mensagem do paciente, ou uma dele depois da pergunta, nao esta entre as que o job leu antes do turno, ai_turno.mensagens_lidas, ou foi lida e apagada depois; a apagada que o job nao leu nao conta; sem a linha do turno, nada lido); sem_confirmacao_do_paciente (a ancora forte: a ultima mensagem de saida antes da ultima mensagem do paciente nao e a resposta da IA, que nao falhou, gravada depois do instante do pedido; conta toda saida que nao e evento nem nota interna, de qualquer autor e em qualquer situacao de entrega; empate no instante conta como outra saida). A pergunta respondida e a ultima resposta da IA (que nao falhou) gravada depois do instante do pedido e antes da ultima mensagem do paciente. Grava a trilha (cancelado_paciente, changed_by ia, ia_job_id) e o evento na conversa ("A IA cancelou a consulta de DD/MM às HH:MI (procedimento, profissional), a pedido do paciente."), nunca a resposta ao paciente. Devolve {ok:true, starts_at, reutilizado:false} ou {ok:false, motivo}. Parametro nulo: 22004. Nunca 40001 nem 40P01.';
+  'So o servidor (service_role). A IA cancela a consulta p_appointment_id a pedido do paciente (AG4, D-9), com a mesma transicao do botao da confirmacao (cancelar_pelo_paciente: cancelado_paciente pelo mesmo update condicional; reoferta e regua pelos gatilhos e pelo executor de sempre). Na ordem: a trava da conversa (a do reservar e do agendar); o job responder_com_ia desta clinica e conversa (senao 22023 job_invalido); a idempotencia (a linha da trilha com ia_job_id = p_job_id devolve {ok:true, starts_at, reutilizado:true}; de outra consulta, 22023 job_de_outra_consulta); ia_desligada (conversa de outra clinica, fora da IA, ou contato que a IA nao atende); cancelamento_desligado (a ultima versao publicada sem skills.cancelar ou sem cancelar_antecedencia_horas); sem_pedido_de_cancelamento (o estado da janela atual sem o pedido cancelar com o foco nesta consulta, pedido_da_ia_na_conversa); a consulta travada (FOR UPDATE) e os motivos de conferir_consulta_da_ia (consulta_nao_encontrada, consulta_encerrada, encaixe, so_com_a_equipe, remarcacao_pendente, fora_do_prazo); mensagem_nova_do_paciente (revisao curta e revisao final: a ultima mensagem do paciente, ou uma dele depois da pergunta, que NENHUM turno leu: fora das lidas do job, ai_turno.mensagens_lidas, e das dos turnos desta conversa em enviado ou passou_para_equipe ou em decidido de outro job, o conjunto do motor; ou que o job leu e foi apagada depois; a apagada que o job nao leu nao conta; as de sem_envio, de reservado de outro job e de outra conversa nao contam; sem a linha do turno do job, ele nada leu; vem antes de tudo o que depende da pessoa); consulta_mudou (linha kind remarcacao na trilha com changed_at depois do comeco do turno que escreveu a PERGUNTA respondida: a criacao do job dela, message.job_id, menos 5 segundos, c_folga_da_mudanca; sem o job, o instante do pedido menos 2 minutos); pedido_vencido (a PERGUNTA respondida tem 60 minutos ou mais, c_validade_do_pedido; a confirmar com o dono); sem_confirmacao_do_paciente (a ancora forte: a ultima mensagem de saida antes da ultima mensagem do paciente nao e a resposta da IA, que nao falhou, gravada depois do instante do pedido; conta toda saida que nao e evento nem nota interna, de qualquer autor e em qualquer situacao de entrega; empate no instante conta como outra saida). A pergunta respondida e a ultima resposta da IA (que nao falhou) gravada depois do instante do pedido e antes da ultima mensagem do paciente. Grava a trilha (cancelado_paciente, changed_by ia, ia_job_id) e o evento na conversa ("A IA cancelou a consulta de DD/MM às HH:MI (procedimento, profissional), a pedido do paciente."), nunca a resposta ao paciente. Devolve {ok:true, starts_at, reutilizado:false} ou {ok:false, motivo}. Parametro nulo: 22004. Nunca 40001 nem 40P01.';
 
 -- ---------------------------------------------------------------------------
 -- 7) A reserva e o agendar, com a remarcacao
@@ -1374,6 +1449,15 @@ declare
   v_lidas uuid[];
   v_desde_da_reserva timestamptz;
   -- [revisao curta] fim
+  -- [revisao final] inicio
+  -- A folga do consulta_mudou da remarcacao (cabecalho, REVISAO FINAL, B2):
+  -- a mudanca da antiga com changed_at ate 5 s antes da criacao do job da
+  -- reserva conta. A mesma constante esta em cancelar_consulta_pela_ia:
+  -- trocar o valor e trocar nos dois.
+  c_folga_da_mudanca constant interval := interval '5 seconds';
+  -- As lidas de todo turno que conta (M1).
+  v_respondidas uuid[];
+  -- [revisao final] fim
 begin
   if p_clinic_id is null or p_conversation_id is null or p_job_id is null then
     raise exception using errcode = '22004', message = 'parametro_nulo';
@@ -1500,11 +1584,12 @@ begin
   -- remarcar (conferir_consulta_da_ia, lida sob a trava: duas remarcacoes
   -- da mesma consulta param aqui, em remarcacao_pendente, antes do insert),
   -- o vinculo da reserva com o mesmo procedimento, profissional e convenio
-  -- (ou particular) e a antiga que nao mudou de horario nem de profissional
-  -- desde o comeco do turno da reserva (a pergunta T3, que o "sim"
-  -- confirma, saiu no turno da reserva e disse o horario da antiga, lido
-  -- depois da criacao do job; [revisao curta] antes, a reserva menos 2
-  -- minutos, que ainda vale sem o job).
+  -- (ou particular) e, [revisao final] DEPOIS da mensagem nova (abaixo), a
+  -- antiga que nao mudou de horario nem de profissional desde o comeco do
+  -- turno da reserva (a pergunta T3, que o "sim" confirma, saiu no turno da
+  -- reserva e disse o horario da antiga, lido depois da criacao do job;
+  -- [revisao curta] antes, a reserva menos 2 minutos, que ainda vale sem o
+  -- job).
   if p_remarcar is not null then
     select a.skills, a.remarcar_antecedencia_horas into v_config
       from public.ai_agent_config a
@@ -1547,12 +1632,91 @@ begin
     then
       return jsonb_build_object('ok', false, 'motivo', 'remarcacao_invalida');
     end if;
+  end if;
+  -- [remarcar e cancelar] fim
+
+  -- [revisao curta] inicio
+  -- Na remarcacao e (B3, c_ancora_forte_na_marcacao) na marcacao: o "sim"
+  -- e a pergunta que ele responde, lidos uma vez (a ancora forte, abaixo):
+  -- v_sim e a ULTIMA mensagem do paciente; v_ultima_pergunta, a ULTIMA
+  -- saida da IA (que nao falhou) gravada depois da reserva e antes do
+  -- "sim". E um turno leu o "sim" (a regra de cancelar_consulta_pela_ia): a
+  -- ultima mensagem do paciente e toda mensagem dele depois da pergunta
+  -- estao entre as que o job leu antes do turno (ai_turno.mensagens_lidas);
+  -- a que chegou depois da leitura, ou a lida que foi apagada, e
+  -- mensagem_nova_do_paciente (o turno seguinte le de novo).
+  -- [revisao final] M1: so e nova a que NENHUM turno leu (as lidas do job
+  -- MAIS as dos turnos desta conversa em enviado ou passou_para_equipe e as
+  -- dos decididos de outro job: o idsRespondidos do motor); a lida e
+  -- apagada continua so pelas lidas do job. M1b: logo depois das recusas
+  -- estruturais (a reserva, o horario e, na remarcacao, a habilidade, o
+  -- pedido, a antiga travada e conferida e remarcacao_invalida) e ANTES de
+  -- tudo o que depende da pessoa: o consulta_mudou da remarcacao, os dados
+  -- informados (consulta_para_outra_pessoa, menor_de_idade), ja_tem_consulta,
+  -- faltam_dados e as recusas por falta de confirmacao. Nada foi gravado ate
+  -- aqui (so travas e leituras).
+  if p_remarcar is not null or c_ancora_forte_na_marcacao then
+    select max(m.created_at) into v_sim
+      from public.message m
+     where m.conversation_id = p_conversation_id
+       and m.clinic_id = p_clinic_id
+       and m.direction = 'entrada'
+       and m.author = 'paciente';
+    select max(x.created_at) into v_ultima_pergunta
+      from public.message x
+     where x.conversation_id = p_conversation_id
+       and x.clinic_id = p_clinic_id
+       and x.direction = 'saida'
+       and x.author = 'ia'
+       and x.content_type <> 'evento'
+       and not x.is_internal_note
+       and x.delivery_status is distinct from 'falhou'
+       and x.created_at > v_reserva.created_at
+       and x.created_at < v_sim;
+    select t.mensagens_lidas into v_lidas
+      from public.ai_turno t
+     where t.job_id = p_job_id
+       and t.clinic_id = p_clinic_id
+       and t.conversation_id = p_conversation_id;
+    v_lidas := coalesce(v_lidas, '{}'::uuid[]);
+    select coalesce(array_agg(l.id), '{}'::uuid[]) into v_respondidas
+      from public.ai_turno t
+      cross join lateral unnest(t.mensagens_lidas) as l(id)
+     where t.conversation_id = p_conversation_id
+       and t.clinic_id = p_clinic_id
+       and (t.job_id = p_job_id
+            or t.estado in ('enviado', 'passou_para_equipe')
+            or (t.estado = 'decidido' and t.job_id <> p_job_id));
+    if exists (
+      select 1
+        from public.message m
+       where m.conversation_id = p_conversation_id
+         and m.clinic_id = p_clinic_id
+         and m.direction = 'entrada'
+         and m.author = 'paciente'
+         and (m.created_at >= v_sim or m.created_at > v_ultima_pergunta)
+         and ((m.deleted_at is null and not (m.id = any (v_respondidas)))
+              or (m.deleted_at is not null and m.id = any (v_lidas)))
+    ) then
+      return jsonb_build_object('ok', false, 'motivo', 'mensagem_nova_do_paciente');
+    end if;
+  end if;
+  -- [revisao curta] fim
+
+  -- [remarcar e cancelar] inicio
+  -- A antiga que nao mudou desde o comeco do turno da reserva ([revisao
+  -- final] depois da mensagem nova: o consulta_mudou leva o modelo a
+  -- reservar e perguntar de novo).
+  if p_remarcar is not null then
     -- [revisao curta] O comeco do turno que fez a reserva (e a pergunta T3,
     -- com o horario da antiga): a criacao do job da reserva
     -- (slot_hold.job_id). Sem o job, a reserva menos 2 minutos (a regra de
     -- antes). Assim a reserva feita de novo depois de um consulta_mudou (com
-    -- a hora atual da antiga) vale, mesmo logo depois da mudanca.
-    select j.created_at into v_desde_da_reserva
+    -- a hora atual da antiga) vale, logo que o job dela nasce mais de 5 s
+    -- depois da mudanca. [revisao final] B2: com o job, menos
+    -- c_folga_da_mudanca (5 s): o changed_at da trilha e o comeco da
+    -- transacao da recepcao.
+    select j.created_at - c_folga_da_mudanca into v_desde_da_reserva
       from public.job_queue j
      where j.id = v_reserva.job_id
        and j.clinic_id = p_clinic_id
@@ -1573,7 +1737,9 @@ begin
   -- [agendamento completo] inicio
   -- Na ordem: primeiro o que passa para a equipe (D-8), depois a consulta
   -- que ja existe e por fim os dados que faltam (a IA nao pede dado para
-  -- uma consulta que nao vai marcar).
+  -- uma consulta que nao vai marcar). [revisao final] Tudo isto depois da
+  -- mensagem nova (acima): depende do que a pessoa informou ou pede uma
+  -- resposta dela.
   -- (a) Os dados informados: a linha aberta da conversa, do contato de
   -- agora (registrar_dados_da_marcacao, sob a mesma trava da conversa) e
   -- [revisao final] da janela atual da IA (a de outra janela, inclusive a
@@ -1644,57 +1810,6 @@ begin
     end if;
   end if;
   -- [agendamento completo] fim
-
-  -- [revisao curta] inicio
-  -- Na remarcacao e (B3, c_ancora_forte_na_marcacao) na marcacao: o "sim"
-  -- e a pergunta que ele responde, lidos uma vez (a ancora forte, abaixo):
-  -- v_sim e a ULTIMA mensagem do paciente; v_ultima_pergunta, a ULTIMA
-  -- saida da IA (que nao falhou) gravada depois da reserva e antes do
-  -- "sim". E o job leu o "sim" (a regra de cancelar_consulta_pela_ia): a
-  -- ultima mensagem do paciente e toda mensagem dele depois da pergunta
-  -- estao entre as que o job leu antes do turno (ai_turno.mensagens_lidas);
-  -- a que chegou depois da leitura, ou a lida que foi apagada, e
-  -- mensagem_nova_do_paciente (o turno seguinte le de novo). Antes das
-  -- recusas por falta de confirmacao.
-  if p_remarcar is not null or c_ancora_forte_na_marcacao then
-    select max(m.created_at) into v_sim
-      from public.message m
-     where m.conversation_id = p_conversation_id
-       and m.clinic_id = p_clinic_id
-       and m.direction = 'entrada'
-       and m.author = 'paciente';
-    select max(x.created_at) into v_ultima_pergunta
-      from public.message x
-     where x.conversation_id = p_conversation_id
-       and x.clinic_id = p_clinic_id
-       and x.direction = 'saida'
-       and x.author = 'ia'
-       and x.content_type <> 'evento'
-       and not x.is_internal_note
-       and x.delivery_status is distinct from 'falhou'
-       and x.created_at > v_reserva.created_at
-       and x.created_at < v_sim;
-    select t.mensagens_lidas into v_lidas
-      from public.ai_turno t
-     where t.job_id = p_job_id
-       and t.clinic_id = p_clinic_id
-       and t.conversation_id = p_conversation_id;
-    v_lidas := coalesce(v_lidas, '{}'::uuid[]);
-    if exists (
-      select 1
-        from public.message m
-       where m.conversation_id = p_conversation_id
-         and m.clinic_id = p_clinic_id
-         and m.direction = 'entrada'
-         and m.author = 'paciente'
-         and (m.created_at >= v_sim or m.created_at > v_ultima_pergunta)
-         and ((m.deleted_at is null and not (m.id = any (v_lidas)))
-              or (m.deleted_at is not null and m.id = any (v_lidas)))
-    ) then
-      return jsonb_build_object('ok', false, 'motivo', 'mensagem_nova_do_paciente');
-    end if;
-  end if;
-  -- [revisao curta] fim
 
   -- [confirmacao depois da pergunta] (revisao da E4): o paciente confirmou
   -- numa mensagem PROPRIA, depois de a IA perguntar. A pergunta e a
@@ -1887,7 +2002,7 @@ grant execute on function public.agendar_pela_ia(uuid, uuid, uuid, uuid, uuid)
   to service_role;
 
 comment on function public.agendar_pela_ia(uuid, uuid, uuid, uuid, uuid) is
-  'So o servidor (service_role). Marca a consulta da reserva viva da conversa, depois de uma mensagem do paciente posterior a pergunta da IA (a primeira resposta da IA gravada depois da reserva, que nao falhou): agendado, created_by ia, approval_status pendente, send_confirmation false (a regua so comeca com a aprovacao), oferecer_vaga_ao_cancelar false, source interna, a unidade da reserva; consome a reserva, liga os dados informados (dados_informados_na_marcacao, a linha aberta da janela atual da IA) a consulta e grava o evento na conversa. p_slot_hold_id (revisao final; nulo = como antes): a reserva que o "Confirma ...?" perguntou; se a reserva viva da conversa (ou, no mesmo job de novo, a que ele consumiu) for outra, reserva_diferente, sem gravar nada. p_remarcar (AG4; nulo = como antes): a consulta antiga da remarcacao (D-10); depois da conferencia do horario, recusa remarcacao_desligada, sem_pedido_de_remarcacao, trava a antiga e recusa os motivos de conferir_consulta_da_ia (consulta_nao_encontrada, consulta_encerrada, encaixe, so_com_a_equipe, pendente_da_equipe, remarcacao_pendente, fora_do_prazo), remarcacao_invalida (a reserva com outro procedimento, profissional ou convenio) e consulta_mudou (a antiga mudou de horario ou de profissional depois do comeco do turno da reserva: a criacao do job dela, slot_hold.job_id; sem o job, a reserva menos 2 minutos); nao pede dado (sem faltam_dados) e nao liga os dados informados; a consulta nova leva remarcacao_de (o indice unico de uma remarcacao pendente por consulta, 23505, vira remarcacao_pendente); a antiga ganha remarcacao_pedida_em (se ainda nao tinha), os toques pendentes como remarcacao_pedida e a linha de evento remarcacao_pedida com autor ia; o evento da conversa diz o par de horarios; o retorno ganha remarcacao_de e remarcacao_de_starts_at (tambem na repeticao do job). Devolve {ok:true, appointment_id, starts_at, ends_at, reutilizado} ou {ok:false, motivo}: reserva_inexistente, reserva_diferente, reserva_vencida, ia_desligada, agenda_nao_configurada, vinculo_invalido, unidade_invalida, antes_da_antecedencia, depois_do_horizonte, fora_da_jornada, bloqueado, conflito (consulta no horario, inclusive o 23P01, sem gravar nada), reservado_por_outra_conversa; depois os da remarcacao; depois, nesta ordem, consulta_para_outra_pessoa (a marca da janela atual), menor_de_idade (menos de 18 anos no dia da consulta, pelo nascimento informado ou pelo do cadastro do contato), ja_tem_consulta (com appointment_id: o contato ja tem consulta futura ativa do mesmo procedimento; nunca na remarcacao; o reservar ja recusa antes, e o agendar confere de novo) e faltam_dados (com faltam: a lista do que falta; nunca na remarcacao); mensagem_nova_do_paciente (revisao curta: a regra de cancelar_consulta_pela_ia, a ultima mensagem do paciente, ou uma dele depois da ultima resposta da IA gravada depois da reserva, que o job nao leu antes do turno, ai_turno.mensagens_lidas, ou que leu e foi apagada); e sem_confirmacao_do_paciente (a primeira resposta da IA depois da reserva, que nao falhou, e uma mensagem do paciente depois dela; e a ancora forte de cancelar_consulta_pela_ia com a reserva no lugar do pedido: a ultima mensagem de saida antes da ultima mensagem do paciente tem de ser a resposta da IA, que nao falhou, gravada depois da reserva; evento e nota interna nao contam). A ancora forte e a mensagem_nova_do_paciente valem na remarcacao e, desde a revisao curta (B3, decisao do dono a confirmar; c_ancora_forte_na_marcacao no corpo, false desfaz), tambem sem p_remarcar. Idempotente pelo job_id (a consulta do job volta com reutilizado true; job de outra conversa: 22023). Parametro nulo: 22004.';
+  'So o servidor (service_role). Marca a consulta da reserva viva da conversa, depois de uma mensagem do paciente posterior a pergunta da IA (a primeira resposta da IA gravada depois da reserva, que nao falhou): agendado, created_by ia, approval_status pendente, send_confirmation false (a regua so comeca com a aprovacao), oferecer_vaga_ao_cancelar false, source interna, a unidade da reserva; consome a reserva, liga os dados informados (dados_informados_na_marcacao, a linha aberta da janela atual da IA) a consulta e grava o evento na conversa. p_slot_hold_id (revisao final; nulo = como antes): a reserva que o "Confirma ...?" perguntou; se a reserva viva da conversa (ou, no mesmo job de novo, a que ele consumiu) for outra, reserva_diferente, sem gravar nada. p_remarcar (AG4; nulo = como antes): a consulta antiga da remarcacao (D-10); depois da conferencia do horario, recusa remarcacao_desligada, sem_pedido_de_remarcacao, trava a antiga e recusa os motivos de conferir_consulta_da_ia (consulta_nao_encontrada, consulta_encerrada, encaixe, so_com_a_equipe, pendente_da_equipe, remarcacao_pendente, fora_do_prazo), remarcacao_invalida (a reserva com outro procedimento, profissional ou convenio) e, depois de mensagem_nova_do_paciente, consulta_mudou (a antiga mudou de horario ou de profissional depois do comeco do turno da reserva: a criacao do job dela, slot_hold.job_id, menos 5 segundos, c_folga_da_mudanca; sem o job, a reserva menos 2 minutos); nao pede dado (sem faltam_dados) e nao liga os dados informados; a consulta nova leva remarcacao_de (o indice unico de uma remarcacao pendente por consulta, 23505, vira remarcacao_pendente); a antiga ganha remarcacao_pedida_em (se ainda nao tinha), os toques pendentes como remarcacao_pedida e a linha de evento remarcacao_pedida com autor ia; o evento da conversa diz o par de horarios; o retorno ganha remarcacao_de e remarcacao_de_starts_at (tambem na repeticao do job). Devolve {ok:true, appointment_id, starts_at, ends_at, reutilizado} ou {ok:false, motivo}: reserva_inexistente, reserva_diferente, reserva_vencida, ia_desligada, agenda_nao_configurada, vinculo_invalido, unidade_invalida, antes_da_antecedencia, depois_do_horizonte, fora_da_jornada, bloqueado, conflito (consulta no horario, inclusive o 23P01, sem gravar nada), reservado_por_outra_conversa; depois os da remarcacao ate remarcacao_invalida; depois mensagem_nova_do_paciente (revisao final: antes de tudo o que depende da pessoa; a ultima mensagem do paciente, ou uma dele depois da ultima resposta da IA gravada depois da reserva, que NENHUM turno leu: fora das lidas do job, ai_turno.mensagens_lidas, e das dos turnos desta conversa em enviado ou passou_para_equipe ou em decidido de outro job; ou que o job leu e foi apagada; com p_remarcar e, enquanto c_ancora_forte_na_marcacao, sem); depois o consulta_mudou da remarcacao; depois, nesta ordem, consulta_para_outra_pessoa (a marca da janela atual), menor_de_idade (menos de 18 anos no dia da consulta, pelo nascimento informado ou pelo do cadastro do contato), ja_tem_consulta (com appointment_id: o contato ja tem consulta futura ativa do mesmo procedimento; nunca na remarcacao; o reservar ja recusa antes, e o agendar confere de novo) e faltam_dados (com faltam: a lista do que falta; nunca na remarcacao); e sem_confirmacao_do_paciente (a primeira resposta da IA depois da reserva, que nao falhou, e uma mensagem do paciente depois dela; e a ancora forte de cancelar_consulta_pela_ia com a reserva no lugar do pedido: a ultima mensagem de saida antes da ultima mensagem do paciente tem de ser a resposta da IA, que nao falhou, gravada depois da reserva; evento e nota interna nao contam). A ancora forte e a mensagem_nova_do_paciente valem na remarcacao e, desde a revisao curta (B3, decisao do dono a confirmar; c_ancora_forte_na_marcacao no corpo, false desfaz), tambem sem p_remarcar. Idempotente pelo job_id (a consulta do job volta com reutilizado true; job de outra conversa: 22023). Parametro nulo: 22004.';
 
 -- ---------------------------------------------------------------------------
 -- 8) O estado do atendimento e os dados informados

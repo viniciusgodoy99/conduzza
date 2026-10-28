@@ -426,6 +426,16 @@ type Comum = {
    * do paciente). Nula: nada a contar.
    */
   notaParaAEquipe?: string | null;
+  /**
+   * Revisao final da AG4 (M1 e B1): o turno parou porque o banco disse
+   * mensagem_nova_do_paciente (a pessoa escreveu, ou apagou o que o turno
+   * leu, depois da leitura). O desfecho continua o do "sem mensagem" (nada
+   * sai, ninguem assume, nenhuma falha); isto o separa do turno que nao
+   * tinha mensagem a responder. O executor do WhatsApp NAO grava o estado
+   * (ele nao mudou) e garante o job seguinte (enfileirar_resposta_da_ia),
+   * para a conversa nunca ficar calada. Ausente: nao foi isso.
+   */
+  mensagemNova?: true;
 };
 
 export type ResultadoDoTurno =
@@ -1760,9 +1770,14 @@ async function turnoDoAgente(
           // banco). Nada sai e a conversa NAO passa para a equipe: o desfecho
           // e o de "sem mensagem" (o executor fecha o turno sem envio e
           // conclui o job), e o proximo job responde lendo a mensagem nova.
-          // O estado fica como no comeco (AgendaDoTurno.fechar).
+          // O estado fica como no comeco (AgendaDoTurno.fechar). Revisao
+          // final da AG4 (M1 e B1): marcado como mensagem nova, o executor
+          // nao grava o estado e garante o job seguinte.
           trilha.push({ tipo: "agenda", texto: efeito.passo });
-          return fraseFixa({ tipo: "falhou", motivo: "sem_mensagem" });
+          return {
+            ...fraseFixa({ tipo: "falhou", motivo: "sem_mensagem" }),
+            mensagemNova: true,
+          };
         }
         if (efeito.tipo === "passar") {
           // AG3 (D-8): a consulta e para outra pessoa, ou o paciente e menor

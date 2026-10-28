@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { dadosQueFaltam, type DadoDaMarcacao } from "@/lib/agente/atendimento";
 import type { CatalogoDoAgente } from "@/lib/agente/ferramentas/buscar-procedimento";
+import { idsRespondidos } from "@/lib/agente/historico";
 import {
   carteirinhaValida,
   cpfValido,
@@ -34,6 +35,13 @@ import { UNID } from "./cadastro-fixtures";
 // marcar, mensagem_nova_do_paciente (R7) e a ancora forte (R9: a ultima
 // saida antes da ultima mensagem do paciente e a resposta da IA, nao
 // falhada, depois da reserva). Sem elas, como antes.
+//
+// Revisao final da AG4 (contrato-mudancas R12, R13 e R15, a frente de
+// banco): a mensagem do paciente so e "nova" se NENHUM turno a leu (as
+// lidas do job mais idsRespondidos dos turnos da conversa, `turnos`; a
+// apagada so conta com as lidas do JOB), e a conferencia vem logo depois
+// da reserva (as estruturais), ANTES de consulta_para_outra_pessoa,
+// ja_tem_consulta e faltam_dados.
 
 /**
  * Revisao da AG4: uma mensagem da conversa como o banco guarda, na ordem
@@ -72,7 +80,34 @@ export type OpcoesDoContrato = {
    * mensagem_nova_do_paciente nao e conferida.
    */
   lidas?: (jobId: string) => readonly string[] | undefined;
+  /**
+   * Revisao final da AG4 (R12): os turnos da conversa (ai_turno: o job, o
+   * estado e as lidas). As lidas dos que contam para o banco
+   * (idsRespondidos: enviado, passou_para_equipe e o decidido de outro job)
+   * somam com as do job no ramo NAO apagado. Ausente: so as do job.
+   */
+  turnos?: () => readonly TurnoNoBanco[];
 };
+
+/** Revisao final da AG4 (R12): uma linha de ai_turno da conversa. */
+export type TurnoNoBanco = {
+  job_id: string;
+  estado: string;
+  mensagens_lidas: string[] | null;
+};
+
+/**
+ * Revisao final da AG4 (R12): as lidas dos OUTROS turnos que contam para o
+ * banco, pela MESMA funcao do motor (idsRespondidos, lib/agente/
+ * historico.ts): enviado e passou_para_equipe de qualquer job, decidido de
+ * outro job. sem_envio e reservado de outro job nao contam.
+ */
+export function respondidasPelosTurnos(
+  opcoes: Pick<OpcoesDoContrato, "turnos">,
+  jobId: string,
+): ReadonlySet<string> {
+  return idsRespondidos(opcoes.turnos?.() ?? [], jobId);
+}
 
 /**
  * Revisao da AG4 (R2 e R3; revisao curta, R9 na marcacao): a ancora forte.
@@ -152,11 +187,18 @@ export function perguntaRespondida(
  * depois da leitura) ou alguma APAGADA esta dentro delas (o paciente apagou
  * o que o modelo leu). A apagada que o job nao leu nao conta. Sem a conversa
  * ou sem as lidas: nao confere.
+ *
+ * Revisao final da AG4 (R12): no ramo NAO apagado, contam tambem as lidas
+ * dos outros turnos que o banco conta (`respondidas`, o idsRespondidos dos
+ * turnos da conversa): a mensagem que um turno 'enviado' ja leu nao e nova
+ * (a resposta dele pode ter sido gravada DEPOIS da mensagem seguinte). O
+ * ramo apagado continua so com as lidas do JOB.
  */
 export function mensagemNovaDoPaciente(
   conversa: readonly MensagemNoBanco[] | undefined,
   lidas: readonly string[] | undefined,
   pergunta: MensagemNoBanco | null = null,
+  respondidas: ReadonlySet<string> = new Set(),
 ): boolean {
   if (conversa === undefined || lidas === undefined) {
     return false;
@@ -171,8 +213,11 @@ export function mensagemNovaDoPaciente(
   return doPaciente
     .filter((m) => m.em >= sim || (pergunta !== null && m.em > pergunta.em))
     .some((m) => {
-      const lida = lidas.includes(m.id ?? "");
-      return m.apagada === true ? lida : !lida;
+      const id = m.id ?? "";
+      const lidaPeloJob = lidas.includes(id);
+      return m.apagada === true
+        ? lidaPeloJob
+        : !lidaPeloJob && !respondidas.has(id);
     });
 }
 
@@ -487,6 +532,27 @@ export function rpcsDaAg3(banco: AgendaEmMemoria, opcoes: OpcoesDoContrato) {
     if (Date.parse(String(viva.expires_at)) <= agora) {
       return { data: { ok: false, motivo: "reserva_vencida" }, error: null };
     }
+    // Revisao final da AG4 (R12, R13 e R15): com a conversa e as lidas, a
+    // mensagem nova do paciente logo depois das recusas estruturais (a
+    // reserva e o horario), ANTES de tudo o que depende do que a pessoa
+    // disse (consulta_para_outra_pessoa, ja_tem_consulta, faltam_dados e a
+    // ancora forte). Lida por qualquer turno que o banco conta: nao e nova.
+    const desde =
+      typeof viva.created_at === "string" ? Date.parse(viva.created_at) : null;
+    const conversa = opcoes.conversa?.();
+    if (
+      mensagemNovaDoPaciente(
+        conversa,
+        opcoes.lidas?.(String(args.p_job_id)),
+        perguntaRespondida(conversa, desde),
+        respondidasPelosTurnos(opcoes, String(args.p_job_id)),
+      )
+    ) {
+      return {
+        data: { ok: false, motivo: "mensagem_nova_do_paciente" },
+        error: null,
+      };
+    }
     if (opcoes.recusarAgendar) {
       const extra =
         opcoes.recusarAgendar === "faltam_dados"
@@ -513,24 +579,8 @@ export function rpcsDaAg3(banco: AgendaEmMemoria, opcoes: OpcoesDoContrato) {
     if (faltam.length > 0) {
       return { data: { ok: false, motivo: "faltam_dados", faltam }, error: null };
     }
-    // Revisao curta das correcoes da AG4 (R7 e R9, R10 na ordem): com a
-    // conversa e as lidas, a mensagem nova do paciente e a ancora forte
-    // (depois da reserva), as ultimas conferencias antes de marcar.
-    const desde =
-      typeof viva.created_at === "string" ? Date.parse(viva.created_at) : null;
-    const conversa = opcoes.conversa?.();
-    if (
-      mensagemNovaDoPaciente(
-        conversa,
-        opcoes.lidas?.(String(args.p_job_id)),
-        perguntaRespondida(conversa, desde),
-      )
-    ) {
-      return {
-        data: { ok: false, motivo: "mensagem_nova_do_paciente" },
-        error: null,
-      };
-    }
+    // Revisao curta das correcoes da AG4 (R9): com a conversa, a ancora
+    // forte (depois da reserva), a ultima conferencia antes de marcar.
     if (!ancoraForte(conversa, desde)) {
       return {
         data: { ok: false, motivo: "sem_confirmacao_do_paciente" },

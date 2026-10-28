@@ -1196,6 +1196,39 @@ type LinhaDaSaida = {
   created_at?: unknown;
 };
 
+const INSTANTE_DO_BANCO =
+  /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}(?::?\d{2})?)?$/i;
+
+/**
+ * Revisao final da AG4 (B4): o instante EXATO de um timestamptz do banco,
+ * normalizado ("<segundos desde 1970 em UTC>.<fracao com 9 casas>"). O
+ * PostgREST manda os microssegundos e o Date.parse corta no milissegundo:
+ * duas saidas no mesmo milissegundo com microssegundos diferentes viravam
+ * "empate", e o banco as ordena (so o instante igual e empate para ele).
+ * Sem o fuso, UTC. null: fora do formato.
+ */
+export function instanteExatoDoBanco(valor: unknown): string | null {
+  if (typeof valor !== "string") {
+    return null;
+  }
+  const lido = INSTANTE_DO_BANCO.exec(valor.trim());
+  if (lido === null) {
+    return null;
+  }
+  const [, dia, hora, fracao = "", fuso = "Z"] = lido;
+  const fusoIso =
+    fuso.toUpperCase() === "Z"
+      ? "Z"
+      : /^[+-]\d{2}$/.test(fuso)
+        ? `${fuso}:00`
+        : fuso.replace(/^([+-]\d{2})(\d{2})$/, "$1:$2");
+  const segundos = Date.parse(`${dia}T${hora}${fusoIso}`);
+  if (!Number.isFinite(segundos)) {
+    return null;
+  }
+  return `${Math.trunc(segundos / 1000)}.${fracao.padEnd(9, "0")}`;
+}
+
 /**
  * Revisao curta das correcoes da AG4 (achados 2 e 8): a ultima mensagem de
  * SAIDA antes da ultima mensagem do paciente na conversa, como o banco
@@ -1208,7 +1241,9 @@ type LinhaDaSaida = {
  * O corpo vem ORIGINAL, sem a mascara do nome: so o turno le, para conferir
  * a frase fixa (T1 ou T3); nunca vai ao modelo nem a log. `empate`: outra
  * saida no MESMO instante que nao e da IA ou que falhou (o banco conta como
- * outra no meio). null: sem mensagem do paciente, ou sem saida antes dela.
+ * outra no meio); revisao final (B4): o instante exato, com os
+ * microssegundos (instanteExatoDoBanco). null: sem mensagem do paciente, ou
+ * sem saida antes dela.
  * Lanca na leitura que falha ou passa do prazo.
  */
 export async function lerSaidaAntesDaRespostaDaIa(
@@ -1267,12 +1302,13 @@ export async function lerSaidaAntesDaRespostaDaIa(
   const daIaEntregue = (l: LinhaDaSaida) =>
     l.author === "ia" && l.delivery_status !== "falhou";
   const segunda = linhas[1];
-  const instante = (l: LinhaDaSaida) =>
-    typeof l.created_at === "string" ? Date.parse(l.created_at) : Number.NaN;
+  // Revisao final da AG4 (B4): o instante exato (com os microssegundos),
+  // como o banco compara; nunca o Date.parse, que corta no milissegundo.
+  const doPrimeiro = instanteExatoDoBanco(primeira.created_at);
   const mesmoInstante =
     segunda !== undefined &&
-    Number.isFinite(instante(primeira)) &&
-    instante(segunda) === instante(primeira);
+    doPrimeiro !== null &&
+    instanteExatoDoBanco(segunda.created_at) === doPrimeiro;
   return {
     autoria,
     texto:
