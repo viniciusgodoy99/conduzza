@@ -31,6 +31,14 @@ import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
 // coberta por ele (marcada como tratada, sem turno da IA e sem segundo
 // lembrete); por isso o texto diz que outro assunto e so escrever de novo.
 //
+// Revisao da AG5 (o lembrete que morre sem sair): a mensagem que pediu o
+// lembrete e as que ele cobriu ficam no contador do Atendimento ate ele SAIR
+// (o executor tira a conversa do contador, lib/jobs/worker.ts). Se ele morre
+// sem sair (a oferta fechou, sem autorizacao, numero removido, falha
+// definitiva), elas continuam no contador, e a varredura de 3 minutos passa a
+// conversa para a equipe: ninguem fica sem resposta calado. O mesmo vale
+// para o SIM e o NAO QUERO dessa oferta (lembreteDeixaSemResposta).
+//
 // Sem "vaga", sem promessa e sem travessao. O prazo e so a hora: a janela de
 // resposta da clinica vai de 5 a 240 minutos (CHECK de
 // clinic.waitlist_response_minutes), entao "ate as 10:30" e sempre o proximo
@@ -100,6 +108,17 @@ export function ofertaDePeParaOContato(
 }
 
 /**
+ * O last_error do job do lembrete gravado JA cancelado, sem nunca ter sido
+ * pedido (revisao da AG5): a pessoa ouviu a recusa educada do aceite
+ * (RESPOSTA_OFERTA_PERDIDA, "esse horario nao esta mais disponivel"), em
+ * geral com a oferta ainda aberta para ela (sem_vinculo, inclusive
+ * ja_tem_consulta; nao_cabe; recurso_ocupado). O lembrete desta oferta nunca
+ * sai para ela, e nenhuma mensagem esperava por ele. Codigo curto, como todo
+ * last_error (nunca conteudo).
+ */
+export const MOTIVO_DO_LEMBRETE_DISPENSADO = "lembrete_dispensado";
+
+/**
  * Onde esta o lembrete desta oferta para este contato:
  * - nenhum: ainda nao foi para a fila (o job do id por nome nao existe);
  * - na_fila: o job esta vivo (pendente ou executando) e nenhuma mensagem dele
@@ -107,16 +126,24 @@ export function ofertaDePeParaOContato(
  * - saiu: ha mensagem dele que nao falhou (a linha nasce 'enviando' logo
  *   antes do provedor, como a da oferta em envioDaOferta);
  * - morto: o job acabou sem mensagem que saiu (falhou de vez, cancelado ou
- *   concluido sem envio); nunca vai sair, e o id por nome impede outro.
+ *   concluido sem envio); nunca vai sair, e o id por nome impede outro;
+ * - dispensado: gravado ja cancelado depois da recusa educada do aceite
+ *   (MOTIVO_DO_LEMBRETE_DISPENSADO): como o morto, nunca sai e impede outro,
+ *   mas nenhuma mensagem esperava por ele.
  */
-export type SituacaoDoLembrete = "nenhum" | "na_fila" | "saiu" | "morto";
+export type SituacaoDoLembrete =
+  | "nenhum"
+  | "na_fila"
+  | "saiu"
+  | "morto"
+  | "dispensado";
 
 /** Os estados de job_queue em que o job ainda pode executar. */
 const JOB_VIVO = new Set(["pendente", "executando"]);
 
 /** A situacao do lembrete pelo job (null: nao existe) e pelas mensagens dele. */
 export function situacaoDoLembrete(
-  job: { status: string | null } | null,
+  job: { status: string | null; last_error?: string | null } | null,
   mensagens: readonly { delivery_status: string | null }[],
 ): SituacaoDoLembrete {
   if (mensagens.some((m) => m.delivery_status !== "falhou")) {
@@ -125,5 +152,23 @@ export function situacaoDoLembrete(
   if (!job) {
     return "nenhum";
   }
-  return JOB_VIVO.has(job.status ?? "") ? "na_fila" : "morto";
+  if (JOB_VIVO.has(job.status ?? "")) {
+    return "na_fila";
+  }
+  return job.last_error === MOTIVO_DO_LEMBRETE_DISPENSADO
+    ? "dispensado"
+    : "morto";
+}
+
+/**
+ * O lembrete que existe e NAO saiu (na fila ou morto) deixa sem resposta a
+ * mensagem que o pediu e as que ele cobriu (marcadas como tratadas pelo
+ * sistema, sem turno da IA). Enquanto for assim, nenhuma resposta a oferta
+ * tira a conversa do contador do Atendimento: se ele morrer sem sair, a
+ * varredura de 3 minutos passa a conversa para a equipe, que ve as
+ * mensagens. O que saiu respondeu (o texto diz que outro assunto e so
+ * escrever de novo); nenhum e dispensado nao deixam mensagem esperando.
+ */
+export function lembreteDeixaSemResposta(situacao: SituacaoDoLembrete): boolean {
+  return situacao === "na_fila" || situacao === "morto";
 }

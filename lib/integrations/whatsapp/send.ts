@@ -66,10 +66,11 @@ export type SendTextInput = {
   /**
    * Envio do MOTOR (regua, follow-up, oferta de espera, eco, toque manual).
    * Reserva contra o slot de massa (whatsapp_account.next_bulk_send_at) E o
-   * intervalo curto do ultimo envio real. Ausente (a resposta digitada no
-   * Inbox), o envio respeita SO o intervalo curto e nunca espera a fila das
-   * mensagens automaticas (decisao do dono de 24/09/2026: atendimento
-   * primeiro).
+   * intervalo curto do ultimo envio real. Ausente ou false (a resposta
+   * digitada no Inbox, a da IA e o lembrete da oferta, que o motor manda como
+   * resposta 1:1), o envio respeita SO o intervalo curto e nunca espera a
+   * fila das mensagens automaticas (decisao do dono de 24/09/2026:
+   * atendimento primeiro).
    */
   envioAutomatico?: boolean;
   /**

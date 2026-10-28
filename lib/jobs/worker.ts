@@ -106,6 +106,17 @@ export type ResultadoDeJob =
   | { reagendar: string; motivo?: string };
 
 /**
+ * Teto de espera do slot no trilho 1:1 do lembrete da oferta: o mesmo da
+ * resposta digitada no Atendimento (o padrao de sendWhatsAppText). No 1:1 a
+ * espera e so o intervalo curto que cada envio do numero deixa (1,5 a 4 s),
+ * entao 8 s cobrem ate dois envios recentes. Adiado, o lembrete voltaria
+ * para a fila atras dos jobs mais antigos do numero e perderia o prazo de 3
+ * minutos. Cabe na estimativa do motor (CUSTO_ESTIMADO_MS, 25 s): 8 s, as
+ * RPCs e um texto so no provedor (10 s).
+ */
+export const ESPERA_MAXIMA_DO_LEMBRETE_MS = 8_000;
+
+/**
  * WhatsApp da clinica fora do ar para este envio ('desconectado': o numero do
  * job caiu; 'sem_numero': a clinica nao tem numero ativo). Nao queima
  * tentativa: devolve o job para a proxima volta, em esperas crescentes de 5
@@ -283,10 +294,30 @@ async function executarEnvioAtivo(
   // cancelada"): responde a um toque do PROPRIO paciente, entao impoe ao
   // proximo envio so o espacamento curto do 1:1, e nao os 10 a 30 s da
   // massa. Continua no trilho automatico (espera o slot de massa em vez de
-  // furar a fila das outras mensagens automaticas). A marca vem de
-  // interceptar-resposta.ts; oferta de espera e aviso de remarcacao nao a
-  // tem e seguem com o espacamento de massa.
+  // furar a fila das outras mensagens automaticas), menos o lembrete da
+  // oferta (abaixo). A marca vem de interceptar-resposta.ts; oferta de espera
+  // e aviso de remarcacao nao a tem e seguem com o espacamento de massa.
   const respostaAoPaciente = job.payload.resposta_ao_paciente === true;
+
+  // O LEMBRETE da oferta (T-E4) sai como RESPOSTA 1:1, pelo trilho da
+  // resposta da IA (enviarRespostaDaIa) e da digitada no Atendimento. Ele tem
+  // prazo: a mensagem que o pediu (e as que ele cobriu) fica no contador do
+  // Atendimento ate ele SAIR, e a varredura de 3 minutos passa a conversa
+  // para a equipe ("A IA nao respondeu a tempo", ia_sem_resposta no
+  // planner). No trilho automatico ele esperava o slot de massa atras da
+  // leva de confirmacoes (10 a 30 s cada) e estourava o prazo. No 1:1 ele
+  // nao reserva nem espera o slot de massa (next_bulk_send_at): espera so o
+  // intervalo curto desde o ultimo envio real do numero (o anti-ban da
+  // resposta 1:1) e deixa o mesmo intervalo curto para o proximo envio. As
+  // mensagens em massa continuam espacadas entre si (o slot de massa nao anda
+  // com ele). As guardas nao mudam: a oferta de pe e a autorizacao (acima), o
+  // numero que recebeu (abaixo), uma mensagem por job e o custo gravado
+  // (send.ts).
+  //
+  // Na FILA ele continua com a prioridade 0 dos toques (o CHECK
+  // job_queue_prioridade_valida aceita so 0 e 1): o claim, um job por numero
+  // a cada passagem, o pega depois dos jobs do numero com run_at mais antigo.
+  const trilhoUmAUm = typeof lembreteDaOferta === "string";
 
   // NUMERO (varios numeros por clinica, docs/07): o banco diz por qual numero
   // este job sai, conferindo a posse e a remocao, e carimba (numero_do_job).
@@ -353,19 +384,32 @@ async function executarEnvioAtivo(
     body,
     authorUserId: null,
     author: "sistema",
-    envioAutomatico: true,
-    ...(respostaAoPaciente ? {} : { espacamentoMs: espacamentoDeMassaMs() }),
+    // O slot de massa para todos, menos o lembrete da oferta (trilho 1:1).
+    envioAutomatico: !trilhoUmAUm,
+    // Os 10 a 30 s da massa so no envio em massa; o eco e o lembrete deixam o
+    // intervalo curto do 1:1. No trilho 1:1 o espacamento vai inteiro para o
+    // intervalo curto do numero: os 10 a 30 s ali atrasariam a resposta
+    // digitada no Atendimento e a da IA.
+    ...(respostaAoPaciente || trilhoUmAUm
+      ? {}
+      : { espacamentoMs: espacamentoDeMassaMs() }),
     // Teto CURTO de proposito. O piso do espacamento de massa e 10 segundos,
     // entao quase todo job concorrente cai em adiamento e nao em espera. Os 3
     // segundos cobrem so a poeira. Esperar de verdade nao cabe num ambiente
-    // sem servidor, e o adiamento nao custa nada (nada e reservado).
-    esperaMaximaMs: 3_000,
+    // sem servidor, e o adiamento nao custa nada (nada e reservado). O
+    // lembrete e a excecao (ESPERA_MAXIMA_DO_LEMBRETE_MS).
+    esperaMaximaMs: trilhoUmAUm ? ESPERA_MAXIMA_DO_LEMBRETE_MS : 3_000,
     jobId: job.id,
     // Assercao: a conversa e deste numero. Divergiu, nada sai (send.ts).
     whatsappAccountId: accountId,
   });
 
   if (resultado.ok) {
+    // O lembrete da oferta SAIU: so agora a conversa sai do contador
+    // (revisao da AG5, o lembrete que morre sem sair).
+    if (typeof lembreteDaOferta === "string") {
+      await tirarDoContadorDepoisDoLembrete(admin, job, conversationId);
+    }
     return { ok: true };
   }
   // Numero removido entre numero_do_job e o envio: nada foi gravado. A
@@ -412,6 +456,55 @@ async function executarEnvioAtivo(
     erro: resultado.code ?? resultado.reason,
     definitivo: !podeRepetir,
   };
+}
+
+/**
+ * Revisao da AG5 (o lembrete que morre sem sair). O LEMBRETE da oferta que
+ * SAIU responde a mensagem que o pediu e as que ele cobriu (o interceptador
+ * as marcou como tratadas pelo sistema, sem turno da IA, e as deixou no
+ * contador do Atendimento). So agora a conversa sai do contador: a do envio
+ * (garantir_conversa_aberta), e so com a IA, no proprio update (status
+ * ia_atendendo). Se alguem assumiu no meio, ou a varredura ja a passou para a
+ * equipe, a equipe continua vendo as mensagens.
+ *
+ * O lembrete que morre sem sair (a oferta fechou e o banco o cancelou, a
+ * guarda acima, sem autorizacao, numero removido, falha definitiva, ou o
+ * 'ja_enviado' de uma tentativa anterior, que nao diz se a mensagem saiu)
+ * nunca chega aqui: a conversa fica no contador, e a varredura de 3 minutos a
+ * passa para a equipe (sem_resposta).
+ *
+ * Nunca lanca e nunca muda o desfecho do job (o lembrete saiu): o update que
+ * falha so deixa a conversa no contador, o mesmo lado seguro. Log so com ids
+ * e codigo.
+ */
+async function tirarDoContadorDepoisDoLembrete(
+  admin: SupabaseClient,
+  job: Job,
+  conversationId: string,
+): Promise<void> {
+  try {
+    const { error } = await admin
+      .from("conversation")
+      .update({ awaiting_reply: false })
+      .eq("clinic_id", job.clinic_id)
+      .eq("id", conversationId)
+      .eq("status", "ia_atendendo");
+    if (error) {
+      log.warn("lembrete_da_oferta_contador_mantido", {
+        job_id: job.id,
+        clinic_id: job.clinic_id,
+        conversation_id: conversationId,
+        error_code: error.code ?? null,
+      });
+    }
+  } catch {
+    log.warn("lembrete_da_oferta_contador_mantido", {
+      job_id: job.id,
+      clinic_id: job.clinic_id,
+      conversation_id: conversationId,
+      error_code: "excecao",
+    });
+  }
 }
 
 // Falhas em que a mensagem nao tem o que marcar: sumiu, foi apagada (a lapide

@@ -17,8 +17,9 @@ vi.mock("@/lib/integrations/whatsapp/send", () => ({
 import { CHAVE_DO_LEMBRETE } from "@/lib/domain/lembrete-da-oferta";
 import { sendWhatsAppText } from "@/lib/integrations/whatsapp/send";
 import { executarJobComPosse, type Job } from "@/lib/jobs/worker";
+import { log } from "@/lib/log";
 
-import { bancoFalso, type Resposta } from "../jobs/banco-falso";
+import { bancoFalso, eUpdate, type Resposta } from "../jobs/banco-falso";
 
 // AG5, revisao (achado 2): o LEMBRETE da oferta (T-E4) e um eco do
 // interceptador com payload.lembrete_da_oferta e SEM offer_id, entao a guarda
@@ -30,6 +31,12 @@ import { bancoFalso, type Resposta } from "../jobs/banco-falso";
 // (oferecida a ele, aberta, no prazo e sem a recusa dele); senao morre
 // definitivo como 'oferta_encerrada', antes de qualquer efeito colateral
 // (nem a autorizacao, nem o numero, nem a conversa).
+//
+// Revisao da AG5 (o lembrete que morre sem sair): o interceptador deixa a
+// conversa no contador do Atendimento ao enfileirar o lembrete; o executor a
+// tira quando o lembrete SAI (resultado ok do envio), na conversa do envio
+// (garantir_conversa_aberta) e so com a IA (status ia_atendendo, no update).
+// Em todo caminho em que o lembrete nao sai, a conversa nao e tocada.
 
 const CLINICA = "11111111-1111-4111-8111-111111111111";
 const NUMERO = "22222222-2222-4222-8222-222222222222";
@@ -58,12 +65,21 @@ const DESCONECTADO = {
   message: "",
 };
 
-function banco(oferta: Resposta) {
+function banco(
+  oferta: Resposta,
+  opcoes: { conversa?: Resposta; consentimento?: boolean } = {},
+) {
   return bancoFalso({
-    tabelas: { waitlist_offer: () => oferta },
+    tabelas: {
+      waitlist_offer: () => oferta,
+      conversation: () => opcoes.conversa ?? { data: null, error: null },
+    },
     rpcs: {
       confirmar_posse_job: () => ({ data: true, error: null }),
-      consentimento_vigente: () => ({ data: true, error: null }),
+      consentimento_vigente: () => ({
+        data: opcoes.consentimento ?? true,
+        error: null,
+      }),
       numero_do_job: () => ({
         data: { estado: "ok", whatsapp_account_id: NUMERO },
         error: null,
@@ -103,6 +119,21 @@ function leiturasDaOferta(b: ReturnType<typeof banco>) {
     .map((c) => c.metodos.map((m) => [m.metodo, ...m.args]));
 }
 
+/** As escritas em conversation, com os filtros encadeados. */
+function escritasNaConversa(b: ReturnType<typeof banco>) {
+  return b.tabelas
+    .filter((c) => c.tabela === "conversation" && eUpdate(c))
+    .map((c) => c.metodos.map((m) => [m.metodo, ...m.args]));
+}
+
+/** A conversa sai do contador: so ela, desta clinica, e so com a IA. */
+const SAI_DO_CONTADOR = [
+  ["update", { awaiting_reply: false }],
+  ["eq", "clinic_id", CLINICA],
+  ["eq", "id", "conversa-1"],
+  ["eq", "status", "ia_atendendo"],
+];
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(AGORA);
@@ -111,6 +142,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.mocked(log.warn).mockClear();
 });
 
 describe("a guarda do lembrete da oferta no executor", () => {
@@ -129,6 +161,9 @@ describe("a guarda do lembrete da oferta no executor", () => {
       ],
     ]);
     expect(b.chamadasDe("falhar_job")).toEqual([]);
+    // Revisao da AG5: o lembrete SAIU, entao a conversa do envio sai do
+    // contador, so com a IA. Antes de concluir o job.
+    expect(escritasNaConversa(b)).toEqual([SAI_DO_CONTADOR]);
   });
 
   it.each([
@@ -170,6 +205,9 @@ describe("a guarda do lembrete da oferta no executor", () => {
       expect(b.chamadasDe("numero_do_job")).toEqual([]);
       expect(b.chamadasDe("garantir_conversa_aberta")).toEqual([]);
       expect(sendWhatsAppText).not.toHaveBeenCalled();
+      // Morreu sem sair: a conversa fica no contador (a varredura a passa
+      // para a equipe).
+      expect(escritasNaConversa(b)).toEqual([]);
     },
   );
 
@@ -239,5 +277,110 @@ describe("a guarda do lembrete da oferta no executor", () => {
     delete eco.payload[CHAVE_DO_LEMBRETE];
     expect(await executarJobComPosse(b.admin, WORKER, eco)).toBe("concluido");
     expect(leiturasDaOferta(b)).toEqual([]);
+    // O eco comum nao mexe no contador aqui (quem tira e o interceptador).
+    expect(escritasNaConversa(b)).toEqual([]);
+  });
+});
+
+describe("o lembrete que sai tira a conversa do contador; o que não sai a deixa (revisão da AG5)", () => {
+  it.each([
+    [
+      "esperando o canal (desconectado)",
+      DESCONECTADO,
+      "reagendado",
+    ],
+    [
+      "o canal ocupado (slot adiado)",
+      {
+        ok: false,
+        reason: "slot_adiado",
+        livreEm: iso(AGORA + MIN),
+        message: "",
+      },
+      "reagendado",
+    ],
+    [
+      "o número removido no envio",
+      {
+        ok: false,
+        reason: "desconectado",
+        code: "numero_removido",
+        message: "",
+      },
+      "falhou",
+    ],
+    [
+      "a autorização revogada na hora do envio",
+      {
+        ok: false,
+        reason: "sem_consentimento",
+        code: "sem_consentimento",
+        message: "",
+      },
+      "falhou",
+    ],
+    [
+      "a falha definitiva (envio incerto)",
+      {
+        ok: false,
+        reason: "falha_envio",
+        code: "envio_incerto",
+        message: "",
+      },
+      "falhou",
+    ],
+    [
+      "o ja_enviado de uma tentativa anterior (não diz se saiu)",
+      { ok: false, reason: "ja_enviado", code: "ja_enviado", message: "" },
+      "concluido",
+    ],
+  ])(
+    "%s: a conversa não é tocada",
+    async (_nome, envio, desfecho) => {
+      vi.mocked(sendWhatsAppText).mockResolvedValue(envio as never);
+      const b = banco({ data: OFERTA_DE_PE, error: null });
+      expect(await executarJobComPosse(b.admin, WORKER, lembrete())).toBe(
+        desfecho,
+      );
+      expect(escritasNaConversa(b)).toEqual([]);
+    },
+  );
+
+  it("sem a autorização antes do envio: morre sem enviar e a conversa não é tocada", async () => {
+    const b = banco(
+      { data: OFERTA_DE_PE, error: null },
+      { consentimento: false },
+    );
+    expect(await executarJobComPosse(b.admin, WORKER, lembrete())).toBe(
+      "falhou",
+    );
+    expect(b.chamadasDe("falhar_job")[0]).toMatchObject({
+      p_erro: "sem_consentimento",
+      p_definitivo: true,
+    });
+    expect(sendWhatsAppText).not.toHaveBeenCalled();
+    expect(escritasNaConversa(b)).toEqual([]);
+  });
+
+  it("o update da conversa falha: o lembrete saiu, o job conclui, e o aviso leva só ids e o código", async () => {
+    vi.mocked(sendWhatsAppText).mockResolvedValue(ENVIOU as never);
+    const b = banco(
+      { data: OFERTA_DE_PE, error: null },
+      { conversa: { data: null, error: { code: "57014" } } },
+    );
+    expect(await executarJobComPosse(b.admin, WORKER, lembrete())).toBe(
+      "concluido",
+    );
+    expect(b.chamadasDe("concluir_job")).toHaveLength(1);
+    expect(b.chamadasDe("falhar_job")).toEqual([]);
+    expect(log.warn).toHaveBeenCalledWith(
+      "lembrete_da_oferta_contador_mantido",
+      {
+        job_id: JOB,
+        clinic_id: CLINICA,
+        conversation_id: "conversa-1",
+        error_code: "57014",
+      },
+    );
   });
 });
