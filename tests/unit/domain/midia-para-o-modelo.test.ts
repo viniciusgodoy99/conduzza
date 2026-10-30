@@ -204,7 +204,8 @@ function jpeg(orientacao: number): Uint8Array {
     segmento(0xe0, juntar(texto("JFIF"), Uint8Array.from([0, 1, 1, 0, 0, 1, 0, 1, 0, 0]))),
     app1ComGps(orientacao),
     segmento(0xed, texto("Photoshop 3.0 IPTC Autor Fulano")),
-    segmento(0xee, texto("Adobe")),
+    // APP14 Adobe de verdade: "Adobe", versao, duas marcas e a transformacao.
+    segmento(0xee, juntar(texto("Adobe"), Uint8Array.from([0, 100, 0, 0, 0, 0, 1]))),
     segmento(0xfe, texto("comentario com o nome do aparelho")),
     segmento(0xdb, new Uint8Array(65)),
     segmento(0xc0, Uint8Array.from([8, 0, 16, 0, 16, 1, 1, 0x11, 0])),

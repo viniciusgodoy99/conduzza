@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
+
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
@@ -44,30 +47,44 @@ vi.mock("@/components/agente/acoes", () => ({
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
 }));
+// [AG6b mídia] o calculo do servidor (lib/agente/midia-no-servidor.ts) e
+// server-only.
+vi.mock("server-only", () => ({}));
 
-const { AbaHabilidades, notaDaFaseDeTeste } =
+const { AbaHabilidades, descricaoDaChave, notaDaFaseDeTeste } =
   await import("@/components/agente/aba-habilidades");
+const { CALIBRAGEM_DO_SERVIDOR, midiaNoServidor } =
+  await import("@/lib/agente/midia-no-servidor");
 const { PainelDoAgente } = await import("@/components/agente/painel-do-agente");
 const { Simulador } = await import("@/components/agente/simulador");
-const { HABILIDADES_DE_MIDIA, midiaLigadaNasHabilidades, TEXTOS_DA_MIDIA } =
-  await import("@/components/agente/textos");
+const {
+  dicaDaMidiaNoServidor,
+  HABILIDADES_DE_MIDIA,
+  midiaLigadaNasHabilidades,
+  TEXTOS_DA_MIDIA,
+} = await import("@/components/agente/textos");
 const { configDeTeste, dadosDeTeste } = await import("./tela-fixtures");
 
 const AGENDA: AgendaDoAgente = { antecedenciaHoras: null, horizonteDias: null };
 
-/** O que o desenho diz, letra por letra (a configuracao tem de bater). */
+/**
+ * O que o desenho diz, letra por letra (a configuracao tem de bater). A
+ * nota, desde a revisao das telas da AG6b (item 4): "os telefones
+ * cadastrados na aba WhatsApp", e nao "da equipe" (o telefone de paciente
+ * usado mesmo assim que confirmou o aviso novo tambem manda midia, D-95).
+ */
 const DO_DESENHO = {
   ler_audio: {
     titulo: "Entender áudio",
     descricao:
       "Transcreve o áudio que a pessoa manda e responde por escrito. Áudio sem fala, longo demais ou que não deu para transcrever passa para a equipe.",
-    nota: "A transcrição é feita pela OpenAI, nos EUA, com a chave do Conduzza, só nas conversas com o assistente. Por enquanto, só com os telefones da equipe que confirmaram o aviso de áudio, foto e documento.",
+    nota: "A transcrição é feita pela OpenAI, nos EUA, com a chave do Conduzza, só nas conversas com o assistente. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
   },
   ler_imagem_e_documento: {
     titulo: "Ler imagem e documento",
     descricao:
       "Lê a foto ou o PDF de um pedido de exame ou procedimento e responde sobre os itens que a clínica faz. Resultado, laudo, receita, foto do corpo, carteirinha, guia e documento pessoal passam para a equipe.",
-    nota: "A foto ou o PDF vai uma vez para a OpenAI, nos EUA, sem o nome do arquivo e sem a localização da foto. Por enquanto, só com os telefones da equipe que confirmaram o aviso de áudio, foto e documento.",
+    nota: "A foto ou o PDF vai uma vez para a OpenAI, nos EUA, sem o nome do arquivo e sem a localização da foto. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
   },
 } as const;
 
@@ -323,5 +340,269 @@ describe("a nota do simulador (D-62)", () => {
       </TooltipProvider>,
     );
     expect(html).not.toContain("data-nota-da-midia");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// [AG6b mídia] Revisao das telas da AG6b
+// ---------------------------------------------------------------------------
+
+const SEM_A_PROVA = { audio: false, arquivo: false } as const;
+const CALIBRADO = { audio: true, arquivo: true } as const;
+
+/** O span da dica do servidor da habilidade, ou "" sem ele. */
+function dicaDoServidorNa(html: string, chave: string): string {
+  return (
+    new RegExp(
+      `<span id="agente-habilidade-${chave}-no-servidor"[^>]*>[^<]*</span>`,
+    ).exec(html)?.[0] ?? ""
+  );
+}
+
+describe("a nota diz quem manda mídia (item 4)", () => {
+  it("os telefones cadastrados na aba WhatsApp, não só os da equipe (o de paciente usado mesmo assim também)", () => {
+    for (const chave of MIDIA) {
+      const nota = notaDaFaseDeTeste(chave) ?? "";
+      expect(nota).toContain(
+        "só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
+      );
+      expect(nota).not.toContain("telefones da equipe");
+      expect(nota).not.toMatch(/[—–]/);
+    }
+  });
+});
+
+describe("a habilidade que o servidor ainda não deixa valer (item 3)", () => {
+  it("o cálculo do servidor: só as constantes da calibragem; hoje, nada vale", () => {
+    // O estado de hoje (antes da prova paga, D-100).
+    expect(CALIBRAGEM_DO_SERVIDOR).toEqual({
+      transcricaoCalibrada: false,
+      tetoPorImagem: null,
+      tetoPorPagina: null,
+    });
+    expect(midiaNoServidor()).toEqual(SEM_A_PROVA);
+    // Depois da prova: cada uma pela sua constante.
+    expect(
+      midiaNoServidor({
+        transcricaoCalibrada: true,
+        tetoPorImagem: 1_600,
+        tetoPorPagina: 2_000,
+      }),
+    ).toEqual(CALIBRADO);
+    expect(
+      midiaNoServidor({
+        transcricaoCalibrada: true,
+        tetoPorImagem: null,
+        tetoPorPagina: null,
+      }),
+    ).toEqual({ audio: true, arquivo: false });
+    // Um teto so: a foto ou o PDF continuaria indo para a equipe (o lado
+    // conservador: a dica continua).
+    for (const [tetoPorImagem, tetoPorPagina] of [
+      [1_600, null],
+      [null, 2_000],
+    ] as const) {
+      expect(
+        midiaNoServidor({
+          transcricaoCalibrada: false,
+          tetoPorImagem,
+          tetoPorPagina,
+        }).arquivo,
+      ).toBe(false);
+    }
+  });
+
+  it("a dica de cada habilidade de mídia; nada nas outras, nada sem a leitura", () => {
+    expect(dicaDaMidiaNoServidor(HABILIDADE_DO_AUDIO, SEM_A_PROVA)).toBe(
+      TEXTOS_DA_MIDIA.audioSemAProva,
+    );
+    expect(dicaDaMidiaNoServidor(HABILIDADE_DO_ARQUIVO, SEM_A_PROVA)).toBe(
+      TEXTOS_DA_MIDIA.arquivoSemAProva,
+    );
+    expect(
+      dicaDaMidiaNoServidor(HABILIDADE_DO_AUDIO, {
+        audio: true,
+        arquivo: false,
+      }),
+    ).toBeNull();
+    expect(
+      dicaDaMidiaNoServidor(HABILIDADE_DO_ARQUIVO, {
+        audio: false,
+        arquivo: true,
+      }),
+    ).toBeNull();
+    for (const chave of MIDIA) {
+      expect(dicaDaMidiaNoServidor(chave, CALIBRADO)).toBeNull();
+      expect(dicaDaMidiaNoServidor(chave, undefined)).toBeNull();
+      expect(dicaDaMidiaNoServidor(chave, null)).toBeNull();
+    }
+    expect(dicaDaMidiaNoServidor("agendar", SEM_A_PROVA)).toBeNull();
+  });
+
+  it("os textos: de recepcionista, sem travessão, sem jargão", () => {
+    expect(TEXTOS_DA_MIDIA.audioSemAProva).toBe(
+      "Ainda não está valendo: falta a prova com áudios de verdade. Até lá, o áudio vai para a equipe.",
+    );
+    expect(TEXTOS_DA_MIDIA.arquivoSemAProva).toBe(
+      "Ainda não está valendo: falta a prova com fotos e documentos de verdade. Até lá, foto e documento vão para a equipe.",
+    );
+    for (const frase of [
+      TEXTOS_DA_MIDIA.audioSemAProva,
+      TEXTOS_DA_MIDIA.arquivoSemAProva,
+    ]) {
+      expect(frase).not.toMatch(/[—–]/);
+      expect(frase).not.toMatch(
+        /\b(handoff|tenant|opt-in|upload|whisper|transcribe|LLM|token|servidor|calibra\w*)\b/i,
+      );
+    }
+  });
+
+  it("na aba, sem a prova: a dica escrita embaixo da nota, ligada ou desligada, com a chave livre", () => {
+    for (const ligadas of [false, true]) {
+      const html = habilidades({
+        habilidades: habilidadesEfetivas({
+          ler_audio: ligadas,
+          ler_imagem_e_documento: ligadas,
+        }),
+        midiaNoServidor: SEM_A_PROVA,
+      });
+      for (const [chave, dica] of [
+        [HABILIDADE_DO_AUDIO, TEXTOS_DA_MIDIA.audioSemAProva],
+        [HABILIDADE_DO_ARQUIVO, TEXTOS_DA_MIDIA.arquivoSemAProva],
+      ] as const) {
+        // A dica escrita (como a da dependencia: so texto, sem chip).
+        expect(dicaDoServidorNa(html, chave)).toBe(
+          `<span id="agente-habilidade-${chave}-no-servidor" class="text-xs font-semibold text-text-secondary">${dica}</span>`,
+        );
+        // Embaixo da nota.
+        expect(html.indexOf(DO_DESENHO[chave].nota)).toBeLessThan(
+          html.indexOf(dica),
+        );
+        // A chave continua livre (ligar so vale depois da prova; desligar
+        // nunca trava) e diz o estado.
+        const tag = chaveDa(html, chave);
+        expect(tag).not.toMatch(/ disabled=""/);
+        expect(tag).toContain(`aria-checked="${ligadas}"`);
+      }
+    }
+  });
+
+  it("calibrado, ou sem a leitura do servidor: sem a dica", () => {
+    for (const props of [{ midiaNoServidor: CALIBRADO }, {}]) {
+      const html = habilidades(props);
+      for (const chave of MIDIA) {
+        expect(dicaDoServidorNa(html, chave)).toBe("");
+      }
+      expect(html).not.toContain(TEXTOS_DA_MIDIA.audioSemAProva);
+      expect(html).not.toContain(TEXTOS_DA_MIDIA.arquivoSemAProva);
+    }
+  });
+
+  it("recepção: a dica continua, com a chave presa pela permissão", () => {
+    const html = habilidades({
+      podeEditar: false,
+      dica: DICA_RECEPCAO,
+      midiaNoServidor: SEM_A_PROVA,
+    });
+    for (const chave of MIDIA) {
+      expect(chaveDa(html, chave)).toMatch(/ disabled=""/);
+      expect(dicaDoServidorNa(html, chave)).not.toBe("");
+    }
+  });
+
+  it(
+    "o painel leva o que a página calculou até a aba",
+    { timeout: 30_000 },
+    () => {
+      const comDica = painel(dadosDeTeste({ midiaNoServidor: SEM_A_PROVA }));
+      expect(comDica).toContain(TEXTOS_DA_MIDIA.audioSemAProva);
+      expect(comDica).toContain(TEXTOS_DA_MIDIA.arquivoSemAProva);
+      const semDica = painel(dadosDeTeste({ midiaNoServidor: CALIBRADO }));
+      expect(semDica).not.toContain(TEXTOS_DA_MIDIA.audioSemAProva);
+      expect(semDica).not.toContain(TEXTOS_DA_MIDIA.arquivoSemAProva);
+    },
+  );
+
+  it("o SDK nunca vai ao navegador: o cálculo é server-only e só a página da Tela 6 o usa", () => {
+    const servidor = readFileSync("lib/agente/midia-no-servidor.ts", "utf8");
+    expect(servidor.startsWith('import "server-only";')).toBe(true);
+    // So as constantes: nenhuma chamada ao SDK, nenhum cliente.
+    expect(servidor).not.toMatch(/from "openai"|transcreverAudio|lerArquivoComOModelo|criarClienteOpenAi/);
+    const pagina = readFileSync("app/(app)/agente/page.tsx", "utf8");
+    expect(pagina).toContain(
+      'import { midiaNoServidor } from "@/lib/agente/midia-no-servidor";',
+    );
+    expect(pagina).toContain("midiaNoServidor: midiaNoServidor(),");
+    expect(pagina).not.toMatch(/^"use client"/);
+    // Nenhum outro arquivo de tela importa o calculo.
+    const quemImporta: string[] = [];
+    const varrer = (pasta: string) => {
+      for (const nome of readdirSync(pasta)) {
+        const caminho = path.join(pasta, nome);
+        if (statSync(caminho).isDirectory()) {
+          varrer(caminho);
+        } else if (/\.(ts|tsx)$/.test(nome)) {
+          if (
+            readFileSync(caminho, "utf8").includes(
+              "@/lib/agente/midia-no-servidor",
+            )
+          ) {
+            quemImporta.push(caminho);
+          }
+        }
+      }
+    };
+    varrer("app");
+    varrer("components");
+    expect(quemImporta).toEqual([path.join("app", "(app)", "agente", "page.tsx")]);
+  });
+});
+
+describe("a descrição da chave (item 7)", () => {
+  it("a nota da OpenAI entra no aria-describedby da chave; sem a prova, a dica do servidor também, na ordem da tela", () => {
+    const calibrado = habilidades({ midiaNoServidor: CALIBRADO });
+    const semAProva = habilidades({ midiaNoServidor: SEM_A_PROVA });
+    for (const chave of MIDIA) {
+      expect(chaveDa(calibrado, chave)).toContain(
+        `aria-describedby="agente-habilidade-${chave}-fase-de-teste"`,
+      );
+      expect(chaveDa(semAProva, chave)).toContain(
+        `aria-describedby="agente-habilidade-${chave}-fase-de-teste agente-habilidade-${chave}-no-servidor"`,
+      );
+      // Cada id da descricao existe uma vez na tela.
+      for (const sufixo of ["fase-de-teste", "no-servidor"]) {
+        expect(
+          semAProva.match(
+            new RegExp(`id="agente-habilidade-${chave}-${sufixo}"`, "g"),
+          ),
+        ).toHaveLength(1);
+      }
+    }
+  });
+
+  it("as outras notas também (cancelar, remarcar, confirmar presença, lista de espera); sem nota, sem descrição", () => {
+    const html = habilidades();
+    for (const chave of [
+      "cancelar",
+      "remarcar",
+      "lista_de_espera",
+      "confirmar_presenca",
+    ]) {
+      expect(chaveDa(html, chave)).toMatch(
+        new RegExp(
+          `aria-describedby="agente-habilidade-${chave}-fase-de-teste( [^"]+)?"`,
+        ),
+      );
+    }
+    // "Informar preço e convênio": sem nota, sem dica, sem descricao.
+    expect(chaveDa(html, "informar_preco_e_convenio")).not.toContain(
+      "aria-describedby",
+    );
+  });
+
+  it("descricaoDaChave: os ids presentes, na ordem; nada, sem atributo", () => {
+    expect(descricaoDaChave(["a", null, "c"])).toBe("a c");
+    expect(descricaoDaChave([null, null])).toBeUndefined();
+    expect(descricaoDaChave([])).toBeUndefined();
   });
 });

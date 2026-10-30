@@ -42,7 +42,13 @@ vi.mock("@/app/(app)/agente/whatsapp-actions", () => ({
   excluirTelefoneDaIaAction: vi.fn(),
 }));
 
-import type { ContextoDaIa } from "@/components/agente/whatsapp/agente-de-ia";
+import {
+  // [AG6b mídia] início
+  TELEFONE_SEM_MIDIA_STATUS,
+  TEXTOS_DA_IA,
+  // [AG6b mídia] fim
+  type ContextoDaIa,
+} from "@/components/agente/whatsapp/agente-de-ia";
 import {
   AgenteDaClinica,
   textoDoAgenteMudou,
@@ -1240,6 +1246,54 @@ describe("números e telefones do agente no modo do painel", () => {
     );
     expect(adicionar).toContain('disabled=""');
   });
+
+  // [AG6b mídia] início
+  it("o chip do telefone com o aviso antigo, com a mídia ligada da leitura da liberação, e o que a equipe Conduzza faz (revisão das telas da AG6b, item 5)", () => {
+    const comMidia = dadosDaIa({ midiaLigada: true });
+    const saida = cartoes({ dados: comMidia });
+    expect(chip(saida, TELEFONE_SEM_MIDIA_STATUS.label)).toContain(
+      "lucide-hourglass",
+    );
+    expect(saida).toContain(escapado(TEXTOS_DA_IA.semMidiaNaLinha));
+    expect(saida).not.toContain("peça ao administrador");
+    // O usado mesmo sendo de paciente: pelo formulario.
+    expect(cartoes({ dados: comMidia, telefonesForcados: ["t1"] })).toContain(
+      escapado(TEXTOS_DA_IA.semMidiaNaLinhaForcado),
+    );
+    // Travado pela conta suspensa ou pelo agente desligado: o chip e o que
+    // fazer continuam (quem ve e a equipe Conduzza; o porque esta no topo),
+    // nunca o "peça ao administrador".
+    for (const travado of [{ suspensa: true }, { agenteHabilitado: false }]) {
+      const presa = cartoes({ dados: comMidia, ...travado });
+      expect(presa).toContain(TELEFONE_SEM_MIDIA_STATUS.label);
+      expect(presa).toContain(escapado(TEXTOS_DA_IA.semMidiaNaLinha));
+      expect(presa).not.toContain("peça ao administrador");
+    }
+  });
+
+  it("sem chip: sem a mídia ligada, sem o sinal da leitura, ou com o aviso novo confirmado", () => {
+    for (const dados of [
+      dadosDaIa(),
+      dadosDaIa({ midiaLigada: false }),
+      dadosDaIa({
+        midiaLigada: true,
+        telefones: [
+          {
+            id: "t1",
+            telefone: "+5584999990001",
+            rotulo: "Ana",
+            ativo: true,
+            avisoDaOpenaiVersao: 2,
+          },
+        ],
+      }),
+    ]) {
+      expect(cartoes({ dados })).not.toContain(
+        TELEFONE_SEM_MIDIA_STATUS.label,
+      );
+    }
+  });
+  // [AG6b mídia] fim
 
   it("agente desligado na clínica: tudo visível e desabilitado, com a dica", () => {
     const saida = cartoes({ agenteHabilitado: false });

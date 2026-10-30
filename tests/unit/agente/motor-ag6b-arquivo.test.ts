@@ -401,6 +401,15 @@ describe("fora da regra e falha fechada", () => {
     expect((await promessa).desfecho).toEqual({ tipo: "falhou", motivo: "liberacao_suspensa" });
   });
 
+  it("a gravacao com job_antigo (D-A, revisao): o turno marca jobAntigo, sem o agente", async () => {
+    const { porta } = portaFalsa({ leitura: { [FOTO]: { tipo: "job_antigo", uso: null } } });
+    const { promessa, agente } = turno([fotoNoLaco()], { midia: porta });
+    const r = await promessa;
+    expect(r.jobAntigo).toBe(true);
+    expect(r.desfecho).toEqual({ tipo: "falhou", motivo: "liberacao_suspensa" });
+    expect(agente.create).not.toHaveBeenCalled();
+  });
+
   it("sem porta (o simulador): o arquivo passa como midia", async () => {
     const { promessa } = turno([fotoNoLaco()], { midia: null });
     expect((await promessa).desfecho).toMatchObject({ motivo: "midia_nao_suportada" });

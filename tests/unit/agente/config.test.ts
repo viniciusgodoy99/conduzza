@@ -2903,10 +2903,10 @@ describe("AG6b: as habilidades de midia, os motivos e os tipos da leitura", () =
       ferramentas: [],
     });
     expect(notaDaHabilidade(HABILIDADE_DO_AUDIO)).toBe(
-      "A transcrição é feita pela OpenAI, nos EUA, com a chave do Conduzza, só nas conversas com o assistente. Por enquanto, só com os telefones da equipe que confirmaram o aviso de áudio, foto e documento.",
+      "A transcrição é feita pela OpenAI, nos EUA, com a chave do Conduzza, só nas conversas com o assistente. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
     );
     expect(notaDaHabilidade(HABILIDADE_DO_ARQUIVO)).toBe(
-      "A foto ou o PDF vai uma vez para a OpenAI, nos EUA, sem o nome do arquivo e sem a localização da foto. Por enquanto, só com os telefones da equipe que confirmaram o aviso de áudio, foto e documento.",
+      "A foto ou o PDF vai uma vez para a OpenAI, nos EUA, sem o nome do arquivo e sem a localização da foto. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
     );
     expect(notaDaHabilidade("agendar")).toBeNull();
     for (const texto of [

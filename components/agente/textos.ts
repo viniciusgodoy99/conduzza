@@ -6,6 +6,7 @@ import {
 import {
   HABILIDADE_DO_ARQUIVO,
   HABILIDADE_DO_AUDIO,
+  type MidiaNoServidor,
 } from "@/lib/domain/agente/config";
 // [AG6b mídia] fim
 
@@ -504,8 +505,12 @@ export const TEXTOS_DA_PASSAGEM = {
         "Logo depois da frase de sempre, a conversa passa para o responsável, em atendimento, em Minhas, com um aviso na tela.",
     },
   },
+  // [AG6b mídia] Revisao das telas da AG6b (item 1): o arquivo clinico
+  // (midia_clinica) e o resultado ou laudo, a receita e a foto do corpo
+  // (DECISAO_DO_TIPO_DO_LEITOR); "exame" sozinho se confundia com o pedido
+  // de exame, que a IA atende.
   ajuda:
-    "O responsável é o do lead em Leads. Sem responsável, ou com ele fora da equipe ou só com leitura, a conversa vai para a fila. Se alguém assumir antes, a conversa fica com quem assumiu. Quando o motivo é urgência, sintoma, assunto clínico, exame ou foto do corpo, arquivo que o assistente não leu ou não identificou, ou resposta barrada pela conformidade, a conversa vai sempre para a fila. Se a pessoa escrever de novo antes, também fica na fila.",
+    "O responsável é o do lead em Leads. Sem responsável, ou com ele fora da equipe ou só com leitura, a conversa vai para a fila. Se alguém assumir antes, a conversa fica com quem assumiu. Quando o motivo é urgência, sintoma, assunto clínico, resultado de exame, laudo, receita ou foto do corpo, arquivo que o assistente não leu ou não identificou, ou resposta barrada pela conformidade, a conversa vai sempre para a fila. Se a pessoa escrever de novo antes, também fica na fila.",
   salvar: "Salvar regra",
   salvando: "Salvando...",
   salva: "Regra salva no rascunho.",
@@ -569,5 +574,34 @@ export const TEXTOS_DA_MIDIA = {
   // D-62: o simulador nao manda audio, foto nem documento nesta etapa.
   simulador:
     "Áudio, foto e documento só no WhatsApp, com os telefones da equipe.",
+  // Revisao das telas da AG6b (item 3): enquanto o servidor nao foi
+  // calibrado pela prova paga (D-100), a habilidade ligada nao tem efeito, e
+  // a tela diz isso embaixo dela (dicaDaMidiaNoServidor).
+  audioSemAProva:
+    "Ainda não está valendo: falta a prova com áudios de verdade. Até lá, o áudio vai para a equipe.",
+  arquivoSemAProva:
+    "Ainda não está valendo: falta a prova com fotos e documentos de verdade. Até lá, foto e documento vão para a equipe.",
 } as const;
+
+/**
+ * A dica da habilidade de midia que o servidor ainda nao deixa valer, ou
+ * nula: as outras habilidades, a midia ja calibrada, ou sem a leitura do
+ * servidor (`midia` ausente: quem chama nao mandou, e a tela nao inventa a
+ * dica). Vale ligada ou desligada: ligar agora nao muda nada ate a prova.
+ */
+export function dicaDaMidiaNoServidor(
+  chave: string,
+  midia: MidiaNoServidor | null | undefined,
+): string | null {
+  if (!midia) {
+    return null;
+  }
+  if (chave === HABILIDADE_DO_AUDIO) {
+    return midia.audio ? null : TEXTOS_DA_MIDIA.audioSemAProva;
+  }
+  if (chave === HABILIDADE_DO_ARQUIVO) {
+    return midia.arquivo ? null : TEXTOS_DA_MIDIA.arquivoSemAProva;
+  }
+  return null;
+}
 // [AG6b mídia] fim

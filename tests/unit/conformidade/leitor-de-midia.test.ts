@@ -1,4 +1,10 @@
-import { BadRequestError, InternalServerError, RateLimitError } from "openai";
+import {
+  APIConnectionError,
+  BadRequestError,
+  InternalServerError,
+  RateLimitError,
+} from "openai";
+import { OpenAI as SdkDeVerdade } from "openai/client";
 import { zodTextFormat } from "openai/helpers/zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -19,8 +25,10 @@ import {
 import {
   conferirLeitura,
   esquemaDaLeitura,
+  FOLGA_DO_CORTE_DO_LEITOR_MS,
   lerArquivoComOModelo,
   MAX_TOKENS_DO_LEITOR,
+  MAXIMO_DE_CHAMADAS_DO_LEITOR,
   MAXIMO_DE_CODIGOS_NO_ESQUEMA,
   montarEnvelopeDaLeitura,
   NOME_DO_PDF,
@@ -112,6 +120,7 @@ function silenciarLog() {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function ler(
@@ -170,7 +179,12 @@ describe("o corpo da chamada", () => {
     ]) {
       expect(corpo, proibido).not.toHaveProperty(proibido);
     }
-    expect(opcoes).toMatchObject({ timeout: PRAZO_DO_LEITOR_MS, maxRetries: 1 });
+    // A nova tentativa e do leitor (o SDK nunca repete sozinho); a chamada
+    // leva o prazo que sobra e o sinal do corte duro.
+    expect(opcoes).toMatchObject({ maxRetries: 0 });
+    expect(opcoes.timeout).toBeLessThanOrEqual(PRAZO_DO_LEITOR_MS);
+    expect(opcoes.timeout).toBeGreaterThan(PRAZO_DO_LEITOR_MS - 1_000);
+    expect(opcoes.signal).toBeInstanceOf(AbortSignal);
     // O envelope com o nonce e a lista do Cadastro; a foto embutida.
     const [mensagem] = corpo.input as { role: string; content: unknown[] }[];
     expect(mensagem?.role).toBe("user");
@@ -422,6 +436,348 @@ describe("falha fechada", () => {
     expect(log).toContain('"status":"lido"');
     expect(log).not.toContain("resultado_ou_laudo");
     expect(log).not.toContain("laudo");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O corte duro e a nova tentativa (revisao da AG6b: o leitor sem corte duro)
+// ---------------------------------------------------------------------------
+
+const PRAZO_CURTO = 1_000;
+/** O corte duro com uma folga para o relogio do teste (o pedido: ~600 ms). */
+const ATE_O_CORTE = PRAZO_CURTO + 600;
+
+function cronometro() {
+  const inicio = performance.now();
+  return () => performance.now() - inicio;
+}
+
+function dormir(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+/** Nunca responde, nem ao sinal (o cliente que o revisor usou). */
+function pendurado(): Promise<never> {
+  return new Promise<never>(() => undefined);
+}
+
+function erro429(cabecalhos: Record<string, string>) {
+  return new RateLimitError(
+    429,
+    { code: "rate_limit_exceeded", type: "rate_limit_error" },
+    "x",
+    new Headers(cabecalhos),
+  );
+}
+
+function erro500(cabecalhos: Record<string, string> = {}) {
+  return new InternalServerError(500, {}, "x", new Headers(cabecalhos));
+}
+
+type OpcoesDaChamada = { timeout: number; maxRetries: number; signal: AbortSignal };
+
+function opcoesDa(parse: { mock: { calls: unknown[][] } }, i: number): OpcoesDaChamada {
+  return (parse.mock.calls[i] as [unknown, OpcoesDaChamada])[1];
+}
+
+describe("o corte duro: a leitura nunca passa do prazo mais a folga", () => {
+  it("cliente que nunca responde (nem ao sinal): termina no corte, com timeout, e o sinal do SDK aborta", async () => {
+    silenciarLog();
+    const { cliente, parse } = clienteFalso(() => pendurado());
+    const passou = cronometro();
+    const r = await ler(cliente, { prazoMs: PRAZO_CURTO });
+    const ms = passou();
+    expect(r).toEqual({ tipo: "falha", motivo: "timeout", modelo: "gpt-6-luna", uso: null });
+    expect(ms).toBeGreaterThanOrEqual(PRAZO_CURTO);
+    expect(ms).toBeLessThan(ATE_O_CORTE);
+    expect(FOLGA_DO_CORTE_DO_LEITOR_MS).toBe(500);
+    expect(parse).toHaveBeenCalledTimes(1);
+    const opcoes = opcoesDa(parse, 0);
+    expect(opcoes.maxRetries).toBe(0);
+    expect(opcoes.timeout).toBeLessThanOrEqual(PRAZO_CURTO);
+    // O sinal do corte chegou ao SDK e abortou.
+    expect(opcoes.signal.aborted).toBe(true);
+  });
+
+  it("a nova tentativa leva so o prazo que sobra", async () => {
+    silenciarLog();
+    let chamadas = 0;
+    const { cliente, parse } = clienteFalso(async () => {
+      chamadas += 1;
+      if (chamadas === 1) {
+        await dormir(200);
+        throw erro500({ "retry-after-ms": "10" });
+      }
+      return resposta(PEDIDO);
+    });
+    const r = await ler(cliente, { prazoMs: 3_000 });
+    expect(r).toMatchObject({ tipo: "lido" });
+    expect(parse).toHaveBeenCalledTimes(2);
+    expect(opcoesDa(parse, 0).timeout).toBeLessThanOrEqual(3_000);
+    expect(opcoesDa(parse, 1).timeout).toBeLessThanOrEqual(3_000 - 200);
+    expect(opcoesDa(parse, 1).maxRetries).toBe(0);
+  });
+
+  it("429 com retry-after maior que o prazo: nao espera nem repete, o limite volta na hora", async () => {
+    silenciarLog();
+    const { cliente, parse } = clienteFalso(async () => {
+      throw erro429({ "retry-after": "60" });
+    });
+    const passou = cronometro();
+    const r = await ler(cliente);
+    expect(passou()).toBeLessThan(500);
+    expect(parse).toHaveBeenCalledTimes(1);
+    expect(r).toEqual({ tipo: "falha", motivo: "limite", modelo: "gpt-6-luna", uso: null });
+  });
+
+  it("429 com retry-after que cabe: espera o pedido e repete UMA vez (o 429 nao e cobrado)", async () => {
+    silenciarLog();
+    let chamadas = 0;
+    const { cliente, parse } = clienteFalso(async () => {
+      chamadas += 1;
+      if (chamadas === 1) {
+        throw erro429({ "retry-after-ms": "120" });
+      }
+      return resposta(PEDIDO);
+    });
+    const passou = cronometro();
+    const r = await ler(cliente);
+    expect(passou()).toBeGreaterThanOrEqual(100);
+    expect(parse).toHaveBeenCalledTimes(2);
+    expect(r).toMatchObject({ tipo: "lido", modelo: "gpt-6-luna" });
+    expect(r).not.toHaveProperty("tentativasSemUso");
+  });
+
+  it("o erro que chega perto do fim nao repete: a espera e a nova chamada nao cabem", async () => {
+    silenciarLog();
+    const { cliente, parse } = clienteFalso(async () => {
+      await dormir(300);
+      throw erro500();
+    });
+    const passou = cronometro();
+    const r = await ler(cliente, { prazoMs: PRAZO_CURTO });
+    expect(passou()).toBeLessThan(PRAZO_CURTO);
+    expect(parse).toHaveBeenCalledTimes(1);
+    expect(r).toEqual({ tipo: "falha", motivo: "servidor", modelo: "gpt-6-luna", uso: null });
+  });
+
+  it("x-should-retry false (o nosso fetch marca o 429 de cota): nao repete", async () => {
+    silenciarLog();
+    const { cliente, parse } = clienteFalso(async () => {
+      throw erro429({ "x-should-retry": "false", "retry-after-ms": "1" });
+    });
+    expect(await ler(cliente)).toMatchObject({ tipo: "falha", motivo: "limite" });
+    expect(parse).toHaveBeenCalledTimes(1);
+  });
+
+  it("o que nao melhora tentando de novo sai uma vez so (400, excecao do cliente)", async () => {
+    silenciarLog();
+    for (const impl of [
+      async () => {
+        throw new BadRequestError(400, {}, "x", new Headers({ "retry-after-ms": "1" }));
+      },
+      async () => {
+        throw new Error("conteudo do paciente no erro");
+      },
+    ]) {
+      const { cliente, parse } = clienteFalso(impl);
+      expect((await ler(cliente)).tipo).toBe("falha");
+      expect(parse).toHaveBeenCalledTimes(1);
+    }
+  });
+});
+
+describe("o sinal de quem chama (o cancelamento do turno)", () => {
+  it("abortado no meio da chamada: termina na hora, com abortado, mesmo com cliente que ignora o sinal", async () => {
+    silenciarLog();
+    const turno = new AbortController();
+    const { cliente, parse } = clienteFalso(() => pendurado());
+    setTimeout(() => turno.abort(), 100);
+    const passou = cronometro();
+    const r = await ler(cliente, { sinal: turno.signal });
+    expect(passou()).toBeLessThan(400);
+    expect(r).toEqual({ tipo: "falha", motivo: "abortado", modelo: "gpt-6-luna", uso: null });
+    expect(opcoesDa(parse, 0).signal.aborted).toBe(true);
+  });
+
+  it("abortado na espera da nova tentativa: a segunda chamada nao sai", async () => {
+    silenciarLog();
+    const turno = new AbortController();
+    const { cliente, parse } = clienteFalso(async () => {
+      throw erro500({ "retry-after-ms": "2000" });
+    });
+    setTimeout(() => turno.abort(), 100);
+    const passou = cronometro();
+    const r = await ler(cliente, { sinal: turno.signal });
+    expect(passou()).toBeLessThan(400);
+    expect(parse).toHaveBeenCalledTimes(1);
+    // A unica chamada que saiu e a ultima: o motivo dela ja leva a
+    // estimativa (o motor), sem tentativasSemUso.
+    expect(r).toEqual({ tipo: "falha", motivo: "abortado", modelo: "gpt-6-luna", uso: null });
+  });
+
+  it("ja abortado: nada sai, e o motivo e prazo (nunca cobrado)", async () => {
+    const linhas = silenciarLog();
+    const turno = new AbortController();
+    turno.abort();
+    const { cliente, parse } = clienteFalso(async () => resposta(PEDIDO));
+    expect(await ler(cliente, { sinal: turno.signal })).toEqual({
+      tipo: "falha",
+      motivo: "prazo",
+      modelo: "gpt-6-luna",
+      uso: null,
+    });
+    expect(parse).not.toHaveBeenCalled();
+    expect(linhas.join("")).toContain('"error_code":"abortado"');
+  });
+});
+
+describe("o gasto da nova tentativa", () => {
+  it("5xx e depois a resposta: o uso e o da segunda, e a primeira volta em tentativasSemUso", async () => {
+    silenciarLog();
+    let chamadas = 0;
+    const { cliente } = clienteFalso(async () => {
+      chamadas += 1;
+      if (chamadas === 1) {
+        throw erro500({ "retry-after-ms": "1" });
+      }
+      return resposta(PEDIDO);
+    });
+    expect(await ler(cliente)).toMatchObject({
+      tipo: "lido",
+      uso: { tokensEntrada: 1_900, tokensSaida: 20 },
+      tentativasSemUso: 1,
+    });
+  });
+
+  it("5xx duas vezes: no maximo duas chamadas, falha servidor e uma tentativa sem uso", async () => {
+    const linhas = silenciarLog();
+    const { cliente, parse } = clienteFalso(async () => {
+      throw erro500({ "retry-after-ms": "1" });
+    });
+    expect(await ler(cliente)).toEqual({
+      tipo: "falha",
+      motivo: "servidor",
+      modelo: "gpt-6-luna",
+      uso: null,
+      tentativasSemUso: 1,
+    });
+    expect(MAXIMO_DE_CHAMADAS_DO_LEITOR).toBe(2);
+    expect(parse).toHaveBeenCalledTimes(MAXIMO_DE_CHAMADAS_DO_LEITOR);
+    const log = linhas.join("");
+    expect(log).toContain('"status":"nova_tentativa"');
+    expect(log).toContain('"attempt":2');
+  });
+
+  it("a rede caiu e depois a resposta veio: a primeira conta (pode ter sido cobrada)", async () => {
+    silenciarLog();
+    let chamadas = 0;
+    const { cliente } = clienteFalso(async () => {
+      chamadas += 1;
+      if (chamadas === 1) {
+        throw new APIConnectionError({ message: "x" });
+      }
+      return resposta(PEDIDO);
+    });
+    expect(await ler(cliente, { prazoMs: 3_000 })).toMatchObject({
+      tipo: "lido",
+      tentativasSemUso: 1,
+    });
+  });
+});
+
+// O SDK de verdade (subcaminho "openai/client", que o alias nao cobre) so
+// com um fetch FALSO: o fetch global e trocado por um que lanca, entao nada
+// sai da maquina. Aqui o erro que o SDK lanca e da classe de verdade, nao da
+// do stub de "openai" que lib/integrations/llm/openai.ts importa nos testes:
+// a classificacao cai em "desconhecida" (na producao seria o motivo certo).
+// Por isso estes testes provam o TEMPO e as chamadas, nao o motivo.
+function sdkComFetchFalso(responder: (sinal: AbortSignal | null) => Promise<Response>) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      throw new Error("rede proibida nos testes");
+    }),
+  );
+  const falso = vi.fn<typeof fetch>(async (_url, init) => responder(init?.signal ?? null));
+  const cliente = new SdkDeVerdade({
+    apiKey: "sk-falsa-de-teste",
+    organization: null,
+    project: null,
+    baseURL: "https://api.openai.com/v1",
+    // O do cliente de producao (TENTATIVAS_EXTRAS): a chamada do leitor manda 0.
+    maxRetries: 1,
+    logLevel: "off",
+    fetch: falso,
+  });
+  return { cliente: cliente as unknown as ClienteDoLeitor, falso };
+}
+
+describe("o corte duro com o SDK de verdade (openai 7.28) e um fetch falso", () => {
+  it("fetch que nunca responde (nem ao sinal): o corte encerra em prazo mais a folga, com timeout", async () => {
+    silenciarLog();
+    let sinalDoFetch: AbortSignal | null = null;
+    const { cliente, falso } = sdkComFetchFalso((sinal) => {
+      sinalDoFetch = sinal;
+      return pendurado();
+    });
+    const passou = cronometro();
+    const r = await ler(cliente, { prazoMs: PRAZO_CURTO });
+    expect(passou()).toBeLessThan(ATE_O_CORTE);
+    expect(r).toEqual({ tipo: "falha", motivo: "timeout", modelo: "gpt-6-luna", uso: null });
+    expect(falso).toHaveBeenCalledTimes(1);
+    expect((sinalDoFetch as AbortSignal | null)?.aborted).toBe(true);
+  });
+
+  it("corpo que trava depois dos cabecalhos: termina no prazo, sem nova chamada", async () => {
+    silenciarLog();
+    const { cliente, falso } = sdkComFetchFalso(
+      async () =>
+        new Response(new ReadableStream<Uint8Array>({ start: () => undefined }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const passou = cronometro();
+    const r = await ler(cliente, { prazoMs: PRAZO_CURTO });
+    expect(passou()).toBeLessThan(ATE_O_CORTE);
+    expect(r).toMatchObject({ tipo: "falha", uso: null });
+    expect(falso).toHaveBeenCalledTimes(1);
+  });
+
+  it("429 com retry-after de 60 s: o SDK nao dorme nem repete (maxRetries 0)", async () => {
+    silenciarLog();
+    const { cliente, falso } = sdkComFetchFalso(
+      async () =>
+        new Response(
+          JSON.stringify({ error: { type: "rate_limit_error", code: "rate_limit_exceeded" } }),
+          {
+            status: 429,
+            headers: { "content-type": "application/json", "retry-after": "60" },
+          },
+        ),
+    );
+    const passou = cronometro();
+    const r = await ler(cliente);
+    expect(passou()).toBeLessThan(1_000);
+    expect(r.tipo).toBe("falha");
+    expect(falso).toHaveBeenCalledTimes(1);
+  });
+
+  it("o turno cancelado chega ao fetch e encerra a leitura na hora", async () => {
+    silenciarLog();
+    let sinalDoFetch: AbortSignal | null = null;
+    const { cliente } = sdkComFetchFalso((sinal) => {
+      sinalDoFetch = sinal;
+      return pendurado();
+    });
+    const turno = new AbortController();
+    setTimeout(() => turno.abort(), 100);
+    const passou = cronometro();
+    const r = await ler(cliente, { prazoMs: PRAZO_CURTO, sinal: turno.signal });
+    expect(passou()).toBeLessThan(400);
+    expect(r).toMatchObject({ tipo: "falha", motivo: "abortado" });
+    expect((sinalDoFetch as AbortSignal | null)?.aborted).toBe(true);
   });
 });
 

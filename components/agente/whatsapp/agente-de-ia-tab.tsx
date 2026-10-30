@@ -68,6 +68,7 @@ import {
   textoDoTelefoneQueNaoAciona,
   textosDaParada,
   // [AG6b mídia] início
+  podeConfirmarOAvisoNovo,
   TELEFONE_SEM_MIDIA_STATUS,
   telefoneSemMidia,
   textoDoTelefoneSemMidia,
@@ -1232,8 +1233,10 @@ export function CartaoDosTelefones({
   /**
    * Alguma habilidade de midia ligada no rascunho ou na versao publicada: o
    * telefone ligado com o aviso antigo ganha o chip "Sem áudio, foto e
-   * documento" e o que fazer. O Painel geral nao le a configuracao do
-   * agente: sem a prop, sem chip.
+   * documento" e o que fazer. A Tela 6 manda o que a pagina leu da
+   * configuracao; o Painel geral, o que a leitura da liberacao traz
+   * (DadosDaIa.midiaLigada; revisao das telas da AG6b, item 5). Sem a prop,
+   * sem chip.
    */
   midiaLigada?: boolean;
   // [AG6b mídia] fim
@@ -1536,11 +1539,14 @@ export function CartaoDosTelefones({
               // O telefone ligado com o aviso antigo, com alguma habilidade
               // de midia ligada: o chip e o que fazer (desligar e ligar de
               // novo; o forcado, pelo formulario). Leitura dos forcados que
-              // falhou: o texto de sempre.
+              // falhou: o texto de sempre. Quem nao pode (o gestor) le a
+              // quem pedir (revisao das telas da AG6b, item 5).
               const semMidia = telefoneSemMidia(dados, telefone, midiaLigada);
+              const forcado = forcados !== null && forcados.has(telefone.id);
               const textoDeSemMidia = semMidia
                 ? textoDoTelefoneSemMidia(
-                    forcados !== null && forcados.has(telefone.id),
+                    forcado,
+                    podeConfirmarOAvisoNovo({ dicas, forcado, noPainel }),
                   )
                 : null;
               // [AG6b mídia] fim

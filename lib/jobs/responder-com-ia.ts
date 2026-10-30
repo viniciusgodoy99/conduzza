@@ -125,7 +125,13 @@ import { log } from "@/lib/log";
 
 // [AG6b mídia] início
 import { mascararNome } from "@/lib/agente/historico";
-import { entradaDoPortao } from "@/lib/agente/laco";
+import {
+  entradaDoPortao,
+  hojeNoFuso,
+  RESERVA_DO_AGENTE_DEPOIS_DA_MIDIA_MS,
+  RESERVA_DO_FILTRO_MS,
+} from "@/lib/agente/laco";
+import { PRAZO_DO_CLASSIFICADOR_NO_PORTAO_MS } from "@/lib/domain/conformidade/prazo";
 import {
   INTERVALO_DA_ESPERA_MS,
   itensDoCatalogo,
@@ -161,7 +167,10 @@ import {
   transcreverAudio,
   VERSAO_DA_TRANSCRICAO,
 } from "@/lib/integrations/llm/transcricao";
-import { lerArquivoParaAIa } from "@/lib/integrations/storage/arquivo-para-a-ia";
+import {
+  lerArquivoParaAIa,
+  PRAZO_DO_ARQUIVO_NO_STORAGE_MS,
+} from "@/lib/integrations/storage/arquivo-para-a-ia";
 // [AG6b mídia] fim
 
 import { ErroComCodigoDeJob } from "./erro-de-job";
@@ -255,10 +264,48 @@ export const PRAZO_MINIMO_DO_TURNO_MS = 20_000;
 /**
  * AG6b (desenho 5.1): com audio a transcrever ou arquivo a ler, o turno
  * precisa de mais prazo (a transcricao e o leitor vem antes do agente e do
- * filtro). PROPOSTA, a calibrar na prova paga. Abaixo: volta para a fila,
- * sem custo (orcamento_da_passagem).
+ * filtro). PROPOSTA, a calibrar na prova paga (D-100). Abaixo: volta para a
+ * fila, sem custo (orcamento_da_passagem).
+ *
+ * Revisao da AG6b, a conta (era 30 s, e so a transcricao, o classificador e
+ * a reserva do verificador no pior caso davam 30,5 s):
+ *  - o que a midia nunca usa (lib/agente/laco.ts, prazoParaAMidia): a
+ *    reserva do filtro (10 s), a janela minima do agente (3 s) e, no audio,
+ *    o classificador que vem depois da transcricao (8 s): 21 s
+ *    (TURNO_SEM_A_MIDIA_MS). No arquivo o classificador roda ANTES do leitor
+ *    e gasta do mesmo turno ate os mesmos 8 s: a conta e a mesma;
+ *  - o modelo da midia no pior caso: 12 s de prazo (PRAZO_DA_TRANSCRICAO_MS
+ *    e PRAZO_DO_LEITOR_MS, propostas) mais os tres cortes em ordem, cada um
+ *    0,5 s depois do anterior: o corte duro da integracao (a folga dela), o
+ *    da porta (MARGEM_ENTRE_OS_CORTES_MS, lib/agente/midia.ts) e o do laco
+ *    (FOLGA_DO_CORTE_DA_MIDIA_MS): 13,5 s;
+ *  - 21 + 13,5 = 34,5 s, mais 1,5 s para o Storage no caso comum: 36 s.
+ *    Revisao da juncao (30/10/2026): era 35 s, com o corte duro da
+ *    integracao caindo junto com o do laco e DEPOIS do da porta (a porta
+ *    cortava primeiro e o resultado da integracao, com a nova tentativa
+ *    dela, se perdia). Com os cortes em ordem, o pior caso do modelo leva
+ *    1 s a mais (as margens), e o minimo sobe 1 s para o Storage continuar
+ *    com 1,5 s.
+ * O que NAO cabe, e depende da prova paga (medir o Storage e o modelo e
+ * baixar os prazos) ou de subir o maxDuration da rota da IA (decisao de
+ * infraestrutura, desenho 12): o Storage no pior caso proposto (8 s) junto
+ * com o modelo no pior caso, 42,5 s; e audio e arquivo no mesmo turno. O
+ * maior turno possivel e 38 s (os 55 s da invocacao menos os 14 s do envio
+ * e os 3 s das gravacoes), e o minimo nao pode passar dele (o turno com
+ * midia nunca comecaria). Nesses casos a midia e cortada no prazo dela
+ * (falha fechada, a frase de sempre), sem pagar o classificador e o agente,
+ * e a reserva das gravacoes e a do envio ficam inteiras.
  */
-export const PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS = 30_000;
+export const PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS = 36_000;
+/**
+ * Revisao da AG6b: a parte do turno que a midia nunca usa no pior caso (a
+ * conta de cima, para o teste conferir que o minimo cobre o modelo da
+ * midia com folga e cabe no maior turno possivel).
+ */
+export const TURNO_SEM_A_MIDIA_MS =
+  RESERVA_DO_FILTRO_MS +
+  RESERVA_DO_AGENTE_DEPOIS_DA_MIDIA_MS +
+  PRAZO_DO_CLASSIFICADOR_NO_PORTAO_MS;
 // [AG6b mídia] fim
 const UMA_HORA_MS = 60 * 60_000;
 
@@ -390,13 +437,17 @@ export function dependenciasPadraoDaIa(entrada: {
           jobId: e.jobId,
           workerId: e.workerId,
           mascarar: e.mascarar,
+          // Revisao da AG6b: o Storage nunca recebe mais que o prazo dele
+          // (a porta ja corta em PRAZO_MAXIMO_DO_STORAGE_MS; aqui de novo,
+          // com a constante da integracao) e recebe o sinal do corte.
           lerArquivo: (a) =>
             lerArquivoParaAIa(entrada.admin, {
               clinicId: e.clinicId,
               messageId: a.messageId,
               mediaUrl: a.mediaUrl,
               maximoDeBytes: a.maximoDeBytes,
-              prazoMs: a.prazoMs,
+              prazoMs: Math.min(PRAZO_DO_ARQUIVO_NO_STORAGE_MS, a.prazoMs),
+              sinal: a.sinal,
             }),
           transcrever: (t) =>
             transcreverAudio({
@@ -411,6 +462,9 @@ export function dependenciasPadraoDaIa(entrada: {
                 jobId: e.jobId,
                 messageId: t.messageId,
               },
+              // Revisao da AG6b (a juncao): o sinal do corte da porta e do
+              // laco; a requisicao nao fica rodando depois deles.
+              sinal: t.sinal,
             }),
           lerComOModelo: (l) =>
             lerArquivoComOModelo({
@@ -427,9 +481,17 @@ export function dependenciasPadraoDaIa(entrada: {
                 messageId: l.messageId,
                 midia: l.midia,
               },
+              // Revisao da AG6b: o sinal do corte da porta e do laco.
+              sinal: l.sinal,
             }),
           versaoDaTranscricao: VERSAO_DA_TRANSCRICAO,
           modeloDoLeitor: modeloDosClassificadores ?? "desconhecido",
+          // Revisao da AG6b: a estimativa da chamada cortada.
+          modeloDaTranscricao: modeloDaTranscricao(env),
+          tetosDoLeitor: {
+            imagem: TETO_DE_TOKENS_POR_IMAGEM,
+            pagina: TETO_DE_TOKENS_POR_PAGINA,
+          },
         }),
     },
     // [AG6b mídia] fim
@@ -831,7 +893,9 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
         detectarGatilhosDeEntrada({
           mensagens: pendentesNaEspera,
           dataDeNascimento: contato.birth_date,
-          hojeNaClinica: null,
+          // Revisao da AG6b: a data de hoje no fuso da clinica, a mesma do
+          // portao do laco (o menor pelo nascimento nao espera o download).
+          hojeNaClinica: hojeNoFuso(agoraMs, fuso),
         }).length > 0 ||
         pedidoDeConsultaParaOutraPessoa(
           pendentesNaEspera
@@ -1100,8 +1164,18 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
   if (resultado === null) {
     return falharSemModelo(c, { ...base, reservaId }, destino, config);
   }
-  // [AG6b mídia] D-96: o que o turno deixou sem ler (a visao final do laco).
+  // [AG6b mídia] início
+  // Revisao da AG6b (D-A): a gravacao da leitura da midia disse job_antigo
+  // (alguem assumiu e devolveu depois deste job). O gasto ja foi acertado
+  // acima (a chamada saiu); o resto e o D-A de sempre: so conclui, sem
+  // estado, decisao, passagem, evento, frase nem envio. O job da janela nova
+  // cuida da conversa.
+  if (resultado.jobAntigo === true) {
+    return concluirJobAntigo(c, { ...base, reservaId });
+  }
+  // D-96: o que o turno deixou sem ler (a visao final do laco).
   c.midiaNaoLida = resultado.midiaNaoLida === true;
+  // [AG6b mídia] fim
 
   // 11a. Revisao final da AG4 (M1 e B1): o turno parou pela mensagem nova
   // da pessoa (mensagem_nova_do_paciente). O estado NAO e gravado (nao

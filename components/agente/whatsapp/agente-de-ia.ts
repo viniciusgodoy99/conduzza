@@ -687,11 +687,45 @@ export function telefoneSemMidia(
 }
 
 /**
+ * Quem ve pode confirmar o aviso novo deste telefone? O comum: desligar
+ * (dicas.escolha) e ligar de novo pelo dialogo do aviso (dicas.telefone). O
+ * forcado: adicionar de novo pelo formulario (dicas.telefone), com o "Usar
+ * mesmo assim" (dicas.forcar). Na Tela 6, o gestor nao pode (so o
+ * administrador da clinica e o super admin; revisao das telas da AG6b, item
+ * 5). No Painel geral quem ve e sempre a equipe Conduzza, que pode: com a
+ * conta suspensa ou o agente desligado, os botoes ficam presos e o porque
+ * ja esta escrito no topo dos cartoes.
+ */
+export function podeConfirmarOAvisoNovo(entrada: {
+  dicas: Pick<Record<AcaoDaIa, string | null>, "escolha" | "telefone" | "forcar">;
+  forcado: boolean;
+  noPainel: boolean;
+}): boolean {
+  const { dicas, forcado, noPainel } = entrada;
+  if (noPainel) {
+    return true;
+  }
+  return forcado
+    ? dicas.telefone === null && dicas.forcar === null
+    : dicas.escolha === null && dicas.telefone === null;
+}
+
+/**
  * O que fazer, escrito na linha do telefone sem midia. O usado mesmo sendo
  * de paciente (o forcado) so volta pelo formulario, com o "Usar mesmo
- * assim": desligar e ligar de novo nao serve para ele.
+ * assim": desligar e ligar de novo nao serve para ele. Quem nao pode
+ * (podeConfirmar falso: o gestor) le a quem pedir, nunca uma instrucao para
+ * um botao preso.
  */
-export function textoDoTelefoneSemMidia(forcado: boolean): string {
+export function textoDoTelefoneSemMidia(
+  forcado: boolean,
+  podeConfirmar = true,
+): string {
+  if (!podeConfirmar) {
+    return forcado
+      ? TEXTOS_DA_IA.semMidiaNaLinhaForcadoSemPermissao
+      : TEXTOS_DA_IA.semMidiaNaLinhaSemPermissao;
+  }
   return forcado
     ? TEXTOS_DA_IA.semMidiaNaLinhaForcado
     : TEXTOS_DA_IA.semMidiaNaLinha;
@@ -938,6 +972,13 @@ export const TEXTOS_DA_IA = {
   semMidiaNaLinha: "Desligue e ligue de novo para confirmar o aviso novo.",
   semMidiaNaLinhaForcado:
     "Para confirmar o aviso novo, adicione este telefone de novo pelo formulário acima.",
+  // Revisao das telas da AG6b (item 5; PROPOSTA, espera o dono): quem ve e
+  // nao pode desligar nem ligar (o gestor, na Tela 6) le a quem pedir, e nao
+  // a instrucao de um botao preso para ele.
+  semMidiaNaLinhaSemPermissao:
+    "Para confirmar o aviso novo, peça ao administrador da clínica para desligar e ligar de novo este telefone.",
+  semMidiaNaLinhaForcadoSemPermissao:
+    "Para confirmar o aviso novo, peça ao administrador da clínica para adicionar este telefone de novo.",
   // [AG6b mídia] fim
 } as const;
 

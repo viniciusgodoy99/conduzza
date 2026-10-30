@@ -487,6 +487,238 @@ export const CASOS_DE_URGENCIA: readonly CasoDeUrgencia[] = [
   u("AG6-U159", "fisica", "contexto", "não consigo respirar pelo nariz"),
   u("AG6-U160", "fisica", "contexto", "ela não acordou ainda"),
   u("AG6-U161", "fisica", "contexto", "já tive dor no peito e falta de ar"),
+  // ---- revisao de 6eae43d (A1): as lacunas que atravessavam o portao -------
+  // O risco de vida.
+  u("AG6-U162", "risco_de_vida", "literal", "Vou me enforcar hoje."),
+  u("AG6-U163", "risco_de_vida", "literal", "Vou me jogar do prédio."),
+  u("AG6-U164", "risco_de_vida", "parafrase", "vou pular da ponte"),
+  u(
+    "AG6-U165",
+    "risco_de_vida",
+    "parafrase",
+    "minha filha disse que vai se jogar da janela",
+  ),
+  u(
+    "AG6-U166",
+    "risco_de_vida",
+    "literal",
+    "Tomei 20 comprimidos de rivotril.",
+  ),
+  u(
+    "AG6-U167",
+    "risco_de_vida",
+    "parafrase",
+    "Tomei a cartela inteira de remédio pra dormir.",
+  ),
+  // O "de uma vez" desfaz o tratamento de sempre.
+  u(
+    "AG6-U168",
+    "risco_de_vida",
+    "contexto",
+    "tomei todos os remédios que a doutora passou de uma vez",
+  ),
+  u("AG6-U169", "risco_de_vida", "literal", "cortei os pulsos"),
+  u("AG6-U170", "risco_de_vida", "literal", "to me automutilando"),
+  u("AG6-U171", "risco_de_vida", "literal", "escrevi uma carta de despedida"),
+  u("AG6-U172", "risco_de_vida", "literal", "Não vejo mais motivo pra viver."),
+  u("AG6-U173", "risco_de_vida", "negacao", "não, não tenho motivo pra viver"),
+  u("AG6-U174", "risco_de_vida", "literal", "queria não ter nascido"),
+  u("AG6-U175", "risco_de_vida", "caixa_alta", "VOU ME ENFORCAR"),
+  // O fisico.
+  u(
+    "AG6-U176",
+    "fisica",
+    "contexto",
+    "Fiz preenchimento há 1 hora e estou perdendo a visão.",
+  ),
+  u(
+    "AG6-U177",
+    "fisica",
+    "contexto",
+    "Depois do preenchimento no nariz, minha vista escureceu.",
+  ),
+  u(
+    "AG6-U178",
+    "fisica",
+    "parafrase",
+    "fiquei cega de um olho depois do preenchimento",
+  ),
+  u("AG6-U179", "fisica", "literal", "não estou enxergando de um olho"),
+  u("AG6-U180", "fisica", "literal", "minha mãe tá roxa e não respira"),
+  u("AG6-U181", "fisica", "literal", "Minha mãe caiu e não tá respondendo."),
+  u("AG6-U182", "fisica", "parafrase", "meu pai não está respondendo"),
+  u("AG6-U183", "fisica", "parafrase", "a boca do meu pai ficou torta"),
+  u("AG6-U184", "fisica", "literal", "não consigo mexer o braço direito"),
+  u(
+    "AG6-U185",
+    "fisica",
+    "literal",
+    "meu braço e minha perna do lado direito ficaram fracos de repente",
+  ),
+  u("AG6-U186", "fisica", "literal", "tô com uma pressão no peito"),
+  u("AG6-U187", "fisica", "parafrase", "sinto um peso no peito"),
+  u(
+    "AG6-U188",
+    "fisica",
+    "literal",
+    "coração apertado e uma dor que vai pro braço",
+  ),
+  u("AG6-U189", "fisica", "literal", "engoli um produto de limpeza"),
+  u("AG6-U190", "fisica", "parafrase", "minha filha bebeu água sanitária"),
+  // Era a rede do sintoma (urgencia.test.ts): o rosto de outra pessoa que
+  // caiu e o agora, nao a flacidez.
+  u("AG6-U191", "fisica", "contexto", "o rosto dela caiu"),
+  // Decisao desta revisao (o lado seguro): a vista que escurece ao levantar
+  // fica urgencia (FALSOS_POSITIVOS_QUE_FICAM).
+  u(
+    "AG6-U192",
+    "fisica",
+    "contexto",
+    "a vista escureceu quando levantei rápido",
+  ),
+  // ---- revisao de 6eae43d (M1): o procedimento recente com a boca ou o
+  // rosto torto E outro sinal de AVC (o braco, a perna, a fala, a dor de
+  // cabeca forte) na mesma mensagem: urgencia, como na edd123c -------------
+  u(
+    "AG6-U193",
+    "fisica",
+    "contexto",
+    "fiz botox ontem e agora minha boca ficou torta e meu braço tá dormente",
+  ),
+  u(
+    "AG6-U194",
+    "fisica",
+    "contexto",
+    "Fiz botox ontem. Agora minha boca ficou torta e meu braço está fraco.",
+  ),
+  u(
+    "AG6-U195",
+    "fisica",
+    "contexto",
+    "fiz preenchimento hoje e minha boca entortou, meu braço esquerdo tá formigando",
+  ),
+  u(
+    "AG6-U196",
+    "fisica",
+    "contexto",
+    "fiz harmonização ontem, meu rosto ficou torto e minha fala tá estranha",
+  ),
+  u(
+    "AG6-U197",
+    "fisica",
+    "contexto",
+    "fiz botox e minha boca ficou torta e tô com muita dor de cabeça",
+  ),
+  // ---- revisao de 6eae43d (M2): o que a excecao nova nao apaga -------------
+  // O relato presente depois da pergunta sobre o efeito.
+  u(
+    "AG6-U198",
+    "fisica",
+    "contexto",
+    "botox dá falta de ar? tô com falta de ar agora",
+  ),
+  // A estetica com o "de repente" e "mais caido" sem o pedido.
+  u(
+    "AG6-U199",
+    "fisica",
+    "contexto",
+    "minha boca ficou torta de repente, quero fazer preenchimento",
+  ),
+  u(
+    "AG6-U200",
+    "fisica",
+    "contexto",
+    "o lado esquerdo do meu rosto tá mais caído",
+  ),
+  // O sofrimento (sem a queixa estetica ou a dor do corpo) continua.
+  u("AG6-U201", "risco_de_vida", "contexto", "essa ansiedade tá me matando"),
+  u("AG6-U202", "risco_de_vida", "contexto", "essa dor na alma tá me matando"),
+  // A emergencia com o pedido de ajuda, mesmo com o horario.
+  u(
+    "AG6-U203",
+    "fisica",
+    "contexto",
+    "é uma emergência, me ajuda, preciso de um horário agora",
+  ),
+  // ---- revisao de 6eae43d (pedido do coordenador): a overdose, o ferimento
+  // grave e a complicacao do preenchimento (a oclusao vascular) -------------
+  u("AG6-U204", "risco_de_vida", "literal", "tomei uma overdose"),
+  u("AG6-U205", "risco_de_vida", "literal", "overdose de remédio"),
+  u("AG6-U206", "risco_de_vida", "parafrase", "ela teve uma overdose"),
+  u("AG6-U207", "risco_de_vida", "caixa_alta", "OVERDOSE"),
+  u("AG6-U208", "fisica", "literal", "levei um tiro"),
+  u("AG6-U209", "fisica", "literal", "fui baleada"),
+  u("AG6-U210", "fisica", "literal", "fui esfaqueado"),
+  u("AG6-U211", "fisica", "literal", "levei uma facada"),
+  u("AG6-U212", "fisica", "parafrase", "meu filho levou um tiro"),
+  u(
+    "AG6-U213",
+    "fisica",
+    "parafrase",
+    "minha filha foi atingida por bala perdida",
+  ),
+  u(
+    "AG6-U214",
+    "fisica",
+    "contexto",
+    "fiz preenchimento ontem e minha visão tá embaçada",
+  ),
+  u(
+    "AG6-U215",
+    "fisica",
+    "contexto",
+    "fiz harmonização e estou vendo embaçado",
+  ),
+  u(
+    "AG6-U216",
+    "fisica",
+    "contexto",
+    "fiz preenchimento labial e o lábio ficou branco",
+  ),
+  u(
+    "AG6-U217",
+    "fisica",
+    "contexto",
+    "depois do preenchimento a pele ficou esbranquiçada",
+  ),
+  u(
+    "AG6-U218",
+    "fisica",
+    "contexto",
+    "fiz preenchimento e a pele tá rendilhada",
+  ),
+  u(
+    "AG6-U219",
+    "fisica",
+    "contexto",
+    "fiz preenchimento ontem, tá roxo e espalhando",
+  ),
+  u(
+    "AG6-U220",
+    "fisica",
+    "contexto",
+    "fiz preenchimento e tô com uma dor muito forte no lábio",
+  ),
+  u("AG6-U221", "fisica", "contexto", "fiz fios ontem e a dor só piora"),
+  u(
+    "AG6-U222",
+    "fisica",
+    "contexto",
+    "minha mãe fez preenchimento e o lábio dela tá branco",
+  ),
+  // A pergunta sobre o efeito nao apaga a complicacao do preenchimento feito.
+  u(
+    "AG6-U223",
+    "fisica",
+    "contexto",
+    "fiz preenchimento ontem, pode dar visão embaçada?",
+  ),
+  u(
+    "AG6-U224",
+    "fisica",
+    "contexto",
+    "fiz preenchimento ontem e hoje o lábio tá roxo e frio",
+  ),
 ];
 
 export const CONTROLES_DA_URGENCIA: readonly ControleDaUrgencia[] = [
@@ -904,6 +1136,304 @@ export const CONTROLES_DA_URGENCIA: readonly ControleDaUrgencia[] = [
   c("AG6-C141", "apaguei de sono ontem", "o sono"),
   c("AG6-C142", "não tou cum falta di ar", "negação"),
   c("AG6-C143", "já tive falta di ar", "a história (já tive)"),
+  // ---- revisao de 6eae43d (A1): os controles de cada sinal novo ------------
+  c("AG6-C144", "quero pular o almoço", "pular sem o lugar"),
+  c(
+    "AG6-C145",
+    "tomei 2 comprimidos de dipirona ontem, posso fazer o procedimento?",
+    "a pergunta do preparo, com a dose comum (1 ou 2 comprimidos; o remédio em quantidade é de 3 para cima)",
+  ),
+  c(
+    "AG6-C146",
+    "a cartela do anticoncepcional acabou",
+    "a cartela sem o tomar de uma vez",
+  ),
+  c(
+    "AG6-C147",
+    "não estou enxergando bem de longe, vocês têm oftalmologista?",
+    "a vista de sempre (de longe, o oftalmologista)",
+  ),
+  c(
+    "AG6-C148",
+    "meu filho não respira pelo nariz, tem otorrino?",
+    "o nariz, não a respiração",
+  ),
+  c(
+    "AG6-C149",
+    "vou enforcar a sexta-feira e emendar o feriado",
+    "a folga (sem o me e o se)",
+  ),
+  c("AG6-C150", "vou me jogar nessa promoção de botox", "se jogar sem o lugar"),
+  c(
+    "AG6-C151",
+    "tomei todos os remédios que a doutora passou, posso tirar os pontos?",
+    "o tratamento de sempre (o que a doutora passou)",
+  ),
+  c(
+    "AG6-C152",
+    "tomei 3 comprimidos por dia de antibiótico, já posso fazer o laser?",
+    "o tratamento de sempre (por dia)",
+  ),
+  c(
+    "AG6-C153",
+    "tomei 10 gotas de rivotril pra dormir, posso ir dirigindo?",
+    "a dose em gotas (o assunto clínico escala)",
+  ),
+  c(
+    "AG6-C154",
+    "cortei o dedo cozinhando, posso fazer a unha?",
+    "o corte sem o pulso",
+  ),
+  c(
+    "AG6-C155",
+    "vou fazer uma despedida de solteira, tem horário pra maquiagem?",
+    "a despedida sem a carta",
+  ),
+  c(
+    "AG6-C156",
+    "meus filhos são meu motivo pra viver",
+    "o motivo dito, sem a negação",
+  ),
+  c("AG6-C157", "queria ter nascido com o nariz menor kkk", "sem a negação"),
+  c("AG6-C158", "a clínica não está respondendo", "a clínica"),
+  c(
+    "AG6-C159",
+    "minha filha não está respondendo minhas mensagens",
+    "a mensagem",
+  ),
+  c(
+    "AG6-C160",
+    "vou confirmar com minha mãe, ela não está respondendo",
+    "recepção: a mensagem que a mãe não respondeu",
+  ),
+  c(
+    "AG6-C161",
+    "minha mãe não responde, depois eu te aviso",
+    "recepção: a mensagem que a mãe não respondeu",
+  ),
+  c(
+    "AG6-C162",
+    "a ligação caiu e a moça não tá respondendo",
+    "recepção: a ligação que caiu",
+  ),
+  c(
+    "AG6-C163",
+    "não consigo mexer a testa depois do botox, é normal?",
+    "a testa depois do botox, o efeito esperado (escala pelo portão como assunto clínico)",
+  ),
+  c("AG6-C164", "acordei com o braço dormente", "sem o de repente"),
+  c(
+    "AG6-C165",
+    "tenho uma dor no ombro que desce pro braço, vocês têm ortopedista?",
+    "a dor que vem do ombro",
+  ),
+  c(
+    "AG6-C166",
+    "minha pressão subiu, posso fazer botox?",
+    "a pressão sem o peito",
+  ),
+  c(
+    "AG6-C167",
+    "tirei um peso do peito depois que conversei com a doutora",
+    "o alívio (o peso do peito)",
+  ),
+  c(
+    "AG6-C168",
+    "tenho medo de perder a visão com o preenchimento",
+    "o medo, sem a perda agora",
+  ),
+  c(
+    "AG6-C169",
+    "sou cega de um olho, posso fazer botox?",
+    "o estado de sempre",
+  ),
+  c("AG6-C170", "não tô enxergando o link do pagamento", "o texto da tela"),
+  c(
+    "AG6-C171",
+    "tomei sol depois do ácido, é normal arder?",
+    "o ácido da pele, não o veneno",
+  ),
+  c("AG6-C172", "tomei refrigerante, que é veneno", "a figura de linguagem"),
+  // ---- revisao de 6eae43d (M2): os falsos positivos da estetica, da dor,
+  // da pergunta e da agenda (os que a edd123c marcava estao tambem em
+  // FALSOS_POSITIVOS_ACEITOS) -----------------------------------------------
+  c(
+    "AG6-C173",
+    "essas rugas estão me matando, quanto é o botox?",
+    "estética: a queixa como sujeito de me matando",
+  ),
+  c(
+    "AG6-C174",
+    "essa papada tá me matando kkk",
+    "estética: a queixa como sujeito de me matando",
+  ),
+  c(
+    "AG6-C175",
+    "essa flacidez tá me matando",
+    "estética: a queixa como sujeito de me matando",
+  ),
+  c(
+    "AG6-C176",
+    "essas estrias estão me matando",
+    "estética: a queixa como sujeito de me matando",
+  ),
+  c(
+    "AG6-C177",
+    "essas olheiras estão me matando",
+    "estética: a queixa como sujeito de me matando",
+  ),
+  c(
+    "AG6-C178",
+    "essa acne tá me matando",
+    "estética: a queixa como sujeito de me matando",
+  ),
+  c(
+    "AG6-C179",
+    "esse melasma tá me matando",
+    "estética: a queixa como sujeito de me matando",
+  ),
+  c(
+    "AG6-C180",
+    "esse cabelo tá me matando",
+    "estética: a queixa como sujeito de me matando",
+  ),
+  c(
+    "AG6-C181",
+    "essa dor nas costas tá me matando, tem horário com o ortopedista?",
+    "a dor do corpo como sujeito de me matando (escala como sintoma)",
+  ),
+  c(
+    "AG6-C182",
+    "essa enxaqueca tá me matando",
+    "a dor do corpo como sujeito de me matando (escala como sintoma)",
+  ),
+  c(
+    "AG6-C183",
+    "essa cólica tá me matando",
+    "a dor do corpo como sujeito de me matando (escala como sintoma)",
+  ),
+  c(
+    "AG6-C184",
+    "tô morrendo de dor nas costas",
+    "morrendo de dor (escala como sintoma)",
+  ),
+  c(
+    "AG6-C185",
+    "tô morrendo de cólica",
+    "morrendo de dor (escala como sintoma)",
+  ),
+  c("AG6-C186", "meu cabelo tá morrendo", "estética: o cabelo"),
+  c("AG6-C187", "botox dá falta de ar?", "a pergunta sobre o efeito"),
+  c(
+    "AG6-C188",
+    "esse procedimento é perigoso? pode dar falta de ar?",
+    "a pergunta sobre o efeito",
+  ),
+  c(
+    "AG6-C189",
+    "tenho falta de ar quando subo escada, posso fazer lipo?",
+    "a falta de ar do esforço de sempre (escala como sintoma)",
+  ),
+  c(
+    "AG6-C190",
+    "minha boca fica torta quando eu sorrio",
+    "estética: o sorriso",
+  ),
+  c(
+    "AG6-C191",
+    "minha boca tá meio torta, quero fazer preenchimento",
+    "estética: o pedido de procedimento",
+  ),
+  c(
+    "AG6-C192",
+    "minha boca tá caindo de um lado com a idade, o que vocês indicam?",
+    "estética: a idade",
+  ),
+  c(
+    "AG6-C193",
+    "o lado esquerdo do meu rosto tá mais caído, quero fazer fios",
+    "estética: o pedido de procedimento",
+  ),
+  c(
+    "AG6-C194",
+    "Oi, é uma emergência! Preciso de um horário pra amanhã, tenho casamento.",
+    "recepção: o pedido de horário",
+  ),
+  c(
+    "AG6-C195",
+    "tenho uma emergência estética, preciso de um horário hoje",
+    "recepção: a emergência estética e o pedido de horário",
+  ),
+  // ---- revisao de 6eae43d (pedido do coordenador): os controles da
+  // overdose, do ferimento grave e da complicacao do preenchimento ---------
+  c(
+    "AG6-C196",
+    "o que é overdose de vitamina?",
+    "a pergunta de informação sobre a overdose",
+  ),
+  c(
+    "AG6-C197",
+    "existe overdose de botox?",
+    "a pergunta de informação sobre a overdose",
+  ),
+  c("AG6-C198", "essa foto é uma overdose de fofura", "a figura de linguagem"),
+  c("AG6-C199", "não foi overdose", "negação"),
+  c("AG6-C200", "foi tiro e queda", "a figura de linguagem"),
+  c("AG6-C201", "isso foi um tiro no pé", "a figura de linguagem"),
+  c("AG6-C202", "esse preço é uma facada", "a figura do preço"),
+  c("AG6-C203", "levei uma facada nesse orçamento", "a figura do preço"),
+  c("AG6-C204", "levei 300 tiros de laser na axila", "os disparos do laser"),
+  c(
+    "AG6-C205",
+    "levei uns 500 tiros na depilação, é normal arder?",
+    "os disparos do laser contados",
+  ),
+  c(
+    "AG6-C206",
+    "já levei um tiro na perna, posso fazer lipo?",
+    "a história (já levei)",
+  ),
+  c(
+    "AG6-C207",
+    "fiquei com um roxinho depois do preenchimento, é normal?",
+    "o hematoma comum (o roxo sozinho)",
+  ),
+  c("AG6-C208", "ficou roxo onde furou", "o hematoma comum (o roxo sozinho)"),
+  c(
+    "AG6-C209",
+    "fiz preenchimento e ficou roxo onde furou",
+    "o hematoma comum, com o procedimento (o roxo sozinho)",
+  ),
+  c(
+    "AG6-C210",
+    "ficou um pouco inchado depois do preenchimento",
+    "o inchaço leve",
+  ),
+  c(
+    "AG6-C211",
+    "visão embaçada, vocês têm oftalmologista?",
+    "a visão sem o procedimento feito",
+  ),
+  c(
+    "AG6-C212",
+    "quero preencher o lábio, ele é muito pálido",
+    "o pedido de procedimento e o estado de sempre",
+  ),
+  c(
+    "AG6-C213",
+    "fiz preenchimento e tá um pouco dolorido, é normal?",
+    "a dor leve",
+  ),
+  c(
+    "AG6-C214",
+    "vou fazer preenchimento amanhã, pode dar visão embaçada?",
+    "o procedimento só pedido, com a pergunta",
+  ),
+  c(
+    "AG6-C215",
+    "fiz preenchimento e meus dentes estão brancos",
+    "os dentes, não a pele",
+  ),
 ];
 
 export const TENTATIVAS_DE_TRIAGEM: readonly TentativaDeTriagem[] = [
@@ -1110,6 +1640,44 @@ export const RAJADAS_DE_URGENCIA: readonly RajadaDeUrgencia[] = [
     tipo: "fisica",
     mensagens: [parte("é uma emergência, cancela"), parte("tudo e me ajuda")],
   },
+  // Revisao de 6eae43d (M1): o procedimento e a boca ou o rosto torto numa
+  // mensagem, o outro sinal de AVC na outra (o que desfaz a excecao le a
+  // rajada inteira).
+  {
+    id: "AG6-R20",
+    tipo: "fisica",
+    mensagens: [
+      parte("fiz botox ontem e minha boca ficou torta"),
+      parte("meu braço tá dormente"),
+    ],
+  },
+  {
+    id: "AG6-R21",
+    tipo: "fisica",
+    mensagens: [
+      parte("fiz harmonização e meu rosto ficou torto"),
+      parte("e minha fala tá estranha"),
+    ],
+  },
+  // Revisao de 6eae43d (pedido do coordenador): o preenchimento feito numa
+  // mensagem, o sinal da complicacao na outra.
+  {
+    id: "AG6-R22",
+    tipo: "fisica",
+    mensagens: [
+      parte("fiz preenchimento labial hoje"),
+      parte("o lábio ficou branco"),
+    ],
+  },
+  {
+    id: "AG6-R23",
+    tipo: "fisica",
+    mensagens: [
+      parte("oi"),
+      parte("fiz harmonização ontem"),
+      parte("agora tô vendo embaçado"),
+    ],
+  },
 ];
 
 export const RAJADAS_SEM_URGENCIA: readonly RajadaSemUrgencia[] = [
@@ -1168,6 +1736,26 @@ export const RAJADAS_SEM_URGENCIA: readonly RajadaSemUrgencia[] = [
       parte("Agora não consigo falar, me manda mensagem"),
     ],
     porque: "recepção: quem está ocupado, na mesma mensagem",
+  },
+  // Revisao de 6eae43d (M1): a dormencia do labio e a anestesia do
+  // procedimento, nao outro membro.
+  {
+    id: "AG6-RC11",
+    mensagens: [
+      parte("fiz botox ontem e minha boca ficou torta"),
+      parte("e o lábio tá dormente"),
+    ],
+    porque:
+      "efeito do procedimento: a dormência do lábio não é queixa de outro membro",
+  },
+  // Revisao de 6eae43d (pedido do coordenador): o preenchimento so pedido.
+  {
+    id: "AG6-RC12",
+    mensagens: [
+      parte("vou fazer preenchimento amanhã"),
+      parte("minha visão tá embaçada"),
+    ],
+    porque: "o procedimento só pedido, não feito",
   },
 ];
 
@@ -1809,6 +2397,13 @@ function nr(
  * urgencia. Cada uma continua urgencia do MESMO tipo, menos as da lista
  * explicita FALSOS_POSITIVOS_ACEITOS (com a area e o motivo). Nao se tira
  * frase daqui: a que deixar de ser urgencia entra naquela lista.
+ *
+ * Revisao de 6eae43d (a correcao da lista de urgencia): as lacunas fechadas
+ * (A1, o tipo esperado), as frases do procedimento com outro sinal de AVC
+ * (M1, que a edd123c marcava), os falsos positivos da estetica, da dor, da
+ * pergunta e da agenda (M2, que a edd123c marcava e agora estao na lista de
+ * aceitos), as frases das baterias que a edd123c marcava e faltavam aqui e
+ * as do corpus do revisor que deixaram de ser urgencia.
  */
 export const NAO_REGRESSAO_DA_URGENCIA: readonly FraseDaNaoRegressao[] = [
   nr(
@@ -2531,6 +3126,746 @@ export const NAO_REGRESSAO_DA_URGENCIA: readonly FraseDaNaoRegressao[] = [
   ),
   nr("AG6-NR203", "fisica", "urgencia.test.ts", "a boca dela ficou torta"),
   nr("AG6-NR204", "risco_de_vida", "urgencia.test.ts", "eu vou me matar"),
+  // ---- revisao de 6eae43d (A1): as lacunas fechadas (a edd123c tambem
+  // perdia; aqui, o tipo esperado), uma ou mais por sinal novo -------------
+  nr(
+    "AG6-NR205",
+    "risco_de_vida",
+    "revisão de 6eae43d (A1)",
+    "Vou me enforcar hoje.",
+  ),
+  nr(
+    "AG6-NR206",
+    "risco_de_vida",
+    "revisão de 6eae43d (A1)",
+    "Vou me jogar do prédio.",
+  ),
+  nr(
+    "AG6-NR207",
+    "risco_de_vida",
+    "revisão de 6eae43d (A1)",
+    "vou pular da ponte",
+  ),
+  nr(
+    "AG6-NR208",
+    "risco_de_vida",
+    "revisão de 6eae43d (A1)",
+    "Não vejo mais motivo pra viver.",
+  ),
+  nr(
+    "AG6-NR209",
+    "risco_de_vida",
+    "revisão de 6eae43d (A1)",
+    "to me automutilando",
+  ),
+  nr(
+    "AG6-NR210",
+    "risco_de_vida",
+    "revisão de 6eae43d (A1)",
+    "escrevi uma carta de despedida",
+  ),
+  nr(
+    "AG6-NR211",
+    "risco_de_vida",
+    "revisão de 6eae43d (A1)",
+    "queria não ter nascido",
+  ),
+  nr(
+    "AG6-NR212",
+    "fisica",
+    "revisão de 6eae43d (A1)",
+    "Fiz preenchimento há 1 hora e estou perdendo a visão.",
+  ),
+  nr(
+    "AG6-NR213",
+    "fisica",
+    "revisão de 6eae43d (A1)",
+    "Depois do preenchimento no nariz, minha vista escureceu.",
+  ),
+  nr(
+    "AG6-NR214",
+    "fisica",
+    "revisão de 6eae43d (A1)",
+    "não consigo mexer o braço direito",
+  ),
+  nr(
+    "AG6-NR215",
+    "fisica",
+    "revisão de 6eae43d (A1)",
+    "meu braço e minha perna do lado direito ficaram fracos de repente",
+  ),
+  nr(
+    "AG6-NR216",
+    "fisica",
+    "revisão de 6eae43d (A1)",
+    "engoli um produto de limpeza",
+  ),
+  nr(
+    "AG6-NR217",
+    "risco_de_vida",
+    "revisão de 6eae43d (A1)",
+    "Tomei 20 comprimidos de rivotril.",
+  ),
+  nr(
+    "AG6-NR218",
+    "risco_de_vida",
+    "revisão de 6eae43d (A1)",
+    "Tomei a cartela inteira de remédio pra dormir.",
+  ),
+  nr(
+    "AG6-NR219",
+    "risco_de_vida",
+    "revisão de 6eae43d (A1)",
+    "cortei os pulsos",
+  ),
+  nr(
+    "AG6-NR220",
+    "fisica",
+    "revisão de 6eae43d (A1)",
+    "minha mãe tá roxa e não respira",
+  ),
+  nr(
+    "AG6-NR221",
+    "fisica",
+    "revisão de 6eae43d (A1)",
+    "Minha mãe caiu e não tá respondendo.",
+  ),
+  nr(
+    "AG6-NR222",
+    "fisica",
+    "revisão de 6eae43d (A1)",
+    "a boca do meu pai ficou torta",
+  ),
+  nr(
+    "AG6-NR223",
+    "fisica",
+    "revisão de 6eae43d (A1)",
+    "tô com uma pressão no peito",
+  ),
+  nr(
+    "AG6-NR224",
+    "fisica",
+    "revisão de 6eae43d (A1)",
+    "coração apertado e uma dor que vai pro braço",
+  ),
+  nr(
+    "AG6-NR225",
+    "fisica",
+    "revisão de 6eae43d (A1)",
+    "meu pai não está respondendo",
+  ),
+  nr(
+    "AG6-NR226",
+    "fisica",
+    "revisão de 6eae43d (A1)",
+    "não estou enxergando de um olho",
+  ),
+  nr(
+    "AG6-NR227",
+    "fisica",
+    "revisão de 6eae43d (A1)",
+    "a vista escureceu quando levantei rápido",
+  ),
+  // ---- revisao de 6eae43d (M1): a edd123c marcava; a 2ca2097 e a 6eae43d
+  // perdiam (o procedimento apagava a boca torta com o outro sinal de AVC) -
+  nr(
+    "AG6-NR228",
+    "fisica",
+    "revisão de 6eae43d (M1)",
+    "fiz botox ontem e agora minha boca ficou torta e meu braço tá dormente",
+  ),
+  nr(
+    "AG6-NR229",
+    "fisica",
+    "revisão de 6eae43d (M1)",
+    "Fiz botox ontem. Agora minha boca ficou torta e meu braço está fraco.",
+  ),
+  nr(
+    "AG6-NR230",
+    "fisica",
+    "revisão de 6eae43d (M1)",
+    "fiz preenchimento hoje e minha boca entortou, meu braço esquerdo tá formigando",
+  ),
+  nr(
+    "AG6-NR231",
+    "fisica",
+    "revisão de 6eae43d (M1)",
+    "fiz harmonização ontem, meu rosto ficou torto e minha fala tá estranha",
+  ),
+  nr(
+    "AG6-NR232",
+    "fisica",
+    "revisão de 6eae43d (M1)",
+    "fiz botox ontem e minha boca ficou torta",
+    "meu braço tá dormente",
+  ),
+  nr(
+    "AG6-NR233",
+    "fisica",
+    "revisão de 6eae43d (M1)",
+    "fiz botox semana passada e minha boca tá torta e minha perna tá fraca",
+  ),
+  nr(
+    "AG6-NR234",
+    "fisica",
+    "revisão de 6eae43d (M1)",
+    "depois do botox minha boca ficou torta e eu tô com o braço sem força",
+  ),
+  nr(
+    "AG6-NR235",
+    "fisica",
+    "revisão de 6eae43d (M1)",
+    "fiz botox e minha boca ficou torta e tô com muita dor de cabeça",
+  ),
+  nr(
+    "AG6-NR236",
+    "fisica",
+    "revisão de 6eae43d (M1)",
+    "Oi, eu fiz botox ontem e hoje minha boca tá torta e meu braço tá dormente, o que eu faço?",
+  ),
+  nr(
+    "AG6-NR237",
+    "fisica",
+    "revisão de 6eae43d (M1)",
+    "minha boca ficou torta depois do botox e agora não sinto o braço",
+  ),
+  nr(
+    "AG6-NR238",
+    "fisica",
+    "revisão de 6eae43d (M1)",
+    "fiz botox ontem",
+    "minha boca ficou torta",
+    "e meu braço tá dormente",
+  ),
+  // ---- revisao de 6eae43d (M2): a edd123c marcava; deixaram de ser
+  // urgencia (estao em FALSOS_POSITIVOS_ACEITOS, com a area e o motivo) ----
+  nr(
+    "AG6-NR239",
+    "fisica",
+    "revisão de 6eae43d (M2)",
+    "minha boca fica torta quando eu sorrio",
+  ),
+  nr(
+    "AG6-NR240",
+    "fisica",
+    "revisão de 6eae43d (M2)",
+    "minha boca tá meio torta, quero fazer preenchimento",
+  ),
+  nr(
+    "AG6-NR241",
+    "fisica",
+    "revisão de 6eae43d (M2)",
+    "o lado esquerdo do meu rosto tá mais caído, quero fazer fios",
+  ),
+  nr(
+    "AG6-NR242",
+    "risco_de_vida",
+    "revisão de 6eae43d (M2)",
+    "essas rugas estão me matando, quanto é o botox?",
+  ),
+  nr(
+    "AG6-NR243",
+    "risco_de_vida",
+    "revisão de 6eae43d (M2)",
+    "essa papada tá me matando kkk",
+  ),
+  nr(
+    "AG6-NR244",
+    "risco_de_vida",
+    "revisão de 6eae43d (M2)",
+    "essa flacidez tá me matando",
+  ),
+  nr(
+    "AG6-NR245",
+    "risco_de_vida",
+    "revisão de 6eae43d (M2)",
+    "essas estrias estão me matando",
+  ),
+  nr(
+    "AG6-NR246",
+    "risco_de_vida",
+    "revisão de 6eae43d (M2)",
+    "essas olheiras estão me matando",
+  ),
+  nr(
+    "AG6-NR247",
+    "risco_de_vida",
+    "revisão de 6eae43d (M2)",
+    "essa acne tá me matando",
+  ),
+  nr(
+    "AG6-NR248",
+    "risco_de_vida",
+    "revisão de 6eae43d (M2)",
+    "esse melasma tá me matando",
+  ),
+  nr(
+    "AG6-NR249",
+    "risco_de_vida",
+    "revisão de 6eae43d (M2)",
+    "esse cabelo tá me matando",
+  ),
+  nr(
+    "AG6-NR250",
+    "risco_de_vida",
+    "revisão de 6eae43d (M2)",
+    "essa dor nas costas tá me matando, tem horário com o ortopedista?",
+  ),
+  nr(
+    "AG6-NR251",
+    "risco_de_vida",
+    "revisão de 6eae43d (M2)",
+    "essa enxaqueca tá me matando",
+  ),
+  nr(
+    "AG6-NR252",
+    "risco_de_vida",
+    "revisão de 6eae43d (M2)",
+    "essa cólica tá me matando",
+  ),
+  nr("AG6-NR253", "fisica", "revisão de 6eae43d (M2)", "botox dá falta de ar?"),
+  nr(
+    "AG6-NR254",
+    "fisica",
+    "revisão de 6eae43d (M2)",
+    "esse procedimento é perigoso? pode dar falta de ar?",
+  ),
+  nr(
+    "AG6-NR255",
+    "fisica",
+    "revisão de 6eae43d (M2)",
+    "tenho falta de ar quando subo escada, posso fazer lipo?",
+  ),
+  nr(
+    "AG6-NR256",
+    "fisica",
+    "revisão de 6eae43d (M2)",
+    "Oi, é uma emergência! Preciso de um horário pra amanhã, tenho casamento.",
+  ),
+  nr(
+    "AG6-NR257",
+    "fisica",
+    "revisão de 6eae43d (M2)",
+    "tenho uma emergência estética, preciso de um horário hoje",
+  ),
+  // ---- revisao de 6eae43d: as frases das baterias que a edd123c marcava e
+  // que faltavam aqui (a copia fica inteira) --------------------------------
+  nr(
+    "AG6-NR258",
+    "fisica",
+    "urgencia.test.ts",
+    "fiz botox semana passada e minha boca ficou torta",
+  ),
+  nr(
+    "AG6-NR259",
+    "fisica",
+    "urgencia.test.ts",
+    "oi",
+    "fiz botox semana passada e minha boca ficou torta",
+  ),
+  nr(
+    "AG6-NR260",
+    "fisica",
+    "urgencia.test.ts",
+    "Estou no trabalho, não consigo falar, pode mandar mensagem",
+  ),
+  nr(
+    "AG6-NR261",
+    "fisica",
+    "urgencia.test.ts",
+    "não consigo falar, te ligo mais tarde",
+  ),
+  nr(
+    "AG6-NR262",
+    "fisica",
+    "urgencia.test.ts",
+    "oi",
+    "tentei ligar várias vezes, não consigo falar.",
+  ),
+  nr("AG6-NR263", "fisica", "urgencia.test.ts", "meu rosto caiu"),
+  nr("AG6-NR264", "fisica", "urgencia.test.ts", "o rosto dela caiu"),
+  nr("AG6-NR265", "fisica", "urgencia.test.ts", "convul-\nsão"),
+  nr("AG6-NR266", "fisica", "urgencia.test.ts", "desmaiei uma vez no dentista"),
+  nr(
+    "AG6-NR267",
+    "fisica",
+    "urgencia.test.ts",
+    "já tive dor no peito. Hoje voltou",
+  ),
+  nr(
+    "AG6-NR268",
+    "fisica",
+    "urgencia.test.ts",
+    "já tive dor no peito, mas agora tá bem forte",
+  ),
+  nr(
+    "AG6-NR269",
+    "fisica",
+    "urgencia.test.ts",
+    "às vezes sangro muito, agora tô sangrando muito",
+  ),
+  nr("AG6-NR270", "fisica", "urgencia.test.ts", "uma vez chamei a ambulância"),
+  nr(
+    "AG6-NR271",
+    "fisica",
+    "urgencia.test.ts",
+    "o telefone tá ruim, não consigo falar direito",
+  ),
+  nr(
+    "AG6-NR272",
+    "fisica",
+    "urgencia.test.ts",
+    "quanto fica com o botox? minha boca ficou torta",
+  ),
+  nr(
+    "AG6-NR273",
+    "fisica",
+    "urgencia.test.ts",
+    "fiz botox semana passada e de repente minha boca ficou torta",
+  ),
+  nr(
+    "AG6-NR274",
+    "fisica",
+    "urgencia.test.ts",
+    "fiz botox e metade do rosto caiu",
+  ),
+  nr(
+    "AG6-NR275",
+    "fisica",
+    "urgencia.test.ts",
+    "a boca dela ficou torta do nada",
+  ),
+  nr(
+    "AG6-NR276",
+    "fisica",
+    "urgencia.test.ts",
+    "sempre tive a boca torta, mas de repente ela entortou mais",
+  ),
+  nr(
+    "AG6-NR277",
+    "fisica",
+    "urgencia.test.ts",
+    "fiz rinoplastia ontem e não consigo respirar pelo nariz nem pela boca",
+  ),
+  nr(
+    "AG6-NR278",
+    "fisica",
+    "urgencia.test.ts",
+    "socorro, tenho uma emergência, preciso remarcar",
+  ),
+  nr(
+    "AG6-NR279",
+    "risco_de_vida",
+    "urgencia.test.ts",
+    "se não fosse meu marido ia me matar",
+  ),
+  nr(
+    "AG6-NR280",
+    "risco_de_vida",
+    "urgencia.test.ts",
+    "minha mãe vai me matar",
+  ),
+  nr("AG6-NR281", "fisica", "urgencia.test.ts", "oi", "to com falta de ar"),
+  nr(
+    "AG6-NR282",
+    "risco_de_vida",
+    "urgencia.test.ts",
+    "to com falta de ar",
+    "não aguento mais, quero morrer",
+  ),
+  nr(
+    "AG6-NR283",
+    "fisica",
+    "bateria-ag6.test.ts",
+    "não estou com",
+    "falta de ar",
+  ),
+  nr(
+    "AG6-NR284",
+    "risco_de_vida",
+    "casos.ts RTE-K04",
+    "minhas costas tão me matando",
+  ),
+  // ---- revisao de 6eae43d: o corpus do revisor (rev-urg/corpus.ts e
+  // matando.ts), as frases que a edd123c marcava e deixaram de ser urgencia
+  nr(
+    "AG6-NR285",
+    "risco_de_vida",
+    "revisão de 6eae43d (corpus do revisor)",
+    "essa papada tá me matando",
+  ),
+  nr(
+    "AG6-NR286",
+    "risco_de_vida",
+    "revisão de 6eae43d (corpus do revisor)",
+    "essas rugas estão me matando",
+  ),
+  nr(
+    "AG6-NR287",
+    "risco_de_vida",
+    "revisão de 6eae43d (corpus do revisor)",
+    "essa celulite tá me matando kkk",
+  ),
+  nr(
+    "AG6-NR288",
+    "risco_de_vida",
+    "revisão de 6eae43d (corpus do revisor)",
+    "essas manchas estão me matando",
+  ),
+  nr(
+    "AG6-NR289",
+    "fisica",
+    "revisão de 6eae43d (corpus do revisor)",
+    "minha boca tá torta no sorriso, dá pra corrigir com botox?",
+  ),
+  nr(
+    "AG6-NR290",
+    "fisica",
+    "revisão de 6eae43d (corpus do revisor)",
+    "tenho o rosto torto e queria harmonizar",
+  ),
+  nr(
+    "AG6-NR291",
+    "fisica",
+    "revisão de 6eae43d (corpus do revisor)",
+    "minha boca entortou um pouco com o tempo, preenchimento resolve?",
+  ),
+  nr(
+    "AG6-NR292",
+    "risco_de_vida",
+    "revisão de 6eae43d (corpus do revisor)",
+    "essa dor de dente tá me matando",
+  ),
+  nr(
+    "AG6-NR293",
+    "risco_de_vida",
+    "revisão de 6eae43d (corpus do revisor)",
+    "esse joelho tá me matando",
+  ),
+  nr(
+    "AG6-NR294",
+    "risco_de_vida",
+    "revisão de 6eae43d (corpus do revisor)",
+    "essa gastrite tá me matando",
+  ),
+  nr(
+    "AG6-NR295",
+    "risco_de_vida",
+    "revisão de 6eae43d (corpus do revisor)",
+    "essa coceira tá me matando",
+  ),
+  nr(
+    "AG6-NR296",
+    "risco_de_vida",
+    "revisão de 6eae43d (corpus do revisor)",
+    "essa barriga tá me matando",
+  ),
+  nr(
+    "AG6-NR297",
+    "risco_de_vida",
+    "revisão de 6eae43d (corpus do revisor)",
+    "essas manchas no rosto estão me matando",
+  ),
+  nr(
+    "AG6-NR298",
+    "fisica",
+    "revisão de 6eae43d (corpus do revisor)",
+    "fiz uma cirurgia de emergência ano passado, posso fazer harmonização?",
+  ),
+  nr(
+    "AG6-NR299",
+    "fisica",
+    "revisão de 6eae43d (corpus do revisor)",
+    "tenho pânico de agulha, já desmaiei",
+  ),
+  nr(
+    "AG6-NR300",
+    "fisica",
+    "revisão de 6eae43d (corpus do revisor)",
+    "quanto custa o atendimento de emergência?",
+  ),
+  nr(
+    "AG6-NR301",
+    "fisica",
+    "revisão de 6eae43d (corpus do revisor)",
+    "fui na emergência semana passada e me indicaram vocês",
+  ),
+  // ---- revisao de 6eae43d: as frases novas das baterias (os controles e as
+  // regras de leitura de urgencia.test.ts e casos-ag6.ts) que a edd123c
+  // marcava -----------------------------------------------------------------
+  nr(
+    "AG6-NR302",
+    "fisica",
+    "casos-ag6.ts AG6-R20 e AG6-RC11",
+    "fiz botox ontem e minha boca ficou torta",
+  ),
+  nr(
+    "AG6-NR303",
+    "fisica",
+    "casos-ag6.ts AG6-RC11",
+    "fiz botox ontem e minha boca ficou torta",
+    "e o lábio tá dormente",
+  ),
+  nr(
+    "AG6-NR304",
+    "fisica",
+    "urgencia.test.ts",
+    "fiz preenchimento e minha boca ficou torta e dormente",
+  ),
+  nr(
+    "AG6-NR305",
+    "fisica",
+    "urgencia.test.ts",
+    "o rosto dela caiu muito com a idade, vocês fazem fios?",
+  ),
+  nr(
+    "AG6-NR306",
+    "fisica",
+    "urgencia.test.ts",
+    "preenchimento pode causar falta de ar?",
+  ),
+  nr("AG6-NR307", "fisica", "urgencia.test.ts", "botox causa convulsão?"),
+  nr(
+    "AG6-NR308",
+    "fisica",
+    "urgencia.test.ts",
+    "tem risco de dar falta de ar na anestesia?",
+  ),
+  nr(
+    "AG6-NR309",
+    "fisica",
+    "urgencia.test.ts",
+    "a anestesia pode me dar falta de ar?",
+  ),
+  nr(
+    "AG6-NR310",
+    "fisica",
+    "urgencia.test.ts",
+    "posso ter convulsão com a anestesia?",
+  ),
+  nr("AG6-NR311", "fisica", "urgencia.test.ts", "fico sem ar quando corro"),
+  nr(
+    "AG6-NR312",
+    "risco_de_vida",
+    "urgencia.test.ts",
+    "essa dor nas minhas costas tá me matando",
+  ),
+  nr("AG6-NR313", "risco_de_vida", "urgencia.test.ts", "rugas tão me matando"),
+  nr(
+    "AG6-NR314",
+    "fisica",
+    "urgencia.test.ts",
+    "é uma emergência, preciso encaixar hoje",
+  ),
+  nr(
+    "AG6-NR315",
+    "fisica",
+    "urgencia.test.ts",
+    "tenho uma emergência estética kkk",
+  ),
+  // ---- revisao de 6eae43d (pedido do coordenador): a overdose, o ferimento
+  // grave e a complicacao do preenchimento (a edd123c tambem perdia; aqui, o
+  // tipo esperado) -----------------------------------------------------------
+  nr(
+    "AG6-NR316",
+    "risco_de_vida",
+    "revisão de 6eae43d (coordenador)",
+    "tomei uma overdose",
+  ),
+  nr(
+    "AG6-NR317",
+    "risco_de_vida",
+    "revisão de 6eae43d (coordenador)",
+    "overdose de remédio",
+  ),
+  nr(
+    "AG6-NR318",
+    "fisica",
+    "revisão de 6eae43d (coordenador)",
+    "levei um tiro",
+  ),
+  nr("AG6-NR319", "fisica", "revisão de 6eae43d (coordenador)", "fui baleado"),
+  nr(
+    "AG6-NR320",
+    "fisica",
+    "revisão de 6eae43d (coordenador)",
+    "fui esfaqueada",
+  ),
+  nr(
+    "AG6-NR321",
+    "fisica",
+    "revisão de 6eae43d (coordenador)",
+    "levei uma facada",
+  ),
+  nr(
+    "AG6-NR322",
+    "fisica",
+    "revisão de 6eae43d (coordenador)",
+    "meu filho levou um tiro",
+  ),
+  nr(
+    "AG6-NR323",
+    "fisica",
+    "revisão de 6eae43d (coordenador)",
+    "fiz preenchimento ontem e minha visão tá embaçada",
+  ),
+  nr(
+    "AG6-NR324",
+    "fisica",
+    "revisão de 6eae43d (coordenador)",
+    "fiz preenchimento labial e o lábio ficou branco",
+  ),
+  nr(
+    "AG6-NR325",
+    "fisica",
+    "revisão de 6eae43d (coordenador)",
+    "fiz preenchimento ontem, tá roxo e espalhando",
+  ),
+  nr(
+    "AG6-NR326",
+    "fisica",
+    "revisão de 6eae43d (coordenador)",
+    "fiz preenchimento e tô com uma dor muito forte no lábio",
+  ),
+  nr(
+    "AG6-NR327",
+    "fisica",
+    "revisão de 6eae43d (coordenador)",
+    "fiz fios ontem e a dor só piora",
+  ),
+  nr(
+    "AG6-NR328",
+    "fisica",
+    "revisão de 6eae43d (coordenador)",
+    "fiz preenchimento labial hoje",
+    "o lábio ficou branco",
+  ),
+  // As do corpus do revisor (rev-urg/corpus.ts e corpus3.ts) que a edd123c e
+  // a 6eae43d perdiam.
+  nr(
+    "AG6-NR329",
+    "fisica",
+    "revisão de 6eae43d (coordenador)",
+    "depois do preenchimento minha visão ficou embaçada",
+  ),
+  nr(
+    "AG6-NR330",
+    "fisica",
+    "revisão de 6eae43d (coordenador)",
+    "Meu lábio ficou branco e depois roxo logo depois do preenchimento, tá doendo demais.",
+  ),
+  nr(
+    "AG6-NR331",
+    "fisica",
+    "revisão de 6eae43d (coordenador)",
+    "fiz preenchimento ontem e hoje o lábio tá roxo e frio",
+  ),
+  nr(
+    "AG6-NR332",
+    "fisica",
+    "revisão de 6eae43d (coordenador)",
+    "Meu lábio ficou roxo e muito dolorido depois do preenchimento.",
+  ),
 ];
 
 /**
@@ -2538,11 +3873,12 @@ export const NAO_REGRESSAO_DA_URGENCIA: readonly FraseDaNaoRegressao[] = [
  * id e o da frase em NAO_REGRESSAO_DA_URGENCIA). Na duvida, fica urgencia: o
  * falso positivo custa atencao; o falso negativo custa seguranca. Todos
  * continuam passando para a equipe pelo portao de sempre quando trazem
- * sintoma ou assunto clinico (sem a marca de Urgente).
+ * sintoma ou assunto clinico (sem a marca de Urgente). Revisao de 6eae43d:
+ * a area "clinica" (a dor do corpo como figura, a condicao contada).
  */
 export type FalsoPositivoAceito = {
   id: string;
-  area: "estetica" | "recepcao";
+  area: "estetica" | "recepcao" | "clinica";
   motivo: string;
 };
 
@@ -2819,6 +4155,291 @@ export const FALSOS_POSITIVOS_ACEITOS: readonly FalsoPositivoAceito[] = [
   ),
   fp("AG6-NR201", "recepcao", "a negação no meio do sinal"),
   fp("AG6-NR202", "recepcao", "a negação no meio do sinal"),
+  // ---- revisao de 6eae43d (M2) ---------------------------------------------
+  fp(
+    "AG6-NR239",
+    "estetica",
+    "a assimetria do sorriso (quando eu sorrio), sem de repente, outro membro ou a fala",
+  ),
+  fp(
+    "AG6-NR240",
+    "estetica",
+    "o pedido de procedimento na mesma mensagem (quero fazer preenchimento), sem de repente, outro membro ou a fala",
+  ),
+  fp(
+    "AG6-NR241",
+    "estetica",
+    "o pedido de procedimento na mesma mensagem (quero fazer fios), sem de repente, outro membro ou a fala",
+  ),
+  fp(
+    "AG6-NR242",
+    "estetica",
+    "figura de linguagem: a queixa estética como sujeito de me matando (as rugas), com a pergunta do preço",
+  ),
+  fp(
+    "AG6-NR243",
+    "estetica",
+    "figura de linguagem: a queixa estética como sujeito de me matando (a papada)",
+  ),
+  fp(
+    "AG6-NR244",
+    "estetica",
+    "figura de linguagem: a queixa estética como sujeito de me matando (a flacidez)",
+  ),
+  fp(
+    "AG6-NR245",
+    "estetica",
+    "figura de linguagem: a queixa estética como sujeito de me matando (as estrias)",
+  ),
+  fp(
+    "AG6-NR246",
+    "estetica",
+    "figura de linguagem: a queixa estética como sujeito de me matando (as olheiras)",
+  ),
+  fp(
+    "AG6-NR247",
+    "estetica",
+    "figura de linguagem: a queixa estética como sujeito de me matando (a acne)",
+  ),
+  fp(
+    "AG6-NR248",
+    "estetica",
+    "figura de linguagem: a queixa estética como sujeito de me matando (o melasma)",
+  ),
+  fp(
+    "AG6-NR249",
+    "estetica",
+    "figura de linguagem: a queixa estética como sujeito de me matando (o cabelo)",
+  ),
+  fp(
+    "AG6-NR250",
+    "clinica",
+    "figura de linguagem: a dor do corpo como sujeito de me matando (as costas), com o pedido de horário; a dor escala como sintoma",
+  ),
+  fp(
+    "AG6-NR251",
+    "clinica",
+    "figura de linguagem: a dor do corpo como sujeito de me matando (a enxaqueca); a dor escala como sintoma",
+  ),
+  fp(
+    "AG6-NR252",
+    "clinica",
+    "figura de linguagem: a dor do corpo como sujeito de me matando (a cólica); a dor escala como sintoma",
+  ),
+  fp(
+    "AG6-NR253",
+    "estetica",
+    "a pergunta sobre o efeito do procedimento (dá falta de ar?), sem o relato de agora",
+  ),
+  fp(
+    "AG6-NR254",
+    "estetica",
+    "a pergunta sobre o efeito do procedimento (pode dar falta de ar?), sem o relato de agora",
+  ),
+  fp(
+    "AG6-NR255",
+    "clinica",
+    "a falta de ar do esforço de sempre (quando subo escada), com a pergunta do procedimento; escala como sintoma",
+  ),
+  fp(
+    "AG6-NR256",
+    "recepcao",
+    "a emergência da agenda: o pedido de horário pra amanhã (o casamento), sem pedido de ajuda",
+  ),
+  fp(
+    "AG6-NR257",
+    "recepcao",
+    "a emergência estética com o pedido de horário, sem pedido de ajuda",
+  ),
+  // ---- revisao de 6eae43d: as frases das baterias que faltavam ------------
+  fp(
+    "AG6-NR258",
+    "estetica",
+    "efeito do procedimento recente da própria pessoa, na mesma mensagem (segue como sintoma, sem a marca: D-51)",
+  ),
+  fp(
+    "AG6-NR259",
+    "estetica",
+    "efeito do procedimento recente da própria pessoa, na mesma mensagem (segue como sintoma, sem a marca: D-51)",
+  ),
+  fp(
+    "AG6-NR260",
+    "recepcao",
+    "quem está ocupado e pede mensagem: a ligação, não a fala",
+  ),
+  fp(
+    "AG6-NR261",
+    "recepcao",
+    "quem está ocupado e liga depois: a ligação, não a fala",
+  ),
+  fp(
+    "AG6-NR262",
+    "recepcao",
+    'o telefone com a clínica como alvo (dita ou não), sem pessoa nomeada, sem "falar direito", sem queixa do corpo nem começo de repente',
+  ),
+  fp(
+    "AG6-NR263",
+    "estetica",
+    "a flacidez: o próprio rosto que caiu, sem um lado, metade ou de repente (2ca2097)",
+  ),
+  fp(
+    "AG6-NR284",
+    "clinica",
+    "figura de linguagem: a dor do corpo como sujeito de me matando (as costas); escala como sintoma",
+  ),
+  // ---- revisao de 6eae43d: o corpus do revisor ----------------------------
+  fp(
+    "AG6-NR285",
+    "estetica",
+    "figura de linguagem: a queixa estética como sujeito de me matando (a papada)",
+  ),
+  fp(
+    "AG6-NR286",
+    "estetica",
+    "figura de linguagem: a queixa estética como sujeito de me matando (as rugas)",
+  ),
+  fp(
+    "AG6-NR287",
+    "estetica",
+    "figura de linguagem: a queixa estética como sujeito de me matando (a celulite)",
+  ),
+  fp(
+    "AG6-NR288",
+    "estetica",
+    "figura de linguagem: a queixa estética como sujeito de me matando (as manchas)",
+  ),
+  fp(
+    "AG6-NR289",
+    "estetica",
+    "a assimetria do sorriso (torta no sorriso) com o pedido de procedimento",
+  ),
+  fp(
+    "AG6-NR290",
+    "estetica",
+    "o pedido de procedimento na mesma mensagem (queria harmonizar), sem de repente, outro membro ou a fala",
+  ),
+  fp(
+    "AG6-NR291",
+    "estetica",
+    "a idade (com o tempo) e o pedido de procedimento (preenchimento resolve?)",
+  ),
+  fp(
+    "AG6-NR292",
+    "clinica",
+    "figura de linguagem: a dor do corpo como sujeito de me matando (a dor de dente); escala como sintoma",
+  ),
+  fp(
+    "AG6-NR293",
+    "clinica",
+    "figura de linguagem: a dor do corpo como sujeito de me matando (o joelho); escala como sintoma",
+  ),
+  fp(
+    "AG6-NR294",
+    "clinica",
+    "figura de linguagem: a dor do corpo como sujeito de me matando (a gastrite); escala como sintoma",
+  ),
+  fp(
+    "AG6-NR295",
+    "clinica",
+    "figura de linguagem: a queixa do corpo como sujeito de me matando (a coceira); escala como sintoma",
+  ),
+  fp(
+    "AG6-NR296",
+    "estetica",
+    "figura de linguagem: a queixa estética como sujeito de me matando (a barriga)",
+  ),
+  fp(
+    "AG6-NR297",
+    "estetica",
+    "figura de linguagem: a queixa estética como sujeito de me matando (as manchas no rosto)",
+  ),
+  fp(
+    "AG6-NR298",
+    "recepcao",
+    "a emergência que já passou (a cirurgia de emergência do ano passado), com a pergunta do procedimento",
+  ),
+  fp(
+    "AG6-NR299",
+    "clinica",
+    "a história contada (já desmaiei, com o pânico de agulha)",
+  ),
+  fp(
+    "AG6-NR300",
+    "recepcao",
+    "a pergunta sobre o serviço da clínica (o preço do atendimento de emergência)",
+  ),
+  fp("AG6-NR301", "recepcao", "o lugar onde já esteve (fui na emergência)"),
+  // ---- revisao de 6eae43d: as frases novas das baterias -------------------
+  fp(
+    "AG6-NR302",
+    "estetica",
+    "efeito do procedimento recente da própria pessoa, na mesma mensagem (segue como sintoma, sem a marca: D-51); com o braço dormente na rajada é urgência (AG6-R20)",
+  ),
+  fp(
+    "AG6-NR303",
+    "estetica",
+    "efeito do procedimento: a dormência do lábio é a anestesia, não a queixa de outro membro",
+  ),
+  fp(
+    "AG6-NR304",
+    "estetica",
+    "efeito do procedimento: a boca torta e dormente depois do preenchimento (a anestesia), sem outro membro",
+  ),
+  fp(
+    "AG6-NR305",
+    "estetica",
+    "a idade (com a idade) e o pedido de procedimento (vocês fazem fios?)",
+  ),
+  fp(
+    "AG6-NR306",
+    "estetica",
+    "a pergunta sobre o efeito do procedimento (pode causar falta de ar?)",
+  ),
+  fp(
+    "AG6-NR307",
+    "estetica",
+    "a pergunta sobre o efeito do procedimento (causa convulsão?)",
+  ),
+  fp(
+    "AG6-NR308",
+    "clinica",
+    "a pergunta sobre o efeito da anestesia (tem risco de dar falta de ar?)",
+  ),
+  fp(
+    "AG6-NR309",
+    "clinica",
+    "a pergunta sobre o efeito da anestesia (pode me dar falta de ar?)",
+  ),
+  fp(
+    "AG6-NR310",
+    "clinica",
+    "a pergunta sobre o efeito da anestesia (posso ter convulsão?)",
+  ),
+  fp(
+    "AG6-NR311",
+    "clinica",
+    "a falta de ar do esforço de sempre (quando corro); escala como sintoma",
+  ),
+  fp(
+    "AG6-NR312",
+    "clinica",
+    "figura de linguagem: a dor do corpo como sujeito de me matando (as costas); escala como sintoma",
+  ),
+  fp(
+    "AG6-NR313",
+    "estetica",
+    "figura de linguagem: a queixa estética como sujeito de me matando (as rugas, sem o artigo)",
+  ),
+  fp(
+    "AG6-NR314",
+    "recepcao",
+    "a emergência da agenda: o pedido de encaixe, sem pedido de ajuda",
+  ),
+  fp(
+    "AG6-NR315",
+    "recepcao",
+    "a emergência estética (figura de linguagem), sem pedido de ajuda",
+  ),
 ];
 
 /**
@@ -2866,5 +4487,16 @@ export const FALSOS_POSITIVOS_QUE_FICAM: readonly {
     id: "AG6-U146",
     motivo:
       'o "não vou" não é a negação do sinal de risco de vida (como em "não vou me matar")',
+  },
+  // Revisao de 6eae43d: o pedido deixou a decisao a esta frente.
+  {
+    id: "AG6-U192",
+    motivo:
+      "a vista que escurece ao levantar pode ser a queda de pressão (no pós-operatório, o sangramento) e nenhum outro gatilho do portão escala a frase",
+  },
+  {
+    id: "AG6-U182",
+    motivo:
+      "a pessoa da família que não responde, sem o assunto da recepção na mensagem, pode estar desacordada",
   },
 ];

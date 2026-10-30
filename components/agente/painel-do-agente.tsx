@@ -453,6 +453,9 @@ export function PainelDoAgente({
                 podeEditar={podeEditar}
                 dica={dica}
                 pendente={pendente}
+                // [AG6b mídia] a dica da habilidade que o servidor ainda
+                // nao deixa valer (a prova paga, D-100)
+                midiaNoServidor={dados.midiaNoServidor}
                 ocupado={(chave) => ocupado(`habilidade-${chave}`)}
                 aoAlternar={(proximas, habilidade) =>
                   executar(

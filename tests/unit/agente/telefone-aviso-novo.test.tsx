@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { Hourglass } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -126,6 +125,8 @@ import {
   alternarTelefoneDaIaAction,
 } from "@/app/(app)/agente/whatsapp-actions";
 import {
+  // [AG6b mídia] revisao das telas (item 5)
+  podeConfirmarOAvisoNovo,
   TELEFONE_DA_EQUIPE_STATUS,
   TELEFONE_SEM_MIDIA_STATUS,
   telefoneSemMidia,
@@ -143,10 +144,20 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import type { NumeroDoWhatsapp } from "@/components/whatsapp/numeros";
 import { expedientePadrao } from "@/lib/domain/agente/config";
 import {
+  // [AG6b mídia] revisao das telas (itens 2 e 5)
+  COLUNAS_DOS_TELEFONES,
+  COLUNAS_DOS_TELEFONES_SEM_O_AVISO,
+  EVENTO_DOS_TELEFONES_SEM_O_AVISO,
   versaoDoAvisoDaLinha,
   type DadosDaIa,
   type TelefoneDaIa,
 } from "@/lib/queries/ia-liberacao";
+
+// A leitura de verdade (o mock acima troca fetchLiberacaoDaIa para as
+// actions); o log continua o duble deste arquivo.
+const { fetchLiberacaoDaIa: lerLiberacaoDeVerdade } = await vi.importActual<
+  typeof import("@/lib/queries/ia-liberacao")
+>("@/lib/queries/ia-liberacao");
 
 const NUMERO = "11111111-1111-4111-8111-111111111111";
 
@@ -517,10 +528,14 @@ describe("o chip do telefone com o aviso antigo", () => {
     }
   });
 
-  it("a lista de telefones lê a versão do aviso", () => {
-    expect(readFileSync("lib/queries/ia-liberacao.ts", "utf8")).toContain(
-      '.select("id, phone_key, rotulo, ativo, aviso_da_openai_versao")',
+  it("a lista de telefones lê a versão do aviso", async () => {
+    expect(COLUNAS_DOS_TELEFONES).toBe(
+      "id, phone_key, rotulo, ativo, aviso_da_openai_versao",
     );
+    const banco = sessaoDaAba();
+    const lidos = await lerLiberacaoDeVerdade(banco.cliente, CLINICA_LIDA);
+    expect(banco.colunasDosTelefones()).toEqual([COLUNAS_DOS_TELEFONES]);
+    expect(lidos.telefones.map((t) => t.avisoDaOpenaiVersao)).toEqual([2, 1]);
   });
 
   it("na linha: o chip junto do Ligado e o que fazer, escrito", () => {
@@ -564,16 +579,313 @@ describe("o chip do telefone com o aviso antigo", () => {
     );
   });
 
-  it("o gestor vê o chip e o que fazer, com os botões presos e a dica", () => {
+  it("o gestor vê o chip e a quem pedir, com os botões presos e a dica (revisão das telas, item 5)", () => {
     const html = aba({ podeEditar: false });
     const linha = linhaDoTelefone(html, "Vinicius, equipe");
     expect(linha).toContain("Sem áudio, foto e documento");
     expect(linha).toMatch(/<button[^>]*disabled=""[^>]*>Desligar<\/button>/);
+    // Nunca a instrucao de um botao preso para ele: a quem pedir.
+    expect(texto(linha)).toContain(TEXTOS_DA_IA.semMidiaNaLinhaSemPermissao);
+    expect(texto(linha)).not.toContain(TEXTOS_DA_IA.semMidiaNaLinha);
+    // O usado mesmo sendo de paciente: pedir para adicionar de novo.
+    const forcado = linhaDoTelefone(
+      aba({ podeEditar: false, telefonesForcados: ["t1"] }),
+      "Vinicius, equipe",
+    );
+    expect(texto(forcado)).toContain(
+      TEXTOS_DA_IA.semMidiaNaLinhaForcadoSemPermissao,
+    );
+    expect(texto(forcado)).not.toContain(TEXTOS_DA_IA.semMidiaNaLinhaForcado);
+  });
+
+  it("o administrador e o super admin leem o que fazer, nunca a quem pedir", () => {
+    for (const props of [{}, { superAdmin: true }]) {
+      const linha = linhaDoTelefone(aba(props), "Vinicius, equipe");
+      expect(texto(linha)).toContain(TEXTOS_DA_IA.semMidiaNaLinha);
+      expect(texto(linha)).not.toContain("peça ao administrador");
+    }
+  });
+
+  it("quem pode confirmar o aviso novo: pela permissão de desligar e ligar (o forçado, de adicionar e usar mesmo assim); no Painel geral, sempre", () => {
+    const livres = { escolha: null, telefone: null, forcar: null };
+    const doGestor = {
+      escolha: TEXTOS_DA_IA.semPermissao,
+      telefone: TEXTOS_DA_IA.semPermissao,
+      forcar: TEXTOS_DA_IA.semPermissao,
+    };
+    for (const forcado of [false, true]) {
+      expect(
+        podeConfirmarOAvisoNovo({ dicas: livres, forcado, noPainel: false }),
+      ).toBe(true);
+      expect(
+        podeConfirmarOAvisoNovo({ dicas: doGestor, forcado, noPainel: false }),
+      ).toBe(false);
+      // A equipe Conduzza no painel: com os cartoes travados (conta
+      // suspensa, agente desligado), o porque esta no topo.
+      expect(
+        podeConfirmarOAvisoNovo({ dicas: doGestor, forcado, noPainel: true }),
+      ).toBe(true);
+    }
+    // Cada caminho pela dica dele.
+    expect(
+      podeConfirmarOAvisoNovo({
+        dicas: { ...livres, escolha: "x" },
+        forcado: false,
+        noPainel: false,
+      }),
+    ).toBe(false);
+    expect(
+      podeConfirmarOAvisoNovo({
+        dicas: { ...livres, escolha: "x" },
+        forcado: true,
+        noPainel: false,
+      }),
+    ).toBe(true);
+    expect(
+      podeConfirmarOAvisoNovo({
+        dicas: { ...livres, forcar: "x" },
+        forcado: true,
+        noPainel: false,
+      }),
+    ).toBe(false);
+    expect(textoDoTelefoneSemMidia(false, false)).toBe(
+      TEXTOS_DA_IA.semMidiaNaLinhaSemPermissao,
+    );
+    expect(textoDoTelefoneSemMidia(true, false)).toBe(
+      TEXTOS_DA_IA.semMidiaNaLinhaForcadoSemPermissao,
+    );
+    for (const frase of [
+      TEXTOS_DA_IA.semMidiaNaLinhaSemPermissao,
+      TEXTOS_DA_IA.semMidiaNaLinhaForcadoSemPermissao,
+    ]) {
+      expect(frase).not.toMatch(/[—–]/);
+      expect(frase).toContain("peça ao administrador da clínica");
+    }
   });
 
   it("nenhum travessão na aba com o chip", () => {
     expect(aba()).not.toMatch(/[—–]/);
     expect(aba({ telefonesForcados: ["t1"] })).not.toMatch(/[—–]/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// [AG6b mídia] A leitura da liberacao (revisao das telas, itens 2 e 5)
+// ---------------------------------------------------------------------------
+
+const CLINICA_LIDA = "acd9c539-585e-4f2a-a195-712c70099564";
+
+type ConsultaFalsa = {
+  tabela: string;
+  colunas: string;
+  filtros: Record<string, unknown>;
+};
+type RespostaFalsa = { data: unknown; error: { code: string } | null };
+
+/**
+ * A sessao do Supabase so com o que fetchLiberacaoDaIa le. Os telefones:
+ * sem a coluna (antes da migration), 42703 quando ela e pedida; com
+ * `erroDosTelefones`, esse erro sempre. A configuracao: o skills do
+ * rascunho e o da publicada.
+ */
+function sessaoDaAba(
+  opcoes: {
+    semAColuna?: boolean;
+    erroDosTelefones?: string;
+    rascunho?: { skills: unknown } | null;
+    publicada?: { skills: unknown };
+  } = {},
+) {
+  const consultas: ConsultaFalsa[] = [];
+  const responder = ({ tabela, colunas, filtros }: ConsultaFalsa): RespostaFalsa => {
+    if (tabela === "ia_liberacao") {
+      return { data: null, error: null };
+    }
+    if (tabela === "ia_numero_liberado") {
+      return { data: [], error: null };
+    }
+    if (tabela === "ia_contato_liberado") {
+      if (opcoes.erroDosTelefones) {
+        return { data: null, error: { code: opcoes.erroDosTelefones } };
+      }
+      const pediuAVersao = colunas.includes("aviso_da_openai_versao");
+      if (opcoes.semAColuna && pediuAVersao) {
+        return { data: null, error: { code: "42703" } };
+      }
+      const linhas = [
+        { id: "t1", phone_key: "+5584999990001", rotulo: "Vinicius", ativo: true, versao: 2 },
+        { id: "t2", phone_key: "+5584999990002", rotulo: "Ana", ativo: true, versao: 1 },
+      ];
+      return {
+        data: linhas.map(({ versao, ...linha }) =>
+          pediuAVersao ? { ...linha, aviso_da_openai_versao: versao } : linha,
+        ),
+        error: null,
+      };
+    }
+    if (tabela === "ai_agent_config") {
+      if (filtros.status === "publicada") {
+        return {
+          data: {
+            operating_mode: "24h",
+            fallback_minutes: null,
+            operating_hours: {},
+            ...(opcoes.publicada ?? { skills: {} }),
+          },
+          error: null,
+        };
+      }
+      return { data: opcoes.rascunho ?? null, error: null };
+    }
+    return { data: null, error: { code: "tabela_inesperada" } };
+  };
+  const cliente = {
+    from(tabela: string) {
+      const consulta: ConsultaFalsa = { tabela, colunas: "", filtros: {} };
+      consultas.push(consulta);
+      const agora = () => Promise.resolve(responder(consulta));
+      const cadeia = {
+        select(colunas: string) {
+          consulta.colunas = colunas;
+          return cadeia;
+        },
+        eq(coluna: string, valor: unknown) {
+          consulta.filtros[coluna] = valor;
+          return cadeia;
+        },
+        order: () => cadeia,
+        limit: () => cadeia,
+        maybeSingle: agora,
+        then<A, B>(
+          ok?: (resposta: RespostaFalsa) => A | PromiseLike<A>,
+          falha?: (erro: unknown) => B | PromiseLike<B>,
+        ) {
+          return agora().then(ok, falha);
+        },
+      };
+      return cadeia;
+    },
+    rpc: async (nome: string) =>
+      nome === "ia_interruptor_ligado"
+        ? { data: true, error: null }
+        : {
+            data: {
+              teto_atingido: false,
+              versao_publicada: 1,
+              telefones_invalidos: [],
+              telefones_sem_autorizacao: [],
+              conversas_abertas: [],
+              motor_parado: false,
+            },
+            error: null,
+          },
+  };
+  return {
+    cliente: cliente as unknown as SupabaseClient,
+    consultas,
+    colunasDosTelefones: () =>
+      consultas
+        .filter((consulta) => consulta.tabela === "ia_contato_liberado")
+        .map((consulta) => consulta.colunas),
+  };
+}
+
+describe("a lista de telefones antes da migration (item 2)", () => {
+  it("sem a coluna (42703): lê de novo sem ela, todo telefone na versão 1, e a aba não cai", async () => {
+    const banco = sessaoDaAba({ semAColuna: true });
+    const lidos = await lerLiberacaoDeVerdade(banco.cliente, CLINICA_LIDA);
+    expect(banco.colunasDosTelefones()).toEqual([
+      COLUNAS_DOS_TELEFONES,
+      COLUNAS_DOS_TELEFONES_SEM_O_AVISO,
+    ]);
+    expect(COLUNAS_DOS_TELEFONES_SEM_O_AVISO).toBe(
+      "id, phone_key, rotulo, ativo",
+    );
+    // O lado seguro: sem a versao, ninguem tem o aviso novo.
+    expect(lidos.telefones).toEqual([
+      { id: "t1", telefone: "+5584999990001", rotulo: "Vinicius", ativo: true, avisoDaOpenaiVersao: 1 },
+      { id: "t2", telefone: "+5584999990002", rotulo: "Ana", ativo: true, avisoDaOpenaiVersao: 1 },
+    ]);
+    // A volta deixa rastro no servidor: so o evento, a clinica e o codigo.
+    expect(registro.logs).toEqual([
+      [
+        EVENTO_DOS_TELEFONES_SEM_O_AVISO,
+        { clinic_id: CLINICA_LIDA, error_code: "42703" },
+      ],
+    ]);
+    const tudo = JSON.stringify(registro.logs);
+    expect(tudo).not.toContain("99999");
+    expect(tudo).not.toContain("Vinicius");
+  });
+
+  it("com a mídia ligada, o telefone lido sem a coluna ganha o chip (o aviso novo ainda não existe)", async () => {
+    const lidos = await lerLiberacaoDeVerdade(
+      sessaoDaAba({
+        semAColuna: true,
+        rascunho: { skills: { ler_audio: true } },
+      }).cliente,
+      CLINICA_LIDA,
+    );
+    const html = aba({ dados: { ...dados(), telefones: lidos.telefones } });
+    expect(linhaDoTelefone(html, "Vinicius")).toContain(
+      "Sem áudio, foto e documento",
+    );
+  });
+
+  it("outro erro continua derrubando a aba (nunca uma lista que não foi lida), sem ler de novo", async () => {
+    for (const codigo of ["42501", "PGRST205", "42P01"]) {
+      const banco = sessaoDaAba({ erroDosTelefones: codigo });
+      await expect(
+        lerLiberacaoDeVerdade(banco.cliente, CLINICA_LIDA),
+      ).rejects.toThrow();
+      expect(banco.colunasDosTelefones()).toEqual([COLUNAS_DOS_TELEFONES]);
+    }
+    expect(registro.logs).toEqual([]);
+  });
+});
+
+describe("a mídia ligada na leitura da liberação, para o Painel geral (item 5)", () => {
+  it("o rascunho ou a publicada, como a Tela 6; só o verdadeiro liga", async () => {
+    const casos: [Parameters<typeof sessaoDaAba>[0], boolean][] = [
+      [{}, false],
+      [{ rascunho: { skills: { ler_audio: true } } }, true],
+      [{ publicada: { skills: { ler_imagem_e_documento: true } } }, true],
+      [
+        {
+          rascunho: { skills: { ler_audio: false } },
+          publicada: { skills: { ler_audio: true } },
+        },
+        true,
+      ],
+      [{ rascunho: { skills: { agendar: true } } }, false],
+      [{ rascunho: { skills: { ler_audio: "true" } } }, false],
+      [{ rascunho: { skills: [true] } }, false],
+      [{ rascunho: { skills: null }, publicada: { skills: 7 } }, false],
+    ];
+    for (const [opcoes, esperado] of casos) {
+      const lidos = await lerLiberacaoDeVerdade(
+        sessaoDaAba(opcoes).cliente,
+        CLINICA_LIDA,
+      );
+      expect(lidos.midiaLigada, JSON.stringify(opcoes)).toBe(esperado);
+    }
+  });
+
+  it("lê o skills do rascunho e da publicada da clínica, pela sessão", async () => {
+    const banco = sessaoDaAba();
+    await lerLiberacaoDeVerdade(banco.cliente, CLINICA_LIDA);
+    const config = banco.consultas.filter(
+      (consulta) => consulta.tabela === "ai_agent_config",
+    );
+    expect(config.map((consulta) => consulta.filtros)).toEqual([
+      { clinic_id: CLINICA_LIDA, status: "publicada" },
+      { clinic_id: CLINICA_LIDA, status: "rascunho" },
+    ]);
+    for (const consulta of config) {
+      expect(consulta.colunas).toContain("skills");
+      // Nunca as instrucoes (so as RPCs do super admin leem).
+      expect(consulta.colunas).not.toContain("instrucoes");
+    }
   });
 });
 

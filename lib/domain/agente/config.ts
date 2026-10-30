@@ -446,12 +446,15 @@ export const HABILIDADES_DO_AGENTE = [
   // valem na versao PUBLICADA, com o telefone que confirmou o aviso novo
   // (D-95) e, ate a prova paga (D-100), nunca de fato: TRANSCRICAO_CALIBRADA
   // e os tetos do leitor fecham o plano do turno (lib/agente/midia.ts).
+  // Revisao das telas da AG6b (item 4): a nota diz "os telefones cadastrados
+  // na aba WhatsApp", e nao "da equipe": o telefone de paciente usado mesmo
+  // assim (o forcado) que confirmou o aviso novo tambem manda midia (D-95).
   {
     chave: "ler_audio",
     titulo: "Entender áudio",
     descricao:
       "Transcreve o áudio que a pessoa manda e responde por escrito. Áudio sem fala, longo demais ou que não deu para transcrever passa para a equipe.",
-    nota: "A transcrição é feita pela OpenAI, nos EUA, com a chave do Conduzza, só nas conversas com o assistente. Por enquanto, só com os telefones da equipe que confirmaram o aviso de áudio, foto e documento.",
+    nota: "A transcrição é feita pela OpenAI, nos EUA, com a chave do Conduzza, só nas conversas com o assistente. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
     travada: false,
     ferramentas: [],
     padrao: false,
@@ -465,7 +468,7 @@ export const HABILIDADES_DO_AGENTE = [
     titulo: "Ler imagem e documento",
     descricao:
       "Lê a foto ou o PDF de um pedido de exame ou procedimento e responde sobre os itens que a clínica faz. Resultado, laudo, receita, foto do corpo, carteirinha, guia e documento pessoal passam para a equipe.",
-    nota: "A foto ou o PDF vai uma vez para a OpenAI, nos EUA, sem o nome do arquivo e sem a localização da foto. Por enquanto, só com os telefones da equipe que confirmaram o aviso de áudio, foto e documento.",
+    nota: "A foto ou o PDF vai uma vez para a OpenAI, nos EUA, sem o nome do arquivo e sem a localização da foto. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
     travada: false,
     ferramentas: [],
     padrao: false,
@@ -532,6 +535,24 @@ export function notaDaHabilidade(chave: string): string | null {
 /** AG6b: as chaves das duas habilidades de midia (skills do jsonb). */
 export const HABILIDADE_DO_AUDIO = "ler_audio";
 export const HABILIDADE_DO_ARQUIVO = "ler_imagem_e_documento";
+
+/**
+ * AG6b (revisao das telas, item 3): o que o SERVIDOR ja deixa valer, mesmo
+ * com a habilidade ligada na versao publicada. Ate a prova paga (D-100), o
+ * plano do turno (lib/agente/midia.ts) marca todo audio, foto e documento
+ * como fora, e a conversa vai para a equipe. Calculado so no servidor
+ * (lib/agente/midia-no-servidor.ts, pelas constantes da calibragem), e a
+ * Tela 6 mostra a dica na habilidade enquanto falta.
+ */
+export type MidiaNoServidor = {
+  /** A transcricao foi calibrada (TRANSCRICAO_CALIBRADA). */
+  audio: boolean;
+  /**
+   * O leitor tem os tetos de tokens medidos, o da imagem e o da pagina do
+   * PDF (TETO_DE_TOKENS_POR_IMAGEM e TETO_DE_TOKENS_POR_PAGINA).
+   */
+  arquivo: boolean;
+};
 // [AG6b mídia] fim
 
 /**

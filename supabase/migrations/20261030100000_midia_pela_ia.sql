@@ -165,7 +165,11 @@
 -- parametros com o corpo e o comentario de antes; as duas colunas saem; os
 -- corpos de antes do apagamento, da atribuicao, do rotulo e da poda; os
 -- CHECKs de antes, NOT VALID se ja houver linha com valor novo; a linha
--- whisper-1 sai se ia_uso nao tiver linha dela; confere no fim). SE PERDE:
+-- whisper-1 de llm_preco sai sempre, e as linhas dela em ia_uso ficam;
+-- confere no fim). O rollback recusa se houve uso do whisper-1 nos ultimos
+-- 15 minutos (sinal do codigo da AG6b ainda no ar), mas enquanto
+-- TRANSCRICAO_CALIBRADA for falsa nenhum uso acontece e essa trava nao ve o
+-- codigo no ar: a ordem acima e a unica protecao. SE PERDE:
 -- as transcricoes e as leituras, e a versao do aviso dos telefones (todos
 -- voltam ao aviso de hoje). Ficam: as decisoes com os motivos novos, os
 -- eventos no fio, o gasto em ia_uso e a trilha.

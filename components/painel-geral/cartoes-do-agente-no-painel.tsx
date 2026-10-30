@@ -34,7 +34,10 @@ import type { DadosDaIa } from "@/lib/queries/ia-liberacao";
 // tudo fica visivel e desabilitado, com o porque escrito e na dica: a acao
 // recusa mudar numero e telefone de clinica fora da lista. Onda 2: o
 // "Excluir" de cada telefone (item 9) e o "Usar mesmo assim" com a
-// confirmacao do teste (item 3) tambem valem aqui.
+// confirmacao do teste (item 3) tambem valem aqui. [AG6b mídia] Desde a
+// revisao das telas da AG6b (item 5), o chip "Sem áudio, foto e documento"
+// do telefone com o aviso antigo tambem, com a midia ligada da leitura da
+// liberacao, e com o que fazer (a equipe Conduzza desliga e liga de novo).
 
 export type CartoesDoAgenteNoPainelProps = {
   clinicId: string;
@@ -169,6 +172,10 @@ export function CartoesDoAgenteNoPainel({
         dicas={dicas}
         pendente={pendente}
         ocupado={ocupado}
+        // [AG6b mídia] o chip "Sem áudio, foto e documento" tambem aqui: a
+        // midia ligada no rascunho ou na publicada vem da leitura da
+        // liberacao (revisao das telas da AG6b, item 5)
+        midiaLigada={dados.midiaLigada === true}
         aoAlternar={(telefone, ligado, religar) =>
           executar(
             `telefone-${telefone.id}`,

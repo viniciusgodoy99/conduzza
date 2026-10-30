@@ -235,6 +235,7 @@ import {
 import type { PrecoDoModelo, UsoDoModelo } from "./uso";
 // [AG6b mídia] início
 import type { MotivoDaLeitura } from "@/lib/domain/agente/config";
+import { MAXIMO_DE_CHAMADAS_DO_LEITOR } from "@/lib/integrations/llm/leitor-de-midia";
 import {
   custoMaximoDaTranscricao,
   usoEstimadoDoLeitor,
@@ -243,6 +244,7 @@ import {
   decidirPelaLeitura,
   FRASE_DA_FIGURINHA,
   itensDoCatalogo,
+  MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA,
   mensagensParaEstimativa,
   midiaNaoLida as mensagemComMidiaNaoLida,
   motivoMaisForte,
@@ -250,11 +252,15 @@ import {
   PASSOS_DA_MIDIA,
   PREFIXO_DO_AUDIO,
   SEGUNDOS_NA_RESERVA,
+  tokensDoArquivoNaReserva,
   type LeituraGravada,
   type MidiaDaConversa,
   type MidiaPronta,
   type PortaDaMidia,
+  type ResultadoDaLeitura,
+  type ResultadoDaTranscricao,
 } from "./midia";
+import { USO_ZERADO } from "./uso";
 // [AG6b mídia] fim
 
 // ---------------------------------------------------------------------------
@@ -277,6 +283,30 @@ export const PRAZO_DO_TURNO_MS = 45_000;
 export const PRAZO_DA_RODADA_MS = 20_000;
 /** Tempo guardado para o verificador do filtro depois do agente. */
 export const RESERVA_DO_FILTRO_MS = 10_000;
+// [AG6b mídia] início
+/**
+ * AG6b (revisao do prazo): a janela minima do agente que a midia (o preparo,
+ * a transcricao e a leitura) nunca usa. O prazo da midia e o resto do turno
+ * menos esta janela, a reserva do filtro e, quando o classificador ainda vem
+ * depois (a transcricao, passo 2b), o prazo dele
+ * (PRAZO_DO_CLASSIFICADOR_NO_PORTAO_MS). A midia lenta e cortada ANTES de
+ * pagar o classificador e o agente, e o turno nunca passa de prazoEm (a
+ * reserva das gravacoes e a do envio, no executor, ficam inteiras).
+ * PROPOSTA, a calibrar na prova paga (D-100) junto com os prazos da midia;
+ * a conta do minimo do turno com midia esta em
+ * PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS (lib/jobs/responder-com-ia.ts).
+ */
+export const RESERVA_DO_AGENTE_DEPOIS_DA_MIDIA_MS = 3_000;
+/**
+ * AG6b (revisao do prazo): a porta da midia recebe o prazo menos isto (ela
+ * corta ali, com o uso da chamada) e o laco corta de novo no prazo inteiro,
+ * para a porta que nao cumprir o prazo nunca levar o turno alem dele. Os
+ * cortes em ordem (revisao da juncao): a integracao do modelo corta
+ * MARGEM_ENTRE_OS_CORTES_MS antes da porta (lib/agente/midia.ts,
+ * prazoParaAIntegracao), a porta corta esta folga antes do laco.
+ */
+export const FOLGA_DO_CORTE_DA_MIDIA_MS = 500;
+// [AG6b mídia] fim
 /**
  * Teto de saida de UMA rodada do agente: o raciocinio (esforco low) mais a
  * resposta curta em JSON ou a chamada de ferramenta. Revisao de producao de
@@ -502,6 +532,16 @@ type Comum = {
    * recusa de qualquer jeito, midia_nao_lida). Ausente: nao tem.
    */
   midiaNaoLida?: true;
+  /**
+   * AG6b (revisao, D-A): a gravacao da leitura da midia recusou com
+   * job_antigo (o job e de antes da janela atual: alguem assumiu e devolveu
+   * depois dele). O executor do WhatsApp so conclui o job: sem passagem,
+   * sem evento, sem frase, sem envio e sem decisao (outro job, o da janela
+   * nova, cuida da conversa). O desfecho fica o da liberacao perdida
+   * (liberacao_suspensa, a passagem sem frase que confere o D-A de novo):
+   * o lado seguro para quem nao conhece esta marca. Ausente: nao foi isso.
+   */
+  jobAntigo?: true;
   // [AG6b mídia] fim
 };
 
@@ -1193,8 +1233,12 @@ export function custoMaximoDoTurno(entrada: {
    * AG6b (desenho 5.3): a midia que o turno pode mandar aos modelos (o plano
    * do turno). Cada audio a transcrever conta SEGUNDOS_NA_RESERVA (120 s)
    * pelo preco por minuto do modelo; cada arquivo a ler, o pior caso do
-   * leitor (o teto de tokens do arquivo, o envelope e a saida). E a mensagem
-   * de cada um conta como texto no agente, no classificador e no verificador
+   * leitor (o teto de tokens do arquivo, o envelope e a saida). Revisao da
+   * AG6b (a juncao): com a nova tentativa propria das integracoes, o pior
+   * caso honesto e MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO chamadas por audio e
+   * MAXIMO_DE_CHAMADAS_DO_LEITOR por arquivo (cada uma pode ser cobrada); o
+   * acerto continua cobrando o real. E a mensagem de cada um conta como
+   * texto no agente, no classificador e no verificador
    * (mensagensParaEstimativa: a transcricao com 1.000 caracteres no pior
    * caso de bytes). Sem preco ou sem teto: null (quem chama falha fechado).
    */
@@ -1295,7 +1339,9 @@ export function custoMaximoDoTurno(entrada: {
       if (custo === null) {
         return null;
       }
-      total += custo;
+      // Revisao da AG6b: cada chamada da transcricao (a primeira e a nova
+      // tentativa) pode ser cobrada.
+      total += MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA * custo;
     }
     for (const arquivo of entrada.midia.aLer) {
       const uso = usoEstimadoDoLeitor({
@@ -1309,7 +1355,9 @@ export function custoMaximoDoTurno(entrada: {
       if (custo === null) {
         return null;
       }
-      total += custo;
+      // Revisao da AG6b: cada chamada do leitor (a primeira e a nova
+      // tentativa) pode ser cobrada.
+      total += MAXIMO_DE_CHAMADAS_DO_LEITOR * custo;
     }
   }
   // [AG6b mídia] fim
@@ -1440,8 +1488,12 @@ export function turnoDaColetaDeDados(
   );
 }
 
-/** Hoje (AAAA-MM-DD) no fuso da clinica, para a idade do portao. */
-function hojeNoFuso(agoraMs: number, fuso: string): string | null {
+/**
+ * Hoje (AAAA-MM-DD) no fuso da clinica, para a idade do portao. AG6b
+ * (revisao): exportado para o portao da espera do download no executor
+ * (lib/jobs/responder-com-ia.ts) usar a MESMA data que o laco usa.
+ */
+export function hojeNoFuso(agoraMs: number, fuso: string): string | null {
   try {
     const partes = new Intl.DateTimeFormat("en-CA", {
       timeZone: fuso,
@@ -1537,8 +1589,10 @@ export async function executarTurnoDoAgente(
     // responder (inclusive a mensagem nova da pessoa no meio do turno) nao
     // sai e nao passa para a equipe (o executor fecha sem envio).
     const semEnvio =
-      resultado.desfecho.tipo === "falhou" &&
-      resultado.desfecho.motivo === "sem_mensagem";
+      (resultado.desfecho.tipo === "falhou" &&
+        resultado.desfecho.motivo === "sem_mensagem") ||
+      // [AG6b mídia] O job antigo (D-A) so conclui: nada passa.
+      resultado.jobAntigo === true;
     const passou = resultado.tipo === "frase_fixa" && !semEnvio;
     // AG5: a lista de espera desta conversa mora fora do estado; na passagem
     // antes do preparo (o portao), le so para a nota (nunca lanca).
@@ -1657,8 +1711,123 @@ async function turnoDoAgente(
       }
     }
   };
-  /** O prazo que sobra para a midia (o agente e o filtro vem depois). */
-  const prazoParaAMidia = () => prazoEm - agora() - RESERVA_DO_FILTRO_MS;
+  /**
+   * O prazo que a midia pode usar AGORA (revisao da AG6b): o resto do turno
+   * menos a reserva do filtro (o verificador), a janela minima do agente e,
+   * quando o classificador ainda vem depois (a transcricao, 2b), o prazo
+   * dele. A midia nunca come o que vem depois dela, e o turno nunca passa
+   * de prazoEm (a reserva das gravacoes e a do envio ficam inteiras).
+   */
+  const prazoParaAMidia = (classificadorDepois: boolean) =>
+    prazoEm -
+    agora() -
+    RESERVA_DO_FILTRO_MS -
+    RESERVA_DO_AGENTE_DEPOIS_DA_MIDIA_MS -
+    (classificadorDepois ? PRAZO_DO_CLASSIFICADOR_NO_PORTAO_MS : 0);
+  /**
+   * O corte duro de um passo da midia (revisao da AG6b): a porta recebe o
+   * prazo menos a folga e o sinal deste corte (ela corta ali, com o uso da
+   * chamada); o laco corta no prazo inteiro, para a porta que nao cumprir.
+   */
+  const cortarAMidia = <T,>(
+    executar: (prazoDaPortaMs: number, sinal: AbortSignal) => Promise<T>,
+    prazoMs: number,
+  ) =>
+    correrComPrazo(
+      (sinal) =>
+        executar(Math.max(0, prazoMs - FOLGA_DO_CORTE_DA_MIDIA_MS), sinal),
+      prazoMs,
+    );
+  /** O motivo do preparo que falhou: o prazo, ou o resto (falha fechada). */
+  const motivoDoPreparo = (prontas: readonly MidiaPronta[]): FalhaDoAgente =>
+    prontas.some((p) => p.tipo === "falhou" && p.codigo === "prazo")
+      ? "timeout"
+      : "desconhecida";
+  /** O preparo que nem voltou (a porta que nao cumpriu o prazo). */
+  const preparoCortado = (
+    corrida: { tipo: "prazo" } | { tipo: "erro" },
+    passo: string,
+  ): ResultadoDoTurno => {
+    log.warn("ia_midia_cortada", {
+      kind: "preparo",
+      clinic_id: entrada.clinicId,
+      error_code: corrida.tipo === "prazo" ? "prazo" : "excecao",
+    });
+    trilha.push({ tipo: "equipe", texto: passo });
+    return fraseFixa({
+      tipo: "falhou",
+      motivo: corrida.tipo === "prazo" ? "timeout" : "desconhecida",
+    });
+  };
+  /**
+   * A transcricao que a porta nao devolveu no prazo (ou que lancou): falha,
+   * com o pior caso pelos segundos medidos (nao se sabe quantas chamadas
+   * sairam: MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO, a mesma conta da reserva).
+   */
+  const transcricaoCortada = (
+    audio: Extract<MidiaPronta, { tipo: "audio" }>,
+    corrida: { tipo: "prazo" } | { tipo: "erro" },
+  ): ResultadoDaTranscricao => ({
+    tipo: "falhou",
+    motivo: corrida.tipo === "prazo" ? "timeout" : "desconhecida",
+    uso: {
+      papel: "transcricao",
+      modelo: "desconhecido",
+      uso: { ...USO_ZERADO },
+      segundosDeAudio:
+        MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA *
+        Math.max(1, Math.ceil(audio.segundos)),
+    },
+  });
+  /**
+   * A leitura que a porta nao devolveu no prazo (ou que lancou): falha, com
+   * o pior caso do arquivo em cada chamada que pode ter saido
+   * (MAXIMO_DE_CHAMADAS_DO_LEITOR, a mesma conta da reserva; a figurinha nao
+   * chama modelo).
+   */
+  const leituraCortada = (
+    arquivo: Extract<MidiaPronta, { tipo: "arquivo" | "figurinha" }>,
+    corrida: { tipo: "prazo" } | { tipo: "erro" },
+    catalogoDaLeitura: ReturnType<typeof itensDoCatalogo>,
+  ): ResultadoDaLeitura => {
+    const estimado =
+      arquivo.tipo === "arquivo"
+        ? usoEstimadoDoLeitor({
+            catalogo: catalogoDaLeitura,
+            tokensDoArquivo: tokensDoArquivoNaReserva(
+              arquivo.midia,
+              arquivo.arquivo.tipo === "pdf" ? "application/pdf" : "image/jpeg",
+            ),
+          })
+        : null;
+    return {
+      tipo: "falhou",
+      motivo: corrida.tipo === "prazo" ? "timeout" : "desconhecida",
+      uso:
+        estimado === null
+          ? null
+          : {
+              papel: "leitor_de_midia",
+              modelo: modeloDosClassificadores,
+              uso: {
+                tokensEntrada: MAXIMO_DE_CHAMADAS_DO_LEITOR * estimado.tokensEntrada,
+                tokensSaida: MAXIMO_DE_CHAMADAS_DO_LEITOR * estimado.tokensSaida,
+                tokensCacheLidos:
+                  MAXIMO_DE_CHAMADAS_DO_LEITOR * estimado.tokensCacheLidos,
+                tokensCacheGravados:
+                  MAXIMO_DE_CHAMADAS_DO_LEITOR * estimado.tokensCacheGravados,
+              },
+            },
+    };
+  };
+  /**
+   * D-A (revisao da AG6b): a gravacao da leitura disse job_antigo. O job
+   * so conclui (o executor ve a marca): a frase fixa daqui nunca sai.
+   */
+  const jobAntigo = (): ResultadoDoTurno => ({
+    ...fraseFixa({ tipo: "falhou", motivo: "liberacao_suspensa" }),
+    jobAntigo: true,
+  });
 
   /**
    * 2b. Transcreve os audios a transcrever. Devolve o desfecho quando o
@@ -1673,16 +1842,27 @@ async function turnoDoAgente(
       marcarComoFora(lista);
       return null;
     }
-    if (prazoParaAMidia() < 1_000) {
+    // O classificador ainda vem depois da transcricao: o prazo dele fica.
+    const prazoDoPreparo = prazoParaAMidia(true);
+    if (prazoDoPreparo < 1_000) {
       return falhar("prazo");
     }
-    const prontas = await porta.preparar(
-      lista.flatMap((m) => (m.midia === undefined ? [] : [m.midia])),
-      prazoParaAMidia(),
+    const preparo = await cortarAMidia(
+      (prazo, sinal) =>
+        porta.preparar(
+          lista.flatMap((m) => (m.midia === undefined ? [] : [m.midia])),
+          prazo,
+          sinal,
+        ),
+      prazoDoPreparo,
     );
+    if (preparo.tipo !== "resultado") {
+      return preparoCortado(preparo, PASSOS_DA_MIDIA.transcricaoFalhou);
+    }
+    const prontas = preparo.valor;
     if (prontas.some((p) => p.tipo === "falhou")) {
       trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.transcricaoFalhou });
-      return fraseFixa({ tipo: "falhou", motivo: "desconhecida" });
+      return fraseFixa({ tipo: "falhou", motivo: motivoDoPreparo(prontas) });
     }
     // A porta prepara TODOS antes de chamar o modelo: um fora (o limite, o
     // formato, os primeiros bytes) e nenhum e transcrito.
@@ -1693,20 +1873,32 @@ async function turnoDoAgente(
       marcarComoFora(lista);
       return null;
     }
-    if (prazoParaAMidia() < 1_000) {
+    const prazo = prazoParaAMidia(true);
+    if (prazo < 1_000) {
       return falhar("prazo");
     }
-    const prazo = prazoParaAMidia();
     const feitas = await Promise.all(
-      audios.map(async (audio) => ({
-        audio,
-        feita: await porta.transcrever(audio, prazo),
-      })),
+      audios.map(async (audio) => {
+        const corrida = await cortarAMidia(
+          (prazoDaPorta, sinal) => porta.transcrever(audio, prazoDaPorta, sinal),
+          prazo,
+        );
+        return {
+          audio,
+          feita:
+            corrida.tipo === "resultado"
+              ? corrida.valor
+              : transcricaoCortada(audio, corrida),
+        };
+      }),
     );
     for (const { feita } of feitas) {
       if (feita.uso !== null) {
         uso.push(feita.uso);
       }
+    }
+    if (feitas.some(({ feita }) => feita.tipo === "job_antigo")) {
+      return jobAntigo();
     }
     if (feitas.some(({ feita }) => feita.tipo === "fora_da_ia")) {
       return falhar("liberacao_suspensa");
@@ -1768,16 +1960,27 @@ async function turnoDoAgente(
         marcarComoFora(aLer);
         return passarComoMidia();
       }
-      if (prazoParaAMidia() < 1_000) {
+      // O classificador ja leu a legenda: so o agente e o filtro depois.
+      const prazoDoPreparo = prazoParaAMidia(false);
+      if (prazoDoPreparo < 1_000) {
         return falhar("prazo");
       }
-      const prontas = await porta.preparar(
-        aLer.flatMap((m) => (m.midia === undefined ? [] : [m.midia])),
-        prazoParaAMidia(),
+      const preparo = await cortarAMidia(
+        (prazo, sinal) =>
+          porta.preparar(
+            aLer.flatMap((m) => (m.midia === undefined ? [] : [m.midia])),
+            prazo,
+            sinal,
+          ),
+        prazoDoPreparo,
       );
+      if (preparo.tipo !== "resultado") {
+        return preparoCortado(preparo, PASSOS_DA_MIDIA.leituraFalhou);
+      }
+      const prontas = preparo.valor;
       if (prontas.some((p) => p.tipo === "falhou")) {
         trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.leituraFalhou });
-        return fraseFixa({ tipo: "falhou", motivo: "desconhecida" });
+        return fraseFixa({ tipo: "falhou", motivo: motivoDoPreparo(prontas) });
       }
       const legiveis = prontas.filter(
         (p): p is Extract<MidiaPronta, { tipo: "arquivo" | "figurinha" }> =>
@@ -1787,20 +1990,33 @@ async function turnoDoAgente(
         marcarComoFora(aLer);
         return passarComoMidia();
       }
-      if (prazoParaAMidia() < 1_000) {
+      const prazo = prazoParaAMidia(false);
+      if (prazo < 1_000) {
         return falhar("prazo");
       }
-      const prazo = prazoParaAMidia();
       const feitas = await Promise.all(
-        legiveis.map(async (arquivo) => ({
-          arquivo,
-          feita: await porta.ler(arquivo, catalogoDaLeitura, prazo),
-        })),
+        legiveis.map(async (arquivo) => {
+          const corrida = await cortarAMidia(
+            (prazoDaPorta, sinal) =>
+              porta.ler(arquivo, catalogoDaLeitura, prazoDaPorta, sinal),
+            prazo,
+          );
+          return {
+            arquivo,
+            feita:
+              corrida.tipo === "resultado"
+                ? corrida.valor
+                : leituraCortada(arquivo, corrida, catalogoDaLeitura),
+          };
+        }),
       );
       for (const { feita } of feitas) {
         if (feita.uso !== null) {
           uso.push(feita.uso);
         }
+      }
+      if (feitas.some(({ feita }) => feita.tipo === "job_antigo")) {
+        return jobAntigo();
       }
       if (feitas.some(({ feita }) => feita.tipo === "fora_da_ia")) {
         return falhar("liberacao_suspensa");

@@ -73,10 +73,12 @@ import {
   avaliarTranscricao,
   segmentoEmSilencio,
 } from "../../lib/domain/conformidade/qualidade-da-transcricao";
+import { chamadaPodeTerSidoCobrada } from "../../lib/agente/gasto";
 import { criarClienteOpenAi } from "../../lib/integrations/llm/openai";
 import {
   lerArquivoComOModelo,
   MAX_TOKENS_DO_LEITOR,
+  MAXIMO_DE_CHAMADAS_DO_LEITOR,
   montarEnvelopeDaLeitura,
   POLITICA_DO_LEITOR,
   VERSAO_DA_POLITICA_DO_LEITOR,
@@ -85,6 +87,7 @@ import {
   type ItemDoCatalogoDaLeitura,
 } from "../../lib/integrations/llm/leitor-de-midia";
 import {
+  MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO,
   transcreverAudio,
   VERSAO_DA_TRANSCRICAO,
 } from "../../lib/integrations/llm/transcricao";
@@ -171,11 +174,17 @@ class OrcamentoEsgotado extends Error {}
 
 function criarOrcamento(p: ReturnType<typeof lerParametros>) {
   let gastoUsd = 0;
+  // Pessimista: um token por byte do arquivo em base64 e da politica.
+  const piorDeUmaLeitura = (bytesDoArquivo: number) => {
+    const entrada = Math.ceil((bytesDoArquivo * 4) / 3) + POLITICA_DO_LEITOR.length;
+    return (entrada * p.precoEntrada + MAX_TOKENS_DO_LEITOR * p.precoSaida) / 1e6;
+  };
   return {
+    // A reserva conta o pior caso de TODAS as chamadas que a integracao pode
+    // fazer (a nova tentativa propria do leitor e da transcricao), como a
+    // reserva do motor (custoMaximoDoTurno).
     reservarLeitura(bytesDoArquivo: number) {
-      // Pessimista: um token por byte do arquivo em base64 e da politica.
-      const entrada = Math.ceil((bytesDoArquivo * 4) / 3) + POLITICA_DO_LEITOR.length;
-      const pior = (entrada * p.precoEntrada + MAX_TOKENS_DO_LEITOR * p.precoSaida) / 1e6;
+      const pior = piorDeUmaLeitura(bytesDoArquivo) * MAXIMO_DE_CHAMADAS_DO_LEITOR;
       if (gastoUsd + pior > p.orcamentoUsd) {
         throw new OrcamentoEsgotado();
       }
@@ -183,8 +192,13 @@ function criarOrcamento(p: ReturnType<typeof lerParametros>) {
     registrarLeitura(entrada: number, saida: number) {
       gastoUsd += (entrada * p.precoEntrada + saida * p.precoSaida) / 1e6;
     },
+    /** A chamada sem o uso de volta que pode ter sido cobrada: o pior caso. */
+    registrarLeituraNoPiorCaso(bytesDoArquivo: number) {
+      gastoUsd += piorDeUmaLeitura(bytesDoArquivo);
+    },
     reservarAudio(segundos: number) {
-      const pior = (Math.ceil(segundos) / 60) * p.precoAudioPorMinuto;
+      const pior =
+        (Math.ceil(segundos) / 60) * p.precoAudioPorMinuto * MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO;
       if (gastoUsd + pior > p.orcamentoUsd) {
         throw new OrcamentoEsgotado();
       }
@@ -335,6 +349,13 @@ async function main() {
         : r.uso.tokensEntrada + r.uso.tokensCacheLidos + r.uso.tokensCacheGravados;
     if (r.uso !== null) {
       orcamento.registrarLeitura(entrada ?? 0, r.uso.tokensSaida);
+    } else if (r.tipo === "lido" || chamadaPodeTerSidoCobrada(r.motivo)) {
+      orcamento.registrarLeituraNoPiorCaso(arquivo.bytes.length);
+    }
+    // As chamadas anteriores a ultima que falharam sem resposta (a nova
+    // tentativa do leitor): o pior caso de cada uma.
+    for (let i = 0; i < (r.tentativasSemUso ?? 0); i += 1) {
+      orcamento.registrarLeituraNoPiorCaso(arquivo.bytes.length);
     }
     const esperados = (a.itens ?? []).map((nome) => idPorNome.get(nome) ?? "?").sort();
     leituras.push({
@@ -423,17 +444,27 @@ async function main() {
     const lida = medidaDaApi as Parameters<NonNullable<Parameters<typeof transcreverAudio>[0]["medir"]>>[0] | null;
     const segmentos = lida?.segmentos ?? [];
     orcamento.registrarAudio(feita.uso?.segundos ?? medida.segundos);
+    // As tentativas anteriores a ultima que falharam sem resposta: a duracao
+    // medida de cada uma (o pior caso).
+    for (let i = 0; i < (feita.tentativasSemUso ?? 0); i += 1) {
+      orcamento.registrarAudio(medida.segundos);
+    }
     const resposta = { duration: lida?.duration, usage: { seconds: lida?.usageSeconds ?? undefined } };
     // So as metricas (um texto neutro no lugar de cada segmento falado):
     // separa o "sem fala" das travas de metrica (silencio, repeticao,
     // confianca) do "sem fala" pelo texto (frase-fantasma, vazio, longo).
+    // O texto neutro tem o MESMO numero de palavras do segmento (no minimo
+    // uma): a trava da resposta curta (curta_incerta) olha as metricas E o
+    // tamanho, e com um "x" so ela marcaria toda resposta como curta.
     const pelasMetricas =
       feita.tipo === "falhou"
         ? null
         : avaliarTranscricao({
             segmentos: segmentos.map((sg) => ({
               ...sg,
-              text: segmentoEmSilencio({ ...sg, text: "" }) ? "" : "x",
+              text: segmentoEmSilencio({ ...sg, text: "" })
+                ? ""
+                : Array.from({ length: Math.max(1, sg.palavras) }, () => "x").join(" "),
             })),
           });
     audios.push({

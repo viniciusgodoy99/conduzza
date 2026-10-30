@@ -1066,6 +1066,22 @@ export async function fetchLeiturasDaMidia(
 }
 
 /**
+ * A consulta das leituras roda? So na clinica da fase do agente (iaNaFase,
+ * a lista do banco decidida no servidor: fora dela nao ha leitura do
+ * assistente), com a conversa aberta e alguma midia do paciente na pagina.
+ * Revisao das telas da AG6b (item 6): ela e relida a cada evento de message
+ * da conversa aberta, e rodava em toda clinica, uma requisicao a mais por
+ * evento mesmo sem IA.
+ */
+export function consultaDasLeiturasLigada(entrada: {
+  iaNaFase: boolean;
+  conversaAberta: boolean;
+  ids: readonly string[];
+}): boolean {
+  return entrada.iaNaFase && entrada.conversaAberta && entrada.ids.length > 0;
+}
+
+/**
  * O estado das leituras para o fio, a partir da consulta. Com o mapa na
  * mao (inclusive o da leitura anterior, enquanto a nova roda), vale o mapa:
  * leitura que ja apareceu nao some por uma releitura que falhou. Sem mapa e

@@ -10,11 +10,16 @@ vi.mock("@/lib/agente/contexto", () => ({
 }));
 
 import {
+  custoMaximoDaChamada,
   custoMaximoDaTranscricao,
   usoEstimadoDoLeitor,
 } from "@/lib/agente/gasto";
 import { custoMaximoDoTurno } from "@/lib/agente/laco";
-import { itensDoCatalogo } from "@/lib/agente/midia";
+import {
+  itensDoCatalogo,
+  MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA,
+} from "@/lib/agente/midia";
+import { MAXIMO_DE_CHAMADAS_DO_LEITOR } from "@/lib/integrations/llm/leitor-de-midia";
 import {
   comPrecoDaTranscricao,
   custoEmMicrodolar,
@@ -28,6 +33,8 @@ import { BancoEmMemoria } from "../ia-whatsapp/banco-em-memoria";
 import {
   AUDIO,
   audioNoLaco,
+  FOTO,
+  fotoNoLaco,
   linhaDeMidia,
   PAPEIS_DO_USO_NA_AG6B,
   PRECO_DO_WHISPER_POR_MINUTO,
@@ -213,9 +220,62 @@ describe("a reserva do turno com a midia (o pior caso)", () => {
     });
     expect(sem).not.toBeNull();
     expect(com).not.toBeNull();
-    // 120 s x US$ 0,006 = 12.000 microdolar, mais os 1.000 caracteres (no
-    // pior caso de bytes) no agente, no classificador e no verificador.
+    // 120 s x US$ 0,006 = 12.000 microdolar por chamada, mais os 1.000
+    // caracteres (no pior caso de bytes) no agente, no classificador e no
+    // verificador.
     expect((com ?? 0) - (sem ?? 0)).toBeGreaterThan(12_000 + 3 * 4_000 * 1);
+  });
+
+  // Revisao da juncao: a nova tentativa e da transcricao e do leitor (o SDK
+  // nunca repete): cada chamada pode ser cobrada, e a reserva conta o pior
+  // caso honesto. O acerto continua cobrando o real.
+  it("cada audio reserva MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO chamadas de 120 s", () => {
+    const comAudio = (aTranscrever: number) =>
+      custoMaximoDoTurno({
+        ...base,
+        mensagens: [audioNoLaco()],
+        midia: {
+          aTranscrever,
+          modeloDaTranscricao: "whisper-1",
+          aLer: [],
+          modeloDoLeitor: "gpt-6-luna",
+        },
+      });
+    const umaChamada = custoMaximoDaTranscricao(120, "whisper-1", [LUNA, WHISPER]);
+    expect(umaChamada).toBe(12_000);
+    expect(MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA).toBe(2);
+    // As mesmas mensagens nos dois: a diferenca e so a transcricao.
+    expect((comAudio(1) ?? NaN) - (comAudio(0) ?? NaN)).toBe(
+      MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA * 12_000,
+    );
+    expect((comAudio(3) ?? NaN) - (comAudio(0) ?? NaN)).toBe(
+      3 * MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA * 12_000,
+    );
+  });
+
+  it("cada arquivo reserva MAXIMO_DE_CHAMADAS_DO_LEITOR chamadas no teto do arquivo", () => {
+    const comArquivos = (aLer: { tokensDoArquivo: number }[]) =>
+      custoMaximoDoTurno({
+        ...base,
+        mensagens: [fotoNoLaco(FOTO, "quanto fica?")],
+        midia: {
+          aTranscrever: 0,
+          modeloDaTranscricao: "whisper-1",
+          aLer,
+          modeloDoLeitor: "gpt-6-luna",
+        },
+      });
+    const uso = usoEstimadoDoLeitor({
+      catalogo: itensDoCatalogo(CATALOGO_DA_AG6B),
+      tokensDoArquivo: 1_600,
+    });
+    expect(uso).not.toBeNull();
+    const umaChamada =
+      uso === null ? NaN : custoMaximoDaChamada(uso, "gpt-6-luna", [LUNA, WHISPER]);
+    expect(MAXIMO_DE_CHAMADAS_DO_LEITOR).toBe(2);
+    expect(
+      (comArquivos([{ tokensDoArquivo: 1_600 }]) ?? NaN) - (comArquivos([]) ?? NaN),
+    ).toBe(MAXIMO_DE_CHAMADAS_DO_LEITOR * (umaChamada ?? NaN));
   });
 
   it("o arquivo a ler conta o teto do leitor; sem preco da transcricao, null", () => {
@@ -253,7 +313,10 @@ describe("pelo executor: a reserva e o acerto", () => {
     });
     expect(await executarRespostaComIa(cenario.job, EXECUTOR, cenario.deps)).toEqual({ ok: true });
     const [reserva] = cenario.banco.chamadasDe("reservar_gasto_da_ia");
-    expect(Number(reserva?.p_custo_microdolar)).toBeGreaterThan(12_000);
+    // Revisao da juncao: as duas chamadas possiveis de 120 s.
+    expect(Number(reserva?.p_custo_microdolar)).toBeGreaterThan(
+      MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA * 12_000,
+    );
     const [acerto] = cenario.banco.chamadasDe("acertar_gasto_da_ia");
     const linhas = acerto?.p_linhas as Record<string, unknown>[];
     expect(linhas).toContainEqual(
@@ -268,6 +331,66 @@ describe("pelo executor: a reserva e o acerto", () => {
       }),
     );
     expect(escrito.join("")).not.toContain("ia_midia_acima_da_reserva");
+  });
+
+  it("o leitor com a nova tentativa: o acerto soma o pior caso de cada chamada anterior sem resposta (tentativasSemUso)", async () => {
+    const cenario = montarCenario(estado, {
+      mensagens: [linhaDeMidia({ id: FOTO, contentType: "imagem", body: "quanto fica?" })],
+      lerComOModelo: async () => ({
+        tipo: "falha",
+        motivo: "timeout",
+        modelo: "gpt-6-luna",
+        uso: null,
+        tentativasSemUso: 1,
+      }),
+    });
+    expect(await executarRespostaComIa(cenario.job, EXECUTOR, cenario.deps)).toEqual({ ok: true });
+    const umaChamada = usoEstimadoDoLeitor({
+      catalogo: itensDoCatalogo(CATALOGO_DA_AG6B),
+      tokensDoArquivo: 1_600,
+    });
+    expect(umaChamada).not.toBeNull();
+    const [acerto] = cenario.banco.chamadasDe("acertar_gasto_da_ia");
+    const linha = (acerto?.p_linhas as Record<string, unknown>[]).find(
+      (l) => l.papel === "leitor_de_midia",
+    );
+    // A ultima chamada (o prazo: pode ter sido cobrada) e a anterior.
+    expect(linha?.tokens_entrada).toBe(2 * (umaChamada?.tokensEntrada ?? 0));
+    expect(linha?.tokens_saida).toBe(2 * (umaChamada?.tokensSaida ?? 0));
+  });
+
+  it("a transcricao com a nova tentativa: o acerto soma a duracao medida de cada chamada anterior sem resposta (tentativasSemUso)", async () => {
+    const cenario = montarCenario(estado, {
+      mensagens: [linhaDeMidia({ id: AUDIO, contentType: "audio" })],
+      transcricao: {
+        [AUDIO]: {
+          tipo: "transcrita",
+          texto: "Oi, queria saber o valor do hemograma",
+          segundos: 16,
+          uso: { modelo: "whisper-1", segundos: 16 },
+          tentativasSemUso: 1,
+        },
+      },
+    });
+    expect(await executarRespostaComIa(cenario.job, EXECUTOR, cenario.deps)).toEqual({ ok: true });
+    // A duracao que o preparo mediu (a que a porta passou a transcricao).
+    const medidos = Math.ceil(
+      Number(
+        (cenario.transcrever.mock.calls[0] as unknown as [{ segundosMedidos: number }])[0]
+          .segundosMedidos,
+      ),
+    );
+    expect(medidos).toBeGreaterThanOrEqual(15);
+    const [acerto] = cenario.banco.chamadasDe("acertar_gasto_da_ia");
+    const linha = (acerto?.p_linhas as Record<string, unknown>[]).find(
+      (l) => l.papel === "transcricao",
+    );
+    // A ultima (16 s, o que a API devolveu) e a anterior (a duracao medida).
+    expect(linha?.custo_microdolar).toBe(
+      custoEmMicrodolar(USO_ZERADO, WHISPER, 16 + medidos),
+    );
+    expect(escrito.join("")).not.toContain("ia_midia_acima_da_reserva");
+    expect(escrito.join("")).not.toContain("hemograma");
   });
 
   it("o uso real acima da reserva vira log so com a contagem", async () => {

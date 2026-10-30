@@ -30,9 +30,29 @@
 // da prova paga (D-100): sem eles (nulos), o plano do turno nunca manda
 // arquivo ao leitor (a reserva do gasto nao teria o pior caso).
 //
-// LGPD: log so com ids, a midia, o resultado, quantos itens e a duracao.
-// NUNCA o tipo (dizer que o paciente mandou "resultado de exame" e dado de
-// saude): o tipo fica no banco, com RLS.
+// PRAZO (CORTE DURO): a leitura inteira (as chamadas, a espera entre elas e
+// a leitura do corpo) corre dentro de correrComPrazo, com o prazo de quem
+// chama mais FOLGA_DO_CORTE_DO_LEITOR_MS, como a transcricao e o agente. O
+// sinal do corte vai ao SDK junto com o de quem chama (o cancelamento do
+// turno): qualquer um aborta a chamada, e o de quem chama encerra a leitura
+// na hora, mesmo com um cliente que nao respeita o sinal. A nova tentativa e
+// feita AQUI, nao pelo SDK (maxRetries 0): no openai 7.28 o timeout vale por
+// tentativa, a tentativa que estoura e repetida e o SDK dorme o retry-after
+// de ate 60 s no 429 e no 5xx, o que passava do prazo da midia, do turno e
+// da rota. Aqui cada chamada recebe so o prazo que sobra, e a espera
+// (retry-after ou ESPERA_PADRAO_DA_NOVA_TENTATIVA_MS) so acontece se ela e
+// uma chamada de PRAZO_MINIMO_DA_CHAMADA_MS couberem no prazo; senao, a
+// falha volta na hora.
+//
+// GASTO: `uso` e `motivo` sao os da ULTIMA chamada. A chamada anterior que
+// falhou sem resposta e pode ter sido cobrada volta em `tentativasSemUso`,
+// para quem chama somar o pior caso dela (usoEstimadoDoLeitor). Corte antes
+// de qualquer chamada sair (prazo curto, turno ja cancelado): "prazo", que
+// nunca e cobrado.
+//
+// LGPD: log so com ids, a midia, o resultado, quantos itens, a tentativa e a
+// duracao. NUNCA o tipo (dizer que o paciente mandou "resultado de exame" e
+// dado de saude): o tipo fica no banco, com RLS.
 
 import { createHash, randomBytes } from "node:crypto";
 
@@ -51,6 +71,7 @@ import {
   type ConfiancaDaLeitura,
   type TipoDoLeitor,
 } from "@/lib/domain/agente/config";
+import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
 import type {
   MotivoDaFalha,
   UsoDoLlm,
@@ -58,6 +79,8 @@ import type {
 import {
   classificarErroDoLlm,
   idDaRequisicao,
+  TENTATIVAS_EXTRAS,
+  type ErroClassificado,
 } from "@/lib/integrations/llm/openai";
 import {
   identificadorValido,
@@ -73,6 +96,23 @@ import { log } from "@/lib/log";
 
 /** Prazo de uma leitura (PROPOSTA, a calibrar na prova paga). */
 export const PRAZO_DO_LEITOR_MS = 12_000;
+/**
+ * O corte duro e o prazo da leitura mais esta folga (a mesma da transcricao
+ * e do agente). As chamadas e a espera cabem no prazo; a folga so existe
+ * para o corte pegar o que nao respeita o sinal (cliente pendurado, corpo
+ * travado depois dos cabecalhos).
+ */
+export const FOLGA_DO_CORTE_DO_LEITOR_MS = 500;
+/**
+ * As chamadas de uma leitura, no maximo: a primeira e UMA nova tentativa
+ * (TENTATIVAS_EXTRAS do cliente), feita aqui e nao pelo SDK. Cada uma pode
+ * ser cobrada: e o pior caso de uma leitura na reserva do gasto.
+ */
+export const MAXIMO_DE_CHAMADAS_DO_LEITOR = 1 + TENTATIVAS_EXTRAS;
+/** Nenhuma chamada (a primeira ou a nova tentativa) comeca com menos. */
+const PRAZO_MINIMO_DA_CHAMADA_MS = 1_000;
+/** A espera antes da nova tentativa quando a API nao pede outra (a do SDK). */
+const ESPERA_PADRAO_DA_NOVA_TENTATIVA_MS = 500;
 /** O teto da saida (so o tipo, os codigos, a contagem e a confianca). */
 export const MAX_TOKENS_DO_LEITOR = 300;
 /** Ate 10 itens por pedido (o resto conta em fora_do_cadastro). */
@@ -231,18 +271,28 @@ export type LeituraDoModelo = {
   confianca: ConfiancaDaLeitura;
 };
 
+/**
+ * `uso` (e, na falha, `motivo`) sao os da ULTIMA chamada que saiu.
+ * `tentativasSemUso`, so quando houver (0 fica ausente): quantas chamadas
+ * ANTERIORES a ultima sairam, falharam sem resposta e podem ter sido
+ * cobradas (rede, prazo da chamada, 5xx, 408, 409; nunca o 429, que a API
+ * recusa antes de processar). Quem chama soma o pior caso de uma chamada
+ * (usoEstimadoDoLeitor) para cada uma. Falha "prazo": nenhuma chamada saiu.
+ */
 export type ResultadoDoLeitor =
   | {
       tipo: "lido";
       leitura: LeituraDoModelo;
       modelo: string;
       uso: UsoDoLlm | null;
+      tentativasSemUso?: number;
     }
   | {
       tipo: "falha";
       motivo: MotivoDaFalha;
       modelo: string | null;
       uso: UsoDoLlm | null;
+      tentativasSemUso?: number;
     };
 
 /** So responses.parse; os testes injetam um falso. */
@@ -315,10 +365,245 @@ export function conferirLeitura(
   };
 }
 
+// ---------------------------------------------------------------------------
+// O corte duro e a nova tentativa
+// ---------------------------------------------------------------------------
+
 /**
- * Le UM arquivo preparado. Nunca lanca. `modelo` e o do verificador (a
- * lista fechada de IA_MODELO_VERIFICADOR); `identificadorDeSeguranca`, o
- * HMAC de clinica e contato.
+ * Os erros que valem UMA nova tentativa (os do SDK: rede, prazo da chamada,
+ * 429 de ritmo e 5xx; o 408 e o 409 pelo status). Nunca os graves (400,
+ * 401, 403, 404 e o 429 de cota): tentar de novo nao muda nada.
+ */
+const MOTIVOS_QUE_REPETEM: ReadonlySet<MotivoDaFalha> = new Set<MotivoDaFalha>([
+  "conexao",
+  "timeout",
+  "limite",
+  "sobrecarga",
+  "servidor",
+]);
+
+/**
+ * O que a API recusa antes de processar (o 429, de ritmo ou de cota, e os
+ * 4xx de configuracao): nunca cobrado. O SDK vai com maxRetries 0, entao o
+ * erro e so daquela chamada. O resto que falha sem resposta (rede, prazo da
+ * chamada, 5xx, 408, 409) pode ter sido cobrado: o lado seguro, como em
+ * lib/agente/gasto.ts.
+ */
+const CHAMADA_SEM_COBRANCA: ReadonlySet<MotivoDaFalha> = new Set<MotivoDaFalha>([
+  "limite",
+  "cota",
+  "requisicao_invalida",
+  "autenticacao",
+  "permissao",
+  "nao_encontrado",
+]);
+
+/** Um cabecalho da resposta de erro do SDK (APIError.headers), ou null. */
+function cabecalhoDoErro(erro: unknown, nome: string): string | null {
+  if (typeof erro !== "object" || erro === null) {
+    return null;
+  }
+  const cabecalhos: unknown = (erro as { headers?: unknown }).headers;
+  if (
+    typeof cabecalhos !== "object" ||
+    cabecalhos === null ||
+    typeof (cabecalhos as { get?: unknown }).get !== "function"
+  ) {
+    return null;
+  }
+  try {
+    const valor: unknown = (cabecalhos as Headers).get(nome);
+    return typeof valor === "string" ? valor.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function podeRepetir(erro: unknown, classificado: ErroClassificado): boolean {
+  if (classificado.grave) {
+    return false;
+  }
+  // O x-should-retry manda, como no SDK (o 429 de cota ja chega com "false"
+  // pelo fetch do cliente, lib/integrations/llm/openai.ts).
+  const pedido = cabecalhoDoErro(erro, "x-should-retry");
+  if (pedido === "false") {
+    return false;
+  }
+  if (pedido === "true") {
+    return true;
+  }
+  return (
+    MOTIVOS_QUE_REPETEM.has(classificado.motivo) ||
+    (classificado.motivo === "outro_http" &&
+      (classificado.httpStatus === 408 || classificado.httpStatus === 409))
+  );
+}
+
+/**
+ * A espera que a API pediu, em ms (retry-after-ms; depois retry-after, em
+ * segundos ou data HTTP, como no SDK); null sem pedido valido. Sem teto
+ * aqui: a espera que nao cabe no prazo simplesmente nao acontece.
+ */
+function esperaPedida(erro: unknown): number | null {
+  const emMs = cabecalhoDoErro(erro, "retry-after-ms");
+  if (emMs !== null) {
+    const valor = Number.parseFloat(emMs);
+    if (Number.isFinite(valor) && valor >= 0) {
+      return valor;
+    }
+  }
+  const depois = cabecalhoDoErro(erro, "retry-after");
+  if (depois !== null) {
+    const segundos = Number.parseFloat(depois);
+    if (Number.isFinite(segundos)) {
+      return segundos >= 0 ? segundos * 1_000 : null;
+    }
+    const data = Date.parse(depois);
+    if (Number.isFinite(data)) {
+      return Math.max(0, data - Date.now());
+    }
+  }
+  return null;
+}
+
+/** Espera `ms`, ou menos se o sinal abortar. Nunca rejeita. */
+function esperar(ms: number, sinal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (sinal.aborted) {
+      resolve();
+      return;
+    }
+    // pronto so roda depois que o relogio existe (no tempo ou no sinal).
+    const pronto = () => {
+      clearTimeout(relogio);
+      sinal.removeEventListener("abort", pronto);
+      resolve();
+    };
+    const relogio = setTimeout(pronto, Math.max(0, ms));
+    sinal.addEventListener("abort", pronto, { once: true });
+  });
+}
+
+/**
+ * O sinal das chamadas: aborta no corte duro OU quando quem chama desiste
+ * (o turno cancelado). `desistencia` resolve so no segundo caso, para a
+ * leitura terminar na hora mesmo com um cliente que nao respeita o sinal.
+ */
+function sinalDasChamadas(
+  corte: AbortSignal,
+  deQuemChama: AbortSignal | undefined,
+): {
+  sinal: AbortSignal;
+  desistencia: Promise<{ tipo: "abortado" }>;
+  soltar: () => void;
+} {
+  const controle = new AbortController();
+  let avisar: () => void = () => undefined;
+  const desistencia = new Promise<{ tipo: "abortado" }>((resolve) => {
+    avisar = () => resolve({ tipo: "abortado" });
+  });
+  const noCorte = () => controle.abort();
+  const naDesistencia = () => {
+    controle.abort();
+    avisar();
+  };
+  corte.addEventListener("abort", noCorte, { once: true });
+  deQuemChama?.addEventListener("abort", naDesistencia, { once: true });
+  if (corte.aborted) {
+    noCorte();
+  }
+  if (deQuemChama?.aborted) {
+    naDesistencia();
+  }
+  return {
+    sinal: controle.signal,
+    desistencia,
+    soltar: () => {
+      corte.removeEventListener("abort", noCorte);
+      deQuemChama?.removeEventListener("abort", naDesistencia);
+    },
+  };
+}
+
+/** Quantas chamadas sairam e quantas anteriores podem ter sido cobradas. */
+type ContagemDasChamadas = { saidas: number; semUso: number };
+
+type DesfechoDasChamadas<R> =
+  | { tipo: "resposta"; resposta: R }
+  | { tipo: "erro"; erro: unknown; classificado: ErroClassificado }
+  /** Quem chama desistiu (o turno cancelado). */
+  | { tipo: "abortado" }
+  /** O corte duro, visto por dentro. */
+  | { tipo: "prazo" };
+
+/**
+ * A chamada e no maximo UMA nova tentativa, ate `fim`. Cada chamada leva so
+ * o prazo que sobra (o timeout do SDK) e o sinal; a nova tentativa so sai se
+ * o erro repete e se a espera e uma chamada minima cabem antes de `fim`.
+ * Nunca lanca: a excecao do cliente (sincrona ou nao) e o desfecho "erro".
+ */
+async function chamarComNovaTentativa<R>(e: {
+  chamar: (opcoes: { timeout: number; signal: AbortSignal }) => PromiseLike<R>;
+  sinal: AbortSignal;
+  deQuemChama: AbortSignal | undefined;
+  fim: number;
+  agora: () => number;
+  contagem: ContagemDasChamadas;
+  aoRepetir: (classificado: ErroClassificado) => void;
+}): Promise<DesfechoDasChamadas<R>> {
+  const parada = (): DesfechoDasChamadas<R> =>
+    e.deQuemChama?.aborted ? { tipo: "abortado" } : { tipo: "prazo" };
+  let anterior: { erro: unknown; classificado: ErroClassificado } | null =
+    null;
+  for (;;) {
+    if (e.sinal.aborted) {
+      return parada();
+    }
+    const restante = Math.floor(e.fim - e.agora());
+    if (anterior !== null) {
+      if (restante < PRAZO_MINIMO_DA_CHAMADA_MS) {
+        return { tipo: "erro", ...anterior };
+      }
+      // A nova tentativa vai sair: a anterior falhou sem devolver o uso.
+      if (!CHAMADA_SEM_COBRANCA.has(anterior.classificado.motivo)) {
+        e.contagem.semUso += 1;
+      }
+    }
+    e.contagem.saidas += 1;
+    try {
+      const resposta = await e.chamar({
+        timeout: Math.max(1, restante),
+        signal: e.sinal,
+      });
+      return { tipo: "resposta", resposta };
+    } catch (erro) {
+      if (e.sinal.aborted) {
+        return parada();
+      }
+      const classificado = classificarErroDoLlm(erro);
+      anterior = { erro, classificado };
+      if (
+        e.contagem.saidas >= MAXIMO_DE_CHAMADAS_DO_LEITOR ||
+        !podeRepetir(erro, classificado)
+      ) {
+        return { tipo: "erro", erro, classificado };
+      }
+      const espera = esperaPedida(erro) ?? ESPERA_PADRAO_DA_NOVA_TENTATIVA_MS;
+      if (espera + PRAZO_MINIMO_DA_CHAMADA_MS > e.fim - e.agora()) {
+        // A espera e a nova chamada nao cabem no prazo: a falha volta agora.
+        return { tipo: "erro", erro, classificado };
+      }
+      e.aoRepetir(classificado);
+      await esperar(espera, e.sinal);
+    }
+  }
+}
+
+/**
+ * Le UM arquivo preparado. Nunca lanca, e nunca passa de `prazoMs` mais
+ * FOLGA_DO_CORTE_DO_LEITOR_MS. `modelo` e o do verificador (a lista fechada
+ * de IA_MODELO_VERIFICADOR); `identificadorDeSeguranca`, o HMAC de clinica e
+ * contato; `sinal`, o cancelamento do turno (opcional: o corte vale sem ele).
  */
 export async function lerArquivoComOModelo(entrada: {
   cliente: ClienteDoLeitor | null;
@@ -333,10 +618,23 @@ export async function lerArquivoComOModelo(entrada: {
 }): Promise<ResultadoDoLeitor> {
   const agora = entrada.agora ?? Date.now;
   const { cliente, modelo } = entrada;
+  const contagem: ContagemDasChamadas = { saidas: 0, semUso: 0 };
+  // A chamada anterior que pode ter sido cobrada, so quando houver.
+  const semUso = () =>
+    contagem.semUso > 0 ? { tentativasSemUso: contagem.semUso } : {};
   const falha = (
     motivo: MotivoDaFalha,
     uso: UsoDoLlm | null = null,
-  ): ResultadoDoLeitor => ({ tipo: "falha", motivo, modelo, uso });
+    modeloDaFalha: string | null = modelo,
+  ): ResultadoDoLeitor => ({
+    tipo: "falha",
+    motivo,
+    modelo: modeloDaFalha,
+    uso,
+    ...semUso(),
+  });
+  // Solta os ouvintes do sinal de quem chama (tambem quando o corte vence).
+  let soltarOSinal: () => void = () => undefined;
   try {
     if (cliente === null) {
       return falha("sem_cliente");
@@ -348,6 +646,7 @@ export async function lerArquivoComOModelo(entrada: {
     if (!identificador.ok || identificador.valor === null) {
       return falha("requisicao_invalida");
     }
+    const identificadorDaChamada = identificador.valor;
     if (entrada.catalogo.length > MAXIMO_DE_CODIGOS_NO_ESQUEMA) {
       log.warn("ia_leitor_de_midia", {
         ...camposDoLog(entrada.ids),
@@ -359,7 +658,18 @@ export async function lerArquivoComOModelo(entrada: {
       return falha("contexto_truncado");
     }
     const prazo = Math.floor(entrada.prazoMs);
-    if (!(prazo >= 1_000)) {
+    if (!(prazo >= PRAZO_MINIMO_DA_CHAMADA_MS)) {
+      return falha("prazo");
+    }
+    if (entrada.sinal?.aborted) {
+      // O turno ja desistiu: nada sai, e nada e cobrado ("prazo").
+      log.warn("ia_leitor_de_midia", {
+        ...camposDoLog(entrada.ids),
+        modelo,
+        status: "falhou",
+        error_code: "abortado",
+        attempt: 0,
+      });
       return falha("prazo");
     }
     const nonce = randomBytes(12).toString("hex");
@@ -367,9 +677,14 @@ export async function lerArquivoComOModelo(entrada: {
       esquemaDaLeitura(entrada.catalogo.map((c) => c.codigo)),
       "leitura_do_arquivo",
     );
-    const inicio = agora();
-    const chamada = await cliente.responses
-      .parse(
+    const envelope = montarEnvelopeDaLeitura({
+      catalogo: entrada.catalogo,
+      nonce,
+    });
+    const arquivoEmbutido = parteDoArquivo(entrada.arquivo);
+    // A mesma requisicao nas duas chamadas; o SDK nunca repete sozinho.
+    const chamar = (opcoes: { timeout: number; signal: AbortSignal }) =>
+      cliente.responses.parse(
         {
           ...PARAMETROS_FIXOS_DE_CLASSIFICACAO,
           model: modelo,
@@ -378,39 +693,83 @@ export async function lerArquivoComOModelo(entrada: {
           input: [
             {
               role: "user",
-              content: [
-                {
-                  type: "input_text",
-                  text: montarEnvelopeDaLeitura({
-                    catalogo: entrada.catalogo,
-                    nonce,
-                  }),
-                },
-                parteDoArquivo(entrada.arquivo),
-              ],
+              content: [{ type: "input_text", text: envelope }, arquivoEmbutido],
             },
           ],
           text: { format: formato },
-          safety_identifier: identificador.valor,
+          safety_identifier: identificadorDaChamada,
         },
-        { timeout: prazo, maxRetries: 1, signal: entrada.sinal },
-      )
-      .then(
-        (resposta) => ({ ok: true as const, resposta }),
-        (erro: unknown) => ({ ok: false as const, erro }),
+        { timeout: opcoes.timeout, maxRetries: 0, signal: opcoes.signal },
       );
+    const inicio = agora();
+    const corrida = await correrComPrazo((corte) => {
+      const ligacao = sinalDasChamadas(corte, entrada.sinal);
+      soltarOSinal = ligacao.soltar;
+      return Promise.race([
+        chamarComNovaTentativa({
+          chamar,
+          sinal: ligacao.sinal,
+          deQuemChama: entrada.sinal,
+          fim: inicio + prazo,
+          agora,
+          contagem,
+          aoRepetir: (classificado) => {
+            log.warn("ia_leitor_de_midia", {
+              ...camposDoLog(entrada.ids),
+              modelo,
+              status: "nova_tentativa",
+              error_code: classificado.codigo ?? classificado.motivo,
+              http_status: classificado.httpStatus ?? undefined,
+              request_id: classificado.requestId ?? undefined,
+              attempt: contagem.saidas,
+              duration_ms: agora() - inicio,
+            });
+          },
+        }),
+        ligacao.desistencia,
+      ]);
+    }, prazo + FOLGA_DO_CORTE_DO_LEITOR_MS);
+    soltarOSinal();
     const duracao = agora() - inicio;
+    const comuns = {
+      ...camposDoLog(entrada.ids),
+      attempt: contagem.saidas,
+      duration_ms: duracao,
+    };
 
-    if (!chamada.ok) {
-      const classificado = classificarErroDoLlm(chamada.erro);
+    if (corrida.tipo === "erro") {
+      // Nao acontece (o laco nunca lanca); a falha fechada de sempre.
+      log.warn("ia_leitor_de_midia", {
+        ...comuns,
+        modelo,
+        status: "falhou",
+        error_code: "desconhecida",
+      });
+      return falha("desconhecida");
+    }
+    const desfecho =
+      corrida.tipo === "prazo" ? ({ tipo: "prazo" } as const) : corrida.valor;
+    if (desfecho.tipo === "prazo" || desfecho.tipo === "abortado") {
+      // Sem resposta: o corte duro ("timeout") ou o turno cancelado. Se
+      // nenhuma chamada saiu, nada foi cobrado ("prazo").
+      const codigo = desfecho.tipo === "prazo" ? "timeout" : "abortado";
+      log.warn("ia_leitor_de_midia", {
+        ...comuns,
+        modelo,
+        status: "falhou",
+        error_code: codigo,
+      });
+      return falha(contagem.saidas === 0 ? "prazo" : codigo);
+    }
+    if (desfecho.tipo === "erro") {
+      const { classificado } = desfecho;
       const campos = {
-        ...camposDoLog(entrada.ids),
+        ...comuns,
         modelo,
         status: "falhou",
         error_code: classificado.codigo ?? classificado.motivo,
         http_status: classificado.httpStatus ?? undefined,
         request_id: classificado.requestId ?? undefined,
-        duration_ms: duracao,
       };
       if (classificado.grave) {
         log.error("ia_leitor_de_midia", campos);
@@ -420,14 +779,13 @@ export async function lerArquivoComOModelo(entrada: {
       return falha(classificado.motivo);
     }
 
-    const { resposta } = chamada;
+    const { resposta } = desfecho;
     if (!resposta || typeof resposta !== "object") {
       log.warn("ia_leitor_de_midia", {
-        ...camposDoLog(entrada.ids),
+        ...comuns,
         modelo,
         status: "falhou",
         error_code: "saida_invalida",
-        duration_ms: duracao,
       });
       return falha("saida_invalida");
     }
@@ -438,55 +796,50 @@ export async function lerArquivoComOModelo(entrada: {
     const parada = paradaAnomala(resposta);
     if (parada !== null) {
       log.warn("ia_leitor_de_midia", {
-        ...camposDoLog(entrada.ids),
+        ...comuns,
         modelo: modeloQueRespondeu,
         status: "falhou",
         stop_reason: parada.parada,
         error_code: statusParaLog(resposta.status),
         request_id: requestId,
-        duration_ms: duracao,
       });
-      return { tipo: "falha", motivo: parada.motivo, modelo: modeloQueRespondeu, uso };
+      return falha(parada.motivo, uso, modeloQueRespondeu);
     }
     const conferida = conferirLeitura(resposta.output_parsed, entrada.catalogo);
     if (!conferida.ok) {
       log.warn("ia_leitor_de_midia", {
-        ...camposDoLog(entrada.ids),
+        ...comuns,
         modelo: modeloQueRespondeu,
         status: "falhou",
         error_code: conferida.motivo,
         request_id: requestId,
-        duration_ms: duracao,
       });
-      return {
-        tipo: "falha",
-        motivo: conferida.motivo,
-        modelo: modeloQueRespondeu,
-        uso,
-      };
+      return falha(conferida.motivo, uso, modeloQueRespondeu);
     }
     log.info("ia_leitor_de_midia", {
-      ...camposDoLog(entrada.ids),
+      ...comuns,
       modelo: modeloQueRespondeu,
       status: "lido",
       count: conferida.leitura.codigos.length,
       request_id: requestId,
-      duration_ms: duracao,
     });
     return {
       tipo: "lido",
       leitura: conferida.leitura,
       modelo: modeloQueRespondeu,
       uso,
+      ...semUso(),
     };
   } catch {
     // Rede de seguranca: excecao inesperada (inclusive sincrona) vira falha
     // fechada. Nunca olha a mensagem do erro.
+    soltarOSinal();
     log.warn("ia_leitor_de_midia", {
       ...camposDoLog(entrada.ids),
       modelo: modelo ?? undefined,
       status: "falhou",
       error_code: "desconhecida",
+      attempt: contagem.saidas,
     });
     return falha("desconhecida");
   }

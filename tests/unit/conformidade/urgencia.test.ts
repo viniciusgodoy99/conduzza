@@ -796,6 +796,537 @@ describe("a versão do portão", () => {
     expect(versaoDoPortao()).not.toBe("portao-1dd4b555a379");
     // A da 2a revisao (2ca2097), antes da revisao de 30/10/2026.
     expect(versaoDoPortao()).not.toBe("portao-39dcded69204");
+    // A da 6eae43d, antes da correcao da lista (A1, M1 e M2).
+    expect(versaoDoPortao()).not.toBe("portao-d2a3ee0b28c5");
     expect(versaoDoPortao()).toMatch(/^portao-[0-9a-f]{12}$/);
+  });
+});
+
+// Revisao de 6eae43d (a correcao da lista, sobre a revisao de motor e
+// conformidade): os sinais novos (A1), o outro sinal de AVC que desfaz o
+// procedimento e a estetica (M1) e as excecoes da estetica, da dor, da
+// pergunta e da agenda (M2). Os casos tambem estao na bateria (CASOS, os
+// CONTROLES e a NAO_REGRESSAO de bateria-ag6.test.ts); aqui, cada regra.
+describe("os sinais novos de risco de vida (A1)", () => {
+  it.each([
+    ["Vou me enforcar hoje.", "enforcar"],
+    ["VOU ME ENFORCAR", "enforcar"],
+    ["ela tentou se enforcar", "enforcar"],
+    ["Vou me jogar do prédio.", "pular_ou_se_jogar"],
+    ["vou pular da ponte", "pular_ou_se_jogar"],
+    ["minha filha disse que vai se jogar da janela", "pular_ou_se_jogar"],
+    ["pensei em me jogar na frente de um carro", "pular_ou_se_jogar"],
+    ["Tomei 20 comprimidos de rivotril.", "remedio_demais"],
+    ["Tomei a cartela inteira de remédio pra dormir.", "remedio_demais"],
+    ["tomei uns 15 comprimidos", "remedio_demais"],
+    ["Eu tomei todos os comprimidos da cartela.", "remedio_demais"],
+    ["ela tomou remédio demais", "remedio_demais"],
+    ["vou tomar todos os meus remédios de uma vez", "remedio_demais"],
+    // O "de uma vez" desfaz o tratamento de sempre.
+    [
+      "tomei todos os remédios que a doutora passou de uma vez",
+      "remedio_demais",
+    ],
+    ["cortei os pulsos", "cortar_os_pulsos"],
+    ["to me automutilando", "automutilacao"],
+    ["minha filha se automutila", "automutilacao"],
+    ["escrevi uma carta de despedida", "carta_de_despedida"],
+    ["deixei um bilhete de despedida", "carta_de_despedida"],
+    ["Não vejo mais motivo pra viver.", "sem_motivo_pra_viver"],
+    ["não, não tenho motivo pra viver", "sem_motivo_pra_viver"],
+    ["que motivo eu tenho pra viver?", "sem_motivo_pra_viver"],
+    ["queria não ter nascido", "nao_ter_nascido"],
+    ["eu não devia ter nascido", "nao_ter_nascido"],
+    ["pra que eu nasci?", "nao_ter_nascido"],
+  ])("%s: risco de vida (%s)", (texto, sinal) => {
+    expect(urgente(texto)).toEqual({ tipo: "risco_de_vida", sinal });
+  });
+
+  it.each([
+    "vou enforcar a sexta-feira e emendar o feriado",
+    "quero pular o almoço",
+    "vou me jogar nessa promoção de botox",
+    "tomei 2 comprimidos de dipirona ontem, posso fazer o procedimento?",
+    "a cartela do anticoncepcional acabou",
+    "tomei todos os remédios que a doutora passou, posso tirar os pontos?",
+    "tomei 3 comprimidos por dia de antibiótico, já posso fazer o laser?",
+    "tomei 10 gotas de rivotril pra dormir, posso ir dirigindo?",
+    "posso tomar 3 comprimidos de dipirona?",
+    "não tomei 20 comprimidos",
+    "cortei o dedo cozinhando, posso fazer a unha?",
+    "vou fazer uma despedida de solteira, tem horário pra maquiagem?",
+    "meus filhos são meu motivo pra viver",
+    "queria ter nascido com o nariz menor kkk",
+    "por que nasci com esse nariz?",
+    "nunca pensei em me enforcar",
+  ])("%s: não é urgência", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+});
+
+describe("os sinais físicos novos (A1)", () => {
+  it.each([
+    ["minha mãe tá roxa e não respira", "nao_respira"],
+    ["ele ficou sem respirar", "nao_respira"],
+    ["Minha mãe caiu e não tá respondendo.", "nao_responde"],
+    ["ela tá roxa e não responde", "nao_responde"],
+    ["ele não responde a nada", "nao_responde"],
+    ["meu pai não está respondendo", "familia_nao_responde"],
+    // O socorro devolve a urgencia mesmo com o assunto da recepcao.
+    ["meu pai não está respondendo, liguei pro SAMU", "familia_nao_responde"],
+    ["a boca do meu pai ficou torta", "boca_torta"],
+    ["o rosto da minha mãe ficou torto de repente", "rosto_torto"],
+    ["o rosto dela caiu", "rosto_caido_de_outra_pessoa"],
+    ["não consigo mexer o braço direito", "nao_mexe_o_braco"],
+    ["minha mãe não consegue mexer a perna", "nao_mexe_o_braco"],
+    ["não sinto meu braço esquerdo", "nao_mexe_o_braco"],
+    [
+      "meu braço e minha perna do lado direito ficaram fracos de repente",
+      "braco_ou_perna_fraco",
+    ],
+    ["de repente meu braço ficou sem força", "braco_ou_perna_fraco"],
+    ["minha perna ficou dormente do nada", "braco_ou_perna_fraco"],
+    ["tô com uma pressão no peito", "dor_no_peito"],
+    ["sinto um peso no peito", "dor_no_peito"],
+    ["coração apertado e uma dor que vai pro braço", "dor_que_vai_pro_braco"],
+    ["uma dor que desce pro braço esquerdo", "dor_que_vai_pro_braco"],
+    ["engoli um produto de limpeza", "engoliu_veneno"],
+    ["minha filha bebeu água sanitária", "engoliu_veneno"],
+    ["tomei veneno", "engoliu_veneno"],
+  ])("%s: física (%s)", (texto, sinal) => {
+    expect(urgente(texto)).toEqual({ tipo: "fisica", sinal });
+  });
+
+  it.each([
+    "meu filho não respira pelo nariz, tem otorrino?",
+    "fiquei sem respirar de tanto rir",
+    "a clínica não está respondendo",
+    "minha filha não está respondendo minhas mensagens",
+    "vou confirmar com minha mãe, ela não está respondendo",
+    "minha mãe não responde, depois eu te aviso",
+    "a ligação caiu e a moça não tá respondendo",
+    "não consigo mexer a testa depois do botox, é normal?",
+    "não consigo levantar o braço de dor no ombro",
+    "acordei com o braço dormente",
+    "tenho uma dor no ombro que desce pro braço, vocês têm ortopedista?",
+    "dor nas costas que desce pra perna",
+    "minha pressão subiu, posso fazer botox?",
+    "tirei um peso do peito depois que conversei com a doutora",
+    "tomei sol depois do ácido, é normal arder?",
+    "tomei refrigerante, que é veneno",
+    "comprei veneno de rato pra casa",
+    // O "caindo" de outra pessoa e a flacidez; a idade e o pedido sao a
+    // estetica.
+    "o rosto da minha mãe tá caindo, vocês fazem lifting?",
+    "o rosto dela caiu muito com a idade, vocês fazem fios?",
+  ])("%s: não é urgência", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+});
+
+describe("a visão (A1)", () => {
+  it.each([
+    [
+      "Fiz preenchimento há 1 hora e estou perdendo a visão.",
+      "perdendo_a_visao",
+    ],
+    [
+      "Depois do preenchimento no nariz, minha vista escureceu.",
+      "perdendo_a_visao",
+    ],
+    ["fiquei cega de um olho depois do preenchimento", "perdendo_a_visao"],
+    ["escureceu minha vista", "perdendo_a_visao"],
+    // A decisao desta revisao (o lado seguro): a vista que escurece ao
+    // levantar fica urgencia (FALSOS_POSITIVOS_QUE_FICAM).
+    ["a vista escureceu quando levantei rápido", "perdendo_a_visao"],
+    ["não estou enxergando de um olho", "nao_enxerga"],
+    ["não enxergo nada", "nao_enxerga"],
+    ["não tô enxergando o lado esquerdo", "nao_enxerga"],
+    // O procedimento feito desfaz o oculos e o grau.
+    ["fiz botox e não tô enxergando direito sem os óculos", "nao_enxerga"],
+  ])("%s: física (%s)", (texto, sinal) => {
+    expect(urgente(texto)).toEqual({ tipo: "fisica", sinal });
+  });
+
+  it.each([
+    "não estou enxergando bem de longe, vocês têm oftalmologista?",
+    "estou perdendo a visão de perto, preciso de óculos?",
+    "tenho medo de perder a visão com o preenchimento",
+    "é verdade que preenchimento pode deixar cego?",
+    "sou cega de um olho, posso fazer botox?",
+    "não tô enxergando o link do pagamento",
+    "não estou enxergando a diferença depois do botox",
+    "minha pele escureceu depois do laser",
+  ])("%s: não é urgência", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+});
+
+describe("o outro sinal de AVC desfaz o procedimento e a estética (M1)", () => {
+  it.each([
+    [
+      "fiz botox ontem e agora minha boca ficou torta e meu braço tá dormente",
+      "boca_torta",
+    ],
+    [
+      "Fiz botox ontem. Agora minha boca ficou torta e meu braço está fraco.",
+      "boca_torta",
+    ],
+    [
+      "fiz preenchimento hoje e minha boca entortou, meu braço esquerdo tá formigando",
+      "boca_torta",
+    ],
+    [
+      "fiz harmonização ontem, meu rosto ficou torto e minha fala tá estranha",
+      "rosto_torto",
+    ],
+    [
+      "fiz botox e minha boca ficou torta e tô com muita dor de cabeça",
+      "boca_torta",
+    ],
+    [
+      "minha boca fica torta quando eu sorrio e meu braço tá fraco",
+      "boca_torta",
+    ],
+  ])("%s: urgência (%s)", (texto, sinal) => {
+    expect(urgente(texto)?.sinal).toBe(sinal);
+  });
+
+  it("na rajada: o outro sinal em outra mensagem desfaz (lê a rajada inteira)", () => {
+    expect(
+      detectarUrgencia([
+        "fiz botox ontem e minha boca ficou torta",
+        "meu braço tá dormente",
+      ])?.sinal,
+    ).toBe("boca_torta");
+    expect(
+      detectarUrgencia([
+        "fiz harmonização e meu rosto ficou torto",
+        "e minha fala tá estranha",
+      ])?.sinal,
+    ).toBe("rosto_torto");
+  });
+
+  it("a dormência da boca ou do lábio é a anestesia do procedimento, não outro membro", () => {
+    expect(
+      urgente("fiz preenchimento e minha boca ficou torta e dormente"),
+    ).toBeNull();
+    expect(
+      detectarUrgencia([
+        "fiz botox ontem e minha boca ficou torta",
+        "e o lábio tá dormente",
+      ]),
+    ).toBeNull();
+  });
+});
+
+describe("a exceção estética da boca e do rosto: o pedido, a idade e o sorriso (M2)", () => {
+  it.each([
+    "minha boca fica torta quando eu sorrio",
+    "minha boca tá meio torta, quero fazer preenchimento",
+    "minha boca tá caindo de um lado com a idade, o que vocês indicam?",
+    "o lado esquerdo do meu rosto tá mais caído, quero fazer fios",
+    "tenho o rosto torto e queria harmonizar",
+    "minha boca entortou um pouco com o tempo, preenchimento resolve?",
+  ])("%s: não é urgência", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+
+  it.each([
+    // O "de repente" desfaz; "mais caido" sozinho nao e estetica.
+    [
+      "minha boca ficou torta de repente, quero fazer preenchimento",
+      "boca_torta",
+    ],
+    ["o lado esquerdo do meu rosto tá mais caído", "rosto_caido_de_um_lado"],
+    ["meu rosto tá mais caído de um lado", "rosto_caido_de_um_lado"],
+    // O procedimento ja feito nunca e o pedido ("fiz botox", o efeito).
+    [
+      "fiz botox e metade do rosto caiu, dá pra corrigir?",
+      "rosto_caido_de_um_lado",
+    ],
+    // A consulta nao e o pedido de procedimento.
+    ["a boca do meu pai ficou torta, quero uma consulta", "boca_torta"],
+  ])("%s: urgência (%s)", (texto, sinal) => {
+    expect(urgente(texto)?.sinal).toBe(sinal);
+  });
+});
+
+describe("a pergunta sobre o efeito, só nos sinais físicos (M2)", () => {
+  it.each([
+    "botox dá falta de ar?",
+    "esse procedimento é perigoso? pode dar falta de ar?",
+    "preenchimento pode causar falta de ar?",
+    "botox causa convulsão?",
+    "tem risco de dar falta de ar na anestesia?",
+    "a anestesia pode me dar falta de ar?",
+    "posso ter convulsão com a anestesia?",
+  ])("%s: não é urgência", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+
+  it.each([
+    // O relato presente nunca e a pergunta.
+    ["botox dá falta de ar? tô com falta de ar agora", "falta_de_ar"],
+    ["tô com falta de ar, botox dá falta de ar?", "falta_de_ar"],
+    // "Me da" e o relato; "e normal" pode ser quem esta sentindo.
+    ["me dá falta de ar, o que eu faço?", "falta_de_ar"],
+    ["é normal dar falta de ar depois do botox?", "falta_de_ar"],
+    // Sem o "?" nao e a pergunta.
+    ["botox dá falta de ar", "falta_de_ar"],
+  ])("%s: urgência (%s)", (texto, sinal) => {
+    expect(urgente(texto)?.sinal).toBe(sinal);
+  });
+
+  it("o risco de vida não tem a exceção da pergunta", () => {
+    expect(urgente("isso dá vontade de morrer?")?.tipo).toBe("risco_de_vida");
+  });
+});
+
+describe("a falta de ar do esforço de sempre (M2)", () => {
+  it.each([
+    "tenho falta de ar quando subo escada, posso fazer lipo?",
+    "fico sem fôlego quando subo escada, posso fazer a lipo?",
+    "fico sem ar quando corro",
+  ])("%s: não é urgência (escala como sintoma)", (texto) => {
+    expect(urgente(texto)).toBeNull();
+    expect(
+      detectarGatilhosDeEntrada({ mensagens: [{ tipo: "texto", texto }] }),
+    ).toContain("sintoma");
+  });
+
+  it("o agora na mesma oração continua urgente", () => {
+    expect(
+      urgente("tô com falta de ar agora, quando subo escada piora")?.sinal,
+    ).toBe("falta_de_ar");
+  });
+});
+
+describe("o me matando e o morrendo da estética e da dor (M2)", () => {
+  it.each([
+    "essas rugas estão me matando, quanto é o botox?",
+    "essa papada tá me matando kkk",
+    "essa flacidez tá me matando",
+    "esse cabelo tá me matando",
+    "essa dor nas costas tá me matando, tem horário com o ortopedista?",
+    "essa dor nas minhas costas tá me matando",
+    "minhas costas tão me matando",
+    "rugas tão me matando",
+    "essa enxaqueca tá me matando",
+    "essa cólica tá me matando",
+    "tô morrendo de dor nas costas",
+    "tô morrendo de cólica",
+    "meu cabelo tá morrendo",
+  ])("%s: não é urgência", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+
+  it.each([
+    "essa dor nas costas tá me matando, tem horário com o ortopedista?",
+    "minhas costas tão me matando",
+    "essa enxaqueca tá me matando",
+    "essa cólica tá me matando",
+    "tô morrendo de dor nas costas",
+    "tô morrendo de cólica",
+  ])("%s: a dor forte continua escalando como sintoma pelo portão", (texto) => {
+    const gatilhos = detectarGatilhosDeEntrada({
+      mensagens: [{ tipo: "texto", texto }],
+    });
+    expect(gatilhos).toContain("sintoma");
+    expect(gatilhos).not.toContain("urgencia");
+  });
+
+  it.each([
+    // O pronome, o sofrimento e a dor emocional continuam (na duvida,
+    // urgente); o "pelo" de "pelo jeito" nao e o pelo do corpo.
+    "isso tá me matando",
+    "essa ansiedade tá me matando",
+    "essa dor na alma tá me matando",
+    "a dor dessa perda tá me matando",
+    "a saudade tá me matando",
+    "pelo jeito isso vai me matar",
+    // O "morrer de dor" do risco de vida nao tem a excecao (so o
+    // "morrendo", fisico).
+    "quero morrer de dor",
+  ])("%s: risco de vida", (texto) => {
+    expect(urgente(texto)?.tipo).toBe("risco_de_vida");
+  });
+
+  it.each([
+    ["essa dor no peito tá me matando", "dor_no_peito"],
+    ["tô morrendo de dor no peito", "dor_no_peito"],
+  ])("%s: a dor no peito continua física (%s)", (texto, sinal) => {
+    expect(urgente(texto)).toEqual({ tipo: "fisica", sinal });
+  });
+});
+
+describe("a emergência com o pedido de horário (M2)", () => {
+  it.each([
+    "Oi, é uma emergência! Preciso de um horário pra amanhã, tenho casamento.",
+    "tenho uma emergência estética, preciso de um horário hoje",
+    "é uma emergência, preciso encaixar hoje",
+    "tenho uma emergência estética kkk",
+  ])("%s: não é urgência", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+
+  it.each([
+    "é uma emergência, me ajuda, preciso de um horário agora",
+    "é uma emergência, preciso de atendimento",
+  ])(
+    "%s: urgência (o pedido de ajuda e o atendimento não são a agenda)",
+    (texto) => {
+      expect(urgente(texto)?.sinal).toBe("emergencia");
+    },
+  );
+});
+
+// Revisao de 6eae43d (pedido do coordenador): a overdose (risco de vida), o
+// ferimento grave e a complicacao do preenchimento ja feito (a oclusao
+// vascular, a emergencia tipica da clinica de estetica). Os casos tambem
+// estao na bateria (CASOS, CONTROLES, RAJADAS e a NAO_REGRESSAO).
+describe("a overdose (risco de vida)", () => {
+  it.each([
+    "tomei uma overdose",
+    "overdose de remédio",
+    "ela teve uma overdose",
+    "acho que é overdose",
+    "OVERDOSE",
+    // O risco de vida nao tem antecedente nem a excecao da vitamina dita.
+    "já tive overdose",
+    "tomei uma overdose de vitamina D",
+    // Falar sobre (sem a reportagem, o video, a aula) pode ser a ideia.
+    "minha filha anda falando sobre overdose",
+  ])("%s: risco de vida", (texto) => {
+    expect(urgente(texto)).toEqual({
+      tipo: "risco_de_vida",
+      sinal: "overdose",
+    });
+  });
+
+  it.each([
+    "o que é overdose de vitamina?",
+    "existe overdose de botox?",
+    "dá pra ter overdose de colágeno?",
+    "vi uma reportagem sobre overdose",
+    "essa foto é uma overdose de fofura",
+    "uma overdose de amor kkk",
+    "não foi overdose",
+  ])("%s: não é urgência (a informação, a figura ou a negação)", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+});
+
+describe("o ferimento grave (físico)", () => {
+  it.each([
+    "levei um tiro",
+    "fui baleado",
+    "fui baleada",
+    "fui esfaqueado",
+    "levei uma facada",
+    "meu filho levou um tiro",
+    "meu marido levou uma facada",
+    "ele levou três tiros",
+    "atiraram no meu irmão",
+    "deram uma facada nele",
+    "minha filha foi atingida por bala perdida",
+    "levei um tiro no pé",
+    "acabou de levar um tiro",
+    // O laser na mensagem nao apaga o tiro de verdade (sem os disparos
+    // contados).
+    "Meu filho levou um tiro, preciso cancelar a sessão de laser dele",
+  ])("%s: física", (texto) => {
+    expect(urgente(texto)).toEqual({
+      tipo: "fisica",
+      sinal: "ferimento_grave",
+    });
+  });
+
+  it.each([
+    "foi tiro e queda",
+    "isso foi um tiro no pé",
+    "dei um tiro no pé com esse corte de cabelo",
+    "esse preço é uma facada",
+    "levei uma facada nesse orçamento",
+    "me meteram uma facada no preço da consulta",
+    "levei 300 tiros de laser na axila",
+    "levei uns 500 tiros na depilação, é normal arder?",
+    "já levei um tiro na perna, posso fazer lipo?",
+    "faço aula de tiro",
+    "comprei uma bala de goma",
+  ])("%s: não é urgência (a figura, o laser ou a história)", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+});
+
+describe("a complicação do preenchimento feito (a oclusão vascular)", () => {
+  it.each([
+    "fiz preenchimento ontem e minha visão tá embaçada",
+    "fiz harmonização e estou vendo embaçado",
+    "depois do preenchimento no nariz minha visão ficou turva",
+    "fiz bioestimulador e tô enxergando duplo",
+    "fiz preenchimento labial e o lábio ficou branco",
+    "depois do preenchimento a pele ficou esbranquiçada",
+    "fiz preenchimento no bigode chinês e a pele tá pálida",
+    "fiz a boca ontem e ela tá toda manchada",
+    "fiz preenchimento e a pele tá rendilhada",
+    "fiz preenchimento ontem e hoje o lábio tá roxo e frio",
+    "fiz preenchimento ontem, tá roxo e espalhando",
+    "depois do preenchimento ficou um roxo que tá aumentando",
+    "fiz preenchimento e tô com uma dor muito forte no lábio",
+    "fiz fios ontem e a dor só piora",
+    "Meu lábio ficou roxo e muito dolorido depois do preenchimento.",
+    "minha mãe fez preenchimento e o lábio dela tá branco",
+    // A pergunta sobre o efeito nao apaga (semPergunta).
+    "fiz preenchimento ontem, pode dar visão embaçada?",
+  ])("%s: física", (texto) => {
+    expect(urgente(texto)).toEqual({
+      tipo: "fisica",
+      sinal: "oclusao_do_preenchimento",
+    });
+  });
+
+  it("o procedimento feito em outra mensagem da rajada também vale", () => {
+    expect(
+      detectarUrgencia([
+        "fiz preenchimento labial hoje",
+        "o lábio ficou branco",
+      ])?.sinal,
+    ).toBe("oclusao_do_preenchimento");
+    expect(
+      detectarUrgencia([
+        "vou fazer preenchimento amanhã",
+        "minha visão tá embaçada",
+      ]),
+    ).toBeNull();
+  });
+
+  it.each([
+    // O roxo sozinho e o hematoma; o inchaco e a dor leve.
+    "fiquei com um roxinho depois do preenchimento, é normal?",
+    "ficou roxo onde furou",
+    "fiz preenchimento e ficou roxo onde furou",
+    "fiz preenchimento ontem e hoje o lábio tá inchado e roxinho, é normal?",
+    "ficou um pouco inchado depois do preenchimento",
+    "fiz preenchimento e tá um pouco dolorido, é normal?",
+    // Sem o procedimento feito: nenhum, ou so pedido.
+    "visão embaçada, vocês têm oftalmologista?",
+    "quero preencher o lábio, ele é muito pálido",
+    "vou fazer preenchimento amanhã, pode dar visão embaçada?",
+    // A negacao e o que nao e a pele.
+    "fiz preenchimento, o roxo não está espalhando",
+    "fiz preenchimento, a dor não está piorando",
+    "fiz preenchimento e meus dentes estão brancos",
+    "meu fio de cabelo tá branco",
+  ])("%s: não é urgência", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+
+  it("só a complicação do preenchimento não tem a exceção da pergunta", () => {
+    expect(
+      SINAIS_DE_EMERGENCIA.filter((s) => s.semPergunta === true).map(
+        (s) => s.nome,
+      ),
+    ).toEqual(["oclusao_do_preenchimento"]);
   });
 });

@@ -248,7 +248,10 @@ describe("disparo ativo (confirmação de atendimento)", () => {
 });
 
 describe("download de mídia", () => {
-  it("baixa pelo provedor, guarda no Storage e transcreve áudio", async () => {
+  // AG6b (D-94): a uazapi nunca transcreve (transcribe: false) e o worker
+  // nunca grava message.transcript; a transcricao e so do turno da IA, em
+  // ia_leitura_da_midia. Este caso virou a guarda disso.
+  it("baixa pelo provedor, guarda no Storage e nunca transcreve", async () => {
     const clinicId = await criarClinica("midia");
     const contactId = await criarContato(clinicId, "+5584960000004", {
       consentimento: "ativo",
@@ -299,7 +302,8 @@ describe("download de mídia", () => {
       .single();
     const caminho = `${clinicId}/${mensagem!.id}`;
     expect(depois?.media_url).toBe(`storage://${MIDIA_BUCKET}/${caminho}`);
-    expect(depois?.transcript).toContain("Transcrição de teste");
+    // D-94: o download nunca transcreve, nem com o provedor falso.
+    expect(depois?.transcript).toBeNull();
 
     // O arquivo existe MESMO no Storage, com o conteudo do provedor.
     const { data: arquivo, error } = await admin.storage

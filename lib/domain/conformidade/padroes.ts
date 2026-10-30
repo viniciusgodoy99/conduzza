@@ -635,6 +635,48 @@ const ACOMPANHANTE_DO_DIA =
   "(?!,? (?:no dia|nesse dia|neste dia|naquele dia|na consulta|no procedimento|para (?:te )?(?:levar|buscar|acompanhar)|pra (?:te )?(?:levar|buscar|acompanhar)|por causa da (?:sedacao|anestesia))\\b)";
 // [AG6 urgência] fim
 
+// [AG6b mídia] início
+// 3a rodada da AG6b (revisao de 6eae43d): a IA comentando o RESULTADO ou o
+// CONTEUDO do exame ou do laudo ("Vi no seu exame que a glicemia esta
+// alta.", "No laudo esta tudo bem.", "O exame deu positivo."). Antes, so o
+// verificador por modelo barrava. Interpretar exame e ato medico (CFM
+// 2.314/2022); a recepcao recebe, marca, diz o preco e passa o resultado
+// para a equipe ("Recebemos o pedido do exame", "O exame de sangue custa
+// R$ 50", "Vou passar o seu resultado para a equipe", "O resultado fica
+// pronto em 3 dias").
+/** O exame, o laudo e o resultado (o nome do Cadastro chega como o marcador). */
+const DOCUMENTO_DO_RESULTADO =
+  "(?:\\b(?:exames?|laudos?|resultados?|testes?|hemogramas?|ultrassom|ultrassons|ultrassonografias?|mamografias?|tomografias?|ressonancias?|biopsias?|raios?[- ]?x|preventivos?|papanicolau|eletrocardiogramas?|ecocardiogramas?|glicemia|glicose|colesterol|triglicerides|triglicerideos|hemoglobina(?: glicada)?|plaquetas|leucocitos|hemacias|ferritina|tsh|t4(?: livre)?|vitamina (?:d|b12)|creatinina|ureia|acido urico|psa|beta ?hcg|hcg|ldl|hdl)\\b|\\u00a7)";
+/**
+ * O verbo que diz como o resultado ficou ("esta", "deu", "veio") e, com ate
+ * duas palavras antes do valor, o que o resultado mostra ("o laudo mostra
+ * o colesterol elevado", "nao mostrou nada de errado").
+ */
+const VERBO_DO_RESULTADO =
+  "(?:(?:esta|estao|ta|tao|estava|estavam|deu|deram|da|veio|vieram|saiu|sairam|ficou|ficaram|e|eh|sao|foi|foram|parece|parecem|aparece|aparecem|aparenta)|(?:mostra|mostram|mostrou|indica|indicam|indicou|acusa|acusou|aponta|apontou|consta|constam|apresenta|apresentou)(?: [a-z0-9]+){0,2}?)";
+/**
+ * Do resultado ate o verbo: ate quatro palavras ("no seu exame que a
+ * glicemia esta"), nenhuma da agenda nem do preco ("o exame esta marcado e
+ * o atendimento e normal" nao e o exame).
+ */
+const ATE_O_VERBO_DO_RESULTADO =
+  "(?:,? (?!(?:atendimento|funcionamento|expediente|horario|agenda|movimento|transito|preco|valor|custo|prazo|tempo|pagamento|consulta)\\b)[a-z0-9]+){0,4}?,?";
+const INTENSIDADE_DO_RESULTADO =
+  "(?:(?:muito|bem|um pouco|meio|levemente|ligeiramente|bastante|super|so|apenas|tudo|todo|toda|todos|todas|pouco|totalmente|completamente) )*";
+/** O resultado alterado (diagnostico: o que o sinal significa). */
+const VALOR_ALTERADO =
+  "(?:alt[oa]s?|baix[oa]s?|elevad[oa]s?|alterad[oa]s?|aumentad[oa]s?|diminuid[oa]s?|reduzid[oa]s?|positiv[oa]s?|negativ[oa]s?|(?:nao )?reagentes?|(?:acima|abaixo|fora) d[oa]s? (?:normal|referencia|valores? de referencia|esperado|ideal|limite|faixa))\\b";
+/** O resultado normal (triagem: tranquilizar sobre o resultado). */
+const VALOR_NORMAL =
+  "(?:normal|normais|tudo bem|tudo normal|dentro d[oa]s? (?:normal|referencia|valores? de referencia|esperado|ideal|limite|faixa)|sem (?:nenhuma )?alterac(?:ao|oes)|nada de (?:errado|anormal|grave|preocupante|alterado))\\b";
+/**
+ * O valor ANTES do resultado: "esta tudo bem no seu exame", "alto no
+ * laudo". Sem o "com" ("tudo bem com a sua consulta?" e recepcao).
+ */
+const NO_RESULTADO =
+  "(?:,? (?:no|na|nos|nas|em) (?:(?:seu|sua|seus|suas|meu|minha|esse|essa|este|esta|o|a|os|as) )?(?:\\b(?:exames?|laudos?|resultados?|testes?|hemogramas?|ultrassom|ultrassons|ultrassonografias?|mamografias?|tomografias?|ressonancias?|biopsias?)\\b|\\u00a7))";
+// [AG6b mídia] fim
+
 export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
   // ---- triagem -------------------------------------------------------------
   p("triagem", "sintoma_citado", `\\b${alternativas(SINTOMAS)}`),
@@ -820,6 +862,23 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
     "voce_tem_es",
     "\\b(?:usted tiene|tienes|tiene usted)\\b.{0,20}(?:infeccion|alergia|rinitis|migrana|dermatitis|gripe)|\\b(?:sintoma|senal) de\\b",
   ),
+  // [AG6b mídia] início
+  // 3a rodada da AG6b: a IA comentando o resultado ou o conteudo do exame
+  // ou do laudo. O alterado e diagnostico ("a glicemia esta alta", "deu
+  // positivo"); o normal e triagem ("no laudo esta tudo bem", "veio
+  // normal"). As duas ordens: o resultado antes do verbo e o valor antes
+  // do resultado ("esta tudo bem no seu exame").
+  p(
+    "diagnostico",
+    "resultado_de_exame_alterado",
+    `${DOCUMENTO_DO_RESULTADO}${ATE_O_VERBO_DO_RESULTADO} ${VERBO_DO_RESULTADO} ${INTENSIDADE_DO_RESULTADO}${VALOR_ALTERADO}|\\b${VALOR_ALTERADO}${NO_RESULTADO}`,
+  ),
+  p(
+    "triagem",
+    "resultado_de_exame_normal",
+    `${DOCUMENTO_DO_RESULTADO}${ATE_O_VERBO_DO_RESULTADO} ${VERBO_DO_RESULTADO} ${INTENSIDADE_DO_RESULTADO}${VALOR_NORMAL}|\\b${VALOR_NORMAL}${NO_RESULTADO}`,
+  ),
+  // [AG6b mídia] fim
 
   // ---- orientacao clinica --------------------------------------------------
   p(
@@ -1370,15 +1429,26 @@ const TEMPO_DE_CORTESIA = "\\d+ ?(?:h|hs|horas?|min|minutos) de ";
 const CONDICAO_DE_SOCORRO =
   "(?:qualquer coisa|qualquer problema|qualquer emergencia|qualquer intercorrencia|se precisar|se precisarem|caso precise|caso precisem|em caso de|no caso de|se for preciso|se for necessario|se necessario|se piorar|se sentir|se acontecer|se tiver (?:algum|alguma)|se houver|se algo|em (?:uma )?emergencia|numa emergencia|em (?:uma )?urgencia|numa urgencia)";
 /**
- * Revisao de 30/10/2026: a IDA ao lugar depois dele, ate o ponto ("Ficamos
- * ao lado da UPA, va direto para la", "corra para la", "pode ir la agora",
- * "procure-o", "la eles atendem"): o lugar vira destino e a regra
- * pronto_socorro barra, como no main. O "vai" de futuro ("voce vai ver a
- * placa"), o "segue" do endereco ("segue a localizacao") e o "procure a
- * recepcao" nao sao a ida.
+ * Revisao de 30/10/2026: a IDA ao lugar ("Ficamos ao lado da UPA, va direto
+ * para la", "corra para la", "pode ir la agora", "procure-o", "la eles
+ * atendem"): o lugar vira destino e a regra pronto_socorro barra, como no
+ * main.
+ *
+ * 3a rodada (revisao de 6eae43d, M5): a ida e procurada no RASCUNHO
+ * INTEIRO, antes ou depois do lugar, na mesma frase ou em outra. Ate o
+ * ponto ela escapava: "Ficamos em frente a UPA. Va ate la agora.", "Estamos
+ * ao lado da UPA; va direto pra la." e "Ficamos ao lado da UPA, que e o
+ * melhor lugar para voce agora." passavam pela camada de regras. De
+ * proposito larga (o lado seguro: sem a troca, o main barra): o "va", o
+ * "ir", o "corra" e o "la" soltos, o "dirija-se", o "siga para", o
+ * "procure" e o "melhor lugar". Ficam de fora o "vai" e o "vao" de futuro
+ * ("voce vai ver a placa", "o lembrete vai no dia anterior"), o "siga a
+ * placa", o "segue" do endereco ("segue a localizacao"), o "procure a
+ * recepcao" (e o lugar dentro da clinica) e o "-la" do verbo
+ * ("confirma-la").
  */
 const IDA_AO_LUGAR =
-  "(?:(?:va|vai|ir|corra|corre|correr|dirija-se|dirija|dirigir-se)(?: (?:direto|diretamente|agora|ja|correndo|rapido|logo|imediatamente))* (?:pra|para|ate|ao|a|na|no|la)|procur(?:e|a|ar)-(?:o|a|lo|la|los|las)|procur(?:e|a|ar) (?:ele|ela|la|por ele|por ela)|(?:pra|para|ate) la|la)";
+  "(?:va|ir|corra|corram|corre|correr|dirija|dirijam|dirija-se|dirijam-se|se dirija|dirigir-se|se dirigir|encaminhe-se|se encaminhe|(?:vai|vao|sig(?:a|am))(?: (?:direto|diretamente|agora|ja|correndo|rapido|logo|imediatamente))* (?:pra|para|ate|ao|la|em direcao)|procur(?:e|em|a|ar)-(?:o|a|lo|la|los|las)|procur(?:e|em|a|ar)(?! (?:(?:a|o|pela|pelo|nossa|nosso) )?(?:recepcao|recepcionista|secretaria|equipe|atendente|entrada|portaria|placa|estacionamento|elevador|escada|balcao|sala|andar|clinica)\\b)|(?<!-)la|(?:melhor|mais indicad[oa]|mais adequad[oa]) (?:lugar|local)|(?:lugar|local) (?:certo|indicado|mais indicado|adequado|mais adequado))";
 // [AG6 urgência] fim
 
 export const NEUTRALIZACOES_DE_SAIDA: readonly Neutralizacao[] = [
@@ -1476,11 +1546,18 @@ export const NEUTRALIZACOES_DE_SAIDA: readonly Neutralizacao[] = [
     // vira destino ("Qualquer coisa, estamos em frente ao Pronto-Socorro",
     // "Ficamos ao lado da UPA, se precisar") e a regra pronto_socorro barra.
     // Revisao de 30/10/2026 (pior que a producao, que barrava todos): a IDA
-    // ao lugar depois dele, ate o ponto, tambem ("Ficamos ao lado da UPA, va
-    // direto para la", "Estamos em frente ao hospital, corra para la", "Fica
-    // perto do pronto-socorro, va la", "procure-o").
+    // ao lugar tambem ("Ficamos ao lado da UPA, va direto para la", "Estamos
+    // em frente ao hospital, corra para la", "Fica perto do pronto-socorro,
+    // va la", "procure-o"). 3a rodada (M5): a ida em QUALQUER ponto do
+    // rascunho, antes ou depois do lugar, em qualquer frase ("Ficamos em
+    // frente a UPA. Va ate la agora."); a condicao continua na mesma frase.
+    // A palavra de lugar (a assercao curta) vem PRIMEIRO: a busca da ida no
+    // rascunho inteiro so roda onde ha um lugar (sem isso, ela rodava em
+    // toda posicao do texto, e 10 mil caracteres levavam 0,7 s). A janela
+    // de 2.000 caracteres cobre o rascunho inteiro em todo caso que importa
+    // (acima de 700, ele ja bloqueia como longo).
     nome: "servico_de_saude_de_referencia",
-    fonte: `(?<!\\b(?:va|vai|ir|ida|corra|corre|correr|siga|segue|seguir|dirija|dirija-se|dirigir|procure|procura|procurar|busque|buscar|leve|leva|levar|encaminhe|encaminhar)\\b[^.!?;,]{0,30})(?<!\\b${CONDICAO_DE_SOCORRO}\\b[^.!?;]{0,80})(?<=\\b(?:lado|frente|perto|proxim[oa]s?|vizinh[oa]s?|esquina|em cima|embaixo|atras|junto|colad[oa]s?|depois|antes|rua|predio|galeria|quadra|referencia:?(?: e)?) (?:d[aoe]s? |a |ao |as )?(?:uma |um |base d[oa] |entrada d[oa] )?)(?:upa|pronto[ -]?socorro|pronto[ -]?atendimento|samu|hospital|posto de saude)\\b(?![^.!?;]{0,160}\\b(?:${CONDICAO_DE_SOCORRO}|${IDA_AO_LUGAR})\\b)`,
+    fonte: `(?<=\\b(?:lado|frente|perto|proxim[oa]s?|vizinh[oa]s?|esquina|em cima|embaixo|atras|junto|colad[oa]s?|depois|antes|rua|predio|galeria|quadra|referencia:?(?: e)?) (?:d[aoe]s? |a |ao |as )?(?:uma |um |base d[oa] |entrada d[oa] )?)(?=upa|pronto[ -]?socorro|pronto[ -]?atendimento|samu|hospital|posto de saude)(?<!\\b(?:va|vai|ir|ida|corra|corre|correr|siga|segue|seguir|dirija|dirija-se|dirigir|procure|procura|procurar|busque|buscar|leve|leva|levar|encaminhe|encaminhar)\\b[^.!?;,]{0,30})(?<!\\b${CONDICAO_DE_SOCORRO}\\b[^.!?;]{0,80})(?<!\\b${IDA_AO_LUGAR}\\b[\\s\\S]{0,2000})(?:upa|pronto[ -]?socorro|pronto[ -]?atendimento|samu|hospital|posto de saude)\\b(?![^.!?;]{0,160}\\b${CONDICAO_DE_SOCORRO}\\b)(?![\\s\\S]{0,2000}\\b${IDA_AO_LUGAR}\\b)`,
     troca: "loja",
   },
   // [AG6 urgência] fim
@@ -2012,6 +2089,52 @@ const PERGUNTA_DE_PRECO_DO_EXAME =
 const SEM_DESFECHO_DO_EXAME =
   "(?!.{0,40}\\b(?:alterad|deu\\b|deram\\b|sai(?:u|ram)\\b|mostr|apont|acus|positiv|negativ|normal|resultado|antes\\b|depois\\b|precis))";
 
+// [AG6b mídia] início
+// 3a rodada da AG6b (revisao de 6eae43d, item 6): a legenda do pedido que
+// escalava como assunto clinico ANTES do leitor ("quanto fica esse exame?",
+// "quero marcar esses exames", "aceita unimed pra esses exames?",
+// "orcamento desses exames", "exames"). A foto do pedido nunca chegava ao
+// leitor (lado seguro), e o caminho feliz de "Ler imagem e documento"
+// quase nunca se completava.
+
+/**
+ * Antes do exame: o artigo, o demonstrativo (esse, esses, este, estes,
+ * desse, desses, deste, destes, nesse, nesses), o "todos" e o numero ("os
+ * 3 exames", "esses dois exames").
+ */
+const DETERMINANTE_DO_EXAME =
+  "(?:(?:todos |todas )?(?:d[aoe]s? |o |a |os |as |um |uma |uns |umas |esse |esses |este |estes |desse |desses |deste |destes |nesse |nesses |neste |nestes )?(?:(?:dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|\\d{1,2}) )?)";
+/**
+ * O que torna o exame clinico em QUALQUER ponto da mensagem: a finalidade
+ * ("pra que serve", "o que e", "o que faz", "o que significa", "por que"),
+ * o que ele detecta ou indica, e o preparo ("jejum", "preparo"). Com uma
+ * delas, nenhuma troca do exame vale e a palavra continua escalando (antes,
+ * "pra que serve esse exame? quanto custa?" passava pelo portao).
+ */
+const INTENCAO_CLINICA_DO_EXAME =
+  "(?:(?:pra|para) q(?:ue)?\\b(?! (?:dia|dias|hora|horas|horario|horarios|data|datas|mes|semana|turno|periodo|unidade|local|endereco)\\b)|por que|o que (?:e|eh|significa|faz|serve|indica|detecta|mostra|avalia|analisa|ve|quer dizer)|servem? (?:pra|para)|significa\\w*|quer dizer|indica|indicam|detect\\w*|diagnostic\\w*|jejum|preparo|preparar|preparacao)";
+/**
+ * Nenhuma intencao clinica na mensagem inteira, antes ou depois. Vai logo
+ * DEPOIS da palavra "exame" ja casada: assim a busca so roda onde ha um
+ * exame, e nao em toda posicao do texto. A janela de 2.000 caracteres
+ * cobre a mensagem inteira em todo caso que importa (acima de 1.000, a
+ * mensagem ja escala como mensagem_longa) e impede que um texto enorme,
+ * cheio de "exame", custe tempo quadratico.
+ */
+const SEM_INTENCAO_NA_MENSAGEM = `(?<!\\b${INTENCAO_CLINICA_DO_EXAME}\\b[\\s\\S]{0,2000})(?![\\s\\S]{0,2000}\\b${INTENCAO_CLINICA_DO_EXAME}\\b)`;
+/**
+ * A recepcao do exame, logo antes dele: marcar, agendar, remarcar e
+ * cancelar ("quero marcar esses exames"); fazer e realizar fora da
+ * necessidade e da permissao ("tem horario pra fazer esses exames?", mas
+ * nao "preciso fazer esse exame?" nem "posso fazer esse exame?"); o
+ * orcamento, o horario e a vaga ("orcamento desses exames", "horario pros
+ * exames"); e o convenio ("aceita unimed pra esses exames?", "o plano cobre
+ * esse exame?").
+ */
+const RECEPCAO_DO_EXAME =
+  "(?:\\b(?:marcar|marca|marco|marque|agendar|agenda|agendo|agende|remarcar|remarca|remarque|reagendar|reagenda|desmarcar|desmarca|cancelar|cancela)|(?<!\\b(?:precis\\w*|devo|deveria|tenho que|tem que|teria que|e necessario|necessario|posso|podia|poderia)(?: mesmo| realmente| ainda)? )\\b(?:fazer|faco|faca|realizar|realizo|realize)|\\b(?:orcamento|orcamentos|orcar|cotacao|agendamento|agendamentos|marcacao|horario|horarios|vaga|vagas)(?: (?:pra|para|p\\/|pros|pras|pro))?|\\b(?:aceita|aceitam|aceitaria|cobre|cobrem|cobriria|atende|atendem|pega|pegam|autoriza|autorizam)\\b(?:(?: [a-z0-9]+){0,3}? (?:pra|para|p\\/|pros|pras|pro|nos|nas|no|na|em|com))?)";
+// [AG6b mídia] fim
+
 /**
  * Perguntas de recepcao sobre o exame como DOCUMENTO (quando fica pronto,
  * onde pegar), que o padrao de assunto clinico pegava pela palavra "laudo"
@@ -2070,10 +2193,45 @@ export const NEUTRALIZACOES_DE_ENTRADA: readonly Neutralizacao[] = [
     // "quanto custa refazer o exame que deu alterado?", "preciso de exame
     // antes?"). Fica DEPOIS de exame_de_sangue, que precisa ver a palavra
     // "exame".
+    // [AG6b mídia] 3a rodada (item 6): o demonstrativo antes do exame
+    // ("quanto fica esse exame?", "qual o valor desses exames?", "voces
+    // fazem esses exames?") e, nas duas formas, a finalidade e o preparo em
+    // qualquer ponto da mensagem mantem o exame clinico ("o que faz esse
+    // exame?", "pra que serve esse exame? quanto custa?").
     nome: "exame_na_pergunta_de_preco",
-    fonte: `(?<=\\b${PRECO_OU_SERVICO_DO_EXAME} (?:d[aoe]s? |o |a |os |as |um |uma )?)exames?\\b${SEM_DESFECHO_DO_EXAME}|\\bexames?\\b(?=(?:\\W+[a-z]+){0,4}\\W+${PERGUNTA_DE_PRECO_DO_EXAME}\\b)${SEM_DESFECHO_DO_EXAME}`,
+    fonte: `(?<=\\b${PRECO_OU_SERVICO_DO_EXAME} ${DETERMINANTE_DO_EXAME})exames?\\b${SEM_DESFECHO_DO_EXAME}${SEM_INTENCAO_NA_MENSAGEM}|\\bexames?\\b(?=(?:\\W+[a-z]+){0,4}\\W+${PERGUNTA_DE_PRECO_DO_EXAME}\\b)${SEM_DESFECHO_DO_EXAME}${SEM_INTENCAO_NA_MENSAGEM}`,
     troca: "procedimento",
   },
+  // [AG6b mídia] início
+  {
+    // 3a rodada da AG6b (item 6): marcar, agendar, fazer, o orcamento e o
+    // convenio do exame ("quero marcar esses exames", "tem horario pra fazer
+    // esses exames amanha?", "orcamento desses exames por favor", "aceita
+    // unimed pra esses exames?"). O desfecho logo depois ("deu alterado",
+    // "resultado", "antes", "preciso") e a finalidade ou o preparo em
+    // qualquer ponto da mensagem mantem o exame clinico.
+    nome: "exame_na_recepcao",
+    fonte: `(?<=${RECEPCAO_DO_EXAME} ${DETERMINANTE_DO_EXAME})exames?\\b${SEM_DESFECHO_DO_EXAME}${SEM_INTENCAO_NA_MENSAGEM}`,
+    troca: "procedimento",
+  },
+  {
+    // 3a rodada da AG6b (item 6): o pedido do exame e documento, como o
+    // laudo que fica pronto ("segue o pedido de exames", "pedido medico dos
+    // exames", "a guia dos exames"). O leitor diz o que o arquivo e.
+    nome: "pedido_de_exame",
+    fonte: `(?<=\\b(?:pedido|pedidos|requisicao|requisicoes|solicitacao|solicitacoes|guia|guias)(?: medic[oa]s?)? (?:de |d[aoe]s? |desse |desses |deste |destes )(?:(?:dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|\\d{1,2}) )?)exames?\\b${SEM_DESFECHO_DO_EXAME}${SEM_INTENCAO_NA_MENSAGEM}`,
+    troca: "procedimento",
+  },
+  {
+    // 3a rodada da AG6b (item 6): a mensagem (ou a legenda) que e so o
+    // exame ("exames", "segue os exames", "esses exames aqui"). "Meus
+    // exames" continua escalando: pode ser o resultado.
+    nome: "exame_sozinho",
+    fonte:
+      "^(?:(?:segue|seguem|aqui|aqui estao|aqui esta|ai estao|os|o|esses|esse|estes|este|todos os|todos esses) )*exames?(?: (?:aqui|ai|em anexo|anexos?))?[ .!]*$",
+    troca: "procedimento",
+  },
+  // [AG6b mídia] fim
 ];
 
 /** Lexico forte da entrada, na forma compactada (sem letra dobrada). */

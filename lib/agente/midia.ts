@@ -15,6 +15,7 @@ import {
   type TipoDaMidiaLida,
   type TipoDoLeitor,
 } from "@/lib/domain/agente/config";
+import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
 import type {
   MotivoDaFalha,
   UsoDoLlm,
@@ -26,6 +27,9 @@ import {
   VERSAO_DA_FIGURINHA,
 } from "@/lib/domain/midia-para-o-modelo";
 import {
+  FOLGA_DO_CORTE_DO_LEITOR_MS,
+  MAXIMO_DE_CHAMADAS_DO_LEITOR,
+  MAXIMO_DE_CODIGOS_NO_ESQUEMA,
   TETO_DE_TOKENS_POR_IMAGEM,
   TETO_DE_TOKENS_POR_PAGINA,
   VERSAO_DA_POLITICA_DO_LEITOR,
@@ -33,6 +37,7 @@ import {
   type ItemDoCatalogoDaLeitura,
   type ResultadoDoLeitor,
 } from "@/lib/integrations/llm/leitor-de-midia";
+import { TENTATIVAS_EXTRAS } from "@/lib/integrations/llm/openai";
 import type { ArquivoDoStorage } from "@/lib/integrations/storage/arquivo-para-a-ia";
 import type { ResultadoDaTranscricaoNoModelo } from "@/lib/integrations/llm/transcricao";
 import { log } from "@/lib/log";
@@ -68,6 +73,35 @@ import { USO_ZERADO, type UsoDoModelo } from "./uso";
 // Falha fechada em tudo: sem a funcao do banco (PGRST202), sem a leitura,
 // sem o preco, sem a calibragem, sem o teto do leitor, tudo e "fora" e nada
 // sai do servidor. Nada daqui vai para log alem de ids e codigos.
+//
+// Revisao da AG6b (30/10/2026, frente do motor):
+//  - PRAZO: cada passo da porta (o preparo de cada midia, a transcricao e a
+//    leitura de cada arquivo) tem corte duro (correrComPrazo) no prazo que
+//    o laco deu, e o sinal do corte (junto com o do laco, se houver) vai as
+//    integracoes. O Storage nunca recebe mais que PRAZO_MAXIMO_DO_STORAGE_MS.
+//    A chamada cortada que pode ter sido cobrada entra com a estimativa.
+//    Depois do corte, nada mais e feito (nem preparo, nem gravacao);
+//  - LGPD: a leitura ja gravada so vale com a habilidade da midia ligada na
+//    versao publicada E o telefone com o aviso novo (D-95). Sem eles, a
+//    midia e tratada como nao lida (a transcricao antiga nunca vai ao
+//    modelo como texto);
+//  - o Cadastro acima de MAXIMO_DE_CODIGOS_NO_ESQUEMA deixa o arquivo fora
+//    ja no plano, sem chamada (o motivo de sempre da midia nao lida);
+//  - a gravacao recusada com job_antigo (D-A) volta como job_antigo, nunca
+//    como a conversa fora da IA: o executor so conclui o job.
+//
+// Revisao da AG6b (30/10/2026, a juncao entre o leitor, a transcricao e o
+// motor):
+//  - OS CORTES EM ORDEM: a integracao do modelo (a transcricao e o leitor)
+//    corta em prazo + a folga dela. A porta passa um prazo que poe esse
+//    corte MARGEM_ENTRE_OS_CORTES_MS ANTES do corte da porta
+//    (prazoParaAIntegracao): o resultado da integracao, com o uso e as
+//    tentativasSemUso (a nova tentativa dela), sempre chega a porta. A porta
+//    so corta a integracao que nao respeita nada, e ai estima o pior caso
+//    (MAXIMO_DE_CHAMADAS_* chamadas, cada uma no pior caso);
+//  - o GASTO da nova tentativa: o uso da ultima chamada e o pior caso de cada
+//    chamada anterior sem resposta (a duracao medida, no audio; o teto do
+//    arquivo, no leitor).
 
 // ---------------------------------------------------------------------------
 // Tipos
@@ -171,6 +205,47 @@ export const INTERVALO_DA_ESPERA_MS = 15_000;
 export const SEGUNDOS_NA_RESERVA = LIMITES_DA_MIDIA.audio.maximoDeSegundos;
 /** A transcricao conta como um texto deste tamanho nas estimativas. */
 export const CARACTERES_DA_TRANSCRICAO_NA_RESERVA = 1000;
+/**
+ * O maximo que a porta pede ao Storage por arquivo (o mesmo valor de
+ * PRAZO_DO_ARQUIVO_NO_STORAGE_MS, de lib/integrations/storage/arquivo-para-
+ * a-ia.ts, que e server-only e nao entra aqui), por menor que seja o resto
+ * do prazo da midia. PROPOSTA, a calibrar na prova paga (D-100).
+ */
+export const PRAZO_MAXIMO_DO_STORAGE_MS = 8_000;
+/**
+ * Revisao da AG6b (a juncao): o corte duro da integracao do modelo (prazo +
+ * a folga dela) cai esta margem ANTES do corte da porta. A margem cobre o
+ * relogio e a volta do resultado; sem ela, os dois cortes caiam no mesmo
+ * instante (ou o da porta antes), e o resultado da integracao se perdia com
+ * as tentativasSemUso (a porta estimava uma chamada, podendo ter sido duas).
+ */
+export const MARGEM_ENTRE_OS_CORTES_MS = 500;
+/**
+ * O que a porta e a reserva do laco sabem da transcricao, cujo modulo
+ * (lib/integrations/llm/transcricao.ts) e server-only e nao entra aqui (como
+ * PRAZO_MAXIMO_DO_STORAGE_MS): os mesmos valores de
+ * FOLGA_DO_CORTE_DA_TRANSCRICAO_MS (o corte duro e o prazo mais isto) e de
+ * MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO (a primeira e UMA nova tentativa, o pior
+ * caso de um audio). Um teste confere que sao iguais
+ * (tests/unit/conformidade/transcricao.test.ts).
+ */
+export const FOLGA_DO_CORTE_DA_TRANSCRICAO_NA_PORTA_MS = 500;
+export const MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA = 1 + TENTATIVAS_EXTRAS;
+
+/**
+ * O prazo que a porta passa a integracao do modelo (a transcricao ou o
+ * leitor), dado o prazo da porta e a folga do corte duro da integracao: o
+ * corte da integracao (o prazo que ela recebe mais a folga dela) cai
+ * MARGEM_ENTRE_OS_CORTES_MS antes do corte da porta. Pode dar menos que o
+ * minimo de uma chamada: a integracao entao nao chama nada ("prazo", sem
+ * custo).
+ */
+export function prazoParaAIntegracao(
+  prazoDaPortaMs: number,
+  folgaDoCorteDaIntegracaoMs: number,
+): number {
+  return prazoDaPortaMs - folgaDoCorteDaIntegracaoMs - MARGEM_ENTRE_OS_CORTES_MS;
+}
 
 // ---------------------------------------------------------------------------
 // O catalogo e a descricao do pedido
@@ -432,9 +507,17 @@ export type EntradaDoPlano = {
   mensagens: readonly MensagemDaConversa[];
   /** Os ids das pendentes (historico.pendentes). */
   pendentes: readonly string[];
-  /** As habilidades na versao PUBLICADA. */
+  /**
+   * As habilidades na versao PUBLICADA. Valem tambem para a leitura ja
+   * gravada (revisao da AG6b): com a habilidade da midia desligada, a
+   * transcricao e a leitura antigas nao vao mais aos modelos.
+   */
   habilidades: Readonly<Record<string, boolean>>;
-  /** midia_da_ia_liberada (D-95): o telefone confirmou o aviso novo. */
+  /**
+   * midia_da_ia_liberada (D-95): o telefone confirmou o aviso novo. Vale
+   * tambem para a leitura ja gravada (o telefone que voltou ao aviso versao
+   * 1 nao manda mais a transcricao antiga aos modelos).
+   */
   telefoneLiberado: boolean;
   /** As leituras ja gravadas, por message_id. null: a leitura falhou. */
   leituras: ReadonlyMap<string, LeituraGravada> | null;
@@ -444,6 +527,11 @@ export type EntradaDoPlano = {
   transcricaoCalibrada: boolean;
   /** O leitor tem os tetos medidos, o modelo e o preco. */
   leitorPronto: boolean;
+  /**
+   * A lista do Cadastro do leitor (itensDoCatalogo). Acima de
+   * MAXIMO_DE_CODIGOS_NO_ESQUEMA, todo arquivo fica fora (o leitor falharia
+   * de qualquer jeito: o enum do esquema da saida nao cabe).
+   */
   catalogo: readonly ItemDoCatalogoDaLeitura[];
   /** Mascara o nome do contato (a transcricao lida). */
   mascarar: (texto: string) => string;
@@ -501,14 +589,35 @@ export function tokensDoArquivoNaReserva(
 }
 
 /**
+ * A midia pode ir aos modelos neste turno (D-95): a habilidade dela ligada
+ * na versao PUBLICADA e o telefone com o aviso novo. Vale para a midia a
+ * ler E para a leitura ja gravada (revisao da AG6b, LGPD): sem isto, a
+ * transcricao e o pedido lidos antes nunca vao aos modelos como texto.
+ */
+export function midiaLiberadaNoTurno(
+  midia: MidiaLida,
+  entrada: Pick<EntradaDoPlano, "habilidades" | "telefoneLiberado">,
+): boolean {
+  const habilidade =
+    midia === "audio"
+      ? entrada.habilidades.ler_audio === true
+      : entrada.habilidades.ler_imagem_e_documento === true;
+  return habilidade && entrada.telefoneLiberado;
+}
+
+/**
  * O plano da midia do turno (desenho 5.1, 7d). PURO. Para cada midia
  * PENDENTE do paciente, uma situacao; para toda mensagem do recorte com
- * leitura gravada, a leitura aplicada (o arquivo nunca vai de novo). Fora:
- * a habilidade que nao vale na versao publicada, o telefone sem o aviso
- * novo, o tipo fora da lista pelo mimetype, mais de 3 no turno, sem preco
- * ou sem teto, a transcricao sem calibragem, o download que desistiu ou que
- * passou da espera, ou a leitura das leituras que falhou. O tamanho, a
- * duracao, as paginas e os primeiros bytes so a porta sabe, ao ler.
+ * leitura gravada, a leitura aplicada (o arquivo nunca vai de novo), SO com
+ * a habilidade e o telefone valendo agora (midiaLiberadaNoTurno; sem eles,
+ * a midia com leitura e tratada como a sem leitura: a antiga fica com o
+ * marcador de sempre e a pendente fica fora). Fora: a habilidade que nao
+ * vale na versao publicada, o telefone sem o aviso novo, o tipo fora da
+ * lista pelo mimetype, mais de 3 no turno, sem preco ou sem teto, o
+ * Cadastro grande demais para o leitor, a transcricao sem calibragem, o
+ * download que desistiu ou que passou da espera, ou a leitura das leituras
+ * que falhou. O tamanho, a duracao, as paginas e os primeiros bytes so a
+ * porta sabe, ao ler.
  */
 export function planejarMidiasDoTurno(
   entrada: EntradaDoPlano,
@@ -525,8 +634,11 @@ export function planejarMidiasDoTurno(
       return mensagem;
     }
     const pendente = pendentes.has(midia.messageId);
+    // Revisao da AG6b (LGPD): a habilidade e o telefone ANTES de
+    // reaproveitar a leitura gravada.
+    const liberada = midiaLiberadaNoTurno(midia.midia, entrada);
     const leitura = entrada.leituras?.get(midia.messageId);
-    if (leitura !== undefined && leitura.midia === midia.midia) {
+    if (liberada && leitura !== undefined && leitura.midia === midia.midia) {
       return mensagemComALeitura(mensagem, leitura, entrada);
     }
     if (!pendente) {
@@ -536,18 +648,18 @@ export function planejarMidiasDoTurno(
       if (entrada.leituras === null) {
         return "fora";
       }
-      const habilidade =
-        midia.midia === "audio"
-          ? entrada.habilidades.ler_audio === true
-          : entrada.habilidades.ler_imagem_e_documento === true;
-      if (!habilidade || !entrada.telefoneLiberado) {
+      if (!liberada) {
         return "fora";
       }
       if (midia.midia === "audio") {
         if (!entrada.transcricaoCalibrada || !entrada.transcricaoComPreco) {
           return "fora";
         }
-      } else if (!entrada.leitorPronto) {
+      } else if (
+        !entrada.leitorPronto ||
+        // Revisao da AG6b: o Cadastro que nao cabe no esquema do leitor.
+        entrada.catalogo.length > MAXIMO_DE_CODIGOS_NO_ESQUEMA
+      ) {
         return "fora";
       }
       contadas += 1;
@@ -681,34 +793,51 @@ export type ResultadoDaTranscricao =
     }
   | { tipo: "sem_fala"; leitura: LeituraGravada; uso: UsoDoModelo | null }
   | { tipo: "falhou"; motivo: MotivoDaFalha; uso: UsoDoModelo | null }
-  /** A gravacao recusou: a conversa saiu da IA (ou o job e antigo). */
-  | { tipo: "fora_da_ia"; uso: UsoDoModelo | null };
+  /** A gravacao recusou: a conversa saiu da IA (alguem assumiu). */
+  | { tipo: "fora_da_ia"; uso: UsoDoModelo | null }
+  /**
+   * A gravacao recusou com job_antigo (D-A: o job e de antes da janela
+   * atual; alguem assumiu e devolveu depois dele). O executor so conclui o
+   * job: sem passagem, sem evento, sem frase e sem envio.
+   */
+  | { tipo: "job_antigo"; uso: UsoDoModelo | null };
 
 export type ResultadoDaLeitura =
   | { tipo: "lido"; leitura: LeituraGravada; uso: UsoDoModelo | null }
   | { tipo: "falhou"; motivo: MotivoDaFalha; uso: UsoDoModelo | null }
-  | { tipo: "fora_da_ia"; uso: UsoDoModelo | null };
+  | { tipo: "fora_da_ia"; uso: UsoDoModelo | null }
+  /** D-A, como na transcricao. */
+  | { tipo: "job_antigo"; uso: UsoDoModelo | null };
 
 /**
  * A porta da midia (contrato B2 interno): o laco so fala com o arquivo e com
  * os modelos de midia por aqui. O simulador passa null (D-62).
+ *
+ * Revisao da AG6b (prazo): cada metodo volta ate `prazoMs` (o corte duro e
+ * da porta; o laco corta de novo com uma folga, para a porta que nao
+ * cumprir) e repassa o `sinal` de quem chama (o corte do laco) as
+ * integracoes. O sinal abortado e o prazo vencido sao a mesma coisa: nada
+ * mais sai depois deles.
  */
 export type PortaDaMidia = {
   /** Le do Storage e prepara (4.4) cada midia, sem modelo nenhum. */
   preparar(
     midias: readonly MidiaParaPreparar[],
     prazoMs: number,
+    sinal?: AbortSignal,
   ): Promise<MidiaPronta[]>;
   /** Transcreve UM audio preparado e grava a leitura. */
   transcrever(
     audio: Extract<MidiaPronta, { tipo: "audio" }>,
     prazoMs: number,
+    sinal?: AbortSignal,
   ): Promise<ResultadoDaTranscricao>;
   /** Le UM arquivo preparado (a figurinha, local) e grava a leitura. */
   ler(
     arquivo: Extract<MidiaPronta, { tipo: "arquivo" | "figurinha" }>,
     catalogo: readonly ItemDoCatalogoDaLeitura[],
     prazoMs: number,
+    sinal?: AbortSignal,
   ): Promise<ResultadoDaLeitura>;
 };
 
@@ -720,32 +849,57 @@ export type DependenciasDaPortaDoWhatsapp = {
   workerId: string;
   /** Mascara o nome do contato (lib/agente/historico.ts, mascararNome). */
   mascarar: (texto: string) => string;
-  /** lib/integrations/storage/arquivo-para-a-ia.ts, com o admin. */
+  /**
+   * lib/integrations/storage/arquivo-para-a-ia.ts, com o admin. `prazoMs`
+   * nunca passa de PRAZO_MAXIMO_DO_STORAGE_MS; `sinal` aborta no corte.
+   */
   lerArquivo: (entrada: {
     messageId: string;
     mediaUrl: string | null;
     maximoDeBytes: number;
     prazoMs: number;
+    sinal?: AbortSignal;
   }) => Promise<ArquivoDoStorage>;
-  /** lib/integrations/llm/transcricao.ts (transcreverAudio, com o cliente). */
+  /**
+   * lib/integrations/llm/transcricao.ts (transcreverAudio, com o cliente).
+   * `prazoMs` ja e o da integracao (prazoParaAIntegracao: o corte duro dela
+   * cai antes do da porta); `sinal` aborta no corte da porta ou do laco, e
+   * a integracao termina na hora.
+   */
   transcrever: (entrada: {
     messageId: string;
     bytes: Uint8Array;
     segundosMedidos: number;
     prazoMs: number;
+    sinal?: AbortSignal;
   }) => Promise<ResultadoDaTranscricaoNoModelo>;
-  /** lib/integrations/llm/leitor-de-midia.ts (lerArquivoComOModelo). */
+  /**
+   * lib/integrations/llm/leitor-de-midia.ts (lerArquivoComOModelo). O prazo
+   * e o sinal como na transcricao.
+   */
   lerComOModelo: (entrada: {
     messageId: string;
     midia: MidiaLida;
     arquivo: ArquivoParaOLeitor;
     catalogo: readonly ItemDoCatalogoDaLeitura[];
     prazoMs: number;
+    sinal?: AbortSignal;
   }) => Promise<ResultadoDoLeitor>;
   /** VERSAO_DA_TRANSCRICAO (o modulo dela e server-only). */
   versaoDaTranscricao: string;
   /** O modelo do leitor, para estimar a chamada que falhou sem usage. */
   modeloDoLeitor: string;
+  /**
+   * O modelo da transcricao, para estimar a chamada cortada (sem resposta).
+   * Ausente ou nulo: "desconhecido" (o maior preco por minuto da tabela, o
+   * lado seguro do teto).
+   */
+  modeloDaTranscricao?: string | null;
+  /**
+   * Os tetos de tokens do leitor (os da reserva do turno), para estimar a
+   * chamada cortada. Ausentes: TETO_DE_TOKENS_POR_IMAGEM e _POR_PAGINA.
+   */
+  tetosDoLeitor?: { imagem: number | null; pagina: number | null };
 };
 
 /** A resposta de gravar_leitura_da_midia que o motor entende. */
@@ -753,6 +907,7 @@ type GravacaoDaLeitura =
   | { tipo: "gravada" }
   | { tipo: "reutilizada"; leitura: LeituraGravada }
   | { tipo: "fora_da_ia" }
+  | { tipo: "job_antigo" }
   | { tipo: "recusada"; codigo: string };
 
 /** Uma linha de leitura (do banco ou da RPC) no formato do motor, ou null. */
@@ -813,11 +968,12 @@ export function leituraDoBanco(valor: unknown): LeituraGravada | null {
   };
 }
 
-/** Os codigos de gravar_leitura_da_midia que dizem "a IA nao atende mais". */
-const GRAVACAO_FORA_DA_IA: ReadonlySet<string> = new Set([
-  "fora_da_ia",
-  "job_antigo",
-]);
+/**
+ * Os codigos de gravar_leitura_da_midia que dizem "a IA nao atende mais"
+ * (alguem assumiu, resolveu, ou a conversa ja passou). O job_antigo (D-A)
+ * tem o proprio braco: o job esta morto e so conclui.
+ */
+const GRAVACAO_FORA_DA_IA: ReadonlySet<string> = new Set(["fora_da_ia"]);
 
 async function gravarLeitura(
   admin: SupabaseClient,
@@ -874,6 +1030,9 @@ async function gravarLeitura(
         : { tipo: "reutilizada", leitura };
     }
     const motivo = typeof r?.motivo === "string" ? r.motivo : "";
+    if (r?.ok === false && motivo === "job_antigo") {
+      return { tipo: "job_antigo" };
+    }
     if (r?.ok === false && GRAVACAO_FORA_DA_IA.has(motivo)) {
       return { tipo: "fora_da_ia" };
     }
@@ -889,8 +1048,94 @@ async function gravarLeitura(
 }
 
 /**
+ * O sinal que vai as integracoes: aborta no corte da porta OU no de quem
+ * chama (o laco), o que vier primeiro.
+ */
+function sinalDoCorte(
+  corte: AbortSignal,
+  deQuemChama: AbortSignal | undefined,
+): AbortSignal {
+  return deQuemChama === undefined
+    ? corte
+    : AbortSignal.any([corte, deQuemChama]);
+}
+
+/**
+ * As chamadas ANTERIORES a ultima que a integracao fez, que falharam sem
+ * resposta e podem ter sido cobradas (`tentativasSemUso` do leitor e da
+ * transcricao: a nova tentativa delas). Pelos tipos das integracoes
+ * (renomear o campo quebra aqui), mas sem confiar no valor: ausente ou
+ * estranho, 0; nunca mais que as chamadas que a integracao pode fazer antes
+ * da ultima.
+ */
+function tentativasSemUsoDe(
+  feito: ResultadoDoLeitor | ResultadoDaTranscricaoNoModelo,
+  maximoDeChamadas: number,
+): number {
+  const valor: unknown = feito.tentativasSemUso;
+  return typeof valor === "number" && Number.isInteger(valor) && valor > 0
+    ? Math.min(valor, Math.max(0, maximoDeChamadas - 1))
+    : 0;
+}
+
+/** O pior caso de `vezes` chamadas iguais (os tokens somados). */
+function usoRepetido(uso: UsoDoLlm, vezes: number): UsoDoLlm | null {
+  return somarUsos(Array.from({ length: Math.max(0, vezes) }, () => uso));
+}
+
+/** As chamadas de uma leitura numa linha so (os tokens somados). */
+function somarUsos(usos: readonly (UsoDoLlm | null)[]): UsoDoLlm | null {
+  const presentes = usos.filter((u): u is UsoDoLlm => u !== null);
+  if (presentes.length === 0) {
+    return null;
+  }
+  return presentes.reduce((a, b) => ({
+    tokensEntrada: a.tokensEntrada + b.tokensEntrada,
+    tokensSaida: a.tokensSaida + b.tokensSaida,
+    tokensCacheLidos: a.tokensCacheLidos + b.tokensCacheLidos,
+    tokensCacheGravados: a.tokensCacheGravados + b.tokensCacheGravados,
+  }));
+}
+
+/**
+ * O uso da transcricao como ia_uso le (o papel, tokens 0, os segundos): o
+ * da ultima chamada (a integracao ja estima a que falhou e pode ter sido
+ * cobrada) mais o pior caso de cada chamada anterior sem resposta
+ * (`tentativasSemUso`), a duracao medida no preparo.
+ */
+function usoDaTranscricaoNoModelo(
+  feito: ResultadoDaTranscricaoNoModelo,
+  estimativa: { modelo: string; segundosPorChamada: number },
+): UsoDoModelo | null {
+  const anteriores =
+    tentativasSemUsoDe(feito, MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA) *
+    estimativa.segundosPorChamada;
+  if (feito.uso === null && anteriores === 0) {
+    return null;
+  }
+  return {
+    papel: "transcricao",
+    modelo: feito.uso?.modelo ?? estimativa.modelo,
+    uso: { ...USO_ZERADO },
+    segundosDeAudio: (feito.uso?.segundos ?? 0) + anteriores,
+  };
+}
+
+/**
  * A porta da midia do WhatsApp: as integracoes injetadas pelo executor e a
  * gravacao pela RPC, com a posse do job. Nunca lanca.
+ *
+ * Revisao da AG6b (prazo): o preparo de CADA midia, a transcricao e a
+ * leitura correm com corte duro (correrComPrazo) em `prazoMs`, e o sinal do
+ * corte (junto com o de quem chama) vai as integracoes. O Storage recebe no
+ * maximo PRAZO_MAXIMO_DO_STORAGE_MS. A transcricao e o leitor recebem
+ * prazoParaAIntegracao (o corte duro deles cai MARGEM_ENTRE_OS_CORTES_MS
+ * antes do desta porta), entao o resultado deles, com o uso e as
+ * tentativasSemUso, sempre chega. Cortada mesmo assim (a integracao que nao
+ * respeita nada), a chamada ao modelo entra com o uso que ela devolveu (se
+ * voltou) ou com o pior caso (MAXIMO_DE_CHAMADAS_* chamadas, cada uma no
+ * pior caso), e nada mais e feito depois do corte (nem o preparo, nem a
+ * gravacao da leitura).
  */
 export function portaDaMidiaDoWhatsapp(
   admin: SupabaseClient,
@@ -902,237 +1147,401 @@ export function portaDaMidiaDoWhatsapp(
     job_id: d.jobId,
     message_id: messageId,
   });
+  /** O log do corte: so os ids, a midia e o codigo. */
+  const logDoCorte = (
+    messageId: string,
+    midia: MidiaLida,
+    corrida: { tipo: "prazo" | "erro" | "resultado" },
+  ) =>
+    log.warn("ia_midia_cortada", {
+      ...ids(messageId),
+      kind: midia,
+      error_code: corrida.tipo === "erro" ? "excecao" : "prazo",
+    });
+  /** O modelo da transcricao para a estimativa (sem ele, o maior preco). */
+  const modeloDaEstimativa = () =>
+    d.modeloDaTranscricao?.trim() || "desconhecido";
+  /** Uma chamada da transcricao no pior caso: os segundos medidos. */
+  const segundosDeUmaChamada = (
+    audio: Extract<MidiaPronta, { tipo: "audio" }>,
+  ) => Math.max(1, Math.ceil(audio.segundos));
+  /**
+   * A transcricao que a porta cortou sem resposta (a integracao que nao
+   * respeita nada): o pior caso, MAXIMO_DE_CHAMADAS chamadas pelos segundos
+   * medidos no preparo (nao se sabe quantas sairam).
+   */
+  const usoEstimadoDaTranscricao = (
+    audio: Extract<MidiaPronta, { tipo: "audio" }>,
+  ): UsoDoModelo => ({
+    papel: "transcricao",
+    modelo: modeloDaEstimativa(),
+    uso: { ...USO_ZERADO },
+    segundosDeAudio:
+      MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA * segundosDeUmaChamada(audio),
+  });
+  /** Uma chamada do leitor no pior caso: o teto do arquivo (a reserva). */
+  const usoEstimadoDaLeitura = (
+    arquivo: Extract<MidiaPronta, { tipo: "arquivo" }>,
+    catalogo: readonly ItemDoCatalogoDaLeitura[],
+  ): UsoDoLlm | null =>
+    usoEstimadoDoLeitor({
+      catalogo,
+      tokensDoArquivo: tokensDoArquivoNaReserva(
+        arquivo.midia,
+        arquivo.arquivo.tipo === "pdf" ? "application/pdf" : "image/jpeg",
+        d.tetosDoLeitor ?? {
+          imagem: TETO_DE_TOKENS_POR_IMAGEM,
+          pagina: TETO_DE_TOKENS_POR_PAGINA,
+        },
+      ),
+    });
+
+  /** Le UMA midia do Storage e a prepara (4.4). Para no sinal. */
+  const lerEPreparar = async (
+    m: MidiaParaPreparar,
+    prazoMs: number,
+    sinal: AbortSignal,
+  ): Promise<MidiaPronta> => {
+    if (sinal.aborted) {
+      return { tipo: "falhou", messageId: m.messageId, codigo: "prazo" };
+    }
+    const lido = await d.lerArquivo({
+      messageId: m.messageId,
+      mediaUrl: m.mediaUrl,
+      maximoDeBytes:
+        m.midia === "audio"
+          ? LIMITES_DA_MIDIA.audio.maximoDeBytes
+          : Math.max(
+              LIMITES_DA_MIDIA.imagem.maximoDeBytes,
+              LIMITES_DA_MIDIA.pdf.maximoDeBytes,
+            ),
+      // Revisao da AG6b: o Storage nunca recebe o prazo inteiro da midia.
+      prazoMs: Math.min(PRAZO_MAXIMO_DO_STORAGE_MS, prazoMs),
+      sinal,
+    });
+    if (sinal.aborted) {
+      // O corte ja respondeu: o preparo nao roda depois dele.
+      return { tipo: "falhou", messageId: m.messageId, codigo: "prazo" };
+    }
+    if (lido.tipo === "grande_demais") {
+      log.info("ia_midia_fora", {
+        ...ids(m.messageId),
+        kind: m.midia,
+        error_code: "grande_demais",
+      });
+      return { tipo: "fora", messageId: m.messageId, motivo: "grande_demais" };
+    }
+    if (lido.tipo !== "ok") {
+      const codigo = lido.tipo === "falhou" ? lido.codigo : lido.tipo;
+      log.warn("ia_midia_nao_lida_do_storage", {
+        ...ids(m.messageId),
+        kind: m.midia,
+        error_code: codigo,
+      });
+      return { tipo: "falhou", messageId: m.messageId, codigo };
+    }
+    const preparada = prepararMidia({
+      midia: m.midia,
+      bytes: lido.bytes,
+      mimetype: m.mimetype,
+    });
+    if (preparada.tipo === "fora") {
+      log.info("ia_midia_fora", {
+        ...ids(m.messageId),
+        kind: m.midia,
+        error_code: preparada.motivo,
+      });
+      return {
+        tipo: "fora",
+        messageId: m.messageId,
+        motivo: preparada.motivo,
+      };
+    }
+    if (preparada.tipo === "audio") {
+      return m.midia === "audio"
+        ? {
+            tipo: "audio",
+            messageId: m.messageId,
+            bytes: preparada.bytes,
+            segundos: preparada.segundos,
+          }
+        : { tipo: "fora", messageId: m.messageId, motivo: "formato" };
+    }
+    if (m.midia === "audio") {
+      return { tipo: "fora", messageId: m.messageId, motivo: "formato" };
+    }
+    if (preparada.tipo === "figurinha") {
+      return { tipo: "figurinha", messageId: m.messageId, midia: m.midia };
+    }
+    if (preparada.tipo === "pdf") {
+      return {
+        tipo: "arquivo",
+        messageId: m.messageId,
+        midia: m.midia,
+        arquivo: { tipo: "pdf", bytes: preparada.bytes },
+        paginas: preparada.paginas,
+      };
+    }
+    return {
+      tipo: "arquivo",
+      messageId: m.messageId,
+      midia: m.midia,
+      arquivo: {
+        tipo: "imagem",
+        formato: preparada.formato,
+        bytes: preparada.bytes,
+      },
+      paginas: 1,
+    };
+  };
+
   return {
-    async preparar(midias, prazoMs) {
+    async preparar(midias, prazoMs, sinal) {
       return Promise.all(
         midias.map(async (m): Promise<MidiaPronta> => {
-          try {
-            const lido = await d.lerArquivo({
-              messageId: m.messageId,
-              mediaUrl: m.mediaUrl,
-              maximoDeBytes:
-                m.midia === "audio"
-                  ? LIMITES_DA_MIDIA.audio.maximoDeBytes
-                  : Math.max(
-                      LIMITES_DA_MIDIA.imagem.maximoDeBytes,
-                      LIMITES_DA_MIDIA.pdf.maximoDeBytes,
-                    ),
-              prazoMs,
-            });
-            if (lido.tipo === "grande_demais") {
-              log.info("ia_midia_fora", {
-                ...ids(m.messageId),
-                kind: m.midia,
-                error_code: "grande_demais",
-              });
-              return { tipo: "fora", messageId: m.messageId, motivo: "grande_demais" };
-            }
-            if (lido.tipo !== "ok") {
-              const codigo = lido.tipo === "falhou" ? lido.codigo : lido.tipo;
-              log.warn("ia_midia_nao_lida_do_storage", {
-                ...ids(m.messageId),
-                kind: m.midia,
-                error_code: codigo,
-              });
-              return { tipo: "falhou", messageId: m.messageId, codigo };
-            }
-            const preparada = prepararMidia({
-              midia: m.midia,
-              bytes: lido.bytes,
-              mimetype: m.mimetype,
-            });
-            if (preparada.tipo === "fora") {
-              log.info("ia_midia_fora", {
-                ...ids(m.messageId),
-                kind: m.midia,
-                error_code: preparada.motivo,
-              });
-              return {
-                tipo: "fora",
-                messageId: m.messageId,
-                motivo: preparada.motivo,
-              };
-            }
-            if (preparada.tipo === "audio") {
-              return m.midia === "audio"
-                ? {
-                    tipo: "audio",
-                    messageId: m.messageId,
-                    bytes: preparada.bytes,
-                    segundos: preparada.segundos,
-                  }
-                : { tipo: "fora", messageId: m.messageId, motivo: "formato" };
-            }
-            if (m.midia === "audio") {
-              return { tipo: "fora", messageId: m.messageId, motivo: "formato" };
-            }
-            if (preparada.tipo === "figurinha") {
-              return { tipo: "figurinha", messageId: m.messageId, midia: m.midia };
-            }
-            if (preparada.tipo === "pdf") {
-              return {
-                tipo: "arquivo",
-                messageId: m.messageId,
-                midia: m.midia,
-                arquivo: { tipo: "pdf", bytes: preparada.bytes },
-                paginas: preparada.paginas,
-              };
-            }
-            return {
-              tipo: "arquivo",
-              messageId: m.messageId,
-              midia: m.midia,
-              arquivo: {
-                tipo: "imagem",
-                formato: preparada.formato,
-                bytes: preparada.bytes,
-              },
-              paginas: 1,
-            };
-          } catch {
-            return { tipo: "falhou", messageId: m.messageId, codigo: "excecao" };
+          // O corte duro de cada midia (o Storage e o preparo): a excecao
+          // e o prazo viram "falhou" (falha fechada, a conversa passa).
+          const corrida = await correrComPrazo(
+            (corte) => lerEPreparar(m, prazoMs, sinalDoCorte(corte, sinal)),
+            prazoMs,
+          );
+          if (corrida.tipo === "resultado") {
+            return corrida.valor;
           }
+          logDoCorte(m.messageId, m.midia, corrida);
+          return {
+            tipo: "falhou",
+            messageId: m.messageId,
+            codigo: corrida.tipo === "erro" ? "excecao" : "prazo",
+          };
         }),
       );
     },
 
-    async transcrever(audio, prazoMs) {
-      const feito = await d.transcrever({
-        messageId: audio.messageId,
-        bytes: audio.bytes,
-        segundosMedidos: audio.segundos,
-        prazoMs,
-      });
-      const uso: UsoDoModelo | null =
-        feito.uso === null
-          ? null
-          : {
-              papel: "transcricao",
-              modelo: feito.uso.modelo,
-              uso: { ...USO_ZERADO },
-              segundosDeAudio: feito.uso.segundos,
+    async transcrever(audio, prazoMs, sinal) {
+      if (sinal?.aborted === true) {
+        // Nada saiu: sem uso.
+        return { tipo: "falhou", motivo: "timeout", uso: null };
+      }
+      // O uso da chamada assim que ela volta (undefined: nao voltou).
+      let usoDaChamada: UsoDoModelo | null | undefined;
+      const corrida = await correrComPrazo(
+        async (corte): Promise<ResultadoDaTranscricao | null> => {
+          const sinalDaChamada = sinalDoCorte(corte, sinal);
+          const feito = await d.transcrever({
+            messageId: audio.messageId,
+            bytes: audio.bytes,
+            segundosMedidos: audio.segundos,
+            // O corte duro da transcricao cai antes do desta porta: o
+            // resultado (com as tentativas sem uso) sempre volta.
+            prazoMs: prazoParaAIntegracao(
+              prazoMs,
+              FOLGA_DO_CORTE_DA_TRANSCRICAO_NA_PORTA_MS,
+            ),
+            sinal: sinalDaChamada,
+          });
+          const uso = usoDaTranscricaoNoModelo(feito, {
+            modelo: modeloDaEstimativa(),
+            segundosPorChamada: segundosDeUmaChamada(audio),
+          });
+          usoDaChamada = uso;
+          if (feito.tipo === "falhou") {
+            return { tipo: "falhou", motivo: feito.motivo, uso };
+          }
+          if (sinalDaChamada.aborted) {
+            // O corte ja respondeu: a leitura nao e gravada depois dele.
+            return null;
+          }
+          const modelo = feito.uso?.modelo ?? "desconhecido";
+          const leitura: LeituraGravada = {
+            midia: "audio",
+            tipo: feito.tipo === "transcrita" ? "transcricao" : "sem_fala",
+            transcricao: feito.tipo === "transcrita" ? feito.texto : null,
+            segundos: Math.min(150, Math.max(1, Math.ceil(feito.segundos))),
+            procedimentos: [],
+            foraDoCadastro: 0,
+            confianca: null,
+            resumo: null,
+          };
+          const gravada = await gravarLeitura(admin, d, {
+            messageId: audio.messageId,
+            midia: "audio",
+            tipo: leitura.tipo,
+            transcricao: leitura.transcricao,
+            segundos: leitura.segundos,
+            procedimentos: [],
+            foraDoCadastro: 0,
+            confianca: null,
+            resumo: null,
+            modelo,
+            versao: d.versaoDaTranscricao,
+          });
+          if (gravada.tipo === "job_antigo") {
+            return { tipo: "job_antigo", uso };
+          }
+          if (gravada.tipo === "fora_da_ia") {
+            return { tipo: "fora_da_ia", uso };
+          }
+          if (gravada.tipo === "recusada") {
+            log.warn("ia_leitura_nao_gravada", {
+              ...ids(audio.messageId),
+              kind: "audio",
+              error_code: gravada.codigo,
+            });
+            return { tipo: "falhou", motivo: "desconhecida", uso };
+          }
+          // A primeira leitura vale (o job repetido nunca regrava).
+          const valendo =
+            gravada.tipo === "reutilizada" ? gravada.leitura : leitura;
+          if (valendo.tipo === "transcricao" && valendo.transcricao !== null) {
+            return {
+              tipo: "transcrita",
+              texto: valendo.transcricao,
+              textoParaOsModelos: d.mascarar(valendo.transcricao),
+              leitura: valendo,
+              uso,
             };
-      if (feito.tipo === "falhou") {
-        return { tipo: "falhou", motivo: feito.motivo, uso };
+          }
+          return { tipo: "sem_fala", leitura: valendo, uso };
+        },
+        prazoMs,
+      );
+      if (corrida.tipo === "resultado" && corrida.valor !== null) {
+        return corrida.valor;
       }
-      const modelo = feito.uso?.modelo ?? "desconhecido";
-      const leitura: LeituraGravada = {
-        midia: "audio",
-        tipo: feito.tipo === "transcrita" ? "transcricao" : "sem_fala",
-        transcricao: feito.tipo === "transcrita" ? feito.texto : null,
-        segundos: Math.min(150, Math.max(1, Math.ceil(feito.segundos))),
-        procedimentos: [],
-        foraDoCadastro: 0,
-        confianca: null,
-        resumo: null,
+      logDoCorte(audio.messageId, "audio", corrida);
+      return {
+        tipo: "falhou",
+        motivo: corrida.tipo === "erro" ? "desconhecida" : "timeout",
+        // A chamada saiu e pode ter sido cobrada: o uso que voltou (com as
+        // tentativas sem uso), ou o pior caso pelos segundos medidos (a
+        // integracao que nao respeitou o proprio corte).
+        uso:
+          usoDaChamada !== undefined
+            ? usoDaChamada
+            : usoEstimadoDaTranscricao(audio),
       };
-      const gravada = await gravarLeitura(admin, d, {
-        messageId: audio.messageId,
-        midia: "audio",
-        tipo: leitura.tipo,
-        transcricao: leitura.transcricao,
-        segundos: leitura.segundos,
-        procedimentos: [],
-        foraDoCadastro: 0,
-        confianca: null,
-        resumo: null,
-        modelo,
-        versao: d.versaoDaTranscricao,
-      });
-      if (gravada.tipo === "fora_da_ia") {
-        return { tipo: "fora_da_ia", uso };
-      }
-      if (gravada.tipo === "recusada") {
-        log.warn("ia_leitura_nao_gravada", {
-          ...ids(audio.messageId),
-          kind: "audio",
-          error_code: gravada.codigo,
-        });
-        return { tipo: "falhou", motivo: "desconhecida", uso };
-      }
-      // A primeira leitura vale (o job repetido nunca regrava).
-      const valendo = gravada.tipo === "reutilizada" ? gravada.leitura : leitura;
-      if (valendo.tipo === "transcricao" && valendo.transcricao !== null) {
-        return {
-          tipo: "transcrita",
-          texto: valendo.transcricao,
-          textoParaOsModelos: d.mascarar(valendo.transcricao),
-          leitura: valendo,
-          uso,
-        };
-      }
-      return { tipo: "sem_fala", leitura: valendo, uso };
     },
 
-    async ler(arquivo, catalogo, prazoMs) {
-      // A figurinha (D-98): local, sem modelo e sem custo.
-      if (arquivo.tipo === "figurinha") {
-        const leitura: LeituraGravada = {
-          midia: arquivo.midia,
-          tipo: "figurinha",
-          transcricao: null,
-          segundos: null,
-          procedimentos: [],
-          foraDoCadastro: 0,
-          confianca: "alta",
-          // O CHECK do banco: a figurinha nao tem resumo (sem linha na bolha).
-          resumo: null,
-        };
-        const gravada = await gravarLeitura(admin, d, {
-          ...leitura,
-          messageId: arquivo.messageId,
-          modelo: "local",
-          versao: VERSAO_DA_FIGURINHA,
-        });
-        return resultadoDaGravacao(gravada, leitura, null, arquivo, ids);
+    async ler(arquivo, catalogo, prazoMs, sinal) {
+      if (sinal?.aborted === true) {
+        return { tipo: "falhou", motivo: "timeout", uso: null };
       }
-      const feito = await d.lerComOModelo({
-        messageId: arquivo.messageId,
-        midia: arquivo.midia,
-        arquivo: arquivo.arquivo,
-        catalogo,
-        prazoMs,
-      });
-      const usoLido: UsoDoLlm | null =
-        feito.uso ??
-        (feito.tipo === "lido" || chamadaPodeTerSidoCobrada(feito.motivo)
-          ? usoEstimadoDoLeitor({
-              catalogo,
-              tokensDoArquivo: tokensDoArquivoNaReserva(
-                arquivo.midia,
-                arquivo.arquivo.tipo === "pdf" ? "application/pdf" : "image/jpeg",
-              ),
-            })
-          : null);
-      const uso: UsoDoModelo | null =
-        usoLido === null
-          ? null
-          : {
-              papel: "leitor_de_midia",
-              modelo: feito.modelo ?? d.modeloDoLeitor,
-              uso: usoLido,
+      let usoDaChamada: UsoDoModelo | null | undefined;
+      const corrida = await correrComPrazo(
+        async (corte): Promise<ResultadoDaLeitura | null> => {
+          const sinalDaChamada = sinalDoCorte(corte, sinal);
+          // A figurinha (D-98): local, sem modelo e sem custo.
+          if (arquivo.tipo === "figurinha") {
+            const leitura: LeituraGravada = {
+              midia: arquivo.midia,
+              tipo: "figurinha",
+              transcricao: null,
+              segundos: null,
+              procedimentos: [],
+              foraDoCadastro: 0,
+              confianca: "alta",
+              // O CHECK do banco: a figurinha nao tem resumo (sem linha na
+              // bolha).
+              resumo: null,
             };
-      if (feito.tipo === "falha") {
-        return { tipo: "falhou", motivo: feito.motivo, uso };
+            const gravada = await gravarLeitura(admin, d, {
+              ...leitura,
+              messageId: arquivo.messageId,
+              modelo: "local",
+              versao: VERSAO_DA_FIGURINHA,
+            });
+            return resultadoDaGravacao(gravada, leitura, null, arquivo, ids);
+          }
+          const feito = await d.lerComOModelo({
+            messageId: arquivo.messageId,
+            midia: arquivo.midia,
+            arquivo: arquivo.arquivo,
+            catalogo,
+            // O corte duro do leitor cai antes do desta porta: o resultado
+            // (com as tentativas sem uso) sempre volta.
+            prazoMs: prazoParaAIntegracao(prazoMs, FOLGA_DO_CORTE_DO_LEITOR_MS),
+            sinal: sinalDaChamada,
+          });
+          // A ultima chamada (o uso que voltou, ou o pior caso se ela pode ter
+          // sido cobrada) e, pelo leitor com a nova tentativa, o pior caso de
+          // cada chamada anterior que saiu sem resposta.
+          const estimado = usoEstimadoDaLeitura(arquivo, catalogo);
+          const usoLido: UsoDoLlm | null = somarUsos([
+            feito.uso ??
+              (feito.tipo === "lido" || chamadaPodeTerSidoCobrada(feito.motivo)
+                ? estimado
+                : null),
+            estimado === null
+              ? null
+              : usoRepetido(
+                  estimado,
+                  tentativasSemUsoDe(feito, MAXIMO_DE_CHAMADAS_DO_LEITOR),
+                ),
+          ]);
+          const uso: UsoDoModelo | null =
+            usoLido === null
+              ? null
+              : {
+                  papel: "leitor_de_midia",
+                  modelo: feito.modelo ?? d.modeloDoLeitor,
+                  uso: usoLido,
+                };
+          usoDaChamada = uso;
+          if (feito.tipo === "falha") {
+            return { tipo: "falhou", motivo: feito.motivo, uso };
+          }
+          if (sinalDaChamada.aborted) {
+            // O corte ja respondeu: a leitura nao e gravada depois dele.
+            return null;
+          }
+          const leitura: LeituraGravada = {
+            midia: arquivo.midia,
+            tipo: feito.leitura.tipo,
+            transcricao: null,
+            segundos: null,
+            procedimentos: feito.leitura.procedimentos,
+            foraDoCadastro: feito.leitura.foraDoCadastro,
+            confianca: feito.leitura.confianca,
+            resumo: null,
+          };
+          leitura.resumo = resumoDaLeitura(leitura, catalogo);
+          const gravada = await gravarLeitura(admin, d, {
+            ...leitura,
+            messageId: arquivo.messageId,
+            modelo: feito.modelo,
+            versao: VERSAO_DA_POLITICA_DO_LEITOR,
+          });
+          return resultadoDaGravacao(gravada, leitura, uso, arquivo, ids);
+        },
+        prazoMs,
+      );
+      if (corrida.tipo === "resultado" && corrida.valor !== null) {
+        return corrida.valor;
       }
-      const leitura: LeituraGravada = {
-        midia: arquivo.midia,
-        tipo: feito.leitura.tipo,
-        transcricao: null,
-        segundos: null,
-        procedimentos: feito.leitura.procedimentos,
-        foraDoCadastro: feito.leitura.foraDoCadastro,
-        confianca: feito.leitura.confianca,
-        resumo: null,
+      logDoCorte(arquivo.messageId, arquivo.midia, corrida);
+      let uso: UsoDoModelo | null = null;
+      if (usoDaChamada !== undefined) {
+        uso = usoDaChamada;
+      } else if (arquivo.tipo === "arquivo") {
+        // O leitor nao respeitou o proprio corte (que cai antes deste): nao
+        // se sabe quantas chamadas sairam. O pior caso, MAXIMO_DE_CHAMADAS_
+        // DO_LEITOR chamadas, cada uma com o teto do arquivo.
+        const estimado = usoEstimadoDaLeitura(arquivo, catalogo);
+        const piorCaso =
+          estimado === null
+            ? null
+            : usoRepetido(estimado, MAXIMO_DE_CHAMADAS_DO_LEITOR);
+        uso =
+          piorCaso === null
+            ? null
+            : { papel: "leitor_de_midia", modelo: d.modeloDoLeitor, uso: piorCaso };
+      }
+      return {
+        tipo: "falhou",
+        motivo: corrida.tipo === "erro" ? "desconhecida" : "timeout",
+        uso,
       };
-      leitura.resumo = resumoDaLeitura(leitura, catalogo);
-      const gravada = await gravarLeitura(admin, d, {
-        ...leitura,
-        messageId: arquivo.messageId,
-        modelo: feito.modelo,
-        versao: VERSAO_DA_POLITICA_DO_LEITOR,
-      });
-      return resultadoDaGravacao(gravada, leitura, uso, arquivo, ids);
     },
   };
 }
@@ -1144,6 +1553,9 @@ function resultadoDaGravacao(
   arquivo: { messageId: string; midia: MidiaLida },
   ids: (messageId: string) => Record<string, string>,
 ): ResultadoDaLeitura {
+  if (gravada.tipo === "job_antigo") {
+    return { tipo: "job_antigo", uso };
+  }
   if (gravada.tipo === "fora_da_ia") {
     return { tipo: "fora_da_ia", uso };
   }

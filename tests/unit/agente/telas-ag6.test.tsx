@@ -5,6 +5,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
+  // [AG6b mídia] início
+  DECISAO_DO_TIPO_DO_LEITOR,
+  TIPOS_DO_LEITOR,
+  type TipoDoLeitor,
+  // [AG6b mídia] fim
   GATILHOS_OBRIGATORIOS,
   MOTIVOS_QUE_NUNCA_ATRIBUEM,
   regrasDaPassagemPadrao,
@@ -114,29 +119,47 @@ function radios(html: string) {
 }
 
 /**
- * O termo da ajuda para cada motivo que nunca atribui (a lista do banco,
+ * Os termos da ajuda para cada motivo que nunca atribui (a lista do banco,
  * MOTIVOS_QUE_NUNCA_ATRIBUEM). O fora do horario fica de fora: e passagem
  * sem a frase de sempre, e o cartao fala da passagem com a frase. O tipo
  * cobre a lista inteira: motivo novo no banco sem termo aqui nao compila, e
  * o teste confere de novo em tempo de execucao (revisao curta da AG6a: a
- * ajuda tinha esquecido a conformidade).
+ * ajuda tinha esquecido a conformidade). [AG6b mídia] Desde a revisao das
+ * telas da AG6b, mais de um termo por motivo: o arquivo clinico e o
+ * resultado ou laudo, a receita e a foto do corpo (a ajuda dizia so "exame
+ * ou foto do corpo" e esquecia a receita).
  */
 const TERMO_DO_MOTIVO_NA_AJUDA: Readonly<
   Record<
     Exclude<(typeof MOTIVOS_QUE_NUNCA_ATRIBUEM)[number], "fora_do_horario">,
-    string
+    readonly string[]
   >
 > = {
-  urgencia: "urgência",
-  sintoma: "sintoma",
-  assunto_clinico: "assunto clínico",
-  midia_nao_suportada: "arquivo que o assistente não leu",
-  conformidade: "resposta barrada pela conformidade",
+  urgencia: ["urgência"],
+  sintoma: ["sintoma"],
+  assunto_clinico: ["assunto clínico"],
+  midia_nao_suportada: ["arquivo que o assistente não leu"],
+  conformidade: ["resposta barrada pela conformidade"],
   // [AG6b mídia] início
-  midia_clinica: "exame ou foto do corpo",
-  midia_nao_identificada: "não identificou",
+  midia_clinica: ["resultado de exame", "laudo", "receita", "foto do corpo"],
+  midia_nao_identificada: ["não identificou"],
   // [AG6b mídia] fim
 };
+
+// [AG6b mídia] início
+/**
+ * O termo da ajuda para cada tipo do leitor que vai para a equipe como
+ * arquivo clinico (DECISAO_DO_TIPO_DO_LEITOR = midia_clinica). O tipo cobre
+ * os tipos do leitor: tipo clinico novo sem termo aqui falha no teste.
+ */
+const TERMO_DO_TIPO_CLINICO_NA_AJUDA: Readonly<
+  Partial<Record<TipoDoLeitor, readonly string[]>>
+> = {
+  resultado_ou_laudo: ["resultado de exame", "laudo"],
+  receita: ["receita"],
+  foto_do_corpo: ["foto do corpo"],
+};
+// [AG6b mídia] fim
 
 /** O botao Salvar do cartao (o unico botao dele). */
 function botaoSalvar(html: string): string {
@@ -203,23 +226,55 @@ describe("cartão Para quem vai a conversa", () => {
   it("a ajuda cita cada motivo que nunca atribui, a partir da lista do banco (revisão curta: faltava a conformidade)", () => {
     const ajuda = TEXTOS_DA_PASSAGEM.ajuda;
     expect(ajuda).toContain(
-      "Quando o motivo é urgência, sintoma, assunto clínico, exame ou foto do corpo, arquivo que o assistente não leu ou não identificou, ou resposta barrada pela conformidade, a conversa vai sempre para a fila.",
+      "Quando o motivo é urgência, sintoma, assunto clínico, resultado de exame, laudo, receita ou foto do corpo, arquivo que o assistente não leu ou não identificou, ou resposta barrada pela conformidade, a conversa vai sempre para a fila.",
     );
-    // Um termo por motivo de MOTIVOS_QUE_NUNCA_ATRIBUEM (o espelho de
+    // Os termos de cada motivo de MOTIVOS_QUE_NUNCA_ATRIBUEM (o espelho de
     // c_motivos_que_nunca_atribuem), menos o fora do horario (passagem sem
     // a frase). Motivo novo na lista sem termo aqui falha.
-    const termos: Record<string, string> = TERMO_DO_MOTIVO_NA_AJUDA;
+    const termos: Record<string, readonly string[]> = TERMO_DO_MOTIVO_NA_AJUDA;
     const motivos = MOTIVOS_QUE_NUNCA_ATRIBUEM.filter(
       (motivo) => motivo !== "fora_do_horario",
     );
     expect(motivos).toContain("conformidade");
     for (const motivo of motivos) {
-      const termo = termos[motivo];
-      expect(termo, `o motivo ${motivo} sem termo na ajuda`).toBeTruthy();
-      expect(ajuda, motivo).toContain(termo);
+      const doMotivo = termos[motivo] ?? [];
+      expect(doMotivo, `o motivo ${motivo} sem termo na ajuda`).not.toHaveLength(
+        0,
+      );
+      for (const termo of doMotivo) {
+        expect(ajuda, `${motivo}: ${termo}`).toContain(termo);
+      }
     }
     // Nenhum termo sobrando (de motivo que saiu da lista).
     expect(Object.keys(termos).sort()).toEqual([...motivos].sort());
+    // [AG6b mídia] início
+    // Cada tipo do leitor que vai como arquivo clinico (a decisao do
+    // servidor) tem o termo dele na ajuda, e os termos do motivo sao
+    // exatamente os dos tipos: a receita nunca some de novo.
+    const tiposClinicos = TIPOS_DO_LEITOR.filter(
+      (tipo) => DECISAO_DO_TIPO_DO_LEITOR[tipo] === "midia_clinica",
+    );
+    expect(tiposClinicos).toEqual([
+      "resultado_ou_laudo",
+      "receita",
+      "foto_do_corpo",
+    ]);
+    const doTipo: Partial<Record<string, readonly string[]>> =
+      TERMO_DO_TIPO_CLINICO_NA_AJUDA;
+    for (const tipo of tiposClinicos) {
+      const termosDoTipo = doTipo[tipo] ?? [];
+      expect(termosDoTipo, `o tipo ${tipo} sem termo na ajuda`).not.toHaveLength(
+        0,
+      );
+      for (const termo of termosDoTipo) {
+        expect(ajuda, `${tipo}: ${termo}`).toContain(termo);
+      }
+    }
+    expect(Object.keys(doTipo).sort()).toEqual([...tiposClinicos].sort());
+    expect(
+      tiposClinicos.flatMap((tipo) => doTipo[tipo] ?? []),
+    ).toEqual(TERMO_DO_MOTIVO_NA_AJUDA.midia_clinica);
+    // [AG6b mídia] fim
     // A pessoa que escreve de novo antes da atribuicao (o banco recusa com
     // mensagem_nova) tambem fica na fila.
     expect(ajuda).toContain(

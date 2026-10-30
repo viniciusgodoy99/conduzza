@@ -1,6 +1,9 @@
 import { vi } from "vitest";
 
-import { montarCatalogoDoAgente } from "@/lib/agente/ferramentas/buscar-procedimento";
+import {
+  montarCatalogoDoAgente,
+  type CatalogoDoAgente,
+} from "@/lib/agente/ferramentas/buscar-procedimento";
 import { executarTurnoDoAgente } from "@/lib/agente/laco";
 import {
   portaDaMidiaDoWhatsapp,
@@ -112,9 +115,30 @@ export type CenarioDoExecutor = {
   enviarResposta: ReturnType<typeof vi.fn>;
 };
 
+/** A entrada que a porta passa a cada integracao falsa (o prazo e o sinal). */
+export type EntradaDoStorageFalso = {
+  messageId: string;
+  maximoDeBytes: number;
+  prazoMs: number;
+  sinal?: AbortSignal;
+};
+export type EntradaDaTranscricaoFalsa = {
+  messageId: string;
+  segundosMedidos: number;
+  prazoMs: number;
+  sinal?: AbortSignal;
+};
+export type EntradaDoLeitorFalso = {
+  messageId: string;
+  prazoMs: number;
+  sinal?: AbortSignal;
+};
+
 export type OpcoesDoCenario = {
   mensagens: Linha[];
   config?: ConfigDoAgente;
+  /** O Cadastro do turno (padrao: CATALOGO_DA_AG6B). */
+  catalogo?: CatalogoDoAgente;
   skills?: Record<string, boolean>;
   passagemPara?: "fila" | "responsavel_do_lead";
   liberado?: () => boolean;
@@ -125,6 +149,15 @@ export type OpcoesDoCenario = {
   leitura?: Record<string, ResultadoDoLeitor>;
   /** Os bytes do Storage por message_id (padrao: MP3 de 15 s ou JPEG). */
   arquivos?: Record<string, ArquivoDoStorage>;
+  /**
+   * Revisao da AG6b (prazo): as integracoes falsas por inteiro, no lugar
+   * do roteiro (o Storage, a transcricao ou o leitor que travam).
+   */
+  lerArquivo?: (a: EntradaDoStorageFalso) => Promise<ArquivoDoStorage>;
+  transcrever?: (
+    t: EntradaDaTranscricaoFalsa,
+  ) => Promise<ResultadoDaTranscricaoNoModelo>;
+  lerComOModelo?: (l: EntradaDoLeitorFalso) => Promise<ResultadoDoLeitor>;
   /** A midia do executor (padrao: calibrada, com os tetos). */
   midia?: Partial<NonNullable<DependenciasDoExecutorDaIa["midia"]>> | null;
   /** A resposta do agente falso. */
@@ -153,7 +186,7 @@ export function montarCenario(
   };
   const passagemPara = o.passagemPara ?? "fila";
   estado.config = o.config ?? configComMidia({ audio: true, arquivo: true }, passagemPara);
-  estado.catalogo = CATALOGO_DA_AG6B;
+  estado.catalogo = o.catalogo ?? CATALOGO_DA_AG6B;
   bancoDaAg6b(banco, {
     mensagens: o.mensagens,
     estado: marcas,
@@ -171,7 +204,10 @@ export function montarCenario(
     o.resposta ?? "Claro, posso ajudar. Qual procedimento você quer?",
   );
   const lerArquivo = vi.fn(
-    async (a: { messageId: string; maximoDeBytes: number }): Promise<ArquivoDoStorage> => {
+    async (a: EntradaDoStorageFalso): Promise<ArquivoDoStorage> => {
+      if (o.lerArquivo !== undefined) {
+        return o.lerArquivo(a);
+      }
       const dado = o.arquivos?.[a.messageId];
       if (dado !== undefined) {
         return dado;
@@ -184,16 +220,25 @@ export function montarCenario(
     },
   );
   const transcrever = vi.fn(
-    async (t: { messageId: string; segundosMedidos: number }): Promise<ResultadoDaTranscricaoNoModelo> =>
-      o.transcricao?.[t.messageId] ?? {
-        tipo: "transcrita",
-        texto: FALA_PADRAO,
-        segundos: 16,
-        uso: { modelo: "whisper-1", segundos: 16 },
-      },
+    async (t: EntradaDaTranscricaoFalsa): Promise<ResultadoDaTranscricaoNoModelo> => {
+      if (o.transcrever !== undefined) {
+        return o.transcrever(t);
+      }
+      return (
+        o.transcricao?.[t.messageId] ?? {
+          tipo: "transcrita",
+          texto: FALA_PADRAO,
+          segundos: 16,
+          uso: { modelo: "whisper-1", segundos: 16 },
+        }
+      );
+    },
   );
   const lerComOModelo = vi.fn(
-    async (l: { messageId: string }): Promise<ResultadoDoLeitor> => {
+    async (l: EntradaDoLeitorFalso): Promise<ResultadoDoLeitor> => {
+      if (o.lerComOModelo !== undefined) {
+        return o.lerComOModelo(l);
+      }
       const feito = o.leitura?.[l.messageId];
       if (feito === undefined) {
         throw new Error("leitura sem roteiro");
@@ -228,6 +273,8 @@ export function montarCenario(
         lerComOModelo,
         versaoDaTranscricao: "transcricao-0123456789ab",
         modeloDoLeitor: "gpt-6-luna",
+        modeloDaTranscricao: "whisper-1",
+        tetosDoLeitor: { imagem: 1_600, pagina: 1_800 },
       }),
   };
   const deps: DependenciasDoExecutorDaIa = {

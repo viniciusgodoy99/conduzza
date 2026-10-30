@@ -174,7 +174,11 @@ describe("bateria AG6: a não regressão (nenhuma emergência da edd123c fica de
     expect(aceitos.size).toBe(FALSOS_POSITIVOS_ACEITOS.length);
     for (const falso of FALSOS_POSITIVOS_ACEITOS) {
       expect(ids, falso.id).toContain(falso.id);
-      expect(["estetica", "recepcao"], falso.id).toContain(falso.area);
+      // Revisao de 6eae43d: a area "clinica" (a dor do corpo como figura e a
+      // condicao contada).
+      expect(["estetica", "recepcao", "clinica"], falso.id).toContain(
+        falso.area,
+      );
       expect(falso.motivo.trim().length, falso.id).toBeGreaterThan(10);
       expect(falso.motivo, falso.id).not.toMatch(/[–—]/);
     }
@@ -227,6 +231,97 @@ describe("bateria AG6: a não regressão (nenhuma emergência da edd123c fica de
       expect(detectarUrgencia([caso?.texto ?? ""])).not.toBeNull();
     },
   );
+});
+
+// Revisao de 6eae43d (a correcao da lista de urgencia, sobre a revisao de
+// motor e conformidade): A1, as lacunas que atravessavam o portao inteiro
+// (o risco de vida, a visao, o AVC, o envenenamento), agora sinais, cada um
+// com a frase na nao regressao e os controles; M1, o procedimento com a boca
+// ou o rosto torto E outro sinal de AVC, que a edd123c marcava; M2, os
+// falsos positivos da estetica, da dor, da pergunta e da agenda, que a
+// edd123c marcava e entram na lista de aceitos.
+describe("bateria AG6: a revisão de 6eae43d (A1, M1 e M2)", () => {
+  const aceitos = new Set(FALSOS_POSITIVOS_ACEITOS.map((f) => f.id));
+  const daRevisao = (parte: string) =>
+    NAO_REGRESSAO_DA_URGENCIA.filter(
+      (frase) => frase.origem === `revisão de 6eae43d (${parte})`,
+    );
+
+  it("A1: cada sinal novo tem frase na não regressão, e nenhuma delas é falso positivo aceito", () => {
+    const sinais = new Set(
+      daRevisao("A1").map((frase) => detectarUrgencia(frase.textos)?.sinal),
+    );
+    for (const sinal of [
+      "enforcar",
+      "pular_ou_se_jogar",
+      "remedio_demais",
+      "cortar_os_pulsos",
+      "automutilacao",
+      "carta_de_despedida",
+      "sem_motivo_pra_viver",
+      "nao_ter_nascido",
+      "perdendo_a_visao",
+      "nao_enxerga",
+      "nao_respira",
+      "nao_responde",
+      "familia_nao_responde",
+      "nao_mexe_o_braco",
+      "braco_ou_perna_fraco",
+      "dor_que_vai_pro_braco",
+      "engoliu_veneno",
+    ]) {
+      expect(sinais, sinal).toContain(sinal);
+      expect(
+        SINAIS_DE_EMERGENCIA.some((s) => s.nome === sinal),
+        sinal,
+      ).toBe(true);
+    }
+    // As 20 frases do pedido e as tres do que faltava (a familia, a visao
+    // e a vista que escurece ao levantar).
+    expect(daRevisao("A1")).toHaveLength(23);
+    for (const frase of daRevisao("A1")) {
+      expect(aceitos.has(frase.id), frase.id).toBe(false);
+    }
+  });
+
+  it("M1: o procedimento com a boca ou o rosto torto e outro sinal de AVC continua urgência (nenhuma aceita)", () => {
+    expect(daRevisao("M1")).toHaveLength(11);
+    for (const frase of daRevisao("M1")) {
+      expect(aceitos.has(frase.id), frase.id).toBe(false);
+      expect(detectarUrgencia(frase.textos)?.sinal, frase.id).toMatch(
+        /^(?:boca_torta|rosto_torto)$/,
+      );
+    }
+  });
+
+  it("os três sinais do pedido do coordenador (overdose, ferimento grave e a complicação do preenchimento) têm frases na não regressão, nenhuma aceita", () => {
+    const frases = daRevisao("coordenador");
+    expect(frases).toHaveLength(17);
+    const sinais = new Set(
+      frases.map((frase) => detectarUrgencia(frase.textos)?.sinal),
+    );
+    for (const sinal of [
+      "overdose",
+      "ferimento_grave",
+      "oclusao_do_preenchimento",
+    ]) {
+      expect(sinais, sinal).toContain(sinal);
+    }
+    for (const frase of frases) {
+      expect(aceitos.has(frase.id), frase.id).toBe(false);
+    }
+  });
+
+  it("M2: toda frase que a edd123c marcava e deixou de marcar está nos aceitos, com a área e o motivo", () => {
+    expect(daRevisao("M2")).toHaveLength(19);
+    for (const frase of [
+      ...daRevisao("M2"),
+      ...daRevisao("corpus do revisor"),
+    ]) {
+      expect(aceitos.has(frase.id), frase.id).toBe(true);
+      expect(detectarUrgencia(frase.textos), frase.id).toBeNull();
+    }
+  });
 });
 
 /**

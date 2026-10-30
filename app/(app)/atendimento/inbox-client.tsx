@@ -62,6 +62,7 @@ import {
   numerosKeys,
   RESOLVIDAS_LIMIT,
   // [AG6b mídia] início
+  consultaDasLeiturasLigada,
   fetchLeiturasDaMidia,
   idsDasMidiasDoPaciente,
   leiturasDoFio,
@@ -624,25 +625,31 @@ export function InboxClient({
   // fio). So vao as midias do paciente da pagina. A chave mora debaixo da
   // chave das mensagens da conversa: o mesmo evento de message que rele o
   // fio rele as leituras, e a assinatura do recorte pede leitura nova quando
-  // chega midia ou pagina antiga. O erro so aparece na clinica da fase do
-  // agente (iaNaFase): nas outras, nada muda na bolha, nem no erro.
+  // chega midia ou pagina antiga. So na clinica da fase do agente (iaNaFase;
+  // revisao das telas da AG6b, item 6): nas outras nao ha leitura, e a
+  // consulta nem sai (antes, uma requisicao a mais por evento de message).
   const idsDasLeituras = useMemo(
     () => idsDasMidiasDoPaciente(messages),
     [messages],
   );
+  const leiturasLigadas = consultaDasLeiturasLigada({
+    iaNaFase,
+    conversaAberta: selected !== null,
+    ids: idsDasLeituras,
+  });
   const leiturasQuery = useQuery({
     queryKey: [
       ...conversationKeys.leiturasDaMidia(selected?.id ?? "nenhuma"),
       assinaturaDosIds(idsDasLeituras),
     ] as const,
     queryFn: () => fetchLeiturasDaMidia(supabase, clinicId, idsDasLeituras),
-    enabled: selected !== null && idsDasLeituras.length > 0,
+    enabled: leiturasLigadas,
     // Entre uma leitura e a outra, as linhas que ja existiam continuam.
     placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
   });
   const leiturasDaMidia = leiturasDoFio({
-    ligada: selected !== null && idsDasLeituras.length > 0,
+    ligada: leiturasLigadas,
     mostrarErro: iaNaFase,
     data: leiturasQuery.data,
     isError: leiturasQuery.isError,

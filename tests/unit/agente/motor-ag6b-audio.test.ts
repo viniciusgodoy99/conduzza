@@ -392,6 +392,29 @@ describe("falha fechada da transcricao", () => {
     expect(r.uso).toEqual([usoDaTranscricao()]);
   });
 
+  it("a gravacao com job_antigo (D-A, revisao): o turno marca jobAntigo (o executor so conclui), com o uso", async () => {
+    const { porta } = portaFalsa({
+      transcricao: { [AUDIO]: { tipo: "job_antigo", uso: usoDaTranscricao() } },
+    });
+    const { promessa, agente } = turno([audioNoLaco()], { midia: porta });
+    const r = await promessa;
+    expect(r.jobAntigo).toBe(true);
+    // O desfecho de quem nao conhece a marca: a passagem sem frase (o D-A
+    // e conferido de novo nela), nunca uma resposta.
+    expect(r.tipo).toBe("frase_fixa");
+    expect(r.desfecho).toEqual({ tipo: "falhou", motivo: "liberacao_suspensa" });
+    expect(r.uso).toEqual([usoDaTranscricao()]);
+    expect(agente.create).not.toHaveBeenCalled();
+  });
+
+  it("alguem assumiu (fora_da_ia) nao e job antigo", async () => {
+    const { porta } = portaFalsa({
+      transcricao: { [AUDIO]: { tipo: "fora_da_ia", uso: usoDaTranscricao() } },
+    });
+    const { promessa } = turno([audioNoLaco()], { midia: porta });
+    expect((await promessa).jobAntigo).toBeUndefined();
+  });
+
   it("sem porta (o simulador, D-62): o audio continua midia e passa para a equipe", async () => {
     const { promessa, agente } = turno([audioNoLaco()], { midia: null });
     const r = await promessa;

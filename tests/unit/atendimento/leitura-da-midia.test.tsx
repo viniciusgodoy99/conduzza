@@ -17,16 +17,19 @@ vi.mock("@/app/(app)/atendimento/actions", () => ({
 vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({}) }));
 
 import {
+  CARACTERES_DE_DUAS_LINHAS_NA_BOLHA,
   comPontoFinal,
   LeituraDoAssistente,
   linhaDaLeitura,
   TEXTOS_DA_LEITURA,
+  transcricaoPareceLonga,
 } from "@/components/atendimento/media/leitura-do-assistente";
 import { MessageBubble } from "@/components/atendimento/message-bubble";
 import { Thread } from "@/components/atendimento/thread";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { MIDIAS_LIDAS, TIPOS_DE_MIDIA_LIDA } from "@/lib/domain/agente/config";
 import {
+  consultaDasLeiturasLigada,
   conversationKeys,
   fetchLeiturasDaMidia,
   idsDasMidiasDoPaciente,
@@ -245,6 +248,42 @@ describe("áudio do paciente: Transcrição do assistente", () => {
     );
     expect(html).toContain('data-leitura="sem_fala"');
     expect(html).not.toContain(">ver mais<");
+  });
+
+  it("transcrição curta, que cabe nas duas linhas: sem ver mais (revisão das telas, item 7)", () => {
+    const curta = "Quero marcar uma consulta.";
+    expect(transcricaoPareceLonga(curta)).toBe(false);
+    const html = bolha(mensagem(), {
+      leituraDaMidia: leitura({ transcricao: curta }),
+    });
+    expect(texto(html)).toContain(`Transcrição do assistente: ${curta}`);
+    expect(html).not.toContain(">ver mais<");
+    expect(html).not.toContain("aria-expanded");
+    // O texto continua no paragrafo de sempre (o corte e so visual).
+    expect(html).toContain("line-clamp-2");
+  });
+
+  it("antes de medir, a estimativa pelas duas linhas da bolha mais estreita; a quebra de linha conta", () => {
+    const rotulo = `${TEXTOS_DA_LEITURA.transcricao} `;
+    const cabe = "a".repeat(CARACTERES_DE_DUAS_LINHAS_NA_BOLHA - rotulo.length);
+    expect(transcricaoPareceLonga(cabe)).toBe(false);
+    expect(transcricaoPareceLonga(`${cabe}a`)).toBe(true);
+    expect(transcricaoPareceLonga("sim\nnão")).toBe(true);
+    // A transcricao do teste de cima passa: o ver mais aparece.
+    expect(transcricaoPareceLonga(leitura().transcricao ?? "")).toBe(true);
+  });
+
+  it("o componente mede depois de montar e a cada mudança de tamanho (o molde do Ver tudo das agendadas)", () => {
+    const codigo = readFileSync(
+      "components/atendimento/media/leitura-do-assistente.tsx",
+      "utf8",
+    );
+    expect(codigo).toContain("useLayoutEffect(");
+    expect(codigo).toContain(
+      "setCortada(elemento.scrollHeight > elemento.clientHeight + 1)",
+    );
+    expect(codigo).toContain("new ResizeObserver(medir)");
+    expect(codigo).toContain("{cortada || aberta ? (");
   });
 
   it("a transcrição antiga da uazapi continua como Transcrição:, junto da do assistente", () => {
@@ -731,6 +770,38 @@ describe("o estado das leituras para o fio", () => {
         isError: true,
       }),
     ).toBe(SEM_LEITURAS_DO_FIO);
+  });
+
+  it("a consulta só sai na clínica da fase do agente, com a conversa aberta e mídia do paciente (revisão das telas, item 6)", () => {
+    const ids = [AUDIO];
+    expect(
+      consultaDasLeiturasLigada({ iaNaFase: true, conversaAberta: true, ids }),
+    ).toBe(true);
+    // Fora da fase: nenhuma requisicao, nem a cada evento de message.
+    expect(
+      consultaDasLeiturasLigada({ iaNaFase: false, conversaAberta: true, ids }),
+    ).toBe(false);
+    expect(
+      consultaDasLeiturasLigada({ iaNaFase: true, conversaAberta: false, ids }),
+    ).toBe(false);
+    expect(
+      consultaDasLeiturasLigada({
+        iaNaFase: true,
+        conversaAberta: true,
+        ids: [],
+      }),
+    ).toBe(false);
+  });
+
+  it("o Atendimento liga a consulta e o estado do fio pelo mesmo sinal", () => {
+    const codigo = readFileSync("app/(app)/atendimento/inbox-client.tsx", "utf8");
+    expect(codigo).toMatch(
+      /const leiturasLigadas = consultaDasLeiturasLigada\(\{\s*iaNaFase,\s*conversaAberta: selected !== null,\s*ids: idsDasLeituras,\s*\}\);/,
+    );
+    expect(codigo).toContain("enabled: leiturasLigadas,");
+    expect(codigo).toContain("ligada: leiturasLigadas,");
+    // Nenhuma outra consulta das leituras no Atendimento.
+    expect(codigo.match(/fetchLeiturasDaMidia\(/g)).toHaveLength(1);
   });
 
   it("a releitura que falhou não apaga as linhas que já apareceram", () => {

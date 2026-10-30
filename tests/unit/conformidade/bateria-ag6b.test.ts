@@ -14,7 +14,11 @@ import {
   CATEGORIAS_DO_VERIFICADOR,
   type CategoriaDoVerificador,
 } from "@/lib/domain/conformidade/categorias";
-import { filtrarSaida } from "@/lib/domain/conformidade/filtro";
+import {
+  filtrarSaida,
+  versaoDasRegras,
+  versaoDoPortao,
+} from "@/lib/domain/conformidade/filtro";
 import { avaliarRegras } from "@/lib/domain/conformidade/filtro-deterministico";
 import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
 import { detectarGatilhosDeEntrada } from "@/lib/domain/conformidade/gatilhos-de-entrada";
@@ -26,9 +30,14 @@ import type {
 import { contextoDo } from "@/tests/fixtures/ia/conformidade/casos";
 import {
   CONTROLES_DA_MIDIA,
+  CONTROLES_DO_LUGAR,
+  CONTROLES_DO_RESULTADO,
   ENTRADAS_POR_AUDIO,
+  FALAS_QUE_PASSAM,
   LEGENDAS_QUE_ESCALAM,
+  LEGENDAS_QUE_PASSAM,
   SAIDAS_DA_MIDIA_QUE_BLOQUEIAM,
+  SAIDAS_DO_LUGAR_QUE_BLOQUEIAM,
 } from "@/tests/fixtures/ia/conformidade/casos-ag6b";
 
 import {
@@ -37,6 +46,7 @@ import {
   audioNoLaco,
   FOTO,
   fotoNoLaco,
+  lida,
   portaFalsa,
   transcrita,
 } from "../agente/ag6b-contrato";
@@ -153,6 +163,11 @@ describe("bateria AG6b: os ids e a cobertura", () => {
       ...LEGENDAS_QUE_ESCALAM,
       ...SAIDAS_DA_MIDIA_QUE_BLOQUEIAM,
       ...CONTROLES_DA_MIDIA,
+      ...LEGENDAS_QUE_PASSAM,
+      ...FALAS_QUE_PASSAM,
+      ...SAIDAS_DO_LUGAR_QUE_BLOQUEIAM,
+      ...CONTROLES_DO_LUGAR,
+      ...CONTROLES_DO_RESULTADO,
     ].map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
     expect(ENTRADAS_POR_AUDIO.map((c) => c.gatilho)).toEqual(
@@ -279,5 +294,140 @@ describe("bateria AG6b: a IA nunca interpreta o arquivo nem o audio", () => {
   it("a IA nunca pede foto, audio, documento ou arquivo (o 'Nunca' do texto fixo)", () => {
     expect(TEXTO_FIXO_DO_AGENTE).toContain(NUNCA_DA_MIDIA);
     expect(NUNCA_DA_MIDIA).toBe("- peça foto, áudio, documento ou arquivo;");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3a rodada da AG6b (revisao de 6eae43d, 30/10/2026)
+// ---------------------------------------------------------------------------
+
+describe("bateria AG6b (3a rodada): a legenda do pedido chega ao leitor (item 6)", () => {
+  it.each(LEGENDAS_QUE_PASSAM.map((c) => [c.id, c] as const))(
+    "%s: o portao deixa passar",
+    (_id, caso) => {
+      expect(
+        detectarGatilhosDeEntrada({ mensagens: [{ tipo: "texto", texto: caso.texto }] }),
+      ).toEqual([]);
+    },
+  );
+
+  it.each(LEGENDAS_QUE_PASSAM.map((c) => [c.id, c] as const))(
+    "%s: no laco, a foto vai ao leitor e o agente responde",
+    async (_id, caso) => {
+      const { porta, preparar, ler } = portaFalsa({
+        leitura: {
+          [FOTO]: lida({ tipo: "pedido_de_exame_ou_procedimento", procedimentos: [PROC] }),
+        },
+      });
+      const { r, agente } = await turnoComMidia([fotoNoLaco(FOTO, caso.texto)], porta);
+      expect(preparar).toHaveBeenCalledTimes(1);
+      expect(ler).toHaveBeenCalledTimes(1);
+      expect(agente.create).toHaveBeenCalled();
+      expect(r.tipo).toBe("resposta");
+    },
+  );
+
+  it.each(FALAS_QUE_PASSAM.map((c) => [c.id, c] as const))(
+    "%s: a fala sobre o pedido passa pelo portao e o agente responde",
+    async (_id, caso) => {
+      expect(
+        detectarGatilhosDeEntrada({ mensagens: [{ tipo: "texto", texto: caso.texto }] }),
+      ).toEqual([]);
+      const { porta, transcrever } = portaFalsa({
+        transcricao: { [AUDIO]: transcrita(caso.texto) },
+      });
+      const { r, agente } = await turnoComMidia([audioNoLaco()], porta);
+      expect(transcrever).toHaveBeenCalledTimes(1);
+      expect(agente.create).toHaveBeenCalled();
+      expect(r.tipo).toBe("resposta");
+    },
+  );
+});
+
+describe("bateria AG6b (3a rodada): o resultado comentado pela IA tem regra", () => {
+  const DO_RESULTADO = new Set([
+    "AG6B-S02",
+    "AG6B-S03",
+    "AG6B-S11",
+    "AG6B-S12",
+    "AG6B-S13",
+    "AG6B-S14",
+    "AG6B-S15",
+    "AG6B-S16",
+    "AG6B-S17",
+    "AG6B-S18",
+  ]);
+
+  it.each(
+    SAIDAS_DA_MIDIA_QUE_BLOQUEIAM.filter((c) => DO_RESULTADO.has(c.id)).map(
+      (c) => [c.id, c] as const,
+    ),
+  )("%s: a regra do resultado comentado pega", (_id, caso) => {
+    const regras = avaliarRegras(caso.rascunho, contextoDo(caso)).achados.map(
+      (a) => a.regra,
+    );
+    expect(regras).toContain(
+      caso.categoria === "diagnostico"
+        ? "resultado_de_exame_alterado"
+        : "resultado_de_exame_normal",
+    );
+  });
+
+  it.each(CONTROLES_DO_RESULTADO.map((c) => [c.id, c] as const))(
+    "controle %s: o que a IA pode dizer do exame passa nas regras e no filtro",
+    async (_id, caso) => {
+      expect(avaliarRegras(caso.rascunho, contextoDo(caso)).achados).toEqual([]);
+      const decisao = await filtrarSaida({
+        rascunho: caso.rascunho,
+        contexto: contextoDo(caso),
+        verificador: verificadorQueSempreAprova(),
+      });
+      expect(decisao.aprovado).toBe(true);
+    },
+  );
+});
+
+describe("bateria AG6b (3a rodada): a ida ao lugar em qualquer ponto do rascunho (M5)", () => {
+  it.each(SAIDAS_DO_LUGAR_QUE_BLOQUEIAM.map((c) => [c.id, c] as const))(
+    "%s: pronto_socorro barra pela regra, sem chamar o verificador",
+    async (_id, caso) => {
+      const resultado = avaliarRegras(caso.rascunho, contextoDo(caso));
+      expect(resultado.categorias).toContain(caso.categoria);
+      expect(resultado.achados.map((a) => a.regra)).toContain("pronto_socorro");
+      const verificador = verificadorQueSempreAprova();
+      const decisao = await filtrarSaida({
+        rascunho: caso.rascunho,
+        contexto: contextoDo(caso),
+        verificador,
+      });
+      expect(decisao).toMatchObject({ aprovado: false, camada: "regra" });
+      expect(verificador).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(CONTROLES_DO_LUGAR.map((c) => [c.id, c] as const))(
+    "controle %s: o lugar como endereco, sem a ida, passa",
+    async (_id, caso) => {
+      expect(avaliarRegras(caso.rascunho, contextoDo(caso)).achados).toEqual([]);
+      const decisao = await filtrarSaida({
+        rascunho: caso.rascunho,
+        contexto: contextoDo(caso),
+        verificador: verificadorQueSempreAprova(),
+      });
+      expect(decisao.aprovado).toBe(true);
+    },
+  );
+});
+
+// As versoes conferidas na revisao de 6eae43d ficaram para tras: o portao
+// mudou (os demonstrativos, a recepcao, o pedido e a mensagem so com o
+// exame, e a finalidade e o preparo que mantem o exame clinico) e as regras
+// tambem (a ida ao lugar no rascunho inteiro e o resultado comentado).
+describe("bateria AG6b: as versões da 3a rodada", () => {
+  it("o portão e as regras mudaram desde a revisão de 6eae43d", () => {
+    expect(versaoDoPortao()).toMatch(/^portao-[0-9a-f]{12}$/);
+    expect(versaoDasRegras()).toMatch(/^regras-[0-9a-f]{12}$/);
+    expect(versaoDoPortao()).not.toBe("portao-d2a3ee0b28c5");
+    expect(versaoDasRegras()).not.toBe("regras-ed143ad51147");
   });
 });

@@ -1,7 +1,12 @@
 "use client";
 
 import { ChaveTravada } from "@/components/agente/chave-travada";
-import { TEXTOS_DO_AGENTE as T } from "@/components/agente/textos";
+import {
+  // [AG6b mídia] início
+  dicaDaMidiaNoServidor,
+  // [AG6b mídia] fim
+  TEXTOS_DO_AGENTE as T,
+} from "@/components/agente/textos";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import {
   Card,
@@ -17,6 +22,7 @@ import {
   habilidadesComAgenda,
   // [AG6b mídia] início
   notaDaHabilidade,
+  type MidiaNoServidor,
   // [AG6b mídia] fim
   type AgendaDoAgente,
   type HabilidadesDoAgente,
@@ -67,9 +73,19 @@ import {
 // padrao, sem dependencia. Titulo, descricao e nota moram na configuracao
 // (notaDaHabilidade); a tela so renderiza, com a nota embaixo da descricao,
 // para todos os papeis: o audio, a foto e o documento vao para a OpenAI, e
-// so com os telefones da equipe que confirmaram o aviso novo (o chip "Sem
-// áudio, foto e documento" da aba WhatsApp diz qual falta). Sem permissao
-// (recepcao), a chave fica visivel e desabilitada com a dica de sempre.
+// so com os telefones cadastrados na aba WhatsApp que confirmaram o aviso
+// novo (o chip "Sem áudio, foto e documento" da aba WhatsApp diz qual
+// falta). Sem permissao (recepcao), a chave fica visivel e desabilitada com
+// a dica de sempre.
+//
+// Revisao das telas da AG6b: enquanto o servidor nao foi calibrado pela
+// prova paga (D-100; midiaNoServidor, calculado na pagina), a habilidade de
+// midia ligada nao tem efeito, e a dica (dicaDaMidiaNoServidor) fica escrita
+// embaixo dela, para todos os papeis, sem travar a chave: ligar agora so
+// vale depois da prova, e desligar continua livre (item 3). A nota, a dica
+// do servidor e a da dependencia sao a descricao da chave
+// (aria-describedby, na ordem da tela): o leitor de tela ouve a nota da
+// OpenAI no foco (item 7).
 // [AG6b mídia] fim
 
 /** As habilidades que, nesta fase de teste, levam a nota do telefone. */
@@ -110,6 +126,20 @@ export function motivoDaChaveTravada(
   return dicaDaHabilidade(chave, contexto);
 }
 
+// [AG6b mídia] início
+/**
+ * A descricao da chave (aria-describedby): os ids do que esta escrito
+ * embaixo da habilidade, na ordem da tela (a nota, a dica do servidor e a
+ * dica da dependencia). Sem nada escrito, sem o atributo (undefined).
+ */
+export function descricaoDaChave(
+  ids: readonly (string | null)[],
+): string | undefined {
+  const presentes = ids.filter((id): id is string => id !== null);
+  return presentes.length > 0 ? presentes.join(" ") : undefined;
+}
+// [AG6b mídia] fim
+
 export function AbaHabilidades({
   habilidades,
   agenda,
@@ -119,6 +149,9 @@ export function AbaHabilidades({
   pendente,
   ocupado,
   aoAlternar,
+  // [AG6b mídia] início
+  midiaNoServidor,
+  // [AG6b mídia] fim
 }: {
   habilidades: Record<string, boolean>;
   /** Os limites para marcar consulta do rascunho (Regras e limites). */
@@ -134,6 +167,13 @@ export function AbaHabilidades({
     proximas: HabilidadesDoAgente,
     habilidade: (typeof HABILIDADES_DO_AGENTE)[number],
   ) => void;
+  // [AG6b mídia] início
+  /**
+   * O que o servidor ja deixa valer (a prova paga, D-100). Ausente: sem a
+   * dica (a tela nao inventa).
+   */
+  midiaNoServidor?: MidiaNoServidor | null;
+  // [AG6b mídia] fim
 }) {
   const efetivas = habilidadesComAgenda(habilidades, agenda, prazos);
   return (
@@ -172,11 +212,24 @@ export function AbaHabilidades({
               dica,
             );
             const nota = notaDaFaseDeTeste(habilidade.chave);
+            // [AG6b mídia] início
+            const idDaNota = `${idRotulo}-fase-de-teste`;
+            const idDoServidor = `${idRotulo}-no-servidor`;
+            const semEfeito = dicaDaMidiaNoServidor(
+              habilidade.chave,
+              midiaNoServidor,
+            );
+            // [AG6b mídia] fim
             const chave = (
               <Switch
                 checked={ligada}
                 aria-labelledby={idRotulo}
-                aria-describedby={falta ? idDaAgenda : undefined}
+                // [AG6b mídia] a nota e a dica do servidor tambem
+                aria-describedby={descricaoDaChave([
+                  nota ? idDaNota : null,
+                  semEfeito ? idDoServidor : null,
+                  falta ? idDaAgenda : null,
+                ])}
                 aria-busy={ocupado(habilidade.chave) || undefined}
                 disabled={!podeEditar || pendente || falta !== null}
                 onCheckedChange={(valor) =>
@@ -200,13 +253,22 @@ export function AbaHabilidades({
                     {habilidade.descricao}
                   </span>
                   {nota ? (
-                    <span
-                      id={`${idRotulo}-fase-de-teste`}
-                      className="text-xs text-text-secondary"
-                    >
+                    <span id={idDaNota} className="text-xs text-text-secondary">
                       {nota}
                     </span>
                   ) : null}
+                  {/* [AG6b mídia] início: a habilidade que o servidor ainda
+                      nao deixa valer (dica escrita, como a da dependencia;
+                      a chave continua livre). */}
+                  {semEfeito ? (
+                    <span
+                      id={idDoServidor}
+                      className="text-xs font-semibold text-text-secondary"
+                    >
+                      {semEfeito}
+                    </span>
+                  ) : null}
+                  {/* [AG6b mídia] fim */}
                   {falta ? (
                     <span
                       id={idDaAgenda}

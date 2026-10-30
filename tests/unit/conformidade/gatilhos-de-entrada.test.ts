@@ -484,4 +484,80 @@ describe("AG6b: a figurinha e a mídia a ler no portão", () => {
     expect(detectarGatilhosDeEntrada({ mensagens: seis })).toEqual(["mensagem_longa"]);
   });
 });
+
+// 3a rodada da AG6b (revisao de 6eae43d, item 6): o exame na legenda do
+// pedido. A bateria (bateria-ag6b.test.ts) tem as legendas da revisao; aqui
+// ficam as bordas de cada troca.
+describe("AG6b (3a rodada): o exame na legenda do pedido", () => {
+  const portao = (texto: string) =>
+    detectarGatilhosDeEntrada({ mensagens: [{ tipo: "texto", texto }] });
+
+  it.each([
+    "esse",
+    "esses",
+    "este",
+    "estes",
+    "desse",
+    "desses",
+    "deste",
+    "destes",
+    "nesse",
+    "nesses",
+  ])("o demonstrativo %s antes do exame, na pergunta de preco, passa", (d) => {
+    expect(portao(`quanto custa ${d} exames?`)).toEqual([]);
+    expect(portao(`qual o valor ${d} exame?`)).toEqual([]);
+  });
+
+  it.each([
+    "quero marcar esses exames",
+    "dá pra agendar os exames pra sexta?",
+    "preciso marcar esses exames",
+    "quero remarcar o exame de amanhã",
+    "pode cancelar o exame de sábado?",
+    "tem horário pra fazer esses exames amanhã?",
+    "vocês conseguem realizar esses dois exames no mesmo dia?",
+    "orçamento desses exames por favor",
+    "tem vaga pros exames na quinta?",
+    "aceita unimed pra esses exames?",
+    "a unimed cobre esses exames?",
+    "o convênio autoriza esse exame?",
+    "segue o pedido de exames",
+    "o pedido médico dos exames está aqui",
+    "exames",
+    "Exame.",
+    "seguem os exames",
+    "esses exames aqui",
+    "quero marcar um exame de sangue",
+    "tem horário pra que dia pra fazer esses exames?",
+  ])("a recepcao do exame passa: %s", (texto) => {
+    expect(portao(texto)).toEqual([]);
+  });
+
+  it.each([
+    // A finalidade, o preparo e o que ele detecta, em qualquer ponto.
+    ["pra que serve esse exame?", "assunto_clinico"],
+    ["para que serve esses exames? quanto custa?", "assunto_clinico"],
+    ["o que é esse exame?", "assunto_clinico"],
+    ["o que faz esse exame?", "assunto_clinico"],
+    ["esse exame detecta o quê? quero marcar", "assunto_clinico"],
+    ["por que o médico pediu esses exames? quanto fica?", "assunto_clinico"],
+    ["precisa de jejum pra fazer esse exame?", "assunto_clinico"],
+    ["quero marcar esses exames, precisa de jejum?", "assunto_clinico"],
+    ["como é o preparo desses exames? quanto custa?", "assunto_clinico"],
+    // A necessidade e a permissao de fazer.
+    ["preciso fazer esse exame?", "assunto_clinico"],
+    ["devo fazer esses exames?", "assunto_clinico"],
+    ["tenho que fazer esse exame mesmo?", "assunto_clinico"],
+    ["posso fazer esse exame?", "assunto_clinico"],
+    // O resultado e o desfecho.
+    ["quero marcar esses exames pra ver o resultado", "assunto_clinico"],
+    ["quanto custa esse exame? o meu deu alterado", "assunto_clinico"],
+    ["quero marcar o exame depois do procedimento", "assunto_clinico"],
+    ["meus exames", "assunto_clinico"],
+    ["meu exame veio com glicemia alta", "assunto_clinico"],
+    ["esse exame deu alterado, é grave?", "sintoma"],
+  ] as const)("o exame clinico continua escalando: %s", (texto, gatilho) => {
+    expect(portao(texto)[0]).toBe(gatilho);
+  });
+});
 // [AG6b mídia] fim

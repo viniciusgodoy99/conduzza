@@ -746,3 +746,120 @@ describe("resultado", () => {
     }
   });
 });
+
+// [AG6b mídia] início
+// 3a rodada da AG6b (revisao de 6eae43d): a IA comentando o resultado ou o
+// conteudo do exame ou do laudo tem regra deterministica (antes, so o
+// verificador). A bateria (bateria-ag6b.test.ts) tem os casos da revisao;
+// aqui ficam as bordas.
+describe("AG6b (3a rodada): o resultado do exame comentado pela IA", () => {
+  const regras = (texto: string, nomesDoCatalogo: string[] = []) =>
+    avaliarRegras(texto, {
+      precosDoTurno: [5_000],
+      nomesDoCatalogo,
+      mensagensDoPaciente: [],
+    }).achados.map((a) => a.regra);
+
+  it.each([
+    "Vi no seu exame que a glicemia está alta.",
+    "O exame deu positivo.",
+    "Seu resultado veio alterado.",
+    "O laudo mostra o colesterol elevado.",
+    "Sua glicemia está muito alta.",
+    "A hemoglobina glicada deu um pouco aumentada.",
+    "O teste deu reagente.",
+    "O TSH está fora do normal.",
+    "Os valores estão alterados no seu exame.",
+    "Está positivo no teste.",
+  ])("alterado (diagnostico): %s", (texto) => {
+    expect(regras(texto)).toContain("resultado_de_exame_alterado");
+  });
+
+  it.each([
+    "No laudo está tudo bem.",
+    "No laudo, está tudo bem.",
+    "Seu exame veio normal.",
+    "O resultado deu dentro da referência.",
+    "O ultrassom não mostrou nada de errado.",
+    "Está tudo bem no seu exame.",
+    "Seus exames estão sem alteração.",
+  ])("normal (triagem): %s", (texto) => {
+    expect(regras(texto)).toContain("resultado_de_exame_normal");
+  });
+
+  it("o nome do Cadastro (o marcador) tambem e o exame", () => {
+    expect(regras("O Hemograma veio normal.", ["Hemograma"])).toContain(
+      "resultado_de_exame_normal",
+    );
+    expect(regras("O Hemograma deu alterado.", ["Hemograma"])).toContain(
+      "resultado_de_exame_alterado",
+    );
+  });
+
+  it.each([
+    "Recebemos o pedido do exame.",
+    "O exame de sangue custa R$ 50,00.",
+    "Vou passar o seu resultado para a equipe.",
+    "O resultado do exame fica pronto em 3 dias úteis.",
+    "O laudo sai em até 5 dias úteis.",
+    "Seu exame está confirmado para amanhã às 8h.",
+    "O exame é rápido e o resultado sai no mesmo dia.",
+    "Tudo bem? Recebi o seu exame e já passei para a equipe.",
+    "Tudo bem, o resultado do exame fica pronto amanhã.",
+    "Seu exame está marcado e o atendimento é normal no feriado.",
+    "O resultado do exame está disponível na recepção.",
+    "Tudo bem com a sua consulta de amanhã?",
+    "O exame de glicemia é feito pela manhã.",
+  ])("controle: a recepcao com o exame passa: %s", (texto) => {
+    expect(regras(texto)).toEqual([]);
+  });
+
+  it("o preparo do exame continua orientacao clinica (D-4, opcao A)", () => {
+    expect(
+      avaliarRegras(
+        "Para o exame, venha em jejum de 8 horas se o médico pediu.",
+        CONTEXTO_PADRAO,
+      ).categorias,
+    ).toContain("orientacao_clinica");
+  });
+});
+
+// 3a rodada da AG6b (revisao de 6eae43d, M5): a troca do ponto de
+// referencia (servico_de_saude_de_referencia) so vale sem a ida ao lugar em
+// NENHUM ponto do rascunho. Sem a troca, pronto_socorro barra, como no
+// main.
+describe("AG6b (3a rodada): a ida ao lugar no rascunho inteiro", () => {
+  const prontoSocorro = (texto: string) =>
+    avaliarRegras(texto, CONTEXTO_PADRAO).achados.some(
+      (a) => a.regra === "pronto_socorro",
+    );
+
+  it.each([
+    "Ficamos em frente à UPA. Vá até lá agora.",
+    "Estamos ao lado do Pronto-Socorro. Vá para lá imediatamente.",
+    "Estamos ao lado da UPA; vá direto pra lá.",
+    "Ficamos ao lado da UPA, que é o melhor lugar para você agora.",
+    "Estamos ao lado da UPA, o local certo para isso.",
+    "Ficamos perto da UPA. Lá eles te atendem.",
+    "Ficamos perto da UPA. Procure ela agora.",
+    "Ficamos perto da UPA. Corre pra lá.",
+    "Ficamos perto da UPA. Se dirija à recepção dela.",
+    "Pode ir agora: ficamos em frente ao Pronto Atendimento.",
+    "Ficamos próximos ao posto de saúde. Sigam para lá.",
+  ])("a ida em qualquer ponto barra: %s", (texto) => {
+    expect(prontoSocorro(texto)).toBe(true);
+  });
+
+  it.each([
+    "Ficamos na Rua X, em frente à UPA do bairro. Seu horário é às 14h.",
+    "A clínica fica perto da UPA do Centro, no segundo andar.",
+    "Ficamos ao lado da UPA; procure a recepção no térreo.",
+    "A clínica fica ao lado da UPA. Siga a placa azul da entrada.",
+    "Ficamos ao lado da UPA. O lembrete vai no dia anterior.",
+    "Ficamos ao lado da UPA. Você vai ver a placa azul.",
+    "A clínica fica ao lado da UPA. Sua consulta está marcada; é só confirmá-la por aqui.",
+  ])("controle: o endereco sem a ida passa: %s", (texto) => {
+    expect(avaliarRegras(texto, CONTEXTO_PADRAO).achados).toEqual([]);
+  });
+});
+// [AG6b mídia] fim
