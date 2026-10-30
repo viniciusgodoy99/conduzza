@@ -46,6 +46,10 @@ import {
   // [AG6 passagem] início
   TEXTOS_DA_PASSAGEM,
   // [AG6 passagem] fim
+  // [AG6b mídia] início
+  midiaLigadaNasHabilidades,
+  TEXTOS_DA_MIDIA,
+  // [AG6b mídia] fim
   TEXTOS_DO_AGENTE as T,
   type AbaDoAgente,
 } from "@/components/agente/textos";
@@ -691,6 +695,13 @@ export function PainelDoAgente({
           dica={dica}
           motivo={dados.motivoDoSimulador}
           aoSimular={acoes.simular}
+          // [AG6b mídia] D-62: com midia ligada no rascunho (que o simulador
+          // usa), a nota de que audio, foto e documento sao so do WhatsApp
+          notaDaMidia={
+            midiaLigadaNasHabilidades(config.habilidades)
+              ? TEXTOS_DA_MIDIA.simulador
+              : null
+          }
         />
       </div>
 

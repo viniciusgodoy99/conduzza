@@ -358,29 +358,26 @@ export class UazapiProvider implements WhatsAppProvider {
   async downloadMedia(
     ref: InstanceRef,
     waMessageId: string,
-    options: { transcribe?: boolean } = {},
   ): Promise<MediaDownloadResult> {
     // Contrato confirmado na especificacao (POST /message/download):
     // pedido {id, return_base64, return_link, transcribe, openai_apikey};
     // resposta {mimetype, base64Data?, transcription?, fileURL?}.
     // return_base64 e return_link=false de proposito: midia de paciente vai
     // para o NOSSO Storage, nunca fica numa URL publica do provedor.
+    // [AG6b mídia] início
+    // AG6b (D-56 e D-94): a uazapi NUNCA transcreve. transcribe: false vai
+    // SEMPRE, explicito (pela especificacao dela, sem a chave na chamada ela
+    // usaria a chave salva na instancia), e nunca vai openai_apikey. A
+    // transcricao e do servidor do Conduzza, no turno da IA, com a chave do
+    // agente (lib/integrations/llm/transcricao.ts).
     const payload: Record<string, unknown> = {
       id: waMessageId,
       return_base64: true,
       return_link: false,
       generate_mp3: true,
-      transcribe: options.transcribe === true,
+      transcribe: false,
     };
-    // Transcricao envia AUDIO DE PACIENTE para a OpenAI via servidor uazapi.
-    // Isso so acontece com decisao explicita do operador: a chave e a env
-    // DEDICADA UAZAPI_OPENAI_KEY (nunca reaproveitamos OPENAI_API_KEY em
-    // silencio). Sem a chave, o servidor uazapi usa a dele se tiver; senao a
-    // resposta vem sem transcricao e o audio fica sem texto, que e o
-    // comportamento seguro por padrao.
-    if (options.transcribe && process.env.UAZAPI_OPENAI_KEY) {
-      payload.openai_apikey = process.env.UAZAPI_OPENAI_KEY;
-    }
+    // [AG6b mídia] fim
     const { status, body } = await this.request(ref, PATHS.messageDownload, {
       payload,
       timeoutMs: DOWNLOAD_TIMEOUT_MS,
@@ -389,12 +386,9 @@ export class UazapiProvider implements WhatsAppProvider {
     const base64 = pickString(body, ["base64Data"]);
     const mimetype = pickString(body, ["mimetype"]);
     if (status >= 200 && status < 300 && base64 && mimetype) {
-      return {
-        ok: true,
-        base64,
-        mimetype,
-        transcript: pickString(body, ["transcription"]),
-      };
+      // [AG6b mídia] A transcricao que o provedor mandar (nunca pedida) e
+      // ignorada.
+      return { ok: true, base64, mimetype };
     }
     return {
       ok: false,

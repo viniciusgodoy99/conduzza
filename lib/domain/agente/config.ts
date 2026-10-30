@@ -290,6 +290,13 @@ export type HabilidadeDoAgente = {
    * habilidade). Nula na habilidade sem dependencia.
    */
   dicaDaDependencia: string | null;
+  // [AG6b mídia] início
+  /**
+   * AG6b: a nota da fase de teste, escrita embaixo da descricao (a tela so
+   * renderiza; notaDaHabilidade). Ausente: sem nota daqui.
+   */
+  nota?: string;
+  // [AG6b mídia] fim
 };
 
 /**
@@ -432,6 +439,42 @@ export const HABILIDADES_DO_AGENTE = [
     precisaDoPrazo: null,
     dicaDaDependencia: null,
   },
+  // [AG6b mídia] início
+  // AG6b (desenho, secao 6; D-56, D-14 e D-58): o audio pela transcricao e a
+  // foto ou o PDF pelo leitor de midia. Desligadas por padrao, sem
+  // ferramenta (o motor le a midia antes do agente) e sem dependencia. So
+  // valem na versao PUBLICADA, com o telefone que confirmou o aviso novo
+  // (D-95) e, ate a prova paga (D-100), nunca de fato: TRANSCRICAO_CALIBRADA
+  // e os tetos do leitor fecham o plano do turno (lib/agente/midia.ts).
+  {
+    chave: "ler_audio",
+    titulo: "Entender áudio",
+    descricao:
+      "Transcreve o áudio que a pessoa manda e responde por escrito. Áudio sem fala, longo demais ou que não deu para transcrever passa para a equipe.",
+    nota: "A transcrição é feita pela OpenAI, nos EUA, com a chave do Conduzza, só nas conversas com o assistente. Por enquanto, só com os telefones da equipe que confirmaram o aviso de áudio, foto e documento.",
+    travada: false,
+    ferramentas: [],
+    padrao: false,
+    precisaDaAgenda: false,
+    precisaDaHabilidade: null,
+    precisaDoPrazo: null,
+    dicaDaDependencia: null,
+  },
+  {
+    chave: "ler_imagem_e_documento",
+    titulo: "Ler imagem e documento",
+    descricao:
+      "Lê a foto ou o PDF de um pedido de exame ou procedimento e responde sobre os itens que a clínica faz. Resultado, laudo, receita, foto do corpo, carteirinha, guia e documento pessoal passam para a equipe.",
+    nota: "A foto ou o PDF vai uma vez para a OpenAI, nos EUA, sem o nome do arquivo e sem a localização da foto. Por enquanto, só com os telefones da equipe que confirmaram o aviso de áudio, foto e documento.",
+    travada: false,
+    ferramentas: [],
+    padrao: false,
+    precisaDaAgenda: false,
+    precisaDaHabilidade: null,
+    precisaDoPrazo: null,
+    dicaDaDependencia: null,
+  },
+  // [AG6b mídia] fim
   {
     chave: "passar_para_equipe",
     titulo: "Passar para a equipe",
@@ -473,6 +516,23 @@ export function habilidadesEfetivas(valor: unknown): HabilidadesDoAgente {
   }
   return resultado;
 }
+
+// [AG6b mídia] início
+/**
+ * AG6b: a nota da fase de teste que mora na configuracao (as duas
+ * habilidades de midia), ou nula. A tela so renderiza.
+ */
+export function notaDaHabilidade(chave: string): string | null {
+  const habilidade: HabilidadeDoAgente | undefined = HABILIDADES_DO_AGENTE.find(
+    (h) => h.chave === chave,
+  );
+  return habilidade?.nota ?? null;
+}
+
+/** AG6b: as chaves das duas habilidades de midia (skills do jsonb). */
+export const HABILIDADE_DO_AUDIO = "ler_audio";
+export const HABILIDADE_DO_ARQUIVO = "ler_imagem_e_documento";
+// [AG6b mídia] fim
 
 /**
  * As ferramentas que o modelo recebe, na ordem da lista (estavel para o
@@ -1473,6 +1533,17 @@ export const MOTIVOS_DE_ESCALONAMENTO = [
   // deterministico decide): fica fora de MOTIVOS_DO_AGENTE.
   "urgencia",
   // [AG6 urgência] fim
+  // [AG6b mídia] início
+  // AG6b (migration 20261030100000, que redefine o CHECK com a lista da AG6a
+  // mais estes tres): o leitor de midia identificou um arquivo que so a
+  // equipe pode avaliar (resultado, laudo, receita, foto do corpo: CFM), um
+  // documento do paciente (carteirinha, guia, documento pessoal: D-58) ou
+  // nao identificou o arquivo. Motivos do SISTEMA (o servidor decide pela
+  // leitura, nunca o modelo): ficam fora de MOTIVOS_DO_AGENTE.
+  "midia_clinica",
+  "documento_do_paciente",
+  "midia_nao_identificada",
+  // [AG6b mídia] fim
 ] as const;
 export type MotivoDeEscalonamento = (typeof MOTIVOS_DE_ESCALONAMENTO)[number];
 
@@ -1516,6 +1587,14 @@ export const ROTULO_DO_MOTIVO_DE_ESCALONAMENTO: Readonly<
   // AG6a (migration 20261029120000): o rotulo de rotulo_do_motivo_da_ia.
   urgencia: "a pessoa descreveu algo que pode ser uma emergência",
   // [AG6 urgência] fim
+  // [AG6b mídia] início
+  // AG6b (migration 20261030100000): os rotulos de rotulo_do_motivo_da_ia.
+  midia_clinica: "o paciente mandou um arquivo que só a equipe pode avaliar",
+  documento_do_paciente:
+    "o paciente mandou a carteirinha, uma guia do convênio ou um documento pessoal",
+  midia_nao_identificada:
+    "o assistente não identificou o arquivo que o paciente mandou",
+  // [AG6b mídia] fim
 };
 
 /**
@@ -1595,6 +1674,12 @@ export const TEXTO_DO_EVENTO_DA_IA: Readonly<
   // AG6a (migration 20261029120000).
   urgencia: passagemDaIa("urgencia"),
   // [AG6 urgência] fim
+  // [AG6b mídia] início
+  // AG6b (migration 20261030100000).
+  midia_clinica: passagemDaIa("midia_clinica"),
+  documento_do_paciente: passagemDaIa("documento_do_paciente"),
+  midia_nao_identificada: passagemDaIa("midia_nao_identificada"),
+  // [AG6b mídia] fim
   nao_individual:
     "Chegou uma mensagem de grupo ou de status. A conversa voltou para a equipe.",
   fora_do_horario: `${PASSAGEM_DA_IA}agora está fora do horário escolhido para o assistente.`,
@@ -1779,6 +1864,14 @@ export const MOTIVOS_QUE_NUNCA_ATRIBUEM = [
   "assunto_clinico",
   "midia_nao_suportada",
   "conformidade",
+  // [AG6b mídia] início
+  // AG6b (D-96; migration 20261030100000, c_motivos_que_nunca_atribuem com
+  // os oito, nesta ordem): o arquivo clinico e o que o assistente nao
+  // identificou ficam na fila de todos. documento_do_paciente atribui (e
+  // administrativo).
+  "midia_clinica",
+  "midia_nao_identificada",
+  // [AG6b mídia] fim
 ] as const satisfies readonly MotivoDoEventoDaIa[];
 
 /**
@@ -1829,6 +1922,124 @@ export function textoDaAtribuicaoDaIa(nome: string | null | undefined): string {
   return `A conversa ficou com ${cortado}, responsável pelo lead.`;
 }
 // [AG6 passagem] fim
+
+// [AG6b mídia] início
+// ---------------------------------------------------------------------------
+// A midia lida pelo assistente (AG6b; desenho 1.2, 3.4 e 6): os tipos da
+// leitura (ia_leitura_da_midia), a decisao do servidor e o resumo que a
+// equipe ve embaixo da bolha. PURO: o motor (lib/agente/midia.ts), o leitor
+// (lib/integrations/llm/leitor-de-midia.ts) e a tela leem daqui.
+// ---------------------------------------------------------------------------
+
+/** A midia da mensagem lida (ia_leitura_da_midia.midia; message.content_type). */
+export const MIDIAS_LIDAS = ["audio", "imagem", "documento"] as const;
+export type MidiaLida = (typeof MIDIAS_LIDAS)[number];
+
+/** Os tipos da leitura do audio (a transcricao, ou "sem fala"). */
+export const TIPOS_DA_TRANSCRICAO = ["transcricao", "sem_fala"] as const;
+export type TipoDaTranscricao = (typeof TIPOS_DA_TRANSCRICAO)[number];
+
+/** Os 10 tipos do leitor de midia (a saida fechada do modelo). */
+export const TIPOS_DO_LEITOR = [
+  "pedido_de_exame_ou_procedimento",
+  "guia_ou_autorizacao",
+  "carteirinha",
+  "documento_de_identidade",
+  "resultado_ou_laudo",
+  "receita",
+  "foto_do_corpo",
+  "figurinha",
+  "outro",
+  "ilegivel",
+] as const;
+export type TipoDoLeitor = (typeof TIPOS_DO_LEITOR)[number];
+
+/** Todos os tipos de ia_leitura_da_midia.tipo (o CHECK do banco). */
+export const TIPOS_DE_MIDIA_LIDA = [
+  ...TIPOS_DA_TRANSCRICAO,
+  ...TIPOS_DO_LEITOR,
+] as const;
+export type TipoDaMidiaLida = (typeof TIPOS_DE_MIDIA_LIDA)[number];
+
+/** A confianca do leitor (obrigatoria em imagem e documento). */
+export const CONFIANCAS_DA_LEITURA = ["alta", "media", "baixa"] as const;
+export type ConfiancaDaLeitura = (typeof CONFIANCAS_DA_LEITURA)[number];
+
+/**
+ * Os motivos da passagem pela leitura do arquivo, NA ORDEM da prioridade
+ * (desenho 1.2: com varios arquivos no turno, o clinico primeiro, depois o
+ * documento do paciente, depois o nao identificado).
+ */
+export const MOTIVOS_DA_LEITURA = [
+  "midia_clinica",
+  "documento_do_paciente",
+  "midia_nao_identificada",
+] as const satisfies readonly MotivoDeEscalonamento[];
+export type MotivoDaLeitura = (typeof MOTIVOS_DA_LEITURA)[number];
+
+/**
+ * A tabela 1.2 do desenho, por tipo: "segue" (com a IA) ou o motivo da
+ * passagem. O pedido e a figurinha seguem so com confianca alta ou media (e
+ * o pedido, so com todos os itens no Cadastro): quem decide e
+ * decidirPelaLeitura (lib/agente/midia.ts). A decisao e do servidor, nunca
+ * do modelo.
+ */
+export const DECISAO_DO_TIPO_DO_LEITOR: Readonly<
+  Record<TipoDoLeitor, "segue" | MotivoDaLeitura>
+> = {
+  pedido_de_exame_ou_procedimento: "segue",
+  guia_ou_autorizacao: "documento_do_paciente",
+  carteirinha: "documento_do_paciente",
+  documento_de_identidade: "documento_do_paciente",
+  resultado_ou_laudo: "midia_clinica",
+  receita: "midia_clinica",
+  foto_do_corpo: "midia_clinica",
+  figurinha: "segue",
+  outro: "midia_nao_identificada",
+  ilegivel: "midia_nao_identificada",
+};
+
+/**
+ * O resumo da leitura (ia_leitura_da_midia.resumo), montado pelo SERVIDOR so
+ * com os nomes do Cadastro e estes textos fixos ("{}" e a lista dos nomes,
+ * ou a contagem). A tela mostra "Lido pelo assistente: {resumo}.". A
+ * figurinha (de qualquer confianca) e o audio gravam o resumo NULO (o CHECK
+ * ia_leitura_da_midia_resumo_coerente): sem linha na bolha. Nunca texto do
+ * arquivo.
+ */
+export const RESUMO_DA_LEITURA = {
+  pedido: "pedido com {}",
+  pedidoComMuitosItens: "pedido com {} itens do Cadastro",
+  pedidoForaDoCadastro:
+    "pedido com item fora do Cadastro, passado para a equipe",
+  pedidoSemSeguranca:
+    "pedido que o assistente não leu com segurança, passado para a equipe",
+  guia_ou_autorizacao: "guia ou autorização do convênio, passada para a equipe",
+  carteirinha: "carteirinha do convênio, passada para a equipe",
+  documento_de_identidade: "documento pessoal, passado para a equipe",
+  resultado_ou_laudo: "resultado de exame ou laudo, passado para a equipe",
+  receita: "receita, passada para a equipe",
+  foto_do_corpo: "foto do corpo, passada para a equipe",
+  outro: "arquivo que o assistente não identificou, passado para a equipe",
+  ilegivel: "arquivo ilegível, passado para a equipe",
+} as const;
+
+/** O teto do resumo (o CHECK de ia_leitura_da_midia.resumo). */
+export const LIMITE_DO_RESUMO_DA_LEITURA = 300;
+
+/**
+ * O que a tela do Atendimento le de cada leitura (QCONV, fetchLeiturasDaMidia;
+ * contrato B2 para B3). transcricao so no tipo "transcricao"; resumo so em
+ * imagem e documento.
+ */
+export type LeituraDaMidiaNaTela = {
+  messageId: string;
+  midia: MidiaLida;
+  tipo: TipoDaMidiaLida;
+  transcricao: string | null;
+  resumo: string | null;
+};
+// [AG6b mídia] fim
 
 // ---------------------------------------------------------------------------
 // Conformidade (caixa travada da aba Regras e limites)

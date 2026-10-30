@@ -22,6 +22,8 @@ import { DICA_RECEPCAO, ITEM_ATIVO, VERSAO_2 } from "./tela-fixtures";
 // recepcao vendo tudo travado, com a dica. O audio ("Entender áudio") fica
 // fora desta rodada: a aba Habilidades nao muda. Tudo renderizado no
 // servidor; nada aqui chama acao nem rede.
+// [AG6b mídia] Desde a AG6b, o audio, a foto e o documento entram na aba
+// Habilidades (o bloco do audio, no fim; o resto em telas-ag6b.test.tsx).
 
 vi.mock("@/components/agente/acoes", () => ({
   acoesDoAgente: {
@@ -390,10 +392,17 @@ describe("simulador, habilidades e textos da AG6a", () => {
     );
   });
 
-  it("o áudio fica fora desta rodada: a aba Habilidades não ganha Entender áudio", () => {
+  // [AG6b mídia] início
+  // Ate a AG6b, este teste exigia a AUSENCIA de "Entender áudio" (o audio
+  // ficava fora da AG6a). A AG6b o traz (desenho da AG6b, secao 6): a aba
+  // Habilidades ganha "Entender áudio" e "Ler imagem e documento", com as
+  // notas (tests/unit/agente/telas-ag6b.test.tsx tem o resto).
+  it("o áudio entra na AG6b: a aba Habilidades ganha Entender áudio e Ler imagem e documento", () => {
     const html = painel(dadosDeTeste(), "habilidades");
-    expect(texto(html)).not.toContain("Entender áudio");
+    expect(texto(html)).toContain("Entender áudio");
+    expect(texto(html)).toContain("Ler imagem e documento");
   });
+  // [AG6b mídia] fim
 
   it("sem travessão e com linguagem de recepcionista", () => {
     const textos = [

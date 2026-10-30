@@ -97,7 +97,8 @@ describe("baixar_midia de mensagem enviada pelo celular", () => {
 
     expect(desfecho).toBe("concluido");
     expect(downloadMedia).toHaveBeenCalledTimes(1);
-    expect(downloadMedia.mock.calls[0]?.[2]).toEqual({ transcribe: false });
+    // [AG6b mídia] Sem opcao nenhuma de transcrever (a uazapi nunca transcreve).
+    expect(downloadMedia.mock.calls[0]).toHaveLength(2);
     const [update] = db.updatesEm("message") as Record<string, unknown>[];
     expect(update?.media_url).toBe(
       `storage://midia-conversas/${CLINICA}/${MENSAGEM}`,
@@ -115,14 +116,20 @@ describe("baixar_midia de mensagem enviada pelo celular", () => {
     expect(String(select?.args[0])).toContain("pelo_celular");
   });
 
-  it("áudio do paciente continua transcrito", async () => {
+  // [AG6b mídia] início
+  // AG6b (D-56, D-91 e D-94): o audio do PACIENTE tambem nao e transcrito no
+  // download. Ele so vira texto no turno da IA, pelo servidor do Conduzza
+  // (lib/integrations/llm/transcricao.ts), e a leitura mora em
+  // ia_leitura_da_midia, nunca em message.transcript.
+  it("áudio do paciente também não é transcrito no download (AG6b)", async () => {
     const db = banco({ content_type: "audio", pelo_celular: false });
     await executarJobComPosse(db.admin, WORKER, job());
 
-    expect(downloadMedia.mock.calls[0]?.[2]).toEqual({ transcribe: true });
+    expect(downloadMedia.mock.calls[0]).toHaveLength(2);
     const [update] = db.updatesEm("message") as Record<string, unknown>[];
-    expect(update?.transcript).toBe("texto do audio");
+    expect(update).not.toHaveProperty("transcript");
   });
+  // [AG6b mídia] fim
 
   it("leitura da mensagem que falha volta para a fila, não morre como não encontrada", async () => {
     // Ex.: o codigo publicado antes da migration (coluna pelo_celular ainda
@@ -164,7 +171,8 @@ describe("baixar_midia de mensagem enviada pelo celular", () => {
     const desfecho = await executarJobComPosse(db.admin, WORKER, job());
 
     expect(desfecho).toBe("concluido");
-    expect(downloadMedia.mock.calls[0]?.[2]).toEqual({ transcribe: false });
+    // [AG6b mídia]
+    expect(downloadMedia.mock.calls[0]).toHaveLength(2);
     const [update] = db.updatesEm("message") as Record<string, unknown>[];
     expect(update?.media_mimetype).toBe("image/jpeg");
   });

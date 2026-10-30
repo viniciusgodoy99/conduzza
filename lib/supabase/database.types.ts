@@ -2465,6 +2465,7 @@ export type Database = {
         Row: {
           alterado_por: string | null
           ativo: boolean
+          aviso_da_openai_versao: number
           clinic_id: string
           created_at: string
           forcado: boolean
@@ -2476,6 +2477,7 @@ export type Database = {
         Insert: {
           alterado_por?: string | null
           ativo?: boolean
+          aviso_da_openai_versao?: number
           clinic_id: string
           created_at?: string
           forcado?: boolean
@@ -2487,6 +2489,7 @@ export type Database = {
         Update: {
           alterado_por?: string | null
           ativo?: boolean
+          aviso_da_openai_versao?: number
           clinic_id?: string
           created_at?: string
           forcado?: boolean
@@ -2604,6 +2607,78 @@ export type Database = {
             columns: ["clinic_id"]
             isOneToOne: false
             referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ia_leitura_da_midia: {
+        Row: {
+          clinic_id: string
+          confianca: string | null
+          conversation_id: string
+          created_at: string
+          fora_do_cadastro: number
+          id: string
+          job_id: string
+          message_id: string
+          midia: string
+          modelo: string
+          procedimentos: string[]
+          resumo: string | null
+          segundos_de_audio: number | null
+          tipo: string
+          transcricao: string | null
+          versao: string
+        }
+        Insert: {
+          clinic_id: string
+          confianca?: string | null
+          conversation_id: string
+          created_at?: string
+          fora_do_cadastro?: number
+          id?: string
+          job_id: string
+          message_id: string
+          midia: string
+          modelo: string
+          procedimentos?: string[]
+          resumo?: string | null
+          segundos_de_audio?: number | null
+          tipo: string
+          transcricao?: string | null
+          versao: string
+        }
+        Update: {
+          clinic_id?: string
+          confianca?: string | null
+          conversation_id?: string
+          created_at?: string
+          fora_do_cadastro?: number
+          id?: string
+          job_id?: string
+          message_id?: string
+          midia?: string
+          modelo?: string
+          procedimentos?: string[]
+          resumo?: string | null
+          segundos_de_audio?: number | null
+          tipo?: string
+          transcricao?: string | null
+          versao?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ia_leitura_da_midia_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ia_leitura_da_midia_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversation"
             referencedColumns: ["id"]
           },
         ]
@@ -3044,6 +3119,7 @@ export type Database = {
       }
       llm_preco: {
         Row: {
+          audio_microdolar_por_minuto: number
           cache_escrita_microdolar_por_milhao: number
           cache_leitura_microdolar_por_milhao: number
           created_at: string
@@ -3055,6 +3131,7 @@ export type Database = {
           vigente_desde: string
         }
         Insert: {
+          audio_microdolar_por_minuto?: number
           cache_escrita_microdolar_por_milhao: number
           cache_leitura_microdolar_por_milhao: number
           created_at?: string
@@ -3066,6 +3143,7 @@ export type Database = {
           vigente_desde: string
         }
         Update: {
+          audio_microdolar_por_minuto?: number
           cache_escrita_microdolar_por_milhao?: number
           cache_leitura_microdolar_por_milhao?: number
           created_at?: string
@@ -5937,6 +6015,7 @@ export type Database = {
           p_forcar_contato_existente?: boolean
           p_rotulo: string
           p_telefone_e164: string
+          p_versao_do_aviso?: number
         }
         Returns: boolean
       }
@@ -6217,6 +6296,24 @@ export type Database = {
         Args: { p_job_id: string; p_motivo: string; p_worker: string }
         Returns: boolean
       }
+      gravar_leitura_da_midia: {
+        Args: {
+          p_confianca: string
+          p_fora_do_cadastro: number
+          p_job_id: string
+          p_message_id: string
+          p_midia: string
+          p_modelo: string
+          p_procedimentos: string[]
+          p_resumo: string
+          p_segundos: number
+          p_tipo: string
+          p_transcricao: string
+          p_versao: string
+          p_worker: string
+        }
+        Returns: Json
+      }
       gravar_resolucao_de_anuncios_meta: {
         Args: {
           p_ad_account_id: string
@@ -6287,6 +6384,7 @@ export type Database = {
         Args: { p_clinic_id: string; p_modos: string[] }
         Returns: boolean
       }
+      ia_lista_sem_repetido: { Args: { p_lista: string[] }; Returns: boolean }
       ia_marcar_respondida: {
         Args: { p_job_id: string; p_worker: string }
         Returns: boolean
@@ -6426,6 +6524,10 @@ export type Database = {
           retorno_voltaram: number
           sem_contato_6m: number
         }[]
+      }
+      midia_da_ia_liberada: {
+        Args: { p_clinic_id: string; p_telefone: string }
+        Returns: boolean
       }
       midia_mensagem_do_caminho: {
         Args: { p_caminho: string }

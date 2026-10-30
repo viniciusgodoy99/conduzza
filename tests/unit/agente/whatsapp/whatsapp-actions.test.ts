@@ -780,6 +780,8 @@ describe("telefones da equipe", () => {
           p_ativo: true,
           p_forcar_contato_existente: false,
           p_confirmou_aviso_da_openai: true,
+          // [AG6b mídia] a versao do aviso que a tela mostrou (D-60)
+          p_versao_do_aviso: 2,
         },
       },
     ]);
@@ -889,6 +891,8 @@ describe("telefones da equipe", () => {
           p_ativo: true,
           p_forcar_contato_existente: false,
           p_confirmou_aviso_da_openai: true,
+          // [AG6b mídia] a versao do aviso que a tela mostrou (D-60)
+          p_versao_do_aviso: 2,
         },
       },
     ]);
@@ -965,7 +969,12 @@ describe("E3: ligar o modo e o número é só da equipe Conduzza", () => {
         confirmarAvisoDaOpenai: true,
       }),
     () =>
-      alternarTelefoneDaIaAction({ telefone: "+5584999990001", ligado: true }),
+      alternarTelefoneDaIaAction({
+        telefone: "+5584999990001",
+        ligado: true,
+        // [AG6b mídia] o "Ligar de novo" sai do dialogo do aviso (D-60)
+        confirmarAvisoDaOpenai: true,
+      }),
   ] as const;
 
   it("administrador da clínica: modo equipe e número com a dica da equipe Conduzza, sem banco", async () => {
@@ -1053,6 +1062,8 @@ describe("E3: ligar o modo e o número é só da equipe Conduzza", () => {
         alternarTelefoneDaIaAction({
           telefone: "+5584999990001",
           ligado: true,
+          // [AG6b mídia] o "Ligar de novo" sai do dialogo do aviso (D-60)
+          confirmarAvisoDaOpenai: true,
         }),
       () =>
         alternarTelefoneDaIaAction({
@@ -1090,6 +1101,8 @@ describe("telefone da equipe pelo administrador (decisão do dono de 19/10/2026)
           p_ativo: true,
           p_forcar_contato_existente: false,
           p_confirmou_aviso_da_openai: true,
+          // [AG6b mídia] a versao do aviso que o formulario mostrou (D-60)
+          p_versao_do_aviso: 2,
         },
       },
     ]);
@@ -1116,6 +1129,8 @@ describe("telefone da equipe pelo administrador (decisão do dono de 19/10/2026)
       await alternarTelefoneDaIaAction({
         telefone: "+5584999990001",
         ligado: true,
+        // [AG6b mídia] o "Ligar de novo" sai do dialogo do aviso (D-60)
+        confirmarAvisoDaOpenai: true,
       }),
     ).toEqual({ ok: true });
     expect(registro.rpcs).toEqual([
@@ -1126,6 +1141,12 @@ describe("telefone da equipe pelo administrador (decisão do dono de 19/10/2026)
           p_telefone_e164: "+5584999990001",
           p_rotulo: "",
           p_ativo: true,
+          // [AG6b mídia] início
+          // A confirmacao do dialogo vai ao banco (a trilha, com a versao) e
+          // a versao do aviso fica no telefone (D-60).
+          p_confirmou_aviso_da_openai: true,
+          p_versao_do_aviso: 2,
+          // [AG6b mídia] fim
         },
       },
     ]);
@@ -1191,6 +1212,8 @@ describe("telefone da equipe pelo administrador (decisão do dono de 19/10/2026)
       await alternarTelefoneDaIaAction({
         telefone: "+5584999990001",
         ligado: true,
+        // [AG6b mídia] o "Ligar de novo" sai do dialogo do aviso (D-60)
+        confirmarAvisoDaOpenai: true,
       }),
     ).toEqual({ ok: false, error: TEXTOS_DA_IA.contatoDePaciente });
     expect(registro.inseridos).toEqual([]);
@@ -1326,6 +1349,8 @@ describe("E3: telefone novo da equipe", () => {
       await alternarTelefoneDaIaAction({
         telefone: "+5584999990001",
         ligado: true,
+        // [AG6b mídia] o "Ligar de novo" sai do dialogo do aviso (D-60)
+        confirmarAvisoDaOpenai: true,
       }),
     ).toEqual({ ok: false, error: TEXTOS_DA_IA.contatoDePaciente });
   });
@@ -1350,6 +1375,8 @@ describe("E3: telefone novo da equipe", () => {
         p_forcar_contato_existente: true,
         p_confirmou_aviso_da_openai: true,
         p_confirmou_teste_com_paciente: true,
+        // [AG6b mídia] a versao do aviso que a tela mostrou (D-60)
+        p_versao_do_aviso: 2,
       },
     });
   });
@@ -1382,6 +1409,8 @@ describe("confirmação da OpenAI no banco e Ligar de novo só da lista (19/10/2
       await alternarTelefoneDaIaAction({
         telefone: "+5584999990009",
         ligado: true,
+        // [AG6b mídia] o "Ligar de novo" sai do dialogo do aviso (D-60)
+        confirmarAvisoDaOpenai: true,
       }),
     ).toEqual({
       ok: false,
@@ -1405,6 +1434,8 @@ describe("confirmação da OpenAI no banco e Ligar de novo só da lista (19/10/2
       await alternarTelefoneDaIaAction({
         telefone: "+558499990001",
         ligado: true,
+        // [AG6b mídia] o "Ligar de novo" sai do dialogo do aviso (D-60)
+        confirmarAvisoDaOpenai: true,
       }),
     ).toEqual({ ok: true });
     expect(
@@ -1420,6 +1451,8 @@ describe("confirmação da OpenAI no banco e Ligar de novo só da lista (19/10/2
       await alternarTelefoneDaIaAction({
         telefone: "+5584999990001",
         ligado: true,
+        // [AG6b mídia] o "Ligar de novo" sai do dialogo do aviso (D-60)
+        confirmarAvisoDaOpenai: true,
       }),
     ).toEqual({
       ok: false,
@@ -1453,15 +1486,38 @@ describe("confirmação da OpenAI no banco e Ligar de novo só da lista (19/10/2
     ]);
   });
 
-  it("o Ligar de novo nunca manda a confirmação (ela é do formulário de adicionar)", async () => {
+  // [AG6b mídia] início
+  // Ate a AG6b, o "Ligar de novo" nunca mandava a confirmacao (ela era so do
+  // formulario de adicionar). Desde a AG6b (D-60 e D-95), ele sai do dialogo
+  // do aviso, manda a confirmacao e a versao do aviso, e a acao recusa ligar
+  // sem ela, antes de qualquer leitura (os casos estao em
+  // tests/unit/agente/telefone-aviso-novo.test.tsx).
+  it("o Ligar de novo manda a confirmação do diálogo e a versão do aviso; sem ela, nem lê a lista", async () => {
     await alternarTelefoneDaIaAction({
       telefone: "+5584999990001",
       ligado: true,
+      confirmarAvisoDaOpenai: true,
     });
-    expect(registro.rpcs.at(-1)?.args).not.toHaveProperty(
-      "p_confirmou_aviso_da_openai",
-    );
+    expect(registro.rpcs.at(-1)?.args).toMatchObject({
+      p_ativo: true,
+      p_confirmou_aviso_da_openai: true,
+      p_versao_do_aviso: 2,
+    });
+    registro.rpcs.length = 0;
+    registro.consultas.length = 0;
+    expect(
+      await alternarTelefoneDaIaAction({
+        telefone: "+5584999990001",
+        ligado: true,
+      }),
+    ).toEqual({
+      ok: false,
+      error: TEXTOS_DA_IA.avisoDaOpenaiObrigatorioAoLigar,
+    });
+    expect(registro.rpcs).toEqual([]);
+    expect(registro.consultas).toEqual([]);
   });
+  // [AG6b mídia] fim
 
   it("o banco recusa telefone novo sem a confirmação: o texto do campo, nada na trilha", async () => {
     registro.errosDoRpc.set("definir_contato_liberado_da_ia", {
@@ -1531,6 +1587,8 @@ describe("onda 2: o Usar mesmo assim do administrador (item 3)", () => {
           p_forcar_contato_existente: true,
           p_confirmou_aviso_da_openai: true,
           p_confirmou_teste_com_paciente: true,
+          // [AG6b mídia] a versao do aviso que a tela mostrou (D-60)
+          p_versao_do_aviso: 2,
         },
       },
     ]);
@@ -1587,9 +1645,13 @@ describe("onda 2: o Usar mesmo assim do administrador (item 3)", () => {
   });
 
   it("os textos da confirmação: a frase do contrato e nenhum travessão", () => {
+    // [AG6b mídia] início
+    // A frase do contrato da onda 2 com "ou mandar (texto, áudio, foto e
+    // documento)" (D-60; PROPOSTA da AG6b, espera o dono).
     expect(TEXTOS_DO_TESTE_COM_PACIENTE.confirmacao).toBe(
-      "A pessoa deste telefone sabe que vai conversar com um assistente virtual de teste e que o que escrever vai para a OpenAI, nos EUA.",
+      "A pessoa deste telefone sabe que vai conversar com um assistente virtual de teste e que o que escrever ou mandar (texto, áudio, foto e documento) vai para a OpenAI, nos EUA.",
     );
+    // [AG6b mídia] fim
     for (const texto of Object.values(TEXTOS_DO_TESTE_COM_PACIENTE)) {
       expect(texto).not.toMatch(/[—–]/);
     }

@@ -110,6 +110,17 @@ import {
   ROTULO_DO_CAMPO_DA_PASSAGEM,
   textoDaAtribuicaoDaIa,
   // [AG6 passagem] fim
+  // [AG6b mídia] início
+  DECISAO_DO_TIPO_DO_LEITOR,
+  HABILIDADE_DO_ARQUIVO,
+  HABILIDADE_DO_AUDIO,
+  MIDIAS_LIDAS,
+  MOTIVOS_DA_LEITURA,
+  notaDaHabilidade,
+  RESUMO_DA_LEITURA,
+  TIPOS_DE_MIDIA_LIDA,
+  TIPOS_DO_LEITOR,
+  // [AG6b mídia] fim
   type ConfigDoAgente,
   type HorarioDeOperacao,
   type ItemDaBase,
@@ -220,6 +231,10 @@ describe("habilidades", () => {
       "remarcar",
       "lista_de_espera",
       "confirmar_presenca",
+      // [AG6b mídia] início
+      "ler_audio",
+      "ler_imagem_e_documento",
+      // [AG6b mídia] fim
       "passar_para_equipe",
     ]);
     const porChave = Object.fromEntries(
@@ -354,6 +369,9 @@ describe("habilidades", () => {
       remarcar: true,
       lista_de_espera: true,
       confirmar_presenca: false,
+      // [AG6b mídia] As duas habilidades de midia, desligadas por padrao.
+      ler_audio: false,
+      ler_imagem_e_documento: false,
       passar_para_equipe: true,
     });
     expect(habilidadesEfetivas({})).toEqual({
@@ -364,6 +382,9 @@ describe("habilidades", () => {
       remarcar: false,
       lista_de_espera: false,
       confirmar_presenca: false,
+      // [AG6b mídia] As duas habilidades de midia, desligadas por padrao.
+      ler_audio: false,
+      ler_imagem_e_documento: false,
       passar_para_equipe: true,
     });
   });
@@ -466,6 +487,9 @@ describe("habilidades", () => {
       remarcar: false,
       lista_de_espera: false,
       confirmar_presenca: false,
+      // [AG6b mídia] As duas habilidades de midia, desligadas por padrao.
+      ler_audio: false,
+      ler_imagem_e_documento: false,
       passar_para_equipe: true,
     });
     expect(
@@ -956,8 +980,12 @@ describe("escalonamento e conformidade", () => {
     // [AG6 urgência] início
     // AG6a (migration 20261029120000): urgencia (23).
     expect((arquivoDoCheck ?? "") >= "20261029120000").toBe(true);
-    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(23);
     // [AG6 urgência] fim
+    // [AG6b mídia] início
+    // AG6b (migration 20261030100000): os tres motivos da midia (26).
+    expect((arquivoDoCheck ?? "") >= "20261030100000").toBe(true);
+    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(26);
+    // [AG6b mídia] fim
   });
 
   it("AG4: fora_do_prazo tem o rótulo do banco e o texto do evento", () => {
@@ -1575,6 +1603,9 @@ describe("leitura do banco", () => {
         remarcar: false,
         lista_de_espera: false,
         confirmar_presenca: false,
+        // [AG6b mídia] As duas habilidades de midia, desligadas por padrao.
+        ler_audio: false,
+        ler_imagem_e_documento: false,
         passar_para_equipe: true,
       },
       horario: { ...horarioPadrao(), modo: "fallback", minutosSemResposta: 15 },
@@ -1655,6 +1686,9 @@ describe("leitura do banco", () => {
         remarcar: false,
         lista_de_espera: false,
         confirmar_presenca: false,
+        // [AG6b mídia] As duas habilidades de midia, desligadas por padrao.
+        ler_audio: false,
+        ler_imagem_e_documento: false,
         passar_para_equipe: true,
       },
       horario: {
@@ -2582,9 +2616,18 @@ describe("AG5: a lista de espera pela IA (D-36, recomendação)", () => {
   it("os motivos de escalonamento não mudam (a passagem usa os que existem)", () => {
     // [AG6 urgência] início
     // A AG5 nao muda os motivos; a AG6a acrescenta urgencia (22 + 1).
-    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(23);
-    expect(MOTIVOS_DE_ESCALONAMENTO.at(-1)).toBe("urgencia");
+    expect(MOTIVOS_DE_ESCALONAMENTO).toContain("urgencia");
     // [AG6 urgência] fim
+    // [AG6b mídia] início
+    // A AG6b acrescenta os tres da midia depois da urgencia (23 + 3).
+    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(26);
+    expect(MOTIVOS_DE_ESCALONAMENTO.slice(-4)).toEqual([
+      "urgencia",
+      "midia_clinica",
+      "documento_do_paciente",
+      "midia_nao_identificada",
+    ]);
+    // [AG6b mídia] fim
   });
 });
 
@@ -2775,6 +2818,12 @@ describe("AG6a: para quem vai a conversa", () => {
       "assunto_clinico",
       "midia_nao_suportada",
       "conformidade",
+      // [AG6b mídia] início
+      // AG6b (D-96): o arquivo clinico e o nao identificado; o documento do
+      // paciente atribui.
+      "midia_clinica",
+      "midia_nao_identificada",
+      // [AG6b mídia] fim
     ]);
     for (const motivo of MOTIVOS_QUE_NUNCA_ATRIBUEM) {
       expect(motivoPodeAtribuir(motivo), motivo).toBe(false);
@@ -2824,3 +2873,91 @@ describe("AG6a: para quem vai a conversa", () => {
   });
 });
 // [AG6 passagem] fim
+
+// [AG6b mídia] início
+// AG6b (desenho, secao 6; contrato B2 para B3): as duas habilidades de midia
+// (a chave, o titulo, a descricao e a nota moram aqui; a tela so
+// renderiza), os tres motivos novos com o rotulo e o evento do banco, e os
+// tipos da leitura com a decisao e o resumo do servidor.
+describe("AG6b: as habilidades de midia, os motivos e os tipos da leitura", () => {
+  it("Entender audio e Ler imagem e documento: desligadas, sem ferramenta, com a nota", () => {
+    const porChave = Object.fromEntries(HABILIDADES_DO_AGENTE.map((h) => [h.chave, h]));
+    expect(porChave[HABILIDADE_DO_AUDIO]).toMatchObject({
+      titulo: "Entender áudio",
+      descricao:
+        "Transcreve o áudio que a pessoa manda e responde por escrito. Áudio sem fala, longo demais ou que não deu para transcrever passa para a equipe.",
+      travada: false,
+      padrao: false,
+      ferramentas: [],
+      precisaDaAgenda: false,
+      precisaDaHabilidade: null,
+      precisaDoPrazo: null,
+      dicaDaDependencia: null,
+    });
+    expect(porChave[HABILIDADE_DO_ARQUIVO]).toMatchObject({
+      titulo: "Ler imagem e documento",
+      descricao:
+        "Lê a foto ou o PDF de um pedido de exame ou procedimento e responde sobre os itens que a clínica faz. Resultado, laudo, receita, foto do corpo, carteirinha, guia e documento pessoal passam para a equipe.",
+      travada: false,
+      padrao: false,
+      ferramentas: [],
+    });
+    expect(notaDaHabilidade(HABILIDADE_DO_AUDIO)).toBe(
+      "A transcrição é feita pela OpenAI, nos EUA, com a chave do Conduzza, só nas conversas com o assistente. Por enquanto, só com os telefones da equipe que confirmaram o aviso de áudio, foto e documento.",
+    );
+    expect(notaDaHabilidade(HABILIDADE_DO_ARQUIVO)).toBe(
+      "A foto ou o PDF vai uma vez para a OpenAI, nos EUA, sem o nome do arquivo e sem a localização da foto. Por enquanto, só com os telefones da equipe que confirmaram o aviso de áudio, foto e documento.",
+    );
+    expect(notaDaHabilidade("agendar")).toBeNull();
+    for (const texto of [
+      porChave[HABILIDADE_DO_AUDIO]?.descricao,
+      porChave[HABILIDADE_DO_ARQUIVO]?.descricao,
+      notaDaHabilidade(HABILIDADE_DO_AUDIO),
+      notaDaHabilidade(HABILIDADE_DO_ARQUIVO),
+    ]) {
+      expect(texto).not.toMatch(TRAVESSAO);
+    }
+  });
+
+  it("os tres motivos novos: o rotulo e o evento do banco (contrato da AG6b, secao 1)", () => {
+    expect(TEXTO_DO_EVENTO_DA_IA.midia_clinica).toBe(
+      "A IA passou a conversa para a equipe: o paciente mandou um arquivo que só a equipe pode avaliar.",
+    );
+    expect(TEXTO_DO_EVENTO_DA_IA.documento_do_paciente).toBe(
+      "A IA passou a conversa para a equipe: o paciente mandou a carteirinha, uma guia do convênio ou um documento pessoal.",
+    );
+    expect(TEXTO_DO_EVENTO_DA_IA.midia_nao_identificada).toBe(
+      "A IA passou a conversa para a equipe: o assistente não identificou o arquivo que o paciente mandou.",
+    );
+    expect(motivoPodeAtribuir("documento_do_paciente")).toBe(true);
+  });
+
+  it("os tipos da leitura (o CHECK do banco) e a decisao do servidor", () => {
+    expect(MIDIAS_LIDAS).toEqual(["audio", "imagem", "documento"]);
+    expect(TIPOS_DE_MIDIA_LIDA).toEqual([
+      "transcricao",
+      "sem_fala",
+      "pedido_de_exame_ou_procedimento",
+      "guia_ou_autorizacao",
+      "carteirinha",
+      "documento_de_identidade",
+      "resultado_ou_laudo",
+      "receita",
+      "foto_do_corpo",
+      "figurinha",
+      "outro",
+      "ilegivel",
+    ]);
+    expect(Object.keys(DECISAO_DO_TIPO_DO_LEITOR).sort()).toEqual([...TIPOS_DO_LEITOR].sort());
+    expect(MOTIVOS_DA_LEITURA).toEqual([
+      "midia_clinica",
+      "documento_do_paciente",
+      "midia_nao_identificada",
+    ]);
+    for (const texto of Object.values(RESUMO_DA_LEITURA)) {
+      expect(texto).not.toMatch(TRAVESSAO);
+      expect(Array.from(texto).length).toBeLessThanOrEqual(300);
+    }
+  });
+});
+// [AG6b mídia] fim

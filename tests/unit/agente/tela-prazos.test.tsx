@@ -150,6 +150,11 @@ describe("Habilidades: Cancelar consulta e Remarcar consulta", () => {
       "remarcar",
       "lista_de_espera",
       "confirmar_presenca",
+      // [AG6b mídia] início
+      // AG6b: as duas de midia, antes de Passar para a equipe.
+      "ler_audio",
+      "ler_imagem_e_documento",
+      // [AG6b mídia] fim
       "passar_para_equipe",
     ]);
     const html = habilidades();

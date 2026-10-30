@@ -611,6 +611,14 @@ export const MENSAGEM_AGENDADA_STATUS: Record<
 //   decorativos da Tela 6 (cartoes "Urgência" e "Para quem vai a conversa"),
 //   neutros, nunca status.
 // [AG6 urgência] fim
+// [AG6b mídia] início
+// - ScanText: SO a linha "Lido pelo assistente" embaixo da foto e do
+//   documento do paciente no Atendimento, no tom ia (dono novo e unico,
+//   conferido em 30/10/2026 que ninguem usava; nao e status e nao entra em
+//   mapa; components/atendimento/media/leitura-do-assistente.tsx). O chip
+//   "Sem áudio, foto e documento" do telefone da equipe (Tela 6) reaproveita
+//   o Hourglass warning, no sentido de pendencia que ele ja tem.
+// [AG6b mídia] fim
 // Trocas decorrentes, cada uma no lote da sua tela: toque "pulado" MailWarning
 // e "na fila" Mail; aviso de recurso do modal de agendamento e dialogo da
 // regua CircleAlert; erro de Confirmacoes OctagonAlert; Recuperadas com tom

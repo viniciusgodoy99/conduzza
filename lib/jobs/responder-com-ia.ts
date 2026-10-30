@@ -123,6 +123,47 @@ import {
 } from "@/lib/integrations/whatsapp/send";
 import { log } from "@/lib/log";
 
+// [AG6b mídia] início
+import { mascararNome } from "@/lib/agente/historico";
+import { entradaDoPortao } from "@/lib/agente/laco";
+import {
+  INTERVALO_DA_ESPERA_MS,
+  itensDoCatalogo,
+  lerLeiturasDoTurno,
+  midiaNaoLida,
+  planejarMidiasDoTurno,
+  portaDaMidiaDoWhatsapp,
+  semEspera,
+  telefoneLiberadoParaMidia,
+  type PlanoDaMidia,
+  type PortaDaMidia,
+} from "@/lib/agente/midia";
+import {
+  comPrecoDaTranscricao,
+  lerPrecoDaTranscricao,
+  linhasDoUso,
+  type PrecoDoModelo,
+} from "@/lib/agente/uso";
+import {
+  detectarGatilhosDeEntrada,
+  pedidoDeConsultaParaOutraPessoa,
+} from "@/lib/domain/conformidade/gatilhos-de-entrada";
+import {
+  lerArquivoComOModelo,
+  PRAZO_DO_LEITOR_MS,
+  TETO_DE_TOKENS_POR_IMAGEM,
+  TETO_DE_TOKENS_POR_PAGINA,
+} from "@/lib/integrations/llm/leitor-de-midia";
+import {
+  modeloDaTranscricao,
+  PRAZO_DA_TRANSCRICAO_MS,
+  TRANSCRICAO_CALIBRADA,
+  transcreverAudio,
+  VERSAO_DA_TRANSCRICAO,
+} from "@/lib/integrations/llm/transcricao";
+import { lerArquivoParaAIa } from "@/lib/integrations/storage/arquivo-para-a-ia";
+// [AG6b mídia] fim
+
 import { ErroComCodigoDeJob } from "./erro-de-job";
 import type { Job, ResultadoDeJob } from "./worker";
 
@@ -210,6 +251,15 @@ export const RESERVA_DO_ENVIO_MS = 14_000;
 export const RESERVA_DAS_GRAVACOES_MS = 3_000;
 /** Abaixo disto de prazo para o turno, nem comeca: volta para a fila. */
 export const PRAZO_MINIMO_DO_TURNO_MS = 20_000;
+// [AG6b mídia] início
+/**
+ * AG6b (desenho 5.1): com audio a transcrever ou arquivo a ler, o turno
+ * precisa de mais prazo (a transcricao e o leitor vem antes do agente e do
+ * filtro). PROPOSTA, a calibrar na prova paga. Abaixo: volta para a fila,
+ * sem custo (orcamento_da_passagem).
+ */
+export const PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS = 30_000;
+// [AG6b mídia] fim
 const UMA_HORA_MS = 60 * 60_000;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -235,7 +285,38 @@ export type DependenciasDoExecutorDaIa = {
   executarTurno: typeof executarTurnoDoAgente;
   enviarResposta: typeof enviarRespostaDaIa;
   enviarFrase: typeof enviarFraseFixaDaIa;
+  // [AG6b mídia] início
+  /**
+   * AG6b: a midia do turno (a calibragem, os tetos, o modelo da transcricao
+   * e a porta). Ausente: nenhuma midia sai (todo audio, foto e documento
+   * continua passando para a equipe, como antes da AG6b).
+   */
+  midia?: DependenciasDaMidiaDoTurno;
+  // [AG6b mídia] fim
 };
+
+// [AG6b mídia] início
+/** AG6b: o que o executor precisa para a midia do turno. */
+export type DependenciasDaMidiaDoTurno = {
+  /** TRANSCRICAO_CALIBRADA (a prova paga, D-100). */
+  transcricaoCalibrada: boolean;
+  /** Os tetos de tokens do leitor medidos na prova (nulos: nao le). */
+  tetosDoLeitor: { imagem: number | null; pagina: number | null };
+  /** O modelo da transcricao (IA_MODELO_TRANSCRICAO; null: fora da lista). */
+  modeloDaTranscricao: string | null;
+  /** O modelo do leitor (IA_MODELO_VERIFICADOR; null: fora da lista). */
+  modeloDoLeitor: string | null;
+  /** A porta da midia deste turno (o job, a posse e o HMAC do contato). */
+  criarPorta: (entrada: {
+    clinicId: string;
+    conversationId: string;
+    jobId: string;
+    workerId: string;
+    identificador: string | null;
+    mascarar: (texto: string) => string;
+  }) => PortaDaMidia;
+};
+// [AG6b mídia] fim
 
 /**
  * incluirClinicasDeTeste existe so para as suites (clinica e_de_teste com
@@ -257,8 +338,10 @@ export function dependenciasPadraoDaIa(entrada: {
   prazoFinalMs: number;
 }): DependenciasDoExecutorDaIa {
   const env = process.env;
-  let cliente: ClienteDoAgente | null | undefined;
-  const clienteDoAgente = (): ClienteDoAgente | null => {
+  // [AG6b mídia] O cliente inteiro (a transcricao usa audio; o agente,
+  // responses): o mesmo cliente e a mesma chave (D-94).
+  let cliente: ReturnType<typeof clienteOpenAiDoAmbiente> | undefined;
+  const clienteDoAgente = (): ReturnType<typeof clienteOpenAiDoAmbiente> => {
     if (cliente === undefined) {
       cliente = clienteOpenAiDoAmbiente(env);
     }
@@ -291,6 +374,65 @@ export function dependenciasPadraoDaIa(entrada: {
     executarTurno: executarTurnoDoAgente,
     enviarResposta: enviarRespostaDaIa,
     enviarFrase: enviarFraseFixaDaIa,
+    // [AG6b mídia] início
+    midia: {
+      transcricaoCalibrada: TRANSCRICAO_CALIBRADA,
+      tetosDoLeitor: {
+        imagem: TETO_DE_TOKENS_POR_IMAGEM,
+        pagina: TETO_DE_TOKENS_POR_PAGINA,
+      },
+      modeloDaTranscricao: modeloDaTranscricao(env),
+      modeloDoLeitor: modeloDosClassificadores,
+      criarPorta: (e) =>
+        portaDaMidiaDoWhatsapp(entrada.admin, {
+          clinicId: e.clinicId,
+          conversationId: e.conversationId,
+          jobId: e.jobId,
+          workerId: e.workerId,
+          mascarar: e.mascarar,
+          lerArquivo: (a) =>
+            lerArquivoParaAIa(entrada.admin, {
+              clinicId: e.clinicId,
+              messageId: a.messageId,
+              mediaUrl: a.mediaUrl,
+              maximoDeBytes: a.maximoDeBytes,
+              prazoMs: a.prazoMs,
+            }),
+          transcrever: (t) =>
+            transcreverAudio({
+              cliente: clienteDoAgente(),
+              modelo: modeloDaTranscricao(env),
+              bytes: t.bytes,
+              segundosMedidos: t.segundosMedidos,
+              prazoMs: Math.min(PRAZO_DA_TRANSCRICAO_MS, t.prazoMs),
+              ids: {
+                clinicId: e.clinicId,
+                conversationId: e.conversationId,
+                jobId: e.jobId,
+                messageId: t.messageId,
+              },
+            }),
+          lerComOModelo: (l) =>
+            lerArquivoComOModelo({
+              cliente: clienteDoAgente(),
+              modelo: modeloDosClassificadores,
+              identificadorDeSeguranca: e.identificador,
+              arquivo: l.arquivo,
+              catalogo: l.catalogo,
+              prazoMs: Math.min(PRAZO_DO_LEITOR_MS, l.prazoMs),
+              ids: {
+                clinicId: e.clinicId,
+                conversationId: e.conversationId,
+                jobId: e.jobId,
+                messageId: l.messageId,
+                midia: l.midia,
+              },
+            }),
+          versaoDaTranscricao: VERSAO_DA_TRANSCRICAO,
+          modeloDoLeitor: modeloDosClassificadores ?? "desconhecido",
+        }),
+    },
+    // [AG6b mídia] fim
   };
 }
 
@@ -329,6 +471,15 @@ type Contexto = {
    */
   regras?: RegrasDaPassagem | null;
   // [AG6 passagem] fim
+  // [AG6b mídia] início
+  /**
+   * AG6b (D-96): o turno leu midia do paciente que o assistente nao leu
+   * (sem leitura, sem fala, video): a atribuicao nem e pedida (o banco
+   * recusa de qualquer jeito, midia_nao_lida). Ausente: nao se sabe (a
+   * retomada; o banco decide).
+   */
+  midiaNaoLida?: boolean;
+  // [AG6b mídia] fim
 };
 
 const CONCLUIR: ResultadoDeJob = { ok: true };
@@ -606,6 +757,103 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
   }
   // [AG6 urgência] fim
 
+  // [AG6b mídia] início
+  // 7d. O plano da midia (desenho 5.1): so com midia do paciente no
+  // recorte. O portao do aviso (midia_da_ia_liberada, D-95), as leituras ja
+  // gravadas (o job repetido nunca chama o modelo de novo), o preco por
+  // minuto da transcricao e o catalogo; a situacao de cada midia pendente
+  // (lib/agente/midia.ts). Arquivo ainda baixando, dentro de 90 s: antes de
+  // esperar, o portao nos textos (a midia que baixa como texto vazio); se
+  // ele escala, segue sem esperar (o laco escala no 1a); senao, volta em
+  // 15 s, sem estado e sem reserva.
+  c.midiaNaoLida = mensagensPendentes(historico.mensagens).some(midiaNaoLida);
+  let mensagensDoTurno = historico.mensagens;
+  let plano: PlanoDaMidia | null = null;
+  let precosDaMidia: PrecoDoModelo[] | null = null;
+  let catalogoDaMidia: Awaited<
+    ReturnType<typeof carregarCatalogoDoAgente>
+  > | null = null;
+  if (historico.mensagens.some((m) => m.midia !== undefined)) {
+    const [precosLidos, catalogoLido] = await Promise.all([
+      lerOuFalhar(() => lerPrecos(admin)),
+      lerOuFalhar(() => carregarCatalogoDoAgente(admin, clinicId)),
+    ]);
+    const midiaDeps = c.deps.midia;
+    const modeloDoAudio = midiaDeps?.modeloDaTranscricao ?? null;
+    const [liberado, leituras, porMinuto] = await Promise.all([
+      telefoneLiberadoParaMidia(admin, { clinicId, telefone }),
+      lerLeiturasDoTurno(admin, {
+        clinicId,
+        conversationId: c.conversationId,
+        messageIds: historico.mensagens.flatMap((m) =>
+          m.midia === undefined ? [] : [m.midia.messageId],
+        ),
+      }),
+      modeloDoAudio === null
+        ? Promise.resolve(null)
+        : lerPrecoDaTranscricao(admin, modeloDoAudio),
+    ]);
+    precosDaMidia =
+      modeloDoAudio === null
+        ? precosLidos
+        : comPrecoDaTranscricao(precosLidos, modeloDoAudio, porMinuto);
+    catalogoDaMidia = catalogoLido;
+    const modeloDoLeitor = midiaDeps?.modeloDoLeitor ?? null;
+    plano = planejarMidiasDoTurno(
+      {
+        mensagens: historico.mensagens,
+        pendentes: historico.pendentes,
+        habilidades: config.habilidades,
+        telefoneLiberado: midiaDeps !== undefined && liberado,
+        leituras,
+        transcricaoComPreco:
+          modeloDoAudio !== null && (porMinuto ?? 0) > 0,
+        transcricaoCalibrada: midiaDeps?.transcricaoCalibrada === true,
+        leitorPronto:
+          midiaDeps !== undefined &&
+          modeloDoLeitor !== null &&
+          precosDaMidia.some((p) => p.modelo === modeloDoLeitor),
+        catalogo: itensDoCatalogo(catalogoLido),
+        mascarar: (texto) => mascararNome(texto, contato.name),
+        agoraMs,
+      },
+      midiaDeps?.tetosDoLeitor ?? { imagem: null, pagina: null },
+    );
+    mensagensDoTurno = plano.mensagens;
+    c.midiaNaoLida = plano.midiaNaoLida;
+    if (plano.esperar) {
+      const pendentesNaEspera = mensagensPendentes(mensagensDoTurno).map((m) =>
+        m.midia?.situacao === "baixando"
+          ? { tipo: "texto", texto: "" }
+          : entradaDoPortao(m),
+      );
+      const escala =
+        detectarGatilhosDeEntrada({
+          mensagens: pendentesNaEspera,
+          dataDeNascimento: contato.birth_date,
+          hojeNaClinica: null,
+        }).length > 0 ||
+        pedidoDeConsultaParaOutraPessoa(
+          pendentesNaEspera
+            .filter((e) => e.tipo === "texto")
+            .map((e) => e.texto),
+        );
+      if (!escala) {
+        log.info("ia_esperando_midia", idsDoLog(c));
+        return {
+          reagendar: new Date(
+            c.deps.agora() + INTERVALO_DA_ESPERA_MS,
+          ).toISOString(),
+          motivo: "esperando_midia",
+        };
+      }
+      mensagensDoTurno = semEspera(mensagensDoTurno);
+    }
+  }
+  const comMidiaParaOModelo =
+    plano !== null && (plano.aTranscrever > 0 || plano.aLer.length > 0);
+  // [AG6b mídia] fim
+
   // 8. Teto de respostas da conversa na ultima hora.
   const teto = await tetoDeRespostasPorHora(admin, clinicId);
   if (teto !== null) {
@@ -627,14 +875,25 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
     PRAZO_DO_TURNO_MS,
     restanteMs(c) - RESERVA_DO_ENVIO_MS - RESERVA_DAS_GRAVACOES_MS,
   );
-  if (prazoDoTurno < PRAZO_MINIMO_DO_TURNO_MS) {
+  // [AG6b mídia] Com midia para o modelo, o prazo minimo e o da midia.
+  if (
+    prazoDoTurno <
+    (comMidiaParaOModelo
+      ? PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS
+      : PRAZO_MINIMO_DO_TURNO_MS)
+  ) {
     return { reagendar: agoraIso(c), motivo: "orcamento_da_passagem" };
   }
 
-  const [precos, catalogo] = await Promise.all([
-    lerOuFalhar(() => lerPrecos(admin)),
-    lerOuFalhar(() => carregarCatalogoDoAgente(admin, clinicId)),
-  ]);
+  // [AG6b mídia] Os precos (com o da transcricao) e o catalogo ja lidos no
+  // plano da midia, ou lidos agora.
+  const [precos, catalogo] =
+    precosDaMidia !== null && catalogoDaMidia !== null
+      ? [precosDaMidia, catalogoDaMidia]
+      : await Promise.all([
+          lerOuFalhar(() => lerPrecos(admin)),
+          lerOuFalhar(() => carregarCatalogoDoAgente(admin, clinicId)),
+        ]);
 
   // 8b. (AG3) O estado do atendimento desta janela, pelo job.
   const leitura = await lerAtendimentoDaIa(admin, {
@@ -675,11 +934,14 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
   // 9. A reserva do custo maximo (so quando o modelo pode ser chamado: sem
   // cliente, modelo ou identificador o laco falha antes de qualquer chamada).
   let reservaId: string | null = null;
+  // [AG6b mídia] O que foi reservado (para o log do uso acima da reserva).
+  let reservado: number | null = null;
   if (cliente !== null && modelo !== null && identificador !== null) {
     const custoMaximo = custoMaximoDoTurno({
       config,
       catalogo,
-      mensagens: historico.mensagens,
+      // [AG6b mídia] as mensagens do turno (com a midia do plano)
+      mensagens: mensagensDoTurno,
       agoraMs,
       fuso,
       modelo,
@@ -693,11 +955,23 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
         agoraMs,
         fuso,
       }),
+      // [AG6b mídia] a transcricao e o leitor no pior caso (desenho 5.3)
+      midia:
+        plano === null || !comMidiaParaOModelo
+          ? null
+          : {
+              aTranscrever: plano.aTranscrever,
+              modeloDaTranscricao: c.deps.midia?.modeloDaTranscricao ?? "",
+              aLer: plano.aLer,
+              modeloDoLeitor: c.deps.midia?.modeloDoLeitor ?? "",
+            },
     });
     if (custoMaximo === null) {
       log.warn("ia_preco_ausente", idsDoLog(c));
       return falharSemModelo(c, base, destino, config);
     }
+    // [AG6b mídia]
+    reservado = custoMaximo;
     const reserva = await reservarGasto(admin, {
       clinicId,
       origem: "whatsapp",
@@ -717,6 +991,22 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
   }
   await salvarTurnoComReserva(c, { ...base, reservaId }, precos);
 
+  // [AG6b mídia] início
+  // A porta da midia so com audio a transcrever ou arquivo a ler (as
+  // integracoes injetadas; a gravacao com a posse deste job).
+  const portaDaMidia =
+    comMidiaParaOModelo && c.deps.midia !== undefined
+      ? c.deps.midia.criarPorta({
+          clinicId,
+          conversationId: c.conversationId,
+          jobId: c.job.id,
+          workerId: c.workerId,
+          identificador,
+          mascarar: (texto) => mascararNome(texto, contato.name),
+        })
+      : null;
+  // [AG6b mídia] fim
+
   // 10. O turno.
   const inicio = c.deps.agora();
   let resultado: ResultadoDoTurno | null = null;
@@ -728,7 +1018,8 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
       identificadorDeSeguranca: identificador,
       config,
       catalogo,
-      mensagens: historico.mensagens,
+      // [AG6b mídia] as mensagens do turno (com a midia do plano)
+      mensagens: mensagensDoTurno,
       agoraMs,
       fuso,
       verificador: c.deps.criarVerificador(identificador ?? ""),
@@ -762,6 +1053,8 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
       modeloDosClassificadores,
       prazoMs: prazoDoTurno,
       agora: c.deps.agora,
+      // [AG6b mídia]
+      midia: portaDaMidia,
     });
   } catch {
     // O laco tem a propria rede; isto nao deveria acontecer. A reserva fica
@@ -782,11 +1075,33 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
       conversationId: c.conversationId,
       jobId: c.job.id,
     });
+    // [AG6b mídia] início
+    // Desenho 5.3: o uso real com midia acima da reserva (o pior caso errou
+    // para baixo) vira log, so com a contagem. O teto conta o real.
+    if (comMidiaParaOModelo && reservado !== null) {
+      const real = linhasDoUso({
+        clinicId,
+        origem: "whatsapp",
+        usos: resultado.uso,
+        precos,
+      }).linhas.reduce((soma, linha) => soma + linha.custo_microdolar, 0);
+      if (real > reservado) {
+        log.warn("ia_midia_acima_da_reserva", {
+          ...idsDoLog(c),
+          count: resultado.uso.filter(
+            (u) => u.papel === "transcricao" || u.papel === "leitor_de_midia",
+          ).length,
+        });
+      }
+    }
+    // [AG6b mídia] fim
   }
 
   if (resultado === null) {
     return falharSemModelo(c, { ...base, reservaId }, destino, config);
   }
+  // [AG6b mídia] D-96: o que o turno deixou sem ler (a visao final do laco).
+  c.midiaNaoLida = resultado.midiaNaoLida === true;
 
   // 11a. Revisao final da AG4 (M1 e B1): o turno parou pela mensagem nova
   // da pessoa (mensagem_nova_do_paciente). O estado NAO e gravado (nao
@@ -1612,6 +1927,16 @@ async function atribuirDepoisDaFrase(
   if (!pedirAtribuicaoNaPassagem(motivo, await regrasParaAPassagem(c))) {
     return;
   }
+  // [AG6b mídia] início
+  // AG6b (D-96): com midia do paciente que o assistente nao leu (o audio que
+  // ninguem ouviu pode ser uma emergencia), a conversa fica na fila de
+  // todos: a chamada nem sai (o banco recusa de qualquer jeito,
+  // midia_nao_lida).
+  if (c.midiaNaoLida === true) {
+    log.info("ia_atribuicao_da_ia", { ...idsDoLog(c), status: "midia_nao_lida" });
+    return;
+  }
+  // [AG6b mídia] fim
   const restante = restanteMs(c);
   if (restante < PRAZO_MINIMO_DA_ATRIBUICAO_MS) {
     log.warn("ia_atribuicao_falhou", {

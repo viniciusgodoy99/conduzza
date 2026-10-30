@@ -485,6 +485,8 @@ describe("telefones pelo painel", () => {
           p_ativo: true,
           p_forcar_contato_existente: false,
           p_confirmou_aviso_da_openai: true,
+          // [AG6b mídia] a versao do aviso que a tela mostrou (D-60)
+          p_versao_do_aviso: 2,
         },
       },
     ]);
@@ -512,6 +514,8 @@ describe("telefones pelo painel", () => {
         clinicId: DO_PAINEL,
         telefone: "+5584999990001",
         ligado: true,
+        // [AG6b mídia] o "Ligar de novo" sai do dialogo do aviso (D-60)
+        confirmarAvisoDaOpenai: true,
       }),
     ).toEqual({ ok: true });
     expect(registro.consultas).toEqual([
@@ -529,6 +533,8 @@ describe("telefones pelo painel", () => {
         clinicId: DO_PAINEL,
         telefone: "+5584999990001",
         ligado: true,
+        // [AG6b mídia] o "Ligar de novo" sai do dialogo do aviso (D-60)
+        confirmarAvisoDaOpenai: true,
       }),
     ).toEqual({
       ok: false,

@@ -458,3 +458,30 @@ describe("AG6a: a urgência no portão", () => {
   });
 });
 // [AG6 urgência] fim
+
+// [AG6b mídia] início
+// AG6b (D-98): a figurinha reconhecida (no servidor ou pelo leitor) nao
+// escala como midia e nao tem texto; o audio a transcrever chega ao portao
+// como texto vazio (conta no numero de mensagens) e o arquivo a ler, como a
+// legenda (quem monta e o laco).
+describe("AG6b: a figurinha e a mídia a ler no portão", () => {
+  it("a figurinha nao escala; o resto da midia continua escalando", () => {
+    expect(
+      detectarGatilhosDeEntrada({ mensagens: [{ tipo: "figurinha", texto: null }] }),
+    ).toEqual([]);
+    expect(
+      detectarGatilhosDeEntrada({
+        mensagens: [
+          { tipo: "figurinha", texto: null },
+          { tipo: "audio", texto: null },
+        ],
+      }),
+    ).toEqual(["midia"]);
+  });
+
+  it("o texto vazio do audio a transcrever conta no numero de mensagens", () => {
+    const seis = Array.from({ length: 6 }, () => ({ tipo: "texto", texto: "" }));
+    expect(detectarGatilhosDeEntrada({ mensagens: seis })).toEqual(["mensagem_longa"]);
+  });
+});
+// [AG6b mídia] fim

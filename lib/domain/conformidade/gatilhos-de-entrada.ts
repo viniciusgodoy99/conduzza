@@ -208,6 +208,13 @@ export function detectarGatilhosDeEntrada(
   // [AG6 urgência] fim
 
   for (const mensagem of entrada.mensagens) {
+    // [AG6b mídia] início
+    // AG6b (D-98): a figurinha que o servidor (ou o leitor) reconheceu nao
+    // escala como midia e nao tem texto. Conta so no numero de mensagens.
+    if (mensagem.tipo === "figurinha") {
+      continue;
+    }
+    // [AG6b mídia] fim
     if (mensagem.tipo !== "texto") {
       // Audio (mesmo transcrito), imagem e documento nunca vao ao agente na
       // fase controlada: escala.
@@ -478,6 +485,12 @@ export const FONTES_DO_PORTAO_EM_CODIGO: readonly string[] = [
   `caixa alta: ${MINIMO_DE_LETRAS_DA_CAIXA_ALTA} letras, ${PROPORCAO_DA_CAIXA_ALTA}, ${MINIMO_DE_PALAVRAS_DA_CAIXA_ALTA} palavras, sem ${INTERROGACAO.source}`,
   `limites: ${LIMITE_DE_MENSAGEM}, ${LIMITE_DA_RAJADA}, ${MAXIMO_DE_MENSAGENS_NO_CONTEXTO}`,
   "midia escala",
+  // [AG6b mídia] início
+  // AG6b: a figurinha reconhecida nao escala nem tem texto; o audio a
+  // transcrever chega como texto vazio e o arquivo a ler como a legenda
+  // (quem monta e o laco: entradaDoPortao).
+  "figurinha nao escala como midia e nao tem texto",
+  // [AG6b mídia] fim
   // Revisao final da AG3 (D-8): a consulta para outra pessoa adulta.
   PEDIDO_DE_AGENDA.source,
   PARA_A_PESSOA.source,

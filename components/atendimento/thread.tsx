@@ -58,6 +58,12 @@ import {
   // [AG6 urgência] início
   urgenteAberta,
   // [AG6 urgência] fim
+  // [AG6b mídia] início
+  leituraDaMensagem,
+  podeTerLeituraDaMidia,
+  SEM_LEITURAS_DO_FIO,
+  type LeiturasDoFio,
+  // [AG6b mídia] fim
   type ComplianceDecision,
   type ConversationListItem,
   type MessageItem,
@@ -315,6 +321,9 @@ export function Thread({
   podeVerRascunho = false,
   erroNasDecisoes = false,
   aoRecarregarDecisoes,
+  // [AG6b mídia] início
+  leiturasDaMidia = SEM_LEITURAS_DO_FIO,
+  // [AG6b mídia] fim
 }: {
   conversation: ConversationListItem;
   messages: MessageItem[];
@@ -368,6 +377,14 @@ export function Thread({
    */
   erroNasDecisoes?: boolean;
   aoRecarregarDecisoes?: () => void;
+  // [AG6b mídia] início
+  /**
+   * O que o assistente transcreveu ou leu da midia do paciente (AG6b), da
+   * consulta separada do fio (fetchLeiturasDaMidia). Sem ela, nenhuma linha;
+   * com erro, a linha "indisponível agora" na midia que podia ter leitura.
+   */
+  leiturasDaMidia?: LeiturasDoFio;
+  // [AG6b mídia] fim
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const ultimaId = messages[messages.length - 1]?.id;
@@ -682,6 +699,16 @@ export function Thread({
                   }
                   timezone={timezone}
                   agendada={agendadaDaMensagem(agendadasDoFio, item.message.id)}
+                  // [AG6b mídia] início
+                  leituraDaMidia={leituraDaMensagem(
+                    leiturasDaMidia,
+                    item.message.id,
+                  )}
+                  leituraIndisponivel={
+                    leiturasDaMidia.estado === "erro" &&
+                    podeTerLeituraDaMidia(item.message)
+                  }
+                  // [AG6b mídia] fim
                 />
               );
             })}

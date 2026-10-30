@@ -233,6 +233,29 @@ import {
   type TextoDescartado,
 } from "./prompt";
 import type { PrecoDoModelo, UsoDoModelo } from "./uso";
+// [AG6b mídia] início
+import type { MotivoDaLeitura } from "@/lib/domain/agente/config";
+import {
+  custoMaximoDaTranscricao,
+  usoEstimadoDoLeitor,
+} from "./gasto";
+import {
+  decidirPelaLeitura,
+  FRASE_DA_FIGURINHA,
+  itensDoCatalogo,
+  mensagensParaEstimativa,
+  midiaNaoLida as mensagemComMidiaNaoLida,
+  motivoMaisForte,
+  PASSO_DO_MOTIVO_DA_LEITURA,
+  PASSOS_DA_MIDIA,
+  PREFIXO_DO_AUDIO,
+  SEGUNDOS_NA_RESERVA,
+  type LeituraGravada,
+  type MidiaDaConversa,
+  type MidiaPronta,
+  type PortaDaMidia,
+} from "./midia";
+// [AG6b mídia] fim
 
 // ---------------------------------------------------------------------------
 // Parametros
@@ -339,6 +362,26 @@ export type MensagemDaConversa = {
    */
   legendaOriginal?: string | null;
   // [AG6 urgência] fim
+  // [AG6b mídia] início
+  /**
+   * AG6b: de onde veio o texto do paciente. "audio": a transcricao (o
+   * modelo le "(áudio) ..."; `textoOriginal` e a transcricao sem a mascara).
+   * "arquivo": o pedido lido pelo leitor de midia (o modelo le a descricao e
+   * a legenda; `texto` e a legenda mascarada). Ausente: o texto digitado.
+   */
+  origem?: "audio" | "arquivo";
+  /**
+   * AG6b: o pedido lido ("(a pessoa mandou um pedido de exame ou
+   * procedimento com: p3 Hemograma)"), montado pelo servidor so com os
+   * codigos e os nomes do Cadastro. So com origem "arquivo".
+   */
+  arquivo?: { descricao: string };
+  /**
+   * AG6b: a midia do paciente (audio, imagem ou documento) e a situacao dela
+   * no turno. So o servidor le: nunca vai a OpenAI nem para log.
+   */
+  midia?: MidiaDaConversa;
+  // [AG6b mídia] fim
 };
 
 /**
@@ -369,7 +412,11 @@ export type OrigemDoEscalonamento =
   // (consulta para outra pessoa, menor de idade, D-8).
   | "ferramenta"
   // AG3 (item 9): a segunda falha seguida do atendimento.
-  | "sistema";
+  | "sistema"
+  // [AG6b mídia] início
+  // AG6b: o leitor de midia identificou o arquivo (so na trilha).
+  | "leitor";
+// [AG6b mídia] fim
 
 /** Falhas do turno alem das do verificador e do classificador. */
 export type FalhaDoAgente =
@@ -447,6 +494,15 @@ type Comum = {
    * para a conversa nunca ficar calada. Ausente: nao foi isso.
    */
   mensagemNova?: true;
+  // [AG6b mídia] início
+  /**
+   * AG6b (D-96): a passagem deste turno tem midia do paciente que o
+   * assistente nao leu (sem leitura, "sem fala", video, localizacao). O
+   * executor do WhatsApp nao pede a atribuicao ao responsavel (o banco
+   * recusa de qualquer jeito, midia_nao_lida). Ausente: nao tem.
+   */
+  midiaNaoLida?: true;
+  // [AG6b mídia] fim
 };
 
 export type ResultadoDoTurno =
@@ -533,6 +589,14 @@ export type EntradaDoTurno = {
   prazoMs?: number;
   /** Relogio injetavel para teste. */
   agora?: () => number;
+  // [AG6b mídia] início
+  /**
+   * AG6b: a porta da midia (ler o arquivo, transcrever, ler a foto ou o
+   * PDF e gravar a leitura). O simulador passa null (D-62): toda midia
+   * continua escalando como hoje. Ausente ou nula: nenhuma midia sai.
+   */
+  midia?: PortaDaMidia | null;
+  // [AG6b mídia] fim
 };
 
 // ---------------------------------------------------------------------------
@@ -931,14 +995,39 @@ export function mensagemParaOModelo(
   mensagem: MensagemDaConversa,
   opcoes: OpcoesDoTextoParaOsModelos = {},
 ): string {
+  // [AG6b mídia] início
+  // AG6b (D-98): a figurinha do paciente, sem conteudo nenhum.
+  if (mensagem.tipo === "figurinha" && mensagem.autor === "paciente") {
+    return FRASE_DA_FIGURINHA;
+  }
+  // [AG6b mídia] fim
   if ((mensagem.tipo ?? "texto") !== "texto" || mensagem.texto === null) {
     return MARCADOR_DE_MIDIA[mensagem.autor];
   }
-  return Array.from(
+  // [AG6b mídia] o corpo (era o retorno direto), para a marca e a descricao.
+  const corpo = Array.from(
     semMarcadores(minimizarParaLlm(textoParaOsModelos(mensagem, opcoes))),
   )
     .slice(0, CARACTERES_POR_MENSAGEM)
     .join("");
+  // [AG6b mídia] início
+  // AG6b: a transcricao vai marcada como audio; o pedido lido, com a
+  // descricao do servidor antes da legenda. O corte e so no texto do
+  // paciente (a marca e a descricao nunca sao cortadas).
+  if (mensagem.autor === "paciente" && mensagem.origem === "audio") {
+    return `${PREFIXO_DO_AUDIO} ${corpo}`;
+  }
+  if (
+    mensagem.autor === "paciente" &&
+    mensagem.origem === "arquivo" &&
+    mensagem.arquivo !== undefined
+  ) {
+    return corpo.trim() === ""
+      ? mensagem.arquivo.descricao
+      : `${mensagem.arquivo.descricao} ${corpo}`;
+  }
+  // [AG6b mídia] fim
+  return corpo;
 }
 
 export function historicoParaOModelo(
@@ -950,6 +1039,66 @@ export function historicoParaOModelo(
     content: mensagemParaOModelo(mensagem, opcoes),
   }));
 }
+
+// [AG6b mídia] início
+/**
+ * AG6b: a mensagem pendente como o portao de entrada a le (desenho 5.1, 1a
+ * e 1c). O texto (e a transcricao ja aplicada) pelo original; a figurinha,
+ * sem texto e sem escalar como midia; o audio a transcrever, um texto vazio
+ * (conta na rajada e no numero de mensagens); o arquivo a ler (ou ja lido),
+ * a legenda original. O resto (a midia fora, o audio sem fala, o video, a
+ * localizacao) continua midia, e escala.
+ */
+export function entradaDoPortao(m: MensagemDaConversa): MensagemDeEntrada {
+  const tipo = m.tipo ?? "texto";
+  if (tipo === "texto") {
+    return {
+      tipo: "texto",
+      texto: m.textoOriginal ?? m.texto,
+      legenda: m.legendaOriginal ?? null,
+    };
+  }
+  if (tipo === "figurinha") {
+    return { tipo: "figurinha", texto: null };
+  }
+  const situacao = m.midia?.situacao;
+  if (situacao === "a_transcrever") {
+    return { tipo: "texto", texto: "" };
+  }
+  if (
+    m.midia !== undefined &&
+    m.midia.midia !== "audio" &&
+    (situacao === "a_ler" || situacao === "lida")
+  ) {
+    return { tipo: "texto", texto: m.legendaOriginal ?? "" };
+  }
+  return {
+    tipo,
+    texto: m.textoOriginal ?? m.texto,
+    // [AG6 urgência] A legenda da midia, so para a urgencia.
+    legenda: m.legendaOriginal ?? null,
+  };
+}
+
+/**
+ * AG6b: o arquivo a ler (ou ja lido, ainda midia) visto pela legenda
+ * mascarada, como texto: o classificador, o verificador e a carteirinha em
+ * jogo leem a legenda (o arquivo so o leitor ve). O resto, como esta.
+ */
+export function vistaDaLegenda(m: MensagemDaConversa): MensagemDaConversa {
+  const situacao = m.midia?.situacao;
+  if (
+    m.midia !== undefined &&
+    m.midia.midia !== "audio" &&
+    (m.tipo ?? "texto") !== "texto" &&
+    m.tipo !== "figurinha" &&
+    (situacao === "a_ler" || situacao === "lida")
+  ) {
+    return { ...m, tipo: "texto", texto: m.midia.legenda ?? "" };
+  }
+  return m;
+}
+// [AG6b mídia] fim
 
 /** As mensagens do paciente depois da ultima resposta (nao respondidas). */
 export function mensagensPendentes(
@@ -1039,6 +1188,23 @@ export function custoMaximoDoTurno(entrada: {
    * situacao fica com o texto mais longo.
    */
   atendimento?: AtendimentoParaOModelo | null;
+  // [AG6b mídia] início
+  /**
+   * AG6b (desenho 5.3): a midia que o turno pode mandar aos modelos (o plano
+   * do turno). Cada audio a transcrever conta SEGUNDOS_NA_RESERVA (120 s)
+   * pelo preco por minuto do modelo; cada arquivo a ler, o pior caso do
+   * leitor (o teto de tokens do arquivo, o envelope e a saida). E a mensagem
+   * de cada um conta como texto no agente, no classificador e no verificador
+   * (mensagensParaEstimativa: a transcricao com 1.000 caracteres no pior
+   * caso de bytes). Sem preco ou sem teto: null (quem chama falha fechado).
+   */
+  midia?: {
+    aTranscrever: number;
+    modeloDaTranscricao: string;
+    aLer: readonly { tokensDoArquivo: number }[];
+    modeloDoLeitor: string;
+  } | null;
+  // [AG6b mídia] fim
 }): number | null {
   // AG3: com a carteirinha em jogo o texto vai com os codigos curtos
   // escondidos, que pode ficar uns caracteres mais longo ("1234" vira
@@ -1046,7 +1212,15 @@ export function custoMaximoDoTurno(entrada: {
   const maisLongo = <T,>(a: T, b: T): T =>
     JSON.stringify(a).length >= JSON.stringify(b).length ? a : b;
   const escondido: OpcoesDoTextoParaOsModelos = { esconderCodigos: true };
-  const pendentes = mensagensPendentes(entrada.mensagens).map((m) =>
+  // [AG6b mídia] início
+  // As midias que vao aos modelos contam como texto (o pior caso).
+  const itensDaLeitura = itensDoCatalogo(entrada.catalogo);
+  const mensagensDaConta =
+    entrada.midia === null || entrada.midia === undefined
+      ? entrada.mensagens
+      : mensagensParaEstimativa(entrada.mensagens, itensDaLeitura);
+  // [AG6b mídia] fim
+  const pendentes = mensagensPendentes(mensagensDaConta).map((m) =>
     maisLongo(m.texto ?? "", textoParaOsModelos(m, escondido)),
   );
   const corpo = {
@@ -1057,9 +1231,10 @@ export function custoMaximoDoTurno(entrada: {
       contato: entrada.contato ?? null,
       atendimento: entrada.atendimento ?? null,
     }),
+    // [AG6b mídia] mensagensDaConta (era entrada.mensagens).
     input: maisLongo(
-      historicoParaOModelo(entrada.mensagens),
-      historicoParaOModelo(entrada.mensagens, escondido),
+      historicoParaOModelo(mensagensDaConta),
+      historicoParaOModelo(mensagensDaConta, escondido),
     ),
     tools: ferramentasDaChamada(entrada.config),
     text: { format: FORMATO_DA_RESPOSTA },
@@ -1109,6 +1284,35 @@ export function custoMaximoDoTurno(entrada: {
     }
     total += custo;
   }
+  // [AG6b mídia] início
+  if (entrada.midia !== null && entrada.midia !== undefined) {
+    for (let i = 0; i < entrada.midia.aTranscrever; i += 1) {
+      const custo = custoMaximoDaTranscricao(
+        SEGUNDOS_NA_RESERVA,
+        entrada.midia.modeloDaTranscricao,
+        entrada.precos,
+      );
+      if (custo === null) {
+        return null;
+      }
+      total += custo;
+    }
+    for (const arquivo of entrada.midia.aLer) {
+      const uso = usoEstimadoDoLeitor({
+        catalogo: itensDaLeitura,
+        tokensDoArquivo: arquivo.tokensDoArquivo,
+      });
+      const custo =
+        uso === null
+          ? null
+          : custoMaximoDaChamada(uso, entrada.midia.modeloDoLeitor, entrada.precos);
+      if (custo === null) {
+        return null;
+      }
+      total += custo;
+    }
+  }
+  // [AG6b mídia] fim
   return total;
 }
 
@@ -1144,13 +1348,49 @@ export function atendimentoParaEstimativa(entrada: {
 /** As mensagens do paciente no formato de registrar_dados_do_paciente. */
 function mensagensDoPacienteParaOsDados(
   mensagens: readonly MensagemDaConversa[],
-): { mascarado: string; original: string }[] {
+): {
+  mascarado: string;
+  original: string;
+  // [AG6b mídia] AG6b (D-57): a origem, para o CPF e a carteirinha ditos
+  // nunca serem lidos (so digitados). A descricao do arquivo nunca entra:
+  // no pedido, o texto e so a legenda.
+  origem?: "audio" | "arquivo";
+}[] {
   return mensagens.flatMap((m) =>
     m.autor === "paciente" && (m.tipo ?? "texto") === "texto" && m.texto !== null
-      ? [{ mascarado: m.texto, original: m.textoOriginal ?? m.texto }]
+      ? [
+          {
+            mascarado: m.texto,
+            original: m.textoOriginal ?? m.texto,
+            // [AG6b mídia]
+            ...(m.origem === undefined ? {} : { origem: m.origem }),
+          },
+        ]
       : [],
   );
 }
+
+// [AG6b mídia] início
+/**
+ * AG6b: os itens (nomes do Cadastro) de cada pedido lido que seguiu com a IA
+ * nas mensagens do turno, para os fatos ("A pessoa mandou um pedido com:
+ * Hemograma, Glicemia de jejum."). Nunca texto do arquivo.
+ */
+function pedidosDoTurno(
+  mensagens: readonly MensagemDaConversa[],
+  catalogo: CatalogoDoAgente,
+): string[][] {
+  const itens = itensDoCatalogo(catalogo);
+  return mensagens.flatMap((m) => {
+    const leitura = m.midia?.leitura;
+    if (m.origem !== "arquivo" || leitura === undefined) {
+      return [];
+    }
+    const decisao = decidirPelaLeitura(leitura, itens);
+    return decisao.tipo === "segue" ? [decisao.itens.map((i) => i.nome)] : [];
+  });
+}
+// [AG6b mídia] fim
 
 /** O que a nota para a equipe diz do motivo da passagem. */
 function motivoParaANota(desfecho: DesfechoDoTurno): string {
@@ -1234,6 +1474,28 @@ export async function executarTurnoDoAgente(
     pendentes.length === 0
       ? undefined
       : entrada.mensagens[entrada.mensagens.length - pendentes.length - 1];
+  // [AG6b mídia] início
+  // AG6b: as mensagens do paciente da agenda sao VIVAS (os mesmos arrays,
+  // trocados no lugar): a transcricao e o pedido lido entram nelas depois da
+  // leitura, antes do agente (o "sim" falado, D-97; o nome e o nascimento
+  // ditos, D-57). As ferramentas leem na hora da chamada.
+  const mensagensDaAgenda = {
+    doPaciente: mensagensDoPacienteParaOsDados(entrada.mensagens),
+    pendentes: mensagensDoPacienteParaOsDados(pendentes),
+  };
+  const atualizarAgenda = (mensagens: readonly MensagemDaConversa[]) => {
+    mensagensDaAgenda.doPaciente.splice(
+      0,
+      mensagensDaAgenda.doPaciente.length,
+      ...mensagensDoPacienteParaOsDados(mensagens),
+    );
+    mensagensDaAgenda.pendentes.splice(
+      0,
+      mensagensDaAgenda.pendentes.length,
+      ...mensagensDoPacienteParaOsDados(mensagensPendentes(mensagens)),
+    );
+  };
+  // [AG6b mídia] fim
   const agendaDoTurno = criarAgendaDoTurno({
     porta: entrada.agenda ?? null,
     catalogo: entrada.catalogo,
@@ -1242,8 +1504,9 @@ export async function executarTurnoDoAgente(
     fuso: entrada.fuso,
     atendimento: entrada.atendimento ?? null,
     mensagens: {
-      doPaciente: mensagensDoPacienteParaOsDados(entrada.mensagens),
-      pendentes: mensagensDoPacienteParaOsDados(pendentes),
+      // [AG6b mídia] os arrays vivos
+      doPaciente: mensagensDaAgenda.doPaciente,
+      pendentes: mensagensDaAgenda.pendentes,
       antesDasPendentes:
         antes === undefined || antes.autor !== "assistente"
           ? null
@@ -1260,7 +1523,12 @@ export async function executarTurnoDoAgente(
     // comeco do turno mais o tempo que ja passou.
     agora: entrada.agora ?? relogioDesde(entrada.agoraMs),
   });
-  const resultado = await turnoDoAgente(entrada, agendaDoTurno);
+  const resultado = await turnoDoAgente(
+    entrada,
+    agendaDoTurno,
+    // [AG6b mídia]
+    atualizarAgenda,
+  );
   if (!comEstado) {
     return resultado;
   }
@@ -1307,6 +1575,9 @@ export async function executarTurnoDoAgente(
 async function turnoDoAgente(
   entrada: EntradaDoTurno,
   agendaDoTurno: AgendaDoTurno,
+  // [AG6b mídia] AG6b: a agenda recebe as mensagens com a midia lida.
+  atualizarAgenda: (mensagens: readonly MensagemDaConversa[]) => void = () =>
+    undefined,
 ): Promise<ResultadoDoTurno> {
   const comEstado =
     entrada.atendimento !== null && entrada.atendimento !== undefined;
@@ -1320,6 +1591,22 @@ async function turnoDoAgente(
   let descartados: TextoDescartado = { instrucoes: false, itensDaBase: 0 };
   const modeloDosClassificadores =
     entrada.modeloDosClassificadores?.trim() || "desconhecido";
+  // [AG6b mídia] início
+  // A copia das mensagens do turno: as pendentes com midia mudam aqui (a
+  // transcricao, o pedido lido, a figurinha), nunca em entrada.mensagens.
+  const mensagensDoTurno: MensagemDaConversa[] = [...entrada.mensagens];
+  const inicioDasPendentes =
+    mensagensDoTurno.length - mensagensPendentes(entrada.mensagens).length;
+  const pendentesDoTurno = () => mensagensDoTurno.slice(inicioDasPendentes);
+  const trocarPendente = (messageId: string, nova: MensagemDaConversa) => {
+    const i = mensagensDoTurno.findIndex(
+      (m, j) => j >= inicioDasPendentes && m.midia?.messageId === messageId,
+    );
+    if (i >= 0) {
+      mensagensDoTurno[i] = nova;
+    }
+  };
+  // [AG6b mídia] fim
 
   const fraseFixa = (
     desfecho: DesfechoDoTurno,
@@ -1335,6 +1622,10 @@ async function turnoDoAgente(
     descartados,
     ferramentasUsadas,
     rascunhoBloqueado,
+    // [AG6b mídia] D-96: a passagem com midia do paciente que ninguem leu.
+    ...(pendentesDoTurno().some(mensagemComMidiaNaoLida)
+      ? { midiaNaoLida: true as const }
+      : {}),
   });
   const escalar = (
     motivo: MotivoDeEscalonamento,
@@ -1353,6 +1644,248 @@ async function turnoDoAgente(
     return fraseFixa({ tipo: "falhou", motivo });
   };
 
+  // [AG6b mídia] início
+  // A midia que fica fora (sem porta, o arquivo fora da regra, ou o preparo
+  // de um audio do turno que deu fora): continua midia, e o portao escala.
+  const marcarComoFora = (mensagens: readonly MensagemDaConversa[]) => {
+    for (const m of mensagens) {
+      if (m.midia !== undefined) {
+        trocarPendente(m.midia.messageId, {
+          ...m,
+          midia: { ...m.midia, situacao: "fora" },
+        });
+      }
+    }
+  };
+  /** O prazo que sobra para a midia (o agente e o filtro vem depois). */
+  const prazoParaAMidia = () => prazoEm - agora() - RESERVA_DO_FILTRO_MS;
+
+  /**
+   * 2b. Transcreve os audios a transcrever. Devolve o desfecho quando o
+   * turno para aqui (falha fechada, a conversa saiu da IA, o prazo), ou null
+   * para seguir (o 1c confere o texto transcrito, o sem fala e o fora).
+   */
+  const transcreverAsPendentes = async (
+    lista: readonly MensagemDaConversa[],
+  ): Promise<ResultadoDoTurno | null> => {
+    const porta = entrada.midia ?? null;
+    if (porta === null) {
+      marcarComoFora(lista);
+      return null;
+    }
+    if (prazoParaAMidia() < 1_000) {
+      return falhar("prazo");
+    }
+    const prontas = await porta.preparar(
+      lista.flatMap((m) => (m.midia === undefined ? [] : [m.midia])),
+      prazoParaAMidia(),
+    );
+    if (prontas.some((p) => p.tipo === "falhou")) {
+      trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.transcricaoFalhou });
+      return fraseFixa({ tipo: "falhou", motivo: "desconhecida" });
+    }
+    // A porta prepara TODOS antes de chamar o modelo: um fora (o limite, o
+    // formato, os primeiros bytes) e nenhum e transcrito.
+    const audios = prontas.filter(
+      (p): p is Extract<MidiaPronta, { tipo: "audio" }> => p.tipo === "audio",
+    );
+    if (audios.length !== prontas.length || audios.length !== lista.length) {
+      marcarComoFora(lista);
+      return null;
+    }
+    if (prazoParaAMidia() < 1_000) {
+      return falhar("prazo");
+    }
+    const prazo = prazoParaAMidia();
+    const feitas = await Promise.all(
+      audios.map(async (audio) => ({
+        audio,
+        feita: await porta.transcrever(audio, prazo),
+      })),
+    );
+    for (const { feita } of feitas) {
+      if (feita.uso !== null) {
+        uso.push(feita.uso);
+      }
+    }
+    if (feitas.some(({ feita }) => feita.tipo === "fora_da_ia")) {
+      return falhar("liberacao_suspensa");
+    }
+    const falha = feitas.find(({ feita }) => feita.tipo === "falhou")?.feita;
+    if (falha !== undefined && falha.tipo === "falhou") {
+      trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.transcricaoFalhou });
+      return fraseFixa({ tipo: "falhou", motivo: falha.motivo });
+    }
+    for (const { audio, feita } of feitas) {
+      const original = lista.find((m) => m.midia?.messageId === audio.messageId);
+      if (original?.midia === undefined) {
+        continue;
+      }
+      if (feita.tipo === "transcrita") {
+        trilha.push({ tipo: "outro", texto: PASSOS_DA_MIDIA.transcreveu });
+        trocarPendente(audio.messageId, {
+          ...original,
+          tipo: "texto",
+          origem: "audio",
+          texto: feita.textoParaOsModelos,
+          textoOriginal: feita.texto,
+          midia: { ...original.midia, situacao: "lida", leitura: feita.leitura },
+        });
+      } else if (feita.tipo === "sem_fala") {
+        trocarPendente(audio.messageId, {
+          ...original,
+          midia: { ...original.midia, situacao: "lida", leitura: feita.leitura },
+        });
+      }
+    }
+    return null;
+  };
+
+  /**
+   * 3b. Le os arquivos a ler (a figurinha, local) e decide pela leitura de
+   * cada arquivo pendente (a tabela 1.2, com a prioridade: o clinico, o
+   * documento do paciente, o nao identificado). Devolve o desfecho quando o
+   * turno passa ou para aqui, ou null para seguir com o agente (o pedido
+   * vira a descricao, a figurinha vira figurinha).
+   */
+  const lerOsArquivosPendentes = async (): Promise<ResultadoDoTurno | null> => {
+    const catalogoDaLeitura = itensDoCatalogo(entrada.catalogo);
+    const aLer = pendentesDoTurno().filter(
+      (m) => m.midia?.situacao === "a_ler",
+    );
+    if (aLer.length > 0) {
+      const porta = entrada.midia ?? null;
+      const passarComoMidia = () => {
+        trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.arquivoFora });
+        return fraseFixa({
+          tipo: "escalou",
+          motivo: MOTIVO_DO_GATILHO.midia,
+          gatilho: "midia",
+          origem: "portao",
+        });
+      };
+      if (porta === null) {
+        marcarComoFora(aLer);
+        return passarComoMidia();
+      }
+      if (prazoParaAMidia() < 1_000) {
+        return falhar("prazo");
+      }
+      const prontas = await porta.preparar(
+        aLer.flatMap((m) => (m.midia === undefined ? [] : [m.midia])),
+        prazoParaAMidia(),
+      );
+      if (prontas.some((p) => p.tipo === "falhou")) {
+        trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.leituraFalhou });
+        return fraseFixa({ tipo: "falhou", motivo: "desconhecida" });
+      }
+      const legiveis = prontas.filter(
+        (p): p is Extract<MidiaPronta, { tipo: "arquivo" | "figurinha" }> =>
+          p.tipo === "arquivo" || p.tipo === "figurinha",
+      );
+      if (legiveis.length !== prontas.length || legiveis.length !== aLer.length) {
+        marcarComoFora(aLer);
+        return passarComoMidia();
+      }
+      if (prazoParaAMidia() < 1_000) {
+        return falhar("prazo");
+      }
+      const prazo = prazoParaAMidia();
+      const feitas = await Promise.all(
+        legiveis.map(async (arquivo) => ({
+          arquivo,
+          feita: await porta.ler(arquivo, catalogoDaLeitura, prazo),
+        })),
+      );
+      for (const { feita } of feitas) {
+        if (feita.uso !== null) {
+          uso.push(feita.uso);
+        }
+      }
+      if (feitas.some(({ feita }) => feita.tipo === "fora_da_ia")) {
+        return falhar("liberacao_suspensa");
+      }
+      const falha = feitas.find(({ feita }) => feita.tipo === "falhou")?.feita;
+      if (falha !== undefined && falha.tipo === "falhou") {
+        trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.leituraFalhou });
+        return fraseFixa({ tipo: "falhou", motivo: falha.motivo });
+      }
+      for (const { arquivo, feita } of feitas) {
+        const original = aLer.find(
+          (m) => m.midia?.messageId === arquivo.messageId,
+        );
+        if (original?.midia !== undefined && feita.tipo === "lido") {
+          trocarPendente(arquivo.messageId, {
+            ...original,
+            midia: {
+              ...original.midia,
+              situacao: "lida",
+              leitura: feita.leitura,
+            },
+          });
+        }
+      }
+    }
+    // A decisao do servidor por arquivo lido (os de agora e os que o job
+    // repetido ja tinha gravado), com a prioridade.
+    const lidas = pendentesDoTurno().filter(
+      (m): m is MensagemDaConversa & {
+        midia: MidiaDaConversa & { leitura: LeituraGravada };
+      } =>
+        m.midia !== undefined &&
+        m.midia.midia !== "audio" &&
+        m.midia.situacao === "lida" &&
+        m.midia.leitura !== undefined &&
+        (m.tipo ?? "texto") !== "texto" &&
+        m.tipo !== "figurinha",
+    );
+    const decisoes = lidas.map((m) => ({
+      mensagem: m,
+      decisao: decidirPelaLeitura(m.midia.leitura, catalogoDaLeitura),
+    }));
+    const motivo = motivoMaisForte(
+      decisoes.flatMap(({ decisao }): MotivoDaLeitura[] =>
+        decisao.tipo === "escala" ? [decisao.motivo] : [],
+      ),
+    );
+    if (motivo !== null) {
+      trilha.push({ tipo: "equipe", texto: PASSO_DO_MOTIVO_DA_LEITURA[motivo] });
+      return fraseFixa({
+        tipo: "escalou",
+        motivo,
+        gatilho: null,
+        origem: "leitor",
+      });
+    }
+    for (const { mensagem, decisao } of decisoes) {
+      if (decisao.tipo === "segue") {
+        trilha.push({
+          tipo: "outro",
+          texto: PASSOS_DA_MIDIA.leuPedido.replace("{}", () =>
+            String(decisao.itens.length),
+          ),
+        });
+        trocarPendente(mensagem.midia.messageId, {
+          ...mensagem,
+          tipo: "texto",
+          origem: "arquivo",
+          texto: mensagem.midia.legenda ?? "",
+          textoOriginal: mensagem.legendaOriginal ?? "",
+          arquivo: { descricao: decisao.descricao },
+        });
+      } else if (decisao.tipo === "figurinha") {
+        trilha.push({ tipo: "outro", texto: PASSOS_DA_MIDIA.figurinha });
+        trocarPendente(mensagem.midia.messageId, {
+          ...mensagem,
+          tipo: "figurinha",
+          texto: null,
+        });
+      }
+    }
+    return null;
+  };
+  // [AG6b mídia] fim
+
   try {
     const pendentes = mensagensPendentes(entrada.mensagens);
     if (pendentes.length === 0) {
@@ -1362,67 +1895,98 @@ async function turnoDoAgente(
     // 1. Portao deterministico, no texto ORIGINAL do contato (local, sem
     // rede): a mascara do nome so existe para a OpenAI e nao pode esconder
     // um gatilho. Os passos 3, 4 e 6 continuam so com o texto mascarado.
-    const gatilhos = detectarGatilhosDeEntrada({
-      mensagens: pendentes.map((m): MensagemDeEntrada => ({
-        tipo: m.tipo ?? "texto",
-        texto: m.textoOriginal ?? m.texto,
-        // [AG6 urgência] A legenda da midia, so para a urgencia.
-        legenda: m.legendaOriginal ?? null,
-      })),
-      dataDeNascimento: entrada.dataDeNascimento ?? null,
-      hojeNaClinica:
-        entrada.hojeNaClinica ?? hojeNoFuso(entrada.agoraMs, entrada.fuso),
-    });
-    const gatilho = gatilhos[0];
-    if (gatilho !== undefined) {
-      trilha.push({
-        tipo: "outro",
-        texto: "A mensagem foi conferida antes de chegar ao assistente.",
+    // [AG6b mídia] início
+    // AG6b (desenho 5.1): o portao roda nas pendentes do TURNO, com a midia
+    // pela situacao dela (entradaDoPortao): no 1a, o audio a transcrever e
+    // um texto vazio (conta na rajada e no numero de mensagens, nunca como
+    // midia) e o arquivo a ler (ou ja lido) e a legenda; a midia fora, o
+    // audio sem fala e o video continuam midia. Gatilho: nada sai. No 1c
+    // (depois da transcricao), roda de novo com o texto transcrito.
+    const passarPeloPortao = (): ResultadoDoTurno | null => {
+      const entradas = pendentesDoTurno().map(entradaDoPortao);
+      const gatilhos = detectarGatilhosDeEntrada({
+        mensagens: entradas,
+        dataDeNascimento: entrada.dataDeNascimento ?? null,
+        hojeNaClinica:
+          entrada.hojeNaClinica ?? hojeNoFuso(entrada.agoraMs, entrada.fuso),
       });
-      // [AG6 urgência] início
-      // AG6a: o sinal de emergencia vem primeiro na ordem dos gatilhos. A
-      // conversa passa com o motivo urgencia (o banco marca como Urgente e
-      // nunca atribui) e a frase de sempre. No WhatsApp o executor ja passou
-      // antes do teto e da reserva; aqui e a segunda trava e o simulador.
-      if (gatilho === "urgencia") {
-        trilha.push({ tipo: "equipe", texto: PASSO_DA_URGENCIA });
-        return fraseFixa({
-          tipo: "escalou",
-          motivo: "urgencia",
-          gatilho,
-          origem: "portao",
+      const gatilho = gatilhos[0];
+      if (gatilho !== undefined) {
+        trilha.push({
+          tipo: "outro",
+          texto: "A mensagem foi conferida antes de chegar ao assistente.",
         });
+        // [AG6 urgência] início
+        // AG6a: o sinal de emergencia vem primeiro na ordem dos gatilhos. A
+        // conversa passa com o motivo urgencia (o banco marca como Urgente
+        // e nunca atribui) e a frase de sempre. No WhatsApp o executor ja
+        // passou antes do teto e da reserva; aqui e a segunda trava, o
+        // simulador e (AG6b) a urgencia falada no audio.
+        if (gatilho === "urgencia") {
+          trilha.push({ tipo: "equipe", texto: PASSO_DA_URGENCIA });
+          return fraseFixa({
+            tipo: "escalou",
+            motivo: "urgencia",
+            gatilho,
+            origem: "portao",
+          });
+        }
+        // [AG6 urgência] fim
+        // O audio em que nao deu para entender fala (as travas da saida da
+        // transcricao): o passo proprio, o motivo de sempre da midia.
+        if (
+          gatilho === "midia" &&
+          pendentesDoTurno().some(
+            (m) =>
+              m.midia?.midia === "audio" &&
+              m.midia.leitura?.tipo === "sem_fala",
+          )
+        ) {
+          trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.semFala });
+          return fraseFixa({
+            tipo: "escalou",
+            motivo: MOTIVO_DO_GATILHO.midia,
+            gatilho,
+            origem: "portao",
+          });
+        }
+        return escalar(
+          MOTIVO_DO_GATILHO[gatilho],
+          "portao",
+          gatilho,
+          textoDoGatilho(gatilho),
+        );
       }
-      // [AG6 urgência] fim
-      return escalar(
-        MOTIVO_DO_GATILHO[gatilho],
-        "portao",
-        gatilho,
-        textoDoGatilho(gatilho),
-      );
+      // Revisao final da AG3 (achado 15, D-8): o pedido de consulta para
+      // outra pessoa adulta ("para minha mae", "pro meu marido") passa para
+      // a equipe antes do modelo, com o motivo do banco e sem gatilho (o
+      // CHECK de gatilho_entrada nao muda). Filho e filha seguem pela regra
+      // do menor. AG6b: nos textos, nas transcricoes e nas legendas.
+      if (
+        pedidoDeConsultaParaOutraPessoa(
+          entradas
+            .filter((e) => e.tipo === "texto")
+            .map((e) => e.texto),
+        )
+      ) {
+        trilha.push({
+          tipo: "outro",
+          texto: "A mensagem foi conferida antes de chegar ao assistente.",
+        });
+        return escalar(
+          "consulta_para_outra_pessoa",
+          "portao",
+          null,
+          ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.consulta_para_outra_pessoa,
+        );
+      }
+      return null;
+    };
+    const doPortao = passarPeloPortao();
+    if (doPortao !== null) {
+      return doPortao;
     }
-    // Revisao final da AG3 (achado 15, D-8): o pedido de consulta para outra
-    // pessoa adulta ("para minha mae", "pro meu marido") passa para a equipe
-    // antes do modelo, com o motivo do banco e sem gatilho (o CHECK de
-    // gatilho_entrada nao muda). Filho e filha seguem pela regra do menor.
-    if (
-      pedidoDeConsultaParaOutraPessoa(
-        pendentes
-          .filter((m) => (m.tipo ?? "texto") === "texto")
-          .map((m) => m.textoOriginal ?? m.texto),
-      )
-    ) {
-      trilha.push({
-        tipo: "outro",
-        texto: "A mensagem foi conferida antes de chegar ao assistente.",
-      });
-      return escalar(
-        "consulta_para_outra_pessoa",
-        "portao",
-        null,
-        ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.consulta_para_outra_pessoa,
-      );
-    }
+    // [AG6b mídia] fim
 
     // 2. Configuracao.
     const { cliente, modelo } = entrada;
@@ -1437,15 +2001,44 @@ async function turnoDoAgente(
       return falhar("sem_identificador");
     }
 
+    // [AG6b mídia] início
+    // 2b. A transcricao dos audios a transcrever (a porta le o arquivo,
+    // prepara, chama a transcricao e grava a leitura) e, 1c, o portao de
+    // novo com o texto transcrito: a urgencia falada primeiro (a passagem
+    // com o motivo urgencia marca no banco), depois os outros; o audio sem
+    // fala ou fora da regra escala como midia.
+    const aTranscrever = pendentesDoTurno().filter(
+      (m) => m.midia?.situacao === "a_transcrever",
+    );
+    if (aTranscrever.length > 0) {
+      const transcricao = await transcreverAsPendentes(aTranscrever);
+      if (transcricao !== null) {
+        return transcricao;
+      }
+      const doPortaoDeNovo = passarPeloPortao();
+      if (doPortaoDeNovo !== null) {
+        return doPortaoDeNovo;
+      }
+    }
+    // [AG6b mídia] fim
+
     // 3. Classificador de entrada. AG3 (LGPD): com a carteirinha em jogo,
     // o codigo curto que a minimizacao deixa passar nao vai ao
     // classificador, ao agente nem ao verificador (o servidor acha a
     // carteirinha no texto original: registrar_dados_do_paciente).
+    // [AG6b mídia] O turno com a transcricao e com a legenda do arquivo a
+    // ler (vistaDaLegenda): a carteirinha falada ou escrita na legenda
+    // tambem conta.
     const opcoesDoTexto: OpcoesDoTextoParaOsModelos = {
-      esconderCodigos: esconderCodigosNoTurno(entrada),
+      esconderCodigos: esconderCodigosNoTurno({
+        mensagens: mensagensDoTurno.map(vistaDaLegenda),
+        atendimento: entrada.atendimento ?? null,
+      }),
     };
-    const textosPendentes = pendentes.map((m) =>
-      textoParaOsModelos(m, opcoesDoTexto),
+    // [AG6b mídia] As transcricoes e as legendas (mascaradas) vao ao
+    // classificador e ao verificador; a midia sem leitura, como texto vazio.
+    const textosPendentes = pendentesDoTurno().map((m) =>
+      textoParaOsModelos(vistaDaLegenda(m), opcoesDoTexto),
     );
     // Revisao curta das correcoes da AG3 (achado 1, ALTO, CFM): o
     // classificador le o texto SEM mascara de nome e de nascimento. A
@@ -1517,6 +2110,18 @@ async function turnoDoAgente(
       return falhar(ehMotivoDaFalha(motivo) ? motivo : "desconhecida");
     }
 
+    // [AG6b mídia] início
+    // 3b. O leitor de midia: so DEPOIS do portao e do classificador lerem a
+    // legenda (o arquivo nao sai quando a legenda ja passou a conversa).
+    const doLeitor = await lerOsArquivosPendentes();
+    if (doLeitor !== null) {
+      return doLeitor;
+    }
+    // A agenda le a transcricao e a legenda do pedido (o "sim" falado, D-97;
+    // o nome e o nascimento ditos, D-57; nunca a descricao do arquivo).
+    atualizarAgenda(mensagensDoTurno);
+    // [AG6b mídia] fim
+
     // 4. O agente.
     const ferramentas: FunctionTool[] = ferramentasDaChamada(entrada.config);
     const permitidas: ReadonlySet<string> = new Set(
@@ -1563,7 +2168,8 @@ async function turnoDoAgente(
       });
     }
     const historico: ResponseInputItem[] = historicoParaOModelo(
-      entrada.mensagens,
+      // [AG6b mídia] as mensagens do turno (a midia lida aplicada)
+      mensagensDoTurno,
       opcoesDoTexto,
     );
     const precosDoTurno: number[] = [];
@@ -2046,6 +2652,9 @@ async function turnoDoAgente(
             ? ferramentasDoTurno
             : [...ferramentasDoTurno, doEstado],
         respostasDaBase,
+        // [AG6b mídia] Os pedidos lidos na conversa (so os nomes do
+        // Cadastro), para o resumo dos fatos do verificador.
+        pedidos: pedidosDoTurno(mensagensDoTurno, entrada.catalogo),
       });
     } catch {
       log.warn("ia_agente_fatos_falharam", {

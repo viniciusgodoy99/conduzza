@@ -10,6 +10,9 @@ import {
   telefoneDaEquipeSchema,
   TEXTOS_DA_IA,
   TEXTOS_DO_TESTE_COM_PACIENTE,
+  // [AG6b mídia] início
+  VERSAO_DO_AVISO_DA_OPENAI,
+  // [AG6b mídia] fim
 } from "@/components/agente/whatsapp/agente-de-ia";
 import { TEXTOS_DO_PAINEL } from "@/components/painel-geral/painel-geral";
 import { situacaoDaConexao } from "@/components/whatsapp/numeros";
@@ -162,6 +165,12 @@ const alternarTelefoneSchema = z
     telefone: z.string().regex(E164),
     ligado: z.boolean(),
     clinicId: clinicaDoPainel,
+    // [AG6b mídia] início
+    // O aviso da OpenAI confirmado no dialogo do "Ligar de novo" (D-60):
+    // obrigatorio para ligar (a acao recusa sem ele), sem efeito no
+    // desligar. So o true passa, como no formulario de adicionar.
+    confirmarAvisoDaOpenai: z.literal(true).optional(),
+    // [AG6b mídia] fim
   })
   .strict();
 
@@ -363,6 +372,13 @@ function textoDoErro(kind: string, error: ErroDoBanco, outro: string): string {
     }
   }
   if (kind.startsWith("telefone_") && codigo === "22023") {
+    // [AG6b mídia] início
+    // A versao do aviso fora de 1 e 2 (migration 20261030100000): e erro do
+    // codigo, nunca do telefone que a pessoa digitou.
+    if (chave === "versao_do_aviso_invalida") {
+      return outro;
+    }
+    // [AG6b mídia] fim
     return TEXTOS_DA_IA.telefoneInvalido;
   }
   // A clinica em producao (migration 20261022120000, revisao da onda 2): o
@@ -748,6 +764,12 @@ export async function adicionarTelefoneDaIaAction(
     p_forcar_contato_existente: forcar,
     p_confirmou_aviso_da_openai: parsed.data.confirmarAvisoDaOpenai,
     ...(forcar ? { p_confirmou_teste_com_paciente: true } : {}),
+    // [AG6b mídia] início
+    // A versao do aviso que o formulario mostrou (D-60; migration
+    // 20261030100000): o banco grava no telefone, e so a 2 deixa a midia ir
+    // a OpenAI (D-95).
+    p_versao_do_aviso: VERSAO_DO_AVISO_DA_OPENAI,
+    // [AG6b mídia] fim
   });
   if (error) {
     const resultado = falhou(
@@ -805,6 +827,12 @@ async function telefoneEstaNaLista(
  * Telefone novo entra so pelo formulario de adicionar, com a confirmacao do
  * aviso da OpenAI (o banco tambem recusa criar linha sem ela, e desligar
  * telefone fora da lista nao cria linha).
+ *
+ * [AG6b mídia] Desde a AG6b (D-60 e D-95), ligar de novo tambem exige a
+ * confirmacao do aviso (o dialogo do "Ligar de novo"), e a versao do aviso
+ * vai ao banco com ela: e assim que o telefone que ja estava ligado confirma
+ * o aviso de audio, foto e documento (desligar e ligar de novo). Desligar
+ * continua sem nada disso, e o banco volta a versao para 1.
  */
 export async function alternarTelefoneDaIaAction(
   entrada: unknown,
@@ -817,6 +845,14 @@ export async function alternarTelefoneDaIaAction(
   if (!parsed.success) {
     return { ok: false, error: TEXTOS.dadosInvalidos };
   }
+  // [AG6b mídia] início
+  // Ligar de novo so com o aviso da OpenAI confirmado (D-60), como o
+  // formulario de adicionar: a tela so liga pelo dialogo do aviso, e a acao
+  // recusa o resto antes de qualquer leitura. Desligar nunca e recusado.
+  if (parsed.data.ligado && parsed.data.confirmarAvisoDaOpenai !== true) {
+    return { ok: false, error: TEXTOS_DA_IA.avisoDaOpenaiObrigatorioAoLigar };
+  }
+  // [AG6b mídia] fim
   const supabase = await createClient();
   if (parsed.data.ligado) {
     let naLista: boolean;
@@ -839,6 +875,18 @@ export async function alternarTelefoneDaIaAction(
     // Vazio mantem o rotulo gravado (nullif no banco).
     p_rotulo: "",
     p_ativo: parsed.data.ligado,
+    // [AG6b mídia] início
+    // Ligar de novo: a confirmacao do aviso vai ao banco (a trilha
+    // confirmou_aviso_da_openai, com a versao) e a versao que o dialogo
+    // mostrou fica no telefone (D-60). Desligar vai sem os dois: o banco
+    // volta a versao para 1.
+    ...(parsed.data.ligado
+      ? {
+          p_confirmou_aviso_da_openai: true,
+          p_versao_do_aviso: VERSAO_DO_AVISO_DA_OPENAI,
+        }
+      : {}),
+    // [AG6b mídia] fim
   });
   if (error) {
     return falhou(

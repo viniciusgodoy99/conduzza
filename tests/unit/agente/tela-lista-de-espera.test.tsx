@@ -245,7 +245,11 @@ describe("a nota da fase de teste", () => {
       expect(notaDaFaseDeTeste(chave), chave).toBeNull();
     }
     const html = habilidades();
-    expect(html.match(/-fase-de-teste"/g)).toHaveLength(4);
+    // [AG6b mídia] início
+    // AG6b: "Entender áudio" e "Ler imagem e documento" tambem levam nota
+    // (a da configuracao, tests/unit/agente/telas-ag6b.test.tsx): 4 + 2.
+    expect(html.match(/-fase-de-teste"/g)).toHaveLength(6);
+    // [AG6b mídia] fim
   });
 
   it("é nota, não status: só texto, sem chip nem cor própria", () => {

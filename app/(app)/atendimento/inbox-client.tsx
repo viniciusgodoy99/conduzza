@@ -61,6 +61,11 @@ import {
   fetchResolvedConversations,
   numerosKeys,
   RESOLVIDAS_LIMIT,
+  // [AG6b mídia] início
+  fetchLeiturasDaMidia,
+  idsDasMidiasDoPaciente,
+  leiturasDoFio,
+  // [AG6b mídia] fim
   type ConversationListItem,
   type MessageItem,
   type NumerosDoInbox,
@@ -612,6 +617,37 @@ export function InboxClient({
     placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
   });
+  // [AG6b mídia] início
+  // O que o ASSISTENTE transcreveu ou leu da midia do paciente (AG6b):
+  // consulta SEPARADA do fio e tolerante (sem a tabela, a conversa abre sem
+  // as leituras; com erro, so a linha "indisponível agora" na midia, nunca o
+  // fio). So vao as midias do paciente da pagina. A chave mora debaixo da
+  // chave das mensagens da conversa: o mesmo evento de message que rele o
+  // fio rele as leituras, e a assinatura do recorte pede leitura nova quando
+  // chega midia ou pagina antiga. O erro so aparece na clinica da fase do
+  // agente (iaNaFase): nas outras, nada muda na bolha, nem no erro.
+  const idsDasLeituras = useMemo(
+    () => idsDasMidiasDoPaciente(messages),
+    [messages],
+  );
+  const leiturasQuery = useQuery({
+    queryKey: [
+      ...conversationKeys.leiturasDaMidia(selected?.id ?? "nenhuma"),
+      assinaturaDosIds(idsDasLeituras),
+    ] as const,
+    queryFn: () => fetchLeiturasDaMidia(supabase, clinicId, idsDasLeituras),
+    enabled: selected !== null && idsDasLeituras.length > 0,
+    // Entre uma leitura e a outra, as linhas que ja existiam continuam.
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
+  });
+  const leiturasDaMidia = leiturasDoFio({
+    ligada: selected !== null && idsDasLeituras.length > 0,
+    mostrarErro: iaNaFase,
+    data: leiturasQuery.data,
+    isError: leiturasQuery.isError,
+  });
+  // [AG6b mídia] fim
   // "Tentar de novo" volta a mostrar carregando enquanto busca.
   const estadoDasAgendadas = agendadasQuery.data
     ? ("pronto" as const)
@@ -1201,6 +1237,8 @@ export function InboxClient({
             onLoadOlder={() => void messagesQuery.fetchNextPage()}
             authorNames={authorNames}
             agendadasDoFio={agendadasDoFioQuery.data}
+            // [AG6b mídia] o que o assistente transcreveu ou leu da midia
+            leiturasDaMidia={leiturasDaMidia}
             onBack={() => setSelectedId(null)}
             onToggleContext={abrirContexto}
             viewerId={viewerId}

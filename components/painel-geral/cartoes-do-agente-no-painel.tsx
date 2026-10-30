@@ -169,7 +169,7 @@ export function CartoesDoAgenteNoPainel({
         dicas={dicas}
         pendente={pendente}
         ocupado={ocupado}
-        aoAlternar={(telefone, ligado) =>
+        aoAlternar={(telefone, ligado, religar) =>
           executar(
             `telefone-${telefone.id}`,
             () =>
@@ -177,8 +177,15 @@ export function CartoesDoAgenteNoPainel({
                 clinicId,
                 telefone: telefone.telefone,
                 ligado,
+                // [AG6b mídia] o aviso confirmado no dialogo do "Ligar de
+                // novo" (D-60), como na aba da Tela 6.
+                ...(religar
+                  ? { confirmarAvisoDaOpenai: religar.confirmarAvisoDaOpenai }
+                  : {}),
               }),
             ligado ? "Telefone ligado." : "Telefone desligado.",
+            // [AG6b mídia] o dialogo fecha no fim, deu certo ou nao
+            religar ? { sempre: religar.fechar } : {},
           )
         }
         aoExcluir={(telefone, { fechar }) =>

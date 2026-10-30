@@ -67,6 +67,11 @@ import {
   textoDoLimiteDeGasto,
   textoDoTelefoneQueNaoAciona,
   textosDaParada,
+  // [AG6b mídia] início
+  TELEFONE_SEM_MIDIA_STATUS,
+  telefoneSemMidia,
+  textoDoTelefoneSemMidia,
+  // [AG6b mídia] fim
   whatsappLigado,
   type AcaoDaIa,
   type EscolhaDaAba,
@@ -144,6 +149,12 @@ import type { DadosDaIa, TelefoneDaIa } from "@/lib/queries/ia-liberacao";
 //   contato fora do publico escolhido, P4b), e a do telefone com conversa
 //   aberta com a equipe diz em QUAL numero e o que fazer, com o link para a
 //   conversa (revisao de producao de 19/10/2026).
+//   [AG6b mídia] Desde a AG6b (D-60 e D-95), o aviso cobre texto, audio,
+//   foto e documento, e a versao dele fica no telefone: o "Ligar de novo"
+//   abre um dialogo com o aviso (DialogoDoReligar), e o telefone ligado com
+//   o aviso antigo, com alguma habilidade de midia ligada no rascunho ou na
+//   versao publicada, ganha o chip "Sem áudio, foto e documento" e o que
+//   fazer, escrito na linha.
 // - Quem desliga e nao liga de novo (o administrador da clinica) le "Depois
 //   de desligar, só a equipe Conduzza liga de novo." junto do seletor (com
 //   o WhatsApp ligado), no dialogo do "Só simulador" e em cada numero
@@ -185,6 +196,15 @@ export type DadosDaAbaWhatsapp = {
    * falhou (o dialogo fica com o texto de sempre).
    */
   telefonesForcados: string[] | null;
+  // [AG6b mídia] início
+  /**
+   * Alguma habilidade de midia ("Entender áudio" ou "Ler imagem e
+   * documento") ligada no rascunho ou na versao publicada (a pagina decide,
+   * midiaLigadaNasHabilidades): so com ela o telefone com o aviso antigo
+   * ganha o chip "Sem áudio, foto e documento". Ausente: sem chip.
+   */
+  midiaLigada?: boolean;
+  // [AG6b mídia] fim
 };
 
 type Resultado = { tom: "alert" | "success"; texto: string };
@@ -380,6 +400,9 @@ function AbaWhatsappCarregada({
   agoraMs,
   fuso,
   telefonesForcados,
+  // [AG6b mídia] início
+  midiaLigada = false,
+  // [AG6b mídia] fim
 }: DadosDaAbaWhatsapp & { dados: DadosDaIa }) {
   const ids = useId();
   const { pendente, resultado, executar, ocupado } = useAcaoDaIa();
@@ -687,15 +710,24 @@ function AbaWhatsappCarregada({
         dicas={dicas}
         pendente={pendente}
         ocupado={ocupado}
-        aoAlternar={(telefone, ligado) =>
+        // [AG6b mídia] o chip do telefone com o aviso antigo
+        midiaLigada={midiaLigada}
+        aoAlternar={(telefone, ligado, religar) =>
           executar(
             `telefone-${telefone.id}`,
             () =>
               alternarTelefoneDaIaAction({
                 telefone: telefone.telefone,
                 ligado,
+                // [AG6b mídia] o aviso confirmado no dialogo do "Ligar de
+                // novo" (D-60): a acao grava a versao dele no telefone.
+                ...(religar
+                  ? { confirmarAvisoDaOpenai: religar.confirmarAvisoDaOpenai }
+                  : {}),
               }),
             ligado ? "Telefone ligado." : "Telefone desligado.",
+            // [AG6b mídia] o dialogo fecha no fim, deu certo ou nao
+            religar ? { sempre: religar.fechar } : {},
           )
         }
         aoExcluir={(telefone, { fechar }) =>
@@ -1042,6 +1074,107 @@ type DepoisDeAdicionar = {
  * pede confirmacao e diz, no telefone forcado, que voltar pede a
  * confirmacao de novo.
  */
+// [AG6b mídia] início
+/**
+ * O "Ligar de novo" sai do dialogo do aviso da OpenAI (D-60): a confirmacao
+ * marcada e o fechar do dialogo, que quem chama roda no fim da acao. Sem
+ * ele, a chamada e a de desligar.
+ */
+export type ReligarComAviso = {
+  confirmarAvisoDaOpenai: true;
+  fechar: () => void;
+};
+
+/**
+ * O dialogo do "Ligar de novo" (D-60 e D-95): de quem e o telefone, a caixa
+ * do aviso da OpenAI (o texto do formulario, nunca marcada sozinha) e o
+ * "Ligar de novo", preso com a dica enquanto a caixa nao esta marcada. A
+ * acao recusa de novo sem ela, e o banco so grava a versao do aviso com a
+ * confirmacao. Controlado por quem chama (exportado para o teste: o portal
+ * do Radix nao existe no servidor).
+ */
+export function DialogoDoReligar({
+  telefone,
+  confirmou,
+  aoMudarConfirmacao,
+  aoFechar,
+  aoConfirmar,
+  pendente,
+  ocupado,
+  dica,
+  idDaCaixa,
+}: {
+  /** O telefone a ligar de novo; nulo, o dialogo fechado. */
+  telefone: TelefoneDaIa | null;
+  confirmou: boolean;
+  aoMudarConfirmacao: (confirmou: boolean) => void;
+  aoFechar: () => void;
+  aoConfirmar: () => void;
+  pendente: boolean;
+  /** A acao deste telefone esta rodando. */
+  ocupado: boolean;
+  /** A dica de permissao (dicas.telefone); nula, pode ligar. */
+  dica: string | null;
+  idDaCaixa: string;
+}) {
+  return (
+    <Dialog
+      open={telefone !== null}
+      onOpenChange={(aberto) => (!aberto && !pendente ? aoFechar() : null)}
+    >
+      <DialogContent className="sm:max-w-[520px]">
+        <DialogHeader>
+          <DialogTitle>{TEXTOS_DA_IA.religarTitulo}</DialogTitle>
+          <DialogDescription>{TEXTOS_DA_IA.religarTexto}</DialogDescription>
+        </DialogHeader>
+        {telefone ? (
+          <p className="text-[13px] text-foreground">
+            <span className="font-semibold">
+              {telefone.rotulo ?? "Sem nome"}
+            </span>{" "}
+            <span className="cz-num text-text-secondary">
+              {telefoneParaExibir(telefone.telefone)}
+            </span>
+          </p>
+        ) : null}
+        <div className="flex min-h-10 items-start gap-3">
+          <Checkbox
+            id={idDaCaixa}
+            checked={confirmou}
+            onCheckedChange={(valor) => aoMudarConfirmacao(valor === true)}
+            disabled={pendente || dica !== null}
+            className="mt-0.5"
+          />
+          <Label
+            htmlFor={idDaCaixa}
+            className="text-[13px] leading-snug font-normal"
+          >
+            {TEXTOS_DA_IA.confirmarAvisoDaOpenai}
+          </Label>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" disabled={pendente} onClick={aoFechar}>
+            Cancelar
+          </Button>
+          {comDica(
+            <Button
+              disabled={pendente || !confirmou || dica !== null}
+              aria-busy={ocupado || undefined}
+              onClick={aoConfirmar}
+            >
+              <Power aria-hidden />
+              {ocupado ? TEXTOS_DA_IA.religando : TEXTOS_DA_IA.religar}
+            </Button>,
+            dica ??
+              (confirmou ? null : TEXTOS_DA_IA.avisoDaOpenaiObrigatorioAoLigar),
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+// [AG6b mídia] fim
+
 export function CartaoDosTelefones({
   dados,
   numeros,
@@ -1055,6 +1188,9 @@ export function CartaoDosTelefones({
   aoExcluir,
   aoAdicionar,
   noPainel = false,
+  // [AG6b mídia] início
+  midiaLigada = false,
+  // [AG6b mídia] fim
 }: {
   dados: DadosDaIa;
   /**
@@ -1079,11 +1215,28 @@ export function CartaoDosTelefones({
   dicas: Record<AcaoDaIa, string | null>;
   pendente: boolean;
   ocupado: (qual: string) => boolean;
-  aoAlternar: (telefone: TelefoneDaIa, ligado: boolean) => void;
+  /**
+   * Desligar (ligado falso) sai na hora; ligar de novo, so do dialogo do
+   * aviso, com `religar` ([AG6b mídia], D-60).
+   */
+  aoAlternar: (
+    telefone: TelefoneDaIa,
+    ligado: boolean,
+    religar?: ReligarComAviso,
+  ) => void;
   aoExcluir: (telefone: TelefoneDaIa, retorno: { fechar: () => void }) => void;
   aoAdicionar: (valores: TelefoneValidado, depois: DepoisDeAdicionar) => void;
   /** Painel geral: a clinica nao e a ativa de quem ve. */
   noPainel?: boolean;
+  // [AG6b mídia] início
+  /**
+   * Alguma habilidade de midia ligada no rascunho ou na versao publicada: o
+   * telefone ligado com o aviso antigo ganha o chip "Sem áudio, foto e
+   * documento" e o que fazer. O Painel geral nao le a configuracao do
+   * agente: sem a prop, sem chip.
+   */
+  midiaLigada?: boolean;
+  // [AG6b mídia] fim
 }) {
   const tituloId = useId();
   const ids = useId();
@@ -1118,6 +1271,32 @@ export function CartaoDosTelefones({
   const [confirmouTeste, setConfirmouTeste] = useState(false);
   // O telefone a excluir (o dialogo de confirmacao).
   const [excluindo, setExcluindo] = useState<TelefoneDaIa | null>(null);
+  // [AG6b mídia] início
+  // O telefone do "Ligar de novo" (D-60 e D-95): o dialogo pede o aviso da
+  // OpenAI, como o formulario de adicionar, e so liga com ele marcado; a
+  // acao grava no telefone a versao do aviso que a tela mostrou.
+  const [religando, setReligando] = useState<TelefoneDaIa | null>(null);
+  const [confirmouAvisoAoReligar, setConfirmouAvisoAoReligar] = useState(false);
+  const fecharReligar = () => {
+    setReligando(null);
+    setConfirmouAvisoAoReligar(false);
+  };
+  const abrirReligar = (telefone: TelefoneDaIa) => {
+    setConfirmouAvisoAoReligar(false);
+    setReligando(telefone);
+  };
+  const confirmarReligar = () => {
+    if (!religando || !confirmouAvisoAoReligar) {
+      return;
+    }
+    aoAlternar(religando, true, {
+      confirmarAvisoDaOpenai: true,
+      fechar: fecharReligar,
+    });
+  };
+  const religandoOcupado =
+    religando !== null && ocupado(`telefone-${religando.id}`);
+  // [AG6b mídia] fim
   const telefoneDigitado = form.watch("telefone");
   // No painel a confirmacao e sempre pedida (ver o comentario do cartao).
   const pedindoConfirmacao =
@@ -1353,12 +1532,30 @@ export function CartaoDosTelefones({
               const dicaDaLinha = telefone.ativo
                 ? dicas.escolha
                 : (dicas.telefone ?? textoDeQueNaoAciona);
+              // [AG6b mídia] início
+              // O telefone ligado com o aviso antigo, com alguma habilidade
+              // de midia ligada: o chip e o que fazer (desligar e ligar de
+              // novo; o forcado, pelo formulario). Leitura dos forcados que
+              // falhou: o texto de sempre.
+              const semMidia = telefoneSemMidia(dados, telefone, midiaLigada);
+              const textoDeSemMidia = semMidia
+                ? textoDoTelefoneSemMidia(
+                    forcados !== null && forcados.has(telefone.id),
+                  )
+                : null;
+              // [AG6b mídia] fim
               const botao = (
                 <Button
                   variant={telefone.ativo ? "ghost" : "outline"}
                   disabled={dicaDaLinha !== null || pendente}
                   aria-busy={ocupado(qual) || undefined}
-                  onClick={() => aoAlternar(telefone, !telefone.ativo)}
+                  // [AG6b mídia] desligar sai na hora; ligar de novo, so
+                  // pelo dialogo do aviso
+                  onClick={() =>
+                    telefone.ativo
+                      ? aoAlternar(telefone, false)
+                      : abrirReligar(telefone)
+                  }
                 >
                   {ocupado(qual)
                     ? "Salvando..."
@@ -1414,6 +1611,14 @@ export function CartaoDosTelefones({
                               : undefined
                           }
                         />
+                        {/* [AG6b mídia] início */}
+                        {semMidia ? (
+                          <StatusChip
+                            size="sm"
+                            definition={TELEFONE_SEM_MIDIA_STATUS}
+                          />
+                        ) : null}
+                        {/* [AG6b mídia] fim */}
                       </span>
                     </div>
                     <div className="flex flex-wrap items-center gap-1">
@@ -1426,6 +1631,17 @@ export function CartaoDosTelefones({
                       {textoDeQueNaoAciona}
                     </Aviso>
                   ) : null}
+                  {/* [AG6b mídia] início: o que fazer, escrito (a cor e o
+                      chip nao vao sozinhos). */}
+                  {textoDeSemMidia !== null ? (
+                    <p
+                      data-sem-midia
+                      className="text-[12.5px] font-semibold text-text-secondary"
+                    >
+                      {textoDeSemMidia}
+                    </p>
+                  ) : null}
+                  {/* [AG6b mídia] fim */}
                   {conversasAbertas.map((conversa) =>
                     noPainel ? (
                       <Aviso
@@ -1525,6 +1741,21 @@ export function CartaoDosTelefones({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* [AG6b mídia] início: o "Ligar de novo" com o aviso da OpenAI
+          (D-60), que grava no telefone a versao do aviso. */}
+      <DialogoDoReligar
+        telefone={religando}
+        confirmou={confirmouAvisoAoReligar}
+        aoMudarConfirmacao={setConfirmouAvisoAoReligar}
+        aoFechar={fecharReligar}
+        aoConfirmar={confirmarReligar}
+        pendente={pendente}
+        ocupado={religandoOcupado}
+        dica={dicas.telefone}
+        idDaCaixa={`${ids}-aviso-religar`}
+      />
+      {/* [AG6b mídia] fim */}
 
       {/* O "Usar mesmo assim" do telefone de paciente (item 3, P3): so com
           a confirmacao do teste marcada; fica registrado no nome de quem

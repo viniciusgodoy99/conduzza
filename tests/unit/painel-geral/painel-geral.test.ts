@@ -1321,6 +1321,20 @@ describe("onda 2: requisitos da produção", () => {
     expect(rotuloDoRequisito("constructor")).toBe("Outro requisito do banco");
   });
 
+  // [AG6b mídia] início
+  // D-94 (AG6b): a chave transcricao_com_nossa_chave fica, o sentido muda (a
+  // uazapi nao transcreve; a transcricao e do servidor do Conduzza, pela
+  // chave do agente). Texto proposto, sem travessao.
+  it("o requisito da transcrição com o sentido novo da AG6b (D-94)", () => {
+    expect(rotuloDoRequisito("transcricao_com_nossa_chave")).toBe(
+      "A uazapi não transcreve: a transcrição é do Conduzza, pela chave do agente",
+    );
+    expect(rotuloDoRequisito("transcricao_com_nossa_chave")).not.toMatch(
+      /[–—]/,
+    );
+  });
+  // [AG6b mídia] fim
+
   it("o hint de requisitos_pendentes vira a lista em nomes", () => {
     expect(requisitosDoHint("rodada_cfm, publico_escolhido")).toEqual([
       "Rodada paga de conferência do CFM",

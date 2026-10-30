@@ -440,6 +440,12 @@ export const CODIGOS_DA_ATRIBUICAO = [
   "com_responsavel",
   "urgente",
   "mensagem_nova",
+  // [AG6b mídia] início
+  // AG6b (D-96; contrato do banco da AG6b): o job leu audio, imagem ou
+  // documento (ou video, localizacao, cartao) que o assistente nao
+  // transcreveu nem leu, ou o audio "sem fala": a conversa fica na fila.
+  "midia_nao_lida",
+  // [AG6b mídia] fim
   "regra_fila",
   "sem_responsavel",
   "responsavel_inapto",

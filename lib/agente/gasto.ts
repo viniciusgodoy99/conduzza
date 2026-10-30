@@ -41,6 +41,14 @@ import {
   montarEnvelope,
   POLITICA_DO_VERIFICADOR,
 } from "@/lib/integrations/llm/verificador";
+// [AG6b mídia] início
+import {
+  MAX_TOKENS_DO_LEITOR,
+  montarEnvelopeDaLeitura,
+  POLITICA_DO_LEITOR,
+  type ItemDoCatalogoDaLeitura,
+} from "@/lib/integrations/llm/leitor-de-midia";
+// [AG6b mídia] fim
 import { log } from "@/lib/log";
 
 import {
@@ -186,6 +194,65 @@ export function custoMaximoDaChamada(
     (entrada * porTokenDeEntrada + uso.tokensSaida * preco.saida) / 1_000_000,
   );
 }
+
+// [AG6b mídia] início
+/**
+ * AG6b: o teto do custo de uma transcricao, em microdolar: os segundos pelo
+ * preco por minuto do modelo (llm_preco.audio_microdolar_por_minuto, lido
+ * por lerPrecoDaTranscricao). null sem o modelo nos precos ou com o preco
+ * por minuto zerado ou ausente: o audio nao sai (o plano do turno o marca
+ * como fora; nunca uma transcricao sem custo no teto).
+ */
+export function custoMaximoDaTranscricao(
+  segundos: number,
+  modelo: string,
+  precos: readonly PrecoDoModelo[],
+): number | null {
+  const exato = precos.find((p) => p.modelo === modelo);
+  const porMinuto = exato?.audioPorMinuto ?? 0;
+  if (
+    exato === undefined ||
+    !Number.isSafeInteger(porMinuto) ||
+    porMinuto <= 0 ||
+    !(segundos > 0)
+  ) {
+    return null;
+  }
+  return Math.ceil((Math.ceil(segundos) * porMinuto) / 60);
+}
+
+/**
+ * AG6b: o maximo de uma chamada do leitor de midia: a politica, o envelope
+ * com a lista do Cadastro, o arquivo (o teto de tokens de uma imagem, ou o
+ * de uma pagina vezes as paginas) e o teto de saida. null sem o teto medido
+ * na prova paga (o leitor nao roda).
+ */
+export function usoEstimadoDoLeitor(entrada: {
+  catalogo: readonly ItemDoCatalogoDaLeitura[];
+  /** Os tokens do arquivo no pior caso (imagem, ou paginas x por pagina). */
+  tokensDoArquivo: number | null;
+}): UsoDoLlm | null {
+  if (
+    entrada.tokensDoArquivo === null ||
+    !Number.isFinite(entrada.tokensDoArquivo) ||
+    entrada.tokensDoArquivo <= 0
+  ) {
+    return null;
+  }
+  return usoDeEstimativa(
+    tokensNoMaximo(POLITICA_DO_LEITOR) +
+      tokensNoMaximo(
+        montarEnvelopeDaLeitura({
+          catalogo: entrada.catalogo,
+          nonce: NONCE_DE_MEDIDA,
+        }),
+      ) +
+      entrada.tokensDoArquivo +
+      FOLGA_DA_CHAMADA,
+    MAX_TOKENS_DO_LEITOR,
+  );
+}
+// [AG6b mídia] fim
 
 export type ReservaDoGasto =
   { tipo: "reservado"; id: string } | { tipo: "teto" } | { tipo: "erro" };

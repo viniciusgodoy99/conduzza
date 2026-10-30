@@ -434,6 +434,15 @@ export type FatosDoTurno = {
    * "quando surgir uma vaga") nao e horario livre. Ausente: desligada.
    */
   listaDeEsperaLigada?: boolean;
+  // [AG6b mídia] início
+  /**
+   * AG6b: os pedidos de exame ou procedimento que a pessoa mandou e o leitor
+   * de midia leu (cada um, os nomes do Cadastro dos itens). So vai ao resumo
+   * dos fatos do verificador ("A pessoa mandou um pedido com: ..."); nenhuma
+   * regra deterministica nova. Ausente: nenhum.
+   */
+  pedidos?: readonly (readonly string[])[];
+  // [AG6b mídia] fim
 };
 
 export type AchadoDosFatos = { categoria: CategoriaDosFatos; regra: string };

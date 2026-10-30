@@ -97,6 +97,20 @@ import {
 import type { AtendimentoParaOModelo } from "./ferramentas/agenda-do-turno";
 import { FERRAMENTA_REGISTRAR_DADOS } from "./ferramentas/registrar-dados";
 import { FERRAMENTA_RESERVAR_HORARIO } from "./ferramentas/reservar-horario";
+// [AG6b mídia] início
+import {
+  DESCRICAO_DO_PEDIDO,
+  FRASE_DA_FIGURINHA,
+  PREFIXO_DO_AUDIO,
+} from "./midia";
+
+/**
+ * AG6b (desenho 5.4): o item do "Nunca" do texto fixo. A IA nunca pede foto,
+ * audio, documento nem arquivo (a carteirinha, por exemplo, e pedida por
+ * escrito, D-21 e D-58), com ou sem as habilidades de midia.
+ */
+export const NUNCA_DA_MIDIA = "- peça foto, áudio, documento ou arquivo;";
+// [AG6b mídia] fim
 
 /**
  * Identidade, escopo e limites do agente. Mudar este texto muda
@@ -226,6 +240,7 @@ Nunca:
 - invente horário, horário de funcionamento, endereço, profissional, especialidade, idade atendida, requisito, valor, convênio ou regra que não esteja nos blocos ou na ferramenta;
 - diga qual empresa, tecnologia ou modelo de IA está por trás do atendimento, nem quem criou ou treinou você: para essa pergunta, use fora_do_assunto;
 - diga que marcou, reservou, confirmou, cancelou ou remarcou sem a ferramenta ter dito "marcado", "reservado", "confirmada", "cancelada" ou "remarcado" nesta resposta (o horário reservado do bloco <atendimento_em_andamento> com "reserva viva" continua reservado), nem que colocou a pessoa na lista de espera ou que ela está na lista sem a ferramenta ou o bloco <atendimento_em_andamento> dizer;
+${NUNCA_DA_MIDIA}
 - escreva CPF, número de carteirinha, data de nascimento ou qualquer número que a pessoa mandou.
 
 Jeito de escrever:
@@ -325,6 +340,13 @@ export const FRASES_DO_ATENDIMENTO = {
     "Dados que a clínica pede para marcar: {}, e o número da carteirinha quando o convênio ou o procedimento pede.",
   nenhumDadoExigido:
     "Dados que a clínica pede para marcar: nenhum, só o número da carteirinha quando o convênio ou o procedimento pede.",
+  // [AG6b mídia] início
+  // AG6b (desenho 5.4): so com a habilidade valendo na versao publicada.
+  audioLigado:
+    "Áudio: ligado. A mensagem que começa com (áudio) é a transcrição automática do que a pessoa falou e pode ter erro de palavra. Se um nome, uma data, uma hora ou um procedimento não fizer sentido, pergunte de novo. CPF e número da carteirinha, peça para a pessoa digitar. Se a pessoa responder por áudio à oferta de um horário da lista de espera, peça para ela responder SIM ou NÃO QUERO por escrito.",
+  arquivoLigado:
+    'Arquivo: ligado. Quando a pessoa manda um pedido de exame ou procedimento, você recebe só os itens, com os códigos do bloco <procedimentos>. Antes de falar de valor, confirme os itens com a pessoa. Diga "o pedido que você mandou", nunca "pela foto" nem "pela imagem". Nunca comente para que serve o exame nem o motivo do pedido.',
+  // [AG6b mídia] fim
 } as const;
 
 /**
@@ -484,6 +506,8 @@ export const FONTES_DA_VERSAO_DO_PROMPT = {
   // AG2: o procedimento que so a equipe marca.
   procedimentos: FRASES_DOS_PROCEDIMENTOS,
   contato: FRASES_DO_CONTATO,
+  // [AG6b mídia] AG6b: o que o modelo le no lugar da midia lida.
+  midia: [PREFIXO_DO_AUDIO, FRASE_DA_FIGURINHA, DESCRICAO_DO_PEDIDO, NUNCA_DA_MIDIA],
   formato: FORMATO_DA_RESPOSTA,
   ferramentas: [
     FERRAMENTA_FORA_DO_ASSUNTO,
@@ -746,6 +770,14 @@ function blocoDoAtendimento(
     remarcarLigado ? frases.remarcarLigado : frases.remarcarDesligado,
     // AG5: a lista de espera.
     esperaLigada ? frases.listaDeEsperaLigada : frases.listaDeEsperaDesligada,
+    // [AG6b mídia] início
+    // AG6b: o audio e o arquivo, so com a habilidade valendo (a versao
+    // publicada; o plano do turno ainda confere o telefone e a calibragem).
+    ...(config.habilidades.ler_audio === true ? [frases.audioLigado] : []),
+    ...(config.habilidades.ler_imagem_e_documento === true
+      ? [frases.arquivoLigado]
+      : []),
+    // [AG6b mídia] fim
   ];
 }
 

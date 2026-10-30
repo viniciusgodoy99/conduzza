@@ -2,6 +2,12 @@ import {
   horaNaClinica,
   dataNaClinica,
 } from "@/components/atendimento/fuso-da-clinica";
+// [AG6b mídia] início
+import {
+  HABILIDADE_DO_ARQUIVO,
+  HABILIDADE_DO_AUDIO,
+} from "@/lib/domain/agente/config";
+// [AG6b mídia] fim
 
 // Textos e regras puras da tela do Agente de IA (Tela 6). Modulo PURO: o
 // teste de tela confere a copia daqui (sem travessao, sem jargao) e a
@@ -517,3 +523,45 @@ export const TEXTOS_DA_URGENCIA = {
   exemplo: "No Atendimento, a conversa aparece com:",
 } as const;
 // [AG6 urgência] fim
+
+// [AG6b mídia] início
+// AG6b (desenho da AG6b, secao 6; D-60 e D-62 pela recomendacao, pendentes
+// do dono): "Entender áudio" e "Ler imagem e documento". O titulo, a
+// descricao e a nota de cada uma moram em lib/domain/agente/config.ts (a
+// tela so renderiza, como as outras habilidades); aqui ficam so o que a
+// tela decide e escreve fora dela.
+
+/**
+ * As duas habilidades de midia (as chaves de skills, contrato da AG6b). Com
+ * uma delas ligada no rascunho, o simulador ganha a nota de que audio, foto
+ * e documento so funcionam no WhatsApp (D-62); ligada no rascunho ou na
+ * versao publicada, o telefone da equipe com o aviso antigo ganha o chip
+ * "Sem áudio, foto e documento" na aba WhatsApp (D-60).
+ */
+export const HABILIDADES_DE_MIDIA = [
+  HABILIDADE_DO_AUDIO,
+  HABILIDADE_DO_ARQUIVO,
+] as const;
+
+/**
+ * Alguma das habilidades de midia esta ligada em alguma destas habilidades
+ * (o rascunho, a versao publicada)? Nula ou ausente nao liga nada. So o
+ * booleano verdadeiro vale (o jsonb da clinica nunca liga por engano).
+ */
+export function midiaLigadaNasHabilidades(
+  ...listas: readonly (Readonly<Record<string, boolean>> | null | undefined)[]
+): boolean {
+  return listas.some(
+    (habilidades) =>
+      habilidades !== null &&
+      habilidades !== undefined &&
+      HABILIDADES_DE_MIDIA.some((chave) => habilidades[chave] === true),
+  );
+}
+
+export const TEXTOS_DA_MIDIA = {
+  // D-62: o simulador nao manda audio, foto nem documento nesta etapa.
+  simulador:
+    "Áudio, foto e documento só no WhatsApp, com os telefones da equipe.",
+} as const;
+// [AG6b mídia] fim

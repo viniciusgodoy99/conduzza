@@ -15,6 +15,9 @@ import {
   dicaDaHabilidade,
   HABILIDADES_DO_AGENTE,
   habilidadesComAgenda,
+  // [AG6b mídia] início
+  notaDaHabilidade,
+  // [AG6b mídia] fim
   type AgendaDoAgente,
   type HabilidadesDoAgente,
   type PrazosDoAgente,
@@ -57,6 +60,17 @@ import {
 // outras). A nota da fase de teste dela e outra: o SIM a oferta marca a
 // consulta na hora, e o contato vira paciente ali (sem a aprovacao da
 // equipe). Nota, nao status, como as outras.
+//
+// [AG6b mídia] início
+// AG6b (desenho da AG6b, secao 6; D-60 e D-95 pela recomendacao, pendentes
+// do dono): "Entender áudio" e "Ler imagem e documento", desligadas por
+// padrao, sem dependencia. Titulo, descricao e nota moram na configuracao
+// (notaDaHabilidade); a tela so renderiza, com a nota embaixo da descricao,
+// para todos os papeis: o audio, a foto e o documento vao para a OpenAI, e
+// so com os telefones da equipe que confirmaram o aviso novo (o chip "Sem
+// áudio, foto e documento" da aba WhatsApp diz qual falta). Sem permissao
+// (recepcao), a chave fica visivel e desabilitada com a dica de sempre.
+// [AG6b mídia] fim
 
 /** As habilidades que, nesta fase de teste, levam a nota do telefone. */
 export const HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA: ReadonlySet<string> =
@@ -70,7 +84,11 @@ export function notaDaFaseDeTeste(chave: string): string | null {
   if (chave === "lista_de_espera") {
     return T.listaDeEsperaNaFaseDeTeste;
   }
-  return null;
+  // [AG6b mídia] início
+  // A nota que mora na configuracao (as habilidades de midia); nula nas
+  // outras.
+  return notaDaHabilidade(chave);
+  // [AG6b mídia] fim
 }
 
 /**

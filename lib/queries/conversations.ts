@@ -1,6 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { ConversationStatus } from "@/lib/design/status";
+// [AG6b mídia] início
+// So TIPOS (somem no build): o Atendimento nao carrega a configuracao do
+// agente no navegador.
+import type {
+  LeituraDaMidiaNaTela,
+  MidiaLida,
+  TipoDaMidiaLida,
+} from "@/lib/domain/agente/config";
+// [AG6b mídia] fim
 import { corDoNumero, type CorDoNumero } from "@/lib/domain/cor-do-numero";
 import { recencia } from "@/lib/domain/filtros-da-conversa";
 
@@ -390,6 +399,16 @@ export const conversationKeys = {
   totalResolvidas: (clinicId: string) =>
     ["conversations-resolvidas-total", clinicId] as const,
   messages: (conversationId: string) => ["messages", conversationId] as const,
+  // [AG6b mídia] início
+  /**
+   * As leituras da midia pelo assistente (fetchLeiturasDaMidia), DEBAIXO da
+   * chave das mensagens da conversa de proposito: elas ficam fora do tempo
+   * real (a linha tem texto do paciente), e todo evento de message que rele
+   * o fio (invalidar e por prefixo) rele as leituras junto.
+   */
+  leiturasDaMidia: (conversationId: string) =>
+    ["messages", conversationId, "leituras-da-midia"] as const,
+  // [AG6b mídia] fim
   decisions: (conversationId: string) => ["decisions", conversationId] as const,
   consent: (contactId: string) => ["consent", contactId] as const,
 };
@@ -806,6 +825,262 @@ export async function fetchMessagesPage(
       : null;
   return { items: rows.reverse(), nextCursor };
 }
+
+// [AG6b mídia] início
+// LEITURAS DA MIDIA PELO ASSISTENTE (AG6b; desenho da AG6b, secoes 3.4 e 6;
+// D-99 pela recomendacao, pendente do dono). Na conversa que a IA atende, com
+// a habilidade valendo, o assistente transcreve o audio do paciente
+// ("Entender áudio") e le a foto ou o PDF ("Ler imagem e documento"); o
+// servidor grava o resultado em ia_leitura_da_midia (migration
+// 20261030100000), uma linha por mensagem, nunca alterada. A equipe ve
+// embaixo da bolha "Transcrição do assistente:" no audio e "Lido pelo
+// assistente:" na foto e no documento
+// (components/atendimento/media/leitura-do-assistente.tsx).
+//
+// Consulta PROPRIA, fora do select do fio, de proposito (a licao do achado
+// 16 e da AG6a): sem a tabela (codigo no ar antes da migration, ou o
+// rollback) o PostgREST responde PGRST205 ou 42P01, e a conversa abre sem as
+// leituras, como antes; qualquer outro erro lanca, e a tela diz "Leitura do
+// assistente indisponível agora." na linha da midia, so na clinica da fase
+// do agente (leiturasDoFio: nas outras, nada muda, nem no erro). O fio nunca
+// cai por ela.
+//
+// E DADO DE SAUDE (a transcricao e o que a pessoa falou): pela SESSAO, com a
+// RLS da mensagem (membro ativo da clinica; o profissional so na conversa
+// dele; a mensagem apagada leva a leitura), dentro do fio que o Atendimento
+// ja audita. Fora do tempo real: a chave mora debaixo da chave das
+// mensagens da conversa (conversationKeys.leiturasDaMidia), entao o MESMO
+// evento de message que rele o fio rele as leituras. Nada daqui vai para
+// log, nem no texto do erro.
+
+/**
+ * Uma leitura como a tela mostra: o tipo e do contrato da AG6b (B2 para B3,
+ * em lib/domain/agente/config.ts). O texto do resumo e montado e gravado
+ * pelo servidor, so com nomes do Cadastro e textos fixos; a tela so mostra.
+ */
+export type { LeituraDaMidiaNaTela };
+
+/**
+ * ESPELHO de MIDIAS_LIDAS e TIPOS_DE_MIDIA_LIDA (lib/domain/agente/config.ts,
+ * os CHECKs de ia_leitura_da_midia): copia de proposito, para o Atendimento
+ * nao levar a configuracao inteira do agente ao navegador (daqui so os
+ * tipos, que somem no build). tests/unit/atendimento/leitura-da-midia.test.tsx
+ * confere as duas listas contra a configuracao.
+ */
+export const MIDIAS_LIDAS_NA_TELA = [
+  "audio",
+  "imagem",
+  "documento",
+] as const satisfies readonly MidiaLida[];
+
+export const TIPOS_LIDOS_NA_TELA = [
+  "transcricao",
+  "sem_fala",
+  "pedido_de_exame_ou_procedimento",
+  "guia_ou_autorizacao",
+  "carteirinha",
+  "documento_de_identidade",
+  "resultado_ou_laudo",
+  "receita",
+  "foto_do_corpo",
+  "figurinha",
+  "outro",
+  "ilegivel",
+] as const satisfies readonly TipoDaMidiaLida[];
+
+const MIDIAS_LIDAS_PELO_ASSISTENTE: ReadonlySet<string> = new Set(
+  MIDIAS_LIDAS_NA_TELA,
+);
+const TIPOS_DA_LEITURA: ReadonlySet<string> = new Set(TIPOS_LIDOS_NA_TELA);
+
+/** As leituras do fio aberto, como o fio recebe. */
+export type LeiturasDoFio = {
+  /**
+   * desligada: nao ha o que ler (sem midia de paciente na pagina) ou o erro
+   * nao se mostra; carregando: a primeira leitura; erro: a consulta falhou
+   * (a linha "indisponível agora"); pronta: o mapa vale.
+   */
+  estado: "desligada" | "carregando" | "erro" | "pronta";
+  /** Por message_id. */
+  porMensagem: Readonly<Record<string, LeituraDaMidiaNaTela>>;
+};
+
+/** O fio sem leituras (consulta desligada). */
+export const SEM_LEITURAS_DO_FIO: LeiturasDoFio = {
+  estado: "desligada",
+  porMensagem: {},
+};
+
+/**
+ * A mensagem pode ter leitura do assistente: e do paciente (entrada), nao e
+ * nota, nao foi apagada, e e audio, imagem ou documento. A mensagem que a
+ * clinica mandou nunca e lida (desenho da AG6b, 1.1), e o video e o resto
+ * que chega como 'texto' tambem nao.
+ */
+export function podeTerLeituraDaMidia(
+  mensagem: Pick<
+    MessageItem,
+    "direction" | "content_type" | "deleted_at" | "is_internal_note"
+  >,
+): boolean {
+  return (
+    mensagem.direction === "entrada" &&
+    !mensagem.is_internal_note &&
+    mensagem.deleted_at === null &&
+    MIDIAS_LIDAS_PELO_ASSISTENTE.has(mensagem.content_type)
+  );
+}
+
+const UUID_DA_MENSAGEM =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Os ids das mensagens da pagina que podem ter leitura, na ordem do fio. So
+ * ids validos: a bolha otimista (id provisorio) nao derruba a consulta.
+ */
+export function idsDasMidiasDoPaciente(
+  mensagens: readonly Pick<
+    MessageItem,
+    "id" | "direction" | "content_type" | "deleted_at" | "is_internal_note"
+  >[],
+): string[] {
+  return mensagens
+    .filter(
+      (mensagem) =>
+        podeTerLeituraDaMidia(mensagem) && UUID_DA_MENSAGEM.test(mensagem.id),
+    )
+    .map((mensagem) => mensagem.id);
+}
+
+/** Ids por consulta: o filtro in.(...) vai na URL. */
+const LOTE_DAS_LEITURAS = 100;
+
+/**
+ * A tabela ainda nao existe (ou ja saiu): o PostgREST responde PGRST205
+ * (fora do cache de esquema) e o Postgres, 42P01. Sem tabela, nenhuma
+ * leitura (o mesmo criterio de lib/queries/implementadores.ts).
+ */
+const LEITURAS_FORA_DO_BANCO: ReadonlySet<string> = new Set([
+  "PGRST205",
+  "42P01",
+]);
+
+function textoOuNulo(valor: unknown): string | null {
+  return typeof valor === "string" ? valor : null;
+}
+
+/**
+ * Uma linha do banco como a tela usa; fora do formato (midia ou tipo que o
+ * CHECK nao deixaria), nula: a bolha fica sem linha.
+ */
+function leituraDaLinha(
+  linha: Record<string, unknown>,
+): LeituraDaMidiaNaTela | null {
+  const { message_id: messageId, midia, tipo } = linha;
+  if (
+    typeof messageId !== "string" ||
+    typeof midia !== "string" ||
+    !MIDIAS_LIDAS_PELO_ASSISTENTE.has(midia) ||
+    typeof tipo !== "string" ||
+    !TIPOS_DA_LEITURA.has(tipo)
+  ) {
+    return null;
+  }
+  return {
+    messageId,
+    midia: midia as MidiaLida,
+    tipo: tipo as TipoDaMidiaLida,
+    transcricao: textoOuNulo(linha.transcricao),
+    resumo: textoOuNulo(linha.resumo),
+  };
+}
+
+/**
+ * As leituras das mensagens, por message_id. Sem a tabela, mapa vazio (a
+ * conversa abre como antes). Outro erro LANCA, sem nada do erro do banco no
+ * texto: a tela mostra a linha "indisponível agora", e o fio continua.
+ */
+export async function fetchLeiturasDaMidia(
+  supabase: SupabaseClient,
+  clinicId: string,
+  messageIds: readonly string[],
+): Promise<Record<string, LeituraDaMidiaNaTela>> {
+  const ids = [
+    ...new Set(messageIds.filter((id) => UUID_DA_MENSAGEM.test(id))),
+  ];
+  if (ids.length === 0) {
+    return {};
+  }
+  const lotes: string[][] = [];
+  for (let inicio = 0; inicio < ids.length; inicio += LOTE_DAS_LEITURAS) {
+    lotes.push(ids.slice(inicio, inicio + LOTE_DAS_LEITURAS));
+  }
+  const respostas = await Promise.all(
+    lotes.map((lote) =>
+      supabase
+        .from("ia_leitura_da_midia")
+        .select("message_id, midia, tipo, transcricao, resumo")
+        .eq("clinic_id", clinicId)
+        .in("message_id", lote),
+    ),
+  );
+  const porMensagem: Record<string, LeituraDaMidiaNaTela> = {};
+  for (const { data, error } of respostas) {
+    if (error) {
+      if (LEITURAS_FORA_DO_BANCO.has(error.code ?? "")) {
+        return {};
+      }
+      throw new Error("leituras da midia ilegiveis");
+    }
+    for (const linha of (data ?? []) as Record<string, unknown>[]) {
+      const leitura = leituraDaLinha(linha);
+      if (leitura) {
+        porMensagem[leitura.messageId] = leitura;
+      }
+    }
+  }
+  return porMensagem;
+}
+
+/**
+ * O estado das leituras para o fio, a partir da consulta. Com o mapa na
+ * mao (inclusive o da leitura anterior, enquanto a nova roda), vale o mapa:
+ * leitura que ja apareceu nao some por uma releitura que falhou. Sem mapa e
+ * com erro, "erro" so quando `mostrarErro` (a clinica da fase do agente;
+ * nas outras nada muda, nem no erro).
+ */
+export function leiturasDoFio(consulta: {
+  /** A consulta roda (ha midia de paciente na pagina). */
+  ligada: boolean;
+  mostrarErro: boolean;
+  data: Readonly<Record<string, LeituraDaMidiaNaTela>> | undefined;
+  isError: boolean;
+}): LeiturasDoFio {
+  if (!consulta.ligada) {
+    return SEM_LEITURAS_DO_FIO;
+  }
+  if (consulta.data) {
+    return { estado: "pronta", porMensagem: consulta.data };
+  }
+  if (consulta.isError) {
+    return consulta.mostrarErro
+      ? { estado: "erro", porMensagem: {} }
+      : SEM_LEITURAS_DO_FIO;
+  }
+  return { estado: "carregando", porMensagem: {} };
+}
+
+/** A leitura da mensagem, ou null (sem leitura, ou o fio sem o mapa). */
+export function leituraDaMensagem(
+  leituras: LeiturasDoFio,
+  messageId: string,
+): LeituraDaMidiaNaTela | null {
+  // hasOwn: um id como "constructor" nao pode achar nada no prototipo.
+  return Object.hasOwn(leituras.porMensagem, messageId)
+    ? (leituras.porMensagem[messageId] ?? null)
+    : null;
+}
+// [AG6b mídia] fim
 
 export async function fetchComplianceDecisions(
   supabase: SupabaseClient,

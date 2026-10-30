@@ -114,6 +114,18 @@ export type TelefoneDaIa = {
   telefone: string;
   rotulo: string | null;
   ativo: boolean;
+  // [AG6b mídia] início
+  /**
+   * A versao do aviso da OpenAI que o telefone confirmou ao ligar
+   * (ia_contato_liberado.aviso_da_openai_versao, migration 20261030100000; so
+   * a funcao escreve): 1 = so texto, 2 = texto, audio, foto e documento
+   * (D-60). So a 2 deixa a midia ir a OpenAI (D-95). Opcional no tipo, como
+   * telefonesForaDoPublico: quem monta o telefone a mao (testes) pode deixar
+   * de fora, e ausente vale 1 (o lado seguro). A leitura do banco traz
+   * sempre.
+   */
+  avisoDaOpenaiVersao?: 1 | 2;
+  // [AG6b mídia] fim
 };
 
 /**
@@ -221,7 +233,21 @@ type LinhaDoTelefone = {
   phone_key: string;
   rotulo: string | null;
   ativo: boolean;
+  // [AG6b mídia] início
+  aviso_da_openai_versao?: unknown;
+  // [AG6b mídia] fim
 };
+
+// [AG6b mídia] início
+/**
+ * A versao do aviso gravada no telefone. So o 2 vale como o aviso novo;
+ * qualquer outro valor (o 1, ou um que o CHECK do banco nao deixaria) vale
+ * 1, o lado seguro: o telefone fica sem midia ate confirmar de novo.
+ */
+export function versaoDoAvisoDaLinha(valor: unknown): 1 | 2 {
+  return valor === 2 ? 2 : 1;
+}
+// [AG6b mídia] fim
 
 function modoDaLinha(modo: string): ModoDaIa {
   if (
@@ -366,7 +392,11 @@ export async function fetchLiberacaoDaIa(
         .order("created_at", { ascending: true }),
       supabase
         .from("ia_contato_liberado")
-        .select("id, phone_key, rotulo, ativo")
+        // [AG6b mídia] a versao do aviso confirmada (o chip "Sem áudio, foto
+        // e documento"). A coluna nasce com a migration 20261030100000, que
+        // vai antes do codigo (desenho da AG6b, secao 9): sem ela, a aba
+        // mostra o erro dela, nunca um telefone com midia.
+        .select("id, phone_key, rotulo, ativo, aviso_da_openai_versao")
         .eq("clinic_id", clinicId)
         .order("created_at", { ascending: true }),
       supabase.rpc("ia_interruptor_ligado"),
@@ -415,6 +445,11 @@ export async function fetchLiberacaoDaIa(
         telefone: telefone.phone_key,
         rotulo: telefone.rotulo,
         ativo: telefone.ativo,
+        // [AG6b mídia] início
+        avisoDaOpenaiVersao: versaoDoAvisoDaLinha(
+          telefone.aviso_da_openai_versao,
+        ),
+        // [AG6b mídia] fim
       }),
     ),
     interruptorLigado: interruptor.data,

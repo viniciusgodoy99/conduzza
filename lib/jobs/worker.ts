@@ -627,8 +627,9 @@ async function baixarEGuardarMidia(
 
   const { data: mensagem, error: erroLeitura } = await admin
     .from("message")
+    // [AG6b mídia] Sem transcript (o worker nunca grava a transcricao).
     .select(
-      "id, content_type, transcript, deleted_at, whatsapp_account_id, pelo_celular",
+      "id, content_type, deleted_at, whatsapp_account_id, pelo_celular",
     )
     .eq("clinic_id", job.clinic_id)
     .eq("id", messageId)
@@ -675,21 +676,21 @@ async function baixarEGuardarMidia(
     return { ok: false, erro: "numero_removido", definitivo: true };
   }
 
-  // Audio que a CLINICA mandou direto pelo WhatsApp (pelo_celular) nao vai
-  // para a transcricao: minimizacao (a clinica sabe o que falou, e mandar a
-  // voz da equipe a um terceiro nao serve a nada), e o audio enviado pelo
-  // Atendimento tambem nunca e transcrito. Transcricao e so do paciente.
-  const transcrever =
-    mensagem.content_type === "audio" && mensagem.pelo_celular !== true;
+  // [AG6b mídia] início
+  // AG6b (D-56, D-91 e D-94): o download nunca transcreve (a uazapi recebe
+  // transcribe: false sempre) e o worker nunca grava message.transcript. O
+  // audio do PACIENTE so vira texto no turno da IA (a conversa com o
+  // assistente, a habilidade "Entender áudio" e o telefone liberado), pelo
+  // servidor do Conduzza (lib/integrations/llm/transcricao.ts). O da
+  // clinica (pelo celular ou pelo Atendimento) nunca e transcrito.
   const { provider, ref } = await carregarInstancia(
     admin,
     job.clinic_id,
     accountId,
   );
   const baixado = await provider
-    .downloadMedia(ref, waMessageId, {
-      transcribe: transcrever,
-    })
+    .downloadMedia(ref, waMessageId)
+    // [AG6b mídia] fim
     .catch(() => ({
       ok: false as const,
       errorCode: "download_indisponivel",
@@ -754,11 +755,8 @@ async function baixarEGuardarMidia(
     .update({
       media_url: `storage://${MIDIA_BUCKET}/${caminho}`,
       ...(tipoReal ? { media_mimetype: tipoReal } : {}),
-      // `transcrever` de novo: um provedor que transcreva sem ser pedido nao
-      // grava texto do audio da clinica.
-      ...(transcrever && baixado.transcript && !mensagem.transcript
-        ? { transcript: baixado.transcript }
-        : {}),
+      // [AG6b mídia] Nunca transcript (AG6b): a leitura da IA mora em
+      // ia_leitura_da_midia, gravada so pelo turno.
     })
     .eq("id", messageId)
     .is("deleted_at", null)

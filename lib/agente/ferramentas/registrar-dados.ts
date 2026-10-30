@@ -352,6 +352,14 @@ export type MensagemDoPaciente = {
   mascarado: string;
   /** O texto como chegou (sem a marca); igual ao mascarado no simulador. */
   original: string;
+  // [AG6b mídia] início
+  /**
+   * AG6b: "audio" e a transcricao (o CPF e a carteirinha ditos nunca sao
+   * lidos: so digitados, D-57; o nome e o nascimento ditos valem);
+   * "arquivo" e a legenda do pedido lido. Ausente: o texto digitado.
+   */
+  origem?: "audio" | "arquivo";
+  // [AG6b mídia] fim
 };
 
 const PARTICULAS = new Set(["da", "das", "de", "do", "dos", "e"]);
@@ -527,6 +535,17 @@ export function dataNoTextoDoPaciente(
 // O CPF e a carteirinha, do texto ORIGINAL (o modelo so viu o marcador)
 // ---------------------------------------------------------------------------
 
+// [AG6b mídia] início
+/**
+ * AG6b (D-57): o CPF e o numero da carteirinha ditos no audio nao sao
+ * registrados (a transcricao erra digito; a IA pede para a pessoa digitar).
+ * So a mensagem que nao veio do audio entra na busca dos numeros.
+ */
+function semNumeroFalado(mensagem: MensagemDoPaciente): boolean {
+  return mensagem.origem !== "audio";
+}
+// [AG6b mídia] fim
+
 export type ExtracaoDoCpf =
   | { tipo: "achou"; cpf: string }
   | { tipo: "nao_encontrado" }
@@ -546,7 +565,8 @@ export type ExtracaoDaCarteirinha =
 function trechosNumericos(
   mensagens: readonly MensagemDoPaciente[],
 ): { tipo: string; texto: string }[] {
-  return mensagens.flatMap((mensagem) =>
+  // [AG6b mídia] D-57: o numero dito no audio nunca vira CPF nem carteirinha.
+  return mensagens.filter(semNumeroFalado).flatMap((mensagem) =>
     trechosMinimizados(mensagem.original).filter(
       (t) =>
         t.tipo === "cpf" ||
@@ -689,6 +709,8 @@ export function extrairCarteirinha(
     .map((t) => carteirinhaValida(t.texto))
     .filter((t): t is string => t !== null);
   const curtos = mensagens
+    // [AG6b mídia] D-57: nunca do audio.
+    .filter(semNumeroFalado)
     .flatMap((mensagem) => codigosCurtos(minimizarParaLlm(mensagem.original)))
     .map((c) => carteirinhaValida(c))
     .filter((c): c is string => c !== null);

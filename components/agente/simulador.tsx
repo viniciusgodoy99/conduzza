@@ -315,6 +315,9 @@ export function Simulador({
   motivo,
   aoSimular,
   className,
+  // [AG6b mídia] início
+  notaDaMidia = null,
+  // [AG6b mídia] fim
 }: {
   nomeDoAssistente: string;
   /** Administrador, gestor ou super admin. */
@@ -325,6 +328,14 @@ export function Simulador({
   motivo: string | null;
   aoSimular: (entrada: EntradaDaSimulacao) => Promise<ResultadoDaSimulacao>;
   className?: string;
+  // [AG6b mídia] início
+  /**
+   * D-62: com "Entender áudio" ou "Ler imagem e documento" ligada no
+   * rascunho, a nota de que audio, foto e documento so funcionam no
+   * WhatsApp (o simulador so manda texto). Nula: sem nota.
+   */
+  notaDaMidia?: string | null;
+  // [AG6b mídia] fim
 }) {
   const [falas, setFalas] = useState<FalaDoSimulador[]>([]);
   const [texto, setTexto] = useState("");
@@ -456,6 +467,13 @@ export function Simulador({
             {T.simuladorTitulo}
           </CardTitle>
           <CardDescription>{T.simuladorDescricao}</CardDescription>
+          {/* [AG6b mídia] início: nota, nao status (so texto, sem cor). */}
+          {notaDaMidia ? (
+            <p data-nota-da-midia className="text-[12.5px] text-text-secondary">
+              {notaDaMidia}
+            </p>
+          ) : null}
+          {/* [AG6b mídia] fim */}
         </div>
         <CardAction>
           <Button

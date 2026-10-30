@@ -53,6 +53,11 @@ export const MOTIVOS_QUE_NUNCA_ATRIBUEM_NO_BANCO = [
   "assunto_clinico",
   "midia_nao_suportada",
   "conformidade",
+  // [AG6b mídia] início
+  // AG6b (migration 20261030100000, D-96): os oito, nesta ordem.
+  "midia_clinica",
+  "midia_nao_identificada",
+  // [AG6b mídia] fim
 ] as const;
 
 /** O valor de escalation_rules.passagem_para que liga a atribuicao. */
@@ -75,6 +80,12 @@ export const CODIGOS_DA_ATRIBUICAO_NO_BANCO = [
   "com_responsavel",
   "urgente",
   "mensagem_nova",
+  // [AG6b mídia] início
+  // AG6b (migration 20261030100000, D-96): a midia que o job leu e o
+  // assistente nao leu (sem leitura ou "sem fala"). O motor nem chama nesse
+  // caso; a recusa em memoria fica com a frente de banco (ag6b-contrato.ts).
+  "midia_nao_lida",
+  // [AG6b mídia] fim
   "regra_fila",
   "sem_responsavel",
   "responsavel_inapto",

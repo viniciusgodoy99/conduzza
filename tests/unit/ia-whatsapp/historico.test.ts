@@ -871,3 +871,127 @@ describe("o portão lê o texto original do contato; a OpenAI, só o mascarado",
     ]);
   });
 });
+
+// [AG6b mídia] início
+// AG6b: o audio, a imagem e o documento do contato levam a midia (o id da
+// mensagem, o estado do arquivo, o media_mimetype, o created_at e a legenda
+// com o nome mascarado), que so o servidor le: o plano do turno decide se
+// ela vai ao modelo. O modelo continua vendo o marcador ate a leitura.
+describe("AG6b: a mídia do contato no histórico", () => {
+  it("o áudio e a foto do contato levam a mídia (com a legenda mascarada); o vídeo e a clínica, não", () => {
+    const foto = mensagemDaLinha(
+      {
+        id: "f1",
+        author: "paciente",
+        content_type: "imagem",
+        body: "Maria aqui, segue o pedido",
+        media_url: "storage://midia-conversas/c/f1",
+        media_mimetype: "image/jpeg",
+        created_at: "2026-10-13T12:00:00.000Z",
+      },
+      "Maria",
+    );
+    expect(foto).toEqual({
+      autor: "paciente",
+      texto: null,
+      tipo: "imagem",
+      legendaOriginal: "Maria aqui, segue o pedido",
+      midia: {
+        messageId: "f1",
+        midia: "imagem",
+        arquivo: "pronto",
+        mediaUrl: "storage://midia-conversas/c/f1",
+        mimetype: "image/jpeg",
+        criadaEm: "2026-10-13T12:00:00.000Z",
+        legenda: `${MARCA_DO_NOME} aqui, segue o pedido`,
+      },
+    });
+    // O modelo continua vendo o marcador (a leitura e do plano do turno).
+    expect(mensagemParaOModelo(foto)).toBe(
+      "(o paciente mandou um conteúdo que não é texto)",
+    );
+    const audio = mensagemDaLinha(
+      {
+        id: "a1",
+        author: "paciente",
+        content_type: "audio",
+        body: null,
+        media_url: null,
+        media_mimetype: null,
+        created_at: "2026-10-13T12:00:00.000Z",
+      },
+      null,
+    );
+    expect(audio.midia).toEqual({
+      messageId: "a1",
+      midia: "audio",
+      arquivo: "baixando",
+      mediaUrl: null,
+      mimetype: null,
+      criadaEm: "2026-10-13T12:00:00.000Z",
+      legenda: null,
+    });
+    expect(
+      mensagemDaLinha(
+        {
+          id: "d1",
+          author: "paciente",
+          content_type: "documento",
+          body: null,
+          media_url: "indisponivel://desistiu",
+          created_at: "2026-10-13T12:00:00.000Z",
+        },
+        null,
+      ).midia?.arquivo,
+    ).toBe("indisponivel");
+    // O video (texto com media_url) nao tem midia lida; a da clinica, nunca.
+    expect(
+      mensagemDaLinha(
+        {
+          id: "v1",
+          author: "paciente",
+          content_type: "texto",
+          body: null,
+          media_url: "https://mmg.whatsapp.net/video.enc",
+          created_at: "2026-10-13T12:00:00.000Z",
+        },
+        null,
+      ).midia,
+    ).toBeUndefined();
+    expect(
+      mensagemDaLinha(
+        {
+          id: "c1",
+          author: "usuario",
+          content_type: "imagem",
+          body: null,
+          media_url: "storage://x",
+          created_at: "2026-10-13T12:00:00.000Z",
+        },
+        null,
+      ).midia,
+    ).toBeUndefined();
+  });
+
+  it("o carregador traz a mídia do contato com o media_mimetype", async () => {
+    sequencia = 0;
+    const banco = new BancoEmMemoria();
+    banco.linhas("message").push(
+      mensagem({
+        author: "paciente",
+        content_type: "audio",
+        body: null,
+        media_url: "storage://midia-conversas/c/a",
+        media_mimetype: "audio/mpeg",
+      }),
+    );
+    const historico = await carregar(banco);
+    expect(historico.mensagens[0]?.midia).toMatchObject({
+      midia: "audio",
+      arquivo: "pronto",
+      mimetype: "audio/mpeg",
+    });
+    expect(historico.pendentes).toEqual([historico.mensagens[0]?.midia?.messageId]);
+  });
+});
+// [AG6b mídia] fim

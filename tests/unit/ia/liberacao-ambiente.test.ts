@@ -65,8 +65,10 @@ describe("T1: producao da Vercel com a chave e o segredo do identificador", () =
     ["sem chave", { OPENAI_API_KEY: undefined }],
     ["chave vazia", { OPENAI_API_KEY: "" }],
     ["chave so com espacos", { OPENAI_API_KEY: "   " }],
+    // [AG6b mídia] A chave antiga da transcricao pela uazapi saiu do codigo
+    // (D-94); uma que ainda sobre no ambiente continua sem ligar nada.
     [
-      "so a chave da transcricao (UAZAPI_OPENAI_KEY) nao liga",
+      "a chave antiga da transcricao pela uazapi, se sobrar no ambiente, nao liga",
       { OPENAI_API_KEY: undefined, UAZAPI_OPENAI_KEY: "chave-da-uazapi" },
     ],
     [

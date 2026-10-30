@@ -437,8 +437,18 @@ export function resumirFatosDoTurno(
       ? ROTULO_DA_LISTA_DE_ESPERA.existente
       : null;
 
+  // [AG6b mídia] início
+  // AG6b: os pedidos que a pessoa mandou, so com os nomes do Cadastro (o
+  // leitor de midia nunca devolve texto do arquivo).
+  const pedidos = (fatos.pedidos ?? [])
+    .map((itens) => itens.map((nome) => numaLinha(nome)).filter((n) => n !== ""))
+    .filter((itens) => itens.length > 0)
+    .map((itens) => ROTULO_DO_PEDIDO.replace("{}", () => itens.join(", ")));
+  // [AG6b mídia] fim
   const resumo = [
     `Hoje na clínica: ${hoje}.`,
+    // [AG6b mídia]
+    ...pedidos,
     secao(
       "Ações que as ferramentas fizeram com sucesso nesta resposta",
       acoes,
@@ -499,6 +509,12 @@ export function resumirFatosDoTurno(
   return { ok: true, texto: resumo };
 }
 
+// [AG6b mídia] início
+/** AG6b: o pedido lido ("{}" e a lista dos nomes do Cadastro). */
+const ROTULO_DO_PEDIDO =
+  "A pessoa mandou um pedido com: {}.";
+// [AG6b mídia] fim
+
 /** As regras do resumo, para a versao das regras mudar quando ele mudar. */
 export const FONTES_DO_RESUMO: readonly string[] = [
   `limite ${LIMITE_DO_RESUMO_DOS_FATOS}`,
@@ -525,4 +541,8 @@ export const FONTES_DO_RESUMO: readonly string[] = [
   // AG5: a lista de espera.
   JSON.stringify(ROTULO_DA_LISTA_DE_ESPERA),
   "resumo: a lista de espera sem dia e hora; a pessoa na lista sem o procedimento, o profissional e a preferencia",
+  // [AG6b mídia] início
+  ROTULO_DO_PEDIDO,
+  "resumo: o pedido lido pelo leitor de midia so com os nomes do Cadastro",
+  // [AG6b mídia] fim
 ];
