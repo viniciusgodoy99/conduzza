@@ -216,12 +216,28 @@ async function conversaNaIa(): Promise<{ contato: string; conversa: string }> {
   telefones += 1;
   const n = telefones;
   const telefone = `+55847${digitos}${String(n).padStart(2, "0")}`;
+  // O contato nasce paciente e o telefone, forcado, ANTES de a conversa
+  // existir (o forcado so vale gravado depois do sinal de paciente): a
+  // consulta que o caso cria depois nao abre janela para a manutencao do
+  // motor (a cada minuto) tirar a conversa de teste da IA
+  // (ia_pode_falar_com), o que dava ia_desligada ao acaso.
+  await admin
+    .from("contact")
+    .insert({
+      clinic_id: clinicaA,
+      phone_e164: telefone,
+      name: "Contato sintético",
+      kind: "paciente",
+    })
+    .throwOnError();
   await rpcOk("definir_contato_liberado_da_ia", {
     p_clinic_id: clinicaA,
     p_telefone_e164: telefone,
     p_rotulo: "Equipe sintética",
     p_ativo: true,
+    p_forcar_contato_existente: true,
     p_confirmou_aviso_da_openai: true,
+    p_confirmou_teste_com_paciente: true,
   });
   const r = await rpcOk<{
     conversation_id: string | null;

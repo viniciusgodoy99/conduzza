@@ -318,6 +318,10 @@ beforeAll(async () => {
       skills: { agendar: true },
       agenda_antecedencia_horas: 2,
       agenda_horizonte_dias: 30,
+      // Desde a AG3 o padrao exige nome completo e nascimento (faltam_dados);
+      // este arquivo mede a concorrencia da marcacao, nao a coleta de dados.
+      exige_nome_completo: false,
+      exige_nascimento: false,
     })
     .throwOnError();
 
