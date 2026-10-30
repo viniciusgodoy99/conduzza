@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   GATILHOS_OBRIGATORIOS,
+  MOTIVOS_QUE_NUNCA_ATRIBUEM,
   regrasDaPassagemPadrao,
   type PassagemDaConversa,
 } from "@/lib/domain/agente/config";
@@ -110,6 +111,27 @@ function radios(html: string) {
   );
 }
 
+/**
+ * O termo da ajuda para cada motivo que nunca atribui (a lista do banco,
+ * MOTIVOS_QUE_NUNCA_ATRIBUEM). O fora do horario fica de fora: e passagem
+ * sem a frase de sempre, e o cartao fala da passagem com a frase. O tipo
+ * cobre a lista inteira: motivo novo no banco sem termo aqui nao compila, e
+ * o teste confere de novo em tempo de execucao (revisao curta da AG6a: a
+ * ajuda tinha esquecido a conformidade).
+ */
+const TERMO_DO_MOTIVO_NA_AJUDA: Readonly<
+  Record<
+    Exclude<(typeof MOTIVOS_QUE_NUNCA_ATRIBUEM)[number], "fora_do_horario">,
+    string
+  >
+> = {
+  urgencia: "urgência",
+  sintoma: "sintoma",
+  assunto_clinico: "assunto clínico",
+  midia_nao_suportada: "mídia",
+  conformidade: "resposta barrada pela conformidade",
+};
+
 /** O botao Salvar do cartao (o unico botao dele). */
 function botaoSalvar(html: string): string {
   const botao = html
@@ -146,7 +168,7 @@ describe("cartão Para quem vai a conversa", () => {
 
   it("os textos acompanham a atribuição depois da frase de sempre (revisão da AG6a)", () => {
     expect(TEXTOS_DA_PASSAGEM.descricao).toBe(
-      "Salvo no rascunho, vale ao publicar. Vale quando o assistente passa a conversa para a equipe com a frase de sempre.",
+      "Salvo no rascunho, vale ao publicar. Conta quando o assistente passa a conversa para a equipe com a frase de sempre.",
     );
     expect(TEXTOS_DA_PASSAGEM.opcoes.responsavel_do_lead.descricao).toBe(
       "Logo depois da frase de sempre, a conversa passa para o responsável, em atendimento, em Minhas, com um aviso na tela.",
@@ -155,21 +177,50 @@ describe("cartão Para quem vai a conversa", () => {
     expect(ajuda).toContain(
       "Se alguém assumir antes, a conversa fica com quem assumiu.",
     );
-    // Os motivos que a frente do banco tira da atribuicao: sempre a fila.
-    for (const motivo of ["urgência", "sintoma", "assunto clínico", "mídia"]) {
-      expect(ajuda).toContain(motivo);
-    }
     expect(ajuda).toContain("vai sempre para a fila");
-    // O que o texto antigo prometia e nao e mais verdade.
+    // O que o texto antigo prometia e nao e mais verdade: a atribuicao e
+    // tentada mesmo quando a frase nao sai, e nao "ja fica" com ninguem.
     expect(
       TEXTOS_DA_PASSAGEM.opcoes.responsavel_do_lead.descricao,
     ).not.toContain("já fica");
-    expect(TEXTOS_DA_PASSAGEM.descricao).not.toContain("Conta quando");
+    expect(TEXTOS_DA_PASSAGEM.descricao).not.toContain("o contato recebe");
+    expect(TEXTOS_DA_PASSAGEM.descricao).not.toContain("frase fixa");
+    // Revisao curta: sem o "vale ao publicar. Vale quando" repetido.
+    expect(TEXTOS_DA_PASSAGEM.descricao.match(/\bvale\b/gi)).toHaveLength(1);
     const lido = texto(passagem());
     expect(lido).toContain(TEXTOS_DA_PASSAGEM.descricao);
     expect(lido).toContain(
       TEXTOS_DA_PASSAGEM.opcoes.responsavel_do_lead.descricao,
     );
+  });
+
+  it("a ajuda cita cada motivo que nunca atribui, a partir da lista do banco (revisão curta: faltava a conformidade)", () => {
+    const ajuda = TEXTOS_DA_PASSAGEM.ajuda;
+    expect(ajuda).toContain(
+      "Quando o motivo é urgência, sintoma, assunto clínico, mídia ou resposta barrada pela conformidade, a conversa vai sempre para a fila.",
+    );
+    // Um termo por motivo de MOTIVOS_QUE_NUNCA_ATRIBUEM (o espelho de
+    // c_motivos_que_nunca_atribuem), menos o fora do horario (passagem sem
+    // a frase). Motivo novo na lista sem termo aqui falha.
+    const termos: Record<string, string> = TERMO_DO_MOTIVO_NA_AJUDA;
+    const motivos = MOTIVOS_QUE_NUNCA_ATRIBUEM.filter(
+      (motivo) => motivo !== "fora_do_horario",
+    );
+    expect(motivos).toContain("conformidade");
+    for (const motivo of motivos) {
+      const termo = termos[motivo];
+      expect(termo, `o motivo ${motivo} sem termo na ajuda`).toBeTruthy();
+      expect(ajuda, motivo).toContain(termo);
+    }
+    // Nenhum termo sobrando (de motivo que saiu da lista).
+    expect(Object.keys(termos).sort()).toEqual([...motivos].sort());
+    // A pessoa que escreve de novo antes da atribuicao (o banco recusa com
+    // mensagem_nova) tambem fica na fila.
+    expect(ajuda).toContain(
+      "Se a pessoa escrever de novo antes, também fica na fila.",
+    );
+    // O leitor de tela ouve a ajuda inteira no cartao.
+    expect(texto(passagem())).toContain(ajuda);
   });
 
   it("a ajuda é a descrição do grupo de cartões (aria-describedby)", () => {

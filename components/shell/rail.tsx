@@ -40,7 +40,8 @@ import { cn } from "@/lib/utils";
 // Menu lateral do Conduzza Design System (docs/06 secao 5.1): fundo ink-900
 // nos dois temas, item ativo com fundo lime translucido, texto lime e barra
 // de 2px. De 1024 a 1599px ele fica recolhido em 64px (so icones, com o
-// rotulo como dica ao lado e ainda no nome acessivel do link); a partir de
+// rotulo como dica ao lado e ainda no nome acessivel do link; com conversa
+// urgente, a dica leva tambem os dois numeros, numerosDaDica); a partir de
 // 1600px, aberto em 248px; abaixo de 1024px vira gaveta. Quem decide a
 // largura e o CSS, pela variante rail-aberto (data-rail na raiz do shell).
 
@@ -76,6 +77,56 @@ export function alertaDoItem(
     quantas,
     descricao: quantas === 1 ? "conversa urgente" : "conversas urgentes",
   };
+}
+
+/**
+ * Os numeros da dica do item no menu RECOLHIDO (de 1024 a 1599px, o
+ * padrao). La, o canto do icone tem lugar para uma pilula so e o alerta
+ * vence (nav-badge.tsx): com conversa urgente, o numero de aguardando nao
+ * aparece em lugar nenhum da tela, e a dica mostrava so o rotulo (revisao
+ * curta da AG6a). Com o alerta, a dica leva os dois numeros, as urgentes
+ * primeiro e com o texto que o leitor de tela ouve no nome do link ("2
+ * conversas urgentes, 7 conversas aguardando resposta"), com o numero real
+ * (sem o 99+). Sem o alerta, nulo: a pilula do canto ja mostra o numero, e
+ * a dica fica so com o rotulo.
+ */
+export function numerosDaDica(
+  badge: NavItem["badge"],
+  contadores: ContadoresDoMenu,
+): string | null {
+  const alerta = alertaDoItem(badge, contadores);
+  if (!badge || !alerta) {
+    return null;
+  }
+  const partes = [`${alerta.quantas} ${alerta.descricao}`];
+  const aguardando = contadores[badge];
+  if (aguardando > 0) {
+    const [uma, varias] = DESCRICAO_DO_CONTADOR[badge];
+    partes.push(`${aguardando} ${aguardando === 1 ? uma : varias}`);
+  }
+  return partes.join(", ");
+}
+
+/**
+ * O conteudo da dica do item: o rotulo e, com os numeros (numerosDaDica),
+ * uma segunda linha com eles.
+ */
+export function ConteudoDaDica({
+  rotulo,
+  numeros,
+}: {
+  rotulo: string;
+  numeros: string | null;
+}) {
+  if (!numeros) {
+    return <>{rotulo}</>;
+  }
+  return (
+    <span className="grid gap-px">
+      <span>{rotulo}</span>
+      <span className="font-normal">{numeros}</span>
+    </span>
+  );
 }
 // [AG6 urgência] fim
 
@@ -130,6 +181,7 @@ function ItemDoMenu({
   ativo,
   contagem,
   alerta = null,
+  numerosNaDica = null,
   recolhido,
   aoNavegar,
 }: {
@@ -140,6 +192,8 @@ function ItemDoMenu({
   // [AG6 urgência] início
   /** As urgentes abertas: o contador do Atendimento em alerta. */
   alerta?: AlertaDoContador | null;
+  /** Com o alerta, os dois numeros na dica do menu recolhido. */
+  numerosNaDica?: string | null;
   // [AG6 urgência] fim
   recolhido: boolean;
   aoNavegar?: () => void;
@@ -188,7 +242,8 @@ function ItemDoMenu({
     <Tooltip open={recolhido ? undefined : false}>
       <TooltipTrigger asChild>{link}</TooltipTrigger>
       <TooltipContent side="right" sideOffset={8}>
-        {rotulo}
+        {/* [AG6 urgência] Com urgentes, o rotulo e os dois numeros. */}
+        <ConteudoDaDica rotulo={rotulo} numeros={numerosNaDica} />
       </TooltipContent>
     </Tooltip>
   );
@@ -285,6 +340,7 @@ export function Rail({
                 ativo={item.href === itemAtivo}
                 contagem={item.badge ? contadores[item.badge] : null}
                 alerta={alertaDoItem(item.badge, contadores)}
+                numerosNaDica={numerosDaDica(item.badge, contadores)}
                 recolhido={recolhido}
                 aoNavegar={aoNavegar}
               />

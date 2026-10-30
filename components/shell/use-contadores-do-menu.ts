@@ -32,6 +32,9 @@ import {
   // [AG6 urgência] início
   contarConversasUrgentes,
   // [AG6 urgência] fim
+  // [AG6 passagem] início
+  conversasEmAtendimentoCom,
+  // [AG6 passagem] fim
 } from "@/components/shell/contadores-do-menu";
 import type { ContadoresDoMenu } from "@/components/shell/tipos";
 import { createClient } from "@/lib/supabase/client";
@@ -68,11 +71,12 @@ import { assinarComSessao } from "@/lib/realtime/assinar-com-sessao";
 //   por marca;
 // - o aviso "A IA passou para você a conversa de {nome}." com "Abrir" nasce
 //   do evento de CONVERSATION que este canal ja recebe filtrado pela
-//   clinica, quando a conversa entra em atendimento com quem olha
-//   (vigiaDaAtribuicao: uma pergunta por entrada); o servidor confere o
-//   ultimo evento do fio. O menu nao assina mais message: era sem filtro de
-//   clinica, em todas as telas, e cada aba conferia a RLS de cada evento de
-//   todas as clinicas.
+//   clinica, quando a conversa ENTRA em atendimento com quem olha depois da
+//   montagem (vigiaDaAtribuicao: uma pergunta por entrada, semeado na
+//   montagem com as conversas que ja estavam com a pessoa, revisao curta);
+//   o servidor confere o ultimo evento do fio e o nome nele. O menu nao
+//   assina mais message: era sem filtro de clinica, em todas as telas, e
+//   cada aba conferia a RLS de cada evento de todas as clinicas.
 // O nome vem da Server Action, que le pela sessao e grava a trilha
 // (avisos-actions.ts); nada do evento vai para log.
 // [AG6 urgência e passagem] fim
@@ -332,7 +336,8 @@ export function useContadoresDoMenu({
     // nao zera: o shell continua montado).
     const avisados = new Set<string>();
     // Quando perguntar pela atribuicao: a conversa que entra em atendimento
-    // com quem olha (uma pergunta por entrada, nunca por evento).
+    // com quem olha depois da montagem (uma pergunta por entrada, nunca por
+    // evento). Nasce desarmado: a semente, abaixo, o arma.
     const atribuicaoNova = vigiaDaAtribuicao({ clinicId, viewerId });
 
     const abrir = (conversationId: string) => {
@@ -407,6 +412,24 @@ export function useContadoresDoMenu({
         classNames: { actionButton: CLASSE_DO_ABRIR },
       });
     };
+
+    // A semente do vigia (revisao curta da AG6a): as conversas que ja estao
+    // em atendimento com quem olha nao perguntam ao servidor nem repetem o
+    // aviso (F5, segunda aba, outro aparelho, troca de clinica). Lida sem
+    // esperar o canal ficar de pe; o que entrou na espera e a semente nao
+    // conhece pergunta agora. Falha semeia vazio: o vigia arma assim mesmo.
+    if (vigiarConversas) {
+      void conversasEmAtendimentoCom(supabase, clinicId, viewerId)
+        .catch(() => null)
+        .then((ids) => {
+          if (!ativo) {
+            return;
+          }
+          for (const conversationId of atribuicaoNova.semear(ids ?? [])) {
+            void avisarAtribuicao(conversationId);
+          }
+        });
+    }
 
     const { principal, urgencia } = canaisDoMenu(
       supabase,

@@ -35,6 +35,9 @@ import {
   CASOS_DE_URGENCIA,
   CONTROLES_DA_SAIDA_DA_URGENCIA,
   CONTROLES_DA_URGENCIA,
+  FALSOS_POSITIVOS_ACEITOS,
+  FALSOS_POSITIVOS_QUE_FICAM,
+  NAO_REGRESSAO_DA_URGENCIA,
   RAJADAS_DE_URGENCIA,
   RAJADAS_SEM_URGENCIA,
   SAIDAS_DA_URGENCIA_QUE_BLOQUEIAM,
@@ -113,6 +116,7 @@ describe("bateria AG6: os sinais de emergência", () => {
       ...CONTROLES_DA_SAIDA_DA_URGENCIA,
       ...RAJADAS_DE_URGENCIA,
       ...RAJADAS_SEM_URGENCIA,
+      ...NAO_REGRESSAO_DA_URGENCIA,
     ].map((caso) => caso.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
@@ -149,6 +153,78 @@ describe("bateria AG6: os sinais de emergência", () => {
       });
       expect(gatilhos).toContain(caso.gatilho);
       expect(gatilhos).not.toContain("urgencia");
+    },
+  );
+});
+
+// Revisao de 30/10/2026 (a regra da rodada): NENHUMA emergencia que a
+// edd123c pegava fica de fora. A lista (casos-ag6.ts) copia a bateria
+// urgente da edd123c, todas as frases da revisao e toda frase das baterias
+// que o detector da edd123c marcava; cada uma continua urgencia do mesmo
+// tipo, menos as da lista EXPLICITA de falsos positivos aceitos, cada um com
+// a area (estetica ou recepcao) e o motivo.
+describe("bateria AG6: a não regressão (nenhuma emergência da edd123c fica de fora)", () => {
+  const aceitos = new Map(FALSOS_POSITIVOS_ACEITOS.map((f) => [f.id, f]));
+  const daRevisao = NAO_REGRESSAO_DA_URGENCIA.filter(
+    (frase) => frase.origem === "revisão de 30/10/2026",
+  );
+
+  it("a lista é honesta: cada falso positivo aceito aponta para uma frase dela, com a área e o motivo, e a bateria urgente da edd123c está inteira", () => {
+    const ids = new Set(NAO_REGRESSAO_DA_URGENCIA.map((frase) => frase.id));
+    expect(aceitos.size).toBe(FALSOS_POSITIVOS_ACEITOS.length);
+    for (const falso of FALSOS_POSITIVOS_ACEITOS) {
+      expect(ids, falso.id).toContain(falso.id);
+      expect(["estetica", "recepcao"], falso.id).toContain(falso.area);
+      expect(falso.motivo.trim().length, falso.id).toBeGreaterThan(10);
+      expect(falso.motivo, falso.id).not.toMatch(/[–—]/);
+    }
+    // A bateria urgente da edd123c (AG6-U01 a AG6-U54), inteira e sem
+    // nenhuma frase aceita como falso positivo.
+    const daEdd = NAO_REGRESSAO_DA_URGENCIA.filter((frase) =>
+      frase.origem.startsWith("edd123c "),
+    );
+    expect(daEdd).toHaveLength(54);
+    for (const frase of daEdd) {
+      expect(aceitos.has(frase.id), frase.id).toBe(false);
+    }
+    // Todas as frases do paciente da revisao (achados 1, 2, 5 e 6; as do
+    // filtro, 3 e 4, estao nas saidas AG6-S75 a AG6-S89).
+    expect(daRevisao).toHaveLength(39);
+  });
+
+  it.each(
+    NAO_REGRESSAO_DA_URGENCIA.filter((frase) => !aceitos.has(frase.id)).map(
+      (frase) => [frase.id, frase] as const,
+    ),
+  )(
+    "%s continua urgência do mesmo tipo e o primeiro gatilho do portão",
+    (_id, frase) => {
+      expect(detectarUrgencia(frase.textos)?.tipo).toBe(frase.tipo);
+      expect(
+        detectarGatilhosDeEntrada({
+          mensagens: frase.textos.map((texto) => ({ tipo: "texto", texto })),
+        })[0],
+      ).toBe("urgencia");
+    },
+  );
+
+  it.each(FALSOS_POSITIVOS_ACEITOS.map((falso) => [falso.id, falso] as const))(
+    "%s é falso positivo aceito: não é urgência",
+    (id, falso) => {
+      const frase = NAO_REGRESSAO_DA_URGENCIA.find((f) => f.id === id);
+      expect(frase, falso.motivo).toBeDefined();
+      expect(detectarUrgencia(frase?.textos ?? [])).toBeNull();
+    },
+  );
+
+  it.each(
+    FALSOS_POSITIVOS_QUE_FICAM.map((falso) => [falso.id, falso] as const),
+  )(
+    "%s é falso positivo que FICA como urgência (o lado seguro)",
+    (id, falso) => {
+      const caso = CASOS_DE_URGENCIA.find((c) => c.id === id);
+      expect(caso, falso.motivo).toBeDefined();
+      expect(detectarUrgencia([caso?.texto ?? ""])).not.toBeNull();
     },
   );
 });
@@ -223,7 +299,11 @@ function textosDaUrgencia(
   mensagens: readonly MensagemDeEntrada[],
 ): (string | null)[] {
   return mensagens.map((m) =>
-    m.tipo === "texto" ? m.texto : m.tipo === "audio" ? null : (m.legenda ?? null),
+    m.tipo === "texto"
+      ? m.texto
+      : m.tipo === "audio"
+        ? null
+        : (m.legenda ?? null),
   );
 }
 
@@ -474,9 +554,15 @@ describe("bateria AG6: as regras novas da revisão", () => {
   // Revisao de 28/10/2026 (achado 6): a referencia de endereco so passa sem
   // a condicao na mesma frase; com ela, o lugar e destino.
   it.each([
-    ["Qualquer coisa, estamos em frente ao Pronto-Socorro.", ["pronto_socorro"]],
+    [
+      "Qualquer coisa, estamos em frente ao Pronto-Socorro.",
+      ["pronto_socorro"],
+    ],
     ["Ficamos ao lado da UPA, se precisar.", ["pronto_socorro"]],
-    ["Caso precise, ficamos próximos ao Hospital São José.", ["pronto_socorro"]],
+    [
+      "Caso precise, ficamos próximos ao Hospital São José.",
+      ["pronto_socorro"],
+    ],
     ["Se piorar, a UPA fica ao lado.", ["pronto_socorro"]],
     ["Numa emergência, o hospital fica em frente.", ["pronto_socorro"]],
     // A condicao em outra frase (ou depois do ponto e virgula) nao conta.
@@ -491,6 +577,26 @@ describe("bateria AG6: as regras novas da revisão", () => {
     ],
     // "Qualquer duvida" nao e condicao de socorro.
     ["Qualquer dúvida, estamos ao lado do Hospital São José.", []],
+    // Revisao de 30/10/2026 (achado 4): a ida ao lugar depois dele, ate o
+    // ponto, tambem o torna destino (o main barra todas).
+    ["Ficamos ao lado da UPA, vá direto para lá.", ["pronto_socorro"]],
+    ["Estamos em frente ao hospital, corra para lá.", ["pronto_socorro"]],
+    ["Ficamos perto da UPA, pode ir lá agora.", ["pronto_socorro"]],
+    ["Fica perto do pronto-socorro, vá lá.", ["pronto_socorro"]],
+    [
+      "A clínica fica em frente ao Pronto-Socorro Municipal, procure-o.",
+      ["pronto_socorro"],
+    ],
+    ["Ficamos ao lado da UPA, lá eles te atendem.", ["pronto_socorro"]],
+    // O "vai" de futuro, o "segue" do endereco, o "procure a recepcao" e a
+    // ida em outra frase nao tornam o lugar destino.
+    ["Ficamos ao lado do Hospital São José, você vai ver a placa azul.", []],
+    ["Ficamos ao lado do Hospital Geral, segue a localização.", []],
+    [
+      "A clínica fica em frente ao Hospital Geral, procure a recepção no térreo.",
+      [],
+    ],
+    ["Ficamos ao lado do Hospital Geral. Pode vir de ônibus até lá.", []],
   ] as const)("o lugar com a condição: %s", (rascunho, esperadas) => {
     expect(
       regrasQuePegam(rascunho).filter((regra) => regra === "pronto_socorro"),
@@ -514,6 +620,20 @@ describe("bateria AG6: as regras novas da revisão", () => {
     ],
     ["Chame alguém para ficar com você.", ["primeiros_socorros"]],
     ["Não fique sozinha.", ["primeiros_socorros"]],
+    // Revisao de 30/10/2026 (achado 3): as excecoes da recepcao so valem
+    // para ficar sentada e para o "sente-se"; o resto barra como na edd123c.
+    ["Fique deitada e aguarde o atendimento.", ["postura_do_corpo"]],
+    ["Fique de lado e aguarde o atendimento.", ["postura_do_corpo"]],
+    ["Mantenha-se deitada e aguarde o atendimento.", ["postura_do_corpo"]],
+    ["Quando chegar, fique deitada.", ["postura_do_corpo"]],
+    ["Ao entrar, fique de costas.", ["postura_do_corpo"]],
+    ["Quando chegar, fique imóvel.", ["postura_do_corpo"]],
+    ["Ao chegar, deita-se e aguarde o atendimento.", ["postura_do_corpo"]],
+    ["Fique deitada na recepção.", ["postura_do_corpo"]],
+    ["Não fique sozinha depois do procedimento.", ["primeiros_socorros"]],
+    ["Fique sentada e aguarde o atendimento.", []],
+    ["Quando chegar, fique sentada que já te chamamos.", []],
+    ["Não fique sozinha no dia do procedimento: venha acompanhada.", []],
   ] as const)("a recepção e a conduta: %s", (rascunho, esperadas) => {
     expect(
       regrasQuePegam(rascunho).filter(
@@ -547,5 +667,13 @@ describe("bateria AG6: as versões da revisão", () => {
     expect(versaoDasRegras()).toMatch(/^regras-[0-9a-f]{12}$/);
     expect(versaoDoPortao()).not.toBe("portao-1dd4b555a379");
     expect(versaoDasRegras()).not.toBe("regras-179cba548782");
+  });
+
+  // Revisao de 30/10/2026: a lista de urgencia e o lexico do sintoma mudaram
+  // (o portao) e a postura, os primeiros socorros e o lugar de referencia
+  // tambem (as regras). As versoes da 2a revisao (2ca2097) ficaram para tras.
+  it("o portão e as regras mudaram desde a 2a revisão (2ca2097)", () => {
+    expect(versaoDoPortao()).not.toBe("portao-39dcded69204");
+    expect(versaoDasRegras()).not.toBe("regras-342236c82294");
   });
 });

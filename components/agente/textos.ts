@@ -473,13 +473,19 @@ export const TEXTOS_DO_AGENTE = {
 // sempre (atribuir_conversa_passada_pela_ia): a conversa fica uns segundos
 // em "Aguardando você", a atribuicao e tentada mesmo quando a frase nao sai,
 // e quem assumir antes fica com ela (revisao da AG6a: o texto acompanha).
-// Urgencia, sintoma, assunto clinico e midia nunca atribuem (a frente do
-// banco). O "o que mudou" usa ROTULO_DO_CAMPO_DA_PASSAGEM e
+// Nunca atribuem os motivos de MOTIVOS_QUE_NUNCA_ATRIBUEM
+// (lib/domain/agente/config.ts, o espelho de c_motivos_que_nunca_atribuem
+// do banco): a urgencia, o sintoma, o assunto clinico, a midia e a resposta
+// barrada pela conformidade (o fora do horario tambem, mas e passagem sem a
+// frase, fora deste cartao). A pessoa que escreve de novo antes da
+// atribuicao tambem fica na fila (o banco recusa com mensagem_nova). O teste
+// da Tela 6 monta a lista da ajuda a partir dessa constante, para o texto
+// nao descolar do banco. O "o que mudou" usa ROTULO_DO_CAMPO_DA_PASSAGEM e
 // ROTULO_DA_PASSAGEM da configuracao.
 export const TEXTOS_DA_PASSAGEM = {
   titulo: "Para quem vai a conversa",
   descricao:
-    "Salvo no rascunho, vale ao publicar. Vale quando o assistente passa a conversa para a equipe com a frase de sempre.",
+    "Salvo no rascunho, vale ao publicar. Conta quando o assistente passa a conversa para a equipe com a frase de sempre.",
   opcoes: {
     fila: {
       rotulo: "Para a fila (Sem atendente)",
@@ -493,7 +499,7 @@ export const TEXTOS_DA_PASSAGEM = {
     },
   },
   ajuda:
-    "O responsável é o do lead em Leads. Sem responsável, ou com ele fora da equipe ou só com leitura, a conversa vai para a fila. Se alguém assumir antes, a conversa fica com quem assumiu. Quando o motivo é urgência, sintoma, assunto clínico ou mídia, a conversa vai sempre para a fila.",
+    "O responsável é o do lead em Leads. Sem responsável, ou com ele fora da equipe ou só com leitura, a conversa vai para a fila. Se alguém assumir antes, a conversa fica com quem assumiu. Quando o motivo é urgência, sintoma, assunto clínico, mídia ou resposta barrada pela conformidade, a conversa vai sempre para a fila. Se a pessoa escrever de novo antes, também fica na fila.",
   salvar: "Salvar regra",
   salvando: "Salvando...",
   salva: "Regra salva no rascunho.",

@@ -2,7 +2,15 @@ import { readFileSync } from "node:fs";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from "vitest";
 
 vi.mock("@/app/(app)/atendimento/actions", () => ({
   assumirConversaAction: vi.fn(),
@@ -34,6 +42,7 @@ import {
 import {
   aplicarMarcaNaLista,
   aplicarMarcasNaLista,
+  EVENTO_DA_LISTA_SEM_A_MARCA,
   fetchConversationById,
   fetchConversations,
   fetchMarcasAbertas,
@@ -316,6 +325,23 @@ describe("a lista antes da migration (o embutido da marca sem a tabela)", () => 
     { ...conversa("2", "João Lima"), urgente: undefined },
   ];
 
+  // A volta escreve no log do servidor (revisao curta): a saida fica presa
+  // aqui, e os testes do rastro leem o que foi escrito.
+  let saida: MockInstance<typeof process.stdout.write>;
+  beforeEach(() => {
+    saida = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  });
+  afterEach(() => {
+    saida.mockRestore();
+  });
+
+  /** As linhas que o log escreveu, ja lidas. */
+  function registros(): Record<string, unknown>[] {
+    return saida.mock.calls.map(
+      ([linha]) => JSON.parse(String(linha)) as Record<string, unknown>,
+    );
+  }
+
   it("PGRST200 ou 42P01: refaz sem o embutido e o Atendimento abre sem a marca", async () => {
     for (const erro of [SEM_A_TABELA, { code: "42P01", message: "x" }]) {
       const { supabase, pedidos } = bancoDaLista({
@@ -420,6 +446,103 @@ describe("a lista antes da migration (o embutido da marca sem a tabela)", () => 
       undefined,
     ]) {
       expect(marcaForaDoBanco(outro), JSON.stringify(outro)).toBe(false);
+    }
+  });
+
+  it("a volta deixa rastro no servidor, só com o código (revisão curta: era silenciosa)", async () => {
+    for (const erro of [SEM_A_TABELA, { code: "42P01", message: "x" }]) {
+      saida.mockClear();
+      const { supabase } = bancoDaLista({
+        comMarca: { error: erro },
+        semMarca: { data: linhas },
+      });
+      await fetchConversations(supabase, CLINICA);
+      // Uma linha por busca que voltou (as recentes e as que esperam).
+      expect(registros()).toHaveLength(2);
+      for (const registro of registros()) {
+        // Nada alem do codigo: nem a clinica, nem a mensagem do erro.
+        expect(Object.keys(registro).sort()).toEqual([
+          "error_code",
+          "evento",
+          "nivel",
+          "ts",
+        ]);
+        expect(registro).toMatchObject({
+          nivel: "warn",
+          evento: EVENTO_DA_LISTA_SEM_A_MARCA,
+          error_code: erro.code,
+        });
+      }
+      const escrito = saida.mock.calls.map(([linha]) => String(linha)).join("");
+      for (const dado of [
+        "Maria",
+        "João",
+        "+5585",
+        CLINICA,
+        "schema cache",
+        "conversa_urgente",
+      ]) {
+        expect(escrito).not.toContain(dado);
+      }
+    }
+  });
+
+  it("o arquivo de resolvidas e a conversa do link também deixam o rastro, uma linha cada", async () => {
+    await fetchResolvedConversations(
+      bancoDaLista({
+        comMarca: { error: SEM_A_TABELA },
+        semMarca: { data: [] },
+      }).supabase,
+      CLINICA,
+    );
+    await fetchConversationById(
+      bancoDaLista({
+        comMarca: { error: SEM_A_TABELA },
+        semMarca: { data: null },
+      }).supabase,
+      CLINICA,
+      "2",
+    );
+    expect(registros().map((r) => [r.evento, r.error_code])).toEqual([
+      [EVENTO_DA_LISTA_SEM_A_MARCA, "PGRST200"],
+      [EVENTO_DA_LISTA_SEM_A_MARCA, "PGRST200"],
+    ]);
+  });
+
+  it("com a tabela, nenhum rastro; outro erro também não (ele continua sendo erro)", async () => {
+    await fetchConversations(
+      bancoDaLista({
+        comMarca: { data: [] },
+        semMarca: { error: { code: "XX000", message: "nao devia" } },
+      }).supabase,
+      CLINICA,
+    );
+    await expect(
+      fetchConversations(
+        bancoDaLista({
+          comMarca: { error: { code: "42501", message: "sem permissao" } },
+          semMarca: { data: linhas },
+        }).supabase,
+        CLINICA,
+      ),
+    ).rejects.toThrow("sem permissao");
+    expect(saida).not.toHaveBeenCalled();
+  });
+
+  it("no navegador, a volta acontece sem log (o log estruturado é do servidor)", async () => {
+    vi.stubGlobal("window", {});
+    try {
+      const resultado = await fetchConversations(
+        bancoDaLista({
+          comMarca: { error: SEM_A_TABELA },
+          semMarca: { data: linhas },
+        }).supabase,
+        CLINICA,
+      );
+      expect(resultado.map((c) => c.id).sort()).toEqual(["1", "2"]);
+      expect(saida).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 });

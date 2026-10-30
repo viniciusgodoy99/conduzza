@@ -7,13 +7,15 @@
 //   conversa e o instante da passagem).
 // - "A IA passou para você a conversa de {nome}." com "Abrir": nasce do
 //   evento de CONVERSATION que o menu ja recebe, filtrado pela clinica,
-//   quando a conversa entra em atendimento com quem olha
-//   (vigiaDaAtribuicao, uma pergunta por entrada); o servidor confere que o
-//   ultimo evento do fio e o da atribuicao ("A conversa ficou com {nome},
-//   responsável pelo lead.") e e recente. Revisao da AG6a: antes, o menu
-//   assinava message (content_type evento) SEM filtro de clinica, em todas
-//   as telas, e o tempo real conferia a RLS por aba para cada evento de
-//   qualquer clinica, com corpos de evento de agenda chegando a todas.
+//   quando a conversa ENTRA em atendimento com quem olha depois da montagem
+//   do menu (vigiaDaAtribuicao, semeado com as que ja estavam com a pessoa;
+//   uma pergunta por entrada); o servidor confere que o ultimo evento do fio
+//   e o da atribuicao A QUEM PEDE ("A conversa ficou com {nome},
+//   responsável pelo lead.", com o nome do perfil dela) e e recente. Revisao
+//   da AG6a: antes, o menu assinava message (content_type evento) SEM filtro
+//   de clinica, em todas as telas, e o tempo real conferia a RLS por aba
+//   para cada evento de qualquer clinica, com corpos de evento de agenda
+//   chegando a todas.
 //
 // O nome do contato e dado de paciente: nunca vem do evento, e sim de uma
 // Server Action que le pela sessao (RLS) e grava a leitura na trilha antes
@@ -57,7 +59,7 @@ const ATRIBUICAO_COM_NOME =
  * 5)? O texto e do banco (atribuir_conversa_passada_pela_ia); nenhuma acao
  * da equipe grava esse texto ("assumiu", "transferiu" sao outros).
  */
-export function ehEventoDeAtribuicao(corpo: unknown): boolean {
+export function ehEventoDeAtribuicao(corpo: unknown): corpo is string {
   return (
     typeof corpo === "string" &&
     (corpo === ATRIBUICAO_SEM_NOME || ATRIBUICAO_COM_NOME.test(corpo))
@@ -116,9 +118,27 @@ export type LinhaDaConversaNoEvento = {
 /**
  * Quantas conversas o vigia lembra antes de esquecer todas (a proxima
  * entrada de cada uma vira uma pergunta a mais ao servidor, nunca um aviso
- * a mais: quem decide e ele).
+ * a mais: quem decide e ele). Tambem o teto da semente
+ * (conversasEmAtendimentoCom).
  */
 export const CONVERSAS_LEMBRADAS = 2_000;
+
+/**
+ * O vigia da atribuicao (vigiaDaAtribuicao): chamado com a linha de cada
+ * evento de conversation, devolve o id quando e hora de perguntar ao
+ * servidor, ou nulo. `semear` o arma (ver abaixo).
+ */
+export type VigiaDaAtribuicao = {
+  (linha: LinhaDaConversaNoEvento | null | undefined): string | null;
+  /**
+   * As conversas que JA estavam em atendimento com a pessoa na montagem
+   * (conversasEmAtendimentoCom, pela sessao). Arma o vigia; essas nunca
+   * perguntam. Devolve as entradas que esperavam a semente e que ela nao
+   * conhece (entraram depois da leitura): essas perguntam agora. A leitura
+   * que falhou semeia vazio. So a primeira chamada vale.
+   */
+  semear: (ids: readonly string[]) => string[];
+};
 
 /**
  * O vigia da atribuicao: diz QUANDO perguntar ao servidor se a conversa
@@ -128,7 +148,22 @@ export const CONVERSAS_LEMBRADAS = 2_000;
  * conversa em atendimento recebe um evento a cada mensagem). Se ela sai e
  * volta (devolvida para a IA e passada de novo), e outra entrada. Quem
  * decide se o aviso sai e o servidor (lerAvisoDaConversaAction): o mesmo
- * evento chega quando a propria pessoa assume a conversa.
+ * evento chega quando a propria pessoa assume a conversa ou quando um
+ * colega passa a conversa para ela.
+ *
+ * SEMEADO NA MONTAGEM (revisao curta da AG6a): sem saber o que ja estava
+ * com a pessoa, o primeiro evento de cada conversa em atendimento com ela
+ * (uma mensagem nova, por exemplo) parecia uma entrada. Depois de F5, numa
+ * segunda aba, em outro aparelho ou na troca de clinica, o aviso de uma
+ * atribuicao de menos de 5 minutos saia de novo, e cada conversa dela fazia
+ * uma pergunta na fila de Server Actions do Next (a frente do proximo
+ * "Enviar"). Agora o vigia nasce DESARMADO: ate a semente chegar, nenhum
+ * evento pergunta, e as entradas vistas ficam na espera; `semear` marca as
+ * conversas que ja estavam com a pessoa (sem pergunta para elas) e devolve
+ * as da espera que a semente nao conhece. O evento que chegou antes da
+ * semente vale mais que ela para a mesma conversa (a semente so preenche o
+ * que o vigia ainda nao conhece). O aviso, entao, so sai para a conversa
+ * que ENTRA em atendimento com a pessoa depois da montagem.
  */
 export function vigiaDaAtribuicao({
   clinicId,
@@ -138,9 +173,20 @@ export function vigiaDaAtribuicao({
   clinicId: string;
   viewerId: string;
   limite?: number;
-}): (linha: LinhaDaConversaNoEvento | null | undefined) => string | null {
+}): VigiaDaAtribuicao {
   const comigo = new Map<string, boolean>();
-  return (linha) => {
+  // As entradas vistas antes da semente (a decisao espera por ela).
+  const naEspera = new Set<string>();
+  let armado = false;
+
+  const lembrar = (id: string, minha: boolean) => {
+    if (!comigo.has(id) && comigo.size >= limite) {
+      comigo.clear();
+    }
+    comigo.set(id, minha);
+  };
+
+  const vigia = (linha: LinhaDaConversaNoEvento | null | undefined) => {
     if (
       !linha ||
       linha.clinic_id !== clinicId ||
@@ -152,13 +198,36 @@ export function vigiaDaAtribuicao({
       linha.status === "em_atendimento" &&
       typeof linha.assignee_user_id === "string" &&
       linha.assignee_user_id === viewerId;
-    const antes = comigo.get(linha.id);
-    if (antes === undefined && comigo.size >= limite) {
-      comigo.clear();
+    const entrou = minha && comigo.get(linha.id) !== true;
+    lembrar(linha.id, minha);
+    if (!armado) {
+      if (entrou) {
+        naEspera.add(linha.id);
+      } else if (!minha) {
+        naEspera.delete(linha.id);
+      }
+      return null;
     }
-    comigo.set(linha.id, minha);
-    return minha && antes !== true ? linha.id : null;
+    return entrou ? linha.id : null;
   };
+
+  const semear = (ids: readonly string[]): string[] => {
+    if (armado) {
+      return [];
+    }
+    armado = true;
+    const jaComigo = new Set(ids);
+    for (const id of jaComigo) {
+      if (!comigo.has(id)) {
+        lembrar(id, true);
+      }
+    }
+    const perguntar = [...naEspera].filter((id) => !jaComigo.has(id));
+    naEspera.clear();
+    return perguntar;
+  };
+
+  return Object.assign(vigia, { semear });
 }
 
 /** O evento da janela que pede ao Atendimento aberto para abrir a conversa. */

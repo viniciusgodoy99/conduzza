@@ -8,6 +8,7 @@ import {
 } from "@/components/shell/avisos-da-conversa";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { auditarLeituraDePaciente } from "@/lib/auth/read-audit";
+import { textoDaAtribuicaoDaIa } from "@/lib/domain/agente/config";
 import { formatarTelefone } from "@/lib/domain/telefone";
 import { log } from "@/lib/log";
 import { marcaDeUrgenciaDaLinha } from "@/lib/queries/conversations";
@@ -28,11 +29,15 @@ import { createClient } from "@/lib/supabase/server";
 //   aberta (alguem ja pegou: sem aviso);
 // - atribuida: a conversa da clinica ativa esta em atendimento com QUEM
 //   PEDE, e o ULTIMO evento do fio dela e o da atribuicao ao responsavel do
-//   lead (sistema, evento, o texto do banco), de menos de 5 minutos. O
-//   vigia pergunta quando a conversa ENTRA em atendimento com a pessoa
-//   (revisao da AG6a: nasce do evento de conversation, nao mais de message),
-//   e isso tambem acontece quando ela mesma assume: ai o ultimo evento e o
-//   "assumiu", e nao ha aviso.
+//   lead (sistema, evento, o texto do banco), de menos de 5 minutos, COM O
+//   NOME DE QUEM PEDE (o profile.name dela, como o banco escreve). O vigia
+//   pergunta quando a conversa ENTRA em atendimento com a pessoa (revisao
+//   da AG6a: nasce do evento de conversation, nao mais de message), e isso
+//   tambem acontece quando ela mesma assume ou quando um colega passa a
+//   conversa para ela. Assumir e Transferir gravam o evento deles DEPOIS do
+//   update (atendimento/actions.ts): por um instante, o ultimo evento do fio
+//   ainda e o da atribuicao da IA ao colega, e sem o nome a Ana que recebeu
+//   do Bruno via "A IA passou para você" (revisao curta da AG6a).
 // Log so com a clinica, o tipo e o codigo do erro; nunca nome nem texto.
 
 const entradaSchema = z.discriminatedUnion("tipo", [
@@ -74,6 +79,26 @@ function contatoParaOAviso(contato: unknown): string | null {
   return typeof telefone === "string" && telefone !== ""
     ? formatarTelefone(telefone)
     : null;
+}
+
+/** Espacos, tabulacoes e quebras viram um espaco so, sem as pontas. */
+function emUmaLinha(texto: string): string {
+  return texto.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * O evento da atribuicao e o de QUEM PEDE? O texto do banco leva o nome do
+ * perfil do responsavel (profile.name numa linha, ate 80 caracteres; sem
+ * nome, o generico), e o espelho dele e textoDaAtribuicaoDaIa: o evento so
+ * vale quando e EXATAMENTE o texto que o banco escreveria para quem pede.
+ * Os dois lados passam por emUmaLinha antes de comparar (o \s do Postgres e
+ * o do JavaScript nao pegam os mesmos espacos; uma diferenca que sobrar so
+ * tira o aviso, nunca da um aviso errado). Colegas com o mesmo nome no
+ * perfil continuam indistinguiveis por aqui: o caso raro em que o aviso
+ * ainda pode sair para quem recebeu de um colega.
+ */
+function atribuicaoAQuemPede(corpo: string, nomeDoPerfil: string | null) {
+  return emUmaLinha(corpo) === emUmaLinha(textoDaAtribuicaoDaIa(nomeDoPerfil));
 }
 
 /** O que a conversa precisa ter para cada aviso (a marca, so na urgencia). */
@@ -133,22 +158,35 @@ export async function lerAvisoDaConversaAction(
       return { ok: true, aviso: null };
     }
     // O ULTIMO evento do fio desta conversa (o desempate pelo id, como o
-    // fio): se alguem assumiu ou transferiu depois, o ultimo e outro.
-    const { data: ultimo, error: erroDoEvento } = await supabase
-      .from("message")
-      .select("author, content_type, body, created_at")
-      .eq("clinic_id", active.clinicId)
-      .eq("conversation_id", pedido.conversationId)
-      .eq("content_type", "evento")
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (erroDoEvento) {
+    // fio): se alguem assumiu ou transferiu depois, o ultimo e outro. Junto,
+    // o nome do perfil de quem pede (a policy deixa ler o proprio), para
+    // conferir que a atribuicao foi a ELA (atribuicaoAQuemPede).
+    const [
+      { data: ultimo, error: erroDoEvento },
+      { data: perfil, error: erroDoPerfil },
+    ] = await Promise.all([
+      supabase
+        .from("message")
+        .select("author, content_type, body, created_at")
+        .eq("clinic_id", active.clinicId)
+        .eq("conversation_id", pedido.conversationId)
+        .eq("content_type", "evento")
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("profile")
+        .select("name")
+        .eq("user_id", context.userId)
+        .maybeSingle(),
+    ]);
+    const erroDaLeitura = erroDoEvento ?? erroDoPerfil;
+    if (erroDaLeitura) {
       log.warn("aviso_da_conversa_nao_lido", {
         clinic_id: active.clinicId,
         kind: pedido.tipo,
-        error_code: erroDoEvento.code ?? null,
+        error_code: erroDaLeitura.code ?? null,
       });
       return { ok: false };
     }
@@ -162,11 +200,16 @@ export async function lerAvisoDaConversaAction(
       typeof evento?.created_at === "string"
         ? Date.parse(evento.created_at)
         : Number.NaN;
+    const nomeDoPerfil = (perfil as { name?: unknown } | null)?.name;
     if (
       !evento ||
       evento.author !== "sistema" ||
       evento.content_type !== "evento" ||
       !ehEventoDeAtribuicao(evento.body) ||
+      !atribuicaoAQuemPede(
+        evento.body,
+        typeof nomeDoPerfil === "string" ? nomeDoPerfil : null,
+      ) ||
       !Number.isFinite(quando) ||
       Date.now() - quando > JANELA_DO_AVISO_MS
     ) {

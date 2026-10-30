@@ -34,10 +34,13 @@ import {
 // conversa), que a recebe "Em atendimento", em Minhas, com um aviso na
 // tela. Sem responsavel, com ele fora da equipe ou so com leitura, a fila;
 // quem assumir antes fica com a conversa; urgencia, sintoma, assunto
-// clinico e midia vao sempre para a fila. Quem decide e o banco, depois da
-// frase (atribuir_conversa_passada_pela_ia), pela ultima versao publicada:
-// a tela so guarda a escolha. O paragrafo de ajuda e a descricao do grupo
-// de cartoes (aria-describedby), para o leitor de tela ouvir as excecoes.
+// clinico, midia e a resposta barrada pela conformidade vao sempre para a
+// fila (MOTIVOS_QUE_NUNCA_ATRIBUEM, menos o fora do horario, que e passagem
+// sem a frase), e a pessoa que escreve de novo antes da atribuicao tambem
+// fica nela. Quem decide e o banco, depois da frase
+// (atribuir_conversa_passada_pela_ia), pela ultima versao publicada: a tela
+// so guarda a escolha. O paragrafo de ajuda e a descricao do grupo de
+// cartoes (aria-describedby), para o leitor de tela ouvir as excecoes.
 //
 // Molde do cartao "Quem o assistente atende": cartoes de radio com o proprio
 // Salvar (grava no RASCUNHO pela acao salvarPassagemAction, vale ao
