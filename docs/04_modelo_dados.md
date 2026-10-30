@@ -4311,6 +4311,6 @@ Ao cancelar, grava a trilha (`cancelado_paciente`, `changed_by` `ia`, sem usuár
 - **O ok para aplicar** a migration e publicar o código, nessa ordem. **Feito em 28/10/2026** (acima, "Na produção").
 - **As decisões pendentes** (34.1): D-24 a D-33, a D-35 (os 60 minutos), a âncora forte também na marcação da AG3 (B3, que muda a marcação da AG3 já publicada, onde "Agendar consulta" estiver ligada) e a unidade de cada consulta no resumo do verificador (`docs/03`, 21.21).
 - **A citação de outra mensagem não é conferida pelo banco** (34.9): só o motor recusa o toque atrasado num botão de outra mensagem; conferir `reply_to_message_id` no banco fica para a próxima migration.
-- **Os tipos foram escritos à mão** (a seção 4 do CLAUDE.md pede gerados): regenerar depois de aplicar.
+- **Os tipos foram escritos à mão** (a seção 4 do CLAUDE.md pede gerados): conferidos em 30/10/2026 contra os gerados da produção (`supabase gen types`, depois da `20261028100000` aplicada) pelo `canon-tipos.cjs`: tudo o que a AG4 criou bate; sobram só as 19 diferenças antigas (funções que o código não usa e o `contact.phone_key` no Insert e no Update), as mesmas da publicação da AG3.
 - **As provas de banco** (acima) só rodam depois de aplicar. **Rodaram na produção** em 28/10/2026 e, depois do ajuste da preparação dos testes, em 30/10/2026 (acima, "Na produção").
 - **A rodada paga D34** com as versões novas, antes de qualquer paciente.
