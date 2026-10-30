@@ -12,6 +12,7 @@ import type {
 // [AG6b mídia] fim
 import { corDoNumero, type CorDoNumero } from "@/lib/domain/cor-do-numero";
 import { recencia } from "@/lib/domain/filtros-da-conversa";
+import { log } from "@/lib/log";
 
 // Tipos e fetchers do Inbox. Sem tipos gerados do banco (pendencia
 // registrada), as formas sao declaradas aqui e os selects fazem cast; a RLS
@@ -351,7 +352,8 @@ const CONVERSATION_SELECT_SEM_MARCA =
 // 42P01 (o cache ainda acha a tabela que saiu, como no rollback), e a lista
 // de TODAS as clinicas caia no error.tsx. Com esses dois codigos, a busca
 // e refeita sem o embutido e cada conversa vem com `urgente: null`: o
-// Atendimento abre sem a marca. Qualquer outro erro continua sendo erro.
+// Atendimento abre sem a marca, e o servidor registra a volta no log so
+// com o codigo (revisao curta). Qualquer outro erro continua sendo erro.
 // [AG6 urgência] fim
 const CONVERSATION_SELECT =
   `${CONVERSATION_SELECT_SEM_MARCA}, urgencia:conversa_urgente (desde, encerrada_em)` as const;
@@ -372,9 +374,28 @@ type RespostaDaBusca = {
   error: { code?: string | null; message: string } | null;
 };
 
+/** O evento do log quando a lista volta sem o embutido da marca. */
+export const EVENTO_DA_LISTA_SEM_A_MARCA = "atendimento_lista_sem_a_marca";
+
+/**
+ * A volta sem o embutido deixa rastro no servidor (revisao curta da AG6a:
+ * antes, ela era silenciosa, e o Atendimento sem a marca de urgencia
+ * passava despercebido). So o codigo do erro, nada de dado (nem a clinica:
+ * o erro e do banco inteiro). No navegador, nada: este modulo roda nos dois
+ * lados, o log estruturado e do servidor (process.stdout) e a carga da tela
+ * passa sempre pelo servidor primeiro (a pagina do Atendimento).
+ */
+function registrarAVoltaSemAMarca(codigo: string | null): void {
+  if (typeof window !== "undefined") {
+    return;
+  }
+  log.warn(EVENTO_DA_LISTA_SEM_A_MARCA, { error_code: codigo });
+}
+
 /**
  * Faz a busca com a marca embutida e, se o embutido nao existe no banco
- * (marcaForaDoBanco), refaz sem ele. `buscar` recebe o select de cada vez.
+ * (marcaForaDoBanco), refaz sem ele, com o rastro no servidor. `buscar`
+ * recebe o select de cada vez.
  */
 async function comAMarcaSePuder(
   buscar: (
@@ -382,9 +403,11 @@ async function comAMarcaSePuder(
   ) => PromiseLike<RespostaDaBusca>,
 ): Promise<RespostaDaBusca> {
   const resposta = await buscar(CONVERSATION_SELECT);
-  return marcaForaDoBanco(resposta.error)
-    ? buscar(CONVERSATION_SELECT_SEM_MARCA)
-    : resposta;
+  if (!marcaForaDoBanco(resposta.error)) {
+    return resposta;
+  }
+  registrarAVoltaSemAMarca(resposta.error?.code ?? null);
+  return buscar(CONVERSATION_SELECT_SEM_MARCA);
 }
 // [AG6 urgência] fim
 

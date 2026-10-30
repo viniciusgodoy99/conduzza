@@ -596,7 +596,12 @@ const REGIOES = alternativas([
 
 // [AG6 urgência] início
 // AG6a (revisao de 28/10/2026, achados de falso positivo das regras novas):
-// o que e recepcao e nao conduta com o corpo.
+// o que e recepcao e nao conduta com o corpo. Revisao de 30/10/2026: as
+// excecoes da recepcao (o lugar, a chegada e a espera) valem SO para ficar
+// sentada e para o "sente-se" ("senta-se"): deitada, de lado, de costas,
+// imovel, as pernas para cima e o "deite-se" continuam barrados como na
+// edd123c ("Fique deitada e aguarde o atendimento", "Quando chegar, fique
+// deitada", "Ao entrar, fique de costas", "Ao chegar, deita-se e aguarde").
 /** O lugar da recepcao ("fique sentada na sala de espera"). */
 const NA_RECEPCAO =
   "(?:na|no) (?:recepcao|sala de espera|area de espera|sofa da recepcao)";
@@ -614,13 +619,20 @@ const DEPOIS_DA_CHEGADA = `(?<!\\b${CHEGADA_NA_CLINICA},? (?:por favor,? )?)`;
 /** Esperar a vez na recepcao ("sente-se e aguarde ser chamada"). */
 const ESPERAR_A_VEZ =
   "e aguarde (?:ser chamad[oa]|a chamada|o chamado|sua vez|a sua vez|seu nome|o seu nome|a recepcao|ser atendid[oa]|o atendimento)";
+/** Ficar de um jeito: o imperativo (ou "tente", "procure", "continue"). */
+const FICAR_DE_UM_JEITO =
+  "\\b(?:fique|fiquem|permaneca|permanecam|continue|continuem|mantenha-?se|se mantenha|procure ficar|tente ficar|quedese)\\b(?: [a-z]+){0,2}?";
 /**
  * O acompanhante do dia do procedimento, logo depois ("chame alguem para
  * ficar com voce no dia, por causa da sedacao", "nao fique sozinha no dia
  * do procedimento"): logistica da clinica, como "venha acompanhada".
+ * Revisao de 30/10/2026: "depois do procedimento", "apos o procedimento",
+ * "durante o procedimento" e "na volta" sairam ("Nao fique sozinha depois
+ * do procedimento" e cuidado depois do procedimento: barra, como na
+ * edd123c).
  */
 const ACOMPANHANTE_DO_DIA =
-  "(?!,? (?:no dia|nesse dia|neste dia|naquele dia|na consulta|no procedimento|durante o procedimento|depois do procedimento|apos o procedimento|na volta|para (?:te )?(?:levar|buscar|acompanhar)|pra (?:te )?(?:levar|buscar|acompanhar)|por causa da (?:sedacao|anestesia))\\b)";
+  "(?!,? (?:no dia|nesse dia|neste dia|naquele dia|na consulta|no procedimento|para (?:te )?(?:levar|buscar|acompanhar)|pra (?:te )?(?:levar|buscar|acompanhar)|por causa da (?:sedacao|anestesia))\\b)";
 // [AG6 urgência] fim
 
 export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
@@ -912,7 +924,7 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
   p(
     "orientacao_clinica",
     "postura_do_corpo",
-    `${DEPOIS_DA_CHEGADA}\\b(?:fique|fiquem|permaneca|permanecam|continue|continuem|mantenha-?se|se mantenha|procure ficar|tente ficar|quedese)\\b(?: [a-z]+){0,2}? (?:sentad(?:inh)?[oa]s?|deitad(?:inh)?[oa]s?|acostad[oa]s?|recostad[oa]s?|reclinad[oa]s?|de lado|de barriga (?:para|pra) (?:cima|baixo)|de costas|imove(?:l|is)|com (?:as pernas|os pes|a cabeca) (?:para|pra) (?:cima|baixo)|com (?:as pernas|os pes) (?:elevad[oa]s|levantad[oa]s|no alto))\\b(?! ${NA_RECEPCAO}\\b)(?! ${ESPERAR_A_VEZ}\\b)|${DEPOIS_DA_CHEGADA}\\b(?:deite|deita|deitem|sente|senta|sentem)-?se\\b(?! a vontade)(?! ${NA_RECEPCAO}\\b)(?! ${ESPERAR_A_VEZ}\\b)|\\bdeite\\b|\\b(?:deita|senta) (?:ai|ali|aqui|um pouco|um pouquinho|de lado|no chao)\\b|\\b(?:deixe|deixa|mantenha|coloque|coloca|ponha|poe)\\b (?:a pessoa|ela|ele|o paciente|a paciente|a crianca|sua mae|seu pai|seu filho|sua filha)(?: [a-z]+){0,2}? (?:sentad|deitad|recostad|reclinad|de lado\\b|de barriga\\b|de costas\\b)|\\b(?:levante|levanta|eleve|eleva|erga|ergue)\\b (?:as |suas |os |seus )(?:pernas|pes)\\b|\\b(?:pernas|pes) (?:para|pra) (?:cima|o alto)\\b|\\bcabeca entre (?:os|as) (?:joelhos|pernas)\\b|\\bposicao (?:lateral|de seguranca|de recuperacao)\\b|\\bvir(?:e|a) (?:a pessoa|ela|ele|o paciente|a paciente|a crianca|o corpo)(?: [a-z]+)? de lado\\b|\\bnao se (?:levante|levanta|mexa|mexe|movimente|movimenta|mova)\\b|\\b(?:sit down|lie down|stay (?:seated|lying down)|sientese|acuestese)\\b`,
+    `${DEPOIS_DA_CHEGADA}${FICAR_DE_UM_JEITO} sentad(?:inh)?[oa]s?\\b(?! ${NA_RECEPCAO}\\b)(?! ${ESPERAR_A_VEZ}\\b)|${FICAR_DE_UM_JEITO} (?:deitad(?:inh)?[oa]s?|acostad[oa]s?|recostad[oa]s?|reclinad[oa]s?|de lado|de barriga (?:para|pra) (?:cima|baixo)|de costas|imove(?:l|is)|com (?:as pernas|os pes|a cabeca) (?:para|pra) (?:cima|baixo)|com (?:as pernas|os pes) (?:elevad[oa]s|levantad[oa]s|no alto))\\b|${DEPOIS_DA_CHEGADA}\\b(?:sente|senta|sentem)-?se\\b(?! a vontade)(?! ${NA_RECEPCAO}\\b)(?! ${ESPERAR_A_VEZ}\\b)|\\b(?:deite|deita|deitem)-?se\\b(?! a vontade)|\\bdeite\\b|\\b(?:deita|senta) (?:ai|ali|aqui|um pouco|um pouquinho|de lado|no chao)\\b|\\b(?:deixe|deixa|mantenha|coloque|coloca|ponha|poe)\\b (?:a pessoa|ela|ele|o paciente|a paciente|a crianca|sua mae|seu pai|seu filho|sua filha)(?: [a-z]+){0,2}? (?:sentad|deitad|recostad|reclinad|de lado\\b|de barriga\\b|de costas\\b)|\\b(?:levante|levanta|eleve|eleva|erga|ergue)\\b (?:as |suas |os |seus )(?:pernas|pes)\\b|\\b(?:pernas|pes) (?:para|pra) (?:cima|o alto)\\b|\\bcabeca entre (?:os|as) (?:joelhos|pernas)\\b|\\bposicao (?:lateral|de seguranca|de recuperacao)\\b|\\bvir(?:e|a) (?:a pessoa|ela|ele|o paciente|a paciente|a crianca|o corpo)(?: [a-z]+)? de lado\\b|\\bnao se (?:levante|levanta|mexa|mexe|movimente|movimenta|mova)\\b|\\b(?:sit down|lie down|stay (?:seated|lying down)|sientese|acuestese)\\b`,
   ),
   p(
     "orientacao_clinica",
@@ -1357,6 +1369,16 @@ const TEMPO_DE_CORTESIA = "\\d+ ?(?:h|hs|horas?|min|minutos) de ";
  */
 const CONDICAO_DE_SOCORRO =
   "(?:qualquer coisa|qualquer problema|qualquer emergencia|qualquer intercorrencia|se precisar|se precisarem|caso precise|caso precisem|em caso de|no caso de|se for preciso|se for necessario|se necessario|se piorar|se sentir|se acontecer|se tiver (?:algum|alguma)|se houver|se algo|em (?:uma )?emergencia|numa emergencia|em (?:uma )?urgencia|numa urgencia)";
+/**
+ * Revisao de 30/10/2026: a IDA ao lugar depois dele, ate o ponto ("Ficamos
+ * ao lado da UPA, va direto para la", "corra para la", "pode ir la agora",
+ * "procure-o", "la eles atendem"): o lugar vira destino e a regra
+ * pronto_socorro barra, como no main. O "vai" de futuro ("voce vai ver a
+ * placa"), o "segue" do endereco ("segue a localizacao") e o "procure a
+ * recepcao" nao sao a ida.
+ */
+const IDA_AO_LUGAR =
+  "(?:(?:va|vai|ir|corra|corre|correr|dirija-se|dirija|dirigir-se)(?: (?:direto|diretamente|agora|ja|correndo|rapido|logo|imediatamente))* (?:pra|para|ate|ao|a|na|no|la)|procur(?:e|a|ar)-(?:o|a|lo|la|los|las)|procur(?:e|a|ar) (?:ele|ela|la|por ele|por ela)|(?:pra|para|ate) la|la)";
 // [AG6 urgência] fim
 
 export const NEUTRALIZACOES_DE_SAIDA: readonly Neutralizacao[] = [
@@ -1453,8 +1475,12 @@ export const NEUTRALIZACOES_DE_SAIDA: readonly Neutralizacao[] = [
     // "numa emergencia" (antes ou depois do lugar, ate o ponto), o lugar
     // vira destino ("Qualquer coisa, estamos em frente ao Pronto-Socorro",
     // "Ficamos ao lado da UPA, se precisar") e a regra pronto_socorro barra.
+    // Revisao de 30/10/2026 (pior que a producao, que barrava todos): a IDA
+    // ao lugar depois dele, ate o ponto, tambem ("Ficamos ao lado da UPA, va
+    // direto para la", "Estamos em frente ao hospital, corra para la", "Fica
+    // perto do pronto-socorro, va la", "procure-o").
     nome: "servico_de_saude_de_referencia",
-    fonte: `(?<!\\b(?:va|vai|ir|ida|corra|corre|correr|siga|segue|seguir|dirija|dirija-se|dirigir|procure|procura|procurar|busque|buscar|leve|leva|levar|encaminhe|encaminhar)\\b[^.!?;,]{0,30})(?<!\\b${CONDICAO_DE_SOCORRO}\\b[^.!?;]{0,80})(?<=\\b(?:lado|frente|perto|proxim[oa]s?|vizinh[oa]s?|esquina|em cima|embaixo|atras|junto|colad[oa]s?|depois|antes|rua|predio|galeria|quadra|referencia:?(?: e)?) (?:d[aoe]s? |a |ao |as )?(?:uma |um |base d[oa] |entrada d[oa] )?)(?:upa|pronto[ -]?socorro|pronto[ -]?atendimento|samu|hospital|posto de saude)\\b(?![^.!?;]{0,80}\\b${CONDICAO_DE_SOCORRO}\\b)`,
+    fonte: `(?<!\\b(?:va|vai|ir|ida|corra|corre|correr|siga|segue|seguir|dirija|dirija-se|dirigir|procure|procura|procurar|busque|buscar|leve|leva|levar|encaminhe|encaminhar)\\b[^.!?;,]{0,30})(?<!\\b${CONDICAO_DE_SOCORRO}\\b[^.!?;]{0,80})(?<=\\b(?:lado|frente|perto|proxim[oa]s?|vizinh[oa]s?|esquina|em cima|embaixo|atras|junto|colad[oa]s?|depois|antes|rua|predio|galeria|quadra|referencia:?(?: e)?) (?:d[aoe]s? |a |ao |as )?(?:uma |um |base d[oa] |entrada d[oa] )?)(?:upa|pronto[ -]?socorro|pronto[ -]?atendimento|samu|hospital|posto de saude)\\b(?![^.!?;]{0,160}\\b(?:${CONDICAO_DE_SOCORRO}|${IDA_AO_LUGAR})\\b)`,
     troca: "loja",
   },
   // [AG6 urgência] fim
@@ -1736,7 +1762,15 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
   e(
     "sintoma",
     "sintoma_citado",
-    "\\b(?:dor\\b|dores\\b|dorzinha|dorzona|doi\\b|doendo|doeu|doer\\b|dolorid|febr|sangr|inchad|inchac|inchou|incha\\b|inchando|desinch|inx[ao]|reac(?:ao|oes)\\b|falta de ar|sem ar\\b|nao consigo respirar|dificuldade (?:de|para|pra) respirar|tontura|tont[oa]\\b|desmai|vomit|enjo|nausea|diarreia|manch|coceira|cocando|coca\\b|cocar|alergi|alergic|infecc|infeccion|infectad|inflama|pus\\b|caroco|nodulo|bolinha|bolha|empol|passando mal|mal estar|me sentindo mal|estou mal|to mal|machuc|ferid|queimad|queimou|queimando|ardencia|ardend|arde\\b|ardeu|ardor|vermelh|roxo|roxa|hematoma|sangue|edema|formigament|dormencia|dormente|paralis|visao turva|vista embacada|convuls|pressao alta|pressao baixa|taquicardia|palpitac|coracao acelerado|quebrei|fratur|torci\\b|torcao|luxac|cortei|cortou|picada|mordida|irritac|descamand|descascand|secrecao|catarro|tosse|gripad|resfriad|garganta|colica|corrimento|enxaqueca|crise|panico|suicid|me matar|quero morrer|tirar minha vida|socorro|urgente|emergencia|grave\\b|piorou|piorando|estranh[oa]|tort[oa]\\b|caid[oa]\\b|assimetric|deformad|endurecid|aperto no peito|peito (?:\\w+ )?(?:doendo|apertad|queimando|ardendo|chiando)|respir|entort|latej|pontada|fisgada|repux|zonz|tontei|puxando pro lado|aguinha|roxinh|carocinh|calombo)|\\bcostas? (?:ta|tao|esta|estao) me matando",
+    // [AG6 urgência] Revisao de 30/10/2026 (rede atras da lista de
+    // urgencia): "me matando" ("essa tristeza ta me matando") e o "caiu" do
+    // corpo ("o rosto dela caiu", "minha boca caiu", "minha mae caiu", "a
+    // pressao dela caiu"). O "caiu" solto fica de fora de proposito: "o pix
+    // caiu?", "a ligacao caiu" e "caiu na caixa postal" sao recepcao.
+    "\\b(?:dor\\b|dores\\b|dorzinha|dorzona|doi\\b|doendo|doeu|doer\\b|dolorid|febr|sangr|inchad|inchac|inchou|incha\\b|inchando|desinch|inx[ao]|reac(?:ao|oes)\\b|falta de ar|sem ar\\b|nao consigo respirar|dificuldade (?:de|para|pra) respirar|tontura|tont[oa]\\b|desmai|vomit|enjo|nausea|diarreia|manch|coceira|cocando|coca\\b|cocar|alergi|alergic|infecc|infeccion|infectad|inflama|pus\\b|caroco|nodulo|bolinha|bolha|empol|passando mal|mal estar|me sentindo mal|estou mal|to mal|machuc|ferid|queimad|queimou|queimando|ardencia|ardend|arde\\b|ardeu|ardor|vermelh|roxo|roxa|hematoma|sangue|edema|formigament|dormencia|dormente|paralis|visao turva|vista embacada|convuls|pressao alta|pressao baixa|taquicardia|palpitac|coracao acelerado|quebrei|fratur|torci\\b|torcao|luxac|cortei|cortou|picada|mordida|irritac|descamand|descascand|secrecao|catarro|tosse|gripad|resfriad|garganta|colica|corrimento|enxaqueca|crise|panico|suicid|me matar|me matando|quero morrer|tirar minha vida|socorro|urgente|emergencia|grave\\b|piorou|piorando|estranh[oa]|tort[oa]\\b|caid[oa]\\b|assimetric|deformad|endurecid|aperto no peito|peito (?:\\w+ )?(?:doendo|apertad|queimando|ardendo|chiando)|respir|entort|latej|pontada|fisgada|repux|zonz|tontei|puxando pro lado|aguinha|roxinh|carocinh|calombo)|\\bcostas? (?:ta|tao|esta|estao) me matando" +
+      "|\\b(?:rosto|face|boca|labio|labios|olho|olhos|palpebra|palpebras|sobrancelha|sobrancelhas|bochecha|bochechas|queixo|braco|bracos|perna|pernas|mao|maos|lado do corpo|metade do corpo|lado do rosto|metade do rosto|pressao|glicose|glicemia)\\b(?: \\w+){0,2}? (?:caiu|cairam)\\b" +
+      "|\\b(?:caiu|cairam)\\b(?: \\w+){0,3}? (?:rosto|face|boca|labio|labios|olho|olhos|palpebra|palpebras|sobrancelha|sobrancelhas|bochecha|bochechas|queixo)\\b" +
+      "|\\b(?:ela|ele|minha mae|meu pai|minha filha|meu filho|minha avo|meu avo|minha vo|meu vo|meu marido|minha esposa|minha mulher|a paciente|o paciente|a crianca|o bebe|a bebe)\\b(?: \\w+)? caiu\\b",
   ),
   // Sinais de urgencia graves e inequivocos (revisao de 05/10/2026): boca ou
   // rosto formigando (AVC), palpebra ou olho caido (ptose da toxina), falta

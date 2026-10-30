@@ -15,7 +15,7 @@ import {
   type SinalDeEmergencia,
 } from "@/lib/domain/conformidade/urgencia";
 
-/** Todas as fontes de um sinal: a dele e as excecoes. */
+/** Todas as fontes de um sinal: a dele, as excecoes e o que as desfaz. */
 function fontesDoSinal(sinal: SinalDeEmergencia): string[] {
   return [
     sinal.fonte,
@@ -23,6 +23,7 @@ function fontesDoSinal(sinal: SinalDeEmergencia): string[] {
     sinal.excecaoDepois,
     sinal.excecaoNaOracaoAnterior,
     sinal.excecaoNaMensagem,
+    sinal.semExcecaoCom,
   ].filter((fonte): fonte is string => fonte !== undefined);
 }
 
@@ -61,9 +62,9 @@ describe("a lista", () => {
       // que traz a propria negacao.
       ...REGRAS_DE_LEITURA_DA_URGENCIA,
     ];
-    expect(FONTES_DA_URGENCIA.slice(SINAIS_DE_EMERGENCIA.length, -2)).toEqual(
-      [...REGRAS_DE_LEITURA_DA_URGENCIA],
-    );
+    expect(FONTES_DA_URGENCIA.slice(SINAIS_DE_EMERGENCIA.length, -2)).toEqual([
+      ...REGRAS_DE_LEITURA_DA_URGENCIA,
+    ]);
     for (const fonte of fontes) {
       const semEscapes = fonte.replace(/\\[a-zA-Z]/g, " ");
       expect(semEscapes, fonte).not.toMatch(/([a-z])\1/);
@@ -255,20 +256,56 @@ describe("a junção das pendentes (na ordem)", () => {
     expect(detectarUrgencia(["no peito", "to com dor"])).toBeNull();
   });
 
-  it("a exceção da mensagem inteira vale na junção (o procedimento numa, a boca na outra)", () => {
+  // Revisao de 30/10/2026: a excecao da mensagem le so a MESMA mensagem do
+  // sinal, nunca a rajada inteira (na 2a revisao, o procedimento numa
+  // mensagem apagava a boca torta da outra).
+  it("a exceção da mensagem lê só a mensagem do sinal (o procedimento numa, a boca na outra: urgência)", () => {
     expect(
-      detectarUrgencia(["fiz botox semana passada", "e minha boca ficou torta"]),
+      detectarUrgencia(["fiz botox semana passada", "e minha boca ficou torta"])
+        ?.sinal,
+    ).toBe("boca_torta");
+    expect(
+      detectarUrgencia([
+        "quanto fica com o botox?",
+        "minha mãe acordou com a boca torta agora",
+      ])?.sinal,
+    ).toBe("boca_torta");
+    // Na mesma mensagem, o efeito do procedimento (D-51) segue sem a marca.
+    expect(
+      detectarUrgencia([
+        "oi",
+        "fiz botox semana passada e minha boca ficou torta",
+      ]),
     ).toBeNull();
-    // Sozinha, a boca torta e o sinal.
-    expect(detectarUrgencia(["e minha boca ficou torta"])?.sinal).toBe(
-      "boca_torta",
-    );
+    // O sinal que atravessa as mensagens le todas as que ele toca.
+    expect(
+      detectarUrgencia(["fiz botox ontem e minha boca", "ficou torta"]),
+    ).toBeNull();
+  });
+
+  it("o que desfaz a exceção lê a rajada inteira (só devolve a urgência)", () => {
+    expect(
+      detectarUrgencia(["acordei", "e tentei ligar, não consigo falar"])?.sinal,
+    ).toBe("nao_consigo_falar");
+    expect(
+      detectarUrgencia([
+        "fiz harmonização e meu rosto ficou torto",
+        "de um lado",
+      ])?.sinal,
+    ).toBe("rosto_torto");
+    expect(
+      detectarUrgencia(["é uma emergência, cancela", "tudo e me ajuda"])?.sinal,
+    ).toBe("emergencia");
+    // Sem o que desfaz, a excecao continua lida so na mensagem do sinal.
+    expect(
+      detectarUrgencia(["oi", "tentei ligar várias vezes, não consigo falar."]),
+    ).toBeNull();
   });
 
   it("nulos e vazios no meio não quebram a junção", () => {
-    expect(detectarUrgencia(["to com dor", null, "  ", "no peito"])?.sinal).toBe(
-      "dor_no_peito",
-    );
+    expect(
+      detectarUrgencia(["to com dor", null, "  ", "no peito"])?.sinal,
+    ).toBe("dor_no_peito");
   });
 });
 
@@ -407,10 +444,339 @@ describe("a outra pessoa", () => {
   });
 
   it("a pergunta retórica com o não é o sinal, nunca a negação dele", () => {
-    expect(urgente("não seria melhor eu morrer?")?.sinal).toBe(
-      "melhor_morrer",
-    );
+    expect(urgente("não seria melhor eu morrer?")?.sinal).toBe("melhor_morrer");
     expect(urgente("melhor eu morrer de vergonha")).toBeNull();
+  });
+});
+
+// Revisao de 30/10/2026 (revisao curta de edd123c..2ca2097): cada regra
+// nova. Os casos de cada sinal estao na bateria (bateria-ag6.test.ts), com a
+// nao regressao.
+describe("o antecedente só vale quando governa o sinal", () => {
+  it.each([
+    // A oracao quebra tambem no " e ": a historia fica na primeira parte.
+    ["já tive infarto e tô com dor no peito", "dor_no_peito"],
+    ["ano passado tive infarto e tô com dor no peito", "dor_no_peito"],
+    ["já tive convulsão e ela tá convulsionando", "convulsao"],
+    ["minha mãe já teve AVC e tá com a boca torta", "boca_torta"],
+    ["já desmaiei antes e tô sem ar", "sem_ar"],
+    // "Uma vez" depois do sinal e a contagem, nao a historia.
+    ["desmaiou uma vez e não acordou mais", "desmaio"],
+    ["desmaiei uma vez no dentista", "desmaio"],
+    // O presente na parte do sinal e a retomada depois desfazem.
+    ["às vezes tô com falta de ar", "falta_de_ar"],
+    ["já tive falta de ar e continua", "falta_de_ar"],
+    // O agora na oracao seguinte: com o "mas", ou com o estado de agora.
+    ["já tive dor no peito, mas agora tá muito forte", "dor_no_peito"],
+    ["já tive dor no peito, agora tá muito forte", "dor_no_peito"],
+    ["já tive dor no peito. Hoje voltou", "dor_no_peito"],
+    ["já tive dor no peito, mas agora tá bem forte", "dor_no_peito"],
+  ])("%s: urgência (%s)", (texto, sinal) => {
+    expect(urgente(texto)?.sinal).toBe(sinal);
+  });
+
+  it.each([
+    "já tive choque anafilático e tô com medo de fazer botox",
+    "Já tive falta de ar ano passado. Hoje estou bem, posso fazer botox?",
+    "já desmaiei tirando sangue. Hoje quero marcar o exame, posso ir acompanhada?",
+    "já tive dor no peito, mas agora estou bem",
+    "minha mãe parou de respirar ano passado e faleceu",
+    "uma vez ela tava morrendo de covid",
+  ])("%s: a história continua história", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+
+  it.each([
+    ["já perdi muito sangue", "muito_sangue"],
+    ["às vezes sangro muito, agora tô sangrando muito", "sangrando_muito"],
+    ["já tive que chamar o SAMU pra ela", "chamar_o_socorro"],
+    ["uma vez chamei a ambulância", "chamar_o_socorro"],
+  ])("%s: nunca no socorro nem no sangramento (%s)", (texto, sinal) => {
+    expect(urgente(texto)?.sinal).toBe(sinal);
+  });
+
+  it("os sinais sem antecedente são os do socorro e do sangramento", () => {
+    expect(
+      SINAIS_DE_EMERGENCIA.filter((s) => s.semAntecedente === true)
+        .map((s) => s.nome)
+        .sort(),
+    ).toEqual(
+      [
+        "chamar_o_socorro",
+        "hemorragia",
+        "muito_sangue",
+        "nao_para_de_sangrar",
+        "sangrando_muito",
+      ].sort(),
+    );
+  });
+});
+
+describe("o telefone só desfaz com a clínica como alvo", () => {
+  it.each([
+    [
+      "liguei pro meu marido, não consigo mexer o braço e não consigo falar direito",
+      "nao_fala_direito",
+    ],
+    [
+      "acordei e tentei ligar pra minha filha, não consigo falar direito",
+      "nao_fala_direito",
+    ],
+    ["liguei pro meu marido e não consigo falar direito", "nao_fala_direito"],
+    ["o telefone tá ruim, não consigo falar direito", "nao_fala_direito"],
+    // A pessoa nomeada, o comeco de repente e a queixa do corpo desfazem.
+    ["liguei pro meu marido, não consigo falar", "nao_consigo_falar"],
+    ["liguei pra ela e não consigo falar", "nao_consigo_falar"],
+    ["acordei e tentei ligar, não consigo falar", "nao_consigo_falar"],
+    [
+      "não consigo falar, tô no trabalho e meu braço tá dormente",
+      "nao_consigo_falar",
+    ],
+    // Sem "alguem" na excecao: o pedido de ajuda e o sinal.
+    ["alguém me ajuda não consigo falar", "nao_consigo_falar"],
+    // A outra pessoa: o telefone nunca desfaz.
+    ["liguei e ela não consegue falar", "nao_consegue_falar"],
+    ["liguei pra minha mãe e ela não consegue falar", "nao_consegue_falar"],
+  ])("%s: urgência (%s)", (texto, sinal) => {
+    expect(urgente(texto)?.sinal).toBe(sinal);
+  });
+
+  it.each([
+    "tentei ligar várias vezes, não consigo falar.",
+    "a recepção não atende, não consigo falar",
+    "liguei e não consigo falar",
+    // Quem esta ocupado, na mesma mensagem (antes ou depois).
+    "Agora não consigo falar, me manda mensagem",
+    "Não consigo falar, estou numa reunião",
+    "Estou no trabalho, não consigo falar, pode mandar mensagem",
+    "não consigo falar, te ligo mais tarde",
+  ])("%s: a ligação, não a fala", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+});
+
+describe("o procedimento só na mesma mensagem, na primeira pessoa e recente", () => {
+  it.each([
+    "fiz botox e minha boca ficou torta",
+    "minha boca ficou torta depois do botox",
+    "fiz harmonização e meu rosto ficou torto",
+    "Fiz preenchimento labial ontem. Hoje minha boca está torta.",
+  ])("%s: efeito do procedimento (sintoma, sem a marca)", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+
+  it.each([
+    // O antigo, a terceira pessoa, a pergunta ("com o botox"), o de repente
+    // e o acordar, e o que nunca se apaga no rosto.
+    [
+      "fiz botox há 2 anos e hoje meu rosto caiu de um lado",
+      "rosto_caido_de_um_lado",
+    ],
+    ["fiz preenchimento há 3 meses e minha boca ficou torta", "boca_torta"],
+    ["minha mãe fez botox e a boca dela ficou torta", "boca_torta"],
+    ["quanto fica com o botox? minha boca ficou torta", "boca_torta"],
+    [
+      "fiz botox semana passada e de repente minha boca ficou torta",
+      "boca_torta",
+    ],
+    ["fiz botox ontem e acordei com a boca torta", "boca_torta"],
+    ["fiz harmonização e meu rosto ficou torto de um lado", "rosto_torto"],
+    ["fiz botox e metade do rosto caiu", "rosto_caido_de_um_lado"],
+  ])("%s: urgência (%s)", (texto, sinal) => {
+    expect(urgente(texto)?.sinal).toBe(sinal);
+  });
+});
+
+describe("o estado permanente e o nariz com a rinoplastia (estética)", () => {
+  it.each([
+    "Meu rosto é torto, quero harmonização facial",
+    "O lado direito do meu rosto é mais caído, quero corrigir",
+    "Minha boca é torta, dá pra corrigir com preenchimento?",
+    "Tenho a boca torta de nascença",
+    "sempre tive a boca torta",
+    "tenho o rosto torto de nascença",
+    "Tenho dificuldade para respirar pelo nariz, quero fazer rinoplastia",
+    "não consigo respirar pelo nariz, quero fazer rinoplastia",
+  ])("%s: não é urgência", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+
+  it.each([
+    // O estado de agora ("ta", "ficou") e o de repente continuam.
+    ["meu rosto tá mais caído de um lado", "rosto_caido_de_um_lado"],
+    ["a boca dela ficou torta do nada", "boca_torta"],
+    [
+      "sempre tive a boca torta, mas de repente ela entortou mais",
+      "boca_torta",
+    ],
+    // O nariz sozinho, ou com a boca, continua (o lado conservador).
+    ["não consigo respirar pelo nariz", "nao_consigo_respirar"],
+    [
+      "fiz rinoplastia ontem e não consigo respirar pelo nariz nem pela boca",
+      "nao_consigo_respirar",
+    ],
+    ["minha boca caiu de um lado", "boca_torta"],
+  ])("%s: urgência (%s)", (texto, sinal) => {
+    expect(urgente(texto)?.sinal).toBe(sinal);
+  });
+});
+
+describe("a emergência da agenda do paciente (recepção)", () => {
+  it.each([
+    "Tenho uma emergência, preciso remarcar",
+    "Estou com uma emergência, não vou poder ir",
+    "Por motivo de emergência preciso cancelar",
+    "preciso desmarcar, é uma emergência",
+    "Vocês fazem atendimento de urgência e emergência?",
+    "vocês têm pronto atendimento de emergência?",
+  ])("%s: não é urgência", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+
+  it.each([
+    // O pedido de ajuda na mesma mensagem desfaz; a agenda em outra
+    // mensagem nao conta (cada mensagem e lida sozinha).
+    [["é uma emergência, cancela tudo e me ajuda"]],
+    [["socorro, tenho uma emergência, preciso remarcar"]],
+    [["tenho uma emergência", "preciso remarcar"]],
+    [["tenho uma emergência, preciso de ajuda"]],
+  ])("%j: urgência", (textos) => {
+    expect(detectarUrgencia(textos)?.sinal).toBe("emergencia");
+  });
+});
+
+describe("o me matar: o eu, o sofrimento e o pronome continuam", () => {
+  it.each([
+    "hoje à noite eu ia me matar",
+    "ontem à noite eu quase ia me matar",
+    "se não fosse a minha filha eu ia me matar",
+    "se não fosse a minha filha ia me matar",
+    "se não fosse meu marido ia me matar",
+    "essa tristeza tá me matando",
+    "essa depressão vai me matar",
+    "a vida tá me matando",
+    "isso vai me matar",
+    "minha mãe vai me matar",
+  ])("%s: risco de vida", (texto) => {
+    expect(urgente(texto)).toEqual({
+      tipo: "risco_de_vida",
+      sinal: "me_matar",
+    });
+  });
+
+  it.each([
+    "meu marido vai me matar",
+    "esse preço vai me matar",
+    "essa dieta tá me matando",
+    "esse trabalho vai me matar",
+    "vocês vão me matar com esse preço",
+    "vou me matar na academia pra ficar em forma",
+  ])("%s: o exagero com sujeito concreto", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+});
+
+describe("as lacunas novas, com a negação, o antecedente e a terceira pessoa", () => {
+  it.each([
+    [
+      "queria dormir e não acordar mais",
+      "risco_de_vida",
+      "dormir_e_nao_acordar",
+    ],
+    [
+      "ela disse que queria dormir e não acordar mais",
+      "risco_de_vida",
+      "dormir_e_nao_acordar",
+    ],
+    // O risco de vida nunca tem antecedente.
+    [
+      "às vezes queria dormir e não acordar mais",
+      "risco_de_vida",
+      "dormir_e_nao_acordar",
+    ],
+    ["quero dormir pra sempre", "risco_de_vida", "dormir_e_nao_acordar"],
+    ["não vejo mais sentido na vida", "risco_de_vida", "sem_sentido_na_vida"],
+    [
+      "não, não vejo mais sentido na vida",
+      "risco_de_vida",
+      "sem_sentido_na_vida",
+    ],
+    [
+      "ela diz que não vê mais sentido na vida",
+      "risco_de_vida",
+      "sem_sentido_na_vida",
+    ],
+    ["vou me cortar", "risco_de_vida", "me_cortar"],
+    ["tô me cortando de novo", "risco_de_vida", "me_cortar"],
+    ["ela disse que vai se cortar", "risco_de_vida", "se_cortar"],
+    ["ela não acorda", "fisica", "nao_acorda"],
+    ["meu pai não acorda", "fisica", "nao_acorda"],
+    ["ele não reage", "fisica", "nao_acorda"],
+    ["ele tá morrendo", "fisica", "morrendo"],
+    ["minha mãe está morrendo", "fisica", "morrendo"],
+    ["ela apagou do nada", "fisica", "apagou"],
+    ["meu pai apagou", "fisica", "apagou"],
+    ["tou cum falta di ar", "fisica", "falta_de_ar"],
+    ["ela tá cum falta di ar", "fisica", "falta_de_ar"],
+  ] as const)("%s: %s (%s)", (texto, tipo, sinal) => {
+    expect(urgente(texto)).toEqual({ tipo, sinal });
+  });
+
+  it.each([
+    // A negacao.
+    "não quero dormir e não acordar mais",
+    "nunca pensei em me cortar",
+    "ele não tá morrendo",
+    "ela não apagou",
+    "não tou cum falta di ar",
+    // A historia (so nos fisicos).
+    "uma vez ela não acordou e levamos ao hospital",
+    "ano passado ele tava morrendo",
+    "uma vez ela apagou do nada no shopping",
+    "já tive falta di ar",
+    // O que nao e o sinal.
+    "tenho medo de dormir e não acordar na anestesia",
+    "pode me cortar o cabelo?",
+    "na lipo, vão me cortar onde?",
+    "o médico vai me cortar muito?",
+    "já me cortei com papel",
+    "minha filha não acorda cedo, tem horário à tarde?",
+    "minha pele não reage bem ao ácido",
+    "to morrendo de rir",
+    "to morrendo de vontade de fazer botox",
+    "meu celular tá morrendo, depois te respondo",
+    "Apaguei a mensagem sem querer",
+    "ela apagou a foto",
+    "apaguei de sono ontem",
+    "eu vejo sentido na vida, só queria remarcar",
+  ])("%s: não é urgência", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+});
+
+describe("a rede do sintoma no portão (me matando, caiu)", () => {
+  const gatilhos = (texto: string) =>
+    detectarGatilhosDeEntrada({ mensagens: [{ tipo: "texto", texto }] });
+
+  it.each([
+    "essa dieta tá me matando",
+    "o rosto dela caiu",
+    "meu rosto caiu",
+    "caiu um lado do rosto",
+    "minha mãe caiu e bateu a cabeça",
+    "a sobrancelha caiu depois do botox",
+    "a pressão dela caiu",
+  ])("%s: escala como sintoma", (texto) => {
+    expect(gatilhos(texto)).toContain("sintoma");
+  });
+
+  it.each([
+    "o pix caiu?",
+    "a ligação caiu, pode me chamar de novo?",
+    "caiu na caixa postal",
+    "o pagamento já caiu na conta de vocês?",
+  ])("%s: o caiu da recepção não escala", (texto) => {
+    expect(gatilhos(texto)).toEqual([]);
   });
 });
 
@@ -428,6 +794,8 @@ describe("a versão do portão", () => {
     // conferida da AG6a (edd123c), antes da segunda revisao.
     expect(versaoDoPortao()).not.toBe("portao-7dc20c87b04a");
     expect(versaoDoPortao()).not.toBe("portao-1dd4b555a379");
+    // A da 2a revisao (2ca2097), antes da revisao de 30/10/2026.
+    expect(versaoDoPortao()).not.toBe("portao-39dcded69204");
     expect(versaoDoPortao()).toMatch(/^portao-[0-9a-f]{12}$/);
   });
 });

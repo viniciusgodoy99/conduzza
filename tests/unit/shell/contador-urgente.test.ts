@@ -121,7 +121,8 @@ vi.mock("@/lib/auth/read-audit", () => ({
 const { contarConversasUrgentes } =
   await import("@/components/shell/contadores-do-menu");
 const { NavBadge } = await import("@/components/shell/nav-badge");
-const { alertaDoItem } = await import("@/components/shell/rail");
+const { alertaDoItem, ConteudoDaDica, numerosDaDica } =
+  await import("@/components/shell/rail");
 const avisos = await import("@/components/shell/avisos-da-conversa");
 const { lerAvisoDaConversaAction } =
   await import("@/app/(app)/atendimento/avisos-actions");
@@ -388,6 +389,105 @@ describe("o contador do Atendimento em alerta", () => {
 });
 
 // ---------------------------------------------------------------------------
+// A dica do item no menu recolhido (revisao curta da AG6a, achado 5)
+// ---------------------------------------------------------------------------
+
+describe("a dica do item no menu recolhido", () => {
+  it("com urgentes, os dois números: as urgentes primeiro e as aguardando, como o leitor de tela ouve", () => {
+    expect(
+      numerosDaDica("conversas", {
+        conversas: 7,
+        confirmacoes: 0,
+        urgentes: 2,
+      }),
+    ).toBe("2 conversas urgentes, 7 conversas aguardando resposta");
+    expect(
+      numerosDaDica("conversas", {
+        conversas: 1,
+        confirmacoes: 0,
+        urgentes: 1,
+      }),
+    ).toBe("1 conversa urgente, 1 conversa aguardando resposta");
+    // O mesmo texto do nome do link (a pilula sr-only).
+    const html = pilula({
+      count: 7,
+      ativo: false,
+      descricao: "conversas aguardando resposta",
+      alerta: { quantas: 2, descricao: "conversas urgentes" },
+    });
+    expect(html).toContain(
+      `, ${numerosDaDica("conversas", { conversas: 7, confirmacoes: 0, urgentes: 2 })}`,
+    );
+  });
+
+  it("os números reais na dica (sem o 99+ da pílula), e sem aguardando contada, só as urgentes", () => {
+    expect(
+      numerosDaDica("conversas", {
+        conversas: 250,
+        confirmacoes: 0,
+        urgentes: 120,
+      }),
+    ).toBe("120 conversas urgentes, 250 conversas aguardando resposta");
+    expect(
+      numerosDaDica("conversas", {
+        conversas: 0,
+        confirmacoes: 0,
+        urgentes: 1,
+      }),
+    ).toBe("1 conversa urgente");
+  });
+
+  it("sem urgente, sem números na dica (a pílula do canto já mostra o número)", () => {
+    for (const urgentes of [0, null, undefined]) {
+      expect(
+        numerosDaDica("conversas", { conversas: 7, confirmacoes: 3, urgentes }),
+      ).toBeNull();
+    }
+    expect(
+      numerosDaDica("confirmacoes", {
+        conversas: 7,
+        confirmacoes: 3,
+        urgentes: 2,
+      }),
+    ).toBeNull();
+    expect(
+      numerosDaDica(undefined, { conversas: 7, confirmacoes: 3, urgentes: 2 }),
+    ).toBeNull();
+  });
+
+  it("o conteúdo da dica: o rótulo e, com os números, uma segunda linha", () => {
+    expect(
+      renderToStaticMarkup(
+        createElement(ConteudoDaDica, { rotulo: "Atendimento", numeros: null }),
+      ),
+    ).toBe("Atendimento");
+    const comNumeros = renderToStaticMarkup(
+      createElement(ConteudoDaDica, {
+        rotulo: "Atendimento",
+        numeros: "2 conversas urgentes, 7 conversas aguardando resposta",
+      }),
+    );
+    expect(comNumeros).toBe(
+      '<span class="grid gap-px"><span>Atendimento</span><span class="font-normal">2 conversas urgentes, 7 conversas aguardando resposta</span></span>',
+    );
+    expect(comNumeros).not.toMatch(/[—–]/);
+  });
+
+  it("o item do menu passa os números para a dica", () => {
+    const rail = readFileSync(
+      join(process.cwd(), "components/shell/rail.tsx"),
+      "utf8",
+    );
+    expect(rail).toContain(
+      "numerosNaDica={numerosDaDica(item.badge, contadores)}",
+    );
+    expect(rail).toMatch(
+      /<TooltipContent side="right" sideOffset=\{8\}>[\s\S]*?<ConteudoDaDica rotulo=\{rotulo\} numeros=\{numerosNaDica\} \/>[\s\S]*?<\/TooltipContent>/,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Os canais do menu (revisao da AG6a)
 // ---------------------------------------------------------------------------
 
@@ -577,15 +677,20 @@ describe("os canais do menu", () => {
 // ---------------------------------------------------------------------------
 
 describe("o que cada evento do menu faz (reacoesDoMenu)", () => {
-  /** As reacoes com o vigia de verdade (desta pessoa) e o resto espiado. */
+  /**
+   * As reacoes com o vigia de verdade (desta pessoa, semeado sem nenhuma
+   * conversa: nada estava com ela na montagem) e o resto espiado.
+   */
   function montar(viewerId = EU) {
     const recontar = vi.fn();
     const avisarAtribuicao = vi.fn();
     const avisarUrgencia = vi.fn();
+    const vigia = avisos.vigiaDaAtribuicao({ clinicId: CLINICA, viewerId });
+    expect(vigia.semear([])).toEqual([]);
     const reagir = reacoesDoMenu({
       clinicId: CLINICA,
       recontar,
-      atribuicaoNova: avisos.vigiaDaAtribuicao({ clinicId: CLINICA, viewerId }),
+      atribuicaoNova: vigia,
       avisarAtribuicao,
       avisarUrgencia,
     });
@@ -823,11 +928,21 @@ describe("quando o evento pede o aviso na tela", () => {
     ...campos,
   });
 
-  it("atribuição: pergunta quando a conversa da clínica ENTRA em atendimento comigo", () => {
+  /** O vigia desta pessoa, ja semeado (nada estava com ela na montagem). */
+  function vigiaArmado(
+    opcoes: Partial<Parameters<typeof avisos.vigiaDaAtribuicao>[0]> = {},
+  ) {
     const vigia = avisos.vigiaDaAtribuicao({
       clinicId: CLINICA,
       viewerId: EU,
+      ...opcoes,
     });
+    vigia.semear([]);
+    return vigia;
+  }
+
+  it("atribuição: pergunta quando a conversa da clínica ENTRA em atendimento comigo", () => {
+    const vigia = vigiaArmado();
     // Na fila (a passagem da IA, antes da frase): nada.
     expect(
       vigia(linha({ status: "aguardando_humano", assignee_user_id: null })),
@@ -837,10 +952,7 @@ describe("quando o evento pede o aviso na tela", () => {
   });
 
   it("atribuição: uma pergunta por entrada, nunca uma por evento (cada mensagem mexe na conversa)", () => {
-    const vigia = avisos.vigiaDaAtribuicao({
-      clinicId: CLINICA,
-      viewerId: EU,
-    });
+    const vigia = vigiaArmado();
     expect(vigia(linha())).toBe(CONVERSA);
     for (let i = 0; i < 5; i += 1) {
       expect(vigia(linha({ unread_count: i }))).toBeNull();
@@ -860,10 +972,7 @@ describe("quando o evento pede o aviso na tela", () => {
   });
 
   it("atribuição: de outra pessoa, de outra clínica, fora de atendimento ou fora do formato, nunca", () => {
-    const vigia = avisos.vigiaDaAtribuicao({
-      clinicId: CLINICA,
-      viewerId: EU,
-    });
+    const vigia = vigiaArmado();
     for (const outra of [
       linha({ assignee_user_id: OUTRA_PESSOA }),
       linha({ assignee_user_id: null }),
@@ -882,11 +991,7 @@ describe("quando o evento pede o aviso na tela", () => {
   });
 
   it("atribuição: o vigia esquece tudo no limite, e a próxima é só mais uma pergunta", () => {
-    const vigia = avisos.vigiaDaAtribuicao({
-      clinicId: CLINICA,
-      viewerId: EU,
-      limite: 2,
-    });
+    const vigia = vigiaArmado({ limite: 2 });
     expect(vigia(linha({ id: "a" }))).toBe("a");
     expect(vigia(linha({ id: "b" }))).toBe("b");
     // A terceira conversa enche o limite: o vigia esquece as outras.
@@ -894,6 +999,164 @@ describe("quando o evento pede o aviso na tela", () => {
     expect(vigia(linha({ id: "c" }))).toBeNull();
     expect(vigia(linha({ id: "a" }))).toBe("a");
     expect(avisos.CONVERSAS_LEMBRADAS).toBeGreaterThanOrEqual(1_000);
+  });
+
+  // Revisao curta da AG6a, achado 2: o aviso se repetia depois de F5, numa
+  // segunda aba, em outro aparelho e na troca de clinica, e cada conversa
+  // atribuida fazia uma pergunta na fila de Server Actions.
+  const OUTRA_CONVERSA = "44444444-4444-4444-8444-444444444444";
+  const TERCEIRA = "55555555-5555-4555-8555-555555555555";
+
+  it("semeado na montagem: a conversa que já estava comigo nunca pergunta (F5, segunda aba, outro aparelho)", () => {
+    const vigia = avisos.vigiaDaAtribuicao({
+      clinicId: CLINICA,
+      viewerId: EU,
+    });
+    // A leitura da montagem: a conversa ja estava em atendimento comigo.
+    expect(vigia.semear([CONVERSA])).toEqual([]);
+    // Cada mensagem nela mexe na conversa: nenhuma pergunta, nunca.
+    for (let i = 0; i < 4; i += 1) {
+      expect(vigia(linha({ unread_count: i }))).toBeNull();
+    }
+    // A conversa que ENTRA em atendimento comigo depois da montagem
+    // pergunta, uma vez.
+    expect(vigia(linha({ id: OUTRA_CONVERSA }))).toBe(OUTRA_CONVERSA);
+    expect(vigia(linha({ id: OUTRA_CONVERSA }))).toBeNull();
+    // A que ja estava comigo, se sai e volta depois da montagem, e outra
+    // entrada (devolvida para a IA e passada de novo).
+    expect(
+      vigia(linha({ status: "ia_atendendo", assignee_user_id: null })),
+    ).toBeNull();
+    expect(vigia(linha())).toBe(CONVERSA);
+  });
+
+  it("desarmado: nenhum evento pergunta antes da semente, e a semente devolve só as entradas que ela não conhece", () => {
+    const vigia = avisos.vigiaDaAtribuicao({
+      clinicId: CLINICA,
+      viewerId: EU,
+    });
+    // Antes da semente, tres conversas entram comigo e uma delas sai.
+    expect(vigia(linha())).toBeNull();
+    expect(vigia(linha({ id: OUTRA_CONVERSA }))).toBeNull();
+    expect(vigia(linha({ id: TERCEIRA }))).toBeNull();
+    expect(
+      vigia(
+        linha({
+          id: TERCEIRA,
+          status: "aguardando_humano",
+          assignee_user_id: null,
+        }),
+      ),
+    ).toBeNull();
+    // A semente conhece a CONVERSA (ja estava comigo na leitura): so a
+    // OUTRA entrou depois da leitura, e ela pergunta agora.
+    expect(vigia.semear([CONVERSA])).toEqual([OUTRA_CONVERSA]);
+    // Daqui em diante, nenhuma das duas pergunta de novo.
+    expect(vigia(linha())).toBeNull();
+    expect(vigia(linha({ id: OUTRA_CONVERSA }))).toBeNull();
+    // A que saiu antes da semente e volta agora e uma entrada.
+    expect(vigia(linha({ id: TERCEIRA }))).toBe(TERCEIRA);
+  });
+
+  it("a semente só preenche o que o vigia não conhece: o evento que chegou antes vale mais que ela", () => {
+    const vigia = avisos.vigiaDaAtribuicao({
+      clinicId: CLINICA,
+      viewerId: EU,
+    });
+    // O evento diz que a conversa saiu de mim; a leitura (de quando, nao se
+    // sabe) ainda a via comigo.
+    expect(
+      vigia(linha({ status: "resolvida", assignee_user_id: EU })),
+    ).toBeNull();
+    expect(vigia.semear([CONVERSA])).toEqual([]);
+    // Quando ela volta comigo, e uma entrada.
+    expect(vigia(linha())).toBe(CONVERSA);
+  });
+
+  it("a semente que falhou (vazia) arma assim mesmo, e só a primeira semente vale", () => {
+    const vigia = avisos.vigiaDaAtribuicao({
+      clinicId: CLINICA,
+      viewerId: EU,
+    });
+    expect(vigia(linha())).toBeNull();
+    // A leitura falhou: o que esperava pergunta (o servidor confere).
+    expect(vigia.semear([])).toEqual([CONVERSA]);
+    expect(vigia(linha({ id: OUTRA_CONVERSA }))).toBe(OUTRA_CONVERSA);
+    // Uma segunda semente nao desarma nem apaga nada.
+    expect(vigia.semear([TERCEIRA])).toEqual([]);
+    expect(vigia(linha({ id: TERCEIRA }))).toBe(TERCEIRA);
+  });
+
+  it("troca de clínica: o vigia da clínica nova, semeado com as dela, não pergunta pelas que já estavam comigo lá", () => {
+    const daNova = avisos.vigiaDaAtribuicao({
+      clinicId: OUTRA_CLINICA,
+      viewerId: EU,
+    });
+    expect(daNova.semear([OUTRA_CONVERSA])).toEqual([]);
+    expect(
+      daNova(linha({ id: OUTRA_CONVERSA, clinic_id: OUTRA_CLINICA })),
+    ).toBeNull();
+    // Evento da clinica de antes nunca chega a ele.
+    expect(daNova(linha())).toBeNull();
+  });
+
+  it("a leitura da semente: só os ids das conversas em atendimento comigo, da clínica ativa, pela sessão", async () => {
+    const { conversasEmAtendimentoCom } =
+      await import("@/components/shell/contadores-do-menu");
+    const { cliente, consultas } = clienteFalso(() => ({
+      data: [{ id: CONVERSA }, { id: OUTRA_CONVERSA }, { id: 42 }],
+    }));
+    expect(
+      await conversasEmAtendimentoCom(cliente as never, CLINICA, EU),
+    ).toEqual([CONVERSA, OUTRA_CONVERSA]);
+    expect(consultas).toEqual([
+      {
+        tabela: "conversation",
+        // So o id: nenhum dado de paciente (nem trilha a gravar).
+        colunas: "id",
+        opcoes: null,
+        filtros: [
+          ["eq", "clinic_id", CLINICA],
+          ["eq", "status", "em_atendimento"],
+          ["eq", "assignee_user_id", EU],
+          ["limit", "", avisos.CONVERSAS_LEMBRADAS],
+        ],
+      },
+    ]);
+    // Sem nada: lista vazia; com erro: nulo (quem chama semeia vazio).
+    expect(
+      await conversasEmAtendimentoCom(
+        clienteFalso(() => ({ data: null })).cliente as never,
+        CLINICA,
+        EU,
+      ),
+    ).toEqual([]);
+    expect(
+      await conversasEmAtendimentoCom(
+        clienteFalso(() => ({ error: { code: "08006" } })).cliente as never,
+        CLINICA,
+        EU,
+      ),
+    ).toBeNull();
+  });
+
+  it("o menu semeia o vigia na montagem com a leitura, e pergunta só pelo que a semente devolve", () => {
+    const vigia = readFileSync(
+      join(process.cwd(), "components/shell/use-contadores-do-menu.ts"),
+      "utf8",
+    );
+    expect(vigia).toMatch(
+      /conversasEmAtendimentoCom\(supabase, clinicId, viewerId\)[\s\S]*?\.catch\(\(\) => null\)[\s\S]*?atribuicaoNova\.semear\(ids \?\? \[\]\)[\s\S]*?avisarAtribuicao\(conversationId\)/,
+    );
+    // So com o Atendimento no menu (o mesmo canal de conversation).
+    expect(vigia).toMatch(
+      /if \(vigiarConversas\) \{\s*void conversasEmAtendimentoCom\(/,
+    );
+    // A semente que chega depois de o vigia morrer (troca de clinica,
+    // desmontagem) nao pergunta nada.
+    expect(vigia).toMatch(
+      /\.then\(\(ids\) => \{\s*if \(!ativo\) \{\s*return;\s*\}\s*for \(const conversationId of atribuicaoNova\.semear/,
+    );
   });
 
   it("o Abrir: com o Atendimento aberto, pede pela janela; fora dele, vai pelo link", () => {
@@ -943,7 +1206,13 @@ type Respostas = {
   erroDaConversa?: unknown;
   mensagem?: unknown;
   erroDaMensagem?: unknown;
+  /** O perfil de quem pede (EU); sem a chave, o da Ana Souza. */
+  perfil?: unknown;
+  erroDoPerfil?: unknown;
 };
+
+/** O nome do perfil de quem pede nos testes (a sessao e a EU). */
+const MEU_NOME = "Ana Souza";
 
 function bancoCom(respostas: Respostas) {
   banco = clienteFalso((consulta) => {
@@ -956,6 +1225,14 @@ function bancoCom(respostas: Respostas) {
       return respostas.erroDaMensagem
         ? { error: respostas.erroDaMensagem }
         : { data: respostas.mensagem ?? null };
+    }
+    if (consulta.tabela === "profile") {
+      if (respostas.erroDoPerfil) {
+        return { error: respostas.erroDoPerfil };
+      }
+      return {
+        data: "perfil" in respostas ? respostas.perfil : { name: MEU_NOME },
+      };
     }
     return { error: { code: "42P01" } };
   });
@@ -1111,20 +1388,155 @@ describe("lerAvisoDaConversaAction (atribuida)", () => {
       ["order", "id", { ascending: false }],
       ["limit", "", 1],
     ]);
+    // O nome de quem pede: o proprio perfil, pela sessao (a policy deixa).
+    const doPerfil = consultas.find((c) => c.tabela === "profile");
+    expect(doPerfil?.colunas).toBe("name");
+    expect(doPerfil?.filtros).toEqual([["eq", "user_id", EU]]);
   });
 
-  it("o nome sem o evento de nome: o genérico do banco também vale", async () => {
+  it("o evento sem o nome (o genérico do banco) vale só para quem não tem nome no perfil", async () => {
+    const generico = {
+      ...evento,
+      body: "A conversa ficou com o responsável pelo lead.",
+    };
+    // O banco escreve o generico com o perfil vazio ou ausente.
+    for (const perfil of [{ name: "   " }, { name: "" }, null]) {
+      bancoCom({ conversa: minha, mensagem: generico, perfil });
+      expect(
+        await lerAvisoDaConversaAction(ENTRADA),
+        JSON.stringify(perfil),
+      ).toEqual({ ok: true, aviso: { contato: "Maria Silva" } });
+    }
+    // Com nome no perfil, o generico foi de outra pessoa (sem nome).
+    trilha.mockClear();
+    bancoCom({ conversa: minha, mensagem: generico });
+    expect(await lerAvisoDaConversaAction(ENTRADA)).toEqual({
+      ok: true,
+      aviso: null,
+    });
+    expect(trilha).not.toHaveBeenCalled();
+  });
+
+  // Revisao curta da AG6a, achado 3: Assumir e Transferir gravam o evento
+  // deles DEPOIS do update. A IA atribuiu ao Bruno ha menos de 5 minutos, o
+  // Bruno passa para a Ana: no instante entre o update e o evento do
+  // Transferir, a conversa ja esta com a Ana e o ultimo evento do fio
+  // ainda e a atribuicao ao Bruno.
+  it("o Bruno passa para a Ana logo depois da atribuição da IA: a Ana não vê A IA passou para você", async () => {
+    const aoBruno = {
+      ...evento,
+      body: "A conversa ficou com Bruno Lima, responsável pelo lead.",
+    };
+    // (O mesmo quando a Ana ASSUME a conversa que a IA tinha dado ao Bruno:
+    // o servidor ve a mesma coisa.)
+    bancoCom({ conversa: minha, mensagem: aoBruno });
+    expect(await lerAvisoDaConversaAction(ENTRADA)).toEqual({
+      ok: true,
+      aviso: null,
+    });
+    expect(trilha).not.toHaveBeenCalled();
+    // Quando o evento do Transferir chega, o ultimo ja e outro: sem aviso
+    // tambem (o caso de sempre).
     bancoCom({
       conversa: minha,
       mensagem: {
         ...evento,
-        body: "A conversa ficou com o responsável pelo lead.",
+        body: "Bruno Lima passou a conversa para Ana Souza",
       },
+    });
+    expect(await lerAvisoDaConversaAction(ENTRADA)).toEqual({
+      ok: true,
+      aviso: null,
+    });
+    // E a Ana com nome parecido nao passa: o nome inteiro, como o banco
+    // escreveu.
+    for (const nome of ["Ana", "Ana Souza Lima", "ana souza"]) {
+      bancoCom({ conversa: minha, mensagem: evento, perfil: { name: nome } });
+      expect(await lerAvisoDaConversaAction(ENTRADA), nome).toEqual({
+        ok: true,
+        aviso: null,
+      });
+    }
+    expect(trilha).not.toHaveBeenCalled();
+  });
+
+  it("o nome do perfil como o banco escreve: numa linha, sem as pontas e até 80 caracteres", async () => {
+    const { textoDaAtribuicaoDaIa } =
+      await import("@/lib/domain/agente/config");
+    for (const nome of [
+      "  Ana\n Souza\t ",
+      "Maria-Luísa D'Ávila",
+      "Ana 🌷 Souza",
+      "B".repeat(120),
+      "😀".repeat(90),
+    ]) {
+      trilha.mockClear();
+      bancoCom({
+        conversa: minha,
+        mensagem: { ...evento, body: textoDaAtribuicaoDaIa(nome) },
+        perfil: { name: nome },
+      });
+      expect(await lerAvisoDaConversaAction(ENTRADA), nome).toEqual({
+        ok: true,
+        aviso: { contato: "Maria Silva" },
+      });
+      expect(trilha).toHaveBeenCalledTimes(1);
+    }
+    // O corte e o do banco: 80 caracteres do nome, nem 79 nem 81.
+    for (const tamanho of [79, 81]) {
+      bancoCom({
+        conversa: minha,
+        mensagem: {
+          ...evento,
+          body: `A conversa ficou com ${"B".repeat(tamanho)}, responsável pelo lead.`,
+        },
+        perfil: { name: "B".repeat(120) },
+      });
+      expect(await lerAvisoDaConversaAction(ENTRADA), String(tamanho)).toEqual({
+        ok: true,
+        aviso: null,
+      });
+    }
+  });
+
+  it("os espaços que o Postgres não junta (o espaço sem quebra) não tiram o aviso de quem é", async () => {
+    // O \s do Postgres nao pega o espaco sem quebra; o do JavaScript pega.
+    // Os dois lados viram uma linha so antes de comparar.
+    bancoCom({
+      conversa: minha,
+      mensagem: {
+        ...evento,
+        body: "A conversa ficou com Ana\u00a0Souza, responsável pelo lead.",
+      },
+      perfil: { name: "Ana\u00a0Souza" },
     });
     expect(await lerAvisoDaConversaAction(ENTRADA)).toEqual({
       ok: true,
       aviso: { contato: "Maria Silva" },
     });
+  });
+
+  it("a leitura do perfil que falha: ok falso, sem trilha e só o código no log", async () => {
+    const saida = vi.mocked(process.stdout.write);
+    saida.mockClear();
+    bancoCom({
+      conversa: minha,
+      mensagem: evento,
+      erroDoPerfil: { code: "42501", message: "Ana Souza sem permissão" },
+    });
+    expect(await lerAvisoDaConversaAction(ENTRADA)).toEqual({ ok: false });
+    expect(trilha).not.toHaveBeenCalled();
+    const linhas = saida.mock.calls.map(([linha]) => String(linha));
+    expect(linhas).toHaveLength(1);
+    const registro = JSON.parse(linhas[0] ?? "{}") as Record<string, unknown>;
+    expect(registro).toMatchObject({
+      evento: "aviso_da_conversa_nao_lido",
+      clinic_id: CLINICA,
+      kind: "atribuida",
+      error_code: "42501",
+    });
+    expect(linhas[0]).not.toContain("Ana");
+    expect(linhas[0]).not.toContain("Maria");
   });
 
   it("de outra pessoa, de outro evento, velho ou fora de atendimento: sem aviso", async () => {
