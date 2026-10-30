@@ -28,13 +28,16 @@ import {
 // [AG6 passagem] início "Para quem vai a conversa" (AG6a, desenho da secao 6; D-15
 // do dono, e D-54 e D-55 pela recomendacao, pendentes), na aba Regras e
 // limites da Tela 6, logo depois dos prazos: quando o assistente passa a
-// conversa para a equipe com a frase fixa, ela vai para a fila ("Aguardando
-// você", sem responsavel; o padrao) ou para o responsavel do lead (o de
-// Leads, ativo e com papel que atende conversa), que a recebe "Em
-// atendimento", em Minhas, com um aviso na tela. Sem responsavel, com ele
-// fora da equipe ou so com leitura, a fila; a conversa urgente vai sempre
-// para a fila. Quem decide e o banco, na passagem, pela ultima versao
-// publicada (contrato da AG6a, secao 2): a tela so guarda a escolha.
+// conversa para a equipe com a frase de sempre, ela vai para a fila
+// ("Aguardando você", sem responsavel; o padrao) ou, logo depois da frase,
+// para o responsavel do lead (o de Leads, ativo e com papel que atende
+// conversa), que a recebe "Em atendimento", em Minhas, com um aviso na
+// tela. Sem responsavel, com ele fora da equipe ou so com leitura, a fila;
+// quem assumir antes fica com a conversa; urgencia, sintoma, assunto
+// clinico e midia vao sempre para a fila. Quem decide e o banco, depois da
+// frase (atribuir_conversa_passada_pela_ia), pela ultima versao publicada:
+// a tela so guarda a escolha. O paragrafo de ajuda e a descricao do grupo
+// de cartoes (aria-describedby), para o leitor de tela ouvir as excecoes.
 //
 // Molde do cartao "Quem o assistente atende": cartoes de radio com o proprio
 // Salvar (grava no RASCUNHO pela acao salvarPassagemAction, vale ao
@@ -45,6 +48,9 @@ import {
 //
 // O ladrilho do cabecalho (UserRoundCheck) e decorativo e neutro: a cor nao
 // diz estado (docs/06, 4.6: sem dono de status).
+
+/** O paragrafo de ajuda, que descreve o grupo de cartoes (um so na tela). */
+const ID_DA_AJUDA = "agente-passagem-ajuda";
 
 /** Ladrilho decorativo do cabecalho dos cartoes da AG6: a cor nao diz estado. */
 export function LadrilhoDoCartao({ icone: Icone }: { icone: LucideIcon }) {
@@ -117,6 +123,7 @@ export function CartaoDaPassagem({
         <CartoesDeEscolha
           nome="agente-passagem"
           rotuloDoGrupo={T.titulo}
+          idDaAjuda={ID_DA_AJUDA}
           className="lg:grid-cols-2"
           desabilitado={travado}
           valor={escolhida}
@@ -130,10 +137,7 @@ export function CartaoDaPassagem({
             descricao: T.opcoes[valor].descricao,
           }))}
         />
-        <p
-          id="agente-passagem-ajuda"
-          className="text-[12.5px] text-text-secondary"
-        >
+        <p id={ID_DA_AJUDA} className="text-[12.5px] text-text-secondary">
           {T.ajuda}
         </p>
         {erro ? (

@@ -138,11 +138,53 @@ describe("cartão Para quem vai a conversa", () => {
     expect(lido).toContain(TEXTOS_DA_PASSAGEM.descricao);
     expect(lido).toContain("Para a fila (Sem atendente)");
     expect(lido).toContain("Para o responsável do lead, quando houver");
-    expect(lido).toContain(
-      "O responsável é o do lead em Leads. Sem responsável, ou com ele fora da equipe ou só com leitura, a conversa vai para a fila. Conversa urgente vai sempre para a fila.",
-    );
+    expect(lido).toContain(TEXTOS_DA_PASSAGEM.ajuda);
     expect(html).toContain(
       'role="radiogroup" aria-label="Para quem vai a conversa"',
+    );
+  });
+
+  it("os textos acompanham a atribuição depois da frase de sempre (revisão da AG6a)", () => {
+    expect(TEXTOS_DA_PASSAGEM.descricao).toBe(
+      "Salvo no rascunho, vale ao publicar. Vale quando o assistente passa a conversa para a equipe com a frase de sempre.",
+    );
+    expect(TEXTOS_DA_PASSAGEM.opcoes.responsavel_do_lead.descricao).toBe(
+      "Logo depois da frase de sempre, a conversa passa para o responsável, em atendimento, em Minhas, com um aviso na tela.",
+    );
+    const ajuda = TEXTOS_DA_PASSAGEM.ajuda;
+    expect(ajuda).toContain(
+      "Se alguém assumir antes, a conversa fica com quem assumiu.",
+    );
+    // Os motivos que a frente do banco tira da atribuicao: sempre a fila.
+    for (const motivo of ["urgência", "sintoma", "assunto clínico", "mídia"]) {
+      expect(ajuda).toContain(motivo);
+    }
+    expect(ajuda).toContain("vai sempre para a fila");
+    // O que o texto antigo prometia e nao e mais verdade.
+    expect(
+      TEXTOS_DA_PASSAGEM.opcoes.responsavel_do_lead.descricao,
+    ).not.toContain("já fica");
+    expect(TEXTOS_DA_PASSAGEM.descricao).not.toContain("Conta quando");
+    const lido = texto(passagem());
+    expect(lido).toContain(TEXTOS_DA_PASSAGEM.descricao);
+    expect(lido).toContain(
+      TEXTOS_DA_PASSAGEM.opcoes.responsavel_do_lead.descricao,
+    );
+  });
+
+  it("a ajuda é a descrição do grupo de cartões (aria-describedby)", () => {
+    const html = passagem();
+    const grupo = /<div role="radiogroup"[^>]*>/.exec(html)?.[0] ?? "";
+    expect(grupo).toContain('aria-describedby="agente-passagem-ajuda"');
+    expect(html).toMatch(
+      /<p id="agente-passagem-ajuda"[^>]*>[^<]*Se alguém assumir antes/,
+    );
+    // So um paragrafo com o id na tela.
+    expect(html.match(/id="agente-passagem-ajuda"/g)).toHaveLength(1);
+    // Travado (recepcao), a ajuda continua ligada ao grupo.
+    const travado = passagem({ podeEditar: false, dica: DICA_RECEPCAO });
+    expect(/<div role="radiogroup"[^>]*>/.exec(travado)?.[0]).toContain(
+      'aria-describedby="agente-passagem-ajuda"',
     );
   });
 

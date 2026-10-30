@@ -8,7 +8,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // aviso do SAMU da AG6c, chaves de versoes futuras) lidas do proprio
 // rascunho, pelo mesmo caminho de permissao das outras partes
 // (administrador, gestor ou super admin; a recepcao recebe a dica), com o
-// Zod estrito na entrada e a trilha sem o valor.
+// Zod estrito na entrada e a trilha sem o valor. Revisao da AG6a: ler e
+// regravar o jsonb tem trava (concorrencia otimista pelo updated_at do
+// rascunho lido): a gravacao no meio faz a acao recusar com a corrida de
+// sempre, sem perder a outra chave.
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
@@ -17,6 +20,8 @@ const CLINICA = "acd9c539-585e-4f2a-a195-712c70099564";
 const FORA_DA_FASE = "11111111-2222-4333-8444-555555555555";
 const USUARIO = "0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a";
 const RASCUNHO = "0b0b0b0b-0b0b-4b0b-8b0b-0b0b0b0b0b0b";
+/** O carimbo do rascunho lido (como o PostgREST devolve, com microssegundos). */
+const LIDO_EM = "2026-10-28T07:45:12.123456+00:00";
 
 type Operacao = {
   tabela: string;
@@ -30,8 +35,14 @@ class Banco {
   operacoes: Operacao[] = [];
   rpcs: { nome: string; args: unknown }[] = [];
   regrasGravadas: unknown = { aviso_de_urgencia: true, chave_futura: 7 };
+  /** O updated_at do rascunho como a leitura devolve (nulo: sem carimbo). */
+  carimbo: string | null = LIDO_EM;
+  /** A leitura nao acha o rascunho (publicado entre o garantir e a leitura). */
+  semLinha = false;
   erroNaLeitura: { code: string } | null = null;
   rascunhoAtualizado = true;
+  /** Outra gravacao no meio: o UPDATE com o carimbo lido nao acha a linha. */
+  gravadoNoMeio = false;
 
   escritas(): Operacao[] {
     return this.operacoes.filter(
@@ -48,13 +59,24 @@ class Banco {
       return { data: null, error: null };
     }
     if (op.tabela === "ai_agent_config" && op.tipo === "select") {
-      return this.erroNaLeitura
-        ? { data: null, error: this.erroNaLeitura }
-        : { data: { escalation_rules: this.regrasGravadas }, error: null };
+      if (this.erroNaLeitura) {
+        return { data: null, error: this.erroNaLeitura };
+      }
+      return {
+        data: this.semLinha
+          ? null
+          : { escalation_rules: this.regrasGravadas, updated_at: this.carimbo },
+        error: null,
+      };
     }
     if (op.tabela === "ai_agent_config" && op.tipo === "update") {
+      // O banco so acha a linha com o carimbo que ela tem agora.
+      const carimbo = op.filtros.find(([coluna]) => coluna === "updated_at");
+      const mesmoCarimbo =
+        carimbo === undefined ||
+        (!this.gravadoNoMeio && carimbo[1] === LIDO_EM);
       return {
-        data: this.rascunhoAtualizado ? [{ id: RASCUNHO }] : [],
+        data: this.rascunhoAtualizado && mesmoCarimbo ? [{ id: RASCUNHO }] : [],
         error: null,
       };
     }
@@ -199,17 +221,18 @@ describe("para quem vai a conversa (salvarPassagemAction)", () => {
         }),
         papel,
       ).toEqual({ ok: true });
-      // Le o jsonb do PROPRIO rascunho, preso a clinica.
+      // Le o jsonb do PROPRIO rascunho, preso a clinica, com o carimbo.
       const leitura = banco.operacoes.find(
         (op) => op.tabela === "ai_agent_config" && op.tipo === "select",
       );
-      expect(leitura?.colunas).toBe("escalation_rules");
+      expect(leitura?.colunas).toBe("escalation_rules, updated_at");
       expect(leitura?.filtros).toEqual([
         ["id", RASCUNHO],
         ["clinic_id", CLINICA],
       ]);
       const [escrita, ...outras] = banco.escritas();
       expect(outras).toEqual([]);
+      // Grava no MESMO rascunho lido, so se o carimbo ainda e o lido.
       expect(escrita).toEqual({
         tabela: "ai_agent_config",
         tipo: "update",
@@ -224,8 +247,13 @@ describe("para quem vai a conversa (salvarPassagemAction)", () => {
           ["id", RASCUNHO],
           ["clinic_id", CLINICA],
           ["status", "rascunho"],
+          ["updated_at", LIDO_EM],
         ],
       });
+      // O rascunho e garantido uma vez so (a escrita usa o lido).
+      expect(
+        banco.rpcs.filter((r) => r.nome === "garantir_rascunho_do_agente"),
+      ).toHaveLength(1);
     }
   });
 
@@ -292,6 +320,59 @@ describe("para quem vai a conversa (salvarPassagemAction)", () => {
       error:
         "O agente de IA foi alterado ao mesmo tempo por outra pessoa. Recarregue a página e tente de novo.",
     });
+  });
+
+  it("outra gravação entre a leitura e o UPDATE: nada gravado, a corrida de sempre, sem trilha", async () => {
+    banco.gravadoNoMeio = true;
+    expect(
+      await acoes.salvarPassagemAction({ passagemPara: "responsavel_do_lead" }),
+    ).toEqual({
+      ok: false,
+      error:
+        "O agente de IA foi alterado ao mesmo tempo por outra pessoa. Recarregue a página e tente de novo.",
+    });
+    // O UPDATE saiu com o carimbo lido e nao achou a linha: nada mudou.
+    const [escrita] = banco.escritas();
+    expect(escrita?.filtros).toContainEqual(["updated_at", LIDO_EM]);
+    expect(banco.trilha()).toEqual([]);
+  });
+
+  it("rascunho que sumiu ou veio sem carimbo: a corrida, sem gravar nada", async () => {
+    for (const ajuste of [
+      (b: Banco) => {
+        b.semLinha = true;
+      },
+      (b: Banco) => {
+        b.carimbo = null;
+      },
+      (b: Banco) => {
+        b.carimbo = "";
+      },
+    ]) {
+      banco = new Banco();
+      ajuste(banco);
+      expect(
+        await acoes.salvarPassagemAction({ passagemPara: "fila" }),
+      ).toEqual({
+        ok: false,
+        error:
+          "O agente de IA foi alterado ao mesmo tempo por outra pessoa. Recarregue a página e tente de novo.",
+      });
+      expect(banco.escritas()).toEqual([]);
+      expect(banco.trilha()).toEqual([]);
+    }
+  });
+
+  it("as outras partes da Tela 6 seguem sem o carimbo (o mesmo caminho de antes)", async () => {
+    expect(await acoes.salvarPublicoAction({ publico: "todos" })).toEqual({
+      ok: true,
+    });
+    const [escrita] = banco.escritas();
+    expect(escrita?.filtros).toEqual([
+      ["id", RASCUNHO],
+      ["clinic_id", CLINICA],
+      ["status", "rascunho"],
+    ]);
   });
 
   it("o painel chama a ação pelo contrato das ações da tela", async () => {

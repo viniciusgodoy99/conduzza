@@ -1,17 +1,19 @@
 -- Rollback manual da migration 20261029120000_urgencia_e_passagem_da_ia.sql
 -- (urgencia e passagem da IA ao responsavel do lead, AG6a, parte de banco;
--- 28/10/2026, com a revisao de 28/10/2026: a atribuicao fora da passagem).
+-- 28/10/2026, com a revisao de 28/10/2026: a atribuicao fora da passagem;
+-- a revisao 2, do mesmo dia, os motivos clinicos e a mensagem nova, nao
+-- muda nada aqui: a funcao da atribuicao sai inteira).
 --
--- Corpos de ANTES da migration: o modelo local (a producao de 28/10/2026,
--- lida com q.js e fndef.js, so leitura, mais a AG4 e a AG5, que vao antes
--- desta e ainda nao foram aplicadas), com o md5(prosrc) (o ensaio confere
--- que o banco ainda esta assim antes de trocar, e o fim deste arquivo
--- confere que voltaram):
+-- Corpos de ANTES da migration: o modelo local (a producao de 30/10/2026,
+-- ja com a AG4, aplicada em 28/10/2026, lida com q.js e fndef.js, so
+-- leitura, mais a AG5, que vai antes desta e ainda nao foi aplicada), com o
+-- md5(prosrc) (o ensaio confere que o banco ainda esta assim antes de
+-- trocar, e o fim deste arquivo confere que voltaram):
 --   passar_conversa_da_ia_para_equipe(uuid,text,text)  bc305ae8af0f10c98e2f181c5aa72d30 (o de producao, M1; sem comentario)
 --   rotulo_do_motivo_da_ia(text)                       0cfbd4cde199c421d3e644a2307373f9 (o da AG4; sem comentario)
 --   podar_agendamento_da_ia()                          5db27895d8a149788f1e12dd0f3b8dbe (o da AG5; comentario 7ce7fc5d49033292bbff34e091ffcf47)
--- SE A AG5 OU A AG4 MUDAREM antes de aplicar (revisao), estes corpos e os
--- md5 mudam junto: refazer este arquivo com o corpo vigente.
+-- SE A AG5 MUDAR antes de aplicar (revisao), estes corpos e os md5 mudam
+-- junto: refazer este arquivo com o corpo vigente.
 --
 -- O QUE A MIGRATION FEZ: os CHECKs ai_decision_log_escalation_reason_valida
 -- e ai_decision_log_gatilho_entrada_valido com urgencia (e um comentario em

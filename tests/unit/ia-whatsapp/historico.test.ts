@@ -376,6 +376,86 @@ describe("mapeamento", () => {
     ).toEqual({ autor: "paciente", texto: null, tipo: "audio" });
   });
 
+  // [AG6 urgência] Revisao de 28/10/2026: a legenda que o contato escreveu
+  // na midia vai so como legendaOriginal, que so a urgencia le (local, sem
+  // rede); o modelo continua vendo so o marcador.
+  it("a legenda da mídia do contato vai só como legendaOriginal; nunca do áudio, da clínica ou vazia", () => {
+    const foto = mensagemDaLinha(
+      {
+        author: "paciente",
+        content_type: "imagem",
+        body: "to com dor no peito",
+        media_url: "storage://x",
+      },
+      "Maria",
+    );
+    expect(foto).toEqual({
+      autor: "paciente",
+      texto: null,
+      tipo: "imagem",
+      legendaOriginal: "to com dor no peito",
+    });
+    expect(mensagemParaOModelo(foto)).toBe(
+      "(o paciente mandou um conteúdo que não é texto)",
+    );
+    expect(JSON.stringify(historicoParaOModelo([foto]))).not.toContain(
+      "peito",
+    );
+    // O video (texto com media_url) e o documento tambem.
+    expect(
+      mensagemDaLinha(
+        {
+          author: "paciente",
+          content_type: "texto",
+          body: "ela desmaiou",
+          media_url: "https://mmg.whatsapp.net/video.enc",
+        },
+        null,
+      ),
+    ).toEqual({
+      autor: "paciente",
+      texto: null,
+      tipo: "midia",
+      legendaOriginal: "ela desmaiou",
+    });
+    expect(
+      mensagemDaLinha(
+        {
+          author: "paciente",
+          content_type: "documento",
+          body: "o exame",
+          media_url: "storage://doc",
+        },
+        null,
+      ),
+    ).toMatchObject({ tipo: "documento", legendaOriginal: "o exame" });
+    // Nunca do audio, nunca da clinica, nunca vazia.
+    for (const linha of [
+      {
+        author: "paciente",
+        content_type: "audio",
+        body: "to com falta de ar",
+        media_url: "storage://a",
+      },
+      {
+        author: "usuario",
+        content_type: "imagem",
+        body: "Segue a foto",
+        media_url: "storage://x",
+      },
+      {
+        author: "paciente",
+        content_type: "imagem",
+        body: "   ",
+        media_url: "storage://x",
+      },
+    ]) {
+      expect(mensagemDaLinha(linha, null), linha.author).not.toHaveProperty(
+        "legendaOriginal",
+      );
+    }
+  });
+
   it("o marcador da mídia da clínica não diz que foi o paciente", () => {
     const daClinica = mensagemDaLinha(
       {

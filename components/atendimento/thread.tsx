@@ -44,7 +44,7 @@ import {
 } from "@/lib/agente/nota-da-passagem";
 import {
   // [AG6 urgência] início
-  DICA_DA_URGENCIA,
+  dicaDaUrgencia,
   URGENCIA_DA_CONVERSA,
   // [AG6 urgência] fim
   estadoVisualDaConversa,
@@ -151,12 +151,18 @@ export function autorDaBolha(
 
 // [AG6 urgência] início
 /**
- * O chip "Urgente" do cabecalho (D-53), com a dica que diz o que fazer.
+ * O chip "Urgente" do cabecalho (D-53), com a dica que diz o que fazer,
+ * certa por papel (so quem pode assumir ouve "Assuma para atender.").
  * Focavel (o padrao do DisabledWithHint): a dica abre no foco do teclado e
  * no mouse, e o leitor de tela ouve o chip e a dica. Nunca escondido pela
  * largura do fio, como o estado: e o que mais importa nesta conversa.
  */
-export function ChipDaUrgencia() {
+export function ChipDaUrgencia({
+  podeAssumir = true,
+}: {
+  /** canEdit do Atendimento: o Somente leitura nao assume. */
+  podeAssumir?: boolean;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -167,7 +173,7 @@ export function ChipDaUrgencia() {
           <StatusChip definition={URGENCIA_DA_CONVERSA} />
         </span>
       </TooltipTrigger>
-      <TooltipContent>{DICA_DA_URGENCIA}</TooltipContent>
+      <TooltipContent>{dicaDaUrgencia(podeAssumir)}</TooltipContent>
     </Tooltip>
   );
 }
@@ -505,7 +511,9 @@ export function Thread({
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {/* [AG6 urgência] início */}
-          {urgenteAberta(conversation) ? <ChipDaUrgencia /> : null}
+          {urgenteAberta(conversation) ? (
+            <ChipDaUrgencia podeAssumir={podeEditar} />
+          ) : null}
           {/* [AG6 urgência] fim */}
           <StatusChip
             className="@max-[599px]/fio:hidden"

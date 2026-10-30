@@ -50,8 +50,12 @@ import {
 // "Aguardando você" sem responsavel. O motor chama so na passagem COM a
 // frase que devolveu "passou" e com a regra "responsavel_do_lead" na versao
 // publicada que ele leu; nunca na urgencia, no fora do horario, nas
-// passagens sem frase nem no "ja_fora_da_ia". O banco decide de novo. Erro
-// da RPC: a fila, so o log com ids e o codigo. Nenhum teste chama a OpenAI.
+// passagens sem frase nem no "ja_fora_da_ia". Revisao R2 do contrato do
+// banco: nem no sintoma, no assunto clinico, na midia e na conformidade
+// (onde cai a emergencia que a lista deterministica nao pega), e o banco
+// recusa com mensagem_nova quando o paciente escreveu o que o job nao leu.
+// O banco decide de novo. Erro da RPC: a fila, so o log com ids e o
+// codigo. Nenhum teste chama a OpenAI.
 
 const estado = vi.hoisted(() => ({
   config: null as unknown,
@@ -551,15 +555,6 @@ describe("AG6a: a passagem COM a frase, e a atribuição DEPOIS da frase", () =>
 
   it.each<[string, ResultadoDoTurno["desfecho"]]>([
     [
-      "sintoma pelo portão",
-      {
-        tipo: "escalou",
-        motivo: "sintoma",
-        gatilho: "sintoma",
-        origem: "portao",
-      },
-    ],
-    [
       "o agente pediu",
       {
         tipo: "escalou",
@@ -569,12 +564,12 @@ describe("AG6a: a passagem COM a frase, e a atribuição DEPOIS da frase", () =>
       },
     ],
     [
-      "a conformidade bloqueou",
+      "o pedido de falar com alguém",
       {
-        tipo: "bloqueou",
-        categoria: "triagem",
-        camada: "regra",
-        motivoDaFalha: null,
+        tipo: "escalou",
+        motivo: "pedido_humano",
+        gatilho: "pedido_humano",
+        origem: "portao",
       },
     ],
     ["falha técnica do turno", { tipo: "falhou", motivo: "desconhecida" }],
@@ -584,6 +579,115 @@ describe("AG6a: a passagem COM a frase, e a atribuição DEPOIS da frase", () =>
     expect(passagens()[0]).not.toHaveProperty("p_atribuir");
     expect(marcas.ordem).toEqual(["passagem", "frase", "atribuicao:atribuida"]);
     expect(conversaDoCenario(banco).assignee_user_id).toBe(ANA);
+  });
+
+  // Revisao R2 do contrato do banco (28/10/2026): onde cai a emergencia que
+  // a lista deterministica nao pega (o sintoma, o assunto clinico, a midia,
+  // a resposta que o filtro do CFM barrou), a conversa fica na fila de
+  // todos, com a regra do responsavel ligada: o motor nem chama a
+  // atribuicao (e o banco recusaria com motivo_nao_atribui).
+  it.each<[string, ResultadoDoTurno["desfecho"], string]>([
+    [
+      "sintoma pelo portão",
+      {
+        tipo: "escalou",
+        motivo: "sintoma",
+        gatilho: "sintoma",
+        origem: "portao",
+      },
+      "sintoma",
+    ],
+    [
+      "sintoma pelo agente (escalar_humano)",
+      {
+        tipo: "escalou",
+        motivo: "sintoma",
+        gatilho: null,
+        origem: "agente",
+      },
+      "sintoma",
+    ],
+    [
+      "assunto clínico pelo classificador",
+      {
+        tipo: "escalou",
+        motivo: "assunto_clinico",
+        gatilho: "assunto_clinico",
+        origem: "classificador",
+      },
+      "assunto_clinico",
+    ],
+    [
+      "a mídia (o áudio, a foto, o documento)",
+      {
+        tipo: "escalou",
+        motivo: "midia_nao_suportada",
+        gatilho: "midia",
+        origem: "portao",
+      },
+      "midia_nao_suportada",
+    ],
+    [
+      "a conformidade bloqueou",
+      {
+        tipo: "bloqueou",
+        categoria: "triagem",
+        camada: "regra",
+        motivoDaFalha: null,
+      },
+      "conformidade",
+    ],
+  ])(
+    "%s (R2): a frase sai e a conversa fica na fila de todos, sem chamar a atribuição",
+    async (_nome, desfecho, motivo) => {
+      montar({ motor: "responsavel_do_lead", resultado: frase(desfecho) });
+      expect(await rodar()).toEqual({ ok: true });
+      expect(passagens()).toEqual([
+        { p_job_id: JOB, p_worker: EXECUTOR, p_motivo: motivo },
+      ]);
+      expect(marcas.ordem).toEqual(["passagem", "frase"]);
+      expect(frases).toEqual([{ ok: true, messageId: "msg-frase" }]);
+      expect(atribuicoes()).toEqual([]);
+      expect(conversaDoCenario(banco)).toMatchObject({
+        status: "aguardando_humano",
+        assignee_user_id: null,
+      });
+      expect(eventosDoFio(banco)).not.toContain(EVENTO_DA_ANA);
+    },
+  );
+
+  it("o banco recusa sozinho os motivos da R2 (motivo_nao_atribui), mesmo se o motor chamasse", async () => {
+    for (const motivo of [
+      "sintoma",
+      "assunto_clinico",
+      "midia_nao_suportada",
+      "conformidade",
+      "urgencia",
+    ]) {
+      montar({ motor: "responsavel_do_lead" });
+      banco.linhas("ai_decision_log").push({
+        id: "d-r2",
+        clinic_id: CLINICA,
+        conversation_id: CONVERSA,
+        job_id: JOB,
+        desfecho: motivo === "conformidade" ? "bloqueou" : "escalou",
+        escalation_reason: motivo,
+      });
+      Object.assign(conversaDoCenario(banco), {
+        status: "aguardando_humano",
+        assignee_user_id: null,
+      });
+      expect(
+        await atribuirConversaPassadaPelaIa(banco.cliente(), {
+          clinicId: CLINICA,
+          conversationId: CONVERSA,
+          jobId: JOB,
+          workerId: EXECUTOR,
+        }),
+        motivo,
+      ).toEqual({ tipo: "resposta", codigo: "motivo_nao_atribui" });
+      expect(conversaDoCenario(banco).assignee_user_id, motivo).toBeNull();
+    }
   });
 
   it("o teto de respostas (escalarSemModelo): a frase e depois a Ana", async () => {
@@ -855,6 +959,126 @@ describe("AG6a: o banco decide quem recebe (o espelho do contrato R1.2)", () => 
       assignee_user_id: BIA,
     });
     expect(eventosDoFio(banco)).not.toContain(EVENTO_DA_ANA);
+  });
+
+  // Revisao R2.2 do contrato do banco: a mensagem do paciente que o job nao
+  // leu (desde a criacao do job, fora de ai_turno.mensagens_lidas dele) deixa
+  // a conversa na fila de todos (mensagem_nova), entre urgente e regra_fila.
+  function mensagemDoPaciente(id: string, criadaEm: string, extra = {}) {
+    banco.linhas("message").push({
+      id,
+      clinic_id: CLINICA,
+      conversation_id: CONVERSA,
+      author: "paciente",
+      direction: "entrada",
+      content_type: "texto",
+      body: "oi?",
+      media_url: null,
+      deleted_at: null,
+      is_internal_note: false,
+      pelo_celular: false,
+      created_at: criadaEm,
+      ...extra,
+    });
+  }
+
+  it("o paciente escreveu entre a frase e a atribuição: a fila (mensagem_nova), só o código no log", async () => {
+    montar({ motor: "responsavel_do_lead" });
+    enviarFrase.mockImplementation(async () => {
+      marcas.ordem.push("frase");
+      const saida = guardaDaFrase();
+      frases.push(saida);
+      mensagemDoPaciente("m2", "2026-10-13T14:59:20.000Z");
+      return saida;
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(marcas.ordem).toEqual([
+      "passagem",
+      "frase",
+      "atribuicao:mensagem_nova",
+    ]);
+    expect(frases).toEqual([{ ok: true, messageId: "msg-frase" }]);
+    expect(conversaDoCenario(banco)).toMatchObject({
+      status: "aguardando_humano",
+      assignee_user_id: null,
+    });
+    expect(eventosDoFio(banco)).not.toContain(EVENTO_DA_ANA);
+    const linha = logs.join("");
+    expect(linha).toContain('"status":"mensagem_nova"');
+    expect(linha).not.toContain("resposta_fora_do_formato");
+    expect(linha).not.toContain("oi?");
+  });
+
+  it("a mensagem que chegou durante o turno (o modelo não a viu): a fila (mensagem_nova)", async () => {
+    montar({ motor: "responsavel_do_lead" });
+    turno.mockImplementation(async () => {
+      mensagemDoPaciente("m2", "2026-10-13T14:59:05.000Z");
+      return frase(VALOR);
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    // O turno gravou so o que leu (m1); m2 ficou fora das lidas.
+    expect(
+      banco.linhas("ai_turno").find((t) => t.job_id === JOB)?.mensagens_lidas,
+    ).toEqual(["m1"]);
+    expect(marcas.atribuicoes).toEqual([
+      { atribuida: false, codigo: "mensagem_nova" },
+    ]);
+    expect(conversaDoCenario(banco).assignee_user_id).toBeNull();
+  });
+
+  it("a mensagem que o job leu, a apagada, a de outra conversa e a de antes do job não contam: a Ana", async () => {
+    montar({ motor: "responsavel_do_lead" });
+    // Lida pelo job: chegou depois da criacao do job e antes da leitura.
+    mensagemDoPaciente("m2", "2026-10-13T14:59:02.000Z");
+    // Apagada, depois da criacao do job.
+    mensagemDoPaciente("m3", "2026-10-13T14:59:03.000Z", {
+      deleted_at: "2026-10-13T14:59:04.000Z",
+    });
+    // De outra conversa do mesmo contato.
+    mensagemDoPaciente("m4", "2026-10-13T14:59:04.000Z", {
+      conversation_id: "c0000000-0000-4000-8000-000000000099",
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(
+      banco.linhas("ai_turno").find((t) => t.job_id === JOB)?.mensagens_lidas,
+    ).toEqual(["m1", "m2"]);
+    expect(marcas.ordem).toEqual(["passagem", "frase", "atribuicao:atribuida"]);
+    expect(conversaDoCenario(banco).assignee_user_id).toBe(ANA);
+  });
+
+  it("a ordem das recusas: urgente antes de mensagem_nova, e mensagem_nova antes de regra_fila", async () => {
+    montar({ motor: "responsavel_do_lead", banco: "fila" });
+    enviarFrase.mockImplementation(async () => {
+      marcas.ordem.push("frase");
+      const saida = guardaDaFrase();
+      frases.push(saida);
+      mensagemDoPaciente("m2", "2026-10-13T14:59:20.000Z");
+      return saida;
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(marcas.atribuicoes).toEqual([
+      { atribuida: false, codigo: "mensagem_nova" },
+    ]);
+
+    montar({ motor: "responsavel_do_lead" });
+    banco.linhas("conversa_urgente").push({
+      conversation_id: CONVERSA,
+      clinic_id: CLINICA,
+      desde: "2026-10-13T14:00:00.000Z",
+      job_id: "10000000-0000-4000-8000-000000000009",
+      encerrada_em: null,
+    });
+    enviarFrase.mockImplementation(async () => {
+      marcas.ordem.push("frase");
+      const saida = guardaDaFrase();
+      frases.push(saida);
+      mensagemDoPaciente("m2", "2026-10-13T14:59:20.000Z");
+      return saida;
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(marcas.atribuicoes).toEqual([
+      { atribuida: false, codigo: "urgente" },
+    ]);
   });
 
   it("a resposta aprovada que o banco recusou (ia_sem_aprovacao): a frase, e o banco não atribui (sem_passagem, R1.3)", async () => {

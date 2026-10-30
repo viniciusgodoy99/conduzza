@@ -339,6 +339,101 @@ describe("AG6a: a urgência no executor", () => {
     expect(turnoGravado()).toMatchObject({ mensagens_lidas: ["m1", "m2"] });
   });
 
+  // Revisao de 28/10/2026: a juncao das pendentes, na ordem, e a legenda da
+  // midia (nunca do audio).
+  function pendente(id: string, criadaEm: string, extra: Partial<Linha>) {
+    banco.linhas("message").push({
+      id,
+      clinic_id: CLINICA,
+      conversation_id: CONVERSA,
+      author: "paciente",
+      direction: "entrada",
+      content_type: "texto",
+      body: null,
+      media_url: null,
+      deleted_at: null,
+      is_internal_note: false,
+      pelo_celular: false,
+      created_at: criadaEm,
+      ...extra,
+    });
+  }
+
+  it("a mensagem em partes (\"to com dor\" e depois \"no peito\"): a junção na ordem passa", async () => {
+    montar("to com dor");
+    pendente("m2", "2026-10-13T14:58:40.000Z", { body: "no peito" });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(turno).not.toHaveBeenCalled();
+    expect(decisoes()[0]).toMatchObject({ escalation_reason: "urgencia" });
+    expect(turnoGravado()).toMatchObject({ mensagens_lidas: ["m1", "m2"] });
+    expect(banco.linhas("conversa_urgente")).toHaveLength(1);
+    expect(logs.join("")).not.toContain("peito");
+  });
+
+  it("a legenda da foto (\"to com dor no peito\"): passa, sem modelo", async () => {
+    montar("ignorado");
+    const m1 = banco.linhas("message").find((m) => m.id === "m1");
+    Object.assign(m1 ?? {}, {
+      content_type: "imagem",
+      media_url: "clinica/midia/m1.jpg",
+      body: "to com dor no peito",
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(turno).not.toHaveBeenCalled();
+    expect(decisoes()[0]).toMatchObject({
+      escalation_reason: "urgencia",
+      gatilho_entrada: "urgencia",
+    });
+    expect(banco.linhas("conversa_urgente")).toHaveLength(1);
+    expect(enviarFrase).toHaveBeenCalledTimes(1);
+    expect(logs.join("")).not.toContain("peito");
+  });
+
+  it("a legenda do vídeo junto com o texto de antes (\"olha isso\" e \"ela desmaiou\"): passa", async () => {
+    montar("olha isso");
+    pendente("m2", "2026-10-13T14:58:40.000Z", {
+      content_type: "video",
+      media_url: "clinica/midia/m2.mp4",
+      body: "ela desmaiou",
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(turno).not.toHaveBeenCalled();
+    expect(decisoes()[0]).toMatchObject({ escalation_reason: "urgencia" });
+  });
+
+  it("o corpo do áudio nunca é lido pela urgência nesta rodada: o turno de sempre (que escala a mídia)", async () => {
+    montar("ignorado");
+    const m1 = banco.linhas("message").find((m) => m.id === "m1");
+    Object.assign(m1 ?? {}, {
+      content_type: "audio",
+      media_url: "clinica/midia/m1.ogg",
+      body: "to com falta de ar",
+    });
+    turno.mockImplementation(async () => ({
+      tipo: "frase_fixa",
+      resposta: FRASE_DE_ESCALONAMENTO,
+      desfecho: {
+        tipo: "escalou",
+        motivo: "midia_nao_suportada",
+        gatilho: "midia",
+        origem: "portao",
+      },
+      trilha: [],
+      uso: [],
+      versaoDoPrompt: "agente-teste",
+      filtro: null,
+      descartados: { instrucoes: false, itensDaBase: 0 },
+      rascunhoBloqueado: null,
+    }));
+    expect(await rodar()).toEqual({ ok: true });
+    expect(turno).toHaveBeenCalledTimes(1);
+    // O laco recebe o audio sem legenda (so a urgencia leria a legenda).
+    const mensagens = turno.mock.calls[0]?.[0].mensagens ?? [];
+    expect(mensagens.at(-1)).toMatchObject({ tipo: "audio", texto: null });
+    expect(mensagens.at(-1)).not.toHaveProperty("legendaOriginal");
+    expect(banco.linhas("conversa_urgente")).toEqual([]);
+  });
+
   it("o nome do contato mascarado não esconde o sinal (lê o texto original)", async () => {
     // O contato se chama "Falta Silva": a mascara do nome troca "falta" por
     // Fulano no texto da OpenAI; a urgencia le o texto original.
@@ -378,6 +473,14 @@ describe("AG6a: o que não é urgência segue o turno de sempre", () => {
     "Tem falta de ar condicionado na sala de espera?",
     "o SAMU fica perto daí?",
     "nunca tive convulsão, posso fazer botox?",
+    // Revisao de 28/10/2026: os falsos positivos da estetica e da recepcao.
+    "fiz botox e minha boca ficou torta",
+    "papada e rosto caindo, o que vocês fazem?",
+    "surgiu uma emergência familiar, preciso cancelar",
+    "tentei ligar várias vezes, não consigo falar.",
+    "meu marido vai me matar",
+    "já desmaiei tirando sangue",
+    "minha mãe teve um AVC, ela pode fazer botox?",
   ])("%s: o turno roda (reserva e portão de sempre)", async (texto) => {
     montar(texto);
     turno.mockImplementation(async () => respondeu());
@@ -465,6 +568,68 @@ describe("AG6a: a urgência na retomada e na corrida", () => {
     expect(conversaDoCenario(banco).assignee_user_id).toBeNull();
     expect(banco.chamadasDe("atribuir_conversa_passada_pela_ia")).toEqual([]);
     expect(enviarFrase).toHaveBeenCalledTimes(1);
+  });
+
+  // Revisao de 28/10/2026 (achado 7): a passagem por urgencia que voltou
+  // SEM a marca (a gravacao em conversa_urgente falhou e virou WARNING no
+  // banco) deixa o aviso no log, so com os ids e o codigo. A passagem vale:
+  // a conversa na fila de todos, a frase de sempre, nenhuma atribuicao.
+  function avisosSemMarca(): string[] {
+    return logs
+      .join("")
+      .split("\n")
+      .filter((linha) => linha.includes('"evento":"ia_urgencia_sem_marca"'));
+  }
+
+  it("a marca que não gravou (urgente falso): a passagem vale, a frase sai e o aviso fica no log, só com ids e o código", async () => {
+    montar(EMERGENCIA);
+    banco.rpc("passar_conversa_da_ia_para_equipe", () => {
+      Object.assign(conversaDoCenario(banco), {
+        status: "aguardando_humano",
+        awaiting_reply: true,
+      });
+      return {
+        data: { passou: true, codigo: "passou", urgente: false },
+        error: null,
+      };
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(enviarFrase).toHaveBeenCalledTimes(1);
+    expect(banco.chamadasDe("atribuir_conversa_passada_pela_ia")).toEqual([]);
+    expect(conversaDoCenario(banco)).toMatchObject({
+      status: "aguardando_humano",
+      assignee_user_id: null,
+    });
+    expect(turnoGravado()).toMatchObject({ estado: "passou_para_equipe" });
+    const avisos = avisosSemMarca();
+    expect(avisos).toHaveLength(1);
+    expect(JSON.parse(avisos[0] ?? "{}")).toEqual({
+      ts: expect.any(String),
+      nivel: "warn",
+      evento: "ia_urgencia_sem_marca",
+      clinic_id: CLINICA,
+      conversation_id: CONVERSA,
+      job_id: JOB,
+      error_code: "marca_nao_gravada",
+    });
+  });
+
+  it("a marca gravada (urgente verdadeiro): nenhum aviso", async () => {
+    montar(EMERGENCIA);
+    expect(await rodar()).toEqual({ ok: true });
+    passouComoUrgencia();
+    expect(avisosSemMarca()).toEqual([]);
+  });
+
+  it("a passagem recusada (ja_fora_da_ia) com urgente falso: nenhum aviso (não passou)", async () => {
+    montar(EMERGENCIA);
+    banco.rpc("passar_conversa_da_ia_para_equipe", () => ({
+      data: { passou: false, codigo: "ja_fora_da_ia", urgente: false },
+      error: null,
+    }));
+    expect(await rodar()).toEqual({ ok: true });
+    expect(enviarFrase).not.toHaveBeenCalled();
+    expect(avisosSemMarca()).toEqual([]);
   });
 
   it("alguém assumiu entre a decisão e a passagem: nada sai e a conversa fica com quem assumiu", async () => {

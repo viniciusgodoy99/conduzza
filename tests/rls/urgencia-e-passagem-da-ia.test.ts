@@ -30,8 +30,16 @@ import { adminClient, anonClient } from "./stack";
 // direto pelo servidor (que pode por ia_atendendo) e a passagem e a de
 // verdade, chamada pelo servidor com um job em execucao deste teste; nenhum
 // executor roda aqui e nenhuma mensagem sai (numero fake). Nada usa a id de
-// uma clinica real. Telefones ficticios. ESCRITO, AINDA NAO RODADO: grava no
-// banco. Roda depois de aplicar a migration, com
+// uma clinica real. Telefones ficticios. As conversas nao tem janela
+// (ia_janela_da_conversa): a manutencao do motor (a cada minuto) so mexe em
+// conversa de clinica de teste COM janela, e nenhum definir_* destas
+// clinicas roda depois de elas existirem; por isso a licao de 30/10/2026 (o
+// contato paciente com o telefone forcado antes da conversa, commit 3f87861
+// do main, para a conversa que entra pela ingestao) nao se aplica aqui. A
+// revisao 2 da migration (os motivos clinicos e a mensagem nova) nao muda
+// nada deste arquivo: a atribuicao aqui so e a recusa da sessao (42501) e a
+// do worker sem posse. ESCRITO, AINDA NAO RODADO: grava no banco. Roda
+// depois de aplicar a migration, com
 // npm run test:rls -- urgencia-e-passagem-da-ia.
 //
 // LIMPEZA MANUAL, se uma execucao morrer antes do afterAll: no SQL editor,

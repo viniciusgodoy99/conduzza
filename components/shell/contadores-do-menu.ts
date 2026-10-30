@@ -35,13 +35,17 @@ export async function contarConversasAguardando(
 
 // [AG6 urgência] início
 /**
- * Conversas marcadas como urgentes AGORA (conversa_urgente aberta; D-53 e
- * contrato da frente de banco, secao 3): o contador do Atendimento fica em
- * alerta enquanto houver alguma. A RLS recorta o papel (o profissional so
- * conta a da conversa com ele, e a urgente vai sempre para a fila); a
- * clinica vem no filtro porque a pessoa pode ser membro de mais de uma.
- * Falha devolve null: o contador fica no tom de sempre, nunca num alerta
- * inventado.
+ * Conversas marcadas como urgentes AGORA (D-53 e contrato da frente de
+ * banco, secao 3): a marca aberta (conversa_urgente sem encerrada_em) COM a
+ * conversa em "Aguardando você", a mesma regra da lista (urgenteAberta, em
+ * lib/queries/conversations.ts). Sem olhar o status, uma marca presa (o
+ * gatilho que fecha a marca falhou e virou WARNING) deixava o menu em
+ * alerta sem chip nenhum na lista (revisao da AG6a). O contador do
+ * Atendimento fica em alerta enquanto houver alguma. A RLS recorta o papel
+ * nas duas tabelas (o profissional so conta a da conversa com ele, e a
+ * urgente vai sempre para a fila); a clinica vem no filtro porque a pessoa
+ * pode ser membro de mais de uma. Falha devolve null: o contador fica no
+ * tom de sempre, nunca num alerta inventado.
  */
 export async function contarConversasUrgentes(
   supabase: SupabaseClient,
@@ -49,9 +53,13 @@ export async function contarConversasUrgentes(
 ): Promise<number | null> {
   const { count, error } = await supabase
     .from("conversa_urgente")
-    .select("conversation_id", { count: "exact", head: true })
+    .select("conversation_id, conversation!inner(status)", {
+      count: "exact",
+      head: true,
+    })
     .eq("clinic_id", clinicId)
-    .is("encerrada_em", null);
+    .is("encerrada_em", null)
+    .eq("conversation.status", "aguardando_humano");
   return error ? null : (count ?? 0);
 }
 // [AG6 urgência] fim

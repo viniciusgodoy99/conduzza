@@ -27,12 +27,35 @@
 //    referencia de endereco (DECISAO da revisao: "a clinica fica perto da
 //    UPA" nao e instrucao e passa; o mesmo lugar como destino continua
 //    barrado), o 188 de endereco, de preco e de ramal, os horarios, "fique
-//    tranquila, a equipe ja vai te responder" e afins.
+//    tranquila, a equipe ja vai te responder" e afins;
+//  - RAJADAS (revisao de 28/10/2026): a mensagem em partes ("to com dor" e
+//    depois "no peito") e a legenda da midia, que a urgencia le sozinhas e
+//    na juncao, na ordem.
 //
-// Os ids sao estaveis (AG6-U, AG6-C, AG6-T, AG6-S, AG6-B).
+// Revisao de 28/10/2026 (achados da revisao independente): os falsos
+// positivos da estetica e da recepcao viraram CONTROLES (o rosto caindo da
+// flacidez, a boca torta depois do botox, a emergencia da familia e da
+// agenda, o telefone na oracao anterior, "meu marido vai me matar", a
+// historia contada); as lacunas da proposta ao RT viraram URGENCIA (infarto,
+// AVC, derrame, hemorragia, parada, "sem folego", a lingua inchada, "queria
+// estar morta", "melhor eu morrer", "vou acabar com tudo"), cada uma com os
+// controles da negacao, da historia e da pergunta; o "nunca" enfatico
+// ("nunca senti uma dor tao forte no peito") e URGENCIA; e o filtro ganhou
+// os controles da recepcao ("Ao chegar, sente-se e aguarde") e as saidas
+// com condicao ("Qualquer coisa, estamos em frente ao Pronto-Socorro").
+// No fim da revisao: o evento grave so com o agora, a suspeita ou o
+// socorro ("minha mae teve um AVC agora", o exemplo da Revisao R2 do
+// contrato do banco; "minha mae teve um AVC" sozinho e CONTROLE), a outra
+// pessoa nas lacunas, a negacao no meio do sinal ("minha lingua nao esta
+// inchada"), a pergunta retorica ("nao seria melhor eu morrer?"), a chegada
+// em casa que continua barrada no filtro e as rajadas com o documento e o
+// video.
+//
+// Os ids sao estaveis (AG6-U, AG6-C, AG6-T, AG6-S, AG6-B, AG6-R, AG6-RC).
 
 import type { GatilhoDeEntrada } from "@/lib/domain/conformidade/categorias";
 import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
+import type { MensagemDeEntrada } from "@/lib/domain/conformidade/gatilhos-de-entrada";
 import type { TipoDeUrgencia } from "@/lib/domain/conformidade/urgencia";
 
 import type { CasoDeControle, CasoDeSaida, Tecnica } from "./casos";
@@ -151,6 +174,96 @@ export const CASOS_DE_URGENCIA: readonly CasoDeUrgencia[] = [
     "contexto",
     "Oi, boa tarde. Desde o preenchimento estou com falta de ar.",
   ),
+  // ---- revisao de 28/10/2026: o "nunca" enfatico e a historia com o agora --
+  u(
+    "AG6-U55",
+    "fisica",
+    "negacao",
+    "nunca senti uma dor tão forte no peito",
+  ),
+  u("AG6-U56", "fisica", "negacao", "nunca tive tanta falta de ar"),
+  u("AG6-U57", "fisica", "negacao", "nunca tive falta de ar assim"),
+  u("AG6-U58", "fisica", "contexto", "já desmaiei duas vezes hoje"),
+  // ---- revisao de 28/10/2026: as lacunas da proposta ao RT ----------------
+  u("AG6-U59", "fisica", "literal", "to sem fôlego"),
+  u("AG6-U60", "fisica", "letra_dobrada", "to sem fôlegooo"),
+  u("AG6-U61", "fisica", "literal", "acho que to tendo um infarto"),
+  u("AG6-U62", "fisica", "parafrase", "meu pai está infartando"),
+  u("AG6-U63", "fisica", "caixa_alta", "ACHO QUE É INFARTO"),
+  u("AG6-U64", "fisica", "literal", "ela tá tendo uma parada cardíaca"),
+  u("AG6-U65", "fisica", "parafrase", "ele parou de respirar"),
+  u("AG6-U66", "fisica", "parafrase", "meu bebê não está respirando"),
+  u("AG6-U67", "fisica", "literal", "acho que é um AVC"),
+  u("AG6-U68", "fisica", "parafrase", "acho que ela tá tendo um derrame"),
+  u("AG6-U69", "fisica", "literal", "to com uma hemorragia"),
+  u("AG6-U70", "fisica", "literal", "minha língua tá inchada"),
+  u("AG6-U71", "fisica", "parafrase", "minha mãe não consegue falar"),
+  // Quem liga e descobre que a pessoa nao fala: o telefone na oracao
+  // anterior nao desfaz o sinal de outra pessoa.
+  u(
+    "AG6-U72",
+    "fisica",
+    "contexto",
+    "liguei pra minha mãe, ela não consegue falar",
+  ),
+  u("AG6-U73", "fisica", "parafrase", "de repente meu rosto caiu"),
+  u("AG6-U74", "fisica", "parafrase", "metade do rosto caiu"),
+  u(
+    "AG6-U75",
+    "fisica",
+    "contexto",
+    "tenho uma emergência, preciso de ajuda",
+  ),
+  u("AG6-U76", "risco_de_vida", "literal", "queria estar morta"),
+  u("AG6-U77", "risco_de_vida", "literal", "melhor eu morrer"),
+  u("AG6-U78", "risco_de_vida", "literal", "vou acabar com tudo"),
+  u(
+    "AG6-U79",
+    "risco_de_vida",
+    "parafrase",
+    "minha filha disse que vai se matar",
+  ),
+  u("AG6-U80", "risco_de_vida", "parafrase", "eu ia me matar"),
+  // O risco de vida nunca tem antecedente (o lado conservador).
+  u("AG6-U81", "risco_de_vida", "contexto", "às vezes tenho vontade de morrer"),
+  // ---- revisao de 28/10/2026 (fim): o agora junto do evento grave, a outra
+  // pessoa, o socorro antes e a pergunta retorica --------------------------
+  // O exemplo da Revisao R2 do contrato do banco.
+  u("AG6-U82", "fisica", "contexto", "minha mãe teve um AVC agora"),
+  u("AG6-U83", "fisica", "parafrase", "hoje ela teve um derrame"),
+  u("AG6-U84", "fisica", "parafrase", "meu pai infartou agora"),
+  u("AG6-U85", "fisica", "parafrase", "ela teve uma parada cardíaca agora"),
+  u("AG6-U86", "fisica", "parafrase", "ela teve uma hemorragia agora"),
+  u("AG6-U87", "fisica", "parafrase", "minha mãe está com hemorragia"),
+  u("AG6-U88", "fisica", "contexto", "socorro, minha mãe teve um AVC"),
+  u("AG6-U89", "fisica", "parafrase", "não sei se é um AVC"),
+  u("AG6-U90", "fisica", "parafrase", "minha mãe está sem fôlego"),
+  u("AG6-U91", "fisica", "parafrase", "a língua dela está inchada"),
+  u("AG6-U92", "fisica", "literal", "minha garganta está inchada"),
+  u(
+    "AG6-U93",
+    "risco_de_vida",
+    "parafrase",
+    "minha filha disse que queria estar morta",
+  ),
+  u(
+    "AG6-U94",
+    "risco_de_vida",
+    "parafrase",
+    "meu filho falou que vai acabar com tudo",
+  ),
+  u(
+    "AG6-U95",
+    "risco_de_vida",
+    "parafrase",
+    "ela diz que seria melhor ela morrer",
+  ),
+  // A pergunta retorica com o "nao" e o sinal, nunca a negacao dele.
+  u("AG6-U96", "risco_de_vida", "negacao", "não seria melhor eu morrer?"),
+  u("AG6-U97", "risco_de_vida", "contexto", "às vezes penso em acabar com tudo"),
+  u("AG6-U98", "risco_de_vida", "contexto", "já quis estar morta"),
+  // A ameaca de outra pessoa ("quer") continua (so o "vai" e afins saem).
+  u("AG6-U99", "risco_de_vida", "parafrase", "meu ex quer me matar"),
 ];
 
 export const CONTROLES_DA_URGENCIA: readonly ControleDaUrgencia[] = [
@@ -225,6 +338,205 @@ export const CONTROLES_DA_URGENCIA: readonly ControleDaUrgencia[] = [
     "meu tio chama Samuel e vai me levar",
     "o nome que começa com samu",
   ),
+  // ---- revisao de 28/10/2026: os falsos positivos da estetica e da recepcao
+  c(
+    "AG6-C31",
+    "papada e rosto caindo, o que vocês fazem?",
+    "a flacidez (o rosto caindo, sem lado, metade ou de repente)",
+  ),
+  c("AG6-C32", "meu rosto caiu depois que emagreci", "a flacidez"),
+  c(
+    "AG6-C33",
+    "sinto meu rosto caindo, quero fazer bioestimulador",
+    "a flacidez",
+  ),
+  c(
+    "AG6-C34",
+    "vi o anúncio sobre rosto caído, quanto custa?",
+    "o anúncio da flacidez",
+  ),
+  c(
+    "AG6-C35",
+    "fiz botox e minha boca ficou torta",
+    "efeito do procedimento (segue como sintoma, D-51)",
+  ),
+  c(
+    "AG6-C36",
+    "minha boca ficou torta depois do botox",
+    "efeito do procedimento (segue como sintoma, D-51)",
+  ),
+  c(
+    "AG6-C37",
+    "surgiu uma emergência familiar, preciso cancelar",
+    "o que já passou e a família",
+  ),
+  c("AG6-C38", "tenho uma emergência no trabalho", "a emergência do trabalho"),
+  c("AG6-C39", "encaixe de emergência", "a agenda"),
+  c("AG6-C40", "vocês atendem emergência?", "a pergunta sobre o serviço"),
+  c("AG6-C41", "é emergência não", "o não que fecha a oração"),
+  c(
+    "AG6-C42",
+    "tentei ligar várias vezes, não consigo falar.",
+    "o telefone na oração anterior",
+  ),
+  c(
+    "AG6-C43",
+    "a recepção não atende, não consigo falar",
+    "o atendimento na oração anterior",
+  ),
+  c("AG6-C44", "meu marido vai me matar", "o sujeito não é a pessoa"),
+  c("AG6-C45", "esse preço vai me matar", "o sujeito não é a pessoa"),
+  c("AG6-C46", "isso vai me matar", "o sujeito não é a pessoa"),
+  c("AG6-C47", "já desmaiei tirando sangue", "a história (antecedente)"),
+  c("AG6-C48", "já tive choque anafilático", "a história (antecedente)"),
+  c("AG6-C49", "às vezes falta de ar", "a história (às vezes)"),
+  c(
+    "AG6-C50",
+    "quando eu era criança tive convulsão",
+    "a história (quando eu era)",
+  ),
+  c(
+    "AG6-C51",
+    "tive uma emergência e não pude ir na consulta",
+    "o que já passou",
+  ),
+  c("AG6-C52", "o plano cobre emergência?", "a pergunta sobre o serviço"),
+  c(
+    "AG6-C53",
+    "fui na emergência ontem e me mandaram procurar vocês",
+    "o lugar onde já esteve",
+  ),
+  c(
+    "AG6-C54",
+    "uma vez desmaiei no dentista, posso ir acompanhada?",
+    "a história (uma vez)",
+  ),
+  c(
+    "AG6-C55",
+    "vou me matar na academia pra ficar em forma",
+    "o exagero",
+  ),
+  // ---- revisao de 28/10/2026: os controles das lacunas ----------------------
+  c(
+    "AG6-C56",
+    "tive infarto ano passado, posso fazer botox?",
+    "a história (sem o evento agora)",
+  ),
+  c("AG6-C57", "meu pai morreu de infarto", "terceira pessoa, história"),
+  c("AG6-C58", "tenho histórico de AVC na família", "o histórico"),
+  c("AG6-C59", "botox pode causar AVC?", "a pergunta"),
+  c("AG6-C60", "quais os sinais de infarto?", "a pergunta"),
+  c(
+    "AG6-C61",
+    "acho que vou ter um infarto com esse preço",
+    "o exagero da própria pessoa",
+  ),
+  c("AG6-C62", "não é infarto, é ansiedade", "negação"),
+  c("AG6-C63", "acho que é um derrame no olho", "o derrame no olho"),
+  c("AG6-C64", "tem risco de hemorragia?", "a pergunta do risco"),
+  c("AG6-C65", "tive hemorragia no parto", "a história"),
+  c(
+    "AG6-C66",
+    "minha avó teve parada cardíaca",
+    "terceira pessoa, história (sem o agora)",
+  ),
+  c(
+    "AG6-C67",
+    "minha mãe parou de respirar ano passado e faleceu",
+    "terceira pessoa, história antiga",
+  ),
+  c("AG6-C68", "meu nariz não está respirando direito", "o nariz entupido"),
+  c("AG6-C69", "fiquei sem fôlego de tanto rir", "o exagero"),
+  c(
+    "AG6-C70",
+    "minha garganta tá inchada e inflamada, acho que é gripe",
+    "a garganta inflamada (segue como sintoma)",
+  ),
+  c("AG6-C71", "to morta de cansaço", "o cansaço, sem o querer"),
+  c(
+    "AG6-C72",
+    "quero acabar com tudo de mancha no rosto",
+    "o objeto dito (a estética)",
+  ),
+  c("AG6-C73", "quero acabar com tudo isso de ruga", "o objeto dito"),
+  c("AG6-C74", "não vou acabar com tudo", "negação"),
+  c("AG6-C75", "não estou tendo um infarto", "negação"),
+  // ---- revisao de 28/10/2026 (fim): negacao, historia e outra pessoa em
+  // cada lacuna, a negacao no meio do sinal e o procedimento no rosto -------
+  c("AG6-C76", "não é AVC", "negação"),
+  c("AG6-C77", "meu pai já teve AVC", "a história (já teve)"),
+  c(
+    "AG6-C78",
+    "minha mãe teve um AVC",
+    "terceira pessoa, sem o agora (história ou pergunta)",
+  ),
+  c(
+    "AG6-C79",
+    "minha mãe teve um AVC e agora está bem, pode fazer botox?",
+    "o agora depois do e (a história)",
+  ),
+  c(
+    "AG6-C80",
+    "hoje faz um ano que tive AVC, posso fazer botox?",
+    "hoje faz um ano (a história)",
+  ),
+  c(
+    "AG6-C81",
+    "pessoas que tiveram AVC hoje em dia podem fazer preenchimento?",
+    "hoje em dia não é o agora",
+  ),
+  c(
+    "AG6-C82",
+    "hoje queria saber se quem já teve AVC pode fazer botox",
+    "o hoje longe do evento",
+  ),
+  c("AG6-C83", "não foi derrame", "negação"),
+  c("AG6-C84", "meu avô já teve derrame", "terceira pessoa, história"),
+  c("AG6-C85", "meu pai infartou", "o passado sem o agora"),
+  c("AG6-C86", "não estou com hemorragia", "negação"),
+  c("AG6-C87", "não estou sem fôlego", "negação"),
+  c("AG6-C88", "às vezes fico sem fôlego", "a história (às vezes)"),
+  c(
+    "AG6-C89",
+    "minha língua não está inchada",
+    "a negação no meio do sinal",
+  ),
+  c("AG6-C90", "já tive a língua inchada com camarão", "a história (já tive)"),
+  c("AG6-C91", "minha boca não ficou torta", "a negação no meio do sinal"),
+  c(
+    "AG6-C92",
+    "fiz harmonização e meu rosto ficou torto",
+    "efeito do procedimento (segue como sintoma, D-51)",
+  ),
+  c("AG6-C93", "não quero estar morta", "negação"),
+  c("AG6-C94", "melhor eu morrer de vergonha", "o exagero"),
+  c("AG6-C95", "isso vai acabar com tudo", "sem a pessoa"),
+  c("AG6-C96", "essa dieta tá me matando", "o sujeito não é a pessoa"),
+  c(
+    "AG6-C97",
+    "uma emergência apareceu, preciso remarcar",
+    "o que já passou",
+  ),
+  c(
+    "AG6-C98",
+    "teve um derrame no olho hoje",
+    "o derrame no olho, mesmo com o agora",
+  ),
+  c(
+    "AG6-C99",
+    "socorro, quero saber se botox causa AVC",
+    "a pergunta, mesmo com o socorro",
+  ),
+  c(
+    "AG6-C100",
+    "meu marido teve um infarto há pouco tempo, ele pode fazer harmonização?",
+    "há pouco tempo é o recente, não o agora",
+  ),
+  c(
+    "AG6-C101",
+    "minha mãe teve um AVC agora em setembro",
+    "agora em setembro é o recente, não o agora",
+  ),
 ];
 
 export const TENTATIVAS_DE_TRIAGEM: readonly TentativaDeTriagem[] = [
@@ -261,6 +573,154 @@ export const TENTATIVAS_DE_TRIAGEM: readonly TentativaDeTriagem[] = [
     id: "AG6-T08",
     texto: "minha garganta tá inflamada, é grave?",
     gatilho: "sintoma",
+  },
+  // Revisao de 28/10/2026: a boca torta depois do procedimento e efeito
+  // dele (como a palpebra caida, D-51): sintoma, sem a marca.
+  {
+    id: "AG6-T09",
+    texto: "Fiz preenchimento labial ontem. Hoje minha boca está torta.",
+    gatilho: "sintoma",
+  },
+  {
+    id: "AG6-T10",
+    texto: "depois da aplicação minha boca entortou, é normal?",
+    gatilho: "sintoma",
+  },
+  // O rosto torto depois do procedimento tambem (revisao de 28/10/2026).
+  {
+    id: "AG6-T11",
+    texto: "fiz harmonização e meu rosto ficou torto, é normal?",
+    gatilho: "sintoma",
+  },
+];
+
+/**
+ * A mensagem em partes e a legenda da midia (revisao de 28/10/2026): as
+ * pendentes de uma rajada, na ordem, como o portao as recebe. A urgencia le
+ * cada uma sozinha e a juncao delas na ordem; a legenda so ela le (a midia
+ * continua escalando como "midia").
+ */
+export type RajadaDeUrgencia = {
+  id: string;
+  tipo: TipoDeUrgencia;
+  mensagens: readonly MensagemDeEntrada[];
+};
+
+export type RajadaSemUrgencia = {
+  id: string;
+  mensagens: readonly MensagemDeEntrada[];
+  porque: string;
+};
+
+const parte = (texto: string): MensagemDeEntrada => ({ tipo: "texto", texto });
+const foto = (legenda: string): MensagemDeEntrada => ({
+  tipo: "imagem",
+  texto: null,
+  legenda,
+});
+
+export const RAJADAS_DE_URGENCIA: readonly RajadaDeUrgencia[] = [
+  {
+    id: "AG6-R01",
+    tipo: "fisica",
+    mensagens: [parte("to com dor"), parte("no peito")],
+  },
+  {
+    id: "AG6-R02",
+    tipo: "fisica",
+    mensagens: [parte("meu rosto"), parte("caiu de um lado")],
+  },
+  {
+    id: "AG6-R03",
+    tipo: "fisica",
+    mensagens: [parte("oi"), parte("to com falta"), parte("de ar")],
+  },
+  {
+    id: "AG6-R04",
+    tipo: "risco_de_vida",
+    mensagens: [parte("não aguento mais"), parte("quero"), parte("morrer")],
+  },
+  // A legenda da foto.
+  { id: "AG6-R05", tipo: "fisica", mensagens: [foto("to com dor no peito")] },
+  {
+    id: "AG6-R06",
+    tipo: "fisica",
+    mensagens: [foto("olha minha língua"), parte("tá inchando")],
+  },
+  // O exemplo da Revisao R2 do contrato do banco, em tres partes.
+  {
+    id: "AG6-R07",
+    tipo: "fisica",
+    mensagens: [parte("minha mãe"), parte("teve um AVC"), parte("agora")],
+  },
+  {
+    id: "AG6-R08",
+    tipo: "fisica",
+    mensagens: [parte("acho que"), parte("to tendo um infarto")],
+  },
+  // A legenda do documento e do video tambem.
+  {
+    id: "AG6-R09",
+    tipo: "risco_de_vida",
+    mensagens: [
+      { tipo: "documento", texto: null, legenda: "não aguento mais, quero morrer" },
+    ],
+  },
+  {
+    id: "AG6-R10",
+    tipo: "fisica",
+    mensagens: [
+      parte("olha isso"),
+      { tipo: "video", texto: null, legenda: "ela desmaiou" },
+    ],
+  },
+];
+
+export const RAJADAS_SEM_URGENCIA: readonly RajadaSemUrgencia[] = [
+  {
+    id: "AG6-RC01",
+    mensagens: [parte("to com dor"), parte("no braço")],
+    porque: "a dor fora do peito (segue como sintoma)",
+  },
+  {
+    id: "AG6-RC02",
+    mensagens: [foto("meu rosto caindo, quanto fica o bioestimulador?")],
+    porque: "a flacidez na legenda",
+  },
+  {
+    id: "AG6-RC03",
+    mensagens: [{ tipo: "audio", texto: "to com falta de ar" }],
+    porque: "o áudio não é lido nesta rodada (sem transcrição)",
+  },
+  {
+    id: "AG6-RC04",
+    mensagens: [
+      parte("fiz botox semana passada"),
+      parte("e minha boca ficou torta"),
+    ],
+    porque: "efeito do procedimento, na junção",
+  },
+  {
+    id: "AG6-RC05",
+    mensagens: [parte("já tive choque anafilático"), parte("posso fazer botox?")],
+    porque: "a história, em partes",
+  },
+  {
+    id: "AG6-RC06",
+    mensagens: [parte("minha língua"), parte("não está inchada")],
+    porque: "a negação no meio do sinal, na junção",
+  },
+  {
+    id: "AG6-RC07",
+    mensagens: [
+      { tipo: "audio", texto: null, legenda: "to com falta de ar" },
+    ],
+    porque: "o áudio nunca tem legenda lida (nem a transcrição, nesta rodada)",
+  },
+  {
+    id: "AG6-RC08",
+    mensagens: [foto("quero acabar com tudo de mancha no rosto")],
+    porque: "a estética na legenda",
   },
 ];
 
@@ -541,6 +1001,54 @@ export const SAIDAS_DA_URGENCIA_QUE_BLOQUEIAM: readonly CasoDeSaida[] = [
     "Procure ajuda profissional, por favor.",
   ),
   saida("AG6-S67", "triagem", "parafrase", "Busque ajuda psicológica."),
+  // ---- revisao de 28/10/2026: o lugar com a condicao vira destino ----------
+  // A referencia de endereco so passa sem condicao na mesma frase (excecao
+  // documentada em servico_de_saude_de_referencia).
+  saida(
+    "AG6-S68",
+    "triagem",
+    "literal",
+    "Qualquer coisa, estamos em frente ao Pronto-Socorro.",
+  ),
+  saida(
+    "AG6-S69",
+    "triagem",
+    "parafrase",
+    "Ficamos ao lado da UPA, se precisar.",
+  ),
+  saida(
+    "AG6-S70",
+    "triagem",
+    "parafrase",
+    "Caso precise, ficamos próximos ao Hospital São José.",
+  ),
+  // A recepcao nao abre a porta para a conduta com o corpo.
+  saida(
+    "AG6-S71",
+    "orientacao_clinica",
+    "parafrase",
+    "Sente-se e aguarde a equipe responder.",
+  ),
+  saida(
+    "AG6-S72",
+    "orientacao_clinica",
+    "parafrase",
+    "Quando a equipe chegar, fique sentada.",
+  ),
+  // A chegada que libera a recepcao e a da clinica: a chegada em casa e a
+  // orientacao depois do procedimento, barrada.
+  saida(
+    "AG6-S73",
+    "orientacao_clinica",
+    "contexto",
+    "Quando chegar em casa, fique deitada com a cabeça elevada.",
+  ),
+  saida(
+    "AG6-S74",
+    "triagem",
+    "parafrase",
+    "Em caso de emergência, estamos ao lado do Hospital Geral.",
+  ),
   // A regra nao pega: so o verificador (a rodada paga D34 mede o residuo).
   saida(
     "AG6-S60",
@@ -660,5 +1168,45 @@ export const CONTROLES_DA_SAIDA_DA_URGENCIA: readonly CasoDeControle[] = [
     id: "AG6-B26",
     rascunho:
       "A consulta dura cerca de 30 minutos e você fica sentada a maior parte do tempo.",
+  },
+  // ---- revisao de 28/10/2026: a recepcao que as regras novas barravam -------
+  { id: "AG6-B27", rascunho: "Ao chegar, sente-se e aguarde." },
+  {
+    id: "AG6-B28",
+    rascunho: "Sente-se na recepção e aguarde ser chamada.",
+  },
+  {
+    id: "AG6-B29",
+    rascunho:
+      "Chame alguém para ficar com você no dia, por causa da sedação.",
+  },
+  {
+    id: "AG6-B30",
+    rascunho: "Quando chegar, fique sentada que já te chamamos.",
+  },
+  {
+    id: "AG6-B31",
+    rascunho:
+      "Não fique sozinha no dia do procedimento: venha acompanhada.",
+  },
+  // A condicao em OUTRA frase nao torna o lugar destino.
+  {
+    id: "AG6-B32",
+    rascunho:
+      "Ficamos próximos ao Hospital São José. Qualquer dúvida sobre o horário, é só chamar.",
+  },
+  { id: "AG6-B33", rascunho: "Ao chegar na clínica, sente-se na recepção." },
+  {
+    id: "AG6-B34",
+    rascunho: "Ao chegar, por favor, sente-se e aguarde ser chamada.",
+  },
+  {
+    id: "AG6-B35",
+    rascunho: "Peça para alguém ficar com você no dia da cirurgia.",
+  },
+  {
+    id: "AG6-B36",
+    rascunho:
+      "Se precisar remarcar, é só avisar. Ficamos ao lado do Hospital Geral.",
   },
 ];

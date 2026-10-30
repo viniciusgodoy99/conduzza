@@ -10,6 +10,9 @@ import {
   Video,
   type LucideIcon,
 } from "lucide-react";
+// [AG6 urgência] início
+import { useId } from "react";
+// [AG6 urgência] fim
 
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
 import { SeloDoNumero } from "@/components/atendimento/selo-do-numero";
@@ -17,7 +20,7 @@ import { ChipDeEtiqueta } from "@/components/shared/chip-de-etiqueta";
 import { StatusChip } from "@/components/shared/status-chip";
 import {
   // [AG6 urgência] início o chip "Urgente" e a dica dele.
-  DICA_DA_URGENCIA,
+  dicaDaUrgencia,
   URGENCIA_DA_CONVERSA,
   // [AG6 urgência] fim
   type EstadoVisualDaConversa,
@@ -176,6 +179,9 @@ export function ConversationCard({
   agora,
   onSelect,
   numero = null,
+  // [AG6 urgência] início
+  podeAssumir = true,
+  // [AG6 urgência] fim
 }: {
   conversation: ConversationListItem;
   /** estadoVisualDaConversa: o MESMO helper do cabecalho do fio */
@@ -195,12 +201,24 @@ export function ConversationCard({
   timezone: string;
   agora: number;
   onSelect: () => void;
+  // [AG6 urgência] início
+  /**
+   * Quem olha pode assumir a conversa (canEdit do Atendimento): a dica do
+   * chip "Urgente" so manda assumir quem pode (o Somente leitura nao).
+   */
+  podeAssumir?: boolean;
+  // [AG6 urgência] fim
 }) {
   const naoLidas = conversation.unread_count;
   const prefixo = prefixoDaPrevia(conversation, viewerId);
   // [AG6 urgência] início A conversa marcada como urgente (D-53): o chip "Urgente"
   // abre a linha 3, antes do estado, e a linha cede uma etiqueta para ele.
   const urgente = urgenteAberta(conversation);
+  // A dica do chip, certa por papel, e o id dela: o cartao inteiro e um
+  // botao (nada focavel cabe dentro), entao a dica chega ao leitor de tela
+  // como a descricao do botao (aria-describedby), e ao mouse pelo title.
+  const dica = dicaDaUrgencia(podeAssumir);
+  const idDaDica = useId();
   // [AG6 urgência] fim
   // Com o selo do numero na linha 3, cabe uma etiqueta so antes do "+N".
   const etiquetasVisiveis = etiquetasNaLinha(Boolean(numero), urgente);
@@ -218,6 +236,8 @@ export function ConversationCard({
       type="button"
       onClick={onSelect}
       aria-current={selected ? "true" : undefined}
+      // [AG6 urgência] A dica do chip "Urgente" (escondida, so a descricao).
+      aria-describedby={urgente ? idDaDica : undefined}
       className={cn(
         "grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2.5 border-b border-l-2 border-b-border px-3.5 py-[11px] text-left cz-transition focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid",
         selected
@@ -279,17 +299,23 @@ export function ConversationCard({
         </span>
         <span className="mt-px flex min-w-0 items-center gap-[5px] overflow-hidden">
           {/* [AG6 urgência] início Primeiro na linha (nunca cortado pela rolagem
-              lateral escondida). A dica vai no title para o mouse; o leitor
-              de tela ouve "Urgente" no nome do cartao e a dica inteira no
-              cabecalho do fio, onde ela e focavel. */}
+              lateral escondida). O leitor de tela ouve "Urgente" no nome do
+              cartao e a dica como a descricao dele (o span escondido logo
+              abaixo, pelo aria-describedby do botao); o mouse, pelo title.
+              No cabecalho do fio a mesma dica e focavel. */}
           {urgente ? (
-            <span title={DICA_DA_URGENCIA} className="inline-flex shrink-0">
-              <StatusChip
-                size="sm"
-                definition={URGENCIA_DA_CONVERSA}
-                className="shrink-0"
-              />
-            </span>
+            <>
+              <span title={dica} className="inline-flex shrink-0">
+                <StatusChip
+                  size="sm"
+                  definition={URGENCIA_DA_CONVERSA}
+                  className="shrink-0"
+                />
+              </span>
+              <span id={idDaDica} hidden>
+                {dica}
+              </span>
+            </>
           ) : null}
           {/* [AG6 urgência] fim */}
           <StatusChip

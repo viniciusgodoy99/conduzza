@@ -24,6 +24,25 @@
 -- atribui; a atribuicao e a RPC nova atribuir_conversa_passada_pela_ia, que
 -- o motor chama DEPOIS da tentativa da frase, numa transacao propria.
 --
+-- REVISAO 2 DE 28/10/2026 (antes de aplicar; achado MEDIO-2 da revisao
+-- independente): a atribuicao pegava exatamente as passagens em que cai a
+-- emergencia que a lista deterministica NAO detecta ("acho que to tendo um
+-- infarto", "minha mae teve um AVC agora", "to com dor" e "no peito" em
+-- duas mensagens, um audio, "parada cardiaca"): elas passam como sintoma,
+-- assunto_clinico, midia_nao_suportada ou conformidade. Com a responsavel
+-- fora do expediente, a conversa saia de "Aguardando voce" e do contador do
+-- menu, e ninguem de plantao via. Agora esses quatro motivos tambem nunca
+-- atribuem (c_motivos_que_nunca_atribuem, a mesma razao da D-54), e a
+-- atribuicao recusa com o codigo novo mensagem_nova quando o paciente
+-- escreveu algo que o job nao leu (depois da passagem, ou durante o turno):
+-- alguem de plantao precisa ver na fila. Nomes dos motivos conferidos na
+-- producao em 28/10/2026 e de novo em 30/10/2026 (q.js, so leitura: o CHECK
+-- ai_decision_log_escalation_reason_valida). Fica FORA desta revisao
+-- (decisao pendente do dono, contrato R2.4): a passagem em que nenhum modelo
+-- leu a mensagem e o motivo atribui (a mensagem longa, os tetos, a falha
+-- tecnica) e o motivo de prioridade maior que esconde, no mesmo turno, a
+-- midia ou o assunto clinico (o portao grava so o primeiro gatilho).
+--
 -- DECISOES DO DONO QUE VALEM: D-5, D-15, D-2, D-4 (opcao A), D-8. DECISOES
 -- AINDA PENDENTES, construidas com a recomendacao do desenho (cada uma e uma
 -- constante nomeada; trocar e uma migration pequena com o mesmo corpo e
@@ -34,7 +53,10 @@
 --        resolver (o gatilho urgencia_sai_quando_alguem_pega);
 --   D-54 urgente vai sempre para a fila, nunca para o responsavel
 --        (c_motivos_que_nunca_atribuem e a marca aberta, em
---        atribuir_conversa_passada_pela_ia);
+--        atribuir_conversa_passada_pela_ia); pela revisao 2, tambem os
+--        motivos clinicos e o conteudo que ninguem leu (sintoma,
+--        assunto_clinico, midia_nao_suportada, conformidade) e a conversa
+--        em que o paciente escreveu o que o job nao leu (mensagem_nova);
 --   D-55 a atribuicao e opcao da clinica (escalation_rules.passagem_para,
 --        fila por padrao), so para responsavel ativo com papel que atende
 --        conversa (c_papeis_que_recebem), como a mensagem agendada; a etapa
@@ -46,12 +68,20 @@
 --     atribuicao devolve o codigo erro e a conversa fica na fila);
 --   - fora_do_horario tambem nunca atribui (o desenho, 1.3: a retomada no
 --     horario so pega conversa sem responsavel);
+--   - (revisao 2) a mensagem nova e a do paciente que o job NAO leu desde
+--     que foi criado: entrada do paciente, nao apagada, created_at a partir
+--     da criacao do job e fora de ai_turno.mensagens_lidas do job (o que o
+--     motor grava antes de toda passagem com frase; sem a linha do turno,
+--     nada lido). Pega a que chegou depois da passagem e tambem a que
+--     chegou durante o turno, que o modelo nao viu. Fica logo depois de
+--     urgente; a do interceptador no meio tambem conta (o lado seguro);
 --   - a atribuicao confere que a passagem foi do job pela ULTIMA decisao
 --     dele (ai_decision_log.job_id): escalou, bloqueou (conformidade) ou
 --     falhou (falha tecnica), com o motivo da passagem em escalation_reason
 --     (c_desfechos_que_passam). O desenho atribui nas passagens com a frase,
---     e a conformidade e a falha tecnica tambem tem frase. A resposta e a
---     falha sem passagem nao atribuem;
+--     e a conformidade e a falha tecnica tambem tem frase (a conformidade,
+--     pela revisao 2, esta entre os motivos que nunca atribuem). A resposta
+--     e a falha sem passagem nao atribuem;
 --   - a atribuicao trava a conversa ANTES de ler a janela e o estado (a
 --     ordem da passagem, D-A) e devolve um codigo por recusa;
 --   - clinic entra no bloco de travas (SHARE ROW EXCLUSIVE: a FK da tabela
@@ -91,11 +121,12 @@
 --      codigo, urgente}. NUNCA atribui. Ganha o comentario (o contrato).
 --   6. atribuir_conversa_passada_pela_ia (nova, so service role): o motor a
 --      chama DEPOIS da tentativa da frase. Com a posse do job, D-A, a
---      passagem do job (a ultima decisao), a conversa na fila sem
---      responsavel e sem marca aberta, a regra da ultima versao publicada e
---      o responsavel apto, a conversa fica com o responsavel do lead (update
---      condicional: nunca rouba) e o evento no fio. Devolve {atribuida,
---      codigo}.
+--      passagem do job (a ultima decisao, por motivo que nao seja urgencia,
+--      fora do horario, clinico nem conteudo que ninguem leu), a conversa na
+--      fila sem responsavel, sem marca aberta e sem mensagem do paciente que
+--      o job nao leu, a regra da ultima versao publicada e o responsavel
+--      apto, a conversa fica com o responsavel do lead (update condicional:
+--      nunca rouba) e o evento no fio. Devolve {atribuida, codigo}.
 --   7. podar_agendamento_da_ia (CREATE OR REPLACE do corpo vigente, o da
 --      AG5): mais a marca encerrada ha mais de 30 dias; chave urgencias.
 --   Sem mudanca: mensagem_ia_exige_aprovacao, frase_de_escalonamento_da_ia
@@ -109,16 +140,17 @@
 -- ja_fora_da_ia. Depois de passar, com urgencia: a marca.
 -- AS RECUSAS da atribuicao, na ordem: sem_posse -> (trava da conversa) ->
 -- job_antigo (D-A) -> sem_passagem -> motivo_nao_atribui -> fora_da_fila ->
--- com_responsavel -> urgente -> regra_fila -> sem_responsavel ->
--- responsavel_inapto; qualquer erro: erro (nada muda).
+-- com_responsavel -> urgente -> mensagem_nova -> regra_fila ->
+-- sem_responsavel -> responsavel_inapto; qualquer erro: erro (nada muda).
 --
--- Producao em 28/10/2026 (q.js, so leitura): a ultima migration aplicada e a
--- 20261027120000 (a AG4, 20261028100000, e a AG5, 20261029100000, vao antes
--- desta e ainda nao foram aplicadas); 3 decisoes da IA (2 com motivo,
--- nenhuma urgencia); 549 conversas (396 em "Aguardando voce"); 545 contatos,
--- NENHUM com responsavel (owner_user_id): a atribuicao nao muda nada ate
--- alguma clinica atribuir responsaveis em Leads e escolher a regra; 3
--- versoes do agente, todas com escalation_rules '{}' (fila). Nenhuma linha
+-- Producao em 30/10/2026 (q.js, so leitura): a ultima migration aplicada e a
+-- 20261028100000 (a AG4, aplicada em 28/10/2026 as 09:12); a AG5,
+-- 20261029100000, vai antes desta e ainda nao foi aplicada; 3 decisoes da IA
+-- (2 com motivo, agente_pediu e pedido_de_agenda; nenhuma urgencia); 568
+-- conversas (415 em "Aguardando voce"); 564 contatos, NENHUM com
+-- responsavel (owner_user_id): a atribuicao nao muda nada ate alguma
+-- clinica atribuir responsaveis em Leads e escolher a regra; 3 versoes do
+-- agente, todas publicadas e com escalation_rules '{}' (fila). Nenhuma linha
 -- muda de valor.
 --
 -- TRAVAS (medidas no Postgres local: pg_locks da transacao depois da
@@ -547,10 +579,11 @@ comment on function public.passar_conversa_da_ia_para_equipe(uuid, text, text) i
 -- O motor passa a conversa (secao 5), tenta a frase de sempre (a guarda a
 -- deixa sair: a conversa esta na fila, sem responsavel) e SO DEPOIS chama
 -- esta funcao, numa transacao propria. Ela confere de novo tudo o que o
--- banco consegue conferir (a posse, D-A, que a passagem foi do job, a fila,
--- a marca, a regra e o responsavel), trava a conversa antes de ler o estado
--- e nunca rouba de quem pegou a conversa no meio. Um codigo por recusa;
--- nada aqui derruba quem chama.
+-- banco consegue conferir (a posse, D-A, que a passagem foi do job e por
+-- motivo que atribui, a fila, a marca, a mensagem nova do paciente, a regra
+-- e o responsavel), trava a conversa antes de ler o estado e nunca rouba de
+-- quem pegou a conversa no meio. Um codigo por recusa; nada aqui derruba
+-- quem chama.
 
 create function public.atribuir_conversa_passada_pela_ia(p_job_id uuid, p_worker text)
 returns jsonb
@@ -560,13 +593,18 @@ set search_path to ''
 as $function$
 declare
   -- A decisao que passou a conversa para a equipe (as saidas com a frase):
-  -- escalou (o motivo), bloqueou (conformidade) ou falhou (falha_tecnica),
-  -- sempre com o motivo da passagem em escalation_reason. A resposta e a
-  -- falha sem passagem (liberacao_suspensa, sem_mensagem) nao atribuem.
+  -- escalou (o motivo), bloqueou (conformidade, que pela revisao 2 nunca
+  -- atribui) ou falhou (falha_tecnica), sempre com o motivo da passagem em
+  -- escalation_reason. A resposta e a falha sem passagem
+  -- (liberacao_suspensa, sem_mensagem) nao atribuem.
   c_desfechos_que_passam constant text[] := array['escalou', 'bloqueou', 'falhou'];
-  -- D-54 (urgente vai sempre para a fila) e a retomada no horario (so pega
-  -- conversa sem responsavel): estes motivos nunca atribuem.
-  c_motivos_que_nunca_atribuem constant text[] := array['urgencia', 'fora_do_horario'];
+  -- Estes motivos nunca atribuem: D-54 (urgente vai sempre para a fila); a
+  -- retomada no horario (so pega conversa sem responsavel); e, pela revisao
+  -- 2 (a mesma razao da D-54: o responsavel pode estar fora), os clinicos e
+  -- o conteudo que ninguem leu, onde cai a emergencia que a lista
+  -- deterministica nao pega (sintoma, assunto clinico, o audio ou outra
+  -- midia, e a resposta que o filtro do CFM barrou).
+  c_motivos_que_nunca_atribuem constant text[] := array['urgencia', 'fora_do_horario', 'sintoma', 'assunto_clinico', 'midia_nao_suportada', 'conformidade'];
   -- D-55: o recorte de Transferir e da mensagem agendada (Somente leitura
   -- nao atende conversa).
   c_papeis_que_recebem constant text[] := array['admin', 'gestor', 'recepcao', 'profissional'];
@@ -586,6 +624,7 @@ declare
   v_regra text;
   v_responsavel uuid;
   v_nome text;
+  v_lidas uuid[];
 begin
   -- Qualquer erro desfaz o que esta chamada fez, vira WARNING (a clinica e
   -- o SQLSTATE, nenhum dado de paciente) e devolve o codigo erro: a conversa
@@ -655,6 +694,34 @@ begin
          and u.encerrada_em is null
     ) then
       return jsonb_build_object('atribuida', false, 'codigo', 'urgente');
+    end if;
+
+    -- (revisao 2) O paciente escreveu o que o job nao leu: a mensagem de
+    -- entrada dele, nao apagada, desde a criacao do job e fora das lidas do
+    -- turno deste job (ai_turno.mensagens_lidas, que o motor grava antes de
+    -- toda passagem com frase; sem a linha do turno, nada lido). A que
+    -- chegou depois da passagem e a que chegou durante o turno (o modelo
+    -- nao a viu): alguem de plantao precisa ver na fila. Depois da trava da
+    -- conversa: a ingestao grava a mensagem e mexe na conversa na mesma
+    -- transacao, entao a que pegou a conversa antes ja aparece aqui; a que
+    -- vem depois espera esta transacao e chega a conversa ja atribuida.
+    select t.mensagens_lidas into v_lidas
+      from public.ai_turno t
+     where t.job_id = p_job_id
+       and t.clinic_id = v_clinica
+       and t.conversation_id = v_conversa;
+    v_lidas := coalesce(v_lidas, '{}'::uuid[]);
+    if exists (
+      select 1 from public.message m
+       where m.conversation_id = v_conversa
+         and m.clinic_id = v_clinica
+         and m.direction = 'entrada'
+         and m.author = 'paciente'
+         and m.deleted_at is null
+         and m.created_at >= v_criado
+         and not coalesce(m.id = any (v_lidas), false)
+    ) then
+      return jsonb_build_object('atribuida', false, 'codigo', 'mensagem_nova');
     end if;
 
     -- A regra da ULTIMA versao publicada (a que o agente le no WhatsApp).
@@ -728,7 +795,7 @@ grant execute on function public.atribuir_conversa_passada_pela_ia(uuid, text)
   to service_role;
 
 comment on function public.atribuir_conversa_passada_pela_ia(uuid, text) is
-  'So o servidor (service_role; o executor da IA), DEPOIS da tentativa da frase de sempre (AG6a, D-15, D-55; revisao de 28/10/2026): a conversa que o job passou para a equipe fica com o responsavel do lead. Recusas na ordem, {atribuida:false, codigo}: sem_posse (o job nao e responder_com_ia em executando com o worker, ou a conversa nao e da clinica do job); (trava da conversa) job_antigo (D-A: job de antes da janela atual); sem_passagem (a ultima decisao do job, em ai_decision_log, nao e escalou, bloqueou ou falhou com escalation_reason); motivo_nao_atribui (urgencia ou fora_do_horario); fora_da_fila (a conversa nao esta em aguardando_humano); com_responsavel; urgente (a marca aberta em conversa_urgente); regra_fila (a ultima versao publicada sem escalation_rules ->> passagem_para = responsavel_do_lead); sem_responsavel (o contato sem owner_user_id); responsavel_inapto (sem clinic_member ativo da clinica com papel admin, gestor, recepcao ou profissional). Atribuiu, {atribuida:true, codigo:atribuida}: o update so de aguardando_humano sem responsavel para em_atendimento com ele (nunca rouba) e o evento "A conversa ficou com {nome}, responsavel pelo lead." (profile.name em uma linha, ate 80; sem nome, "A conversa ficou com o responsavel pelo lead."). Qualquer erro: WARNING com a clinica e o SQLSTATE, nada muda, {atribuida:false, codigo:erro}. Idempotente: a segunda chamada devolve fora_da_fila.';
+  'So o servidor (service_role; o executor da IA), DEPOIS da tentativa da frase de sempre (AG6a, D-15, D-55; revisao de 28/10/2026): a conversa que o job passou para a equipe fica com o responsavel do lead. Recusas na ordem, {atribuida:false, codigo}: sem_posse (o job nao e responder_com_ia em executando com o worker, ou a conversa nao e da clinica do job); (trava da conversa) job_antigo (D-A: job de antes da janela atual); sem_passagem (a ultima decisao do job, em ai_decision_log, nao e escalou, bloqueou ou falhou com escalation_reason); motivo_nao_atribui (urgencia, fora_do_horario e, pela revisao 2, sintoma, assunto_clinico, midia_nao_suportada e conformidade); fora_da_fila (a conversa nao esta em aguardando_humano); com_responsavel; urgente (a marca aberta em conversa_urgente); mensagem_nova (revisao 2: mensagem de entrada do paciente, nao apagada, desde a criacao do job e fora de ai_turno.mensagens_lidas do job; sem o turno, nada lido); regra_fila (a ultima versao publicada sem escalation_rules ->> passagem_para = responsavel_do_lead); sem_responsavel (o contato sem owner_user_id); responsavel_inapto (sem clinic_member ativo da clinica com papel admin, gestor, recepcao ou profissional). Atribuiu, {atribuida:true, codigo:atribuida}: o update so de aguardando_humano sem responsavel para em_atendimento com ele (nunca rouba) e o evento "A conversa ficou com {nome}, responsavel pelo lead." (profile.name em uma linha, ate 80; sem nome, "A conversa ficou com o responsavel pelo lead."). Qualquer erro: WARNING com a clinica e o SQLSTATE, nada muda, {atribuida:false, codigo:erro}. Idempotente: a segunda chamada devolve fora_da_fila.';
 
 -- ---------------------------------------------------------------------------
 -- 7) A poda, com a marca de urgencia encerrada

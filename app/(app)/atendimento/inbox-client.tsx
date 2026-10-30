@@ -1154,6 +1154,8 @@ export function InboxClient({
             temArquivo={temArquivo}
             ehProfissional={viewerRole === "profissional"}
             numeros={numeros}
+            // [AG6 urgência] A dica do chip "Urgente" certa por papel.
+            podeAssumir={podeEditar}
           />
         </div>
         {/* Onda 2 (decisao P11b do dono): resolver de uma vez as conversas

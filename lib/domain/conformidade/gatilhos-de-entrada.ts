@@ -52,6 +52,15 @@ export type MensagemDeEntrada = {
   /** message.content_type: so "texto" segue; qualquer outro e midia. */
   tipo: string;
   texto: string | null;
+  // [AG6 urgência] início
+  /**
+   * A legenda da midia, quando o paciente escreveu uma (message.body da
+   * imagem, do documento ou do video). So a URGENCIA le (revisao de
+   * 28/10/2026): a midia continua escalando como "midia", e nenhum outro
+   * gatilho le a legenda. No texto e no audio, ignorada.
+   */
+  legenda?: string | null;
+  // [AG6 urgência] fim
 };
 
 export type EntradaDoPortao = {
@@ -193,12 +202,23 @@ export function detectarGatilhosDeEntrada(
 ): GatilhoDeEntrada[] {
   const achados = new Set<GatilhoDeEntrada>();
   let total = 0;
+  // [AG6 urgência] início
+  /** O que a urgencia le: o texto e a legenda da midia, na ordem. */
+  const textosDaUrgencia: (string | null)[] = [];
+  // [AG6 urgência] fim
 
   for (const mensagem of entrada.mensagens) {
     if (mensagem.tipo !== "texto") {
       // Audio (mesmo transcrito), imagem e documento nunca vao ao agente na
       // fase controlada: escala.
       achados.add("midia");
+      // [AG6 urgência] início
+      // A legenda da imagem, do documento ou do video. O audio nao tem
+      // legenda, e a transcricao nao e lida nesta rodada.
+      textosDaUrgencia.push(
+        mensagem.tipo === "audio" ? null : (mensagem.legenda ?? null),
+      );
+      // [AG6 urgência] fim
       continue;
     }
     const texto = mensagem.texto ?? "";
@@ -211,15 +231,20 @@ export function detectarGatilhosDeEntrada(
       achados.add(gatilho);
     }
     // [AG6 urgência] início
-    // O sinal de emergencia da lista deterministica (urgencia.ts, D-51):
-    // "urgencia" e o primeiro gatilho (categorias.ts). No WhatsApp o
-    // executor ja passou a conversa antes do teto e da reserva (passo 7c);
-    // aqui e a segunda trava e o caminho do simulador.
-    if (detectarUrgencia([texto]) !== null) {
-      achados.add("urgencia");
-    }
+    textosDaUrgencia.push(texto);
     // [AG6 urgência] fim
   }
+  // [AG6 urgência] início
+  // O sinal de emergencia da lista deterministica (urgencia.ts, D-51):
+  // "urgencia" e o primeiro gatilho (categorias.ts). Cada mensagem sozinha,
+  // a legenda da midia e a juncao delas na ordem ("to com dor" e "no
+  // peito"; revisao de 28/10/2026). No WhatsApp o executor ja passou a
+  // conversa antes do teto e da reserva (passo 7c), com os mesmos textos;
+  // aqui e a segunda trava e o caminho do simulador.
+  if (detectarUrgencia(textosDaUrgencia) !== null) {
+    achados.add("urgencia");
+  }
+  // [AG6 urgência] fim
   if (total > LIMITE_DA_RAJADA) {
     achados.add("mensagem_longa");
   }

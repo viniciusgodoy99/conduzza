@@ -396,6 +396,20 @@ describe("AG6a: os espelhos da urgência e da passagem", () => {
       [...corpo.matchAll(/'codigo', '([a-z_]+)'/g)].map((m) => m[1]),
     );
     expect(devolvidos).toEqual(new Set(CODIGOS_DA_ATRIBUICAO));
+    // Revisao R2 do contrato do banco: as recusas na ORDEM do motor (a
+    // primeira vez que cada codigo aparece no corpo), com mensagem_nova
+    // entre urgente e regra_fila. "atribuida" e "erro" ficam de fora (o
+    // sucesso e o bloco de excecao vem no fim do corpo).
+    const naOrdem = [
+      ...new Set(
+        [...corpo.matchAll(/'codigo', '([a-z_]+)'/g)].map((m) => m[1]),
+      ),
+    ].filter((codigo) => codigo !== "atribuida" && codigo !== "erro");
+    expect(naOrdem).toEqual(
+      CODIGOS_DA_ATRIBUICAO.filter(
+        (codigo) => codigo !== "atribuida" && codigo !== "erro",
+      ),
+    );
     // As listas do banco sao as do motor.
     const lista = (constante: string) =>
       literais(

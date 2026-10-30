@@ -20,15 +20,17 @@ import type {
 //    ja_fora_da_ia), a passagem ("Aguardando você", o evento do motivo) e,
 //    na URGENCIA, a marca em conversa_urgente (upsert por conversa, reabre a
 //    encerrada). NUNCA atribui. Devolve SEMPRE {passou, codigo, urgente};
-//  - atribuir_conversa_passada_pela_ia(p_job_id, p_worker) (R1.2), que o
-//    motor chama DEPOIS da frase: as recusas na ORDEM (sem_posse; job_antigo;
-//    sem_passagem, pela ULTIMA decisao do job; motivo_nao_atribui;
-//    fora_da_fila; com_responsavel; urgente, pela marca aberta; regra_fila,
-//    pela ULTIMA versao publicada; sem_responsavel; responsavel_inapto) e a
-//    atribuicao (D-15 e D-55): o update so de "Aguardando você" sem
-//    responsavel (nunca rouba; sem achar, fora_da_fila) e o evento "A
-//    conversa ficou com {nome}, responsável pelo lead.". Devolve SEMPRE
-//    {atribuida, codigo}.
+//  - atribuir_conversa_passada_pela_ia(p_job_id, p_worker) (R1.2 com a
+//    REVISAO R2 de 28/10/2026), que o motor chama DEPOIS da frase: as
+//    recusas na ORDEM (sem_posse; job_antigo; sem_passagem, pela ULTIMA
+//    decisao do job; motivo_nao_atribui, com os SEIS motivos da R2.1;
+//    fora_da_fila; com_responsavel; urgente, pela marca aberta;
+//    mensagem_nova, a mensagem do paciente que o job nao leu, R2.2;
+//    regra_fila, pela ULTIMA versao publicada; sem_responsavel;
+//    responsavel_inapto) e a atribuicao (D-15 e D-55): o update so de
+//    "Aguardando você" sem responsavel (nunca rouba; sem achar,
+//    fora_da_fila) e o evento "A conversa ficou com {nome}, responsável
+//    pelo lead.". Devolve SEMPRE {atribuida, codigo}.
 // A RPC de verdade e provada nas suites de integracao, de concorrencia e de
 // RLS, pela frente de banco.
 
@@ -40,10 +42,17 @@ export const PAPEIS_QUE_RECEBEM = [
   "profissional",
 ] as const;
 
-/** Os motivos que nunca atribuem, no banco (o espelho de c_motivos_...). */
+/**
+ * Os motivos que nunca atribuem, no banco (o espelho de
+ * c_motivos_que_nunca_atribuem, R2.1: a lista inteira, NESTA ORDEM).
+ */
 export const MOTIVOS_QUE_NUNCA_ATRIBUEM_NO_BANCO = [
   "urgencia",
   "fora_do_horario",
+  "sintoma",
+  "assunto_clinico",
+  "midia_nao_suportada",
+  "conformidade",
 ] as const;
 
 /** O valor de escalation_rules.passagem_para que liga a atribuicao. */
@@ -52,7 +61,10 @@ export const REGRA_DO_RESPONSAVEL = "responsavel_do_lead";
 /** Os desfechos da decisao que passam a conversa (R1.2, recusa 4). */
 export const DESFECHOS_QUE_PASSAM = ["escalou", "bloqueou", "falhou"] as const;
 
-/** Os codigos da atribuicao (R1.2), na ordem das recusas do banco. */
+/**
+ * Os codigos da atribuicao (R1.2 com a R2.2: mensagem_nova entre urgente e
+ * regra_fila), na ordem das recusas do banco.
+ */
 export const CODIGOS_DA_ATRIBUICAO_NO_BANCO = [
   "atribuida",
   "sem_posse",
@@ -62,6 +74,7 @@ export const CODIGOS_DA_ATRIBUICAO_NO_BANCO = [
   "fora_da_fila",
   "com_responsavel",
   "urgente",
+  "mensagem_nova",
   "regra_fila",
   "sem_responsavel",
   "responsavel_inapto",
@@ -76,6 +89,13 @@ export type OpcoesDaPassagemDaAg6 = {
   posse?: () => boolean;
   /** O job e de antes da janela atual (D-A; padrao: nao). */
   jobAntigo?: () => boolean;
+  /**
+   * job_queue.created_at do job (R2.2: a mensagem do paciente desde a
+   * criacao do job e fora das lidas dele e "mensagem_nova"). Sem ele, a
+   * linha do job no banco em memoria; sem as duas, toda mensagem do
+   * paciente fora das lidas conta (o lado seguro).
+   */
+  jobCriadoEm?: string;
   /** Um erro forcado do banco (error.code), antes de tudo. */
   erro?: () => string | null;
   /** Um erro HTTP forcado na ATRIBUICAO (error.code, como PGRST202). */
@@ -294,7 +314,52 @@ export function ultimaDecisaoDoJob(
   return doJob[doJob.length - 1] ?? null;
 }
 
-/** Registra a atribuicao da AG6a (R1.2) em memoria. */
+/**
+ * R2.2: alguma mensagem do paciente (entrada, autor paciente, nao apagada)
+ * desta conversa e desta clinica, desde a criacao do job, fora de
+ * ai_turno.mensagens_lidas do turno DESTE job (sem a linha do turno, nada
+ * lido). As de saida (a frase, os eventos, a resposta da equipe), as de
+ * outra conversa e as de antes da criacao do job nao contam.
+ */
+export function mensagemQueOJobNaoLeu(
+  banco: BancoEmMemoria,
+  opcoes: OpcoesDaPassagemDaAg6,
+  jobId: unknown,
+): boolean {
+  const turno = banco
+    .linhas("ai_turno")
+    .find(
+      (t) =>
+        t.job_id === jobId &&
+        t.clinic_id === opcoes.clinicId &&
+        t.conversation_id === opcoes.conversationId,
+    );
+  const lidas = new Set<unknown>(
+    Array.isArray(turno?.mensagens_lidas) ? turno.mensagens_lidas : [],
+  );
+  const criado =
+    opcoes.jobCriadoEm ??
+    banco.linhas("job_queue").find((j) => j.id === jobId)?.created_at ??
+    null;
+  const desde = criado === null ? null : Date.parse(String(criado));
+  return banco.linhas("message").some((m) => {
+    if (
+      m.conversation_id !== opcoes.conversationId ||
+      m.clinic_id !== opcoes.clinicId ||
+      m.direction !== "entrada" ||
+      m.author !== "paciente" ||
+      (m.deleted_at ?? null) !== null ||
+      lidas.has(m.id)
+    ) {
+      return false;
+    }
+    // Sem o instante (ou sem o do job): conta (o lado seguro, a fila).
+    const quando = Date.parse(String(m.created_at));
+    return desde === null || Number.isNaN(quando) || quando >= desde;
+  });
+}
+
+/** Registra a atribuicao da AG6a (R1.2 com a R2) em memoria. */
 export function rpcDaAtribuicaoDaAg6(
   banco: BancoEmMemoria,
   opcoes: OpcoesDaPassagemDaAg6,
@@ -352,6 +417,10 @@ export function rpcDaAtribuicaoDaAg6(
     }
     if (temMarcaAberta(banco, opcoes.conversationId)) {
       return devolver("urgente");
+    }
+    // 8b (R2.2). A mensagem do paciente que o job nao leu: a fila.
+    if (mensagemQueOJobNaoLeu(banco, opcoes, args.p_job_id)) {
+      return devolver("mensagem_nova");
     }
     // 9. A regra da ULTIMA versao publicada.
     if (
@@ -556,6 +625,8 @@ export function bancoDaAg6(
   const opcoes: OpcoesDaPassagemDaAg6 = {
     conversationId: CONVERSA,
     clinicId: CLINICA,
+    // O job do cenario (job() dos testes) nasceu em CRIADO, depois de m1.
+    jobCriadoEm: CRIADO,
     respostas: e.estado.respostas,
     atribuicoes: e.estado.atribuicoes,
     ordem: e.estado.ordem,

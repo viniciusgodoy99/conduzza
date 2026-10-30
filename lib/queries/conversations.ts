@@ -185,6 +185,30 @@ export function aplicarMarcaNaLista(
     )
     .sort(ordemDoAtendimento);
 }
+
+/**
+ * As marcas abertas lidas ao assinar o canal da marca
+ * (lib/realtime/use-inbox-channel.ts), de uma vez: a MESMA lista quando
+ * nenhuma muda nada. So acrescenta ou atualiza, e so na conversa que a
+ * lista ainda tem em "Aguardando você": a leitura pode ser mais velha que o
+ * evento da conversa (alguem assumiu enquanto ela viajava), e a marca velha
+ * nao pode grudar na conversa que ja saiu da fila. A marca que nao veio
+ * nao e apagada (quem fecha a marca e o evento dela, e a conversa que sai
+ * de "Aguardando você" ja perde a marca pelo proprio status). O evento de
+ * uma marca usa aplicarMarcaNaLista direto: ele pode chegar antes do
+ * evento da conversa, e a marca vale assim mesmo.
+ */
+export function aplicarMarcasNaLista(
+  lista: ConversationListItem[],
+  linhas: readonly Parameters<typeof aplicarMarcaNaLista>[1][],
+): ConversationListItem[] {
+  return linhas.reduce((atual, linha) => {
+    const conversa = atual.find((c) => c.id === linha.conversation_id);
+    return conversa?.status === "aguardando_humano"
+      ? aplicarMarcaNaLista(atual, linha)
+      : atual;
+  }, lista);
+}
 // [AG6 urgência] fim
 
 /** Os mesmos valores de message.author. */
@@ -302,15 +326,58 @@ export function estadoDoConsentimento(
   return consent.revoked_at ? "revogado" : "autorizado";
 }
 
+// A conversa como a lista precisa, SEM a marca de urgencia: e o select de
+// antes da AG6a, e o da volta quando o embutido da marca falha (abaixo).
+const CONVERSATION_SELECT_SEM_MARCA =
+  "id, status, assignee_user_id, unread_count, awaiting_reply, last_message_at, last_inbound_at, last_preview, last_preview_kind, last_preview_author, last_preview_author_user_id, tags, whatsapp_account_id, contact:contact_id (id, clinic_id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, source_origin, source_medium, source_method, source_ad_id, source_google_campaign_id, first_contact_at)";
+
 // [AG6 urgência] início No fim do select, a marca de urgencia embutida
 // (urgencia:conversa_urgente, uma linha por conversa pela FK
 // conversa_urgente_conversation_id_fkey, RLS igual a de conversation): so o
-// instante e se esta encerrada. Este codigo so vai ao ar DEPOIS da migration
-// 20261029120000 (antes, o embutido de uma tabela que nao existe derruba a
-// lista; desenho da AG6, secao 9). Uma string so: a concatenacao tira o tipo
-// literal que o supabase-js le. [AG6 urgência] fim
+// instante e se esta encerrada. "as const" mantem o tipo literal que o
+// supabase-js le.
+//
+// CODIGO NO AR ANTES DA MIGRATION 20261029120000 (revisao da AG6a): sem a
+// tabela, o embutido da PGRST200 (a relacao fora do cache de esquema) ou
+// 42P01 (o cache ainda acha a tabela que saiu, como no rollback), e a lista
+// de TODAS as clinicas caia no error.tsx. Com esses dois codigos, a busca
+// e refeita sem o embutido e cada conversa vem com `urgente: null`: o
+// Atendimento abre sem a marca. Qualquer outro erro continua sendo erro.
+// [AG6 urgência] fim
 const CONVERSATION_SELECT =
-  "id, status, assignee_user_id, unread_count, awaiting_reply, last_message_at, last_inbound_at, last_preview, last_preview_kind, last_preview_author, last_preview_author_user_id, tags, whatsapp_account_id, contact:contact_id (id, clinic_id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, source_origin, source_medium, source_method, source_ad_id, source_google_campaign_id, first_contact_at), urgencia:conversa_urgente (desde, encerrada_em)";
+  `${CONVERSATION_SELECT_SEM_MARCA}, urgencia:conversa_urgente (desde, encerrada_em)` as const;
+
+// [AG6 urgência] início
+/** Os codigos do embutido da marca sem a tabela (ver CONVERSATION_SELECT). */
+const MARCA_FORA_DO_BANCO: ReadonlySet<string> = new Set(["PGRST200", "42P01"]);
+
+/** O erro e o do embutido da marca sem a tabela (a migration nao rodou)? */
+export function marcaForaDoBanco(
+  error: { code?: string | null } | null | undefined,
+): boolean {
+  return MARCA_FORA_DO_BANCO.has(error?.code ?? "");
+}
+
+type RespostaDaBusca = {
+  data: unknown;
+  error: { code?: string | null; message: string } | null;
+};
+
+/**
+ * Faz a busca com a marca embutida e, se o embutido nao existe no banco
+ * (marcaForaDoBanco), refaz sem ele. `buscar` recebe o select de cada vez.
+ */
+async function comAMarcaSePuder(
+  buscar: (
+    colunas: typeof CONVERSATION_SELECT | typeof CONVERSATION_SELECT_SEM_MARCA,
+  ) => PromiseLike<RespostaDaBusca>,
+): Promise<RespostaDaBusca> {
+  const resposta = await buscar(CONVERSATION_SELECT);
+  return marcaForaDoBanco(resposta.error)
+    ? buscar(CONVERSATION_SELECT_SEM_MARCA)
+    : resposta;
+}
+// [AG6 urgência] fim
 
 export const conversationKeys = {
   list: (clinicId: string) => ["conversations", clinicId] as const,
@@ -331,7 +398,8 @@ function normalizeConversation(
   row: Record<string, unknown>,
 ): ConversationListItem {
   const contact = Array.isArray(row.contact) ? row.contact[0] : row.contact;
-  // [AG6 urgência] início O embutido cru (urgencia) vira a marca aberta (urgente).
+  // [AG6 urgência] início O embutido cru (urgencia) vira a marca aberta
+  // (urgente); sem o embutido (a busca de volta), nulo.
   const { urgencia, ...resto } = row;
   return {
     ...resto,
@@ -356,32 +424,38 @@ export async function fetchConversations(
   supabase: SupabaseClient,
   clinicId: string,
 ): Promise<ConversationListItem[]> {
+  // [AG6 urgência] As duas buscas com a marca embutida, cada uma com a volta
+  // sem ela (comAMarcaSePuder).
   const [recentes, esperando] = await Promise.all([
-    supabase
-      .from("conversation")
-      .select(CONVERSATION_SELECT)
-      .eq("clinic_id", clinicId)
-      .neq("status", "resolvida")
-      // A mensagem mais recente, enviada OU recebida, primeiro, como no
-      // WhatsApp (pedido do dono em 06/10/2026; antes era a ordem de
-      // recebimento). A mesma chave de recencia
-      // (lib/domain/filtros-da-conversa) e o indice conversation(clinic_id,
-      // status, last_message_at desc).
-      .order("last_message_at", { ascending: false, nullsFirst: false })
-      .limit(CONVERSATIONS_ATIVAS_LIMIT),
+    comAMarcaSePuder((colunas) =>
+      supabase
+        .from("conversation")
+        .select(colunas)
+        .eq("clinic_id", clinicId)
+        .neq("status", "resolvida")
+        // A mensagem mais recente, enviada OU recebida, primeiro, como no
+        // WhatsApp (pedido do dono em 06/10/2026; antes era a ordem de
+        // recebimento). A mesma chave de recencia
+        // (lib/domain/filtros-da-conversa) e o indice conversation(clinic_id,
+        // status, last_message_at desc).
+        .order("last_message_at", { ascending: false, nullsFirst: false })
+        .limit(CONVERSATIONS_ATIVAS_LIMIT),
+    ),
     // Quem ESPERA resposta entra sempre, mesmo fora das 300 mais recentes.
     // last_message_at anda com todo envio (regua, confirmacao, agendada):
     // numa manha de 300 toques, a conversa em que o paciente escreveu ontem
     // e ninguem respondeu sairia do lote, do "Aguardando voce" e do "Ha mais
     // de 24h" sem aviso (achado 25 da revisao).
-    supabase
-      .from("conversation")
-      .select(CONVERSATION_SELECT)
-      .eq("clinic_id", clinicId)
-      .neq("status", "resolvida")
-      .eq("awaiting_reply", true)
-      .order("last_inbound_at", { ascending: false, nullsFirst: false })
-      .limit(CONVERSATIONS_ATIVAS_LIMIT),
+    comAMarcaSePuder((colunas) =>
+      supabase
+        .from("conversation")
+        .select(colunas)
+        .eq("clinic_id", clinicId)
+        .neq("status", "resolvida")
+        .eq("awaiting_reply", true)
+        .order("last_inbound_at", { ascending: false, nullsFirst: false })
+        .limit(CONVERSATIONS_ATIVAS_LIMIT),
+    ),
   ]);
   if (recentes.error) {
     throw new Error(recentes.error.message);
@@ -419,13 +493,15 @@ export async function fetchResolvedConversations(
   clinicId: string,
   limit = RESOLVIDAS_LIMIT,
 ): Promise<ConversationListItem[]> {
-  const { data, error } = await supabase
-    .from("conversation")
-    .select(CONVERSATION_SELECT)
-    .eq("clinic_id", clinicId)
-    .eq("status", "resolvida")
-    .order("last_message_at", { ascending: false, nullsFirst: false })
-    .limit(limit);
+  const { data, error } = await comAMarcaSePuder((colunas) =>
+    supabase
+      .from("conversation")
+      .select(colunas)
+      .eq("clinic_id", clinicId)
+      .eq("status", "resolvida")
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .limit(limit),
+  );
   if (error) {
     throw new Error(error.message);
   }
@@ -442,17 +518,54 @@ export async function fetchConversationById(
   clinicId: string,
   conversationId: string,
 ): Promise<ConversationListItem | null> {
-  const { data, error } = await supabase
-    .from("conversation")
-    .select(CONVERSATION_SELECT)
-    .eq("clinic_id", clinicId)
-    .eq("id", conversationId)
-    .maybeSingle();
+  const { data, error } = await comAMarcaSePuder((colunas) =>
+    supabase
+      .from("conversation")
+      .select(colunas)
+      .eq("clinic_id", clinicId)
+      .eq("id", conversationId)
+      .maybeSingle(),
+  );
   if (error) {
     throw new Error(error.message);
   }
   return data ? normalizeConversation(data as Record<string, unknown>) : null;
 }
+
+// [AG6 urgência] início
+/** Teto das marcas abertas lidas de uma vez (a mesma ordem da lista ativa). */
+export const MARCAS_ABERTAS_LIMIT = CONVERSATIONS_ATIVAS_LIMIT;
+
+/**
+ * As marcas de urgencia ABERTAS da clinica (so ids e instantes, nenhum dado
+ * de paciente), pela sessao: a RLS de conversa_urgente recorta como a de
+ * conversation. O tempo real do Atendimento le ao assinar o canal da marca
+ * (lib/realtime/use-inbox-channel.ts), para a marca que nasceu antes de o
+ * canal ficar de pe nao se perder. Lanca no erro (sem a tabela, antes da
+ * migration, tambem): quem chama ignora.
+ */
+export async function fetchMarcasAbertas(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<
+  { conversation_id: string; desde: string; encerrada_em: string | null }[]
+> {
+  const { data, error } = await supabase
+    .from("conversa_urgente")
+    .select("conversation_id, desde, encerrada_em")
+    .eq("clinic_id", clinicId)
+    .is("encerrada_em", null)
+    .limit(MARCAS_ABERTAS_LIMIT);
+  if (error) {
+    throw new Error(error.message);
+  }
+  return (data ?? []) as {
+    conversation_id: string;
+    desde: string;
+    encerrada_em: string | null;
+  }[];
+}
+// [AG6 urgência] fim
 
 /**
  * Um numero de WhatsApp ATIVO da clinica, como o Inbox e Configuracoes vao

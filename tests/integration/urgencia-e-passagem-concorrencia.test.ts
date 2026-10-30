@@ -6,10 +6,14 @@ import { adminClient, anonClient } from "../rls/stack";
 
 // Urgencia e passagem da IA (AG6a, migration 20261029120000, com a revisao
 // de 28/10/2026: a atribuicao e a RPC atribuir_conversa_passada_pela_ia,
-// DEPOIS da passagem e da frase) com chamadas AO MESMO TEMPO, contra o banco
-// REAL: a passagem e a atribuicao pelo servidor (como o motor da IA) e o
-// Assumir ou o Resolver pela sessao de quem atende (o update condicional
-// das Server Actions do Atendimento).
+// DEPOIS da passagem e da frase; e a revisao 2, do mesmo dia: os motivos
+// clinicos nunca atribuem, por isso o motivo daqui e pedido_humano, e a
+// mensagem do paciente que o job nao leu barra a atribuicao, mensagem_nova)
+// com chamadas AO MESMO TEMPO, contra o banco REAL: a passagem e a
+// atribuicao pelo servidor (como o motor da IA), o Assumir ou o Resolver
+// pela sessao de quem atende (o update condicional das Server Actions do
+// Atendimento) e a mensagem do paciente pela ingestao de verdade
+// (ingest_inbound_message, como o webhook).
 //
 // LIMITE (o mesmo de ia-agenda-concorrencia.test.ts): os casos "ao mesmo
 // tempo" disparam as chamadas por HTTP (Promise.all) e NAO forcam a
@@ -30,6 +34,11 @@ import { adminClient, anonClient } from "../rls/stack";
 //   sem a conversa estar com o responsavel;
 // - R2, a urgencia contra o Assumir (e contra o Resolver): a marca nunca
 //   fica ABERTA com a conversa fora de "Aguardando voce";
+// - R3 (revisao 2), a atribuicao (com a passagem ja feita) contra a
+//   mensagem nova do paciente: ou a atribuicao veio antes (a conversa com o
+//   responsavel do lead, e a mensagem chega a ela) ou a mensagem veio antes
+//   (mensagem_nova: a conversa na fila, sem ninguem, sem o evento da
+//   atribuicao); a mensagem sempre gravada;
 // - nenhuma chamada devolve 40P01 nem 40001.
 //
 // ESCRITO NA AG6a E NAO RODADO por quem escreveu: grava no banco. Quem roda
@@ -39,6 +48,12 @@ import { adminClient, anonClient } from "../rls/stack";
 // CUIDADO, o banco e o da producao: clinica e_de_teste (sem a IA liberada,
 // numero fake: nenhuma mensagem sai), apagada no afterAll, e os usuarios
 // desta execucao. O interruptor global NUNCA e tocado. Telefones ficticios.
+// As conversas "na IA" sao linhas gravadas direto, sem janela: a manutencao
+// do motor nao as toca (em clinica de teste, so a conversa com janela) e
+// nenhum definir_* desta clinica roda; por isso a licao de 30/10/2026 (o
+// contato paciente com o telefone forcado, commit 3f87861 do main) nao se
+// aplica aqui. A ingestao do R3 acha o contato e a conversa aberta deste
+// numero e so grava a mensagem (o telefone nao esta liberado para a IA).
 //
 // LIMPEZA MANUAL, se uma execucao morrer antes do afterAll: no SQL editor,
 //   delete from public.clinic where slug like 'urgencia-conc-%' and e_de_teste;
@@ -98,22 +113,29 @@ async function criarPessoa(apelido: string, papel: string): Promise<void> {
     .throwOnError();
 }
 
-async function naIa(dono: string | null): Promise<string> {
+/** O contato (lead, com o responsavel dado) e a conversa dele "na IA"; com o telefone. */
+async function naIaComTelefone(dono: string | null): Promise<{ conversa: string; telefone: string }> {
   telefones += 1;
+  const telefone = `+55846${digitos}${String(telefones).padStart(2, "0")}`;
   const contato = await inserir("contact", {
     clinic_id: clinica,
-    phone_e164: `+55846${digitos}${String(telefones).padStart(2, "0")}`,
+    phone_e164: telefone,
     name: "Contato sintético",
     kind: "lead",
     owner_user_id: dono,
   });
-  return inserir("conversation", {
+  const conversa = await inserir("conversation", {
     clinic_id: clinica,
     contact_id: contato,
     status: "ia_atendendo",
     awaiting_reply: false,
     whatsapp_account_id: numero,
   });
+  return { conversa, telefone };
+}
+
+async function naIa(dono: string | null): Promise<string> {
+  return (await naIaComTelefone(dono)).conversa;
 }
 
 async function jobEmExecucao(conversa: string): Promise<string> {
@@ -154,6 +176,30 @@ async function passar(job: string, motivo: string) {
 
 async function atribuir(job: string) {
   return admin.rpc("atribuir_conversa_passada_pela_ia", { p_job_id: job, p_worker: WORKER });
+}
+
+/** A mensagem do paciente chegando pela ingestao de verdade (o webhook). */
+async function ingerir(telefone: string, rotulo: string) {
+  return admin.rpc("ingest_inbound_message", {
+    p_clinic_id: clinica,
+    p_phone_e164: telefone,
+    p_name: "Contato sintético",
+    p_wa_message_id: `urgencia-conc:${sufixo}:${rotulo}`,
+    p_content_type: "texto",
+    p_body: "Mensagem sintética",
+    p_whatsapp_account_id: numero,
+  });
+}
+
+async function mensagensDoPaciente(conversa: string): Promise<number> {
+  const { count } = await admin
+    .from("message")
+    .select("id", { count: "exact", head: true })
+    .eq("conversation_id", conversa)
+    .eq("direction", "entrada")
+    .eq("author", "paciente")
+    .throwOnError();
+  return count ?? 0;
 }
 
 /** O Assumir da tela, a partir do estado que ela viu. */
@@ -257,8 +303,9 @@ describe("R0: a passagem contra o Assumir de quem viu a conversa na IA, ao mesmo
     for (let i = 0; i < RODADAS; i += 1) {
       const conversa = await naIa(pessoa("dona"));
       const job = await jobEmExecucao(conversa);
-      await decidir(conversa, job, "sintoma");
-      const [p, a] = await Promise.all([passar(job, "sintoma"), assumir(conversa, "ia_atendendo")]);
+      // Um motivo que atribuiria (a passagem nunca atribui, mesmo assim).
+      await decidir(conversa, job, "pedido_humano");
+      const [p, a] = await Promise.all([passar(job, "pedido_humano"), assumir(conversa, "ia_atendendo")]);
       semCicloNemSerializacao(p.error, a.error);
       expect(p.error).toBeNull();
       expect(a.error).toBeNull();
@@ -287,9 +334,10 @@ describe("R1: a atribuicao contra o Assumir, ao mesmo tempo", () => {
     for (let i = 0; i < RODADAS; i += 1) {
       const conversa = await naIa(pessoa("dona"));
       const job = await jobEmExecucao(conversa);
-      await decidir(conversa, job, "sintoma");
+      // pedido_humano atribui (pela revisao 2, sintoma nunca atribui).
+      await decidir(conversa, job, "pedido_humano");
       // A passagem ja feita (o motor passa, manda a frase e so depois atribui).
-      const p = await passar(job, "sintoma");
+      const p = await passar(job, "pedido_humano");
       expect(p.error).toBeNull();
       expect(p.data).toEqual({ passou: true, codigo: "passou", urgente: false });
       const [t, a] = await Promise.all([atribuir(job), assumir(conversa, "aguardando_humano")]);
@@ -364,6 +412,41 @@ describe("R2: a urgencia contra quem pega a conversa, ao mesmo tempo", () => {
         expect(r).toEqual({ passou: false, codigo: "ja_fora_da_ia", urgente: false });
         expect(s.conversa.status).toBe("resolvida");
         expect(s.marca).toBeNull();
+      }
+      await admin.rpc("concluir_job", { p_id: job, p_worker: WORKER });
+    }
+  }, 120_000);
+});
+
+describe("R3: a atribuicao contra a mensagem nova do paciente, ao mesmo tempo (revisao 2)", () => {
+  it("ou a conversa fica com o responsavel (a mensagem depois), ou na fila com mensagem_nova; a mensagem sempre gravada", async () => {
+    for (let i = 0; i < RODADAS; i += 1) {
+      const { conversa, telefone } = await naIaComTelefone(pessoa("dona"));
+      const job = await jobEmExecucao(conversa);
+      await decidir(conversa, job, "pedido_humano");
+      // A passagem ja feita (o motor passa, manda a frase e so depois atribui).
+      const p = await passar(job, "pedido_humano");
+      expect(p.error).toBeNull();
+      expect(p.data).toEqual({ passou: true, codigo: "passou", urgente: false });
+      const [t, m] = await Promise.all([atribuir(job), ingerir(telefone, `r3-${i}`)]);
+      semCicloNemSerializacao(t.error, m.error);
+      expect(t.error).toBeNull();
+      expect(m.error).toBeNull();
+      expect(m.data).toMatchObject({ inserted: true, conversation_id: conversa });
+      const r = t.data as Atribuicao;
+      const s = await situacao(conversa);
+      expect(await mensagensDoPaciente(conversa)).toBe(1);
+      if (r.atribuida) {
+        // A atribuicao veio antes: a mensagem chegou a conversa ja com o
+        // responsavel do lead (como qualquer mensagem seguinte).
+        expect(r).toEqual({ atribuida: true, codigo: "atribuida" });
+        expect(s.conversa).toEqual({ status: "em_atendimento", assignee_user_id: pessoa("dona") });
+        expect(s.eventosDaAtribuicao).toBe(1);
+      } else {
+        // A mensagem veio antes: alguem de plantao precisa ver na fila.
+        expect(r).toEqual({ atribuida: false, codigo: "mensagem_nova" });
+        expect(s.conversa).toEqual({ status: "aguardando_humano", assignee_user_id: null });
+        expect(s.eventosDaAtribuicao).toBe(0);
       }
       await admin.rpc("concluir_job", { p_id: job, p_worker: WORKER });
     }

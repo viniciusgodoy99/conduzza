@@ -9,9 +9,22 @@ import { detectarGatilhosDeEntrada } from "@/lib/domain/conformidade/gatilhos-de
 import {
   detectarUrgencia,
   FONTES_DA_URGENCIA,
+  REGRAS_DE_LEITURA_DA_URGENCIA,
   SINAIS_DE_EMERGENCIA,
   TIPOS_DE_URGENCIA,
+  type SinalDeEmergencia,
 } from "@/lib/domain/conformidade/urgencia";
+
+/** Todas as fontes de um sinal: a dele e as excecoes. */
+function fontesDoSinal(sinal: SinalDeEmergencia): string[] {
+  return [
+    sinal.fonte,
+    sinal.excecaoAntes,
+    sinal.excecaoDepois,
+    sinal.excecaoNaOracaoAnterior,
+    sinal.excecaoNaMensagem,
+  ].filter((fonte): fonte is string => fonte !== undefined);
+}
 
 // A urgencia da AG6a (lib/domain/conformidade/urgencia.ts; D-51 e D-52): a
 // lista curta e deterministica de sinais de emergencia, com a negacao e as
@@ -28,8 +41,8 @@ describe("a lista", () => {
     for (const sinal of SINAIS_DE_EMERGENCIA) {
       expect(TIPOS_DE_URGENCIA).toContain(sinal.tipo);
       expect(() => new RegExp(sinal.fonte, "g")).not.toThrow();
-      if (sinal.excecaoAntes !== undefined) {
-        expect(() => new RegExp(sinal.excecaoAntes ?? "")).not.toThrow();
+      for (const fonte of fontesDoSinal(sinal)) {
+        expect(() => new RegExp(fonte), sinal.nome).not.toThrow();
       }
     }
     expect(SINAIS_DE_EMERGENCIA.some((s) => s.tipo === "risco_de_vida")).toBe(
@@ -39,19 +52,29 @@ describe("a lista", () => {
 
   it("as fontes não têm letra dobrada (o texto é lido sem letra repetida)", () => {
     // Fora os escapes ("\\b", "\\s", "\\S", "\\w"), nenhuma letra repetida
-    // nas fontes e nas excecoes: "morrer" na fonte nunca casaria com o texto
-    // lido como "morer". O nome do sinal nao e casado com texto.
+    // nas fontes e em TODAS as excecoes (antes, depois, na oracao anterior,
+    // na mensagem) e nas regras de leitura: "morrer" na fonte nunca casaria
+    // com o texto lido como "morer". O nome do sinal nao e casado com texto.
     const fontes = [
-      ...SINAIS_DE_EMERGENCIA.flatMap((sinal) => [
-        sinal.fonte,
-        sinal.excecaoAntes ?? "",
-      ]),
-      // A negacao, o fim da oracao e o sinal que traz a propria negacao.
-      ...FONTES_DA_URGENCIA.slice(SINAIS_DE_EMERGENCIA.length, -2),
+      ...SINAIS_DE_EMERGENCIA.flatMap(fontesDoSinal),
+      // A negacao, a enfase, a historia, o agora, o fim da oracao e o sinal
+      // que traz a propria negacao.
+      ...REGRAS_DE_LEITURA_DA_URGENCIA,
     ];
+    expect(FONTES_DA_URGENCIA.slice(SINAIS_DE_EMERGENCIA.length, -2)).toEqual(
+      [...REGRAS_DE_LEITURA_DA_URGENCIA],
+    );
     for (const fonte of fontes) {
       const semEscapes = fonte.replace(/\\[a-zA-Z]/g, " ");
       expect(semEscapes, fonte).not.toMatch(/([a-z])\1/);
+    }
+  });
+
+  it("cada exceção entra na versão do portão (mudar uma exceção muda a fonte)", () => {
+    for (const [i, sinal] of SINAIS_DE_EMERGENCIA.entries()) {
+      for (const fonte of fontesDoSinal(sinal)) {
+        expect(FONTES_DA_URGENCIA[i], sinal.nome).toContain(fonte);
+      }
     }
   });
 });
@@ -216,6 +239,181 @@ describe("no portão de entrada", () => {
   });
 });
 
+// Revisao de 28/10/2026 (a segunda revisao da AG6a): as regras de leitura
+// novas. Os casos de cada sinal estao na bateria; aqui, cada regra.
+describe("a junção das pendentes (na ordem)", () => {
+  it.each([
+    [["to com dor", "no peito"], "dor_no_peito"],
+    [["oi", "to com falta", "de ar"], "falta_de_ar"],
+    [["minha mãe", "teve um AVC", "agora"], "avc"],
+    [["não aguento mais", "quero", "morrer"], "quero_morrer"],
+  ] as const)("%j: urgência (%s)", (textos, sinal) => {
+    expect(detectarUrgencia(textos)?.sinal).toBe(sinal);
+  });
+
+  it("na ordem: a junção ao contrário não casa", () => {
+    expect(detectarUrgencia(["no peito", "to com dor"])).toBeNull();
+  });
+
+  it("a exceção da mensagem inteira vale na junção (o procedimento numa, a boca na outra)", () => {
+    expect(
+      detectarUrgencia(["fiz botox semana passada", "e minha boca ficou torta"]),
+    ).toBeNull();
+    // Sozinha, a boca torta e o sinal.
+    expect(detectarUrgencia(["e minha boca ficou torta"])?.sinal).toBe(
+      "boca_torta",
+    );
+  });
+
+  it("nulos e vazios no meio não quebram a junção", () => {
+    expect(detectarUrgencia(["to com dor", null, "  ", "no peito"])?.sinal).toBe(
+      "dor_no_peito",
+    );
+  });
+});
+
+describe("o nunca enfático", () => {
+  it.each([
+    "nunca senti uma dor tão forte no peito",
+    "nunca tive tanta falta de ar",
+    "nunca tive falta de ar assim",
+    "jamais senti tanta dor no peito",
+  ])("%s: urgência (a ênfase, não a negação)", (texto) => {
+    expect(urgente(texto)?.tipo).toBe("fisica");
+  });
+
+  it.each([
+    "nunca tive falta de ar",
+    "não tenho tanta falta de ar",
+    "nunca senti dor no peito",
+  ])("%s: a negação de sempre", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+});
+
+describe("a história contada (o antecedente, só nos sinais físicos)", () => {
+  it.each([
+    "já desmaiei tirando sangue",
+    "já tive choque anafilático",
+    "às vezes falta de ar",
+    "quando eu era criança tive convulsão",
+    "uma vez desmaiei no dentista",
+    "hoje faz um ano que desmaiei",
+    "faz um ano que tive falta de ar",
+  ])("%s: não é urgência", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+
+  it.each([
+    ["já desmaiei duas vezes hoje", "desmaio"],
+    ["mais uma vez desmaiei", "desmaio"],
+    ["às vezes tenho vontade de morrer", "quero_morrer"],
+    ["já pensei em suicídio", "suicidio"],
+  ])("%s: urgência (%s; o agora, ou o risco de vida)", (texto, sinal) => {
+    expect(urgente(texto)?.sinal).toBe(sinal);
+  });
+});
+
+describe("a oração anterior (o telefone antes do não consigo falar)", () => {
+  it.each([
+    "tentei ligar várias vezes, não consigo falar.",
+    "a recepção não atende, não consigo falar",
+    "o telefone só dá ocupado, não consigo falar",
+  ])("%s: não é urgência", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+
+  it.each([
+    ["acordei assim, não consigo falar", "nao_consigo_falar"],
+    // A outra pessoa: quem liga e descobre que ela nao fala e o sinal.
+    ["liguei pra minha mãe, ela não consegue falar", "nao_consegue_falar"],
+    // O telefone na oracao SEGUINTE nao desfaz (pode ser o pedido de ajuda).
+    ["não consigo falar, ligo pra quem?", "nao_consigo_falar"],
+  ])("%s: urgência (%s)", (texto, sinal) => {
+    expect(urgente(texto)?.sinal).toBe(sinal);
+  });
+});
+
+describe("a negação no meio do sinal", () => {
+  it.each([
+    "minha língua não está inchada",
+    "a língua dela não inchou",
+    "minha boca não ficou torta",
+    "meu rosto não está torto",
+    "a garganta não está fechando",
+    "o lado do corpo não ficou dormente",
+  ])("%s: não é urgência", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+
+  it.each([
+    ["minha língua tá inchada", "garganta_ou_lingua_inchada"],
+    ["a boca dela ficou torta", "boca_torta"],
+  ])("%s: urgência (%s)", (texto, sinal) => {
+    expect(urgente(texto)?.sinal).toBe(sinal);
+  });
+});
+
+describe("o evento grave só com o agora ou a suspeita", () => {
+  it.each([
+    ["acho que to tendo um infarto", "infarto"],
+    ["meu pai infartou agora", "infarto"],
+    ["agora há pouco ela teve um AVC", "avc"],
+    ["teve um derrame hoje de manhã", "avc"],
+    ["socorro meu pai infartou", "infarto"],
+    ["ela teve uma parada cardíaca agora", "parada_cardiaca"],
+    ["ela teve uma hemorragia agora", "hemorragia"],
+    ["ela teve um AVC há pouco", "avc"],
+    ["parece que ela teve um derrame", "avc"],
+  ])("%s: urgência (%s)", (texto, sinal) => {
+    expect(urgente(texto)?.sinal).toBe(sinal);
+  });
+
+  it.each([
+    "minha mãe teve um AVC",
+    "meu pai infartou",
+    "parada cardíaca",
+    "minha mãe teve um AVC e agora está bem, pode fazer botox?",
+    "teve AVC ano passado e hoje quer fazer botox",
+    "pessoas que tiveram AVC hoje em dia podem fazer preenchimento?",
+    "hoje faz um ano que tive AVC, posso fazer botox?",
+    "hoje queria saber se quem já teve AVC pode fazer botox",
+    "minha mãe não teve AVC agora",
+    "botox pode causar AVC?",
+    "teve um derrame no olho hoje",
+    // O recente que nao e o agora, e a informacao.
+    "minha mãe teve um AVC agora em setembro",
+    "meu marido teve um infarto há pouco tempo, ele pode fazer harmonização?",
+    "vi uma reportagem sobre AVC hoje",
+    "acho que vou ter um AVC de tanto estresse",
+  ])("%s: não é urgência", (texto) => {
+    expect(urgente(texto)).toBeNull();
+  });
+});
+
+describe("a outra pessoa", () => {
+  it.each([
+    ["meu marido vai me matar", null],
+    ["esse preço vai me matar", null],
+    ["essa dieta tá me matando", null],
+    ["meu ex quer me matar", "me_matar"],
+    ["eu vou me matar", "me_matar"],
+    ["minha filha disse que vai se matar", "se_matar"],
+    ["meu filho falou que vai acabar com tudo", "acabar_com_tudo"],
+    ["isso vai acabar com tudo", null],
+    ["ela diz que seria melhor ela morrer", "melhor_morrer"],
+  ])("%s: %s", (texto, sinal) => {
+    expect(urgente(texto)?.sinal ?? null).toBe(sinal);
+  });
+
+  it("a pergunta retórica com o não é o sinal, nunca a negação dele", () => {
+    expect(urgente("não seria melhor eu morrer?")?.sinal).toBe(
+      "melhor_morrer",
+    );
+    expect(urgente("melhor eu morrer de vergonha")).toBeNull();
+  });
+});
+
 describe("a versão do portão", () => {
   it("as fontes da urgência entram na versão do portão", () => {
     expect(fontesDoPortao().urgencia).toEqual(FONTES_DA_URGENCIA);
@@ -226,8 +424,10 @@ describe("a versão do portão", () => {
       urgencia: [...FONTES_DA_URGENCIA, "um sinal a mais"],
     });
     expect(outra).not.toBe(versaoDoPortao());
-    // A versao de antes da AG6a (no ar desde a AG4).
+    // A versao de antes da AG6a (no ar desde a AG4) e a da ultima versao
+    // conferida da AG6a (edd123c), antes da segunda revisao.
     expect(versaoDoPortao()).not.toBe("portao-7dc20c87b04a");
+    expect(versaoDoPortao()).not.toBe("portao-1dd4b555a379");
     expect(versaoDoPortao()).toMatch(/^portao-[0-9a-f]{12}$/);
   });
 });

@@ -185,9 +185,23 @@ export const URGENCIA_DA_CONVERSA: StatusDefinition = {
   icon: BellRing,
 };
 
-/** A dica do chip "Urgente" (cartao e cabecalho do fio). */
-export const DICA_DA_URGENCIA =
-  "A pessoa descreveu algo que pode ser uma emergência. Assuma para atender.";
+/**
+ * A dica do chip "Urgente" (cartao e cabecalho do fio), certa por papel
+ * (revisao da AG6a): so quem pode assumir ouve "Assuma para atender."; o
+ * Somente leitura, que acompanha sem assumir, ouve so o que aconteceu.
+ */
+export const DICA_DA_URGENCIA = {
+  podeAssumir:
+    "A pessoa descreveu algo que pode ser uma emergência. Assuma para atender.",
+  soAcompanha: "A pessoa descreveu algo que pode ser uma emergência.",
+} as const;
+
+/** A dica do chip para quem olha (pode assumir a conversa ou nao). */
+export function dicaDaUrgencia(podeAssumir: boolean): string {
+  return podeAssumir
+    ? DICA_DA_URGENCIA.podeAssumir
+    : DICA_DA_URGENCIA.soAcompanha;
+}
 // [AG6 urgência] fim
 
 export type EstadoVisualDaConversa = {

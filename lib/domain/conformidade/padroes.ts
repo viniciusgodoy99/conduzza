@@ -594,6 +594,35 @@ const REGIOES = alternativas([
   "aplicad",
 ]);
 
+// [AG6 urgência] início
+// AG6a (revisao de 28/10/2026, achados de falso positivo das regras novas):
+// o que e recepcao e nao conduta com o corpo.
+/** O lugar da recepcao ("fique sentada na sala de espera"). */
+const NA_RECEPCAO =
+  "(?:na|no) (?:recepcao|sala de espera|area de espera|sofa da recepcao)";
+/**
+ * A chegada na clinica LOGO antes ("Ao chegar, sente-se e aguarde",
+ * "Quando chegar na clinica, fique sentada", "Ao chegar, por favor,
+ * sente-se"): o "chegar" sem sujeito e o da pessoa chegando a clinica
+ * ("quando a equipe chegar" continua barrado). So a clinica, ou o lugar
+ * nenhum: a chegada em casa e a orientacao depois do procedimento ("Quando
+ * chegar em casa, fique deitada com a cabeca elevada") continua barrada.
+ */
+const CHEGADA_NA_CLINICA =
+  "(?:ao chegar|quando chegar|assim que chegar|chegando|ao entrar|quando entrar|assim que entrar)(?: (?:aqui|na clinica|no consultorio|na recepcao|na unidade|a clinica|ao consultorio|para a consulta|pra consulta))?";
+const DEPOIS_DA_CHEGADA = `(?<!\\b${CHEGADA_NA_CLINICA},? (?:por favor,? )?)`;
+/** Esperar a vez na recepcao ("sente-se e aguarde ser chamada"). */
+const ESPERAR_A_VEZ =
+  "e aguarde (?:ser chamad[oa]|a chamada|o chamado|sua vez|a sua vez|seu nome|o seu nome|a recepcao|ser atendid[oa]|o atendimento)";
+/**
+ * O acompanhante do dia do procedimento, logo depois ("chame alguem para
+ * ficar com voce no dia, por causa da sedacao", "nao fique sozinha no dia
+ * do procedimento"): logistica da clinica, como "venha acompanhada".
+ */
+const ACOMPANHANTE_DO_DIA =
+  "(?!,? (?:no dia|nesse dia|neste dia|naquele dia|na consulta|no procedimento|durante o procedimento|depois do procedimento|apos o procedimento|na volta|para (?:te )?(?:levar|buscar|acompanhar)|pra (?:te )?(?:levar|buscar|acompanhar)|por causa da (?:sedacao|anestesia))\\b)";
+// [AG6 urgência] fim
+
 export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
   // ---- triagem -------------------------------------------------------------
   p("triagem", "sintoma_citado", `\\b${alternativas(SINTOMAS)}`),
@@ -883,12 +912,12 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
   p(
     "orientacao_clinica",
     "postura_do_corpo",
-    "\\b(?:fique|fiquem|permaneca|permanecam|continue|continuem|mantenha-?se|se mantenha|procure ficar|tente ficar|quedese)\\b(?: [a-z]+){0,2}? (?:sentad(?:inh)?[oa]s?|deitad(?:inh)?[oa]s?|acostad[oa]s?|recostad[oa]s?|reclinad[oa]s?|de lado|de barriga (?:para|pra) (?:cima|baixo)|de costas|imove(?:l|is)|com (?:as pernas|os pes|a cabeca) (?:para|pra) (?:cima|baixo)|com (?:as pernas|os pes) (?:elevad[oa]s|levantad[oa]s|no alto))\\b(?! (?:na|no) (?:recepcao|sala de espera|area de espera|sofa da recepcao)\\b)|\\b(?:deite|deita|deitem|sente|senta|sentem)-?se\\b(?! a vontade)|\\bdeite\\b|\\b(?:deita|senta) (?:ai|ali|aqui|um pouco|um pouquinho|de lado|no chao)\\b|\\b(?:deixe|deixa|mantenha|coloque|coloca|ponha|poe)\\b (?:a pessoa|ela|ele|o paciente|a paciente|a crianca|sua mae|seu pai|seu filho|sua filha)(?: [a-z]+){0,2}? (?:sentad|deitad|recostad|reclinad|de lado\\b|de barriga\\b|de costas\\b)|\\b(?:levante|levanta|eleve|eleva|erga|ergue)\\b (?:as |suas |os |seus )(?:pernas|pes)\\b|\\b(?:pernas|pes) (?:para|pra) (?:cima|o alto)\\b|\\bcabeca entre (?:os|as) (?:joelhos|pernas)\\b|\\bposicao (?:lateral|de seguranca|de recuperacao)\\b|\\bvir(?:e|a) (?:a pessoa|ela|ele|o paciente|a paciente|a crianca|o corpo)(?: [a-z]+)? de lado\\b|\\bnao se (?:levante|levanta|mexa|mexe|movimente|movimenta|mova)\\b|\\b(?:sit down|lie down|stay (?:seated|lying down)|sientese|acuestese)\\b",
+    `${DEPOIS_DA_CHEGADA}\\b(?:fique|fiquem|permaneca|permanecam|continue|continuem|mantenha-?se|se mantenha|procure ficar|tente ficar|quedese)\\b(?: [a-z]+){0,2}? (?:sentad(?:inh)?[oa]s?|deitad(?:inh)?[oa]s?|acostad[oa]s?|recostad[oa]s?|reclinad[oa]s?|de lado|de barriga (?:para|pra) (?:cima|baixo)|de costas|imove(?:l|is)|com (?:as pernas|os pes|a cabeca) (?:para|pra) (?:cima|baixo)|com (?:as pernas|os pes) (?:elevad[oa]s|levantad[oa]s|no alto))\\b(?! ${NA_RECEPCAO}\\b)(?! ${ESPERAR_A_VEZ}\\b)|${DEPOIS_DA_CHEGADA}\\b(?:deite|deita|deitem|sente|senta|sentem)-?se\\b(?! a vontade)(?! ${NA_RECEPCAO}\\b)(?! ${ESPERAR_A_VEZ}\\b)|\\bdeite\\b|\\b(?:deita|senta) (?:ai|ali|aqui|um pouco|um pouquinho|de lado|no chao)\\b|\\b(?:deixe|deixa|mantenha|coloque|coloca|ponha|poe)\\b (?:a pessoa|ela|ele|o paciente|a paciente|a crianca|sua mae|seu pai|seu filho|sua filha)(?: [a-z]+){0,2}? (?:sentad|deitad|recostad|reclinad|de lado\\b|de barriga\\b|de costas\\b)|\\b(?:levante|levanta|eleve|eleva|erga|ergue)\\b (?:as |suas |os |seus )(?:pernas|pes)\\b|\\b(?:pernas|pes) (?:para|pra) (?:cima|o alto)\\b|\\bcabeca entre (?:os|as) (?:joelhos|pernas)\\b|\\bposicao (?:lateral|de seguranca|de recuperacao)\\b|\\bvir(?:e|a) (?:a pessoa|ela|ele|o paciente|a paciente|a crianca|o corpo)(?: [a-z]+)? de lado\\b|\\bnao se (?:levante|levanta|mexa|mexe|movimente|movimenta|mova)\\b|\\b(?:sit down|lie down|stay (?:seated|lying down)|sientese|acuestese)\\b`,
   ),
   p(
     "orientacao_clinica",
     "primeiros_socorros",
-    "\\b(?:pressione|pressiona|pressionar|comprima|comprime|comprimir|faca pressao|faz pressao|fazer pressao|mantenha pressao|mantenha a pressao)\\b(?: [a-z]+){0,3}? (?:local|ferida|ferimento|corte|machucado|sangramento|regiao|pano|gaze|toalha|algodao|curativo|peito|torax)\\b|\\b(?:estanque|estanca|estancar) (?:o )?sang\\w*|\\b(?:torniquete|garrote)\\b|\\b(?:massagem cardiaca|compressoes (?:no peito|toracicas)|reanimacao|ressuscitacao|respiracao boca a boca|manobra de heimlich|heimlich)\\b|\\b(?:afrouxe|afrouxa|afrouxar|desabotoe|desabotoa|desaperte|desaperta)\\b(?: [a-z]+){0,2}? (?:roupa|roupas|cinto|gravata|colarinho|sutia|blusa|camisa)\\b|\\b(?:coloque|coloca|ponha|poe|use|usa|aplique|aplica|passe|passa)\\b(?: [a-z]+){0,3}? (?:bolsa (?:de agua quente|termica|quente)|agua quente|pano (?:umido|molhado|frio|gelado|quente))\\b|\\blav(?:e|a|ar)\\b(?: [a-z]+){0,2}? com (?:agua|soro|sabao|sabonete)\\b|\\bnao fique sozinh[oa]s?\\b(?! (?:nessa|nisso|com essa|com isso)\\b)|\\b(?:fique|fica) (?:perto|junto) de alguem\\b|\\b(?:peca|pede|chame|chama) (?:para |pra )?alguem (?:para |pra )?ficar (?:com voce|com a senhora|com o senhor|perto)\\b",
+    `\\b(?:pressione|pressiona|pressionar|comprima|comprime|comprimir|faca pressao|faz pressao|fazer pressao|mantenha pressao|mantenha a pressao)\\b(?: [a-z]+){0,3}? (?:local|ferida|ferimento|corte|machucado|sangramento|regiao|pano|gaze|toalha|algodao|curativo|peito|torax)\\b|\\b(?:estanque|estanca|estancar) (?:o )?sang\\w*|\\b(?:torniquete|garrote)\\b|\\b(?:massagem cardiaca|compressoes (?:no peito|toracicas)|reanimacao|ressuscitacao|respiracao boca a boca|manobra de heimlich|heimlich)\\b|\\b(?:afrouxe|afrouxa|afrouxar|desabotoe|desabotoa|desaperte|desaperta)\\b(?: [a-z]+){0,2}? (?:roupa|roupas|cinto|gravata|colarinho|sutia|blusa|camisa)\\b|\\b(?:coloque|coloca|ponha|poe|use|usa|aplique|aplica|passe|passa)\\b(?: [a-z]+){0,3}? (?:bolsa (?:de agua quente|termica|quente)|agua quente|pano (?:umido|molhado|frio|gelado|quente))\\b|\\blav(?:e|a|ar)\\b(?: [a-z]+){0,2}? com (?:agua|soro|sabao|sabonete)\\b|\\bnao fique sozinh[oa]s?\\b(?! (?:nessa|nisso|com essa|com isso)\\b)${ACOMPANHANTE_DO_DIA}|\\b(?:fique|fica) (?:perto|junto) de alguem\\b|\\b(?:peca|pede|chame|chama) (?:para |pra )?alguem (?:para |pra )?ficar (?:com voce|com a senhora|com o senhor|perto)\\b${ACOMPANHANTE_DO_DIA}`,
   ),
   // [AG6 urgência] fim
   // en
@@ -1319,6 +1348,17 @@ const TEMPO_DE_CORTESIA = "\\d+ ?(?:h|hs|horas?|min|minutos) de ";
  * Ate 20/10/2026 (politica de 05/10/2026), "sua vaga esta garantida" e
  * "garanto o horario" tambem saiam: o controle B134 virou o caso AG-S13.
  */
+// [AG6 urgência] início
+/**
+ * AG6a (revisao de 28/10/2026): a condicao que transforma o servico de
+ * saude citado em DESTINO ("qualquer coisa", "se precisar", "em caso de",
+ * "numa emergencia"). Com ela na mesma frase, o lugar nao e mais so
+ * referencia de endereco (servico_de_saude_de_referencia, abaixo).
+ */
+const CONDICAO_DE_SOCORRO =
+  "(?:qualquer coisa|qualquer problema|qualquer emergencia|qualquer intercorrencia|se precisar|se precisarem|caso precise|caso precisem|em caso de|no caso de|se for preciso|se for necessario|se necessario|se piorar|se sentir|se acontecer|se tiver (?:algum|alguma)|se houver|se algo|em (?:uma )?emergencia|numa emergencia|em (?:uma )?urgencia|numa urgencia)";
+// [AG6 urgência] fim
+
 export const NEUTRALIZACOES_DE_SAIDA: readonly Neutralizacao[] = [
   {
     // "Pra garantir sua vaga", "quer garantir o horario?", "nao consigo
@@ -1406,9 +1446,15 @@ export const NEUTRALIZACOES_DE_SAIDA: readonly Neutralizacao[] = [
     // da emergencia" continua barrado; a referencia diz o hospital. Na
     // mensagem do paciente com sintoma, nada passa (CONTEXTO_CLINICO); e a
     // urgencia passa a conversa antes do modelo.
+    //
+    // EXCECAO DOCUMENTADA (revisao de 28/10/2026): a troca so vale para a
+    // referencia de endereco SEM CONDICAO na mesma frase. Com "qualquer
+    // coisa", "se precisar", "caso precise", "em caso de", "se piorar",
+    // "numa emergencia" (antes ou depois do lugar, ate o ponto), o lugar
+    // vira destino ("Qualquer coisa, estamos em frente ao Pronto-Socorro",
+    // "Ficamos ao lado da UPA, se precisar") e a regra pronto_socorro barra.
     nome: "servico_de_saude_de_referencia",
-    fonte:
-      "(?<!\\b(?:va|vai|ir|ida|corra|corre|correr|siga|segue|seguir|dirija|dirija-se|dirigir|procure|procura|procurar|busque|buscar|leve|leva|levar|encaminhe|encaminhar)\\b[^.!?;,]{0,30})(?<=\\b(?:lado|frente|perto|proxim[oa]s?|vizinh[oa]s?|esquina|em cima|embaixo|atras|junto|colad[oa]s?|depois|antes|rua|predio|galeria|quadra|referencia:?(?: e)?) (?:d[aoe]s? |a |ao |as )?(?:uma |um |base d[oa] |entrada d[oa] )?)(?:upa|pronto[ -]?socorro|pronto[ -]?atendimento|samu|hospital|posto de saude)\\b",
+    fonte: `(?<!\\b(?:va|vai|ir|ida|corra|corre|correr|siga|segue|seguir|dirija|dirija-se|dirigir|procure|procura|procurar|busque|buscar|leve|leva|levar|encaminhe|encaminhar)\\b[^.!?;,]{0,30})(?<!\\b${CONDICAO_DE_SOCORRO}\\b[^.!?;]{0,80})(?<=\\b(?:lado|frente|perto|proxim[oa]s?|vizinh[oa]s?|esquina|em cima|embaixo|atras|junto|colad[oa]s?|depois|antes|rua|predio|galeria|quadra|referencia:?(?: e)?) (?:d[aoe]s? |a |ao |as )?(?:uma |um |base d[oa] |entrada d[oa] )?)(?:upa|pronto[ -]?socorro|pronto[ -]?atendimento|samu|hospital|posto de saude)\\b(?![^.!?;]{0,80}\\b${CONDICAO_DE_SOCORRO}\\b)`,
     troca: "loja",
   },
   // [AG6 urgência] fim

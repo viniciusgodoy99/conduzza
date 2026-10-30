@@ -5,7 +5,8 @@ import { criarNumeroDeTeste } from "../rls/numeros";
 import { adminClient, anonClient } from "../rls/stack";
 
 // Urgencia e passagem da IA ao responsavel do lead (AG6a, migration
-// 20261029120000_urgencia_e_passagem_da_ia.sql, com a revisao de 28/10/2026)
+// 20261029120000_urgencia_e_passagem_da_ia.sql, com a revisao de 28/10/2026
+// e a revisao 2, do mesmo dia: os motivos clinicos e a mensagem nova)
 // contra o banco REAL, pelo cliente de servico (o servidor, como o motor da
 // IA chama) e, para fechar a marca, pela sessao de quem atende (Assumir,
 // Transferir e Resolver com o update condicional das Server Actions do
@@ -26,9 +27,17 @@ import { adminClient, anonClient } from "../rls/stack";
 //   pelo lead."; Somente leitura, inativo, de outra clinica
 //   (responsavel_inapto) e sem responsavel (sem_responsavel): a fila; sem
 //   perfil e nome vazio: o texto generico;
-// - as decisoes que passam (escalou, bloqueou, falhou) atribuem; a resposta
-//   e o job sem decisao (fora do horario) nao (sem_passagem); a regra e a da
-//   ULTIMA versao publicada (regra_fila);
+// - as decisoes que passam (escalou, falhou) atribuem; a resposta e o job
+//   sem decisao (fora do horario) nao (sem_passagem); a regra e a da ULTIMA
+//   versao publicada (regra_fila);
+// - (revisao 2) os motivos clinicos e o conteudo que ninguem leu (sintoma,
+//   assunto_clinico, midia_nao_suportada e conformidade, esta com bloqueou)
+//   nunca atribuem (motivo_nao_atribui): e onde cai a emergencia que a lista
+//   deterministica nao pega; e a mensagem do paciente que o job nao leu
+//   (depois da passagem, durante o turno, ou sem o turno do job) barra a
+//   atribuicao (mensagem_nova), mas a que o job leu
+//   (ai_turno.mensagens_lidas, como o motor grava), a apagada e a de saida
+//   nao;
 // - a atribuicao nao rouba de quem assumiu antes (fora_da_fila) e a segunda
 //   chamada nao muda nada;
 // - o funil continua levando o lead para Aguardando resposta, e a
@@ -47,8 +56,18 @@ import { adminClient, anonClient } from "../rls/stack";
 // (fora da lista fechada: o motor de producao nunca reivindica job de
 // clinica de teste, e numero 'fake' nao manda nada): a conversa entra pela
 // ingestao de verdade, com a janela, para a guarda do envio poder dizer ok.
+// Licao de 30/10/2026 (commit 3f87861 do main): o contato da G nasce
+// paciente e o telefone e liberado FORCADO antes de a conversa existir (o
+// forcado so vale gravado depois do sinal de paciente); assim a manutencao
+// do motor (a cada minuto, so na conversa de teste COM janela) nunca acha
+// ia_pode_falar_com falso e nao tira a conversa da IA no meio do caso. As
+// conversas das clinicas I e C sao linhas gravadas direto, sem janela: a
+// manutencao nao as toca, e nenhum definir_* dessas clinicas roda depois
+// de elas existirem.
 // A passagem e a atribuicao sao as de verdade, com um job em execucao deste
-// teste (nenhum executor roda aqui). O interruptor global NUNCA e tocado.
+// teste (nenhum executor roda aqui); o turno do job (ai_turno, com as
+// mensagens que ele leu) e gravado pelo teste, como o motor grava antes de
+// toda passagem com frase. O interruptor global NUNCA e tocado.
 // Nada usa a id da salud-care, da teste123 nem da Conduzza Teste. Telefones
 // ficticios.
 //
@@ -68,7 +87,12 @@ const clinicas: string[] = [];
 const usuarios = new Map<string, string>();
 const sessoes = new Map<string, SupabaseClient>();
 
+// O motivo dos casos que atribuem (pela revisao 2, sintoma nunca atribui).
+const EVENTO_DO_PEDIDO = "A IA passou a conversa para a equipe: o paciente pediu para falar com uma pessoa.";
 const EVENTO_DO_SINTOMA = "A IA passou a conversa para a equipe: o paciente descreveu um sintoma.";
+const EVENTO_DO_ASSUNTO_CLINICO = "A IA passou a conversa para a equipe: o assunto é clínico.";
+const EVENTO_DA_MIDIA =
+  "A IA passou a conversa para a equipe: o paciente mandou um conteúdo que o assistente não lê.";
 const EVENTO_DA_URGENCIA =
   "A IA passou a conversa para a equipe: a pessoa descreveu algo que pode ser uma emergência.";
 const EVENTO_DO_HORARIO =
@@ -96,6 +120,7 @@ type Ingestao = {
   inserted: boolean;
   conversation_id: string | null;
   contact_id: string | null;
+  message_id: string | null;
   ia_atendendo?: boolean;
 };
 
@@ -105,6 +130,8 @@ let clinicaC = "";
 let numeroC = "";
 let clinicaG = "";
 let numeroG = "";
+/** O contato da G (paciente, com o telefone forcado), antes da conversa. */
+let contatoG = "";
 let clinicaOutra = "";
 let telefones = 0;
 
@@ -279,6 +306,52 @@ async function atribuirDoJob(job: string): Promise<Atribuicao> {
   return rpcOk<Atribuicao>("atribuir_conversa_passada_pela_ia", { p_job_id: job, p_worker: WORKER });
 }
 
+/**
+ * Uma mensagem da conversa, gravada direto pelo servidor (texto sintetico):
+ * do paciente (entrada) por padrao; de saida, a resposta de quem atende;
+ * apagada quando pedido. O numero vem da conversa (gatilho).
+ */
+async function mensagem(
+  clinica: string,
+  conversa: string,
+  opcoes: { saida?: boolean; apagada?: boolean; autor?: string } = {},
+): Promise<string> {
+  const agora = new Date().toISOString();
+  return inserir("message", {
+    clinic_id: clinica,
+    conversation_id: conversa,
+    direction: opcoes.saida ? "saida" : "entrada",
+    author: opcoes.saida ? "usuario" : "paciente",
+    author_user_id: opcoes.saida ? (opcoes.autor ?? null) : null,
+    content_type: "texto",
+    body: "Mensagem sintética",
+    billable: false,
+    cost_cents: 0,
+    deleted_at: opcoes.apagada ? agora : null,
+  });
+}
+
+/**
+ * O turno do job (ai_turno) com as mensagens que ele leu, como o motor grava
+ * antes de toda passagem com frase (decidido, saida frase).
+ */
+async function turnoLeu(clinica: string, conversa: string, job: string, lidas: string[]): Promise<void> {
+  await admin
+    .from("ai_turno")
+    .upsert(
+      {
+        job_id: job,
+        clinic_id: clinica,
+        conversation_id: conversa,
+        estado: "decidido",
+        saida: "frase",
+        mensagens_lidas: lidas,
+      },
+      { onConflict: "job_id" },
+    )
+    .throwOnError();
+}
+
 async function concluir(job: string): Promise<void> {
   await rpcOk("concluir_job", { p_id: job, p_worker: WORKER });
 }
@@ -401,12 +474,23 @@ beforeAll(async () => {
     p_whatsapp_account_id: numeroG,
     p_ativo: true,
   });
+  // O contato nasce paciente e o telefone, forcado, ANTES de a conversa
+  // existir (o forcado so vale gravado depois do sinal de paciente; licao
+  // de 30/10/2026, no cabecalho).
+  contatoG = await inserir("contact", {
+    clinic_id: clinicaG,
+    phone_e164: TELEFONE_G,
+    name: "Contato sintético",
+    kind: "paciente",
+  });
   await rpcOk("definir_contato_liberado_da_ia", {
     p_clinic_id: clinicaG,
     p_telefone_e164: TELEFONE_G,
     p_rotulo: "Contato sintético",
     p_ativo: true,
+    p_forcar_contato_existente: true,
     p_confirmou_aviso_da_openai: true,
+    p_confirmou_teste_com_paciente: true,
   });
 
   const profissional = await inserir("professional", { clinic_id: clinicaI, name: "Dra. Responsável" });
@@ -448,15 +532,19 @@ describe("a frase sai antes da atribuicao (a revisao)", () => {
       p_body: "Mensagem sintética",
       p_whatsapp_account_id: numeroG,
     });
-    expect(r).toMatchObject({ inserted: true, ia_atendendo: true });
+    // O contato que nasceu antes (paciente, telefone forcado) e o da conversa.
+    expect(r).toMatchObject({ inserted: true, ia_atendendo: true, contact_id: contatoG });
     const conversa = r.conversation_id!;
     await admin
       .from("contact")
       .update({ owner_user_id: pessoa("dona-g") })
-      .eq("id", r.contact_id!)
+      .eq("id", contatoG)
       .throwOnError();
     const job = await jobEmExecucao(clinicaG, numeroG, conversa);
-    await decidir(clinicaG, conversa, job, "escalou", "sintoma");
+    // O turno leu a mensagem que a ingestao gravou (o motor grava antes da
+    // passagem): ela nao e "nova" para a atribuicao.
+    await turnoLeu(clinicaG, conversa, job, [r.message_id!]);
+    await decidir(clinicaG, conversa, job, "escalou", "pedido_humano");
     const guarda = () =>
       rpcOk<string>("ia_pode_enviar_agora", {
         p_job_id: job,
@@ -467,7 +555,7 @@ describe("a frase sai antes da atribuicao (a revisao)", () => {
         p_tipo: "frase",
       });
 
-    expect(await passarDoJob(job, "sintoma")).toEqual({ passou: true, codigo: "passou", urgente: false });
+    expect(await passarDoJob(job, "pedido_humano")).toEqual({ passou: true, codigo: "passou", urgente: false });
     // A passagem nunca atribui: a conversa na fila, sem responsavel, e a
     // frase de sempre pode sair.
     expect(await estado(conversa)).toEqual({
@@ -485,7 +573,7 @@ describe("a frase sai antes da atribuicao (a revisao)", () => {
       awaiting_reply: true,
     });
     expect(await eventos(conversa)).toEqual(
-      [EVENTO_DO_SINTOMA, "A conversa ficou com Pessoa dona-g, responsável pelo lead."].sort(),
+      [EVENTO_DO_PEDIDO, "A conversa ficou com Pessoa dona-g, responsável pelo lead."].sort(),
     );
     await concluir(job);
   });
@@ -601,7 +689,7 @@ describe("a atribuicao ao responsavel do lead, depois da frase (D-15, D-55)", ()
     ["dona-prof", "profissional"],
   ])("o responsavel ativo (%s, %s) recebe a conversa, com o evento e o lead em Aguardando resposta", async (apelido) => {
     const { contato, conversa } = await naIa(pessoa(apelido));
-    expect(await passarEAtribuir(conversa, "sintoma")).toEqual({
+    expect(await passarEAtribuir(conversa, "pedido_humano")).toEqual({
       passagem: { passou: true, codigo: "passou", urgente: false },
       atribuicao: { atribuida: true, codigo: "atribuida" },
     });
@@ -611,7 +699,7 @@ describe("a atribuicao ao responsavel do lead, depois da frase (D-15, D-55)", ()
       awaiting_reply: true,
     });
     expect(await eventos(conversa)).toEqual(
-      [EVENTO_DO_SINTOMA, `A conversa ficou com Pessoa ${apelido}, responsável pelo lead.`].sort(),
+      [EVENTO_DO_PEDIDO, `A conversa ficou com Pessoa ${apelido}, responsável pelo lead.`].sort(),
     );
     expect(await etapa(contato)).toBe("aguardando_resposta");
     expect(await marca(conversa)).toBeNull();
@@ -624,7 +712,7 @@ describe("a atribuicao ao responsavel do lead, depois da frase (D-15, D-55)", ()
     [null, "sem_responsavel"],
   ])("Somente leitura, inativo, de outra clinica ou sem responsavel (%s): a fila (%s)", async (apelido, codigo) => {
     const { contato, conversa } = await naIa(apelido === null ? null : pessoa(apelido));
-    expect(await passarEAtribuir(conversa, "sintoma")).toEqual({
+    expect(await passarEAtribuir(conversa, "pedido_humano")).toEqual({
       passagem: { passou: true, codigo: "passou", urgente: false },
       atribuicao: { atribuida: false, codigo },
     });
@@ -633,24 +721,17 @@ describe("a atribuicao ao responsavel do lead, depois da frase (D-15, D-55)", ()
       assignee_user_id: null,
       awaiting_reply: true,
     });
-    expect(await eventos(conversa)).toEqual([EVENTO_DO_SINTOMA]);
+    expect(await eventos(conversa)).toEqual([EVENTO_DO_PEDIDO]);
     expect(await etapa(contato)).toBe("aguardando_resposta");
   });
 
   it.each([["sem-perfil"], ["nome-vazio"]])("sem nome (%s): atribui com o texto generico", async (apelido) => {
     const { conversa } = await naIa(pessoa(apelido));
-    expect((await passarEAtribuir(conversa, "sintoma")).atribuicao.atribuida).toBe(true);
-    expect(await eventos(conversa)).toEqual([EVENTO_DO_SINTOMA, GENERICO].sort());
+    expect((await passarEAtribuir(conversa, "pedido_humano")).atribuicao.atribuida).toBe(true);
+    expect(await eventos(conversa)).toEqual([EVENTO_DO_PEDIDO, GENERICO].sort());
   });
 
-  it("as saidas com a frase atribuem: a conformidade (bloqueou) e a falha tecnica (falhou)", async () => {
-    const conformidade = await naIa(pessoa("dona"));
-    expect(
-      (await passarEAtribuir(conformidade.conversa, "conformidade", { desfecho: "bloqueou" })).atribuicao,
-    ).toEqual({ atribuida: true, codigo: "atribuida" });
-    expect(await eventos(conformidade.conversa)).toEqual(
-      [EVENTO_DA_CONFORMIDADE, "A conversa ficou com Pessoa dona, responsável pelo lead."].sort(),
-    );
+  it("a falha tecnica (falhou), saida com a frase, atribui", async () => {
     const falha = await naIa(pessoa("dona"));
     expect((await passarEAtribuir(falha.conversa, "falha_tecnica", { desfecho: "falhou" })).atribuicao).toEqual({
       atribuida: true,
@@ -660,6 +741,32 @@ describe("a atribuicao ao responsavel do lead, depois da frase (D-15, D-55)", ()
       [EVENTO_DA_FALHA, "A conversa ficou com Pessoa dona, responsável pelo lead."].sort(),
     );
   });
+
+  // Revisao 2 (28/10/2026): onde cai a emergencia que a lista deterministica
+  // nao pega ("acho que to tendo um infarto", um audio, "parada cardiaca"):
+  // a mesma razao da urgencia (D-54), a responsavel pode estar fora.
+  it.each([
+    ["sintoma", "escalou", EVENTO_DO_SINTOMA],
+    ["assunto_clinico", "escalou", EVENTO_DO_ASSUNTO_CLINICO],
+    ["midia_nao_suportada", "escalou", EVENTO_DA_MIDIA],
+    ["conformidade", "bloqueou", EVENTO_DA_CONFORMIDADE],
+  ] as const)(
+    "os motivos clinicos e o conteudo que ninguem leu nunca atribuem (%s, %s): a fila",
+    async (motivo, desfecho, evento) => {
+      const { contato, conversa } = await naIa(pessoa("dona"));
+      expect(await passarEAtribuir(conversa, motivo, { desfecho })).toEqual({
+        passagem: { passou: true, codigo: "passou", urgente: false },
+        atribuicao: { atribuida: false, codigo: "motivo_nao_atribui" },
+      });
+      expect(await estado(conversa)).toEqual({
+        status: "aguardando_humano",
+        assignee_user_id: null,
+        awaiting_reply: true,
+      });
+      expect(await eventos(conversa)).toEqual([evento]);
+      expect(await etapa(contato)).toBe("aguardando_resposta");
+    },
+  );
 
   it("nao atribuem: a urgencia, o fora do horario (sem decisao) e a decisao que respondeu", async () => {
     const urgente = await naIa(pessoa("dona"));
@@ -689,7 +796,7 @@ describe("a atribuicao ao responsavel do lead, depois da frase (D-15, D-55)", ()
   it("a regra e a da ULTIMA versao publicada (na C, fila)", async () => {
     const { conversa } = await naIa(pessoa("dona-c"), clinicaC, numeroC);
     expect(
-      (await passarEAtribuir(conversa, "sintoma", { clinica: clinicaC, numero: numeroC })).atribuicao,
+      (await passarEAtribuir(conversa, "pedido_humano", { clinica: clinicaC, numero: numeroC })).atribuicao,
     ).toEqual({ atribuida: false, codigo: "regra_fila" });
     expect((await estado(conversa)).status).toBe("aguardando_humano");
   });
@@ -697,8 +804,8 @@ describe("a atribuicao ao responsavel do lead, depois da frase (D-15, D-55)", ()
   it("nao rouba: quem assumiu entre a passagem e a atribuicao fica com a conversa", async () => {
     const { conversa } = await naIa(pessoa("dona"));
     const job = await jobEmExecucao(clinicaI, numeroI, conversa);
-    await decidir(clinicaI, conversa, job, "escalou", "sintoma");
-    expect((await passarDoJob(job, "sintoma")).passou).toBe(true);
+    await decidir(clinicaI, conversa, job, "escalou", "pedido_humano");
+    expect((await passarDoJob(job, "pedido_humano")).passou).toBe(true);
     const { data } = await sessao("recepcao")
       .from("conversation")
       .update({ status: "em_atendimento", assignee_user_id: pessoa("recepcao") })
@@ -714,22 +821,112 @@ describe("a atribuicao ao responsavel do lead, depois da frase (D-15, D-55)", ()
       status: "em_atendimento",
       assignee_user_id: pessoa("recepcao"),
     });
-    expect(await eventos(conversa)).toEqual([EVENTO_DO_SINTOMA]);
+    expect(await eventos(conversa)).toEqual([EVENTO_DO_PEDIDO]);
   });
 
   it("idempotente: a segunda chamada nao muda nada; depois de concluir o job, sem_posse", async () => {
     const { conversa } = await naIa(pessoa("dona"));
     const job = await jobEmExecucao(clinicaI, numeroI, conversa);
-    await decidir(clinicaI, conversa, job, "escalou", "sintoma");
-    await passarDoJob(job, "sintoma");
+    await decidir(clinicaI, conversa, job, "escalou", "pedido_humano");
+    await passarDoJob(job, "pedido_humano");
     expect(await atribuirDoJob(job)).toEqual({ atribuida: true, codigo: "atribuida" });
     expect(await atribuirDoJob(job)).toEqual({ atribuida: false, codigo: "fora_da_fila" });
     await concluir(job);
     expect(await atribuirDoJob(job)).toEqual({ atribuida: false, codigo: "sem_posse" });
     expect(await eventos(conversa)).toEqual(
-      [EVENTO_DO_SINTOMA, "A conversa ficou com Pessoa dona, responsável pelo lead."].sort(),
+      [EVENTO_DO_PEDIDO, "A conversa ficou com Pessoa dona, responsável pelo lead."].sort(),
     );
     expect((await estado(conversa)).assignee_user_id).toBe(pessoa("dona"));
+  });
+});
+
+// Revisao 2 (28/10/2026): a mensagem do paciente que o job NAO leu (entrada,
+// nao apagada, desde a criacao do job, fora de ai_turno.mensagens_lidas do
+// job) barra a atribuicao: alguem de plantao precisa ver na fila. Cada
+// chamada numa transacao propria, como o motor: a mensagem que disparou o
+// job antes dele, o job, o turno com as lidas, a decisao, a passagem e,
+// depois, a atribuicao.
+describe("a mensagem nova do paciente (revisao 2)", () => {
+  /** A conversa na IA, a mensagem que disparou o job, o job e o turno que a leu. */
+  async function comTurno(): Promise<{ contato: string; conversa: string; job: string; lida: string }> {
+    const { contato, conversa } = await naIa(pessoa("dona"));
+    const lida = await mensagem(clinicaI, conversa);
+    const job = await jobEmExecucao(clinicaI, numeroI, conversa);
+    await turnoLeu(clinicaI, conversa, job, [lida]);
+    return { contato, conversa, job, lida };
+  }
+
+  it("o paciente escreveu depois da passagem: mensagem_nova, a conversa na fila, sem o evento da atribuicao", async () => {
+    const { conversa, job } = await comTurno();
+    await decidir(clinicaI, conversa, job, "escalou", "pedido_humano");
+    expect(await passarDoJob(job, "pedido_humano")).toEqual({ passou: true, codigo: "passou", urgente: false });
+    await mensagem(clinicaI, conversa);
+    expect(await atribuirDoJob(job)).toEqual({ atribuida: false, codigo: "mensagem_nova" });
+    expect(await atribuirDoJob(job)).toEqual({ atribuida: false, codigo: "mensagem_nova" });
+    await concluir(job);
+    expect(await estado(conversa)).toEqual({
+      status: "aguardando_humano",
+      assignee_user_id: null,
+      awaiting_reply: true,
+    });
+    expect(await eventos(conversa)).toEqual([EVENTO_DO_PEDIDO]);
+  });
+
+  it("a mensagem que chegou durante o turno (depois da leitura, antes da decisao) barra: o modelo nao a viu", async () => {
+    const { conversa, job } = await comTurno();
+    // O turno ja leu (as lidas gravadas); a pessoa escreve enquanto o modelo
+    // pensa; so depois a decisao e a passagem.
+    await mensagem(clinicaI, conversa);
+    await decidir(clinicaI, conversa, job, "escalou", "pedido_humano");
+    await passarDoJob(job, "pedido_humano");
+    expect(await atribuirDoJob(job)).toEqual({ atribuida: false, codigo: "mensagem_nova" });
+    await concluir(job);
+    expect(await estado(conversa)).toEqual({
+      status: "aguardando_humano",
+      assignee_user_id: null,
+      awaiting_reply: true,
+    });
+    expect(await eventos(conversa)).toEqual([EVENTO_DO_PEDIDO]);
+  });
+
+  it("a mensagem que chegou na espera do job e que ele leu nao barra: atribui", async () => {
+    const { conversa } = await naIa(pessoa("dona"));
+    const primeira = await mensagem(clinicaI, conversa);
+    const job = await jobEmExecucao(clinicaI, numeroI, conversa);
+    // Chegou depois da criacao do job e foi junto no mesmo turno.
+    const segunda = await mensagem(clinicaI, conversa);
+    await turnoLeu(clinicaI, conversa, job, [primeira, segunda]);
+    await decidir(clinicaI, conversa, job, "escalou", "pedido_humano");
+    await passarDoJob(job, "pedido_humano");
+    expect(await atribuirDoJob(job)).toEqual({ atribuida: true, codigo: "atribuida" });
+    await concluir(job);
+    expect((await estado(conversa)).assignee_user_id).toBe(pessoa("dona"));
+  });
+
+  it("sem o turno do job, nada foi lido: a mensagem depois da criacao do job barra", async () => {
+    const { conversa } = await naIa(pessoa("dona"));
+    const job = await jobEmExecucao(clinicaI, numeroI, conversa);
+    await mensagem(clinicaI, conversa);
+    await decidir(clinicaI, conversa, job, "escalou", "pedido_humano");
+    await passarDoJob(job, "pedido_humano");
+    expect(await atribuirDoJob(job)).toEqual({ atribuida: false, codigo: "mensagem_nova" });
+    await concluir(job);
+    expect((await estado(conversa)).status).toBe("aguardando_humano");
+  });
+
+  it("a mensagem apagada e a resposta de quem atende nao barram: atribui", async () => {
+    const { conversa, job } = await comTurno();
+    await decidir(clinicaI, conversa, job, "escalou", "pedido_humano");
+    await passarDoJob(job, "pedido_humano");
+    await mensagem(clinicaI, conversa, { apagada: true });
+    await mensagem(clinicaI, conversa, { saida: true, autor: pessoa("recepcao") });
+    expect(await atribuirDoJob(job)).toEqual({ atribuida: true, codigo: "atribuida" });
+    await concluir(job);
+    expect(await estado(conversa)).toEqual({
+      status: "em_atendimento",
+      assignee_user_id: pessoa("dona"),
+      awaiting_reply: true,
+    });
   });
 });
 

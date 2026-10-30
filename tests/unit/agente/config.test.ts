@@ -2761,23 +2761,41 @@ describe("AG6a: para quem vai a conversa", () => {
     }
   });
 
-  it("o motor pede a atribuição só com a regra ligada e fora da urgência e do horário", () => {
+  it("o motor pede a atribuição só com a regra ligada e fora da urgência, do horário, dos motivos clínicos e da mídia (Revisão R2)", () => {
     const ligada = {
       passagemPara: "responsavel_do_lead",
       avisoDeUrgencia: false,
     } as const;
     const fila = regrasDaPassagemPadrao();
-    expect(MOTIVOS_QUE_NUNCA_ATRIBUEM).toEqual(["urgencia", "fora_do_horario"]);
-    expect(motivoPodeAtribuir("urgencia")).toBe(false);
-    expect(motivoPodeAtribuir("fora_do_horario")).toBe(false);
+    // A lista do banco (c_motivos_que_nunca_atribuem), inteira e NESTA ordem.
+    expect(MOTIVOS_QUE_NUNCA_ATRIBUEM).toEqual([
+      "urgencia",
+      "fora_do_horario",
+      "sintoma",
+      "assunto_clinico",
+      "midia_nao_suportada",
+      "conformidade",
+    ]);
+    for (const motivo of MOTIVOS_QUE_NUNCA_ATRIBUEM) {
+      expect(motivoPodeAtribuir(motivo), motivo).toBe(false);
+      expect(pedirAtribuicaoNaPassagem(motivo, ligada), motivo).toBe(false);
+    }
     expect(pedirAtribuicaoNaPassagem("valor_fora_da_tabela", ligada)).toBe(
       true,
     );
-    expect(pedirAtribuicaoNaPassagem("sintoma", ligada)).toBe(true);
-    expect(pedirAtribuicaoNaPassagem("teto_atingido", ligada)).toBe(true);
-    expect(pedirAtribuicaoNaPassagem("falha_tecnica", ligada)).toBe(true);
-    expect(pedirAtribuicaoNaPassagem("urgencia", ligada)).toBe(false);
-    expect(pedirAtribuicaoNaPassagem("fora_do_horario", ligada)).toBe(false);
+    // Continuam atribuindo (o resto do CHECK; R2.4 deixa a decisao ao dono).
+    for (const motivo of [
+      "pedido_humano",
+      "insatisfacao",
+      "menor_de_idade",
+      "teto_atingido",
+      "teto_de_respostas",
+      "falha_tecnica",
+      "agente_pediu",
+      "pedido_de_agenda",
+    ] as const) {
+      expect(pedirAtribuicaoNaPassagem(motivo, ligada), motivo).toBe(true);
+    }
     expect(pedirAtribuicaoNaPassagem("valor_fora_da_tabela", fila)).toBe(false);
     expect(pedirAtribuicaoNaPassagem("valor_fora_da_tabela", null)).toBe(false);
     expect(pedirAtribuicaoNaPassagem("valor_fora_da_tabela", undefined)).toBe(

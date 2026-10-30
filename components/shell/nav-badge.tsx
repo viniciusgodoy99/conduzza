@@ -21,10 +21,23 @@ import { cn } from "@/lib/utils";
 // sidebar), a forma (o BellRing, dono do "Urgente") e o texto ("N
 // urgentes", no nome do link). O alerta vence o lime do item ativo: a
 // urgencia continua visivel com o Atendimento aberto. Sem a contagem das
-// urgentes (null), o tom de sempre. [AG6 urgência] fim
+// urgentes (null), o tom de sempre.
+//
+// O NUMERO DO SINO E O DAS URGENTES (revisao da AG6a): o sino ao lado do
+// numero de conversas aguardando ("sino 7") parecia 7 urgentes. A pilula
+// de alerta leva o sino e o numero de urgentes; com o menu aberto, o
+// numero de aguardando fica numa pilula propria, ao lado, no tom de
+// sempre; recolhido, o canto do icone tem lugar para uma pilula so, e o
+// alerta vence (o leitor de tela ouve os dois numeros no nome do link).
+// [AG6 urgência] fim
 
 /** O alerta do contador: quantas urgentes e o que o numero quer dizer. */
 export type AlertaDoContador = { quantas: number; descricao: string };
+
+/** O numero da pilula (acima de 99, "99+"). */
+function textoDoNumero(numero: number): string {
+  return numero > 99 ? "99+" : String(numero);
+}
 
 export function NavBadge({
   count,
@@ -47,15 +60,13 @@ export function NavBadge({
   if (total === 0 && !emAlerta) {
     return null;
   }
-  // [AG6 urgência] início Sem conversa aguardando contada, a pilula diz as
-  // urgentes (nunca um zero com o sino).
-  const numero = total > 0 ? total : (alerta?.quantas ?? 0);
-  const texto = numero > 99 ? "99+" : String(numero);
-  const cor = emAlerta
-    ? "bg-(--sidebar-badge-alerta) text-(--sidebar-badge-alerta-text)"
-    : ativo
-      ? "bg-sidebar-primary text-sidebar-primary-foreground"
-      : "bg-(--sidebar-badge) text-(--sidebar-badge-text)";
+  // [AG6 urgência] início
+  const corDoNumero = ativo
+    ? "bg-sidebar-primary text-sidebar-primary-foreground"
+    : "bg-(--sidebar-badge) text-(--sidebar-badge-text)";
+  const corDoAlerta =
+    "bg-(--sidebar-badge-alerta) text-(--sidebar-badge-alerta-text)";
+  const urgentes = emAlerta && alerta ? alerta.quantas : 0;
   const sino = emAlerta ? (
     <BellRing aria-hidden className="size-[11px] shrink-0" />
   ) : null;
@@ -63,30 +74,56 @@ export function NavBadge({
   return (
     <>
       <span className="sr-only">
-        {total > 0 ? `, ${total} ${descricao}` : null}
-        {/* [AG6 urgência] início */}
+        {/* [AG6 urgência] início As urgentes primeiro: e o que mais importa. */}
         {emAlerta && alerta ? `, ${alerta.quantas} ${alerta.descricao}` : null}
         {/* [AG6 urgência] fim */}
+        {total > 0 ? `, ${total} ${descricao}` : null}
       </span>
+      {/* Menu aberto: o alerta (o sino com o numero de urgentes) e, ao lado,
+          o numero de aguardando no tom de sempre. */}
       <span
         aria-hidden
-        className={cn(
-          "ml-auto hidden items-center gap-0.5 rounded-full px-1.5 py-px cz-num text-[11px] leading-4 font-bold rail-aberto:inline-flex",
-          cor,
-        )}
+        className="ml-auto hidden shrink-0 items-center gap-1 rail-aberto:inline-flex"
       >
-        {sino}
-        {texto}
+        {/* [AG6 urgência] início */}
+        {emAlerta ? (
+          <span
+            data-pilula="alerta"
+            className={cn(
+              "inline-flex items-center gap-0.5 rounded-full px-1.5 py-px cz-num text-[11px] leading-4 font-bold",
+              corDoAlerta,
+            )}
+          >
+            {sino}
+            {textoDoNumero(urgentes)}
+          </span>
+        ) : null}
+        {/* [AG6 urgência] fim */}
+        {total > 0 ? (
+          <span
+            data-pilula="numero"
+            className={cn(
+              "inline-flex items-center rounded-full px-1.5 py-px cz-num text-[11px] leading-4 font-bold",
+              corDoNumero,
+            )}
+          >
+            {textoDoNumero(total)}
+          </span>
+        ) : null}
       </span>
+      {/* Recolhido: uma pilula so no canto do icone; o alerta vence. */}
       <span
         aria-hidden
+        data-pilula={emAlerta ? "alerta" : "numero"}
         className={cn(
           "absolute top-1 right-1 flex h-4 min-w-4 items-center justify-center gap-px rounded-full px-1 cz-num text-[10px] leading-4 font-bold ring-2 ring-sidebar rail-aberto:hidden",
-          cor,
+          emAlerta ? corDoAlerta : corDoNumero,
         )}
       >
+        {/* [AG6 urgência] início */}
         {sino}
-        {texto}
+        {textoDoNumero(emAlerta ? urgentes : total)}
+        {/* [AG6 urgência] fim */}
       </span>
     </>
   );

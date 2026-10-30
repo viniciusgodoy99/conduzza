@@ -150,9 +150,11 @@ import type { Job, ResultadoDeJob } from "./worker";
 //     (P5b) e se ela ja respondeu na janela (o aviso de assistente virtual,
 //     P11a); o tipo do contato (lead ou paciente, item 4) vai ao prompt.
 //  7c. [AG6 urgência] A urgencia (AG6a, D-51 e D-52): o sinal de emergencia
-//     da lista deterministica nos textos originais das pendentes, ANTES do
-//     teto e da reserva: decisao, passagem sem atribuir (a marca Urgente) e
-//     a frase de sempre, sem modelo nenhum.
+//     da lista deterministica nos textos originais das pendentes e na
+//     legenda da midia (cada um sozinho e a juncao deles, na ordem), ANTES
+//     do teto e da reserva: decisao, passagem sem atribuir (a marca
+//     Urgente) e a frase de sempre, sem modelo nenhum. A marca que nao
+//     gravou (urgente falso) deixa o aviso no log, so com ids e o codigo.
 //  8. Teto de respostas da conversa na ultima hora.
 //  9. Reserva do custo maximo do turno (origem whatsapp).
 //  8b. (AG3) O estado do atendimento (ler_atendimento_da_ia, pelo job):
@@ -187,8 +189,12 @@ import type { Job, ResultadoDeJob } from "./worker";
 //     que este job passou COM a frase vai ao responsavel do lead quando a
 //     regra da versao publicada pede e o motivo pode atribuir
 //     (atribuir_conversa_passada_pela_ia; contrato do banco, Revisao R1.3).
-//     Nunca antes da frase: a guarda do envio so deixa a frase sair com a
-//     conversa na fila sem responsavel. Recusa ou erro: a fila, so o log.
+//     Revisao R2: a urgencia, o fora do horario, o sintoma, o assunto
+//     clinico, a midia e a conformidade nunca atribuem (a chamada nem sai),
+//     e o banco recusa tambem com mensagem_nova (o paciente escreveu o que o
+//     job nao leu). Nunca antes da frase: a guarda do envio so deixa a frase
+//     sair com a conversa na fila sem responsavel. Recusa ou erro: a fila,
+//     so o log.
 //
 // REGRA ABSOLUTA: nenhum texto (do paciente, da resposta, do rascunho) em
 // log. So ids, codigos e medidas.
@@ -1480,7 +1486,9 @@ async function falharSemModelo(
 // [AG6 urgência] início
 /**
  * AG6a (7c): algum texto ORIGINAL das pendentes (o texto do paciente, sem a
- * mascara do nome) traz um sinal de emergencia da lista deterministica
+ * mascara do nome, e a legenda que ele escreveu na midia), sozinho ou na
+ * juncao deles na ordem ("to com dor" e "no peito"; revisao de
+ * 28/10/2026), traz um sinal de emergencia da lista deterministica
  * (urgencia.ts). Local, sem rede; nada vai para log.
  */
 function urgenciaNasPendentes(
@@ -1488,9 +1496,11 @@ function urgenciaNasPendentes(
 ): boolean {
   return (
     detectarUrgencia(
-      mensagensPendentes(mensagens)
-        .filter((m) => (m.tipo ?? "texto") === "texto")
-        .map((m) => m.textoOriginal ?? m.texto),
+      mensagensPendentes(mensagens).map((m) =>
+        (m.tipo ?? "texto") === "texto"
+          ? (m.textoOriginal ?? m.texto)
+          : (m.legendaOriginal ?? null),
+      ),
     ) !== null
   );
 }
@@ -1579,9 +1589,11 @@ export const PRAZO_MINIMO_DA_ATRIBUICAO_MS = 1_000;
  * AG6a (contrato do banco, Revisao R1.3): DEPOIS da tentativa da frase (saiu
  * ou nao, inclusive depois do evento "O aviso automático ao contato não foi
  * enviado."), a conversa que este job passou COM a frase vai ao responsavel
- * do lead: so quando o motivo pode atribuir (nunca a urgencia nem o fora do
- * horario) e a regra da versao publicada e "responsavel_do_lead"
- * (pedirAtribuicaoNaPassagem). Quem chama garante que a passagem deste job
+ * do lead: so quando o motivo pode atribuir (nunca a urgencia, o fora do
+ * horario e, pela Revisao R2 do contrato do banco, o sintoma, o assunto
+ * clinico, a midia e a conformidade: MOTIVOS_QUE_NUNCA_ATRIBUEM; nesses a
+ * chamada nem sai e a regra nem e lida) e a regra da versao publicada e
+ * "responsavel_do_lead" (pedirAtribuicaoNaPassagem). Quem chama garante que a passagem deste job
  * devolveu "passou" com a frase (passarEAvisar, os tetos e a falha sem
  * modelo) ou que o turno ja esta 'passou_para_equipe' com a saida 'frase'
  * (a retomada); nunca na passagem sem frase nem no "ja_fora_da_ia" (outro
@@ -1659,6 +1671,12 @@ async function retomarAPassagem(
  *
  * [AG6 passagem] AG6a (Revisao R1.1): sempre os tres parametros; a passagem
  * nunca atribui (a atribuicao vem depois da frase, atribuirDepoisDaFrase).
+ *
+ * [AG6 urgência] A passagem por urgencia que passou SEM a marca (o banco
+ * devolveu `urgente: false`: a gravacao em conversa_urgente falhou e virou
+ * WARNING la dentro) deixa o aviso no log, so com os ids e o codigo
+ * (revisao de 28/10/2026). A passagem vale do mesmo jeito: a conversa esta
+ * na fila e a frase sai; so a marca Urgente falta.
  */
 async function passarDoJob(
   c: Contexto,
@@ -1675,6 +1693,18 @@ async function passarDoJob(
     workerId: c.workerId,
     motivo,
   });
+  // [AG6 urgência] início
+  if (
+    motivo === "urgencia" &&
+    passagem.resultado === "passou" &&
+    !passagem.urgente
+  ) {
+    log.warn("ia_urgencia_sem_marca", {
+      ...idsDoLog(c),
+      error_code: "marca_nao_gravada",
+    });
+  }
+  // [AG6 urgência] fim
   return passagem.resultado;
 }
 

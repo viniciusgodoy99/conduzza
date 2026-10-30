@@ -422,10 +422,13 @@ export async function passarParaAEquipe(
 // [AG6 passagem] início
 /**
  * Os codigos de atribuir_conversa_passada_pela_ia (contrato da frente de
- * banco, Revisao R1.2), na ordem das recusas do banco. So "atribuida" muda
- * alguma coisa ("Em atendimento" com o responsavel do lead e o evento "A
- * conversa ficou com {nome}, responsável pelo lead."); "erro" e o erro de
- * dentro da funcao, que o banco desfaz e devolve sem erro HTTP.
+ * banco, Revisao R1.2 com a R2), na ordem das recusas do banco. So
+ * "atribuida" muda alguma coisa ("Em atendimento" com o responsavel do lead
+ * e o evento "A conversa ficou com {nome}, responsável pelo lead."); "erro"
+ * e o erro de dentro da funcao, que o banco desfaz e devolve sem erro HTTP.
+ * "mensagem_nova" (R2.2): o paciente escreveu o que o job nao leu (depois
+ * da criacao do job e fora de ai_turno.mensagens_lidas dele); a conversa
+ * fica na fila, como em toda recusa.
  */
 export const CODIGOS_DA_ATRIBUICAO = [
   "atribuida",
@@ -436,6 +439,7 @@ export const CODIGOS_DA_ATRIBUICAO = [
   "fora_da_fila",
   "com_responsavel",
   "urgente",
+  "mensagem_nova",
   "regra_fila",
   "sem_responsavel",
   "responsavel_inapto",
@@ -456,12 +460,14 @@ export type AtribuicaoDaIa =
 const CODIGOS_CONHECIDOS: ReadonlySet<string> = new Set(CODIGOS_DA_ATRIBUICAO);
 
 /**
- * atribuir_conversa_passada_pela_ia (R1.2): DEPOIS da tentativa da frase, a
- * conversa que este job passou para a equipe vai ao responsavel do lead,
- * quando o banco confere tudo (a posse, o D-A, a ULTIMA decisao do job de
- * passagem e fora da urgencia, a conversa em "Aguardando você" sem
- * responsavel e sem a marca de urgencia aberta, a ULTIMA versao publicada
- * com "responsavel_do_lead" e o responsavel ativo com papel que atende).
+ * atribuir_conversa_passada_pela_ia (R1.2 com a R2): DEPOIS da tentativa da
+ * frase, a conversa que este job passou para a equipe vai ao responsavel do
+ * lead, quando o banco confere tudo (a posse, o D-A, a ULTIMA decisao do
+ * job de passagem com motivo que atribui, fora da urgencia, do horario, dos
+ * clinicos e da midia; a conversa em "Aguardando você" sem responsavel, sem
+ * a marca de urgencia aberta e sem mensagem do paciente que o job nao leu;
+ * a ULTIMA versao publicada com "responsavel_do_lead" e o responsavel ativo
+ * com papel que atende).
  * Quem chama decide SE chama (so a passagem com a frase, com a regra lida e
  * o motivo que pode atribuir). Nunca lanca. Log so com ids e o codigo:
  * "atribuida" e as recusas no info; o erro do banco, a falha da chamada e a

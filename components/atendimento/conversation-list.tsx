@@ -186,6 +186,9 @@ export function ConversationList({
   temArquivo = false,
   ehProfissional = false,
   numeros = SEM_NUMEROS,
+  // [AG6 urgência] início
+  podeAssumir = true,
+  // [AG6 urgência] fim
 }: {
   nomesDeEtapa: Record<string, string>;
   /** Catalogo da clinica: resolve chave para nome e cor. */
@@ -226,6 +229,13 @@ export function ConversationList({
    * selo do numero e a lista ganha o filtro "Numero" (docs/07).
    */
   numeros?: NumerosDoInbox;
+  // [AG6 urgência] início
+  /**
+   * Quem olha pode assumir conversa (canEdit do Atendimento): a dica do
+   * chip "Urgente" do cartao so manda assumir quem pode.
+   */
+  podeAssumir?: boolean;
+  // [AG6 urgência] fim
 }) {
   const [own, setOwn] = useState<OwnFilter>("todas");
   // null = Todos. Guarda o id do numero escolhido.
@@ -804,6 +814,7 @@ export function ConversationList({
               agora={agora}
               onSelect={() => onSelect(conversation.id)}
               numero={numeroParaMostrar(conversation, numeros)}
+              podeAssumir={podeAssumir}
             />
           ))
         ) : situacao === "resolvida" && resolvedLoading ? (

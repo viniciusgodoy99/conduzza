@@ -6,8 +6,14 @@
 //   do tempo real recorta por clinica e papel). Uma vez por marca (a
 //   conversa e o instante da passagem).
 // - "A IA passou para você a conversa de {nome}." com "Abrir": nasce do
-//   evento da atribuicao no fio ("A conversa ficou com {nome}, responsável
-//   pelo lead."), e so para quem ficou com a conversa (o servidor confere).
+//   evento de CONVERSATION que o menu ja recebe, filtrado pela clinica,
+//   quando a conversa entra em atendimento com quem olha
+//   (vigiaDaAtribuicao, uma pergunta por entrada); o servidor confere que o
+//   ultimo evento do fio e o da atribuicao ("A conversa ficou com {nome},
+//   responsável pelo lead.") e e recente. Revisao da AG6a: antes, o menu
+//   assinava message (content_type evento) SEM filtro de clinica, em todas
+//   as telas, e o tempo real conferia a RLS por aba para cada evento de
+//   qualquer clinica, com corpos de evento de agenda chegando a todas.
 //
 // O nome do contato e dado de paciente: nunca vem do evento, e sim de uma
 // Server Action que le pela sessao (RLS) e grava a leitura na trilha antes
@@ -30,10 +36,10 @@ export const TEXTOS_DOS_AVISOS = {
 
 /**
  * O evento da atribuicao mais velho que isto nao vira aviso (o servidor
- * confere, pelo relogio do banco: o do computador da recepcao pode estar
- * errado). A urgencia nao tem janela: o servidor confere se a marca ainda
- * esta aberta, e uma urgente que chegou com a aba suspensa continua
- * urgente.
+ * confere, pelo relogio dele contra o instante gravado pelo banco: o do
+ * computador da recepcao pode estar errado). A urgencia nao tem janela: o
+ * servidor confere se a marca ainda esta aberta, e uma urgente que chegou
+ * com a aba suspensa continua urgente.
  */
 export const JANELA_DO_AVISO_MS = 5 * 60_000;
 
@@ -48,7 +54,7 @@ const ATRIBUICAO_COM_NOME =
 
 /**
  * O corpo e o evento da atribuicao ao responsavel do lead (contrato, secao
- * 5)? O texto e do banco (passar_conversa_da_ia_para_equipe); nenhuma acao
+ * 5)? O texto e do banco (atribuir_conversa_passada_pela_ia); nenhuma acao
  * da equipe grava esse texto ("assumiu", "transferiu" sao outros).
  */
 export function ehEventoDeAtribuicao(corpo: unknown): boolean {
@@ -99,43 +105,60 @@ export function avisoDeUrgenciaDaLinha(
   return { conversationId, chave: `${conversationId}:${desde}` };
 }
 
-/** A linha de message como o tempo real entrega (a linha inteira). */
-export type LinhaDoEventoNoFio = {
+/** A linha de conversation como o tempo real entrega (a linha inteira). */
+export type LinhaDaConversaNoEvento = {
   id?: unknown;
-  conversation_id?: unknown;
   clinic_id?: unknown;
-  author?: unknown;
-  content_type?: unknown;
-  body?: unknown;
-  created_at?: unknown;
+  status?: unknown;
+  assignee_user_id?: unknown;
 };
 
-export type AvisoDeAtribuicao = { conversationId: string; messageId: string };
+/**
+ * Quantas conversas o vigia lembra antes de esquecer todas (a proxima
+ * entrada de cada uma vira uma pergunta a mais ao servidor, nunca um aviso
+ * a mais: quem decide e ele).
+ */
+export const CONVERSAS_LEMBRADAS = 2_000;
 
 /**
- * A mensagem nova e o evento da atribuicao, da clinica ativa? Quem ficou com
- * a conversa e se o evento e recente o servidor confere
- * (lerAvisoDaConversaAction, pelo relogio do banco): a recepcao tambem
- * recebe o evento da conversa passada para outra pessoa.
+ * O vigia da atribuicao: diz QUANDO perguntar ao servidor se a conversa
+ * veio da IA para quem olha. So a conversa da clinica ativa que ENTRA em
+ * atendimento com esta pessoa (antes estava de outro jeito, ou o vigia
+ * ainda nao a conhecia): uma pergunta por entrada, nunca uma por evento (a
+ * conversa em atendimento recebe um evento a cada mensagem). Se ela sai e
+ * volta (devolvida para a IA e passada de novo), e outra entrada. Quem
+ * decide se o aviso sai e o servidor (lerAvisoDaConversaAction): o mesmo
+ * evento chega quando a propria pessoa assume a conversa.
  */
-export function avisoDeAtribuicaoDaLinha(
-  linha: LinhaDoEventoNoFio | null | undefined,
-  clinicId: string,
-): AvisoDeAtribuicao | null {
-  if (
-    !linha ||
-    linha.clinic_id !== clinicId ||
-    linha.author !== "sistema" ||
-    linha.content_type !== "evento" ||
-    !ehEventoDeAtribuicao(linha.body)
-  ) {
-    return null;
-  }
-  const { id: messageId, conversation_id: conversationId } = linha;
-  if (typeof messageId !== "string" || typeof conversationId !== "string") {
-    return null;
-  }
-  return { conversationId, messageId };
+export function vigiaDaAtribuicao({
+  clinicId,
+  viewerId,
+  limite = CONVERSAS_LEMBRADAS,
+}: {
+  clinicId: string;
+  viewerId: string;
+  limite?: number;
+}): (linha: LinhaDaConversaNoEvento | null | undefined) => string | null {
+  const comigo = new Map<string, boolean>();
+  return (linha) => {
+    if (
+      !linha ||
+      linha.clinic_id !== clinicId ||
+      typeof linha.id !== "string"
+    ) {
+      return null;
+    }
+    const minha =
+      linha.status === "em_atendimento" &&
+      typeof linha.assignee_user_id === "string" &&
+      linha.assignee_user_id === viewerId;
+    const antes = comigo.get(linha.id);
+    if (antes === undefined && comigo.size >= limite) {
+      comigo.clear();
+    }
+    comigo.set(linha.id, minha);
+    return minha && antes !== true ? linha.id : null;
+  };
 }
 
 /** O evento da janela que pede ao Atendimento aberto para abrir a conversa. */

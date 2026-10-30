@@ -50,7 +50,12 @@ import type { AberturaDaJanela } from "./whatsapp";
 //    Socorro que escrevia "socorro, me ajuda" chegava ao portao como
 //    "Fulano, me ajuda" e nao escalava. O original nunca vai para a OpenAI
 //    nem para log; as neutralizacoes do portao (Q4: "aqui e a Socorro")
-//    valem nele.
+//    valem nele;
+//  - [AG6 urgência] a midia do contato com legenda (o body da imagem, do
+//    documento ou do video; nunca do audio) leva a legenda ORIGINAL
+//    (legendaOriginal), que so a urgencia le (revisao de 28/10/2026: "to com
+//    dor no peito" escrito na foto). A midia continua indo aos modelos so
+//    como o marcador; a legenda nunca vai para a OpenAI nem para log.
 //
 // PENDENTE e a mensagem do paciente da janela que nenhum turno encerrado
 // respondeu: o id nao esta em ai_turno.mensagens_lidas de um turno 'enviado'
@@ -255,11 +260,21 @@ export function mensagemDaLinha(
   const corpo = typeof linha.body === "string" ? linha.body : "";
   const ehTexto = linha.content_type === "texto";
   if (!ehTexto || linha.media_url !== null || corpo.trim() === "") {
+    // [AG6 urgência] início
+    // A legenda do contato na midia (nunca no audio), so para a urgencia.
+    const legenda: Pick<MensagemDaConversa, "legendaOriginal"> =
+      autor === "paciente" &&
+      linha.content_type !== "audio" &&
+      corpo.trim() !== ""
+        ? { legendaOriginal: corpo }
+        : {};
+    // [AG6 urgência] fim
     return {
       autor,
       ...autoria,
       texto: null,
       tipo: ehTexto ? "midia" : linha.content_type,
+      ...legenda,
     };
   }
   const texto = mascararNome(corpo, nomeDoContato);

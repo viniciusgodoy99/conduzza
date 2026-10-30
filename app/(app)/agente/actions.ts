@@ -386,24 +386,39 @@ async function garantirRascunhoDepoisDaBase(
   }
 }
 
-/** UPDATE no rascunho pela sessao; zero linhas = alguem publicou antes. */
+/**
+ * O rascunho como quem grava o leu (concorrencia otimista, AG6a): o
+ * UPDATE so vale se o rascunho ainda e aquele (o mesmo id e o mesmo
+ * updated_at, que o gatilho set_updated_at troca a cada gravacao).
+ */
+type RascunhoLido = { id: string; updatedAt: string };
+
+/**
+ * UPDATE no rascunho pela sessao; zero linhas = alguem publicou antes. Com
+ * `lido` (quem leu o rascunho para montar `campos`), nao garante de novo e
+ * so grava se ninguem gravou no meio; zero linhas tambem = corrida.
+ */
 async function gravarNoRascunho(
   supabase: Supabase,
   quem: Quem,
   kind: string,
   campos: Record<string, unknown>,
+  lido?: RascunhoLido,
 ): Promise<ResultadoDoAgente> {
-  const rascunho = await garantirRascunho(supabase, quem.clinicId);
+  const rascunho = lido ?? (await garantirRascunho(supabase, quem.clinicId));
   if ("erro" in rascunho) {
     return falhou(quem, `${kind}_rascunho`, rascunho.erro, TEXTOS.naoSalvou);
   }
-  const { data, error } = await supabase
+  let gravacao = supabase
     .from("ai_agent_config")
     .update(campos)
     .eq("id", rascunho.id)
     .eq("clinic_id", quem.clinicId)
-    .eq("status", "rascunho")
-    .select("id");
+    .eq("status", "rascunho");
+  if (lido) {
+    gravacao = gravacao.eq("updated_at", lido.updatedAt);
+  }
+  const { data, error } = await gravacao.select("id");
   if (error) {
     return falhou(quem, kind, error, TEXTOS.naoSalvou);
   }
@@ -647,11 +662,17 @@ export async function salvarPrazosAction(
  * do lead. Grava escalation_rules.passagem_para PRESERVANDO as outras chaves
  * do jsonb (o aviso do SAMU da AG6c, chaves de versoes futuras), lidas do
  * proprio rascunho (o cliente nao e confiavel e nao manda o jsonb inteiro).
- * Vale ao publicar; quem atribui e o banco, na passagem com a frase, pela
+ * Vale ao publicar; quem atribui e o banco, logo depois da frase, pela
  * ultima versao publicada. Mesmo caminho de permissao das outras partes: a
  * guarda daqui (administrador, gestor ou super admin), o grant por coluna
  * (escalation_rules, desde o E0) e a policy de UPDATE so no rascunho. A
  * trilha (editou_passagem_do_agente) nao leva o valor.
+ *
+ * Ler e regravar o jsonb tem trava (revisao da AG6a): concorrencia otimista
+ * pelo updated_at do rascunho lido. Se outra gravacao entrou entre a
+ * leitura e o UPDATE (outra chave do jsonb, ou a mesma regra por outra
+ * pessoa), nada e gravado e a tela pede para recarregar, como as outras
+ * corridas da Tela 6: a outra chave nunca se perde.
  */
 export async function salvarPassagemAction(
   entrada: unknown,
@@ -671,21 +692,28 @@ export async function salvarPassagemAction(
   }
   const { data: atual, error: erroDaLeitura } = await supabase
     .from("ai_agent_config")
-    .select("escalation_rules")
+    .select("escalation_rules, updated_at")
     .eq("id", rascunho.id)
     .eq("clinic_id", quem.clinicId)
     .maybeSingle();
   if (erroDaLeitura) {
     return falhou(quem, "passagem_leitura", erroDaLeitura, TEXTOS.naoSalvou);
   }
+  const linha = atual as {
+    escalation_rules?: unknown;
+    updated_at?: unknown;
+  } | null;
+  // Sem a linha (publicada no meio) ou sem o carimbo: nao ha como gravar
+  // com a trava; a corrida de sempre.
+  if (typeof linha?.updated_at !== "string" || linha.updated_at === "") {
+    return falhou(quem, "passagem_leitura", null, TEXTOS.corrida);
+  }
   return gravarNoRascunho(
     supabase,
     quem,
     "passagem",
-    regrasDaPassagemParaOBanco(
-      parsed.data,
-      (atual as { escalation_rules?: unknown } | null)?.escalation_rules,
-    ),
+    regrasDaPassagemParaOBanco(parsed.data, linha.escalation_rules),
+    { id: rascunho.id, updatedAt: linha.updated_at },
   );
 }
 // [AG6 passagem] fim

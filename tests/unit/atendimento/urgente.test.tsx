@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -25,19 +27,29 @@ import { ChipDaUrgencia, Thread } from "@/components/atendimento/thread";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   DICA_DA_URGENCIA,
+  dicaDaUrgencia,
   estadoVisualDaConversa,
   URGENCIA_DA_CONVERSA,
 } from "@/lib/design/status";
 import {
   aplicarMarcaNaLista,
+  aplicarMarcasNaLista,
   fetchConversationById,
   fetchConversations,
+  fetchMarcasAbertas,
+  fetchResolvedConversations,
+  MARCAS_ABERTAS_LIMIT,
   marcaDeUrgenciaDaLinha,
+  marcaForaDoBanco,
   ordemDoAtendimento,
   urgenteAberta,
   type ConversationListItem,
 } from "@/lib/queries/conversations";
-import { marcaDepoisDoEvento } from "@/lib/realtime/use-inbox-channel";
+import {
+  CANAIS_DO_INBOX,
+  canaisDoInbox,
+  marcaDepoisDoEvento,
+} from "@/lib/realtime/use-inbox-channel";
 
 // AG6a no Atendimento (desenho da AG6, secoes 1.1 e 6; D-53 pela
 // recomendacao, pendente do dono; contrato da frente de banco, secao 3): a
@@ -104,9 +116,14 @@ function lista(conversations: ConversationListItem[]): string {
   );
 }
 
-function cartao(item: ConversationListItem, numero = false): string {
+function cartao(
+  item: ConversationListItem,
+  numero = false,
+  podeAssumir?: boolean,
+): string {
   return renderToStaticMarkup(
     <ConversationCard
+      {...(podeAssumir === undefined ? {} : { podeAssumir })}
       conversation={item}
       estado={estadoVisualDaConversa(item, { viewerId: EU, authorNames: {} })}
       reserva="Lead · Novo"
@@ -239,6 +256,369 @@ describe("a marca de urgência que vem do banco", () => {
 
     const doLink = await fetchConversationById(supabase, CLINICA, "1");
     expect(doLink?.urgente).toEqual(MARCA_CEDO);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O codigo no ar antes da migration (revisao da AG6a, achado 1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Um cliente falso que responde cada busca pelo select pedido: com a marca
+ * embutida, `comMarca`; sem ela, `semMarca`. Guarda os selects, na ordem.
+ */
+function bancoDaLista(respostas: {
+  comMarca: { data?: unknown; error?: unknown };
+  semMarca: { data?: unknown; error?: unknown };
+}) {
+  const pedidos: string[] = [];
+  const supabase = {
+    from: (tabela: string) => {
+      let colunas = "";
+      const resposta = () => {
+        const escolhida = colunas.includes("conversa_urgente")
+          ? respostas.comMarca
+          : respostas.semMarca;
+        return Promise.resolve({ data: null, error: null, ...escolhida });
+      };
+      const consulta = {
+        select(pedidas: string) {
+          colunas = pedidas;
+          pedidos.push(`${tabela}: ${pedidas}`);
+          return consulta;
+        },
+        eq: () => consulta,
+        neq: () => consulta,
+        is: () => consulta,
+        order: () => consulta,
+        limit: () => consulta,
+        maybeSingle: resposta,
+        then: (
+          ok: (valor: unknown) => unknown,
+          falha: (erro: unknown) => unknown,
+        ) => resposta().then(ok, falha),
+      };
+      return consulta;
+    },
+  };
+  return { supabase: supabase as never, pedidos };
+}
+
+const SEM_A_TABELA = {
+  code: "PGRST200",
+  message:
+    "Could not find a relationship between 'conversation' and 'conversa_urgente' in the schema cache",
+};
+
+describe("a lista antes da migration (o embutido da marca sem a tabela)", () => {
+  const linhas = [
+    { ...conversa("1", "Maria Silva"), urgente: undefined },
+    { ...conversa("2", "João Lima"), urgente: undefined },
+  ];
+
+  it("PGRST200 ou 42P01: refaz sem o embutido e o Atendimento abre sem a marca", async () => {
+    for (const erro of [SEM_A_TABELA, { code: "42P01", message: "x" }]) {
+      const { supabase, pedidos } = bancoDaLista({
+        comMarca: { error: erro },
+        semMarca: { data: linhas },
+      });
+      const resultado = await fetchConversations(supabase, CLINICA);
+      expect(resultado.map((c) => c.id).sort()).toEqual(["1", "2"]);
+      for (const item of resultado) {
+        expect(item.urgente).toBeNull();
+        expect(item).not.toHaveProperty("urgencia");
+      }
+      // As duas buscas (recentes e esperando), cada uma com a volta.
+      expect(
+        pedidos.filter((p) => p.includes("conversa_urgente")),
+      ).toHaveLength(2);
+      expect(
+        pedidos.filter((p) => !p.includes("conversa_urgente")),
+      ).toHaveLength(2);
+      // A volta e o select de antes, inteiro (o contato embutido continua).
+      for (const pedido of pedidos.filter(
+        (p) => !p.includes("conversa_urgente"),
+      )) {
+        expect(pedido).toContain("contact:contact_id (");
+        expect(pedido).toContain("whatsapp_account_id");
+      }
+    }
+  });
+
+  it("o arquivo de resolvidas e a conversa do link também voltam sem a marca", async () => {
+    const arquivo = bancoDaLista({
+      comMarca: { error: SEM_A_TABELA },
+      semMarca: {
+        data: [{ ...linhas[0], status: "resolvida" }],
+      },
+    });
+    const resolvidas = await fetchResolvedConversations(
+      arquivo.supabase,
+      CLINICA,
+    );
+    expect(resolvidas.map((c) => [c.id, c.urgente])).toEqual([["1", null]]);
+    expect(arquivo.pedidos).toHaveLength(2);
+
+    const link = bancoDaLista({
+      comMarca: { error: SEM_A_TABELA },
+      semMarca: { data: linhas[1] },
+    });
+    const doLink = await fetchConversationById(link.supabase, CLINICA, "2");
+    expect(doLink?.id).toBe("2");
+    expect(doLink?.urgente).toBeNull();
+    expect(link.pedidos).toHaveLength(2);
+  });
+
+  it("com a tabela, uma busca só por lista, sem volta", async () => {
+    const { supabase, pedidos } = bancoDaLista({
+      comMarca: {
+        data: [
+          {
+            ...linhas[0],
+            urgencia: { desde: MARCA_CEDO.desde, encerrada_em: null },
+          },
+        ],
+      },
+      semMarca: { error: { code: "XX000", message: "nao devia" } },
+    });
+    const resultado = await fetchConversations(supabase, CLINICA);
+    expect(resultado[0]?.urgente).toEqual(MARCA_CEDO);
+    expect(pedidos.every((p) => p.includes("conversa_urgente"))).toBe(true);
+    expect(pedidos).toHaveLength(2);
+  });
+
+  it("qualquer outro erro continua sendo erro (sem volta), e a volta que falha também", async () => {
+    const outro = bancoDaLista({
+      comMarca: { error: { code: "42501", message: "sem permissao" } },
+      semMarca: { data: linhas },
+    });
+    await expect(fetchConversations(outro.supabase, CLINICA)).rejects.toThrow(
+      "sem permissao",
+    );
+    expect(outro.pedidos.every((p) => p.includes("conversa_urgente"))).toBe(
+      true,
+    );
+
+    const volta = bancoDaLista({
+      comMarca: { error: SEM_A_TABELA },
+      semMarca: { error: { code: "08006", message: "caiu" } },
+    });
+    await expect(fetchConversations(volta.supabase, CLINICA)).rejects.toThrow(
+      "caiu",
+    );
+  });
+
+  it("só os códigos da tabela ausente contam como embutido fora do banco", () => {
+    expect(marcaForaDoBanco({ code: "PGRST200" })).toBe(true);
+    expect(marcaForaDoBanco({ code: "42P01" })).toBe(true);
+    for (const outro of [
+      { code: "PGRST201" },
+      { code: "42501" },
+      { code: "PGRST116" },
+      { code: null },
+      null,
+      undefined,
+    ]) {
+      expect(marcaForaDoBanco(outro), JSON.stringify(outro)).toBe(false);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O tempo real em dois canais (revisao da AG6a, achado 1)
+// ---------------------------------------------------------------------------
+
+type Assinatura = {
+  evento: string;
+  tabela: string;
+  filtro: string | undefined;
+  reagir: (payload: unknown) => void;
+};
+
+function supabaseDeCanais() {
+  const canais: { nome: string; assinaturas: Assinatura[] }[] = [];
+  const supabase = {
+    channel(nome: string) {
+      const canal = {
+        nome,
+        assinaturas: [] as Assinatura[],
+        on(
+          _tipo: string,
+          cfg: { event: string; table: string; filter?: string },
+          reagir: (payload: unknown) => void,
+        ) {
+          canal.assinaturas.push({
+            evento: cfg.event,
+            tabela: cfg.table,
+            filtro: cfg.filter,
+            reagir,
+          });
+          return canal;
+        },
+      };
+      canais.push(canal);
+      return canal;
+    },
+  };
+  return { supabase, canais };
+}
+
+describe("o tempo real do Atendimento em dois canais", () => {
+  const reacoes = () => ({
+    conversa: vi.fn(),
+    mensagem: vi.fn(),
+    contato: vi.fn(),
+    numero: vi.fn(),
+    marca: vi.fn(),
+  });
+
+  it("a marca num canal próprio: o principal fica com as quatro tabelas de antes", () => {
+    const { supabase, canais } = supabaseDeCanais();
+    canaisDoInbox(supabase as never, CLINICA, reacoes());
+    expect(canais.map((c) => c.nome)).toEqual([
+      CANAIS_DO_INBOX.principal(CLINICA),
+      CANAIS_DO_INBOX.urgencia(CLINICA),
+    ]);
+    expect(CANAIS_DO_INBOX.principal(CLINICA)).toBe(`inbox:${CLINICA}`);
+    const [principal, daMarca] = canais;
+    expect(
+      principal?.assinaturas.map((a) => [a.evento, a.tabela, a.filtro]),
+    ).toEqual([
+      ["*", "conversation", `clinic_id=eq.${CLINICA}`],
+      ["*", "message", `clinic_id=eq.${CLINICA}`],
+      ["UPDATE", "contact", `clinic_id=eq.${CLINICA}`],
+      ["*", "whatsapp_account", `clinic_id=eq.${CLINICA}`],
+    ]);
+    expect(
+      daMarca?.assinaturas.map((a) => [a.evento, a.tabela, a.filtro]),
+    ).toEqual([["*", "conversa_urgente", `clinic_id=eq.${CLINICA}`]]);
+  });
+
+  it("cada tabela chega na reação dela", () => {
+    const { supabase, canais } = supabaseDeCanais();
+    const reagir = reacoes();
+    canaisDoInbox(supabase as never, CLINICA, reagir);
+    const evento = { eventType: "INSERT", new: { id: "x" } };
+    const [principal, daMarca] = canais;
+    principal?.assinaturas.forEach((a) => a.reagir(evento));
+    daMarca?.assinaturas.forEach((a) => a.reagir(evento));
+    for (const reacao of Object.values(reagir)) {
+      expect(reacao).toHaveBeenCalledTimes(1);
+      expect(reacao).toHaveBeenCalledWith(evento);
+    }
+  });
+
+  it("o hook entra nos dois canais, cada um por si, e só pelo canaisDoInbox", () => {
+    const fonte = readFileSync("lib/realtime/use-inbox-channel.ts", "utf8");
+    expect(fonte.match(/assinarComSessao\(/g)).toHaveLength(2);
+    expect(fonte).toMatch(/assinarComSessao\(supabase, principal,/);
+    expect(fonte).toMatch(/assinarComSessao\(supabase, urgencia,/);
+    expect(fonte.match(/\.channel\(/g)).toHaveLength(2);
+    // Ao assinar a marca, as marcas abertas entram como eventos.
+    expect(fonte).toMatch(/fetchMarcasAbertas\(supabase, clinicId\)/);
+  });
+});
+
+describe("as marcas abertas lidas ao assinar o canal da marca", () => {
+  it("a consulta: só as abertas da clínica, só ids e instantes", async () => {
+    const pedidos: unknown[][] = [];
+    const consulta = {
+      select: (colunas: string) => {
+        pedidos.push(["select", colunas]);
+        return consulta;
+      },
+      eq: (coluna: string, valor: unknown) => {
+        pedidos.push(["eq", coluna, valor]);
+        return consulta;
+      },
+      is: (coluna: string, valor: unknown) => {
+        pedidos.push(["is", coluna, valor]);
+        return consulta;
+      },
+      limit: async (n: number) => {
+        pedidos.push(["limit", n]);
+        return {
+          data: [
+            {
+              conversation_id: "1",
+              desde: MARCA_CEDO.desde,
+              encerrada_em: null,
+            },
+          ],
+          error: null,
+        };
+      },
+    };
+    const tabelas: string[] = [];
+    const marcas = await fetchMarcasAbertas(
+      {
+        from: (tabela: string) => {
+          tabelas.push(tabela);
+          return consulta;
+        },
+      } as never,
+      CLINICA,
+    );
+    expect(tabelas).toEqual(["conversa_urgente"]);
+    expect(pedidos).toEqual([
+      ["select", "conversation_id, desde, encerrada_em"],
+      ["eq", "clinic_id", CLINICA],
+      ["is", "encerrada_em", null],
+      ["limit", MARCAS_ABERTAS_LIMIT],
+    ]);
+    expect(marcas).toEqual([
+      { conversation_id: "1", desde: MARCA_CEDO.desde, encerrada_em: null },
+    ]);
+  });
+
+  it("sem a tabela (antes da migration), lança: o canal ignora", async () => {
+    const consulta = {
+      select: () => consulta,
+      eq: () => consulta,
+      is: () => consulta,
+      limit: async () => ({
+        data: null,
+        error: { code: "PGRST205", message: "sem a tabela" },
+      }),
+    };
+    await expect(
+      fetchMarcasAbertas({ from: () => consulta } as never, CLINICA),
+    ).rejects.toThrow("sem a tabela");
+  });
+
+  it("as abertas entram na lista; a que não veio não é apagada; nada muda, a mesma lista", () => {
+    const maria = conversa("1", "Maria", {
+      last_message_at: "2026-10-27T09:00:00.000Z",
+    });
+    const joao = conversa("2", "João", {
+      last_message_at: "2026-10-27T14:00:00.000Z",
+    });
+    const ana = conversa("3", "Ana", {
+      last_message_at: "2026-10-27T13:00:00.000Z",
+      urgente: MARCA_TARDE,
+    });
+    const antes = [ana, joao, maria];
+    const depois = aplicarMarcasNaLista(antes, [
+      { conversation_id: "1", desde: MARCA_CEDO.desde, encerrada_em: null },
+    ]);
+    // Maria sobe (a mais antiga entre as urgentes); Ana continua marcada.
+    expect(depois.map((c) => c.id)).toEqual(["1", "3", "2"]);
+    expect(depois.find((c) => c.id === "3")?.urgente).toEqual(MARCA_TARDE);
+    expect(aplicarMarcasNaLista(depois, [])).toBe(depois);
+    // A leitura mais velha que o evento da conversa: quem ja saiu da fila
+    // (alguem assumiu) nao ganha a marca velha.
+    const assumida = { ...joao, status: "em_atendimento" as const };
+    expect(
+      aplicarMarcasNaLista(
+        [assumida],
+        [{ conversation_id: "2", desde: MARCA_CEDO.desde, encerrada_em: null }],
+      ),
+    ).toEqual([assumida]);
+    expect(
+      aplicarMarcasNaLista(depois, [
+        { conversation_id: "1", desde: MARCA_CEDO.desde, encerrada_em: null },
+      ]),
+    ).toBe(depois);
   });
 });
 
@@ -425,7 +805,7 @@ describe("o tempo real da marca", () => {
 describe("o chip Urgente no cartão", () => {
   it("abre a linha 3, antes do estado, com a dica e a forma do sino", () => {
     const html = cartao(conversa("1", "Maria", { urgente: MARCA_CEDO }));
-    expect(html).toContain(`title="${DICA_DA_URGENCIA}"`);
+    expect(html).toContain(`title="${DICA_DA_URGENCIA.podeAssumir}"`);
     const urgente = html.indexOf(">Urgente<");
     const estado = html.indexOf(">Aguardando você<");
     expect(urgente).toBeGreaterThan(-1);
@@ -446,6 +826,62 @@ describe("o chip Urgente no cartão", () => {
         }),
       ),
     ).not.toContain(">Urgente<");
+  });
+
+  it("a dica chega ao leitor de tela como a descrição do cartão, não só pelo title", () => {
+    const html = cartao(conversa("1", "Maria", { urgente: MARCA_CEDO }));
+    // O botao do cartao aponta para a dica escondida (nada focavel cabe
+    // dentro de um botao).
+    const id = /<button[^>]*aria-describedby="([^"]+)"/.exec(html)?.[1];
+    expect(id).toBeTruthy();
+    const escondida = new RegExp(
+      `<span id="${id}" hidden="">([^<]*)</span>`,
+    ).exec(html)?.[1];
+    expect(escondida).toBe(DICA_DA_URGENCIA.podeAssumir);
+    // Sem a marca, sem descricao nenhuma.
+    expect(cartao(conversa("1", "Maria"))).not.toContain("aria-describedby");
+  });
+
+  it("a dica certa por papel: o Somente leitura não é mandado assumir", () => {
+    const html = cartao(
+      conversa("1", "Maria", { urgente: MARCA_CEDO }),
+      false,
+      false,
+    );
+    expect(html).not.toContain("Assuma para atender");
+    expect(html).toContain(`title="${DICA_DA_URGENCIA.soAcompanha}"`);
+    expect(html).toContain(`hidden="">${DICA_DA_URGENCIA.soAcompanha}<`);
+    expect(dicaDaUrgencia(true)).toBe(DICA_DA_URGENCIA.podeAssumir);
+    expect(dicaDaUrgencia(false)).toBe(DICA_DA_URGENCIA.soAcompanha);
+    expect(DICA_DA_URGENCIA.podeAssumir).toContain("Assuma para atender.");
+    expect(DICA_DA_URGENCIA.soAcompanha).not.toMatch(/assum/i);
+  });
+
+  it("a lista passa o papel para o cartão (o Inbox manda o canEdit do Atendimento)", () => {
+    const html = renderToStaticMarkup(
+      <ConversationList
+        nomesDeEtapa={{ novo: "Novo" }}
+        etiquetas={[]}
+        conversations={[conversa("1", "Maria", { urgente: MARCA_CEDO })]}
+        viewerId={EU}
+        authorNames={{}}
+        timezone="America/Fortaleza"
+        agoraInicial={Date.parse("2026-10-27T15:00:00.000Z")}
+        selectedId={null}
+        onSelect={() => undefined}
+        podeAssumir={false}
+      />,
+    );
+    expect(html).toContain(DICA_DA_URGENCIA.soAcompanha);
+    expect(html).not.toContain("Assuma para atender");
+    const inbox = readFileSync(
+      "app/(app)/atendimento/inbox-client.tsx",
+      "utf8",
+    );
+    expect(inbox).toContain("podeAssumir={podeEditar}");
+    expect(inbox).toMatch(
+      /const podeEditar = canEdit\(viewerRole, "atendimento"\);/,
+    );
   });
 
   it("a linha cede uma etiqueta para o chip (o resto vira o +N)", () => {
@@ -498,7 +934,8 @@ describe("textos da urgência no Atendimento", () => {
   it("sem travessão e com linguagem de recepcionista", () => {
     for (const texto of [
       URGENCIA_DA_CONVERSA.label,
-      DICA_DA_URGENCIA,
+      DICA_DA_URGENCIA.podeAssumir,
+      DICA_DA_URGENCIA.soAcompanha,
       "Urgentes",
     ]) {
       expect(texto).not.toMatch(/[—–]/);

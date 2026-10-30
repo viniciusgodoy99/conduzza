@@ -1762,14 +1762,29 @@ export const ROTULO_DA_PASSAGEM: Readonly<Record<PassagemDaConversa, string>> =
 
 /**
  * Os motivos que nunca atribuem, com ou sem a regra (o banco confere de
- * novo): a urgencia (D-54) e o fora do horario.
+ * novo: c_motivos_que_nunca_atribuem de atribuir_conversa_passada_pela_ia,
+ * a MESMA lista na MESMA ordem; o espelho compara): a urgencia (D-54), o
+ * fora do horario (a retomada no horario so pega conversa sem responsavel)
+ * e, pela Revisao R2 do contrato do banco (28/10/2026), os clinicos e o
+ * conteudo que ninguem leu, onde cai a emergencia que a lista
+ * deterministica nao pega: o sintoma, o assunto clinico, a midia (o audio,
+ * mesmo transcrito, a imagem e o documento) e a resposta que o filtro do
+ * CFM barrou (conformidade). A mesma razao da D-54: o responsavel pode
+ * estar fora, e a conversa fica na fila de todos.
  */
 export const MOTIVOS_QUE_NUNCA_ATRIBUEM = [
   "urgencia",
   "fora_do_horario",
+  "sintoma",
+  "assunto_clinico",
+  "midia_nao_suportada",
+  "conformidade",
 ] as const satisfies readonly MotivoDoEventoDaIa[];
 
-/** O motivo pode levar a conversa ao responsavel (fora da urgencia e do horario). */
+/**
+ * O motivo pode levar a conversa ao responsavel (fora da urgencia, do
+ * horario, dos motivos clinicos e da midia; MOTIVOS_QUE_NUNCA_ATRIBUEM).
+ */
 export function motivoPodeAtribuir(motivo: MotivoDoEventoDaIa): boolean {
   return !(MOTIVOS_QUE_NUNCA_ATRIBUEM as readonly string[]).includes(motivo);
 }

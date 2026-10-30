@@ -328,6 +328,17 @@ export type MensagemDaConversa = {
    * portao le `texto`.
    */
   textoOriginal?: string | null;
+  // [AG6 urgência] início
+  /**
+   * A legenda que o contato escreveu na midia (message.body da imagem, do
+   * documento ou do video; nunca do audio), como chegou. So a URGENCIA le
+   * (lib/domain/conformidade/urgencia.ts: o passo 7c do executor e o portao;
+   * revisao de 28/10/2026). Local e sem rede: nunca vai para a OpenAI (a
+   * midia vai aos modelos so como o marcador), nem para log, nem para a
+   * coleta de dados. Ausente: a midia sem legenda (ou o texto).
+   */
+  legendaOriginal?: string | null;
+  // [AG6 urgência] fim
 };
 
 /**
@@ -1355,6 +1366,8 @@ async function turnoDoAgente(
       mensagens: pendentes.map((m): MensagemDeEntrada => ({
         tipo: m.tipo ?? "texto",
         texto: m.textoOriginal ?? m.texto,
+        // [AG6 urgência] A legenda da midia, so para a urgencia.
+        legenda: m.legendaOriginal ?? null,
       })),
       dataDeNascimento: entrada.dataDeNascimento ?? null,
       hojeNaClinica:

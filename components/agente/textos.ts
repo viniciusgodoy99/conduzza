@@ -469,13 +469,17 @@ export const TEXTOS_DO_AGENTE = {
 // do dono): o cartao "Para quem vai a conversa" da aba Regras e limites. A
 // regra mora em escalation_rules.passagem_para (lib/domain/agente/config.ts,
 // PASSAGENS_DA_CONVERSA), grava no rascunho e vale ao publicar; quem
-// atribui e o banco, na passagem com a frase fixa, pela ultima versao
-// publicada. O "o que mudou" usa ROTULO_DO_CAMPO_DA_PASSAGEM e
+// atribui e o banco, pela ultima versao publicada, LOGO DEPOIS da frase de
+// sempre (atribuir_conversa_passada_pela_ia): a conversa fica uns segundos
+// em "Aguardando você", a atribuicao e tentada mesmo quando a frase nao sai,
+// e quem assumir antes fica com ela (revisao da AG6a: o texto acompanha).
+// Urgencia, sintoma, assunto clinico e midia nunca atribuem (a frente do
+// banco). O "o que mudou" usa ROTULO_DO_CAMPO_DA_PASSAGEM e
 // ROTULO_DA_PASSAGEM da configuracao.
 export const TEXTOS_DA_PASSAGEM = {
   titulo: "Para quem vai a conversa",
   descricao:
-    "Salvo no rascunho, vale ao publicar. Conta quando o assistente passa a conversa para a equipe e o contato recebe a frase fixa.",
+    "Salvo no rascunho, vale ao publicar. Vale quando o assistente passa a conversa para a equipe com a frase de sempre.",
   opcoes: {
     fila: {
       rotulo: "Para a fila (Sem atendente)",
@@ -485,11 +489,11 @@ export const TEXTOS_DA_PASSAGEM = {
     responsavel_do_lead: {
       rotulo: "Para o responsável do lead, quando houver",
       descricao:
-        "A conversa já fica em atendimento com o responsável, em Minhas, com um aviso na tela.",
+        "Logo depois da frase de sempre, a conversa passa para o responsável, em atendimento, em Minhas, com um aviso na tela.",
     },
   },
   ajuda:
-    "O responsável é o do lead em Leads. Sem responsável, ou com ele fora da equipe ou só com leitura, a conversa vai para a fila. Conversa urgente vai sempre para a fila.",
+    "O responsável é o do lead em Leads. Sem responsável, ou com ele fora da equipe ou só com leitura, a conversa vai para a fila. Se alguém assumir antes, a conversa fica com quem assumiu. Quando o motivo é urgência, sintoma, assunto clínico ou mídia, a conversa vai sempre para a fila.",
   salvar: "Salvar regra",
   salvando: "Salvando...",
   salva: "Regra salva no rascunho.",
