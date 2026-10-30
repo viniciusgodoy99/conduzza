@@ -146,17 +146,43 @@ async function criarPessoa(
   clientes.set(apelido, cliente);
 }
 
-/** Telefone liberado, contato e conversa NA IA pela ingestao (com a janela e a autorizacao). */
+/**
+ * Telefone liberado, contato e conversa NA IA pela ingestao (com a janela e a
+ * autorizacao). A manutencao de producao (a cada minuto) devolve a conversa
+ * de teste que espera resposta ha mais de 3 minutos: so o primeiro caso
+ * depende de conversaA estar com a IA, e ela nasce no fim do beforeAll.
+ */
 async function conversaNaIa(): Promise<{ contato: string; conversa: string }> {
+  // O numero desta chamada fica guardado antes do primeiro await (a licao
+  // da AG3: duas chamadas ao mesmo tempo nao dividem o contador).
   telefones += 1;
   const n = telefones;
   const telefone = `+55846${digitos}${String(n).padStart(2, "0")}`;
+  // O contato nasce paciente e o telefone, forcado, ANTES de a conversa
+  // existir (o forcado so vale gravado depois do sinal de paciente), como
+  // na AG4 (3f87861): a conversa nao depende de o contato seguir sem sinal
+  // de paciente (a entrada na fila nao e sinal hoje; a consulta e) para a
+  // manutencao do motor (a cada minuto) nao a tirar da IA
+  // (ia_pode_falar_com), o que daria ia_desligada ou fora_da_ia ao acaso. A
+  // autorizacao continua nascendo na ingestao (o contato nao tem linha de
+  // consentimento antes dela).
+  await admin
+    .from("contact")
+    .insert({
+      clinic_id: clinicaA,
+      phone_e164: telefone,
+      name: "Contato sintético",
+      kind: "paciente",
+    })
+    .throwOnError();
   await rpcOk("definir_contato_liberado_da_ia", {
     p_clinic_id: clinicaA,
     p_telefone_e164: telefone,
     p_rotulo: "Equipe sintética",
     p_ativo: true,
+    p_forcar_contato_existente: true,
     p_confirmou_aviso_da_openai: true,
+    p_confirmou_teste_com_paciente: true,
   });
   const r = await rpcOk<{
     conversation_id: string | null;

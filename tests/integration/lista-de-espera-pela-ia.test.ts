@@ -138,17 +138,43 @@ async function publicar(skills: Record<string, boolean>): Promise<void> {
 
 const LISTA_LIGADA = { agendar: true, lista_de_espera: true };
 
-/** Telefone liberado, contato e conversa NA IA pela ingestao (janela e autorizacao). */
+/**
+ * Telefone liberado, contato e conversa NA IA pela ingestao (janela e
+ * autorizacao). Cada caso ingere logo antes de usar: a manutencao de
+ * producao (a cada minuto) devolve a conversa de teste que espera resposta
+ * ha mais de 3 minutos.
+ */
 async function conversaNaIa(): Promise<{ contato: string; conversa: string; telefone: string }> {
+  // O numero desta chamada fica guardado antes do primeiro await (a licao
+  // da AG3: duas chamadas ao mesmo tempo nao dividem o contador).
   telefones += 1;
   const n = telefones;
   const telefone = `+55843${digitos}${String(n).padStart(2, "0")}`;
+  // O contato nasce paciente e o telefone, forcado, ANTES de a conversa
+  // existir (o forcado so vale gravado depois do sinal de paciente), como
+  // na AG4 (3f87861): a consulta que o caso cria depois (ja_tem_consulta)
+  // nao abre janela para a manutencao do motor (a cada minuto) tirar a
+  // conversa de teste da IA (ia_pode_falar_com), o que dava ia_desligada ao
+  // acaso. A autorizacao continua nascendo na ingestao (o contato nao tem
+  // linha de consentimento antes dela); a perguntaDoJob, que forca de novo,
+  // mantem o forcado (o sinal ja existe).
+  await admin
+    .from("contact")
+    .insert({
+      clinic_id: clinica,
+      phone_e164: telefone,
+      name: "Contato sintético",
+      kind: "paciente",
+    })
+    .throwOnError();
   await rpcOk("definir_contato_liberado_da_ia", {
     p_clinic_id: clinica,
     p_telefone_e164: telefone,
     p_rotulo: "Equipe sintética",
     p_ativo: true,
+    p_forcar_contato_existente: true,
     p_confirmou_aviso_da_openai: true,
+    p_confirmou_teste_com_paciente: true,
   });
   const r = await rpcOk<{
     conversation_id: string | null;
