@@ -505,7 +505,7 @@ export const TEXTOS_DA_PASSAGEM = {
     },
   },
   ajuda:
-    "O responsável é o do lead em Leads. Sem responsável, ou com ele fora da equipe ou só com leitura, a conversa vai para a fila. Se alguém assumir antes, a conversa fica com quem assumiu. Quando o motivo é urgência, sintoma, assunto clínico, mídia ou resposta barrada pela conformidade, a conversa vai sempre para a fila. Se a pessoa escrever de novo antes, também fica na fila.",
+    "O responsável é o do lead em Leads. Sem responsável, ou com ele fora da equipe ou só com leitura, a conversa vai para a fila. Se alguém assumir antes, a conversa fica com quem assumiu. Quando o motivo é urgência, sintoma, assunto clínico, exame ou foto do corpo, arquivo que o assistente não leu ou não identificou, ou resposta barrada pela conformidade, a conversa vai sempre para a fila. Se a pessoa escrever de novo antes, também fica na fila.",
   salvar: "Salvar regra",
   salvando: "Salvando...",
   salva: "Regra salva no rascunho.",

@@ -130,8 +130,12 @@ const TERMO_DO_MOTIVO_NA_AJUDA: Readonly<
   urgencia: "urgência",
   sintoma: "sintoma",
   assunto_clinico: "assunto clínico",
-  midia_nao_suportada: "mídia",
+  midia_nao_suportada: "arquivo que o assistente não leu",
   conformidade: "resposta barrada pela conformidade",
+  // [AG6b mídia] início
+  midia_clinica: "exame ou foto do corpo",
+  midia_nao_identificada: "não identificou",
+  // [AG6b mídia] fim
 };
 
 /** O botao Salvar do cartao (o unico botao dele). */
@@ -199,7 +203,7 @@ describe("cartão Para quem vai a conversa", () => {
   it("a ajuda cita cada motivo que nunca atribui, a partir da lista do banco (revisão curta: faltava a conformidade)", () => {
     const ajuda = TEXTOS_DA_PASSAGEM.ajuda;
     expect(ajuda).toContain(
-      "Quando o motivo é urgência, sintoma, assunto clínico, mídia ou resposta barrada pela conformidade, a conversa vai sempre para a fila.",
+      "Quando o motivo é urgência, sintoma, assunto clínico, exame ou foto do corpo, arquivo que o assistente não leu ou não identificou, ou resposta barrada pela conformidade, a conversa vai sempre para a fila.",
     );
     // Um termo por motivo de MOTIVOS_QUE_NUNCA_ATRIBUEM (o espelho de
     // c_motivos_que_nunca_atribuem), menos o fora do horario (passagem sem
