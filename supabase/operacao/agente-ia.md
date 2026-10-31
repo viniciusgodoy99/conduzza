@@ -8,6 +8,8 @@ Como está ligado hoje, como fazer o primeiro teste, como desligar em segundos e
 
 **Onda 2 (21/10/2026; construída, revisada e corrigida; as migrations `20261022100000` (M1), `20261022110000` (M2) e `20261022120000` (M3) foram aplicadas em 22/10/2026, com o ok do dono, e o código foi publicado depois delas, `c7b3063`):** o horário do assistente decidido pelo banco e a retomada no fim do expediente; o público (leads, pacientes ou os dois); a frase fixa do fora do assunto e do "você é um robô?"; excluir telefone; o telefone de paciente que aceitou testar, forçado pelo administrador com a confirmação; a pausa pela clínica; a conversão só na aprovação da consulta; tudo do agente na Tela 6 (aba WhatsApp; o interruptor geral vai para o Painel geral); e a **produção** (todos os contatos do público escolhido, ligada só pela equipe Conduzza no Painel geral, com o checklist). O que muda na operação e as receitas novas: seção "Onda 2", logo depois de "Ligar o agente numa clínica (onda 1)". Até cada migration ser aplicada (com o ok do dono) e o código publicado depois das três, valia o que este arquivo dizia; **desde 22/10/2026, valem as notas "depois da onda 2"** espalhadas nele, e o que elas substituem fica como histórico. Nenhuma clínica está em produção: a teste123 e a Conduzza Teste continuam em Teste. Banco no `docs/04`, seção 23; código no `docs/03`, seção 16; estado e pendências no `docs/05`, entrada "Onda 2".
 
+**AG6a e AG6b (28 a 31/10/2026; construídas e revisadas na branch local `agente-ag6b`; as migrations `20261029120000` e `20261030100000` **não foram ensaiadas nem aplicadas na produção** e esperam o ok do dono, depois da AG5; nada publicado):** a conversa urgente e a passagem ao responsável do lead (AG6a), e o áudio, a foto e o documento na conversa com a IA (AG6b), que só valem depois da prova paga (D-100). A ordem de publicação, o que conferir, o que acompanhar, como desligar a mídia e como voltar atrás: seção "Urgência, passagem e mídia pela IA (AG6a e AG6b)", depois de "Agenda pela IA (E4)". Banco no `docs/04`, seções 36 e 37; código no `docs/03`, seções 22 e 23; estado e pendências no `docs/05`, entradas "AG6a do agente de IA" e "AG6b do agente de IA". Este arquivo ainda não tem seções da AG1 à AG5 (o estado e o rollback delas estão no `docs/05` e no `docs/04`, seções 31 a 35).
+
 Construído em 13/10/2026 (plano aprovado pelo dono em 13/10, "pode") e publicado em 19/10/2026 (`1c36327`; o telefone pelo administrador em `24058b1` e os vários números em `a87e01e`). **Migrations aplicadas:** M1 `20261013100000_ia_whatsapp_fila.sql`, M3 `20261013110000_ia_whatsapp_gatilho_mensagem.sql` e M2 `20261013120000_ia_whatsapp_funcoes_quentes.sql` em 13/10/2026, nessa ordem; `20261019100000_ia_telefone_pelo_administrador.sql` e `20261019110000_ia_varios_numeros.sql` em 19/10/2026 (md5 conferidos na produção: "Como foi ligado"). Contrato do banco no `docs/04`, 17.13; turno e travas no `docs/03`, seção 14; estado e decisões no `docs/05`, Fase 3, entrada "E3"; o motor da IA em `supabase/operacao/motor-por-cron.md`, "Resposta da IA no WhatsApp (motor-ia)".
 
 ---
@@ -631,12 +633,15 @@ with motivos(codigo) as (
          ('envio_incerto'), ('aviso_nao_enviado'), ('celular'), ('sem_resposta'),
          ('desligada'), ('parada'), ('sem_autorizacao'),
          -- onda 2 (so existem depois da M2; antes, o rotulo e nulo e a linha nao casa)
-         ('no_expediente'), ('retomou_no_horario'), ('fora_do_assunto')
+         ('no_expediente'), ('retomou_no_horario'), ('fora_do_assunto'),
+         -- AG6a e AG6b (so existem depois das migrations 20261029120000 e 20261030100000)
+         ('urgencia'), ('midia_clinica'), ('documento_do_paciente'), ('midia_nao_identificada')
 )
 select to_char(m.created_at at time zone 'America/Fortaleza', 'DD/MM HH24:MI:SS') as quando,
        c.name as clinica,
        coalesce(mo.codigo,
-                case when m.body like '% devolveu a conversa para a IA' then 'devolveu_para_ia'
+                case when m.body like 'A conversa ficou com %responsável pelo lead.' then 'atribuida_ao_responsavel'
+                     when m.body like '% devolveu a conversa para a IA' then 'devolveu_para_ia'
                      when m.body like '% assumiu a conversa' then 'assumiu'
                      when m.body like '% passou a conversa para %' then 'transferiu'
                      else 'outro_evento' end) as evento,
@@ -1147,6 +1152,204 @@ Como ler: `desfecho` `falhou` com `motivo_da_falha` `desconhecida` num turno de 
 
 ---
 
+## Urgência, passagem e mídia pela IA (AG6a e AG6b)
+
+**AG6a:** quando a pessoa descreve algo que pode ser uma emergência (uma lista fixa de sinais, proposta ao responsável técnico e ainda não aprovada, D-51), a IA passa a conversa para a equipe com a frase de sempre e a marca como **Urgente**: no topo do Atendimento, com o contador do menu em alerta, até alguém assumir, transferir ou resolver. E, independente da lista, a **rede de segurança no portão** passa para a equipe, como sintoma, o risco de vida e a emergência aguda ditos sem rodeio (um erro da lista só tira a marca; a IA não responde). Se a clínica escolher na Tela 6 "Para o responsável do lead, quando houver", a conversa passada vai ao responsável do lead logo depois da frase, mas nunca a urgência, o sintoma, o assunto clínico, a resposta barrada pela conformidade, o arquivo clínico ou que o assistente não leu ou não identificou, nem a conversa em que a pessoa escreveu de novo (essas ficam na fila). **AG6b:** com "Entender áudio" e "Ler imagem e documento" ligadas, o áudio vira texto pela transcrição da OpenAI (`whisper-1`, no nosso servidor) e a foto ou o PDF vai uma vez a um leitor de saída fechada; só o pedido de exame ou procedimento com todos os itens no Cadastro segue com a IA, e o resto passa para a equipe. Decisões e pendências: `docs/05`, entradas "AG6a do agente de IA" e "AG6b do agente de IA"; banco no `docs/04`, seções 36 e 37; motor no `docs/03`, seções 22 e 23.
+
+**Estado em 31/10/2026: nada disto está no ar.** As duas entregas estão construídas e revisadas na branch local `agente-ag6b` (em `577a650`, com a AG5 dentro). As migrations `20261029120000` (AG6a) e `20261030100000` (AG6b) passaram só no ensaio do Postgres local, **não foram ensaiadas nem aplicadas na produção** e esperam o ok do dono, depois da AG5 (`20261029100000`, também não aplicada). **Mesmo publicada, a AG6b não manda nada para a OpenAI antes da prova paga (D-100):** no código, `TRANSCRICAO_CALIBRADA` é falsa e os tetos de tokens do leitor são nulos, então áudio, foto e documento continuam passando para a equipe, como hoje, e a Tela 6 diz "Ainda não está valendo" embaixo das duas habilidades.
+
+### Ordem (cada passo só com o ok do dono, em horário calmo)
+
+1. **A AG5 inteira antes:** a migration, as provas de banco e o código (`docs/05`, entrada "AG5 do agente de IA").
+2. **A migration da AG6a:** o ensaio na produção (`~/.claude/plans/agente-completo/ag6/ensaio-20261029120000.sql`, `ENSAIO OK`; o CREATE TRIGGER segura a escrita em `conversation` durante o ensaio inteiro: poucos ensaios), a migration, a conferência abaixo, o md5 do arquivo (`7ada4024c0d34c12907eb74d5b67a048`), os grants e os tipos gerados. Ela pede `ai_decision_log` em ACCESS EXCLUSIVE e `conversation` e `clinic` em SHARE ROW EXCLUSIVE, em NOWAIT: com alguma ocupada por uns 3 s, falha inteira com 55P03, sem gravar nada, e é só rodar de novo.
+3. **As provas de banco da AG6a na produção**, um arquivo por vez: `tests/rls/urgencia-e-passagem-da-ia.test.ts`, `tests/integration/urgencia-e-passagem-da-ia.test.ts` e `tests/integration/urgencia-e-passagem-concorrencia.test.ts`.
+4. **A migration da AG6b**, do mesmo jeito: o ensaio (`~/.claude/plans/agente-completo/ag6/ensaio-20261030100000.sql`; a FK nova segura a escrita em `conversation` durante o ensaio), a migration, a conferência, o md5 (`d4bab40de33e5cba300a0a94d1d94e6c`), os grants e os tipos. Ela pede `ai_decision_log`, `ia_uso`, `llm_preco` e `ia_contato_liberado` em ACCESS EXCLUSIVE, `clinic` e `conversation` em SHARE ROW EXCLUSIVE e `message` em ACCESS SHARE, com o mesmo NOWAIT e o mesmo 55P03.
+5. **As provas de banco da AG6b**, um arquivo por vez: `tests/rls/midia-pela-ia.test.ts`, `tests/integration/midia-pela-ia.test.ts` e `tests/integration/midia-pela-ia-concorrencia.test.ts`.
+6. **O código:** o merge da `agente-ag6b` e o push. **Recomendação ao dono: a AG6a junto com a AG6b**, porque as correções finais da AG6a (a revisão conjunta de 30/10/2026 e as rodadas `d1a15f6`, `88e9560`, `1cf092d` e `577a650`) só existem nessa branch; publicar a AG6a sozinha pede levar as correções à mão para a `agente-ag6`. **Nunca o código antes das migrations:** a passagem por urgência falha (23514 na decisão, 22023 no rótulo) e o job tenta de novo, e a atribuição dá PGRST202 (a conversa fica na fila); o resto tolera (a lista do Atendimento sem a marca, a mídia toda `fora`, a lista de telefones sem a coluna nova). As migrations com o código de antes quase não mudam nada (`docs/04`, 36.8 e 37.10).
+7. **A operação da D-94 (só o dono; pendente, não foi feita):** tirar a `UAZAPI_OPENAI_KEY` da Vercel, revogar essa chave na OpenAI e conferir no painel da uazapi se a instância guarda uma chave da OpenAI (e apagar a que estiver lá). O código da AG6b não lê mais a variável e pede o download à uazapi sempre com `transcribe: false`.
+8. **A prova paga (D-100, com o ok do dono)**, pela chave do projeto `avaliacao`, só com material sintético e com orçamento máximo, e o commit pequeno das constantes medidas. **Só a partir daí "Entender áudio" e "Ler imagem e documento" valem.** Depois: a D34 de novo, os telefones reconfirmados com o aviso novo, as habilidades ligadas e publicadas na Tela 6 das duas clínicas de teste e o teste com os telefones da equipe.
+
+**Conferir que as migrations estão no banco** (`true` nas colunas da migration aplicada):
+
+```sql
+select
+  -- AG6a
+  to_regclass('public.conversa_urgente') is not null as ag6a_marca,
+  exists (select 1 from pg_publication_tables
+           where pubname = 'supabase_realtime' and schemaname = 'public'
+             and tablename = 'conversa_urgente') as ag6a_marca_no_tempo_real,
+  exists (select 1 from pg_trigger
+           where tgrelid = 'public.conversation'::regclass and not tgisinternal
+             and tgname = 'urgencia_sai_quando_alguem_pega') as ag6a_gatilho,
+  to_regprocedure('public.atribuir_conversa_passada_pela_ia(uuid, text)') is not null as ag6a_atribuicao,
+  -- AG6b
+  to_regclass('public.ia_leitura_da_midia') is not null as ag6b_leituras,
+  to_regprocedure('public.midia_da_ia_liberada(uuid, text)') is not null as ag6b_midia_liberada,
+  to_regprocedure('public.gravar_leitura_da_midia(uuid, text, uuid, text, text, text, integer, uuid[], integer, text, text, text, text)') is not null as ag6b_gravar_leitura,
+  exists (select 1 from information_schema.columns
+           where table_schema = 'public' and table_name = 'ia_contato_liberado'
+             and column_name = 'aviso_da_openai_versao') as ag6b_versao_do_aviso,
+  exists (select 1 from information_schema.columns
+           where table_schema = 'public' and table_name = 'llm_preco'
+             and column_name = 'audio_microdolar_por_minuto') as ag6b_preco_por_minuto;
+```
+
+**Depois da AG6b, duas receitas antigas deste arquivo mudam:** a conferência da onda 2 (a coluna `m2_forcar`) procura `definir_contato_liberado_da_ia` com 7 parâmetros e passa a dar falso, porque a função ganha o oitavo (`p_versao_do_aviso smallint`) e a de 7 sai: é o esperado. E as receitas que ligam telefone pelo SQL editor ("Religar", passo 4, e o telefone de paciente da onda 2) não passam `p_versao_do_aviso`: o telefone desligado volta ligado no aviso de antes (versão 1, sem mídia), o lado seguro. O aviso novo só pela Tela 6, no "Ligar de novo" com a confirmação (D-60).
+
+### Acompanhar: consultas Q a W
+
+Rodar no SQL editor, depois das migrations. Nenhuma escreve e nenhuma devolve nome de paciente, telefone nem texto de mensagem (a transcrição e o resumo da leitura nunca entram; o `de_quem` da U é o rótulo do telefone da equipe, como na I). As recusas da atribuição (`sem_responsavel`, `regra_fila`, `motivo_nao_atribui`, `midia_nao_lida` e as outras) não ficam no banco: só no log da Vercel (`ia_atribuicao_da_ia` e `ia_atribuicao_falhou`, com ids e o código). Na consulta E, os eventos novos aparecem pelo código do motivo (`urgencia`, `midia_clinica`, `documento_do_paciente`, `midia_nao_identificada`) e a atribuição como `atribuida_ao_responsavel`; o gasto da transcrição e do leitor aparece na G, com os papéis `transcricao` e `leitor_de_midia`.
+
+**Q. Conversas urgentes** (as abertas e as que fecharam nos últimos 7 dias)
+
+```sql
+select c.name as clinica,
+       to_char(u.desde at time zone 'America/Fortaleza', 'DD/MM HH24:MI:SS') as urgente_desde,
+       coalesce(u.encerrada_como, 'aberta') as marca,   -- aberta | assumida | transferida | resolvida | outra
+       date_trunc('second', coalesce(u.encerrada_em, now()) - u.desde) as ate_alguem_pegar,
+       v.status as conversa,
+       'https://conduzza.vercel.app/atendimento?conversa=' || u.conversation_id as link
+from public.conversa_urgente u
+join public.clinic c on c.id = u.clinic_id
+join public.conversation v on v.id = u.conversation_id
+where u.clinic_id = any (public.ia_clinicas_da_fase_controlada())
+  and (u.encerrada_em is null or u.encerrada_em >= now() - interval '7 days')
+order by u.encerrada_em is not null, u.desde desc;
+```
+
+Como ler: `aberta` com a conversa em `aguardando_humano` é a urgente esperando alguém: cobrar a equipe (o `ate_alguem_pegar` conta). `aberta` com a conversa em outro estado não deveria existir (o gatilho fecha a marca na saída de "Aguardando você"; se ele falhar, vira WARNING e a transição segue): a lista e o contador já a ignoram, mas avise o desenvolvimento. A marca encerrada some sozinha 30 dias depois (a poda).
+
+**R. Urgência sem marca** (decisões de urgência das últimas 24 horas sem a marca)
+
+```sql
+select to_char(d.created_at at time zone 'America/Fortaleza', 'DD/MM HH24:MI:SS') as quando,
+       c.name as clinica,
+       d.desfecho,
+       v.status as conversa_agora,
+       'https://conduzza.vercel.app/atendimento?conversa=' || d.conversation_id as link
+from public.ai_decision_log d
+join public.clinic c on c.id = d.clinic_id
+join public.conversation v on v.id = d.conversation_id
+where d.clinic_id = any (public.ia_clinicas_da_fase_controlada())
+  and d.escalation_reason = 'urgencia'
+  and d.created_at >= now() - interval '24 hours'
+  and not exists (select 1 from public.conversa_urgente u
+                   where u.conversation_id = d.conversation_id
+                     and (u.job_id = d.job_id or u.desde >= d.created_at))
+order by d.created_at desc;
+```
+
+Como ler: o normal é vazia. Uma linha é a passagem recusada porque a conversa já tinha saído da IA (a equipe já estava nela) ou a marca que não gravou (a passagem valeu sem ela, com o log `ia_urgencia_sem_marca`, só com ids). Na segunda, a conversa foi para a fila sem o chip "Urgente": abra pelo link e confira se alguém já pegou.
+
+**S. Eventos de urgência, mídia e atribuição no fio** (últimos 7 dias, só contagens)
+
+```sql
+with motivos(codigo) as (
+  values ('urgencia'), ('midia_clinica'), ('documento_do_paciente'), ('midia_nao_identificada')
+)
+select c.name as clinica,
+       coalesce(mo.codigo, 'atribuida_ao_responsavel') as evento,
+       count(*) as quantos,
+       to_char(max(m.created_at) at time zone 'America/Fortaleza', 'DD/MM HH24:MI') as ultimo
+from public.message m
+join public.clinic c on c.id = m.clinic_id
+left join motivos mo on public.rotulo_do_motivo_da_ia(mo.codigo) = m.body
+where m.clinic_id = any (public.ia_clinicas_da_fase_controlada())
+  and m.content_type = 'evento'
+  and m.created_at >= now() - interval '7 days'
+  and (mo.codigo is not null or m.body like 'A conversa ficou com %responsável pelo lead.')
+group by c.name, coalesce(mo.codigo, 'atribuida_ao_responsavel')
+order by c.name, evento;
+```
+
+Como ler: `atribuida_ao_responsavel` só aparece em clínica que publicou "Para o responsável do lead" (a T) e tem contato com responsável em Leads. Antes da prova paga, os três motivos da mídia não aparecem (a mídia passa como "conteúdo que o assistente não lê", `midia_nao_suportada`, como hoje).
+
+**T. A regra da passagem e as habilidades de mídia** (a última versão publicada e o rascunho de cada clínica)
+
+```sql
+select c.name as clinica,
+       a.status, a.version,
+       case when a.escalation_rules ->> 'passagem_para' = 'responsavel_do_lead'
+            then 'responsavel_do_lead' else 'fila' end as passagem_para,
+       coalesce((a.skills ->> 'ler_audio') = 'true', false) as entender_audio,
+       coalesce((a.skills ->> 'ler_imagem_e_documento') = 'true', false) as ler_imagem_e_documento,
+       (select count(*) from public.contact k
+         where k.clinic_id = c.id and k.owner_user_id is not null) as contatos_com_responsavel
+from public.clinic c
+join lateral (
+  (select x.status, x.version, x.escalation_rules, x.skills
+     from public.ai_agent_config x
+    where x.clinic_id = c.id and x.status = 'publicada'
+    order by x.version desc limit 1)
+  union all
+  (select x.status, x.version, x.escalation_rules, x.skills
+     from public.ai_agent_config x
+    where x.clinic_id = c.id and x.status = 'rascunho'
+    order by x.version desc limit 1)
+) a on true
+where c.id = any (public.ia_clinicas_da_fase_controlada())
+order by c.name, a.status;
+```
+
+Como ler: o WhatsApp só usa a linha `publicada`. A regra "responsável do lead" só faz efeito com `contatos_com_responsavel` acima de zero (em 30/10/2026, nenhum contato tinha). Antes da D-65 (os buracos da atribuição, com o dono), não publicar "Para o responsável do lead" em nenhuma clínica.
+
+**U. Os telefones e o aviso da OpenAI** (depois da AG6b; sem imprimir telefone)
+
+```sql
+select c.name as clinica,
+       l.rotulo as de_quem,
+       l.ativo, l.forcado,
+       l.aviso_da_openai_versao as versao_do_aviso,               -- 1 o de antes; 2 com áudio, foto e documento
+       l.ativo and l.aviso_da_openai_versao >= 2 as manda_midia    -- o mesmo teste de midia_da_ia_liberada
+from public.ia_contato_liberado l
+join public.clinic c on c.id = l.clinic_id
+where l.clinic_id = any (public.ia_clinicas_da_fase_controlada())
+order by c.name, l.rotulo;
+```
+
+**V. As leituras do assistente** (últimos 7 dias; só contagens, nunca a transcrição nem o resumo)
+
+```sql
+select c.name as clinica,
+       r.midia, r.tipo, r.modelo, r.versao,
+       count(*) as leituras,
+       sum(r.segundos_de_audio) as segundos_de_audio
+from public.ia_leitura_da_midia r
+join public.clinic c on c.id = r.clinic_id
+where r.clinic_id = any (public.ia_clinicas_da_fase_controlada())
+  and r.created_at >= now() - interval '7 days'
+group by c.name, r.midia, r.tipo, r.modelo, r.versao
+order by c.name, r.midia, r.tipo;
+```
+
+Como ler: antes da prova paga, as leituras têm de vir vazias (nada é transcrito nem lido). Depois, `versao` diz a política que leu (`transcricao-...` no áudio, `leitor-...` no arquivo, `figurinha-...` com o modelo `local`).
+
+**W. Passagens por sintoma** (as últimas 24 horas; é onde cai o que a rede de segurança pega e a lista de urgência não marcou)
+
+```sql
+select to_char(d.created_at at time zone 'America/Fortaleza', 'DD/MM HH24:MI:SS') as quando,
+       c.name as clinica,
+       'https://conduzza.vercel.app/atendimento?conversa=' || d.conversation_id as link
+from public.ai_decision_log d
+join public.clinic c on c.id = d.clinic_id
+where d.clinic_id = any (public.ia_clinicas_da_fase_controlada())
+  and d.escalation_reason = 'sintoma'
+  and d.created_at >= now() - interval '24 hours'
+order by d.created_at desc;
+```
+
+Como ler: a rede de segurança não tem código próprio no banco; ela passa como `sintoma`, junto com a dor e a queixa de sempre (do portão ou do classificador), e nunca vai ao responsável do lead. Na primeira semana do teste, abrir pelo link (a leitura fica na trilha) as passagens por sintoma e conferir se alguma era emergência sem a marca Urgente: é um erro da lista de urgência, que só tirou a prioridade (a IA não respondeu). Anotar o caso para o RT pelo id da conversa, nunca copiando o texto para fora do sistema.
+
+### Desligar a mídia (sem desligar a IA)
+
+- **Pela Tela 6** (administrador ou gestor da clínica): desligar "Entender áudio" e "Ler imagem e documento" e **Publicar alterações**. Salvar no rascunho não basta: o motor olha a versão publicada. Depois de publicar, a mídia volta a passar para a equipe, como antes da AG6b, e as leituras já gravadas deixam de ir ao modelo.
+- **Só um telefone:** não há chave de mídia por telefone. Desligar o telefone na aba WhatsApp tira a IA inteira dele e volta o aviso para a versão 1; religado pelo SQL editor ("Religar", passo 4), ele fica sem mídia; pelo "Ligar de novo" da tela, com a confirmação, volta com o aviso novo.
+- **Para parar já**, sem esperar a tela: desligar a clínica inteira ("Desligar em segundos").
+
+**Rollback da AG6a e da AG6b:** seção "Rollback", abaixo. Publicadas juntas, como recomendado, voltar o código para o de antes das duas (o `main` com a AG5) já tira tudo do ar: as migrations com o código de antes não mudam nada para quem usa, e os arquivos de rollback só são precisos para tirar também o banco.
+
+---
+
 ## Como foi ligado (referência para ligar do zero)
 
 Para ligar de novo depois de um rollback ou de um desligamento total: cada passo com o ok do dono, por id, e só depois do anterior conferido. A ordem segura deixa o interruptor geral por último (D33); em 19/10/2026 o dono ligou o interruptor antes do telefone.
@@ -1236,6 +1439,10 @@ select
 ## Rollback
 
 Na ordem. Detalhe e lista exata de objetos no `docs/04`, 17.13, "Rollback".
+
+**Só a AG6b (migration `20261030100000`, depois de aplicada; sem desfazer a AG6a):** (1) voltar o código para um sem a AG6b (o da AG6b chama `gravar_leitura_da_midia` e `midia_da_ia_liberada`, lê `ia_leitura_da_midia` e as duas colunas novas e manda `p_versao_do_aviso`); publicadas juntas, como recomendado, o `main` não tem código só com a AG6a, e voltar o código é voltar para o de antes das duas (o `main` com a AG5); (2) rodar `supabase/operacao/rollback/20261030100000-corpos-anteriores.sql` (md5 `91bb2116219c36b3a8e65a746e03975c`) inteiro, numa transação, no SQL editor, em horário calmo: ACCESS EXCLUSIVE em `ai_decision_log`, `ia_uso`, `llm_preco`, `ia_contato_liberado`, `ia_leitura_da_midia`, `clinic` e `conversation` e ACCESS SHARE em `message` (até o commit, milissegundos, ninguém lê `conversation` nem `clinic`), NOWAIT com até 10 tentativas, e 55P03 sem desfazer nada; ele confere no fim os cinco md5, os grants e os CHECKs. O arquivo recusa se houve uso do `whisper-1` nos últimos 15 minutos (o sinal do código da AG6b ainda no ar), mas, enquanto `TRANSCRICAO_CALIBRADA` for falsa, nenhum uso acontece, e essa trava não vê o código no ar: **a ordem acima é a única proteção**. Perdem-se as transcrições e as leituras e a versão do aviso dos telefones (todos voltam ao aviso de antes); a linha `whisper-1` de `llm_preco` sai; ficam as decisões com os motivos novos, os eventos no fio, o gasto em `ia_uso` e a trilha. Detalhe no `docs/04`, 37.10. Se a AG6a também for desfeita, este vem antes.
+
+**Só a AG6a (migration `20261029120000`, depois de aplicada; com a AG6b já desfeita, se tiver sido aplicada):** (1) voltar o código para o de antes da AG6a (o `main` com a AG5); (2) rodar `supabase/operacao/rollback/20261029120000-corpos-anteriores.sql` (md5 `90312b9da770539609345915c8e4e12e`) inteiro, numa transação, no SQL editor, em horário calmo: ACCESS EXCLUSIVE em `ai_decision_log`, `conversa_urgente`, `conversation` e `clinic` (até o commit, ninguém lê `conversation` nem `clinic`), NOWAIT com até 10 tentativas, e 55P03 sem desfazer nada; a tabela sai da publicação do tempo real antes de sair, e ele confere no fim os três md5, os grants e os CHECKs. Perdem-se as marcas de urgência, abertas e encerradas (a conversa urgente continua na fila, sem o destaque); ficam as decisões com `urgencia`, os eventos no fio e as conversas que já ficaram com o responsável do lead. Detalhe no `docs/04`, 36.8. Se a AG5 ou a AG4 também forem desfeitas, este vem antes (os rollbacks delas estão no `docs/04`, seções 34 e 35).
 
 **Só a onda 2 (migrations `20261022120000`, `20261022110000` e `20261022100000`, aplicadas em 22/10/2026; sem desfazer a onda 1, a E4 nem o E3):** na ordem inversa, M3, M2 e M1, cada uma com o código voltado antes e o arquivo de rollback dela inteiro, numa transação, no SQL editor, em horário calmo; antes da M3, toda clínica de produção para Teste. Passo a passo em "Onda 2", "Rollback da onda 2", e no `docs/04`, 23.8. Se a onda 1, a E4 ou o E3 também forem desfeitos, este vem antes de todos.
 
