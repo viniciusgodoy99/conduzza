@@ -40,16 +40,27 @@ describe("A1: a exceção estética só com o objeto, nunca com o agora, o lado,
   });
 
   it.each([
-    "minha boca tá meio torta, quero fazer preenchimento",
-    "o lado esquerdo do meu rosto tá mais caído, quero fazer fios",
     "tenho o rosto torto e queria harmonizar",
-    "minha boca entortou um pouco com o tempo, preenchimento resolve?",
-    "minha boca tá torta no sorriso, dá pra corrigir com botox?",
     "minha boca fica torta quando eu sorrio",
-    "quanto custa a harmonizacao? meu rosto ta torto de tanto dormir de lado kkk",
   ])("%s: não é urgência (o objeto estético, sem a guarda)", (texto) => {
     expect(urgente(texto)).toBeNull();
   });
+
+  // Revisao RR1 (a politica nova das excecoes): o "ta" e o "esta" (o estado
+  // de agora) e o "entortou" (a mudanca), na oracao do sinal, desfazem o
+  // pedido com o objeto; o pedido em outra oracao nao alcanca o sinal.
+  it.each([
+    "minha boca tá meio torta, quero fazer preenchimento",
+    "o lado esquerdo do meu rosto tá mais caído, quero fazer fios",
+    "minha boca entortou um pouco com o tempo, preenchimento resolve?",
+    "minha boca tá torta no sorriso, dá pra corrigir com botox?",
+    "quanto custa a harmonizacao? meu rosto ta torto de tanto dormir de lado kkk",
+  ])(
+    "%s: urgência (revisão RR1: o estado de agora e a mudança desfazem)",
+    (texto) => {
+      expect(urgente(texto)?.tipo).toBe("fisica");
+    },
+  );
 });
 
 describe("A3: as grafias do risco de vida", () => {
@@ -246,7 +257,6 @@ describe("M2: a oclusão do preenchimento (o antigo, a mancha sozinha, a histór
   it.each([
     "fiz harmonizacao ha 2 anos, minha pele ta manchada, voces fazem peeling?",
     "ja fiz preenchimento labial, minha boca é muito branquinha, tem como dar cor?",
-    "conheço uma moça que ficou cega depois de preenchimento, isso é comum?",
     "fiz preenchimento ano passado, agora quero tratar as manchas, minha pele ta muito manchada",
     "ja fiz harmonizacao e agora quero tratar o melasma, a pele ta muito manchada",
     "fiz fios ha 1 ano, voces fazem laser? minha pele ta manchada do sol",
@@ -270,6 +280,9 @@ describe("M2: a oclusão do preenchimento (o antigo, a mancha sozinha, a histór
     "fiz labial ontem e o labio ta roxo e frio",
     // A mancha com o preenchimento recente.
     "fiz a boca ontem e ela tá toda manchada",
+    // Revisao RR1: a historia de outra pessoa com o "ficou" (a mudanca) na
+    // oracao do sinal e o relato (a pergunta nao e pura).
+    "conheço uma moça que ficou cega depois de preenchimento, isso é comum?",
   ])("%s: urgência", (texto) => {
     expect(urgente(texto)?.tipo).toBe("fisica");
   });
@@ -283,17 +296,20 @@ describe("M4: a ameaça de verdade desfaz o sujeito concreto", () => {
     "meu marido ameacou me matar",
     "meu marido ta me batendo e vai me matar",
     "meu marido vai me matar de pancada",
+    // Revisao RR1: a terceira pessoa (o marido) desfaz o exagero; a figura
+    // so vale com o objeto dito ("essa conta").
+    "meu marido vai me matar se eu gastar mais",
+    "meu marido vai me matar",
   ])("%s: risco de vida", (texto) => {
     expect(urgente(texto)?.tipo).toBe("risco_de_vida");
   });
 
-  it.each([
-    "meu marido vai me matar se eu gastar mais",
-    "meu marido vai me matar",
-    "essa conta vai me matar kkk",
-  ])("%s: não é urgência (o exagero)", (texto) => {
-    expect(urgente(texto)).toBeNull();
-  });
+  it.each(["essa conta vai me matar kkk"])(
+    "%s: não é urgência (o exagero)",
+    (texto) => {
+      expect(urgente(texto)).toBeNull();
+    },
+  );
 
   it.each([
     // As regras que generalizavam (variantes geradas de cada excecao).
@@ -303,13 +319,15 @@ describe("M4: a ameaça de verdade desfaz o sujeito concreto", () => {
     ["meu pai tem historico de avc e acho que ta tendo outro avc agora", "avc"],
     ["uso oculos e perdi a visao do olho direito", "perdendo_a_visao"],
     ["uso oculos e minha vista ficou toda preta", "perdendo_a_visao"],
+    // Revisao RR1: o nariz entupido de outra pessoa nao apaga o "nao
+    // respira" (a terceira pessoa e o "ta" desfazem).
+    ["o nariz dele ta entupido e ele nao respira", "nao_respira"],
   ])("%s: urgência (%s)", (texto, sinal) => {
     expect(urgente(texto)?.sinal).toBe(sinal);
   });
 
   it.each([
     "meu nariz não está respirando direito",
-    "o nariz dele ta entupido e ele nao respira",
     "sou cega de um olho, posso fazer botox?",
     "a sala ta sem ar condicionado",
     "a sala de espera tava sem ar, morri de calor",
@@ -359,8 +377,8 @@ describe("os alarmes falsos que saíram pelo lado seguro", () => {
     "amei o resultado, to morrendo kkkkk",
     "to morrendo aqui de ansiedade pro procedimento amanha",
     "quase desmaiei quando vi a conta kkk",
-    // A agenda com o evento e a pergunta do servico.
-    "pode marcar um encaixe? é uma emergencia, tenho formatura sabado",
+    // A pergunta do servico. Revisao RR1: a agenda em OUTRA frase ("pode
+    // marcar um encaixe? e uma emergencia") nao alcanca o sinal (urgencia).
     "vcs atendem pelo convenio em caso de urgencia e emergencia?",
   ])("%s: não é urgência", (texto) => {
     expect(urgente(texto)).toBeNull();
@@ -376,6 +394,8 @@ describe("os alarmes falsos que saíram pelo lado seguro", () => {
     "quase desmaiei e to tonta",
     // A agenda com quem passa mal.
     "tenho uma emergencia, minha mae ta passando mal, preciso remarcar",
+    // Revisao RR1: a agenda so na frase do sinal.
+    "pode marcar um encaixe? é uma emergencia, tenho formatura sabado",
   ])("%s: urgência", (texto) => {
     expect(urgente(texto)).not.toBeNull();
   });

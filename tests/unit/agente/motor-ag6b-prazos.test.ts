@@ -1026,3 +1026,152 @@ describe("o corte do laco no leitor pelos tetos injetados (R3 de d1a15f6, 2)", (
     );
   });
 });
+
+// Terceira rodada (RR2 de 88e9560, baixo 6): o executor contava o prazo do
+// turno ANTES de umas idas ao banco (o estado, o nascimento, a reserva e o
+// turno), e o laco contava do proprio comeco: com o banco lento, o atraso
+// saia da reserva das gravacoes e do envio. Agora o laco recebe o instante
+// (prazoEmMs), na mesma referencia do executor, e as idas ao banco ficam
+// dentro da conta do turno.
+describe("o prazo do turno numa referencia so, com o banco lento (RR2 de 88e9560, baixo 6)", () => {
+  /** O atraso de cada ida lenta ao banco entre a conta do prazo e o laco. */
+  const DEMORA_MS = 1_500;
+  const LENTAS = ["ler_atendimento_da_ia", "reservar_gasto_da_ia"] as const;
+  const ATRASO_MS = DEMORA_MS * LENTAS.length;
+
+  /** O banco falso lento: estas RPCs so respondem depois de DEMORA_MS. */
+  function bancoLento(cenario: ReturnType<typeof montarCenario>) {
+    for (const nome of LENTAS) {
+      const original = cenario.banco.manipuladores.get(nome);
+      cenario.banco.rpc(nome, async (args) => {
+        await new Promise((resolve) => setTimeout(resolve, DEMORA_MS));
+        return original === undefined ? { data: null, error: null } : original(args);
+      });
+    }
+  }
+
+  it("com midia: a transcricao recebe o prazo que sobra da conta do executor (o atraso do banco sai do turno, nunca das gravacoes)", async () => {
+    relogioFalso();
+    const recebidos: EntradaDaTranscricaoFalsa[] = [];
+    const cenario = montarCenario(estado, {
+      mensagens: [audio()],
+      tempo: () => Date.now(),
+      transcrever: async (t) => {
+        recebidos.push(t);
+        return {
+          tipo: "transcrita",
+          texto: "Oi, queria saber o preco do hemograma",
+          segundos: 16,
+          uso: { modelo: "whisper-1", segundos: 16 },
+        };
+      },
+    });
+    bancoLento(cenario);
+    const promessa = executarRespostaComIa(cenario.job, EXECUTOR, cenario.deps);
+    await vi.advanceTimersByTimeAsync(PRAZO_DA_INVOCACAO_MS);
+    expect(await promessa).toEqual({ ok: true });
+    // O banco lento de verdade: as duas idas sairam antes do laco.
+    for (const nome of LENTAS) {
+      expect(cenario.banco.chamadasDe(nome)).toHaveLength(1);
+    }
+    expect(recebidos).toHaveLength(1);
+    // O turno de 38 s conta da conta do executor: o laco comeca 3 s depois,
+    // e a midia tem 3 s a menos (antes, o laco contava os 38 s do comeco
+    // dele e a integracao recebia o prazo cheio, 3 s alem do turno).
+    expect(recebidos[0]?.prazoMs).toBe(
+      prazoParaAIntegracao(
+        midiaDoAudio - ATRASO_MS - FOLGA_DO_CORTE_DA_MIDIA_MS,
+        FOLGA_DO_CORTE_DA_TRANSCRICAO_NA_PORTA_MS,
+      ),
+    );
+    expect(cenario.enviarResposta).toHaveBeenCalledTimes(1);
+  });
+
+  it("sem midia: o agente recebe o prazo da chamada pela mesma conta (o turno de 25 s menos o banco lento e a reserva do filtro)", async () => {
+    relogioFalso();
+    const turno = 25_000;
+    const cenario = montarCenario(estado, {
+      mensagens: [
+        {
+          id: "m1",
+          clinic_id: CLINICA,
+          conversation_id: CONVERSA,
+          author: "paciente",
+          direction: "entrada",
+          content_type: "texto",
+          body: "Quanto custa o hemograma?",
+          media_url: null,
+          deleted_at: null,
+          is_internal_note: false,
+          pelo_celular: false,
+          created_at: "2026-10-13T14:58:30.000Z",
+        },
+      ],
+      tempo: () => Date.now(),
+      prazoFinalMs: AGORA + turno + RESERVA_DO_ENVIO_MS + RESERVA_DAS_GRAVACOES_MS,
+    });
+    bancoLento(cenario);
+    const promessa = executarRespostaComIa(cenario.job, EXECUTOR, cenario.deps);
+    await vi.advanceTimersByTimeAsync(PRAZO_DA_INVOCACAO_MS);
+    expect(await promessa).toEqual({ ok: true });
+    expect(cenario.agente.create).toHaveBeenCalledTimes(1);
+    const opcoes = (cenario.agente.create.mock.calls[0] as unknown[] | undefined)?.[1] as
+      | { timeout?: number }
+      | undefined;
+    // Antes: 25 s do comeco do laco menos o filtro (15 s); o turno acabava
+    // 3 s depois do que o executor contou, dentro da reserva das gravacoes.
+    expect(opcoes?.timeout).toBe(turno - ATRASO_MS - RESERVA_DO_FILTRO_MS);
+    expect(cenario.enviarResposta).toHaveBeenCalledTimes(1);
+  });
+
+  it("o laco recebe o instante do executor, e o que vier primeiro vale: o instante ou o comeco mais prazoMs", async () => {
+    const { porta } = portaFalsa();
+    const agente = agenteQueResponde("Claro, posso ajudar.");
+    const preparar = vi.fn<PortaDaMidia["preparar"]>(porta.preparar);
+    const entrada = (extra: Partial<EntradaDoTurno>) =>
+      executarTurnoDoAgente({
+        cliente: agente.cliente,
+        modelo: "gpt-6-luna",
+        clinicId: CLINICA,
+        identificadorDeSeguranca: "a".repeat(64),
+        config: configComMidia(),
+        catalogo: CATALOGO_DA_AG6B,
+        mensagens: [audioNoLaco()],
+        agoraMs: AGORA,
+        fuso: "America/Fortaleza",
+        verificador: async () => ({
+          tipo: "veredicto",
+          veredicto: { aprovado: true, violacoes: [], confianca: "alta" },
+          modelo: "gpt-6-luna",
+          uso: null,
+        }),
+        classificador: async () => ({
+          tipo: "classificacao",
+          classificacao: { gatilhos: ["nenhum"], confianca: "alta" },
+          modelo: "gpt-6-luna",
+          uso: null,
+        }),
+        midia: { ...porta, preparar },
+        agora: () => AGORA,
+        ...extra,
+      });
+    // O instante antes do comeco mais prazoMs: vale o instante.
+    await entrada({ prazoMs: PRAZO_DO_TURNO_MS, prazoEmMs: AGORA + 30_000 });
+    // O comeco mais prazoMs antes do instante: vale o prazoMs.
+    await entrada({ prazoMs: 30_000, prazoEmMs: AGORA + PRAZO_DO_TURNO_MS });
+    // Sem instante (o simulador), ou invalido: so o prazoMs.
+    await entrada({ prazoMs: 30_000 });
+    await entrada({ prazoMs: 30_000, prazoEmMs: Number.NaN });
+    const semAMidia =
+      RESERVA_DO_FILTRO_MS +
+      RESERVA_DO_AGENTE_DEPOIS_DA_MIDIA_MS +
+      PRAZO_DO_CLASSIFICADOR_NO_PORTAO_MS +
+      FOLGA_DO_CORTE_DA_MIDIA_MS;
+    expect(preparar.mock.calls.map(([, prazo]) => prazo)).toEqual([
+      30_000 - semAMidia,
+      30_000 - semAMidia,
+      30_000 - semAMidia,
+      30_000 - semAMidia,
+    ]);
+  });
+});

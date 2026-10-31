@@ -34,6 +34,7 @@ import type {
 } from "@/lib/domain/conformidade/categorias";
 import {
   compactar,
+  type GuardaDeJanela,
   type Neutralizacao,
 } from "@/lib/domain/conformidade/normalizar";
 
@@ -644,11 +645,21 @@ const ACOMPANHANTE_DO_DIA =
 // para a equipe ("Recebemos o pedido do exame", "O exame de sangue custa
 // R$ 50", "Vou passar o seu resultado para a equipe", "O resultado fica
 // pronto em 3 dias").
+/**
+ * Revisao final de 31/10/2026 (alarme falso das regras novas): o exame
+ * depois do preco, do valor, da procura, da fila, da agenda ou da data nao e
+ * o resultado ("Se achar o preco do exame alto, temos parcelamento.", "A
+ * procura pelo teste esta alta esta semana.", "o horario do exame esta
+ * otimo pra voce?").
+ */
+const NAO_E_O_RESULTADO_ANTES =
+  "(?<!\\b(?:preco|precos|valor|valores|custo|custos|orcamento|orcamentos|taxa|taxas|procura|demanda|fila|agenda|agendamento|horario|horarios|vaga|vagas|data|datas|dia|marcacao) (?:d[aoe]s?|pel[oa]s?|para o|para a|pro|pra) (?:(?:seu|sua|seus|suas|esse|essa|esses|essas|o|a|os|as) )?)";
 /** O exame, o laudo e o resultado escritos (sem o marcador do Cadastro). */
 const DOCUMENTO_SEM_MARCADOR =
+  NAO_E_O_RESULTADO_ANTES +
   "\\b(?:exames?|laudos?|resultados?|testes?|hemogramas?|ultrassom|ultrassons|ultrassonografias?|mamografias?|tomografias?|ressonancias?|biopsias?|raios?[- ]?x|preventivos?|papanicolau|eletrocardiogramas?|ecocardiogramas?|glicemia|glicose|colesterol|triglicerides|triglicerideos|hemoglobina(?: glicada)?|plaquetas|leucocitos|hemacias|ferritina|tsh|t4(?: livre)?|vitamina (?:d|b12)|creatinina|ureia|acido urico|psa|beta ?hcg|hcg|ldl|hdl)\\b";
 /** O exame, o laudo e o resultado (o nome do Cadastro chega como o marcador). */
-const DOCUMENTO_DO_RESULTADO = `(?:${DOCUMENTO_SEM_MARCADOR}|\\u00a7)`;
+const DOCUMENTO_DO_RESULTADO = `(?:${DOCUMENTO_SEM_MARCADOR}|${NAO_E_O_RESULTADO_ANTES}\\u00a7)`;
 /**
  * O verbo que diz como o resultado ficou ("esta", "deu", "veio") e, com ate
  * duas palavras antes do valor, o que o resultado mostra ("o laudo mostra
@@ -677,29 +688,37 @@ const VALOR_NORMAL =
  * ok", "os resultados ficaram perfeitos"). Nunca antes do exame ("Otimo, no
  * exame de amanha leve o pedido" e recepcao), nem com "para", "pra" ou
  * "com" logo depois ("o exame esta bom para terca?"), nem na pergunta ("o
- * exame das 9h esta ok?" pergunta do horario).
+ * exame das 9h esta ok?" pergunta do horario). Revisao final de
+ * 31/10/2026: sem o "tranquilo", que descreve o exame e nao o resultado ("O
+ * exame e tranquilo, dura uns 15 minutos.").
  */
-const VALOR_NORMAL_DEPOIS_DO_VERBO = `(?:${VALOR_NORMAL}|(?:otim[oa]s?|perfeit[oa]s?|excelentes?|limp[oa]s?|bo(?:m|ns|a|as)|ok|okay|tranquil[oa]s?|em ordem)\\b(?! (?:para|pra|pro|com)\\b)(?!\\s*\\?))`;
+const VALOR_NORMAL_DEPOIS_DO_VERBO = `(?:${VALOR_NORMAL}|(?:otim[oa]s?|perfeit[oa]s?|excelentes?|limp[oa]s?|bo(?:m|ns|a|as)|ok|okay|em ordem)\\b(?! (?:para|pra|pro|com)\\b)(?!\\s*\\?))`;
 /**
  * Revisao R2 de d1a15f6 (M6): o resultado colado no exame, sem verbo
  * ("Exame normal!", "Resultado positivo para gravidez.", "Resultado:
  * positivo.", "colesterol um pouco alto"), ou o numero com o valor ("Seu TSH
  * deu 8, um pouco acima.", "Glicemia: 180 (alta)."). Sem o marcador do
  * Cadastro ("a Limpeza de pele normal ou a profunda?" e recepcao) e sem o
- * "normal ou" da escolha ("o ultrassom normal ou o morfologico?").
+ * "normal ou" da escolha ("o ultrassom normal ou o morfologico?"). Revisao
+ * final de 31/10/2026: tambem sem o "normal e o" da lista dos tipos ("Temos
+ * o ultrassom normal e o morfologico.") e sem o preco ou a duracao logo
+ * depois ("O preventivo normal custa R$ 80.", "o ultrassom normal custa
+ * menos que o com doppler").
  */
 const NUMERO_DO_RESULTADO =
   "(?: d[aeo] [a-z]+)?:? (?:(?:deu|deram|veio|vieram|esta|ta|ficou|foi|e|de|em) )?\\d+(?:[.,]\\d+)?(?: ?(?:mg\\/dl|mg|g\\/dl|ui\\/ml|mui\\/ml|ng\\/ml|mmol\\/l|%))?(?: ?\\(|,)? ?";
 const VALOR_ALTERADO_COLADO = `${INTENSIDADE_DO_RESULTADO}(?:${VALOR_ALTERADO}|acima\\b|abaixo\\b)`;
 const VALOR_NORMAL_COLADO =
-  "(?:normal(?! ou\\b)|normais|limp[oa]s?|sem (?:nenhuma )?alterac(?:ao|oes)|dentro d[oa]s? (?:normal|normalidade|referencia|valores? de referencia|esperado))\\b";
+  "(?:normal(?! ou\\b)(?! e (?:o|a|os|as|um|uma)\\b)(?! (?:custa|custam|sai|saem|fica|ficam|leva|levam|dura|duram|demora|demoram|tem|inclui)\\b)|normais|limp[oa]s?|sem (?:nenhuma )?alterac(?:ao|oes)|dentro d[oa]s? (?:normal|normalidade|referencia|valores? de referencia|esperado))\\b";
 /**
  * Revisao R2 de d1a15f6 (M6): o "nada" do resultado ("O exame nao deu
  * nada.", "o laudo nao mostrou nada"). "Nao tem nada a ver" nao e o
- * resultado.
+ * resultado. Revisao final de 31/10/2026: o "nao tem nada" so com o valor
+ * do resultado ("o laudo nao tem nada de anormal"); "O exame nao tem nada
+ * de complicado, e so uma coleta." e recepcao.
  */
 const NADA_NO_RESULTADO =
-  "nao (?:deu|deram|mostrou|mostraram|mostra|mostram|acusou|acusa|apontou|aponta|indicou|indica|apareceu|aparece|tem|teve|tinha) nada\\b(?! a ver\\b)";
+  "nao (?:deu|deram|mostrou|mostraram|mostra|mostram|acusou|acusa|apontou|aponta|indicou|indica|apareceu|aparece) nada\\b(?! a ver\\b)|nao (?:tem|teve|tinha) nada de (?:errado|anormal|grave|preocupante|alterad[oa]|estranh[oa]|diferente)\\b";
 /**
  * O valor ANTES do resultado: "esta tudo bem no seu exame", "alto no
  * laudo". Sem o "com" ("tudo bem com a sua consulta?" e recepcao).
@@ -787,20 +806,27 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
   // da crise, do desabafo ou do sigilo ("o pessoal do 188 ouve o seu
   // desabafo"); e chamar os bombeiros ou a policia. O 188 dentro de outro
   // numero ("(85) 3188-1880"), no endereco e no preco continua passando.
+  // Revisao final de 31/10/2026: o apoio emocional ou psicologico so como
+  // encaminhamento (procure, busque, ligue, o numero, o servico, a linha de
+  // apoio); a clinica que oferece ("Temos suporte psicologico no
+  // pos-operatorio", "o atendimento tem apoio emocional") passa.
   p(
     "triagem",
     "servico_de_emergencia",
-    "\\bcvv\\b|\\bcentro de valorizacao da vida\\b|\\b(?:ligue|ligar|liga|ligando|ligacao|disque|discar|disca|discando|telefone para|telefonar|telefona|contate|contatar|acione|acionar)\\b(?:,? [a-z]+){0,4}? (?<!\\b(?:ramal|sala|apartamento|apto|bloco|loja) )(?:188|190|193)\\b(?![.,]\\d)|\\b(?:(?:um )?cento e (?:oitenta e oito|noventa e dois|noventa e tres)|um[ -]oito[ -]oito|um[ -]nove[ -](?:dois|tres|zero))\\b|\\b(?:procure|procura|procurar|busque|busca|buscar) (?:uma )?ajuda (?:profissional|especializada|psicologica|imediata|urgente|de emergencia)\\b|\\b(?:apoio|suporte|ajuda) (?:emocional|psicologic[oa])\\b|\\b(?:emocional|psicologic\\w*|valorizacao|desabaf\\w*|crise|suicid\\w*|sigilo\\w*|anonim\\w*)\\b[^.!?;]{0,80}(?<![\\d.,$])\\b188\\b(?![.,]\\d)|(?<![\\d.,$])\\b188\\b(?![.,]\\d)[^.!?;]{0,80}\\b(?:emocional|psicologic\\w*|valorizacao|desabaf\\w*|crise|suicid\\w*|sigilo\\w*|anonim\\w*)|\\b(?:ligue|liga|ligar|chame|chama|chamar|acione|aciona|acionar|disque)\\b(?: [a-z]+){0,3}? (?:bombeiros?|policia|defesa civil)\\b",
+    "\\bcvv\\b|\\bcentro de valorizacao da vida\\b|\\b(?:ligue|ligar|liga|ligando|ligacao|disque|discar|disca|discando|telefone para|telefonar|telefona|contate|contatar|acione|acionar)\\b(?:,? [a-z]+){0,4}? (?<!\\b(?:ramal|sala|apartamento|apto|bloco|loja) )(?:188|190|193)\\b(?![.,]\\d)|\\b(?:(?:um )?cento e (?:oitenta e oito|noventa e dois|noventa e tres)|um[ -]oito[ -]oito|um[ -]nove[ -](?:dois|tres|zero))\\b|\\b(?:procure|procura|procurar|busque|busca|buscar) (?:uma )?ajuda (?:profissional|especializada|psicologica|imediata|urgente|de emergencia)\\b|\\b(?:procure|procura|procurar|busque|busca|buscar|ligue|ligar|liga|disque|contate|acione)\\b(?: [a-z]+){0,2}? (?:apoio|suporte|ajuda) (?:emocional|psicologic[oa])\\b|\\b(?:numero|telefone|linha|servico|canal|central|contato)\\b(?: [a-z]+)? (?:de|do|da) (?:apoio|suporte|ajuda) (?:emocional|psicologic[oa])\\b|\\b(?:emocional|psicologic\\w*|valorizacao|desabaf\\w*|crise|suicid\\w*|sigilo\\w*|anonim\\w*)\\b[^.!?;]{0,80}(?<![\\d.,$])\\b188\\b(?![.,]\\d)|(?<![\\d.,$])\\b188\\b(?![.,]\\d)[^.!?;]{0,80}\\b(?:emocional|psicologic\\w*|valorizacao|desabaf\\w*|crise|suicid\\w*|sigilo\\w*|anonim\\w*)|\\b(?:ligue|liga|ligar|chame|chama|chamar|acione|aciona|acionar|disque)\\b(?: [a-z]+){0,3}? (?:bombeiros?|policia|defesa civil)\\b",
   ),
   // [AG6 urgência] fim
   p(
     "triagem",
     "procure_medico",
     // [AG6 urgência] Revisao R2 de d1a15f6 (B1): o psicologo, o psiquiatra,
-    // o terapeuta, o CAPS, o posto e a UBS, e o "busque" ("Procure um
+    // o CAPS, o posto de saude e a UBS, e o "busque" ("Procure um
     // psicologo.", "Procure o CAPS mais perto de voce."). "Temos psicologa
-    // na clinica, quer agendar?" passa (nao manda procurar).
-    "\\b(?:procur(?:e|ar|a)|busque|buscar)\\b (?:um |uma |o |a |seu |sua )?(?:medic|atendimento|ajuda medica|socorro|hospital|especialista|dermatologista|cardiologista|clinico|ortopedista|ginecologista|pediatra|neurologista|oftalmologista|dentista|psicolog|psiquiatr|terapeuta|caps\\b|posto\\b|ubs\\b|centro de saude|unidade de saude|unidade basica|profissional de saude)",
+    // na clinica, quer agendar?" passa (nao manda procurar). Revisao final
+    // de 31/10/2026: o posto so de saude ("Procure o posto de gasolina em
+    // frente" e endereco) e sem o terapeuta ("Procure uma terapeuta capilar
+    // da nossa equipe" e recepcao de estetica).
+    "\\b(?:procur(?:e|ar|a)|busque|buscar)\\b (?:um |uma |o |a |seu |sua )?(?:medic|atendimento|ajuda medica|socorro|hospital|especialista|dermatologista|cardiologista|clinico|ortopedista|ginecologista|pediatra|neurologista|oftalmologista|dentista|psicolog|psiquiatr|caps\\b|posto (?:de saude|medico)\\b|postinho\\b|ubs\\b|centro de saude|unidade de saude|unidade basica|profissional de saude)",
   ),
   p(
     "triagem",
@@ -2115,14 +2141,22 @@ const SEM_DESFECHO_DO_EXAME =
 const INTENCAO_CLINICA_DO_EXAME =
   "(?:(?:pra|para) q(?:ue)?\\b(?! (?:dia|dias|hora|horas|horario|horarios|data|datas|mes|semana|turno|periodo|unidade|local|endereco)\\b)|por que|o que (?:e|eh|significa|faz|serve|indica|detecta|mostra|avalia|analisa|ve|quer dizer)|servem? (?:pra|para)|significa\\w*|quer dizer|indica|indicam|detect\\w*|diagnostic\\w*|jejum|preparo|preparar|preparacao)";
 /**
- * Nenhuma intencao clinica na mensagem inteira, antes ou depois. Vai logo
- * DEPOIS da palavra "exame" ja casada: assim a busca so roda onde ha um
- * exame, e nao em toda posicao do texto. A janela de 2.000 caracteres
+ * Nenhuma intencao clinica na mensagem inteira, antes ou depois: a guarda
+ * da troca (normalizar.ts) barra o "exame" quando uma intencao termina nos
+ * 2.000 caracteres antes do fim dele ou comeca nos 2.000 depois. A janela
  * cobre a mensagem inteira em todo caso que importa (acima de 1.000, a
- * mensagem ja escala como mensagem_longa) e impede que um texto enorme,
- * cheio de "exame", custe tempo quadratico.
+ * mensagem ja escala como mensagem_longa).
+ *
+ * Revisao de desempenho de 31/10/2026: a guarda era uma lookaround no fim
+ * da fonte, e cada "exame" casado varria a janela de novo ("tem exame "
+ * repetido levava 3,7 s em 65.536 caracteres, o tamanho maximo da mensagem
+ * do WhatsApp). Agora as intencoes sao achadas uma vez por texto, com o
+ * mesmo resultado.
  */
-const SEM_INTENCAO_NA_MENSAGEM = `(?<!\\b${INTENCAO_CLINICA_DO_EXAME}\\b[\\s\\S]{0,2000})(?![\\s\\S]{0,2000}\\b${INTENCAO_CLINICA_DO_EXAME}\\b)`;
+const SEM_INTENCAO_NA_MENSAGEM: GuardaDeJanela = {
+  fonte: `\\b${INTENCAO_CLINICA_DO_EXAME}\\b`,
+  janela: 2000,
+};
 // [AG6b mídia] fim
 
 /**
@@ -2194,8 +2228,10 @@ export const NEUTRALIZACOES_DE_ENTRADA: readonly Neutralizacao[] = [
     // mensagem mantem o exame clinico ("pra que serve o exame? quanto
     // custa?", "quanto custa o exame? precisa de jejum?").
     nome: "exame_na_pergunta_de_preco",
-    fonte: `(?<=\\b${PRECO_OU_SERVICO_DO_EXAME} (?:d[aoe]s? |o |a |os |as |um |uma )?)exames?\\b${SEM_DESFECHO_DO_EXAME}${SEM_INTENCAO_NA_MENSAGEM}|\\bexames?\\b(?=(?:\\W+[a-z]+){0,4}\\W+${PERGUNTA_DE_PRECO_DO_EXAME}\\b)${SEM_DESFECHO_DO_EXAME}${SEM_INTENCAO_NA_MENSAGEM}`,
+    fonte: `(?<=\\b${PRECO_OU_SERVICO_DO_EXAME} (?:d[aoe]s? |o |a |os |as |um |uma )?)exames?\\b${SEM_DESFECHO_DO_EXAME}|\\bexames?\\b(?=(?:\\W+[a-z]+){0,4}\\W+${PERGUNTA_DE_PRECO_DO_EXAME}\\b)${SEM_DESFECHO_DO_EXAME}`,
     troca: "procedimento",
+    // [AG6b mídia] A guarda da 3a rodada, lida em codigo (acima).
+    semPorPerto: SEM_INTENCAO_NA_MENSAGEM,
   },
 ];
 

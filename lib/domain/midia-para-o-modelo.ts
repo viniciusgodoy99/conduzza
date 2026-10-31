@@ -15,9 +15,12 @@
 // passado a toda funcao de leitura (PDF, JPEG, PNG, WebP, MP3, XMP e as
 // fotos de dentro do PDF) e cobrado em cada laco (bytes, objetos,
 // referencias, casamentos de expressao): acabou, o arquivo nao sai
-// ("bomba"). Nenhuma expressao tem quantificadores que se sobrepoem (nada e
-// varrido de novo a cada tentativa), e a entrada nunca e alterada (a
-// limpeza no lugar trabalha numa copia).
+// ("bomba"). A segunda trava e o relogio (terceira revisao, RR2 da
+// 88e9560): o orcamento confere o tempo a cada poucas unidades, e o arquivo
+// que passa de LIMITES_DA_MIDIA.tempoPorArquivoMs tambem e "bomba", contra
+// um laco com peso mal calibrado. Nenhuma expressao tem quantificadores que
+// se sobrepoem (nada e varrido de novo a cada tentativa), e a entrada nunca
+// e alterada (a limpeza no lugar trabalha numa copia).
 //
 // Regras (D-59, D-92, D-98, D-101):
 //  - o tipo vem dos PRIMEIROS BYTES e do media_mimetype da mensagem; os dois
@@ -60,8 +63,13 @@
 //    /Count: nao suportado. Tetos contra o arquivo feito para travar o motor
 //    (fluxos, objetos, o descomprimido no total, o XMP de cada fluxo de
 //    metadados, a sobra do fluxo de objetos e o orcamento de trabalho):
-//    "bomba". Um fluxo que comeca dentro de outro (no dicionario ou nos
-//    dados): nao suportado. A foto embutida (fluxo so com /DCTDecode) e
+//    "bomba". O objeto que o leitor acha (pela xref) e esta leitura nao
+//    veria deixa o PDF de fora (nao suportado): um fluxo que comeca dentro
+//    de outro (no dicionario ou nos dados), o objeto malformado dentro de
+//    um fluxo (o "stream%x" sem o fim de linha), a marca "endstream" que
+//    nao fecha um fluxo lido e o cabecalho com comentario entre as partes
+//    ("4 0 %x\nobj"); os brancos entre as partes nao tem limite (como na
+//    especificacao) e sao lidos. A foto embutida (fluxo so com /DCTDecode) e
 //    limpa no lugar, numa copia e sem mudar o tamanho (o /Length e a xref
 //    continuam certos): APP1 a APP15 e COM viram um COM zerado do mesmo
 //    tamanho (ficam o APP0 JFIF, sem a miniatura, e o APP14 Adobe) e o que
@@ -70,18 +78,23 @@
 //    (D-101: tirar exigiria biblioteca nova), MENOS a localizacao e o
 //    anexo, que deixam o PDF de fora (nao suportado):
 //    . a localizacao: exif:GPS, GPSLatitude, GPSLongitude, a coordenada no
-//      formato do XMP ("3,43.914S"), uma coordenada numa propriedade
-//      photoshop: ou xmp:, ou o lugar escrito por extenso com valor (City,
-//      State, Country, CountryCode, CountryName, ProvinceState,
-//      Sublocation, Location, LocationName, LocationId e WorldRegion, com
-//      qualquer prefixo: photoshop:, Iptc4xmpCore:, Iptc4xmpExt:, ns2:...;
-//      o valor vazio e a chave sem valor nao contam), no XMP de cada fluxo
-//      de metadados (/Type /Metadata, /Subtype /XML ou o que um /Metadata
-//      aponta: do catalogo, da pagina, da foto; descomprimido com o teto) e,
-//      as propriedades de GPS, o lugar e as chaves /City e /GPS... do
-//      dicionario /Info (com valor), em qualquer lugar do arquivo sem
-//      compressao e dentro dos fluxos de objetos. Metadado que nao da para
-//      ler (outro filtro): nao suportado;
+//      formato do XMP ("3,43.914S"), uma coordenada (com ponto ou virgula
+//      decimal) em qualquer propriedade (o XMP inteiro, CDATA inclusive),
+//      ou o lugar escrito por extenso com valor (City, State, Country,
+//      CountryCode, CountryName, ProvinceState, Sublocation, Location,
+//      LocationName, LocationId, WorldRegion, o endereco do contato do
+//      autor CiAdrExtadr, CiAdrCity, CiAdrRegion, CiAdrPcode e CiAdrCtry,
+//      shotLocation e coverage, com qualquer prefixo: photoshop:,
+//      Iptc4xmpCore:, Iptc4xmpExt:, xmpDM:, dc:, ns2:...; o valor vazio e a
+//      chave sem valor nao contam, o CDATA com texto conta), no XMP de cada
+//      fluxo de metadados (/Type /Metadata, /Subtype /XML ou o que um
+//      /Metadata aponta: do catalogo, da pagina, da foto; descomprimido com
+//      o teto) e, as propriedades de GPS, o lugar e as chaves /City,
+//      /State, /Country, /Location, /Latitude, /Longitude e /GPS... do
+//      dicionario /Info ou da assinatura (/Sig) com valor, em qualquer
+//      lugar do arquivo sem compressao e dentro dos fluxos de objetos (com
+//      #xx tambem). Metadado que nao da para ler (outro filtro): nao
+//      suportado;
 //    . o anexo: /EmbeddedFile, /EmbeddedFiles ou /FileAttachment (tambem
 //      escritos com #xx), no arquivo e nos fluxos de objetos, ou a chave /EF
 //      de um /Filespec.
@@ -134,13 +147,32 @@ export const LIMITES_DA_MIDIA = {
   /**
    * O orcamento de trabalho de UM arquivo, de qualquer tipo, em unidades de
    * CUSTO (mais ou menos um caractere andado por um laco em JS). Cada laco
-   * da leitura cobra dele; acabou: "bomba". Calibrado medindo o pior caso
-   * de cada laco contra um laco de referencia (uma unidade por caractere):
-   * nenhum passou de 2 vezes a referencia por unidade, e o pior arquivo de
-   * ate 5 MB fica abaixo de 300 ms num Apple M3 mesmo com a maquina ocupada.
-   * O arquivo real mais caro dos 5.327 conferidos gastou 2,3 milhoes.
+   * da leitura cobra dele; acabou: "bomba". Calibrado de novo na terceira
+   * revisao (RR2 da 88e9560): o pior caso de cada laco (115 arquivos de ate
+   * 5 MB: as chaves e os nomes com #xx, os comentarios, os APPn e o COM, os
+   * cabecalhos, o XMP inteiro, o /Info, alem dos da rodada anterior) medido
+   * contra o laco de referencia (o fimDaString: uma unidade por caractere),
+   * as duas medidas intercaladas no mesmo processo (o menor de 3 de cada).
+   * Nenhum passou de 1,56 vezes a referencia por unidade (o par de decimais
+   * quase coordenada repetido no XMP); antes desta rodada, a chave com #xx
+   * custava 8 vezes (a decodificacao por expressao com funcao nao era
+   * cobrada), o comentario 3 vezes e o APP0 que nao e JFIF 4,7 vezes o
+   * APP1. Com o orcamento cheio a 1,56 vezes, o pior arquivo leva uns
+   * 130 ms num Apple M3 livre (1,26 ns por unidade de referencia; no modo de
+   * pouca energia, uns 3,7 ns, o triplo). O arquivo real mais caro dos
+   * 5.327 conferidos gastou 3,2 milhoes (5%) e 10 ms.
    */
   trabalhoPorArquivo: 64_000_000,
+  /**
+   * A trava de tempo de UM arquivo (a segunda, contra um peso mal
+   * calibrado; o orcamento e a primeira): o relogio e conferido a cada
+   * UNIDADES_ENTRE_RELOGIOS unidades cobradas, e passou disto, "bomba".
+   * Ela torna o resultado do arquivo PATOLOGICO dependente da carga da
+   * maquina (o mesmo arquivo perto do orcamento pode sair numa maquina
+   * livre e virar bomba numa ocupada); os arquivos reais levam ate uns
+   * 11 ms (o mais caro dos 5.327 conferidos), longe dela.
+   */
+  tempoPorArquivoMs: 400,
 } as const;
 
 /** O maior arquivo que o motor aceita baixar do Storage, de qualquer tipo. */
@@ -200,11 +232,32 @@ class MidiaDeFora extends Error {
   }
 }
 
-/** O trabalho que ainda cabe no preparo de UM arquivo (em unidades de CUSTO). */
-type Trabalho = { restante: number };
+/**
+ * O preparo de UM arquivo: o trabalho que ainda cabe (em unidades de
+ * CUSTO), o relogio da trava de tempo e as chaves do PDF escritas com #xx
+ * ja decodificadas.
+ */
+type Trabalho = {
+  restante: number;
+  /** O restante em que o relogio e conferido de novo. */
+  conferirEm: number;
+  /** Quando o preparo comecou (performance.now()). */
+  inicio: number;
+  /** As chaves de dicionario com "#", decodificadas, pelo texto cru (ate CHAVES_GUARDADAS). */
+  chaves: Map<string, string>;
+};
+
+/** De quantas em quantas unidades cobradas o relogio e conferido (uns 5 us de trabalho). */
+const UNIDADES_ENTRE_RELOGIOS = 4096;
 
 function novoTrabalho(): Trabalho {
-  return { restante: LIMITES_DA_MIDIA.trabalhoPorArquivo };
+  const restante = LIMITES_DA_MIDIA.trabalhoPorArquivo;
+  return {
+    restante,
+    conferirEm: restante - UNIDADES_ENTRE_RELOGIOS,
+    inicio: performance.now(),
+    chaves: new Map(),
+  };
 }
 
 /**
@@ -239,28 +292,55 @@ const CUSTO = {
   objeto: 256,
 } as const;
 
-/** Cobra o trabalho; acabou: "bomba". */
+/**
+ * Cobra o trabalho; acabou: "bomba". A cada UNIDADES_ENTRE_RELOGIOS
+ * unidades confere tambem o relogio (a trava de tempo).
+ */
 function gastar(trabalho: Trabalho, unidades: number): void {
   trabalho.restante -= unidades;
-  if (trabalho.restante < 0) {
+  if (trabalho.restante < trabalho.conferirEm) {
+    conferirOTrabalho(trabalho);
+  }
+}
+
+/** O orcamento acabou ou o arquivo passou da trava de tempo: "bomba". */
+function conferirOTrabalho(trabalho: Trabalho): void {
+  if (
+    trabalho.restante < 0 ||
+    performance.now() - trabalho.inicio > LIMITES_DA_MIDIA.tempoPorArquivoMs
+  ) {
     throw new MidiaDeFora("bomba");
   }
+  trabalho.conferirEm = Math.max(0, trabalho.restante - UNIDADES_ENTRE_RELOGIOS);
 }
 
 // ---------------------------------------------------------------------------
 // Bytes
 // ---------------------------------------------------------------------------
 
+/** Os bytes a partir de `de` sao a assinatura? (Sem alocar: roda a cada segmento.) */
 function comecaCom(bytes: Uint8Array, assinatura: readonly number[], de = 0) {
   if (de < 0 || bytes.length < de + assinatura.length) {
     return false;
   }
-  return assinatura.every((b, i) => bytes[de + i] === b);
+  for (let i = 0; i < assinatura.length; i += 1) {
+    if (bytes[de + i] !== assinatura[i]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function ascii(texto: string): number[] {
   return Array.from(texto, (c) => c.charCodeAt(0));
 }
+
+/** As assinaturas dos segmentos do JPEG que se leem (montadas uma vez, nao a cada segmento). */
+const ASSINATURA = {
+  jfif: [...ascii("JFIF"), 0],
+  adobe: ascii("Adobe"),
+  exif: [...ascii("Exif"), 0, 0],
+} as const;
 
 function u24le(bytes: Uint8Array, p: number): number {
   return (bytes[p] ?? 0) | ((bytes[p + 1] ?? 0) << 8) | ((bytes[p + 2] ?? 0) << 16);
@@ -1037,7 +1117,7 @@ function andarPeloJpeg(
 
 /** O APP0 JFIF (o corpo de 14 bytes ou mais), sem a miniatura, ou null. */
 function app0JfifSemMiniatura(corpo: Uint8Array): Uint8Array | null {
-  if (corpo.length < 14 || !comecaCom(corpo, [...ascii("JFIF"), 0])) {
+  if (corpo.length < 14 || !comecaCom(corpo, ASSINATURA.jfif)) {
     return null;
   }
   // Identificador, versao, unidade e densidades; a miniatura 0 por 0.
@@ -1046,7 +1126,7 @@ function app0JfifSemMiniatura(corpo: Uint8Array): Uint8Array | null {
 
 /** O APP14 Adobe (o corpo de 12 bytes: versao, marcas e transformacao), ou null. */
 function app14Adobe(corpo: Uint8Array): Uint8Array | null {
-  if (corpo.length < 12 || !comecaCom(corpo, ascii("Adobe"))) {
+  if (corpo.length < 12 || !comecaCom(corpo, ASSINATURA.adobe)) {
     return null;
   }
   return Uint8Array.from([0xff, APP14, 0x00, 0x0e, ...corpo.subarray(0, 12)]);
@@ -1055,7 +1135,7 @@ function app14Adobe(corpo: Uint8Array): Uint8Array | null {
 /** A orientacao do EXIF (tag 0x0112) num APP1, ou null. */
 export function orientacaoDoExif(app1: Uint8Array): number | null {
   // "Exif\0\0" e o cabecalho TIFF.
-  if (!comecaCom(app1, [...ascii("Exif"), 0, 0])) {
+  if (!comecaCom(app1, ASSINATURA.exif)) {
     return null;
   }
   const tiff = 6;
@@ -1171,9 +1251,13 @@ function prepararJpeg(bytes: Uint8Array, trabalho: Trabalho): MidiaPreparada {
       continue;
     }
     const { marcador, inicio, fim, antesDaVarredura } = pedaco;
-    const corpo = bytes.subarray(inicio + 4, fim);
+    // O corpo (depois do marcador e do tamanho) so vira vista quando a
+    // assinatura confere: os segmentos que so saem nao alocam nada.
+    const corpo = inicio + 4;
     if (marcador === APP0 && antesDaVarredura && !comJfif) {
-      const jfif = app0JfifSemMiniatura(corpo);
+      const jfif = comecaCom(bytes, ASSINATURA.jfif, corpo)
+        ? app0JfifSemMiniatura(bytes.subarray(corpo, fim))
+        : null;
       if (jfif !== null) {
         comJfif = true;
         partes.push(jfif);
@@ -1184,7 +1268,9 @@ function prepararJpeg(bytes: Uint8Array, trabalho: Trabalho): MidiaPreparada {
       continue;
     }
     if (marcador === APP14 && antesDaVarredura && !comAdobe) {
-      const adobe = app14Adobe(corpo);
+      const adobe = comecaCom(bytes, ASSINATURA.adobe, corpo)
+        ? app14Adobe(bytes.subarray(corpo, fim))
+        : null;
       if (adobe !== null) {
         comAdobe = true;
         partes.push(adobe);
@@ -1192,10 +1278,15 @@ function prepararJpeg(bytes: Uint8Array, trabalho: Trabalho): MidiaPreparada {
       continue;
     }
     if (ehApp(marcador) || marcador === COM) {
-      // Nunca sai; do APP1 antes da varredura so se le a orientacao.
-      if (marcador === APP1 && antesDaVarredura && orientacao === null) {
-        gastar(trabalho, CUSTO.volta + Math.min(corpo.length, 8 + ENTRADAS_DO_IFD * 12) * CUSTO.passo / 12);
-        orientacao = orientacaoDoExif(corpo);
+      // Nunca sai; do APP1 Exif antes da varredura so se le a orientacao.
+      if (
+        marcador === APP1 &&
+        antesDaVarredura &&
+        orientacao === null &&
+        comecaCom(bytes, ASSINATURA.exif, corpo)
+      ) {
+        gastar(trabalho, CUSTO.volta + Math.min(fim - corpo, 8 + ENTRADAS_DO_IFD * 12) * CUSTO.passo / 12);
+        orientacao = orientacaoDoExif(bytes.subarray(corpo, fim));
       }
       continue;
     }
@@ -1494,17 +1585,18 @@ function digito(c: number): boolean {
   return c >= 0x30 && c <= 0x39;
 }
 
-/** Os brancos que cabem entre as partes do cabecalho de um objeto. */
-const BRANCOS_DO_CABECALHO = 32;
-
 /**
  * O proximo cabecalho de objeto ("12 0 obj") a partir de `de`: a mesma
- * leitura da expressao (\d{1,10}) branco{1,32} (\d{1,5}) branco{1,32} obj,
- * sem palavra depois, da esquerda para a direita, feita a mao numa passada
- * (a expressao voltava atras em cada digito de um texto de numeros e
- * brancos: 5 MB disso levavam mais de 300 ms). O numero sao os ultimos 10
- * digitos da sequencia, e o casamento comeca neles; o segundo numero que
- * nao fecha um cabecalho pode abrir o seguinte.
+ * leitura da expressao (\d+) branco+ (\d+) branco+ obj, sem palavra
+ * depois, da esquerda para a direita, feita a mao numa passada (a
+ * expressao voltava atras em cada digito de um texto de numeros e brancos:
+ * 5 MB disso levavam mais de 300 ms). Os brancos e os digitos nao tem
+ * limite, como na especificacao (o leitor acha "4", 33 brancos e "0 obj"
+ * pela xref); o comentario entre as partes, que a especificacao tambem
+ * conta como branco, deixa o PDF de fora (cabecalhoComComentario). O
+ * numero sao os ultimos 10 digitos da sequencia, e o casamento comeca
+ * neles; o segundo numero que nao fecha um cabecalho pode abrir o
+ * seguinte.
  */
 function proximoCabecalho(
   t: string,
@@ -1533,7 +1625,7 @@ function proximoCabecalho(
     }
     gastar(trabalho, CUSTO.passo + (c - i) * CUSTO.caractere);
     for (;;) {
-      if (c === b || c - b > BRANCOS_DO_CABECALHO) {
+      if (c === b) {
         break;
       }
       // O segundo numero (c, d) e o branco depois dele (d, e).
@@ -1549,13 +1641,7 @@ function proximoCabecalho(
         e += 1;
       }
       gastar(trabalho, CUSTO.passo + (e - c) * CUSTO.caractere);
-      if (
-        d - c <= 5 &&
-        e > d &&
-        e - d <= BRANCOS_DO_CABECALHO &&
-        t.startsWith("obj", e) &&
-        !regularDoPdf(t.charCodeAt(e + 3))
-      ) {
+      if (e > d && palavraObj(t, e)) {
         const indice = Math.max(a, b - 10);
         return { indice, numero: Number(t.slice(indice, b)), fim: e + 3 };
       }
@@ -1569,6 +1655,88 @@ function proximoCabecalho(
   }
 }
 
+/** Em i comeca a palavra "obj" (sem palavra depois)? */
+function palavraObj(t: string, i: number): boolean {
+  return t.startsWith("obj", i) && !regularDoPdf(t.charCodeAt(i + 3));
+}
+
+/**
+ * Ha cabecalho de objeto com comentario entre as partes ("4 0 %x\nobj" ou
+ * "4 %x\n0 obj")? A especificacao conta o comentario como branco, e o
+ * leitor acha esse objeto pela xref; proximoCabecalho nao o le, entao o
+ * PDF fica de fora ("formato"; nenhum dos 880 PDFs reais conferidos tem
+ * um). O primeiro comentario de um cabecalho assim vem logo depois de um
+ * numero (so brancos no meio): cada "%" nessa posicao e conferido para a
+ * frente (brancos e comentarios, o segundo numero, brancos e comentarios
+ * e o "obj"; ou, com o "%" depois do segundo numero, so brancos e
+ * comentarios e o "obj"). Uma passada: o separador ja andado e o que vem
+ * depois dele nao sao lidos de novo, e o trecho de cada "%" para tras
+ * acaba no "%" anterior.
+ */
+function cabecalhoComComentario(t: string, trabalho: Trabalho): boolean {
+  // O ultimo separador andado (de um "%" ate o fim dos brancos e
+  // comentarios): o "%" de dentro dele acaba no mesmo lugar.
+  let separadorDe = -1;
+  let separadorAte = -1;
+  // O que vem depois do ultimo separador: o segundo numero e o "obj", ou
+  // so o "obj".
+  let depoisDe = -1;
+  let numeroEObj = false;
+  let soObj = false;
+  let anterior = 0;
+  for (let q = t.indexOf("%"); q >= 0; q = t.indexOf("%", q + 1)) {
+    gastar(trabalho, CUSTO.chamada + (q - anterior) * CUSTO.nativo);
+    anterior = q;
+    // Para tras: brancos e um numero; antes dele, brancos e outro numero.
+    let i = q - 1;
+    while (i >= 0 && brancoDoPdf(t.charCodeAt(i))) {
+      i -= 1;
+    }
+    const fimDoNumero = i;
+    while (i >= 0 && digito(t.charCodeAt(i))) {
+      i -= 1;
+    }
+    let j = i;
+    if (i < fimDoNumero) {
+      while (j >= 0 && brancoDoPdf(t.charCodeAt(j))) {
+        j -= 1;
+      }
+    }
+    gastar(trabalho, CUSTO.passo + (q - j) * CUSTO.caractere);
+    if (i === fimDoNumero) {
+      continue;
+    }
+    const depoisDoSegundoNumero = j < i && j >= 0 && digito(t.charCodeAt(j));
+    // Para a frente: o separador que comeca no "%".
+    let s: number;
+    if (q >= separadorDe && q < separadorAte) {
+      s = separadorAte;
+    } else {
+      s = pularBrancos(t, q, trabalho);
+      separadorDe = q;
+      separadorAte = s;
+    }
+    if (s !== depoisDe) {
+      depoisDe = s;
+      soObj = palavraObj(t, s);
+      let d = s;
+      while (d < t.length && digito(t.charCodeAt(d))) {
+        d += 1;
+      }
+      gastar(trabalho, (d - s) * CUSTO.caractere);
+      numeroEObj = false;
+      if (d > s) {
+        const e = pularBrancos(t, d, trabalho);
+        numeroEObj = e > d && palavraObj(t, e);
+      }
+    }
+    if (numeroEObj || (depoisDoSegundoNumero && soObj)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Um valor que e so uma referencia. */
 const SO_REFERENCIA = new RegExp(`^(\\d{1,10})${BRANCO}+(\\d{1,5})${BRANCO}+R$`);
 /** Um nome ("/FlateDecode"). */
@@ -1576,18 +1744,58 @@ const NOME_DO_PDF = /\/[^\0\t\n\f\r ()<>[\]{}\/%]*/g;
 const INTEIRO = /^[+-]?\d{1,10}$/;
 const ENCRYPT = /\/Encrypt(?![A-Za-z0-9])/;
 
-/** O nome sem os escapes "#xx" (o "/Ty#70e" e o "/Type"). */
-function nomeDecodificado(nome: string): string {
-  return nome.includes("#")
-    ? nome.replace(/#([0-9A-Fa-f]{2})/g, (_, hexa: string) =>
-        String.fromCharCode(parseInt(hexa, 16)),
-      )
-    : nome;
+/**
+ * O nome [de, ate) sem os escapes "#xx" ("Ty#70e" e "Type"), decodificado
+ * a mao (a expressao com funcao que fazia isso custava umas 16 vezes a
+ * unidade cobrada), ou null quando passa de `maximo` caracteres
+ * decodificados. O "#" sem dois digitos hexadecimais fica como esta. Nao
+ * cobra: quem chama cobra (o caractere decodificado custa um passo).
+ */
+function nomeSemEscapes(t: string, de: number, ate: number, maximo: number): string | null {
+  const codigos: number[] = [];
+  for (let i = de; i < ate; i += 1) {
+    if (codigos.length >= maximo) {
+      return null;
+    }
+    const c = t.charCodeAt(i);
+    if (c === 0x23 && i + 2 < ate) {
+      const alto = valorHexadecimal(t.charCodeAt(i + 1));
+      const baixo = valorHexadecimal(t.charCodeAt(i + 2));
+      if (alto >= 0 && baixo >= 0) {
+        codigos.push(alto * 16 + baixo);
+        i += 2;
+        continue;
+      }
+    }
+    codigos.push(c);
+  }
+  return String.fromCharCode(...codigos);
 }
 
-/** Pula brancos e comentarios a partir de i. */
+/**
+ * O nome mais longo que se compara (os tipos, os filtros e o /Subtype:
+ * "RunLengthDecode" tem 15). O nome que decodificado passa disto nunca e
+ * igual a nenhum deles e fica como esta no texto (o "#" que sobra tambem
+ * nao aparece em nenhum).
+ */
+const NOME_COMPARADO_MAIS_LONGO = 32;
+
+/** O nome do valor (sem a barra) decodificado; o longo demais, como esta. Quem chama cobra. */
+function nomeDoValor(nome: string, de: number): string {
+  if (!nome.includes("#", de)) {
+    return nome.slice(de);
+  }
+  return nomeSemEscapes(nome, de, nome.length, NOME_COMPARADO_MAIS_LONGO) ?? nome.slice(de);
+}
+
+/**
+ * Pula brancos e comentarios a partir de i. O comentario custa um passo a
+ * mais que os caracteres (medido: o "%\n" repetido custava umas 3 vezes a
+ * unidade por caractere).
+ */
 function pularBrancos(t: string, i: number, trabalho: Trabalho): number {
   let j = i;
+  let comentarios = 0;
   while (j < t.length) {
     const c = t.charCodeAt(j);
     if (brancoDoPdf(c)) {
@@ -1596,6 +1804,7 @@ function pularBrancos(t: string, i: number, trabalho: Trabalho): number {
     }
     if (c === 0x25) {
       // %: comentario ate o fim da linha.
+      comentarios += 1;
       while (j < t.length && t.charCodeAt(j) !== 0x0a && t.charCodeAt(j) !== 0x0d) {
         j += 1;
       }
@@ -1603,7 +1812,7 @@ function pularBrancos(t: string, i: number, trabalho: Trabalho): number {
     }
     break;
   }
-  gastar(trabalho, CUSTO.passo + (j - i) * CUSTO.caractere);
+  gastar(trabalho, CUSTO.passo + (j - i) * CUSTO.caractere + comentarios * CUSTO.passo);
   return j;
 }
 
@@ -1773,6 +1982,41 @@ const CHAVES_LIDAS: ReadonlySet<string> = new Set([
   "EF",
 ]);
 
+/** A chave lida mais longa ("DecodeParms"): a mais longa decodificada so e pulada. */
+const CHAVE_LIDA_MAIS_LONGA = Math.max(...[...CHAVES_LIDAS].map((chave) => chave.length));
+
+/** Quantas chaves com "#" um arquivo guarda decodificadas (as outras sao decodificadas de novo, cobradas). */
+const CHAVES_GUARDADAS = 4096;
+
+/**
+ * A chave [de, ate) sem os escapes "#xx", se ela pode ser uma das lidas
+ * (ate CHAVE_LIDA_MAIS_LONGA caracteres decodificada); senao "". A chave
+ * com "#" e decodificada a mao uma vez por arquivo, cobrando cada
+ * caractere, e guardada pelo texto cru: os 20 mil objetos de um fluxo de
+ * objetos que apontam o mesmo dicionario nao refazem o trabalho (a volta
+ * da chave, ja cobrada, paga o recorte e a procura).
+ */
+function chaveDoDicionario(t: string, de: number, ate: number, trabalho: Trabalho): string {
+  // Nem com todos os caracteres escritos como #xx ela cabe.
+  if (ate - de > 3 * CHAVE_LIDA_MAIS_LONGA) {
+    return "";
+  }
+  const crua = t.slice(de, ate);
+  if (!crua.includes("#")) {
+    return crua;
+  }
+  const guardada = trabalho.chaves.get(crua);
+  if (guardada !== undefined) {
+    return guardada;
+  }
+  gastar(trabalho, CUSTO.volta + (ate - de) * CUSTO.passo);
+  const decodificada = nomeSemEscapes(t, de, ate, CHAVE_LIDA_MAIS_LONGA) ?? "";
+  if (trabalho.chaves.size < CHAVES_GUARDADAS) {
+    trabalho.chaves.set(crua, decodificada);
+  }
+  return decodificada;
+}
+
 /** As chaves lidas do dicionario e o valor bruto de cada uma (repetida: todas). */
 type DicionarioDoPdf = Map<string, string[]>;
 
@@ -1808,9 +2052,7 @@ function lerDicionario(
     gastar(trabalho, CUSTO.volta);
     const fimDaChave = fimDaPalavra(t, j + 1);
     gastar(trabalho, (fimDaChave - j) * CUSTO.caractere);
-    // A chave mais longa lida, com todos os escapes, cabe em 40.
-    const chave =
-      fimDaChave - j - 1 <= 40 ? nomeDecodificado(t.slice(j + 1, fimDaChave)) : "";
+    const chave = chaveDoDicionario(t, j + 1, fimDaChave, trabalho);
     const inicioDoValor = pularBrancos(t, fimDaChave, trabalho);
     const fimDoValorLido = fimDoValor(t, inicioDoValor, trabalho);
     if (fimDoValorLido < 0) {
@@ -1837,14 +2079,14 @@ function lerDicionario(
 function nomesDoValor(valor: string, trabalho: Trabalho): string[] | null {
   gastar(trabalho, CUSTO.volta + valor.length * CUSTO.nome);
   if (valor.startsWith("/")) {
-    return [nomeDecodificado(valor.slice(1))];
+    return [nomeDoValor(valor, 1)];
   }
   if (valor.startsWith("[") && valor.endsWith("]")) {
     const dentro = valor.slice(1, -1);
     if (dentro.replace(NOME_DO_PDF, "").replace(/[\0\t\n\f\r ]+/g, "") !== "") {
       return null;
     }
-    return (dentro.match(NOME_DO_PDF) ?? []).map((nome) => nomeDecodificado(nome.slice(1)));
+    return (dentro.match(NOME_DO_PDF) ?? []).map((nome) => nomeDoValor(nome, 1));
   }
   return null;
 }
@@ -2278,7 +2520,10 @@ type PdfLido = {
  * objetos dos fluxos de objetos e a contagem das paginas. Um FLUXO que
  * comeca dentro de outro (no dicionario ou nos dados) e PDF malformado: os
  * dois acabariam no mesmo "endstream", e as fotos aninhadas seriam lidas de
- * novo a cada nivel ("formato"). Lanca MidiaDeFora.
+ * novo a cada nivel ("formato"). Tambem "formato" o que o leitor tolerante
+ * acha e esta leitura nao veria (a foto dele sairia sem limpar): o objeto
+ * malformado dentro de um fluxo, a marca "endstream" que nao fecha um
+ * fluxo lido e o cabecalho com comentario. Lanca MidiaDeFora.
  */
 function lerPdf(bytes: Uint8Array, trabalho: Trabalho): PdfLido {
   const t = latin1(bytes, trabalho);
@@ -2299,7 +2544,8 @@ function lerPdf(bytes: Uint8Array, trabalho: Trabalho): PdfLido {
   const objetos: ObjetoDoPdf[] = [];
   let fluxos = 0;
   // Ate onde vai o fluxo mais longo ja visto: o que esta antes disso esta
-  // dentro de um fluxo (malformado ali e so ignorado; outro fluxo, fora).
+  // dentro de um fluxo (ali so o objeto sem fluxo e bem formado e lido; o
+  // malformado e outro fluxo deixam o PDF de fora).
   let fimDosFluxos = 0;
   for (
     let achado = proximoCabecalho(t, 0, trabalho);
@@ -2327,7 +2573,9 @@ function lerPdf(bytes: Uint8Array, trabalho: Trabalho): PdfLido {
       continue;
     }
     // Malformado (o dicionario, o "stream" sem fim de linha ou sem
-    // "endstream" depois): fora, a nao ser dentro de um fluxo.
+    // "endstream" depois): fora do fluxo, "corrompido"; dentro de um fluxo,
+    // "formato" (o leitor, mais tolerante, pode achar ali um fluxo, como o
+    // "stream%x" sem o fim de linha, que esta leitura nao veria).
     const lido = lerDicionario(t, v, trabalho);
     const dados =
       lido === null
@@ -2335,10 +2583,7 @@ function lerPdf(bytes: Uint8Array, trabalho: Trabalho): PdfLido {
         : comecoDosDados(t, pularBrancos(t, lido.fim, trabalho), trabalho);
     const fim = typeof dados === "number" ? primeiroDesde(marcas, dados) : -1;
     if (lido === null || dados === "malformado" || (dados !== "nao" && fim < 0)) {
-      if (dentroDeFluxo) {
-        continue;
-      }
-      throw new MidiaDeFora("corrompido");
+      throw new MidiaDeFora(dentroDeFluxo ? "formato" : "corrompido");
     }
     let fluxo: ObjetoDoPdf["fluxo"] = null;
     if (dados !== "nao") {
@@ -2353,6 +2598,18 @@ function lerPdf(bytes: Uint8Array, trabalho: Trabalho): PdfLido {
       fimDosFluxos = Math.max(fimDosFluxos, fim);
     }
     objetos.push({ numero, dicionario: lido.dicionario, valor: null, fluxo });
+  }
+  // Toda marca "endstream" fecha um fluxo lido: cada fluxo acaba na
+  // primeira marca depois do comeco e nenhum comeca dentro de outro, entao
+  // nenhuma marca fica dentro de um fluxo e cada fluxo fecha uma diferente.
+  // A marca que sobra e de um fluxo que o leitor acha e esta leitura nao
+  // viu (o cabecalho com comentario, o dicionario que ela nao le): a foto
+  // dele sairia sem limpar.
+  if (marcas.length !== fluxos) {
+    throw new MidiaDeFora("formato");
+  }
+  if (cabecalhoComComentario(t, trabalho)) {
+    throw new MidiaDeFora("formato");
   }
   // Os fluxos de objetos (/Type /ObjStm, ou /N e /First como os leitores
   // aceitam): so FlateDecode sem preditor, com o teto do descomprimido.
@@ -2464,7 +2721,7 @@ function limparFotoNoLugar(
       antesDaVarredura &&
       !comJfif &&
       fim - corpo >= 14 &&
-      comecaCom(saida, [...ascii("JFIF"), 0], corpo)
+      comecaCom(saida, ASSINATURA.jfif, corpo)
     ) {
       comJfif = true;
       // A miniatura: 0 por 0 e os bytes dela zerados.
@@ -2478,7 +2735,7 @@ function limparFotoNoLugar(
       antesDaVarredura &&
       !comAdobe &&
       fim - corpo >= 12 &&
-      comecaCom(saida, ascii("Adobe"), corpo)
+      comecaCom(saida, ASSINATURA.adobe, corpo)
     ) {
       comAdobe = true;
       saida.fill(0, corpo + 12, fim);
@@ -2586,22 +2843,32 @@ const GPS_NO_XMP = /exif:GPS|GPS(?:Latitude|Longitude|Longtitude)/i;
 const COORDENADA_DO_XMP =
   /(?:^|[^\d.,])\d{1,3},\d{1,2}(?:\.\d+)?(?:,\d{1,2}(?:\.\d+)?)?[NSEW](?![A-Za-z])/;
 /**
- * O valor com coordenada: o par em graus decimais ("-3.731900, -38.526700"),
- * os graus decimais com o hemisferio ("3.7319 S") ou graus, minutos e
- * segundos (3°43'54"S). O "°" do UTF-8 lido em latin1 vem depois de um "Â".
- * Sem quantificadores que se sobrepoem: o separador do par e "brancos, uma
- * virgula ou um ponto e virgula, brancos" OU "brancos sem o espaco, um
- * espaco, brancos" (a mesma lingua de \s*[,; ]\s*), e os brancos dos dois
- * lados do grau so existem com o grau no meio. Assim nenhuma tentativa
- * volta atras mais do que o comprimento do valor.
+ * A coordenada escrita num valor, com o ponto ou com a virgula decimal (o
+ * formato brasileiro): o par em graus decimais ("-3.731900, -38.526700",
+ * "-3,731900; -38,526700"), os graus decimais com o hemisferio ("3.7319 S",
+ * "3,7319 S") ou graus, minutos e segundos (3°43'54"S, 3°43'54,8"S). O "°"
+ * do UTF-8 lido em latin1 vem depois de um "Â". Sem quantificadores que se
+ * sobrepoem: o separador do par e "brancos, uma virgula ou um ponto e
+ * virgula, brancos" OU "brancos sem o espaco, um espaco, brancos" (a mesma
+ * lingua de \s*[,; ]\s*), os brancos dos dois lados do grau so existem com
+ * o grau no meio, e o que separa graus, minutos e segundos nao atravessa
+ * uma tag. A coordenada nao comeca no meio de um numero (nem depois de um
+ * ponto ou de uma virgula): sem isso, "1,1111,1111..." era tentado em cada
+ * digito (medido: 3 vezes a unidade cobrada). Assim nenhuma tentativa volta
+ * atras mais do que o comprimento do trecho.
  */
 const COORDENADAS_NO_VALOR: readonly RegExp[] = [
-  /[-+]?\d{1,3}\.\d{4,}(?:\s*[,;]|[^\S ]* )\s*[-+]?\d{1,3}\.\d{4,}/,
-  /\d{1,3}\.\d{3,}\s*(?:(?:Â°?|°)\s*)?[NSEWLO](?![A-Za-z])/,
-  /\d{1,3}\s*Â?°\s*\d{1,2}\D{1,8}\d{1,2}(?:\.\d+)?\D{0,8}[NSEWLO](?![A-Za-z])/,
+  /(?<![\d.,])[-+]?\d{1,3}[.,]\d{4,}(?:\s*[,;]|[^\S ]* )\s*[-+]?\d{1,3}[.,]\d{4,}/,
+  /(?<![\d.,])\d{1,3}[.,]\d{3,}\s*(?:(?:Â°?|°)\s*)?[NSEWLO](?![A-Za-z])/,
+  /(?<!\d)\d{1,3}\s*Â?°\s*\d{1,2}[^\d<>]{1,8}\d{1,2}(?:[.,]\d+)?[^\d<>]{0,8}[NSEWLO](?![A-Za-z])/,
 ];
 
-/** O valor tem coordenada? (Cada expressao anda o valor no maximo umas vezes.) */
+/**
+ * O texto tem coordenada? Passado no XMP INTEIRO: a coordenada conta em
+ * qualquer propriedade (xmp:Label, dc:description no rdf:Alt, o CDATA),
+ * nao so nas do photoshop: e do xmp:. (Cada expressao anda o texto umas
+ * poucas vezes.)
+ */
 function coordenadaNoValor(valor: string, trabalho: Trabalho): boolean {
   gastar(trabalho, CUSTO.volta + valor.length * COORDENADAS_NO_VALOR.length * 4 * CUSTO.expressao);
   return COORDENADAS_NO_VALOR.some((expressao) => expressao.test(valor));
@@ -2615,11 +2882,6 @@ function brancoDoXml(c: number): boolean {
 /** Letra ASCII ([A-Za-z]). */
 function letraAscii(c: number): boolean {
   return (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a);
-}
-
-/** Caractere de nome das propriedades ([\w.-]). */
-function caractereDeNome(c: number): boolean {
-  return letraAscii(c) || (c >= 0x30 && c <= 0x39) || c === 0x5f || c === 0x2e || c === 0x2d;
 }
 
 /** Caractere de prefixo de nome XML: tudo menos brancos, < > / = aspas e dois-pontos. */
@@ -2638,109 +2900,13 @@ function caractereDePrefixo(c: number): boolean {
 }
 
 /**
- * Um indexOf que lembra o ultimo achado: com as procuras sempre para a
- * frente, cada trecho do texto e varrido uma vez so (a varredura inteira e
- * linear). Cobra o que anda.
- */
-function procurador(texto: string, alvo: string, trabalho: Trabalho): (de: number) => number {
-  let desde = 0;
-  let achado = -2; // -2: nunca procurado; -1: nao ha mais depois de "desde"
-  return (de) => {
-    if (achado !== -2 && de >= desde && (achado === -1 || achado >= de)) {
-      return achado;
-    }
-    const novo = texto.indexOf(alvo, de);
-    gastar(trabalho, CUSTO.chamada + Math.max(0, (novo < 0 ? texto.length : novo) - de) * CUSTO.nativo);
-    desde = de;
-    achado = novo;
-    return novo;
-  };
-}
-
-/** Os prefixos das propriedades em que a coordenada conta. */
-const PREFIXOS_DA_COORDENADA = ["photoshop:", "xmp:"] as const;
-
-/**
- * Algum valor de propriedade photoshop: ou xmp: tem coordenada? O atributo
- * (prefixo:Nome="valor", com brancos em volta do "=") e o elemento
- * (<prefixo:Nome ...>valor<), lidos da esquerda para a direita, um depois
- * do outro, como a expressao de antes fazia, mas a mao: cada delimitador e
- * procurado uma vez so (procurador), e nada volta atras.
- */
-function coordenadaNasPropriedades(texto: string, trabalho: Trabalho): boolean {
-  const prefixos = PREFIXOS_DA_COORDENADA.map((alvo) => ({
-    tamanho: alvo.length,
-    achar: procurador(texto, alvo, trabalho),
-  }));
-  const proximoMaior = procurador(texto, ">", trabalho);
-  const proximoMenor = procurador(texto, "<", trabalho);
-  const proximaAspa = procurador(texto, '"', trabalho);
-  const proximoApostrofo = procurador(texto, "'", trabalho);
-  let cursor = 0;
-  for (;;) {
-    gastar(trabalho, CUSTO.volta);
-    let q = -1;
-    let tamanho = 0;
-    for (const prefixo of prefixos) {
-      const achado = prefixo.achar(cursor);
-      if (achado >= 0 && (q < 0 || achado < q)) {
-        q = achado;
-        tamanho = prefixo.tamanho;
-      }
-    }
-    if (q < 0) {
-      return false;
-    }
-    const nome = q + tamanho;
-    let valor: string | null = null;
-    let depois = q + 1;
-    if (letraAscii(texto.charCodeAt(nome))) {
-      if (q - 1 >= cursor && texto.charCodeAt(q - 1) === 0x3c) {
-        // Elemento: o ">" do fim da tag e o valor ate o proximo "<".
-        const maior = proximoMaior(nome + 1);
-        const menor = maior < 0 ? -1 : proximoMenor(maior + 1);
-        if (menor >= 0) {
-          valor = texto.slice(maior + 1, menor);
-          depois = menor + 1;
-        }
-      }
-      if (valor === null) {
-        // Atributo: o nome, brancos, "=", brancos e o valor entre aspas.
-        let j = nome + 1;
-        while (caractereDeNome(texto.charCodeAt(j))) {
-          j += 1;
-        }
-        while (brancoDoXml(texto.charCodeAt(j))) {
-          j += 1;
-        }
-        if (texto.charCodeAt(j) === 0x3d) {
-          j += 1;
-          while (brancoDoXml(texto.charCodeAt(j))) {
-            j += 1;
-          }
-          const aspa = texto.charCodeAt(j);
-          const fecha =
-            aspa === 0x22 ? proximaAspa(j + 1) : aspa === 0x27 ? proximoApostrofo(j + 1) : -1;
-          if (fecha >= 0) {
-            valor = texto.slice(j + 1, fecha);
-            depois = fecha + 1;
-          }
-        }
-        gastar(trabalho, (j - nome) * CUSTO.caractere);
-      }
-    }
-    if (valor !== null && coordenadaNoValor(valor, trabalho)) {
-      return true;
-    }
-    cursor = depois;
-  }
-}
-
-/**
  * Os nomes (locais) do lugar escrito por extenso, com qualquer prefixo (o
  * XMP de outro programa pode usar ns2: para o mesmo namespace do
  * photoshop:): cidade, estado, pais, codigo e nome do pais, estado ou
- * provincia, sublocal, local, nome e identificador do local e regiao. O
+ * provincia, sublocal, local, nome e identificador do local e regiao; o
+ * endereco do contato do autor no IPTC Core (Iptc4xmpCore:CiAdrExtadr,
+ * CiAdrCity, CiAdrRegion, CiAdrPcode e CiAdrCtry), o lugar da filmagem
+ * (xmpDM:shotLocation) e a abrangencia do Dublin Core (dc:coverage). O
  * exif:GPSAreaInformation ja conta pelo exif:GPS, com qualquer valor.
  */
 const NOMES_DE_LUGAR = [
@@ -2755,6 +2921,13 @@ const NOMES_DE_LUGAR = [
   "LocationName",
   "LocationId",
   "WorldRegion",
+  "CiAdrExtadr",
+  "CiAdrCity",
+  "CiAdrRegion",
+  "CiAdrPcode",
+  "CiAdrCtry",
+  "shotLocation",
+  "coverage",
 ] as const;
 /** Os nomes numa expressao so (o mais longo antes: CountryCode antes de Country). */
 const NOME_DE_LUGAR = new RegExp(
@@ -2766,11 +2939,28 @@ const OCORRENCIAS_DE_LUGAR = 256;
 /** Ate onde se procura o fim do valor (mais longe: na duvida, e lugar). */
 const JANELA_DO_LUGAR = 4096;
 
-/** O trecho tem texto fora das tags? (O "<" sem ">" depois fica como texto.) */
+/**
+ * O trecho tem texto fora das tags? O CDATA ("<![CDATA[Fortaleza]]>") e
+ * texto, nao tag: o de dentro conta. O "<" sem ">" depois, e o CDATA sem
+ * "]]>", ficam como texto (na duvida, e lugar).
+ */
 function temTextoForaDasTags(trecho: string): boolean {
   let i = 0;
   while (i < trecho.length) {
     const c = trecho.charCodeAt(i);
+    if (c === 0x3c && trecho.startsWith("<![CDATA[", i)) {
+      const fim = trecho.indexOf("]]>", i + 9);
+      if (fim < 0) {
+        return true;
+      }
+      for (let j = i + 9; j < fim; j += 1) {
+        if (!brancoDoXml(trecho.charCodeAt(j))) {
+          return true;
+        }
+      }
+      i = fim + 3;
+      continue;
+    }
     if (c === 0x3c) {
       const fim = trecho.indexOf(">", i + 1);
       if (fim < 0) {
@@ -2882,9 +3072,14 @@ function lugarNoTexto(texto: string, trabalho: Trabalho): boolean {
   return false;
 }
 
-/** As chaves de lugar do dicionario /Info: /City e as /GPS... (tambem com #xx). */
+/**
+ * As chaves de lugar do dicionario /Info (e do /Sig, a assinatura, que tem
+ * o /Location): cidade, estado, pais, local, latitude e longitude, alem
+ * das /GPS... (tambem escritas com #xx).
+ */
+const CHAVES_DE_LUGAR_NO_INFO = ["City", "State", "Country", "Location", "Latitude", "Longitude"] as const;
 const LUGAR_NO_INFO = new RegExp(
-  `\\/(?:${nomeComEscapes("City")}|${nomeComEscapes("GPS")}[^\\0\\t\\n\\f\\r ()<>\\[\\]{}/%]*)${SEM_PALAVRA_DEPOIS}`,
+  `\\/(?:${CHAVES_DE_LUGAR_NO_INFO.map((chave) => nomeComEscapes(chave)).join("|")}|${nomeComEscapes("GPS")}[^\\0\\t\\n\\f\\r ()<>\\[\\]{}/%]*)${SEM_PALAVRA_DEPOIS}`,
   "g",
 );
 
@@ -2961,8 +3156,10 @@ function hexadecimalComConteudo(hexa: string): boolean {
 /**
  * O valor do PDF que comeca em i (logo depois da chave) tem conteudo? A
  * string vazia ("()", "<>", so brancos ou so a marca do UTF-16), o null e a
- * chave sem valor (">>", "]", o fim) nao contam; o resto conta (um nome, um
- * numero, uma referencia, uma lista: na duvida, e lugar).
+ * chave sem valor (">>", ">", "]", o fim) nao contam; o resto conta (um
+ * nome, um numero, uma referencia, uma lista: na duvida, e lugar). Nenhum
+ * valor do PDF comeca com ">": a "chave" seguida dele e o fim de uma tag do
+ * XMP sem compressao ("</Country>"), que lugarNoTexto ja confere.
  */
 function valorComConteudo(t: string, i: number, trabalho: Trabalho): boolean {
   const v = pularBrancos(t, i, trabalho);
@@ -2970,7 +3167,7 @@ function valorComConteudo(t: string, i: number, trabalho: Trabalho): boolean {
     return false;
   }
   const c = t.charCodeAt(v);
-  if ((c === 0x3e && t.charCodeAt(v + 1) === 0x3e) || c === 0x5d || c === 0x7d || c === 0x29) {
+  if (c === 0x3e || c === 0x5d || c === 0x7d || c === 0x29) {
     return false;
   }
   if (c === 0x28) {
@@ -2989,7 +3186,7 @@ function valorComConteudo(t: string, i: number, trabalho: Trabalho): boolean {
   return true;
 }
 
-/** Uma chave /City ou /GPS... com valor (o dicionario /Info, solto ou num fluxo de objetos)? */
+/** Uma chave de lugar (LUGAR_NO_INFO) com valor (o /Info ou o /Sig, solto ou num fluxo de objetos)? */
 function lugarNoInfo(texto: string, trabalho: Trabalho): boolean {
   const chaves = new RegExp(LUGAR_NO_INFO);
   let varrido = 0;
@@ -3004,7 +3201,11 @@ function lugarNoInfo(texto: string, trabalho: Trabalho): boolean {
   return false;
 }
 
-/** O XMP tem a localizacao? (Em UTF-16, os zeros saem e sobra o ASCII.) */
+/**
+ * O XMP tem a localizacao? (Em UTF-16, os zeros saem e sobra o ASCII.) A
+ * coordenada e procurada no XMP inteiro: em qualquer propriedade, com
+ * qualquer prefixo, e dentro do CDATA.
+ */
 function localizacaoNoXmp(xmp: string, trabalho: Trabalho): boolean {
   gastar(trabalho, xmp.length * CUSTO.nativo);
   const texto = xmp.includes("\0") ? xmp.replace(/\0/g, "") : xmp;
@@ -3012,14 +3213,14 @@ function localizacaoNoXmp(xmp: string, trabalho: Trabalho): boolean {
     casaNoTexto(GPS_NO_XMP, texto, trabalho) ||
     casaNoTexto(COORDENADA_DO_XMP, texto, trabalho) ||
     lugarNoTexto(texto, trabalho) ||
-    coordenadaNasPropriedades(texto, trabalho)
+    coordenadaNoValor(texto, trabalho)
   );
 }
 
 /**
  * A localizacao no PDF (ja sem a das fotos, que a limpeza zerou): as
- * propriedades de GPS, o lugar por extenso e as chaves /City e /GPS... do
- * /Info em qualquer lugar do arquivo sem compressao e dentro dos fluxos de
+ * propriedades de GPS, o lugar por extenso e as chaves de lugar do /Info
+ * (LUGAR_NO_INFO) em qualquer lugar do arquivo sem compressao e dentro dos fluxos de
  * objetos, e o XMP de cada fluxo de metadados (/Type /Metadata, /Subtype
  * /XML ou o que um /Metadata aponta: do catalogo, da pagina, da foto),
  * descomprimido com os tetos (o do XMP e o do total). O fluxo de metadados
@@ -3132,7 +3333,12 @@ export const VERSAO_DA_FIGURINHA = `figurinha-${createHash("sha256")
 /** O preparo inteiro (limites, listas do que fica, paginas), para as versoes. */
 export const FONTES_DO_PREPARO = {
   limites: LIMITES_DA_MIDIA,
-  trabalho: { porArquivo: LIMITES_DA_MIDIA.trabalhoPorArquivo, custo: CUSTO },
+  trabalho: {
+    porArquivo: LIMITES_DA_MIDIA.trabalhoPorArquivo,
+    custo: CUSTO,
+    tempoPorArquivoMs: LIMITES_DA_MIDIA.tempoPorArquivoMs,
+    unidadesEntreRelogios: UNIDADES_ENTRE_RELOGIOS,
+  },
   formatos: FORMATOS_DA_MIDIA,
   jpeg: {
     quadros: [...SOF_ACEITOS],
@@ -3153,12 +3359,13 @@ export const FONTES_DO_PREPARO = {
   mp3: { ficam: "so os quadros MPEG do mesmo fluxo", lixo: LIXO_ACEITO },
   pdf: {
     paginas: "a maior entre /Count, /Type /Page e /Kids, no texto e nos fluxos de objetos",
-    fora: "/Encrypt; /JPXDecode; cadeia com /DCTDecode; metadado com outro filtro; fluxo dentro de outro",
+    fora: "/Encrypt; /JPXDecode; cadeia com /DCTDecode; metadado com outro filtro; fluxo dentro de outro; objeto malformado dentro de um fluxo; endstream que nao fecha fluxo lido; cabecalho com comentario",
     foto: "/DCTDecode limpa no lugar numa copia (APP1 a APP15 e COM zerados, nada depois do EOI)",
     localizacao: {
       gps: GPS_NO_XMP.source,
       coordenadaDoXmp: COORDENADA_DO_XMP.source,
-      photoshopOuXmp: COORDENADAS_NO_VALOR.map((expressao) => expressao.source),
+      coordenadaNoXmpInteiro: COORDENADAS_NO_VALOR.map((expressao) => expressao.source),
+      lugarComCdata: true,
       lugarComValor: [...NOMES_DE_LUGAR],
       lugarComQualquerPrefixo: true,
       info: LUGAR_NO_INFO.source,

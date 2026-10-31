@@ -205,6 +205,9 @@ import type { Job, ResultadoDeJob } from "./worker";
 //     do teto e da reserva: decisao, passagem sem atribuir (a marca
 //     Urgente) e a frase de sempre, sem modelo nenhum. A marca que nao
 //     gravou (urgente falso) deixa o aviso no log, so com ids e o codigo.
+//     [AG6b mídia] RR2 de 88e9560: de novo depois do plano da midia (7d),
+//     com a transcricao ja gravada que o plano aplicou como texto (o job
+//     repetido), ainda antes do teto e da reserva.
 //  8. Teto de respostas da conversa na ultima hora.
 //  9. Reserva do custo maximo do turno (origem whatsapp).
 //  8b. (AG3) O estado do atendimento (ler_atendimento_da_ia, pelo job):
@@ -213,7 +216,9 @@ import type { Job, ResultadoDeJob } from "./worker";
 //     sem chamar o modelo). E o nascimento informado na conversa (so para a
 //     idade atendida do profissional, nunca para o modelo).
 // 10. O turno (portao, classificador, agente, filtro), com a trava do
-//     WhatsApp entre as rodadas e o prazo da invocacao menos o envio. As
+//     WhatsApp entre as rodadas e o prazo da invocacao menos o envio (e as
+//     gravacoes; RR2 de 88e9560: o instante contado antes do passo 8b, que
+//     o laco recebe em prazoEmMs, com as idas ao banco dentro dele). As
 //     ferramentas de agenda (E4) gravam pelas RPCs com o id DESTE job
 //     (portaDaAgendaDoWhatsapp): repetir o job devolve a mesma reserva e a
 //     mesma consulta, nunca uma segunda.
@@ -292,12 +297,16 @@ export const PRAZO_MINIMO_DO_TURNO_MS = 20_000;
  * A MARGEM DE 2 s ANTES DO TURNO (R3 de d1a15f6, 5), a medir na prova paga
  * (D-100): o turno com midia so comeca com 36 s, e o maior turno possivel e
  * 38 s (os 55 s da invocacao menos os 14 s do envio e os 3 s das
- * gravacoes). Tudo o que vem antes do turno na invocacao (o claim, o
- * historico, o plano da midia, o teto e a reserva) tem de caber nos 2 s do
- * comeco dela; senao o job volta para a fila (orcamento_da_passagem). Se
- * esses 2 s bastam, e se o minimo fica em 36 s, so a prova paga diz. O
- * minimo nunca pode passar do maior turno (o turno com midia nunca
- * comecaria).
+ * gravacoes). Tudo o que vem antes da conta do prazo do turno na invocacao
+ * (o claim, o historico, o plano da midia e o teto) tem de caber nos 2 s do
+ * comeco dela; senao o job volta para a fila (orcamento_da_passagem). RR2
+ * de 88e9560 (baixo 6): o que vem DEPOIS da conta e antes do laco (os
+ * precos e o catalogo sem midia, o estado, o nascimento, a reserva e o
+ * turno) sai do prazo do turno (o laco recebe o instante, prazoEmMs), e no
+ * minimo exato sai do prazo da integracao, como o Storage; nunca da reserva
+ * das gravacoes nem da do envio. Se esses 2 s bastam, e se o minimo fica em
+ * 36 s, so a prova paga diz. O minimo nunca pode passar do maior turno (o
+ * turno com midia nunca comecaria).
  * O que NAO cabe, e depende da prova paga (medir o Storage e o modelo e
  * baixar os prazos) ou de subir o maxDuration da rota da IA (decisao de
  * infraestrutura, desenho 12): o Storage no pior caso proposto (8 s) junto
@@ -897,6 +906,17 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
     );
     mensagensDoTurno = plano.mensagens;
     c.midiaNaoLida = plano.midiaNaoLida;
+    // RR2 de 88e9560 (medio 3): o 7c de novo, com a transcricao JA GRAVADA
+    // que o plano aplicou como texto (o job repetido depois da excecao, da
+    // posse perdida ou da invocacao que morreu; so com a habilidade e o
+    // aviso valendo agora). A urgencia no texto mantido passa a conversa
+    // ANTES do teto de respostas, da reserva e da leitura do estado, como no
+    // 7c: o teto do dia que a reserva perdida da tentativa anterior encheu
+    // nunca segura a marca Urgente. A urgencia so do texto descartado nunca
+    // foi gravada: o laco transcreve de novo e acha de novo.
+    if (urgenciaNasPendentes(mensagensDoTurno)) {
+      return passarPorUrgencia(c, base, destino, config);
+    }
     if (plano.esperar) {
       const pendentesNaEspera = mensagensPendentes(mensagensDoTurno).map((m) =>
         m.midia?.situacao === "baixando"
@@ -949,10 +969,20 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
   // turno para antes do prazo da invocacao menos o envio E as gravacoes
   // depois dele (acerto, decisao, rascunho, turno, passagem): o turno que
   // vai ate o fim ainda passa e manda a frase (CLAUDE.md 3.2).
+  // RR2 de 88e9560 (baixo 6): o prazo conta DESTE instante, e o laco recebe
+  // o instante em que ele acaba (prazoEmMs, no mesmo relogio): as idas ao
+  // banco daqui ate o laco (os precos e o catalogo, o estado, o nascimento,
+  // a reserva e o turno) saem do prazo do turno, nunca da reserva das
+  // gravacoes nem da do envio. Antes o laco contava do proprio comeco.
+  const contaDoTurnoDesde = c.deps.agora();
   const prazoDoTurno = Math.min(
     PRAZO_DO_TURNO_MS,
-    restanteMs(c) - RESERVA_DO_ENVIO_MS - RESERVA_DAS_GRAVACOES_MS,
+    c.deps.prazoFinalMs -
+      contaDoTurnoDesde -
+      RESERVA_DO_ENVIO_MS -
+      RESERVA_DAS_GRAVACOES_MS,
   );
+  const prazoDoTurnoEm = contaDoTurnoDesde + prazoDoTurno;
   // [AG6b mídia] Com midia para o modelo, o prazo minimo e o da midia.
   if (
     prazoDoTurno <
@@ -1130,6 +1160,9 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
       nascimentoInformado,
       modeloDosClassificadores,
       prazoMs: prazoDoTurno,
+      // RR2 de 88e9560 (baixo 6): o instante da conta acima (a mesma
+      // referencia do executor), nao o comeco do laco.
+      prazoEmMs: prazoDoTurnoEm,
       agora: c.deps.agora,
       // [AG6b mídia]
       midia: portaDaMidia,

@@ -898,14 +898,20 @@ describe("tema e tokens", () => {
 // so o que o react-dom/client usa com estes elementos (div, p, span, button
 // e texto), e um layout falso que o teste controla: a largura da bolha em
 // caracteres por linha, a altura de cada linha e o line-clamp-2 (a caixa do
-// paragrafo fecha em duas linhas; o conteudo, nao).
+// paragrafo fecha em duas linhas; o conteudo, nao). RR2 de 88e9560 (baixo
+// 5): a altura da linha e a sobra de arredondamento do conteudo tambem, para
+// fixar o limite da medida (uma linha a mais conta; 1 px, nao).
 
 const NO_ELEMENTO = 1;
 const NO_TEXTO = 3;
 const NO_DOCUMENTO = 9;
 const ALTURA_DA_LINHA = 20;
-/** A largura da bolha, em caracteres por linha (o teste muda). */
-const layout = { largura: 40 };
+/**
+ * O layout falso (o teste muda): a largura da bolha em caracteres por linha,
+ * a altura de cada linha em px e a sobra, em px, que o arredondamento do
+ * navegador deixa na altura do conteudo (subpixel).
+ */
+const layout = { largura: 40, alturaDaLinha: ALTURA_DA_LINHA, sobra: 0 };
 
 type EventoFalso = {
   type: string;
@@ -1074,16 +1080,16 @@ class ElementoFalso extends NoFalso {
   private get linhas(): number {
     return Math.max(1, Math.ceil(this.textContent.length / layout.largura));
   }
-  /** A altura do conteudo inteiro. */
+  /** A altura do conteudo inteiro (com a sobra do arredondamento). */
   get scrollHeight(): number {
-    return this.linhas * ALTURA_DA_LINHA;
+    return this.linhas * layout.alturaDaLinha + layout.sobra;
   }
   /** A altura da caixa: o line-clamp-2 fecha em duas linhas. */
   get clientHeight(): number {
     const linhas = this.classes.includes("line-clamp-2")
       ? Math.min(2, this.linhas)
       : this.linhas;
-    return linhas * ALTURA_DA_LINHA;
+    return linhas * layout.alturaDaLinha;
   }
 }
 
@@ -1198,6 +1204,8 @@ describe("o ver mais medido, num DOM de verdade (R3 de d1a15f6, 4)", () => {
   beforeEach(() => {
     erros = vi.spyOn(console, "error");
     layout.largura = 40;
+    layout.alturaDaLinha = ALTURA_DA_LINHA;
+    layout.sobra = 0;
     container = documento.createElement("div");
     documento.body.appendChild(container);
     raiz = criarRaiz(container);
@@ -1272,6 +1280,35 @@ describe("o ver mais medido, num DOM de verdade (R3 de d1a15f6, 4)", () => {
     expect(ObservadorFalso.observados()).toEqual([paragrafo()]);
   });
 
+  // RR2 de 88e9560 (baixo 5): o limite da medida. O mutante que troca o
+  // "clientHeight + 1" por "+ 25" sobrevivia: nenhum texto ficava so uma
+  // linha alem das duas. A linha a mais (de 20 px e da menor, de 16 px)
+  // sempre mostra o ver mais; o 1 px do arredondamento, nunca.
+  it.each([20, 16])(
+    "o texto exatamente uma linha alem das duas (linha de %i px): ver mais, pela medida (a estimativa nao pega)",
+    async (alturaDaLinha) => {
+      layout.alturaDaLinha = alturaDaLinha;
+      // 81 caracteres com o rotulo: duas linhas cheias de 40 e 1 na terceira.
+      const tresLinhas = "a".repeat(2 * 40 + 1 - TEXTOS_DA_LEITURA.transcricao.length - 1);
+      expect(transcricaoPareceLonga(tresLinhas)).toBe(false);
+      await montar(tresLinhas);
+      expect(paragrafo()?.textContent).toHaveLength(81);
+      expect(paragrafo()?.scrollHeight).toBe(3 * alturaDaLinha);
+      expect(paragrafo()?.clientHeight).toBe(2 * alturaDaLinha);
+      expect(botao()?.textContent).toBe(TEXTOS_DA_LEITURA.verMais);
+    },
+  );
+
+  it("o arredondamento de 1 px na altura do conteudo nao e uma linha: sem ver mais", async () => {
+    layout.sobra = 1;
+    // 80 caracteres com o rotulo: duas linhas cheias de 40.
+    const duasLinhas = "a".repeat(2 * 40 - TEXTOS_DA_LEITURA.transcricao.length - 1);
+    await montar(duasLinhas);
+    const caixa = paragrafo()?.clientHeight ?? Number.NaN;
+    expect(paragrafo()?.scrollHeight).toBe(caixa + 1);
+    expect(botao()).toBeNull();
+  });
+
   it("texto longo: ver mais, com o estado para o leitor de tela", async () => {
     await montar(LONGA);
     expect(botao()?.textContent).toBe(TEXTOS_DA_LEITURA.verMais);
@@ -1331,5 +1368,42 @@ describe("o ver mais medido, num DOM de verdade (R3 de d1a15f6, 4)", () => {
     expect(paragrafo()?.classes).toContain("line-clamp-2");
     expect(botao()).toBeNull();
     expect(ObservadorFalso.observados()).toEqual([paragrafo()]);
+  });
+
+  it("a medida que chega junto com o clique (a bolha alargou no mesmo quadro): aberta, o ver menos fica", async () => {
+    // A medida do ResizeObserver ("agora cabe") fica na fila do React e o
+    // clique (mais urgente) abre antes dela: aberta, com a medida de que
+    // cabe. Sem o "|| aberta", o botao sumia com a transcricao aberta, e
+    // nada mais a fechava (aberta, o efeito nao mede).
+    await montar(LONGA);
+    const verMais = botao();
+    expect(verMais?.textContent).toBe(TEXTOS_DA_LEITURA.verMais);
+    await act(async () => {
+      layout.largura = 400;
+      ObservadorFalso.mudouDeTamanho();
+      verMais?.dispatchEvent({
+        type: "click",
+        bubbles: true,
+        cancelable: true,
+        target: null,
+        currentTarget: null,
+        defaultPrevented: false,
+        parado: false,
+        timeStamp: 0,
+        button: 0,
+        preventDefault() {
+          this.defaultPrevented = true;
+        },
+        stopPropagation() {
+          this.parado = true;
+        },
+      });
+    });
+    expect(paragrafo()?.classes).not.toContain("line-clamp-2");
+    expect(botao()?.textContent).toBe(TEXTOS_DA_LEITURA.verMenos);
+    expect(botao()?.getAttribute("aria-expanded")).toBe("true");
+    // E fecha: o efeito mede de novo, cabe, e o botao some.
+    await clicar(botao());
+    expect(botao()).toBeNull();
   });
 });

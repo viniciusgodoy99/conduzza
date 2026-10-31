@@ -1036,7 +1036,13 @@ function frasesComPosicao(base: string): Frase[] {
       continue;
     }
     if (trecho.startsWith(".")) {
-      const palavra = /([a-z]+)$/.exec(base.slice(0, indice))?.[1];
+      // Revisao final de 31/10/2026 (desempenho): a palavra antes do ponto
+      // so nos 40 caracteres antes dele (a abreviacao mais longa tem 5
+      // letras; a palavra maior que a janela nunca e abreviacao, dentro ou
+      // fora dela). Antes, o texto inteiro ate o ponto, a cada ponto.
+      const palavra = /([a-z]+)$/.exec(
+        base.slice(Math.max(0, indice - 40), indice),
+      )?.[1];
       if (palavra !== undefined && ABREVIACOES.has(palavra)) {
         continue;
       }
@@ -1815,6 +1821,77 @@ function juntarDatas(a: DataDaOferta, b: DataDaOferta): DataDaOferta | null {
 }
 
 /**
+ * Revisao final de 31/10/2026 (desempenho): as datas e as horas do texto
+ * inteiro, lidas UMA vez por texto e modo, para cada frase pegar so as
+ * dela. Antes, partesDaOferta relia o texto inteiro a cada frase (e
+ * fechamentosDasFrases a chama em toda frase): o filtro ficava quadratico no
+ * tamanho do rascunho (". " repetido levava 31,6 s em 65.536 caracteres).
+ * Guarda so o ultimo texto lido (as regras de um rascunho leem o mesmo texto
+ * em sequencia); a lista guardada nunca e devolvida para fora.
+ */
+type TemporaisDoTextoLidos = {
+  base: string;
+  modo: ModoDaLeitura;
+  lidos: readonly TemporalLido[];
+  /** As posicoes em `lidos`, em ordem de indice no texto (estavel). */
+  porIndice: readonly number[];
+};
+let ultimosTemporais: TemporaisDoTextoLidos | null = null;
+
+function temporaisDoTextoLidos(
+  base: string,
+  modo: ModoDaLeitura,
+): TemporaisDoTextoLidos {
+  if (
+    ultimosTemporais !== null &&
+    ultimosTemporais.base === base &&
+    ultimosTemporais.modo === modo
+  ) {
+    return ultimosTemporais;
+  }
+  const lidos = temporaisDoTexto(base, modo);
+  const porIndice = lidos
+    .map((_, posicao) => posicao)
+    .sort((a, b) => (lidos[a]?.indice ?? 0) - (lidos[b]?.indice ?? 0) || a - b);
+  ultimosTemporais = { base, modo, lidos, porIndice };
+  return ultimosTemporais;
+}
+
+/**
+ * As datas e as horas que COMECAM dentro da frase, na mesma ordem de
+ * temporaisDoTexto (primeiro as datas, depois as horas): a busca binaria
+ * acha o comeco da frase e a ordem original volta pela posicao.
+ */
+function temporaisDaFrase(
+  base: string,
+  frase: Frase,
+  modo: ModoDaLeitura,
+): TemporalLido[] {
+  const { lidos, porIndice } = temporaisDoTextoLidos(base, modo);
+  const indiceDe = (k: number) => lidos[porIndice[k] ?? 0]?.indice ?? 0;
+  let baixo = 0;
+  let alto = porIndice.length;
+  while (baixo < alto) {
+    const meio = (baixo + alto) >> 1;
+    if (indiceDe(meio) < frase.inicio) {
+      baixo = meio + 1;
+    } else {
+      alto = meio;
+    }
+  }
+  const posicoes: number[] = [];
+  for (let k = baixo; k < porIndice.length && indiceDe(k) < frase.fim; k += 1) {
+    posicoes.push(porIndice[k] ?? 0);
+  }
+  return posicoes
+    .sort((a, b) => a - b)
+    .flatMap((posicao) => {
+      const lido = lidos[posicao];
+      return lido === undefined ? [] : [lido];
+    });
+}
+
+/**
  * As partes de data, hora e periodo de uma frase que afirma horario livre
  * (o texto inteiro ja normalizado e a frase dentro dele). Alem do que
  * temporaisDoTexto le, o dia da semana, "hoje" e "amanha", "dia 30" sem
@@ -1830,16 +1907,14 @@ function partesDaOferta(
   hoje: DiaDaClinica | null,
   modo: ModoDaLeitura = "rascunho",
 ): ParteDaOferta[] {
-  const dentro = (indice: number) =>
-    indice >= frase.inicio && indice < frase.fim;
   const datas: { indice: number; fim: number; data: DataDaOferta }[] = [];
   const horas: ParteDaOferta[] = [];
-  for (const lido of temporaisDoTexto(base, modo)) {
-    if (!dentro(lido.indice)) {
-      continue;
-    }
+  // Revisao final de 31/10/2026: so as datas e as horas desta frase, sem
+  // reler o texto inteiro (temporaisDaFrase).
+  for (const lido of temporaisDaFrase(base, frase, modo)) {
     if (lido.tipo === "hora") {
-      horas.push(lido);
+      // Uma copia: a lista lida fica guardada para as outras frases.
+      horas.push({ ...lido });
     } else {
       datas.push({
         indice: lido.indice,
@@ -2595,34 +2670,16 @@ function camposDaSaida(saida: string, chaves: ReadonlySet<string>): string[] {
 
 const CAMPOS_DE_ENDERECO: ReadonlySet<string> = new Set(["endereco"]);
 const CAMPOS_DE_LUGAR: ReadonlySet<string> = new Set(["bairro", "cidade"]);
-// [AG6 urgência] início
-/**
- * Revisao R2 de d1a15f6 (A2, 30/10/2026): o ponto de referencia da unidade
- * que consultar_unidades trouxe ("Em frente a UPA do Centro"). E a UNICA
- * excecao da UPA, do pronto-socorro, do SAMU e do hospital na saida (a troca
- * larga servico_de_saude_de_referencia saiu de padroes.ts): so o texto
- * EXATO do campo, quando o rascunho o repete inteiro, sai das vedacoes
- * clinicas, como o endereco. Qualquer outra mencao barra como no main
- * ("Ficamos ao lado da UPA" sem a ferramenta no turno, ou com outro texto).
- */
-const CAMPOS_DE_REFERENCIA: ReadonlySet<string> = new Set([
-  "ponto_de_referencia",
-]);
-/**
- * O ponto de referencia so vale como trecho quando COMECA pela palavra de
- * lugar ("em frente a", "ao lado de", "perto do", "na esquina", "atras",
- * "dentro do"). O nome solto ("Hospital Geral") nao sai: a regra
- * pronto_socorro do main le a ida colada nele ("Va ao Hospital Geral",
- * "corra pro Hospital Geral"), e a mascara do nome inteiro engoliria o
- * "hospital" dessa leitura.
- */
-const REFERENCIA_QUE_COMECA_PELO_LUGAR =
-  /^(?:(?:fica|ficamos|estamos|esta|bem|logo) )?(?:(?:em|ao|a|do|da|de|no|na|nos|nas) )?(?:lado|frente|perto|proxim[oa]s?|vizinh[oa]s?|esquina|cima|embaixo|atras|junto|colad[oa]s?|dentro|defronte|diante|depois|antes)\b/;
-/** Sem a pontuacao em volta do texto do campo ("Em frente a praca."). */
-function semPontuacaoEmVolta(texto: string): string {
-  return texto.replace(/^[^a-z0-9]+/, "").replace(/[^a-z0-9]+$/, "");
-}
-// [AG6 urgência] fim
+// [AG6 urgência] Revisao final de 31/10/2026 (A2): o ponto de referencia
+// da unidade ("Em frente a UPA do Centro") NAO sai das vedacoes clinicas. A
+// mascara do texto exato do campo ponto_de_referencia (revisao R2 de
+// d1a15f6) saiu: com a ferramenta no turno ela deixava passar o que o main
+// barra (a ida em outra frase, "Va direto para la agora"; o remedio dentro
+// do proprio texto, "Ao lado do Hospital, tome dipirona antes de vir"; e a
+// chave lida em qualquer ferramenta, ate a profundidade 6), e nem era
+// alcancavel (cadastro-do-agente.ts descarta a referencia que as regras
+// barram). Liberar a referencia perto de UPA ou pronto-socorro e PROPOSTA
+// para o dono e precisa de outro desenho; ate la, como no main.
 
 /**
  * Revisao 2 da AG2: a parte do endereco da ferramenta (bairro, cidade) que
@@ -2690,13 +2747,6 @@ export function semPalavrasClinicasDeLugar(texto: string): string {
  * continua lido ("Rua das Dores, 100. Tome dipirona" barra). O endereco da
  * ferramenta ja passou pelas regras do filtro no carregamento, com a unica
  * excecao de PALAVRAS_CLINICAS_DE_NOME_DE_LUGAR.
- *
- * Revisao R2 de d1a15f6 (A2): tambem o ponto de referencia que a ferramenta
- * trouxe (campo "ponto_de_referencia"), so o texto EXATO e so quando ele
- * comeca pela palavra de lugar (REFERENCIA_QUE_COMECA_PELO_LUGAR): "Ficamos
- * na Rua X, 123, em frente a UPA do Centro", com "Em frente a UPA do
- * Centro" vindo da ferramenta, passa; o mesmo rascunho sem a ferramenta, ou
- * com outro texto ("ao lado da UPA"), barra como no main.
  */
 export function trechosDeEnderecoDasFerramentas(
   rascunho: string,
@@ -2718,17 +2768,7 @@ export function trechosDeEnderecoDasFerramentas(
     .flatMap((saida) => camposDaSaida(saida, CAMPOS_DE_LUGAR))
     .map((parte) => normalizarBase(parte))
     .filter((parte) => parteQueENomeDeLugar(parte) && citado(parte));
-  // [AG6 urgência] Revisao R2 de d1a15f6 (A2): o ponto de referencia exato.
-  const referencias = fatos.saidasDasFerramentas
-    .flatMap((saida) => camposDaSaida(saida, CAMPOS_DE_REFERENCIA))
-    .map((referencia) => semPontuacaoEmVolta(normalizarBase(referencia)))
-    .filter(
-      (referencia) =>
-        REFERENCIA_QUE_COMECA_PELO_LUGAR.test(referencia) && citado(referencia),
-    );
-  return [
-    ...new Set([...completos, ...logradouros, ...lugares, ...referencias]),
-  ];
+  return [...new Set([...completos, ...logradouros, ...lugares])];
 }
 
 // ---------------------------------------------------------------------------
@@ -4299,8 +4339,30 @@ function escaparRegex(texto: string): string {
   return texto.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Revisao final de 31/10/2026 (desempenho): a regex de cada nome (o
+ * convenio, o plano) e montada uma vez, e nao a cada frase. Quem usa a
+ * regex com "g" so a passa ao replace e ao matchAll, que nao deixam estado
+ * nela (o replace volta o lastIndex a zero; o matchAll copia a regex). Os
+ * nomes vem do Cadastro: a lista recomeca acima de 1.000.
+ */
+const REGEX_DO_NOME = new Map<string, RegExp>();
+
 function regexDoNome(nome: string, flags = ""): RegExp {
-  return new RegExp(`(?<![a-z0-9])${escaparRegex(nome)}(?![a-z0-9])`, flags);
+  const chave = `${flags}\u0000${nome}`;
+  const pronta = REGEX_DO_NOME.get(chave);
+  if (pronta !== undefined) {
+    return pronta;
+  }
+  if (REGEX_DO_NOME.size >= 1000) {
+    REGEX_DO_NOME.clear();
+  }
+  const nova = new RegExp(
+    `(?<![a-z0-9])${escaparRegex(nome)}(?![a-z0-9])`,
+    flags,
+  );
+  REGEX_DO_NOME.set(chave, nova);
+  return nova;
 }
 
 function contem(frase: string, nome: string): boolean {
@@ -6708,10 +6770,6 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   [...CAMPOS_DE_LUGAR].join(","),
   "lugar da ferramenta: duas palavras de nome, a palavra clinica so no fim",
   PALAVRAS_CLINICAS_DE_NOME_DE_LUGAR.join(","),
-  // [AG6 urgência] Revisao R2 de d1a15f6 (A2): o ponto de referencia exato.
-  [...CAMPOS_DE_REFERENCIA].join(","),
-  "ponto de referencia da ferramenta: so o texto exato, sem a pontuacao em volta, comecando pela palavra de lugar",
-  REFERENCIA_QUE_COMECA_PELO_LUGAR.source,
   ...PADROES_DE_ACAO.map(
     (p) =>
       `${p.nome} ${p.acao ?? "estado"} ${p.regex.source}${p.soComAgendaNaFrase ? " so com agenda na frase" : ""}${p.estadoDaEspera === true ? " estado da lista de espera" : ""}`,

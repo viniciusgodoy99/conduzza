@@ -344,21 +344,26 @@ describe("o portao de novo com a transcricao (1c)", () => {
     expect(r.uso).toEqual([usoDaTranscricao()]);
   });
 
-  it("o preparo que acha o audio fora da regra: nenhum e transcrito, e o 1c escala como midia", async () => {
+  it("o preparo que acha o audio fora da regra: o 1c escala como midia; o bom so e transcrito para ler a urgencia (RR2, baixo 7), e o texto dele nao vale neste turno", async () => {
     const { porta, transcrever } = portaFalsa({
       preparo: { [AUDIO_2]: "fora" },
     });
-    const { promessa } = turno([audioNoLaco(AUDIO), audioNoLaco(AUDIO_2)], {
+    const { promessa, agente } = turno([audioNoLaco(AUDIO), audioNoLaco(AUDIO_2)], {
       midia: porta,
     });
     const r = await promessa;
-    expect(transcrever).not.toHaveBeenCalled();
+    // Antes da RR2 de 88e9560 nenhum era transcrito, e a urgencia do audio
+    // bom nem era lida. O audio fora da regra nunca sai.
+    expect(transcrever).toHaveBeenCalledTimes(1);
+    expect(transcrever.mock.calls[0]?.[0].messageId).toBe(AUDIO);
     expect(r.desfecho).toMatchObject({
       tipo: "escalou",
       motivo: "midia_nao_suportada",
       gatilho: "midia",
     });
     expect(r.midiaNaoLida).toBe(true);
+    expect(textosAoClassificador).toEqual([]);
+    expect(agente.create).not.toHaveBeenCalled();
   });
 });
 

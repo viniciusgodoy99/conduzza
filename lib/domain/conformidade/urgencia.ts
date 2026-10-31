@@ -112,6 +112,27 @@
 // bateria (MATRIZES_DA_URGENCIA) cruzam o relato de agora de cada sinal com
 // excecao com os finais que as excecoes leem.
 //
+// A REVISAO RR1 (a politica nova das excecoes, decisao do coordenador; as
+// excecoes ainda generalizavam pelos sinonimos fora das listas fechadas):
+//  1. a excecao so vale com PROVA POSITIVA de que nao e emergencia: o estado
+//     de sempre ("quando sorrio", "sempre foi", "de nascenca"), a pergunta
+//     pura sem relato, a figura com o objeto dito ("esse preco", "a dieta",
+//     "o app") e a agenda sem nenhuma palavra de sintoma. O procedimento
+//     feito deixou de ser excecao (o efeito dele e urgencia);
+//  2. qualquer marca de relato atual ou de evento recente desfaz qualquer
+//     excecao, por CATEGORIA: o tempo recente, a terceira pessoa, o pedido
+//     de ajuda e o relato que retoma o sinal, na leitura inteira
+//     (DESFAZ_NA_LEITURA); o verbo de mudanca e o estado de agora, na oracao
+//     do sinal (MUDANCA_OU_ESTADO). A figura so cai com os da leitura;
+//  3. a excecao vale so na oracao ou na FRASE do sinal (nunca a mensagem
+//     inteira nem outra frase) e nunca apaga outro sinal. O que nao e o
+//     corpo (o objeto: "a sala sem ar", "o celular apagou", "os tiros do
+//     laser", "nao vejo nada no app") ficou lexico, na fonte;
+//  4. na duvida, urgencia: o alarme falso subiu onde a politica manda (a
+//     historia de terceira pessoa, o marido que "vai me matar", "estou com
+//     uma emergencia, nao vou poder ir").
+// As matrizes do revisor (MATRIZES_DO_RR1) estao na bateria, todas urgencia.
+//
 // O TEMPO e linear (revisao R2 de d1a15f6, B5): os fins de oracao, os " e "
 // e os fins de frase sao achados uma vez por leitura; o que depende de um
 // trecho fixo (a mensagem, a oracao, a leitura inteira) e testado uma vez so;
@@ -168,23 +189,41 @@ export type SinalDeEmergencia = {
    */
   excecaoDepois?: string;
   /**
-   * A excecao lida na ORACAO ANTERIOR, a que acaba logo antes da do sinal
-   * ("tentei ligar varias vezes, nao consigo falar").
+   * Revisao RR1: a FIGURA de linguagem com o objeto dito, lida antes do sinal
+   * na mesma oracao ("o preco me deixou sem ar", "essa dieta ta me matando").
+   * E prova positiva: o "ta" da propria figura nao a desfaz, so o que desfaz
+   * na leitura inteira (o tempo recente, a terceira pessoa, o pedido de
+   * ajuda, o relato, o "nao to brincando").
+   */
+  figuraAntes?: string;
+  /** A figura lida depois do sinal ("com esse preco", "de tanto rir", "kkk"). */
+  figuraDepois?: string;
+  /**
+   * A excecao lida na ORACAO ANTERIOR, a que acaba logo antes da do sinal e
+   * so na mesma frase (revisao RR1): "tentei ligar varias vezes, nao consigo
+   * falar". O que vem DEPOIS do sinal nao entra ("nao consigo falar, ligo pra
+   * quem?").
    */
   excecaoNaOracaoAnterior?: string;
   /**
-   * A excecao lida na MESMA MENSAGEM do sinal (revisao de 30/10/2026: nunca
-   * a rajada inteira; na juncao, so a mensagem, ou as mensagens, em que o
-   * sinal casou): casou, o sinal nao conta ("fiz botox e minha boca ficou
-   * torta", "tenho uma emergencia, preciso remarcar").
+   * A excecao lida na FRASE do sinal (revisao RR1: nunca a mensagem inteira
+   * nem outra frase; a frase acaba no ".", no "!" e no "?" e nunca passa da
+   * mensagem do sinal): casou, o sinal nao conta ("tenho uma emergencia,
+   * preciso remarcar", "tentei ligar varias vezes, nao consigo falar").
    */
-  excecaoNaMensagem?: string;
+  excecaoNaFrase?: string;
   /**
-   * O que DESFAZ as excecoes acima: com ele, o sinal conta mesmo que uma
-   * excecao case ("de repente", "acordei", a pessoa nomeada no telefone, o
-   * pedido de ajuda). Lido na leitura INTEIRA (na juncao, a rajada toda: so
-   * acrescenta urgencia, entao le largo; a excecao, que tira, le estreito).
-   * A negacao e o antecedente continuam valendo.
+   * O que o sinal EXIGE na leitura inteira (na juncao, a rajada toda): sem
+   * ele, o sinal nao existe (revisao RR1: o preenchimento feito, a gravidez,
+   * o mal-estar do gas). Nao e excecao: nada o desfaz.
+   */
+  requer?: string;
+  /**
+   * O que DESFAZ as excecoes acima, neste sinal, alem do que desfaz todas
+   * (DESFAZ_NA_LEITURA e MUDANCA_OU_ESTADO, revisao RR1): com ele, o sinal
+   * conta mesmo que uma excecao case. Lido na leitura INTEIRA (na juncao, a
+   * rajada toda: so acrescenta urgencia, entao le largo; a excecao, que
+   * tira, le estreito). A negacao continua valendo.
    */
   semExcecaoCom?: string;
   /**
@@ -221,7 +260,7 @@ const NAO_E_O_AR_DE_RESPIRAR =
  * "ai, to sem ar" e de dor.
  */
 const LUGAR_SEM_AR =
-  "\\b(?:sala|salas|clinica|consultorio|recepcao|predio|espera|voces|vcs|vc|lugar|local|loja)\\b(?:\\s+(?!(?:to|tou|estou|fiquei|fico|ficou|ficamos|ela|ele|eu|me|minha|meu)\\b)\\S+){0,3}\\s*$";
+  "(?<!\\b(?:sala|salas|clinica|consultorio|recepcao|predio|espera|voces|vcs|vc|lugar|local|loja)\\b(?: (?!(?:to|tou|estou|fiquei|fico|ficou|ficamos|ela|ele|eu|me|minha|meu)\\b)\\S+){0,3} )";
 
 /** A pergunta sobre o lugar: "ta sem ar ai?", "sem ar hoje?". */
 const PERGUNTA_DO_LUGAR =
@@ -252,7 +291,7 @@ const REFORCO_DA_DOR =
  * de vontade").
  */
 const EXAGERO_DE_MORRER =
-  "(?!(?: (?:aqui|ja|ate|so|literalmente))? de (?:tanto|rir|vergonha|fome|sede|calor|frio|saudade|saudades|medo|tedio|sono|inveja|preguica|cansaco|curiosidade|amor|amores|ciume|raiva|susto|felicidade|alegria|emocao|orgulho|chorar|vontade|ansiedade|nervoso|dor de cabeca)\\b)";
+  "(?! de tao (?:lind[oa]s?|perfeit[oa]s?|bonit[oa]s?|maravilhos[oa]s?|feliz|felizes|apaixonad[oa]s?|gat[oa]s?|gostos[oa]s?)\\b)(?! com (?:ese|esa|este|esta|o|a) (?:preco|precos|valor|valores|resultado|resultados|conta|orcamento|fatura|boleto|promocao|desconto)\\b)(?!(?: (?:aqui|ja|ate|so|literalmente))? de (?:tanto|rir|vergonha|fome|sede|calor|frio|saudade|saudades|medo|tedio|sono|inveja|preguica|cansaco|curiosidade|amor|amores|ciume|raiva|susto|felicidade|alegria|emocao|orgulho|chorar|vontade|ansiedade|nervoso|dor de cabeca)\\b)";
 
 /**
  * Revisao de 6eae43d (M2): "morrendo DE DOR" ("to morrendo de dor nas
@@ -269,7 +308,7 @@ const MORRENDO_DE_DOR =
  * "vou me matar na academia", "me matando no trabalho".
  */
 const EXAGERO_DE_MATAR =
-  "(?! de (?:tanto|rir|trabalhar|estudar|fome|vergonha|cansaco|treinar|malhar|corer|comer)\\b)(?! (?:na|no) (?:academia|treino|trabalho|servico|dieta|esteira|corida|estudo|estudos)\\b)";
+  "(?! (?:pra|para) (?:conseguir|ganhar|pagar|trabalhar|estudar|chegar|terminar|dar conta|comprar|manter|caber|emagrecer|vencer|achar|arumar|marcar)\\b)(?! de (?:tanto|rir|trabalhar|estudar|fome|vergonha|cansaco|treinar|malhar|corer|comer)\\b)(?! (?:na|no) (?:academia|treino|trabalho|servico|dieta|esteira|corida|estudo|estudos)\\b)";
 
 /**
  * Revisao de 30/10/2026: os sujeitos de exagero CONCRETOS de "vai me matar"
@@ -278,8 +317,17 @@ const EXAGERO_DE_MATAR =
  * depressao vai me matar", "a vida ta me matando"), nem o pronome ("isso vai
  * me matar", "ela vai me matar").
  */
+/**
+ * Revisao RR1: as PESSOAS que "vao me matar" no exagero ("meu marido vai me
+ * matar se eu gastar mais", "a doutora vai me matar, esqueci o protetor"):
+ * excecao de contexto, que a terceira pessoa e a ameaca de verdade desfazem.
+ * As COISAS (SUJEITO_DE_EXAGERO: o preco, a dieta, as rugas, a dor) sao a
+ * figura, que so o relato desfaz.
+ */
+const PESOA_DO_EXAGERO =
+  "(?:marido|esposo|esposa|namorado|namorada|noivo|noiva|chefe|patrao|patroa|doutora|doutor|dra|dr|medica|medico|dermato|dermatologista|esteticista|nutri|nutricionista|personal|profesora|profesor)";
 const SUJEITO_DE_EXAGERO =
-  "(?:preco|precos|valor|valores|conta|contas|boleto|boletos|fatura|faturas|parcela|parcelas|juros|divida|dividas|aluguel|orcamento|gasto|gastos|dieta|dietas|regime|academia|treino|treinos|malhacao|corida|trabalho|trabalhos|servico|emprego|chefe|patrao|patroa|faculdade|escola|prova|provas|estudo|estudos|marido|esposo|esposa|namorado|namorada|noivo|noiva|calor|frio|transito|fila|filas|espera|demora|engarafamento" +
+  "(?:preco|precos|valor|valores|conta|contas|boleto|boletos|fatura|faturas|parcela|parcelas|juros|divida|dividas|aluguel|orcamento|gasto|gastos|dieta|dietas|regime|academia|treino|treinos|malhacao|corida|trabalho|trabalhos|servico|emprego|faculdade|escola|prova|provas|estudo|estudos|calor|frio|transito|fila|filas|espera|demora|engarafamento" +
   // Revisao de 6eae43d (M2): a queixa ESTETICA ("essas rugas estao me
   // matando", "essa papada ta me matando kkk").
   "|ruga|rugas|ruguinha|ruguinhas|linha|linhas|vinco|vincos|papada|flacidez|estria|estrias|olheira|olheiras|acne|espinha|espinhas|cravo|cravos|melasma|mancha|manchas|celulite|celulites|gordura|gordurinha|gordurinhas|bariga|bariguinha|pochete|culote|culotes|cabelo|cabelos|calvicie|careca|caspa|pelinho|pelinhos|buco|bigode|sobrancelha|sobrancelhas|oleosidade|poro|poros|cicatriz|cicatrizes|veruga|verugas|nariz|queixo|bochecha|bochechas|pele|cutis|quilo|quilos|quilinhos|kilos|unha|unhas" +
@@ -340,11 +388,10 @@ const QUEIXA_DO_CORPO =
  * Revisao de 6eae43d (M1): junto da boca ou do rosto torto, a queixa de
  * OUTRO membro ou do corpo (o braco, a perna, um lado do corpo, a dormencia,
  * o formigamento, a fraqueza, "sem forca"), da FALA ("fala estranha",
- * "enrolada") e a dor de cabeca FORTE: os sinais de AVC juntos, que nem o
- * procedimento nem a estetica apagam. Sem QUEIXA_DO_CORPO (que tem a boca, o
- * rosto e o torto do proprio sinal): a dormencia e o formigamento so contam
- * fora do rosto e da boca ("a boca ficou torta e dormente" depois do
- * preenchimento e a anestesia, continua efeito do procedimento).
+ * "enrolada") e a dor de cabeca FORTE: os sinais de AVC juntos, que a
+ * estetica nunca apaga. Sem QUEIXA_DO_CORPO (que tem a boca, o rosto e o
+ * torto do proprio sinal): a dormencia e o formigamento so contam fora do
+ * rosto e da boca ("a boca dormente" da anestesia nao e outro membro).
  */
 const OUTRO_SINAL_DE_AVC =
   "\\b(?:braco|bracos|perna|pernas|lado do corpo|metade do corpo|lado (?:esquerdo|direito) do corpo)\\b" +
@@ -369,6 +416,23 @@ const OCUPADO =
  * qualquer mensagem da rajada, desfaz ("e uma emergencia, cancela tudo e me
  * ajuda").
  */
+/**
+ * Revisao RR1: o NOME com "emergencia" (lexico, na fonte da emergencia): o
+ * contato, a saida, o kit, a luz, o botao, a porta, o plantao e o servico de
+ * emergencia; o encaixe, o horario, a consulta e o retorno de emergencia; o
+ * atendimento, o setor e o hospital de emergencia; e o lugar ("fui na
+ * emergencia").
+ */
+const NOME_COM_EMERGENCIA =
+  "(?<!\\b(?:(?:contato|contatos|telefone|telefones|numero|numeros|fone|celular|whats|whatsap|ramal|pesoa|saida|saidas|kit|luz|luzes|freio|botao|fundo|porta|portas|escada|plantao|servico|servicos) (?:de|da|pra|para)|(?:encaixe|encaixes|encaixar|encaixa|horario|horarios|vaga|vagas|agenda|agendamento|marcacao|consulta|consultas|retorno) (?:de|em|para|pra)|(?:atendimento|atendimentos|pronto atendimento|plantao|plantoes|servico|servicos|setor|ala|equipe|medico|medicos|hospital) (?:de|da|em|para|pra)(?: urgencia (?:e|ou))?|(?:fui|foi|fomos|foram|levei|levou|levaram|estive|esteve|pasei|pasou|sai|saiu|voltei|voltou|atendid[oa]|internad[oa]|(?:tive|teve|tivemos|precisei|precisou) (?:que |de )?ir)(?: \\S+){0,2} (?:na|da|pra|para a|a|numa)) )";
+
+/**
+ * Revisao RR1: a palavra de SINTOMA que tira a agenda da emergencia (a prova
+ * positiva da agenda e nao ter nenhuma).
+ */
+const SINTOMA_NA_AGENDA =
+  "\\b(?:pasando mal|pasou mal|pasei mal|muito mal|ta mal|esta mal|nao ta bem|nao esta bem|ruim|dor|dores|doendo|febre|vomit\\w*|rox[oa]s?|respir\\w*|fra(?:co|ca)s?|gelad[oa]s?|sem reacao|inchad\\w*|tont[oa]s?|tontura|ferid[oa]s?|machuc\\w*|sangr\\w*|sangue|caiu|desmai\\w*|bateu a cabeca|acidente|convuls\\w*|infart\\w*|avc|derame|nao (?:ta |esta )?respondendo|nao responde|nao acorda|piorou|internad[oa]|hospital|upa|pronto socoro)\\b";
+
 const AGENDA_DO_PACIENTE =
   "\\b(?:remarcar|remarca|remarque|remarcacao|desmarcar|desmarca|desmarque|cancelar|cancela|cancele|cancelamento|reagendar|reagenda|reagende|reagendamento|adiar|adia|adie|(?:mudar|trocar|transferir) (?:a|o|minha|meu) (?:consulta|horario|data|dia|agendamento)|(?:nao|nem) (?:vou|vai|irei|poso|poderei|consigo|vou conseguir|vou poder|vamos poder|vamos conseguir|da pra|deu pra|dara pra|pude|consegui) (?:mais )?(?:ir|comparecer|chegar|vir|estar ai|estar la|estar presente)|(?:vou|vou ter que|vou precisar|preciso|tenho que) faltar|faltar (?:a|na) consulta" +
   // Revisao de 6eae43d (M2): o pedido de HORARIO ou de ENCAIXE ("e uma
@@ -406,13 +470,12 @@ const TERCEIRA_PESSOA = `\\b(?:ela|ele|elas|eles|dela|dele|delas|deles|nela|nele
 const TEMPO_ANTIGO =
   "\\b(?:(?:ha|faz|tem) (?:\\d+|um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|alguns|algumas|uns|umas|muitos|muitas|varios|varias|mais de \\S+) (?:anos?|meses|mes)|(?:ano|mes) pasado|(?:anos|meses) atras|em (?:19|20)\\d\\d|(?:ha|faz|tem) (?:muito |bastante )?tempo)\\b";
 
-/**
- * A excecao do procedimento (D-51: o efeito do procedimento continua
- * "sintoma", sem a marca): na MESMA mensagem do sinal, na primeira pessoa e
- * recente. O que nunca se apaga ("de repente", "acordei" e, no rosto, "de um
- * lado" e "metade") fica em semExcecaoCom, lido na rajada inteira.
- */
-const PROCEDIMENTO_NA_MESMA_MENSAGEM = `^(?!.*${TERCEIRA_PESSOA})(?!.*${TEMPO_ANTIGO})(?=.*(?:${PROCEDIMENTO_FEITO}))`;
+// Revisao RR1: a excecao do PROCEDIMENTO (o efeito do botox ou do
+// preenchimento feito, "fiz botox e minha boca ficou torta", que seguia como
+// "sintoma", sem a marca) saiu: o procedimento feito nao e prova positiva de
+// que nao e emergencia (a politica nova), e com qualquer marca de mudanca ou
+// de agora ela ja nao valia. O procedimento feito ainda tira o PEDIDO
+// estetico (ESTETICA_NA_MESMA_MENSAGEM); o sorriso de sempre continua.
 
 /**
  * Revisao R2 de d1a15f6 (A1): o OBJETO estetico, o nome do procedimento da
@@ -464,14 +527,15 @@ const AGORA_NA_BOCA_OU_NO_ROSTO =
 /**
  * Revisao de 6eae43d (M2), refeito na revisao R2 de d1a15f6 (A1): a EXCECAO
  * ESTETICA da boca e do rosto, na mesma mensagem: o pedido de procedimento
- * estetico (com o objeto) ou o sorriso de sempre. Nunca com o procedimento
- * ja feito na mensagem (esse e o efeito do procedimento, que tem regra
- * propria), a terceira pessoa ("a boca da minha mae ficou torta, quero
- * fazer preenchimento"), o agora, o lado ou a queda. "De repente", o outro
- * membro e a fala (semExcecaoCom) desfazem tambem na rajada. "Mais caido" e
- * "meio torta" sozinhos NAO sao estetica.
+ * estetico (com o objeto) ou o sorriso de sempre. O pedido nunca com o
+ * procedimento ja feito na mensagem (o efeito dele; revisao RR1: o sorriso
+ * de sempre vale mesmo depois do botox, "depois do botox minha boca fica
+ * torta quando sorrio"); nenhum dos dois com a terceira pessoa ("a boca da
+ * minha mae ficou torta, quero fazer preenchimento"), o agora, o lado ou a
+ * queda. "De repente", o outro membro e a fala (semExcecaoCom) desfazem
+ * tambem na rajada. "Mais caido" e "meio torta" sozinhos NAO sao estetica.
  */
-const ESTETICA_NA_MESMA_MENSAGEM = `^(?!.*(?:${PROCEDIMENTO_FEITO}))(?!.*${TERCEIRA_PESSOA})(?!.*${AGORA_NA_BOCA_OU_NO_ROSTO})(?:(?=.*(?:${PEDIDO_DE_PROCEDIMENTO}))|(?=.*${FICA_TORTA})(?=.*${NO_SORRISO}))`;
+const ESTETICA_NA_MESMA_MENSAGEM = `^(?!.*${TERCEIRA_PESSOA})(?!.*${AGORA_NA_BOCA_OU_NO_ROSTO})(?:(?!.*(?:${PROCEDIMENTO_FEITO}))(?=.*(?:${PEDIDO_DE_PROCEDIMENTO}))|(?=.*${FICA_TORTA})(?=.*${NO_SORRISO}))`;
 
 /**
  * Revisao de 6eae43d (A1): de quem e a boca ou o rosto ("a boca DO MEU PAI
@@ -501,6 +565,21 @@ const PERMANENTE_DEPOIS =
   "^\\s*(?:\\S+ ){0,2}?(?:de nascenca|de nascimento|desde (?:sempre|crianca|pequen[oa]|nov[oa]|que nasci|o nascimento|bebe|a infancia)|congenit\\w*|naturalmente|por natureza|de familia|genetic\\w*)\\b";
 const PERMANENTE_ANTES =
   "\\b(?:sempre (?:tive|teve|tivemos|fui|foi)|desde (?:sempre|crianca|pequen[oa]|que nasci|bebe|a infancia) (?:tenho|tive|tem|teve))\\b(?: \\S+){0,3}?\\s*$";
+
+/**
+ * Revisao RR1: o estado permanente dito com o "e", o "era" ou o "sempre"
+ * ("minha boca e torta", "meu rosto sempre foi torto", "o lado direito do
+ * meu rosto e mais caido") ficava FORA do sinal (PALAVRA_DO_MEIO_ATUAL), uma
+ * excecao lexica que nada desfazia: "minha boca e torta desde crianca e hoje
+ * ficou pior" passava. Agora o sinal casa o "torta" (ou o "caido") logo
+ * depois dele (DEPOIS_DO_PERMANENTE) e o estado permanente e a excecao de
+ * antes (PERMANENTE_DITO_ANTES), que o tempo recente, a terceira pessoa, o
+ * pedido de ajuda, a mudanca e o estado de agora desfazem.
+ */
+const COMO_E_SEMPRE =
+  "(?:e|eh|era|foi sempre|sempre(?: foi| foram| fica| ficou| esteve)?)";
+const ROSTO_OU_BOCA = "(?:boca|rosto|face|cara)";
+const PERMANENTE_DITO_ANTES = `\\b${ROSTO_OU_BOCA}${DE_QUEM} ${COMO_E_SEMPRE}\\s*$`;
 
 /**
  * O evento grave AGORA, ou a suspeita dele, antes do nome do evento ("to
@@ -596,13 +675,16 @@ const INFORMACAO_SOBRE_O_EVENTO =
 const INFORMACAO_PERTO_DO_EVENTO = `(?:${INFORMACAO_SOBRE_O_EVENTO})(?: (?!e\\b)\\S+){0,5}?\\s*$`;
 
 /**
- * Revisao R2 de d1a15f6 (M4: a regra que generalizou): o nariz ENTUPIDO ou o
- * nariz como sujeito, logo antes do sinal ("o nariz dele ta entupido e ele
- * nao respira", "meu nariz nao esta respirando direito"), nao o nariz em
- * qualquer ponto da oracao ("bateu o nariz e nao respira" e urgencia).
+ * Revisao R2 de d1a15f6 (M4: a regra que generalizou): o nariz ENTUPIDO ("o
+ * nariz dele ta entupido e ele nao respira"; e o estado de agora, revisao
+ * RR1, a desfaz) e o nariz como sujeito logo antes do sinal ("meu nariz nao
+ * esta respirando direito": lexico), nao o nariz em qualquer ponto da oracao
+ * ("bateu o nariz e nao respira" e urgencia).
  */
 const NARIZ_ENTUPIDO =
-  "\\bnariz\\b(?: \\S+){0,3}? (?:entupid[oa]|tapad[oa]|fechad[oa]|obstruid[oa]|congestionad[oa]|escorendo|sujo)\\b|\\bnariz\\b(?: (?!e\\b)\\S+)?\\s*$";
+  "\\bnariz\\b(?: \\S+){0,3}? (?:entupid[oa]|tapad[oa]|fechad[oa]|obstruid[oa]|congestionad[oa]|escorendo)\\b";
+/** O nariz como sujeito, logo antes ("meu nariz nao esta respirando"): lexico. */
+const NARIZ_COMO_SUJEITO = "(?<!\\bnariz\\b(?: (?!e\\b)\\S+)? )";
 
 /**
  * Uma palavra no meio do sinal ("minha boca FICOU torta", "a lingua DELA
@@ -620,6 +702,15 @@ const PALAVRA_DO_MEIO = "(?!(?:nao|nem|nunca|jamais|sem)\\b)\\S+ ";
  */
 const PALAVRA_DO_MEIO_ATUAL =
   "(?!(?:nao|nem|nunca|jamais|sem|e|eh|era|sempre)\\b)\\S+ ";
+
+/**
+ * Revisao RR1: o comeco do sinal logo DEPOIS do estado permanente dito
+ * ("minha boca e [meio] torta", "meu rosto sempre foi torto"): o "e" fica
+ * antes do sinal, na excecao (PERMANENTE_DITO_ANTES), que o agora desfaz.
+ */
+function depoisDoPermanente(sujeito: string): string {
+  return `(?<=\\b${sujeito}${DE_QUEM} ${COMO_E_SEMPRE} )(?:${PALAVRA_DO_MEIO_ATUAL}){0,2}?`;
+}
 
 /**
  * Quem "apagou" (desmaiou): a pessoa antes ("ela apagou do nada", "meu pai
@@ -668,12 +759,12 @@ const FIM_LOGO_DEPOIS = "(?=\\s*$|\\s*[.!?,;:]|\\s+(?:e|nem)\\b)";
 const FIGURA =
   "(?:preco|precos|valor|valores|orcamento|orcamentos|conta|boleto|fatura|parcela|parcelas|resultado|resultados|foto|fotos|noticia|surpresa|beleza|video)";
 const FIGURA_ANTES = `\\b${FIGURA}\\b(?: \\S+){0,2}? (?:me |nos )?deixou\\s*$`;
-const FIGURA_DEPOIS = `^\\s*(?:(?:com|de|quando (?:eu )?vi|ao ver|so de ver|depois que (?:eu )?vi) (?:o |a |os |as |ese |esa |este |esta |tanto |tanta |tamanho |tamanha )?${FIGURA}\\b|de (?:tanto )?rir\\b)`;
+const FIGURA_DEPOIS = `^\\s*(?:(?:com|de|quando (?:eu )?vi|ao ver|so de ver|depois que (?:eu )?vi) (?:o |a |os |as |ese |esa |este |esta |tanto |tanta |tamanho |tamanha )?${FIGURA}\\b|de (?:tanto )?rir\\b|de tao (?:lind[oa]|perfeit[oa]|bonit[oa]|maravilhos[oa]|feliz|felizes|emocionad[oa]|apaixonad[oa]|animad[oa]))`;
 const PIOROU_OU_SOCORO =
   "\\b(?:de repente|derepente|do nada|piorou|piorando|cada vez pior|nao pasa|nao para|socoro|me ajud\\w*|samu|192)\\b";
 
 const FALTA_DE_AR_DE_SEMPRE =
-  "^(?:\\s+\\S+){0,3}?\\s+(?:quando|sempre que|toda vez que) (?:eu )?(?:subo|subir|coro|corer|ando|andar|caminho|caminhar|faco (?:exercicio|esforco|academia|atividade)|pratico|treino|treinar|malho|malhar|me esforco|danco|nado|pedalo|deito|durmo|fico nervos[oa]|fico ansios[oa])\\b";
+  "^(?:\\s+\\S+){0,3}?\\s+(?:quando|sempre que|toda vez que) (?:eu )?(?:subo|subir|coro|corer|ando|andar|caminho|caminhar|faco (?:exercicio|esforco|academia|atividade)|pratico|treino|treinar|malho|malhar|me esforco|danco|nado|pedalo|deito|durmo|fico nervos[oa]|fico ansios[oa])\\b|^(?:\\s+\\S+){0,2}?\\s+(?:no calor|no frio|com (?:o )?calor|com poeira|em lugar fechado|de vez em quando)\\b";
 
 /**
  * Revisao de 6eae43d (A1): o que aconteceu com a pessoa antes de ela nao
@@ -695,6 +786,13 @@ const QUEM_DA_FAMILIA =
   "(?:(?:a |o )?(?:minha|meu) (?:mae|mamae|pai|papai|avo|vo|vovo|filha|filho|marido|esposa|esposo|mulher|irma|irmao|tia|tio|sogra|sogro|bebe|neta|neto|companheira|companheiro)|a crianca|o bebe|a bebe)";
 const ASSUNTO_DA_RECEPCAO =
   "\\b(?:confirm\\w*|avis\\w*|retorn\\w*|tent\\w* de novo|depois (?:eu )?(?:te |lhe )?(?:falo|aviso|chamo|mando|confirmo|respondo)|lig\\w*|telefon\\w*|mensag\\w*|msg|whats\\w*|zap\\w*|email|e-mail|horario|horarios|consulta|consultas|agend\\w*|remarc\\w*|desmarc\\w*|cancel\\w*|marcar|marcacao|pagamento|pix|boleto|cadastro)\\b";
+
+/**
+ * O que "caiu" na recepcao: a ligacao, o pix, o sistema ("a ligacao caiu e a
+ * moca nao ta respondendo"): lexico, na fonte (revisao RR1).
+ */
+const CAIU_NA_RECEPCAO =
+  "(?<!\\b(?:ligac\\w*|chamada|pix|pagamento|sistema|internet|sinal|conexao|rede|whats\\w*|zap\\w*|site|ap|aplicativo|telefone|celular|linha|mensagem|mensagens)\\b(?: \\S+){0,2} )";
 
 /** O objeto da mensagem ("nao responde as mensagens", "o whatsapp"). */
 const SEM_OBJETO_DE_MENSAGEM =
@@ -728,7 +826,15 @@ const NUMERO_DE_SOBRA =
  */
 const RECIPIENTE =
   "(?:cartela|cartelas|caixa|caixas|caixinha|frasco|frascos|vidro|vidros|vidrinho|pote|potes|potinho|tubo|tubos|blister|envelope|envelopes)";
-const MUITO_REMEDIO = `(?:(?:uns |umas |mais de |quase |cerca de )?${NUMERO_DE_SOBRA}|(?:a|as|o|os|um|uma|uns|umas|dois|duas|tres|meu|minha|meus|minhas|ese|esa|aquele|aquela|tod[oa] (?:o|a)|tod[oa]s (?:os|as)) ${RECIPIENTE}(?: (?:inteira|inteiras|toda|todas|inteiro|inteiros|todo|todos|cheia|cheio))?|(?:todos|todas)(?: (?:os|as))?(?: (?:meus|minhas|seus|suas))?|varios|varias|muitos|muitas|um monte de|monte de|um punhado de|uma porada de|um tanto de|um bocado de)`;
+const MUITO_REMEDIO = `(?:(?:uns |umas |mais de |quase |cerca de )?${NUMERO_DE_SOBRA}|(?:\\d+|a|as|o|os|um|uma|uns|umas|dois|duas|tres|meu|minha|meus|minhas|ese|esa|aquele|aquela|tod[oa] (?:o|a)|tod[oa]s (?:os|as)) ${RECIPIENTE}(?: (?:inteira|inteiras|toda|todas|inteiro|inteiros|todo|todos|cheia|cheio))?|varios|varias|muitos|muitas|um monte de|monte de|um punhado de|uma porada de|um tanto de|um bocado de)`;
+/**
+ * Revisao RR1: o "todos os remedios", que a receita desculpa ("tomei todos
+ * os remedios que a doutora passou"); o numero e o recipiente, nao ("minha
+ * vo tomou 8 comprimidos do remedio de pressao que o medico passou").
+ */
+const TODOS_OS_REMEDIOS =
+  "(?:todos|todas)(?: (?:os|as))?(?: (?:meus|minhas|seus|suas))?";
+const DA_RECEITA = `(?!(?: \\S+){0,4}? (?:que (?:\\S+ ){0,2}?(?:pasou|pasaram|receitou|receitaram|prescreveu|prescreveram|indicou|indicaram|mandou|mandaram|pediu|pediram|recomendou|recomendaram)|como (?:\\S+ ){0,2}?(?:pediu|mandou|orientou|receitou|pasou|indicou|prescreveu)|conforme|da receita|do tratamento|d[oa]s? (?:antibiotico\\w*|anticoncepcional\\w*|vitamina\\w*|suplemento\\w*|colageno|fero|ciclo))\\b(?!(?: \\S+){0,4}? (?:de uma (?:so )?vez|tudo junto|(?:todos|todas) junt[oa]s|pra (?:morer|sumir|nao acordar|acabar com tudo|dormir pra sempre|dormir para sempre))\\b))`;
 const REMEDIO =
   "(?:comprimido|comprimidos|remedio|remedios|pilula|pilulas|capsula|capsulas|medicamento|medicamentos|calmante|calmantes|rivotril|clonazepam|diazepam|alprazolam|frontal|lexotan|zolpidem|paracetamol|tylenol|dipirona|dorflex|antidepresivo|antidepresivos|xarope|xaropes)";
 
@@ -748,7 +854,7 @@ const UNIDADE_DE_DOSE =
  * remedio de uma vez. "De uma vez" (DE_UMA_VEZ) desfaz.
  */
 const TRATAMENTO_DE_SEMPRE =
-  "^(?:\\s+\\S+){0,4}?\\s+(?:por dia|ao dia|por semana|na semana|a cada|de \\d+ em \\d+|de (?:quatro|seis|oito|doze) em (?:quatro|seis|oito|doze)|diariamente|todo dia|todos os dias|durante (?:\\d+|um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|dez|quinze|trinta) (?:dias|semanas|meses)|conforme|como (?:\\S+ ){0,2}?(?:pediu|mandou|orientou|receitou|pasou|indicou|prescreveu)|que (?:\\S+ ){0,2}?(?:pasou|pasaram|receitou|receitaram|prescreveu|prescreveram|indicou|indicaram|mandou|mandaram|pediu|pediram|recomendou|recomendaram)|certinho|direitinho|na hora certa|no horario|nos horarios|ate o (?:fim|final)|(?:d[oa]s?|de) (?:antibiotico\\w*|anticoncepcional\\w*|vitamina\\w*|suplemento\\w*|colageno|fero|tratamento|receita|ciclo))\\b";
+  "^(?:\\s+\\S+){0,4}?\\s+(?:por dia|ao dia|por semana|na semana|a cada|de \\d+ em \\d+|de (?:quatro|seis|oito|doze) em (?:quatro|seis|oito|doze)|diariamente|todo dia|todos os dias|durante (?:\\d+|um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|dez|quinze|trinta) (?:dias|semanas|meses)|certinho|direitinho|na hora certa|no horario|nos horarios|ate o (?:fim|final))\\b";
 const DE_UMA_VEZ =
   "\\b(?:de uma (?:so )?vez|tudo junto|(?:todos|todas) junt[oa]s|pra (?:morer|sumir|nao acordar|acabar com tudo))\\b";
 const REMEDIO_EM_EXCESO = `\\b(?:[1-9]\\d+|dez|onze|doze|treze|catorze|quatorze|quinze|dezeseis|dezesete|dezoito|dezenove|vinte|trinta|quarenta|cinquenta|sesenta|setenta|oitenta|noventa|cem)(?: \\S+){0,2}? ${REMEDIO}\\b|\\b${RECIPIENTE} (?:inteir[oa]s?|tod[oa]s?|cheio|cheia)\\b|\\b(?:inteir[oa]|tod[oa]) (?:a|o) ${RECIPIENTE}\\b`;
@@ -767,10 +873,14 @@ const VENENO =
  * Revisao de 6eae43d (A1): a perda da visao. O olho com o oculos, a lente e
  * o grau ("nao estou enxergando bem de longe") e o oftalmologista sao a
  * vista de sempre, nao a perda agora. O texto da tela ("nao estou
- * enxergando o link") e a mensagem, nao a visao.
+ * enxergando o link") e a mensagem, nao a visao. Revisao RR1: o que nunca e
+ * a perda da visao, logo depois do sinal, ficou lexico, na fonte (a vista de
+ * sempre, "perdendo a visao de perto"; a figura, "fiquei cega com o flash";
+ * e a tela, "nao vejo nada no app"); o oculos e o grau, so na frase do sinal
+ * e desfeitos pelo agora (VISTA_DE_SEMPRE_NA_MENSAGEM).
  */
-const VISTA_DE_SEMPRE_DEPOIS =
-  "^\\s*(?:(?:muito |tao )?(?:bem|direito) )?(?:de (?:longe|perto)|pra ler|para ler|as letras|letra pequena|(?:sem|com) (?:o |os |meu |meus )?oculos|com a idade|com o tempo)\\b";
+const NAO_E_A_PERDA_DA_VISAO =
+  "(?!\\s*(?:(?:muito |tao )?(?:bem|direito) )?(?:de (?:longe|perto)|pra ler|para ler|as letras|letra pequena|com (?:o|a) (?:flash|luz|sol|brilho|claridade|farol|celular|tela))\\b)(?!\\s*(?:\\S+ ){0,2}?(?:no|na|nos|nas|do|da|sobre|de) (?:ap|aplicativo|site|tela|link|celular|whats\\w*|zap\\w*|insta\\w*|email|e-mail|sistema|pagina|perfil|catalogo|cardapio|agenda|mensagem|arquivo|pdf|foto|fotos|video|preco|valor|resultado|exame)\\b)";
 const VISTA_DE_SEMPRE_NA_MENSAGEM =
   "\\b(?:oftalm\\w*|oculos|lente|lentes|grau|miopia|astigmatismo|hipermetropia|presbiopia|catarata|vista cansada|exame de vista|consulta de vista)\\b";
 const TEXTO_DA_TELA =
@@ -804,7 +914,7 @@ const OVERDOSE_PERGUNTADA =
 
 /** A overdose como figura ("overdose de fofura", "de amor", "de cafe"). */
 const OVERDOSE_FIGURADA =
-  "^\\s*de (?:fofura|beleza|amor|carinho|informac\\w*|alegria|felicidade|cafe|cafeina|chocolate|doce|doces|acucar|serie|series|netflix|compras|treino|treinos|academia|foto|fotos|selfie|selfies|emoc\\w*|trabalho|estudo|estudos|filtro|filtros|maquiagem|skincare|cuidado|cuidados|perfume|gliter|brilho|rosa|fofoca|fofocas|novela|novelas|musica|musicas|meme|memes)\\b";
+  "de (?:fofura|beleza|amor|carinho|informac\\w*|alegria|felicidade|cafe|cafeina|chocolate|doce|doces|acucar|serie|series|netflix|compras|treino|treinos|academia|foto|fotos|selfie|selfies|emoc\\w*|trabalho|estudo|estudos|filtro|filtros|maquiagem|skincare|cuidado|cuidados|perfume|gliter|brilho|rosa|fofoca|fofocas|novela|novelas|musica|musicas|meme|memes)\\b";
 
 /**
  * Revisao de 6eae43d (pedido do coordenador): o "tiro" e a "facada" da
@@ -816,11 +926,12 @@ const TIRO_FIGURADO_DEPOIS =
 const LASER =
   "\\b(?:laser|depila\\w*|luz pulsada|disparo|disparos|sesao|sesoes|ultraformer|hifu|radiofrequencia|fotona)\\b";
 /**
- * Os disparos do laser contados ("levei uns 500 tiros na depilacao"): o
- * numero alto (de 10 para cima) e o laser na mesma mensagem. "Meu filho
- * levou um tiro, preciso cancelar a sessao de laser" continua urgente.
+ * Os disparos do laser ("levei uns 500 tiros na depilacao", "levei 300 tiros
+ * de laser"): o laser logo depois dos tiros (revisao RR1: lexico, so os tiros
+ * dele; "meu filho levou 10 tiros, preciso cancelar a sessao de depilacao" e
+ * urgencia).
  */
-const DISPARO_DO_LASER = `^(?=.*\\b\\d{2,} tiros\\b)(?=.*${LASER})`;
+const DISPARO_DO_LASER = `(?!(?: \\S+){0,3}? (?:de|do|da|no|na|nos|nas|com o|com a|em) (?:\\S+ )?${LASER})`;
 
 /**
  * Revisao de 6eae43d (pedido do coordenador): o PREENCHIMENTO (e a
@@ -880,21 +991,53 @@ const DOR_FORTE =
 
 /** Revisao R2 de d1a15f6 (M2): a mancha do sol, do melasma e da acne. */
 const MANCHA_DE_SEMPRE =
-  "(?! (?:\\S+ )?(?:de|do|da|pelo|pela|por causa do|por causa da) (?:sol|melasma|espinha|espinhas|acne|idade|nascenca|sarda|sardas|cravo|cravos)\\b)";
+  "(?! (?:\\S+ )?(?:de|do|da|pelo|pela|por causa do|por causa da) (?:sol|melasma|espinha|espinhas|acne|idade|nascenca|sarda|sardas|cravo|cravos|batom|maquiagem|tinta|caneta|base|coretivo|lapis|glos|chocolate|cafe|vinho|acai)\\b)";
 
 /**
- * Revisao R2 de d1a15f6 (M2): o agora que faz o preenchimento antigo contar
- * ("fiz harmonizacao ha 2 anos e hoje o labio ficou branco"). O querer de
- * agora ("agora quero tratar as manchas") nao e o agora do sintoma.
+ * Revisao RR1 (a politica nova das excecoes, decisao do coordenador): a
+ * excecao so vale com a PROVA POSITIVA de que nao e emergencia (o estado de
+ * sempre, a pergunta pura, a figura com o objeto dito, a agenda sem sintoma),
+ * so na oracao ou na frase do sinal, e QUALQUER marca de relato atual ou de
+ * evento recente a desfaz, por CATEGORIA e nao por lista de frases:
+ *  - o TEMPO RECENTE em qualquer forma ("agora", "hoje", "ha pouco", "faz 2
+ *    horas", "faz 2 dias", "essa manha", "desde sabado", "depois do almoco",
+ *    "de repente", "do nada", "acordei", "ontem", "de uns dias pra ca"). O
+ *    querer ("agora quero") e o estado bom ("hoje estou bem") nao;
+ *  - a TERCEIRA PESSOA ("minha mae", "ela") e o PEDIDO DE AJUDA ("socorro",
+ *    "me ajuda", "o que eu faco");
+ *  - o RELATO que retoma o sinal ("minha mae ta assim", "o meu ta assim",
+ *    "aconteceu comigo", "eu to igualzinha");
+ *  - na oracao do sinal, o VERBO DE MUDANCA ("entortou", "caiu", "parou",
+ *    "comecou", "ficou", "piorou", "travou", "apagou") e o ESTADO DE AGORA
+ *    ("ta", "esta", "estou", "to").
  */
-const AGORA_DA_OCLUSAO =
-  "\\b(?:agora|agorinha|agr|hoje|hj|ontem|anteontem|de repente|derepente|do nada|acordei|acordou|ha pouco|faz pouco|acabei de|acabou de)\\b(?! (?:eu )?(?:quero|queria|gostaria|vou|pretendo|penso|preciso|to pensando|estou pensando|resolvi|decidi)\\b)";
+const TEMPO_RECENTE =
+  "\\b(?:agora|agorinha|agr|agora mesmo|(?:hoje|hj)(?! (?:em dia|faz|fazem|completa|completam)\\b)|ontem|anteontem|de repente|derepente|do nada|subitamente|acordei|acordou|acordamos|acordaram|ha pouco|faz pouco|mais cedo|cedinho|desde cedo|depois do almoco|depois da janta|desde (?:ontem|anteontem|hoje|cedo|domingo|segunda|terca|quarta|quinta|sexta|sabado|o almoco|a hora do almoco|que acordei|que acordou|que sai|que saiu|que voltei|que voltou|a aplicacao|o procedimento|a cirurgia|a sesao)|(?:ha|faz|tem) (?:\\d+|um|uma|uns|umas|alguns|algumas|poucos|poucas|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|meia) (?:minuto|minutos|hora|horas|dia|dias|semana|semanas)|(?:esa|esta|nesa|nesta) (?:manha|tarde|noite|madrugada|semana)|(?:nese|neste|ese|este) (?:fim|final) de semana|(?:dias|domingo|segunda|terca|quarta|quinta|sexta|sabado|ontem|manha|semana) pra ca|(?:nas )?ultimas (?:\\S+ )?horas)\\b" +
+  "(?! (?:eu )?(?:quero|queria|gostaria|vou|pretendo|penso|preciso|poso|poderia|pode|da pra|tem como|consigo|marquei|to pensando|estou pensando|resolvi|decidi)\\b)" +
+  "(?! (?:eu )?(?:to|tou|estou|ta|esta|me sinto|fico) (?:bem|otim[oa]|melhor|normal|tranquil[oa]|curad[oa]|recuperad[oa]|de boa)\\b)";
+const PEDIDO_DE_AJUDA_AMPLO =
+  "\\b(?:socoro|me ajud\\w*|ajuda (?:aqui|por favor|pelo amor de deus)|preciso de ajuda|o que (?:eu )?(?:faco|devo fazer|fazer)|nao sei o que fazer|samu|ambulancia|192)\\b";
+/** Revisao RR1: quem nega a propria figura ("nao to brincando", "de verdade"). */
+const NEGA_A_FIGURA =
+  "\\b(?:nao (?:to|tou|estou|e|eh) (?:brincando|zoando)|nao e (?:piada|brincadeira)|brincadeira|falando serio|e serio|de verdade)\\b";
+const RELATO_ANAFORICO =
+  "\\b(?:(?:ta|tah|esta|to|tou|estou|ficou|fiquei|ficaram|estao|tava|estava) (?:asim|dese jeito|igual|igualzinh\\w*)|aconteceu comigo|ta acontecendo|esta acontecendo|comigo (?:ta|esta|e) igual|igualzinh\\w*|(?:o|a) (?:meu|minha) (?:ta|esta|ficou)|(?:to|tou|estou) com iso)\\b";
+const VERBO_DE_MUDANCA =
+  "\\b(?:entortou|entortando|entortaram|caiu|cairam|parou|pararam|parando|comecou|comecei|comecaram|comecando|ficou|fiquei|ficaram|ficando|piorou|piorando|pioraram|travou|travando|apagou|apaguei|apagando|inchou|inchando|escureceu|escurecendo|sumiu|sumindo)\\b";
+const ESTADO_ATUAL =
+  "\\b(?:ta|tah|estou|to|tou|estamos|estao|esta(?! (?:semana|noite|manha|tarde|madrugada|consulta|clinica|mensagem|vez|hora|data|sesao|unidade|pagina|foto|imagem|regiao|area|parte)\\b))\\b";
+
+/**
+ * Revisao R2 de d1a15f6 (M2), alargado na revisao RR1: o agora que faz o
+ * preenchimento antigo contar e que faz a mancha contar (o tempo recente).
+ */
+const AGORA_DA_OCLUSAO = TEMPO_RECENTE;
 
 /**
  * O preenchimento feito que CONTA (revisao R2 de d1a15f6, M2): feito e, se
  * antigo, com o agora. Lookaheads no comeco do texto.
  */
-const PREENCHIMENTO_QUE_CONTA = `(?:(?=.*(?:${PREENCHIMENTO_FEITO}))|(?=.*\\b${PREENCHIMENTO}\\b)(?=.*\\b(?:fiz|fez|apliquei|aplicou|coloquei|colocou) (?:ontem|anteontem|hoje|hj|agora|agorinha|ha pouco)\\b))(?!(?=.*${TEMPO_ANTIGO})(?!.*${AGORA_DA_OCLUSAO}))`;
+const PREENCHIMENTO_QUE_CONTA = `(?:(?=.*(?:${PREENCHIMENTO_FEITO}))|(?=.*\\b${PREENCHIMENTO}\\b)(?=.*\\b(?:fiz|fez|apliquei|aplicou|coloquei|colocou) (?:ontem|anteontem|hoje|hj|agora|agorinha|ha pouco)\\b))(?!(?=.*${TEMPO_ANTIGO})(?!.*(?:${AGORA_DA_OCLUSAO}|${VERBO_DE_MUDANCA}|${ESTADO_ATUAL})))`;
 
 /**
  * A HISTORIA de outra pessoa (revisao R2 de d1a15f6, M2): quem conta o que
@@ -962,16 +1105,19 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     nome: "falta_de_ar",
     tipo: "fisica",
     fonte: `\\b(?:falta(?: d[ei])?|faltando|faltou)(?: o)? ar\\b${NAO_E_O_AR_DE_RESPIRAR}`,
-    excecaoAntes: FIGURA_ANTES,
-    excecaoDepois: `${FALTA_DE_AR_DE_SEMPRE}|${FIGURA_DEPOIS}`,
+    figuraAntes: FIGURA_ANTES,
+    figuraDepois: FIGURA_DEPOIS,
+    excecaoDepois: FALTA_DE_AR_DE_SEMPRE,
     semExcecaoCom: PIOROU_OU_SOCORO,
   },
   {
     nome: "sem_ar",
     tipo: "fisica",
-    fonte: `\\b(?:sem|perdi o|perdendo o) ar\\b${NAO_E_O_AR_DE_RESPIRAR}${PERGUNTA_DO_LUGAR}`,
-    excecaoAntes: `${LUGAR_SEM_AR}|${FIGURA_ANTES}`,
-    excecaoDepois: `${FALTA_DE_AR_DE_SEMPRE}|${FIGURA_DEPOIS}`,
+    // Revisao RR1: o lugar sem ar ("a sala ta sem ar") e lexico, na fonte.
+    fonte: `${LUGAR_SEM_AR}\\b(?:sem|perdi o|perdendo o) ar\\b${NAO_E_O_AR_DE_RESPIRAR}${PERGUNTA_DO_LUGAR}`,
+    figuraAntes: FIGURA_ANTES,
+    figuraDepois: FIGURA_DEPOIS,
+    excecaoDepois: FALTA_DE_AR_DE_SEMPRE,
     semExcecaoCom: PIOROU_OU_SOCORO,
   },
   {
@@ -981,8 +1127,9 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     nome: "sem_folego",
     tipo: "fisica",
     fonte: "\\b(?:sem|falta d[ei]|faltando|perdi o|perdendo o) folego\\b",
-    excecaoAntes: FIGURA_ANTES,
-    excecaoDepois: `^\\s*de (?:tanto|rir|felicidade|emocao|alegria|ansiedade)\\b|${FALTA_DE_AR_DE_SEMPRE}|${FIGURA_DEPOIS}`,
+    figuraAntes: FIGURA_ANTES,
+    figuraDepois: `^\\s*de (?:tanto|rir|felicidade|emocao|alegria|ansiedade)\\b|${FIGURA_DEPOIS}`,
+    excecaoDepois: FALTA_DE_AR_DE_SEMPRE,
     semExcecaoCom: PIOROU_OU_SOCORO,
   },
   {
@@ -991,8 +1138,8 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     fonte:
       // Revisao R2 de d1a15f6 (A3): "n consigo respirar", "naum", "nao
       // consigo respira".
-      `\\b(?:${NAO} (?:consigo|consegui|conseguia|consegue|conseguimos|to conseguindo|tou conseguindo|estou conseguindo|ta conseguindo|esta conseguindo|estava conseguindo|tava conseguindo)|sem conseguir) (?:mais )?respirar?\\b`,
-    excecaoNaMensagem: NARIZ_COM_PROCEDIMENTO,
+      `\\b(?:${NAO} (?:consigo|consegui|conseguia|consegue|conseguimos|to conseguindo|tou conseguindo|estou conseguindo|ta conseguindo|esta conseguindo|estava conseguindo|tava conseguindo)|sem conseguir) (?:mais )?(?:respirar?|puxar o ar|pegar ar|tomar ar)\\b`,
+    excecaoNaFrase: NARIZ_COM_PROCEDIMENTO,
   },
   {
     nome: "dificuldade_para_respirar",
@@ -1000,7 +1147,7 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     fonte:
       "\\bdificuldades? (?:(?:de|di|para|pra|pa|em|pro) )?respirar?\\b|\\bdificuldade respiratoria\\b|\\brespirando com dificuldade\\b",
     // Revisao de 30/10/2026: o nariz com a rinoplastia na mesma mensagem.
-    excecaoNaMensagem: NARIZ_COM_PROCEDIMENTO,
+    excecaoNaFrase: NARIZ_COM_PROCEDIMENTO,
     excecaoDepois: FALTA_DE_AR_DE_SEMPRE,
     semExcecaoCom: PIOROU_OU_SOCORO,
   },
@@ -1019,7 +1166,7 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     nome: "nao_respira",
     tipo: "fisica",
     fonte:
-      `\\b${NAO} respira\\b(?! (?:mais )?(?:direito |bem |muito bem )?(?:pelo|pela|com o|com a|por um|de um) (?:nariz|narina|narinas|lado do nariz)\\b)|` +
+      `${NARIZ_COMO_SUJEITO}\\b${NAO} respira\\b(?! (?:mais )?(?:direito |bem |muito bem )?(?:pelo|pela|com o|com a|por um|de um) (?:nariz|narina|narinas|lado do nariz)\\b)|` +
       "\\b(?:ficou|fiquei|ta|tah|esta|to|tou|estou|tava|estava) sem respirar\\b(?! de (?:tanto|rir|susto|emocao|medo|ansiedade|nervos\\w*)\\b)",
     excecaoAntes: NARIZ_ENTUPIDO,
   },
@@ -1030,7 +1177,7 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // "peso do peito" de "tirei um peso do peito", o alivio).
     nome: "dor_no_peito",
     tipo: "fisica",
-    fonte: `\\b(?:dor|dores|dorzinha|aperto|apertos|queimacao|queimor|pontada|pontadas|presao|presoes)(?: ${REFORCO_DA_DOR})* (?:(?:no|do|em|nese|neste|aqui no|bem no)(?: meu)?|(?:no|do) (?:lado (?:esquerdo|direito)|meio|centro) do) (?:peito|peitu|peto)\\b|\\bpeso(?: ${REFORCO_DA_DOR})* (?:no|nese|neste|aqui no|bem no)(?: meu)? peito\\b|\\bpeito (?:(?:ta|esta|todo|muito|bem|meio|super|tao|ficou|fica) )*(?:doendo|apertad[oa]|queimando|ardendo)\\b`,
+    fonte: `\\b(?:dor|dores|dorzinha|aperto|apertos|queimacao|queimor|pontada|pontadas|presao|presoes)(?: ${REFORCO_DA_DOR})* (?:(?:no|do|em|nese|neste|aqui no|bem no)(?: meu)?|(?:no|do) (?:lado (?:esquerdo|direito)|meio|centro) do) (?:peito|peitu|peto)\\b|\\bpeso(?: ${REFORCO_DA_DOR})* (?:no|nese|neste|aqui no|bem no)(?: meu)? peito\\b|\\bpeito (?:(?:ta|esta|todo|muito|bem|meio|super|tao|ficou|fica) )*(?:doendo|apertad[oa]|queimando|ardendo)\\b|\\b(?:dor|aperto|presao|peso)(?: \\S+){0,2}? (?:esmagando|apertando|queimando|rasgando|furando) (?:o |meu )?peito\\b`,
   },
   {
     // Revisao de 6eae43d (A1, lacuna): a dor que vai para o braco, a
@@ -1051,7 +1198,7 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // infartou") e a pergunta ("botox pode causar infarto?") nao contam.
     nome: "infarto",
     tipo: "fisica",
-    fonte: `${ANTES_DO_EVENTO}(?:${INFARTO})\\b|${eventoComOAgora(INFARTO)}|\\b(?:infartando|enfartando|infatando|enfatando)\\b|${passadoComOAgora("infartou|enfartou|infartei|enfartei")}`,
+    fonte: `${ANTES_DO_EVENTO}(?:${INFARTO})\\b|${eventoComOAgora(INFARTO)}|\\b(?:infartando|enfartando|infatando|enfatando|infartano|enfartano|infatano)\\b|${passadoComOAgora("infartou|enfartou|infartei|enfartei")}`,
     excecaoAntes: INFORMACAO_PERTO_DO_EVENTO,
   },
   {
@@ -1062,7 +1209,7 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // entupido tambem nao.
     nome: "parada_cardiaca",
     tipo: "fisica",
-    fonte: `${ANTES_DO_EVENTO}${PARADA}\\b|\\bem ${PARADA}\\b|${eventoComOAgora(PARADA)}|\\b(?:parou|parando) de respirar\\b|\\b(?:nao|nem) (?:ta|esta|tava|estava) (?:mais )?respirando\\b|\\b(?:nao|nem) respira mais\\b`,
+    fonte: `${ANTES_DO_EVENTO}${PARADA}\\b|\\bem ${PARADA}\\b|${eventoComOAgora(PARADA)}|\\b(?:parou|parando) de respirar\\b|${NARIZ_COMO_SUJEITO}\\b${NAO} (?:ta|esta|tava|estava) (?:mais )?respirando\\b|${NARIZ_COMO_SUJEITO}\\b${NAO} respira mais\\b`,
     excecaoAntes: `${INFORMACAO_PERTO_DO_EVENTO}|${NARIZ_ENTUPIDO}`,
   },
   // ---- desmaio, consciencia e convulsao -----------------------------------
@@ -1074,17 +1221,21 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // agora"; a historia, "ja tive desmaio", continua de fora). O "quase"
     // ("quase desmaiei quando vi a conta kkk") nao conta, salvo com o mal
     // estar, a tontura, o agora ou o gerundio ("to quase desmaiando").
-    fonte: `\\bdesmai(?:ei|ou|u|ando|aram|amos)\\b|\\bdesmai(?:ad|d)[oa]s?\\b|\\b(?:teve|tive|deu|dando|tendo) (?:um |uns )?desmaios?\\b|(?<=\\b${QUEM_APAGOU} )desmaio\\b|\\bdesmaio (?:agora|agr|agorinha|aqui|do nada|de repente|derepente)\\b`,
-    excecaoAntes: "\\bquase\\s*$",
-    semExcecaoCom:
-      "\\b(?:agora|agr|agorinha|tont[oa]s?|tontura|pasando mal|pasei mal|pasou mal|ainda|de novo|socoro|me ajud\\w*|sem ar|falta de ar|dor no peito|desmaiando)\\b",
+    // Revisao RR1: o "quase" so com a figura dita ("quase desmaiei quando vi
+    // a conta", "de emocao"); o "eu desmaio" e o habito ("eu desmaio quando
+    // vejo agulha"), nao a grafia do "desmaiou".
+    fonte: `\\bdesmai(?:ei|ou|u|ando|aram|amos)\\b|\\bdesmai(?:ad|d)[oa]s?\\b|\\b(?:teve|tive|deu|dando|tendo) (?:um |uns )?desmaios?\\b|(?<=\\b(?!eu\\b)${QUEM_APAGOU} )desmaio\\b|\\bdesmaio (?:agora|agr|agorinha|aqui|do nada|de repente|derepente)\\b`,
+    figuraAntes: "\\bquase\\s*$",
+    semExcecaoCom: `\\b(?:tont[oa]s?|tontura|pasando mal|pasei mal|pasou mal|ainda|de novo|sem ar|falta de ar|dor no peito|desmaiando)\\b|^(?!.*\\b(?:quando (?:eu )?vi|ao ver|so de ver|de emocao|de felicidade|de susto|de vergonha|de rir|${FIGURA})\\b)`,
   },
   {
     // Revisao de 30/10/2026 (lacuna): "ela apagou do nada", "meu pai
     // apagou". Com objeto ("apaguei a mensagem") ou o sono, nao.
     nome: "apagou",
     tipo: "fisica",
-    fonte: `\\b${QUEM_APAGOU} (?:${PALAVRA_DO_MEIO})?(?:apagou|apaguei)\\b${APAGOU_SEM_OBJETO}|\\b(?:apagou|apaguei)(?: \\S+)? (?:do nada|de repente|derepente|e cai|e caiu|completamente|de vez)\\b`,
+    // Revisao RR1: o objeto que apagou ("o celular apagou do nada", "a luz
+    // apagou de repente") e lexico.
+    fonte: `\\b${QUEM_APAGOU} (?:${PALAVRA_DO_MEIO})?(?:apagou|apaguei)\\b${APAGOU_SEM_OBJETO}|(?<!\\b(?:celular|cel|telefone|luz|luzes|tela|tv|televisao|computador|notebok|pc|ap|aplicativo|site|sistema|internet|wifi|energia|lampada|fogo|vela|chama|maquina|caro|moto|foto|fotos|mensagem|mensagens|tudo)\\b(?: \\S+){0,2} )\\b(?:apagou|apaguei)(?: \\S+)? (?:do nada|de repente|derepente|e cai|e caiu|completamente|de vez)\\b`,
   },
   {
     nome: "perdeu_os_sentidos",
@@ -1098,7 +1249,7 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // nao acorda cedo") nao conta.
     nome: "nao_acorda",
     tipo: "fisica",
-    fonte: `\\b${NAO} (?:acorda|acordou|ta acordando|esta acordando|quer acordar|consegue acordar|consigo acordar|conseguimos acordar|conseguem acordar|consegui acordar)\\b(?! (?:cedo|antes|de manha|a tempo|na hora|no horario|sozinh\\w*|com (?:o )?despertador|(?:pra|para) (?:ir|trabalhar|escola|aula|a escola|a aula))\\b)|\\b(?:nao|nem) (?:reage|reagiu|ta reagindo|esta reagindo)(?=\\s*$|\\s*[.!?,;:]|\\s+(?:e|mais|a nada|de jeito nenhum|quando)\\b)`,
+    fonte: `\\b${NAO} (?:acorda|acordou|ta acordando|esta acordando|quer acordar|consegue acordar|consigo acordar|conseguimos acordar|conseguem acordar|consegui acordar)\\b(?! (?:nem )?(?:cedo|antes|de manha|a tempo|na hora|no horario|sozinh\\w*|com (?:o )?despertador|(?:pra|para) (?:ir|trabalhar|escola|aula|a escola|a aula))\\b)|(?<!\\b(?:site|ap|aplicativo|sistema|botao|tela|link|celular|computador|pagina|internet)\\b(?: \\S+){0,2} )\\b(?:nao|nem) (?:reage|reagiu|ta reagindo|esta reagindo)(?=\\s*$|\\s*[.!?,;:]|\\s+(?:e|mais|a nada|de jeito nenhum|quando)\\b)`,
   },
   {
     // Revisao de 6eae43d (A1, lacuna): quem nao responde depois do que
@@ -1110,11 +1261,7 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // nao contam.
     nome: "nao_responde",
     tipo: "fisica",
-    fonte: `\\b${O_QUE_ACONTECEU}(?: \\S+){0,3}?(?:,? e|,) (?:\\S+ ){0,2}?${NAO} (?:(?:ta|tah|esta|tava|estava) )?(?:respondendo|responde|reage|reagindo)\\b${SEM_OBJETO_DE_MENSAGEM}|\\b${O_QUE_ACONTECEU}\\b(?: \\S+){0,3}? (?:(?:ta|tah|esta|ficou|fica|e) )?sem (?:responder|reagir|reacao)\\b${SEM_OBJETO_DE_MENSAGEM}|\\b${NAO} (?:(?:ta|tah|esta|tava|estava) )?(?:respondendo|responde|reage|reagindo) (?:mais )?(?:a nada|a estimulos?|aos estimulos|quando (?:eu |a gente )?(?:chamo|chama|chamamos|chamei))\\b`,
-    // O que "caiu" na recepcao: a ligacao, o pix, o sistema ("a ligacao
-    // caiu e a moca nao ta respondendo").
-    excecaoAntes:
-      "\\b(?:ligac\\w*|chamada|pix|pagamento|sistema|internet|sinal|conexao|rede|whats\\w*|zap\\w*|site|ap|aplicativo|telefone|celular|linha|mensagem|mensagens)\\b(?: \\S+){0,2}?\\s*$",
+    fonte: `${CAIU_NA_RECEPCAO}\\b${O_QUE_ACONTECEU}(?: \\S+){0,3}?(?:,? e|,) (?:\\S+ ){0,2}?${NAO} (?:(?:ta|tah|esta|tava|estava) )?(?:respondendo|responde|reage|reagindo)\\b${SEM_OBJETO_DE_MENSAGEM}|${CAIU_NA_RECEPCAO}\\b${O_QUE_ACONTECEU}\\b(?: \\S+){0,3}? (?:(?:ta|tah|esta|ficou|fica|e) )?sem (?:responder|reagir|reacao)\\b${SEM_OBJETO_DE_MENSAGEM}|\\b${NAO} (?:(?:ta|tah|esta|tava|estava) )?(?:respondendo|responde|reage|reagindo) (?:mais )?(?:a nada|a estimulos?|aos estimulos|quando (?:eu |a gente )?(?:chamo|chama|chamamos|chamei))\\b`,
   },
   {
     // Revisao de 6eae43d (A1, lacuna): a pessoa da familia que nao responde,
@@ -1125,8 +1272,11 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // "desmaiou"), o socorro e o pedido de ajuda devolvem a urgencia.
     nome: "familia_nao_responde",
     tipo: "fisica",
-    fonte: `\\b${QUEM_DA_FAMILIA}(?: (?!(?:mas|porem|so|que|nao|nem)\\b)\\S+){0,3}? (?:nao|nem) (?:(?:ta|tah|esta|tava|estava) )?(?:respondendo|responde)(?: mais)?${FIM_LOGO_DEPOIS}`,
-    excecaoNaMensagem: ASSUNTO_DA_RECEPCAO,
+    // Revisao RR1: onde a pessoa esta e lexico ("minha filha nao responde,
+    // ta na escola", "deve ter ficado sem bateria"); o assunto da recepcao
+    // e a excecao da frase (o estado de agora e a terceira pessoa a desfazem).
+    fonte: `\\b${QUEM_DA_FAMILIA}(?: (?!(?:mas|porem|so|que|nao|nem)\\b)\\S+){0,3}? (?:nao|nem|n) (?:(?:ta|tah|esta|tava|estava) )?(?:respondendo|responde)(?: mais)?${FIM_LOGO_DEPOIS}(?![,.]? (?:\\S+ ){0,3}?(?:na escola|no trabalho|trabalhando|na aula|no banho|dirigindo|viajando|no onibus|no metro|sem bateria|sem sinal|sem internet|sem credito|no culto|na igreja|na academia|na faculdade)\\b)`,
+    excecaoNaFrase: ASSUNTO_DA_RECEPCAO,
     semExcecaoCom: `\\b${O_QUE_ACONTECEU}\\b|${PEDIDO_DE_AJUDA}|${INICIO_SUBITO}`,
   },
   {
@@ -1137,15 +1287,12 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // ("meu cabelo ta morrendo") sao a estetica.
     nome: "morrendo",
     tipo: "fisica",
-    fonte: `\\bmorendo\\b${EXAGERO_DE_MORRER}${MORRENDO_DE_DOR}`,
-    // Revisao R2 de d1a15f6: o sujeito colado ao sinal (antes valia em
-    // qualquer ponto da oracao: "meu celular ta morrendo e minha mae ta
-    // morrendo" perdia a mae).
-    excecaoAntes:
-      "\\b(?:celular|cel|bateria|carga|planta|plantas|flor|flores|cabelo|cabelos|fio|fios|cacho|cachos|raiz|raizes|ponta|pontas|cilio|cilios|sobrancelha|sobrancelhas|pele|unha|unhas)\\b(?: \\S+){0,2}?\\s*$",
-    // Revisao R2 de d1a15f6 (alarme falso seguro): a figura do preco ("to
-    // morrendo com esse preco") e o riso ("to morrendo kkkkk").
-    excecaoDepois: `^\\s*(?:com|de) (?:ese|esa|este|esta|tanto|tanta|o|a|os|as|meu|minha) ${FIGURA}\\b|^[\\s,.!]*(?:k[ak]*|(?:ha)+h?|(?:rs)+|lol)\\b`,
+    // Revisao R2 de d1a15f6, refeito na revisao RR1: o objeto colado ao
+    // sinal e lexico ("meu celular ta morrendo"); a figura do preco, do sol
+    // e do riso ("to morrendo com esse preco", "to morrendo kkkkk") e a
+    // figura, que o relato e o "nao to brincando" desfazem.
+    fonte: `(?<!\\b(?:celular|cel|bateria|carga|planta|plantas|flor|flores|cabelo|cabelos|fio|fios|cacho|cachos|raiz|raizes|ponta|pontas|cilio|cilios|sobrancelha|sobrancelhas|pele|unha|unhas)\\b(?: \\S+){0,2} )\\bmorendo\\b${EXAGERO_DE_MORRER}${MORRENDO_DE_DOR}`,
+    figuraDepois: `^\\s*(?:(?:aqui|ja) )?(?:com|de) (?:ese|esa|este|esta|tanto|tanta|o|a|os|as|meu|minha) (?:${FIGURA}|sol|frio|calor|chuva|transito|fila|espera|demora)\\b|^[\\s,.!]*(?:k[ak]*|(?:ha)+h?|(?:rs)+|lol)\\b`,
     semExcecaoCom:
       "\\b(?:socoro|me ajud\\w*|preciso de ajuda|samu|ambulancia|192)\\b",
   },
@@ -1158,47 +1305,46 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     fonte: `\\bco[mn]vul?[sc](?:ao|oes|ionando|ionano|ionou|ionei|ionaram|iva|ivo|ivas|ivos)\\b|${ANTES_DO_EVENTO}${CRISE_EPILEPTICA}\\b|${eventoComOAgora(CRISE_EPILEPTICA)}`,
     // O historico e o remedio sao assunto clinico, nao a crise agora.
     excecaoAntes:
-      "\\b(?:historico|historia|antecedente|antecedentes|ja tive|ja teve|ja tivemos|ja tinha|remedio|remedios|medicamento|medicamentos|medicacao|tratamento|tomo|toma|tomava|controle)\\b(?:\\s+(?:de|da|do|pra|para|pela|pelo|contra|com|uma|um|anti|alguma|algum|as|os))*\\s*$",
+      "\\b(?:historico|historia|antecedente|antecedentes|ja tive|ja teve|ja tivemos|ja tinha|remedio|remedios|medicamento|medicamentos|medicacao|tratamento|tomo|toma|tomava|controle|tem|tenho|temos)\\b(?:\\s+(?:de|da|do|pra|para|pela|pelo|contra|com|uma|um|anti|alguma|algum|as|os|crise|crises))*\\s*$",
   },
   // ---- rosto, fala e um lado do corpo (sinais de AVC) ----------------------
   {
     // A boca torta (e, revisao de 30/10/2026, a boca que caiu de um lado).
-    // Depois do botox, da aplicacao ou do preenchimento, na MESMA mensagem,
-    // na primeira pessoa e recente ("fiz botox e minha boca ficou torta") e
-    // efeito do procedimento: continua "sintoma", sem a marca (D-51, como a
-    // palpebra caida). O estado permanente ("minha boca e torta", "tenho a
-    // boca torta de nascenca") e a estetica. "De repente", "do nada" e
-    // "acordei" desfazem as duas excecoes. Revisao de 6eae43d: de quem e a
+    // Revisao RR1: o efeito do procedimento ("fiz botox e minha boca ficou
+    // torta", antes "sintoma", sem a marca) e urgencia: o procedimento feito
+    // nao e prova positiva. O estado permanente ("minha boca e torta",
+    // "tenho a boca torta de nascenca") e a estetica. "De repente", "do
+    // nada" e "acordei" desfazem as excecoes. Revisao de 6eae43d: de quem e a
     // boca ("a boca do meu pai ficou torta", A1); a excecao estetica na
     // mesma mensagem (o pedido de procedimento, a idade, o sorriso: "minha
     // boca fica torta quando eu sorrio", M2); e a queixa de outro membro, da
-    // fala ou a dor de cabeca forte, na rajada, desfaz o procedimento e a
-    // estetica ("fiz botox ontem e minha boca ficou torta e meu braco ta
-    // dormente", M1).
+    // fala ou a dor de cabeca forte, na rajada, desfaz a estetica ("minha
+    // boca fica torta quando eu sorrio e meu braco ta fraco", M1).
     nome: "boca_torta",
     tipo: "fisica",
-    fonte: `\\bboca${DE_QUEM} (?:${PALAVRA_DO_MEIO_ATUAL}){0,2}?(?:tort[oa]s?|entortou|entortando|entortada)\\b|\\bboca${DE_QUEM} (?:${PALAVRA_DO_MEIO_ATUAL}){0,2}?(?:caiu|caindo|caida|caido)(?: \\S+){0,3}? (?:de um lado|so de um lado|do lado (?:esquerdo|direito)|pela metade|pro lado|pra um lado|para (?:o|um) lado|de repente|derepente)\\b`,
-    excecaoAntes: PERMANENTE_ANTES,
+    fonte: `\\bboca${DE_QUEM} (?:${PALAVRA_DO_MEIO_ATUAL}){0,3}?(?:tort[oa]s?|entortou|entortando|entortada)\\b|\\bboca${DE_QUEM} (?:${PALAVRA_DO_MEIO_ATUAL}){0,2}?(?:caiu|caindo|caida|caido)(?: \\S+){0,3}? (?:de um lado|so de um lado|do lado (?:esquerdo|direito)|pela metade|pro lado|pra um lado|para (?:o|um) lado|de repente|derepente)\\b|\\bboca (?:do|de um) lado(?: (?:esquerdo|direito))?(?: \\S+){0,4}? (?:caiu|caindo|caida|caido|entortou)\\b|${depoisDoPermanente("boca")}tort[oa]s?\\b`,
+    excecaoAntes: `${PERMANENTE_ANTES}|${PERMANENTE_DITO_ANTES}`,
     excecaoDepois: PERMANENTE_DEPOIS,
-    excecaoNaMensagem: `${PROCEDIMENTO_NA_MESMA_MENSAGEM}|${ESTETICA_NA_MESMA_MENSAGEM}`,
+    excecaoNaFrase: ESTETICA_NA_MESMA_MENSAGEM,
     semExcecaoCom: `${INICIO_SUBITO}|${OUTRO_SINAL_DE_AVC}`,
   },
   {
     // Revisao de 28/10/2026: o rosto "caido" e "caindo" e a flacidez da
     // estetica ("papada e rosto caindo", "meu rosto caiu depois que
     // emagreci", "rosto caido, quanto custa?"). Aqui, o rosto TORTO (ou que
-    // entortou). O procedimento recente da propria pessoa, na mesma
-    // mensagem ("fiz harmonizacao e meu rosto ficou torto"), e efeito dele,
-    // como a boca torta: "sintoma". Revisao de 30/10/2026: nunca com "de um
+    // entortou). Revisao RR1: o efeito do procedimento ("fiz harmonizacao e
+    // meu rosto ficou torto", antes "sintoma") e urgencia, como na boca
+    // torta. Revisao de 30/10/2026: nunca com "de um
     // lado", "metade" ou "de repente"; o estado permanente ("meu rosto e
     // torto") e a estetica. Revisao de 6eae43d: de quem e o rosto, a excecao
     // estetica e o que a desfaz, como na boca torta (A1, M1 e M2).
     nome: "rosto_torto",
     tipo: "fisica",
-    fonte: `\\b(?:rosto|face)${DE_QUEM} (?:${PALAVRA_DO_MEIO_ATUAL}){0,2}?(?:tort[oa]s?|entortou|entortando|entortado|entortada)\\b`,
-    excecaoAntes: PERMANENTE_ANTES,
+    // Revisao RR1: "a mae ta com a cara torta do nada".
+    fonte: `\\b(?:rosto|face|(?:a|minha|sua|da) cara)${DE_QUEM} (?:${PALAVRA_DO_MEIO_ATUAL}){0,3}?(?:tort[oa]s?|entortou|entortando|entortado|entortada)\\b|${depoisDoPermanente("(?:rosto|face|(?:a|minha|sua|da) cara)")}tort[oa]s?\\b`,
+    excecaoAntes: `${PERMANENTE_ANTES}|${PERMANENTE_DITO_ANTES}`,
     excecaoDepois: PERMANENTE_DEPOIS,
-    excecaoNaMensagem: `${PROCEDIMENTO_NA_MESMA_MENSAGEM}|${ESTETICA_NA_MESMA_MENSAGEM}`,
+    excecaoNaFrase: ESTETICA_NA_MESMA_MENSAGEM,
     semExcecaoCom: `${INICIO_SUBITO}|${UM_LADO_DO_ROSTO}|${OUTRO_SINAL_DE_AVC}`,
   },
   {
@@ -1218,8 +1364,15 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
       // anestesia do dentista).
       `\\b(?:lado|metade|banda) (?:esquerd[oa] |direit[oa] )?d[oa] (?:meu |minha |seu |sua )?(?:rosto|face|cara)${DE_QUEM} (?:${PALAVRA_DO_MEIO_ATUAL}){0,2}?(?:caiu|caido|caida|caindo|paralisad[oa]|paralizad[oa]|travad[oa]|mole)\\b` +
       `|\\b(?:rosto|face)${DE_QUEM} (?:${PALAVRA_DO_MEIO_ATUAL}){0,2}?(?:caiu|caido|caida|caindo|paralisad[oa]|paralizad[oa]|travad[oa])(?: \\S+){0,3}? (?:de um lado|so de um lado|do lado (?:esquerdo|direito)|pela metade|pro lado|pra um lado|de repente|derepente)\\b` +
-      `|\\b(?:de repente|derepente)(?: \\S+){0,4}? (?:rosto|face) (?:${PALAVRA_DO_MEIO_ATUAL}){0,2}?(?:caiu|caido|caida|caindo)\\b`,
-    excecaoNaMensagem: ESTETICA_NA_MESMA_MENSAGEM,
+      `|\\b(?:de repente|derepente)(?: \\S+){0,4}? (?:rosto|face) (?:${PALAVRA_DO_MEIO_ATUAL}){0,2}?(?:caiu|caido|caida|caindo)\\b` +
+      // Revisao RR1: a metade do rosto dormente com a fala ("meu tio ta com
+      // a metade da cara dormente e nao fala").
+      "|\\b(?:lado|metade|banda) (?:esquerd[oa] |direit[oa] )?d[oa] (?:\\S+ )?(?:rosto|face|cara)\\b(?: \\S+){0,3}? dormente\\b(?=(?: e|,) (?:\\S+ )?(?:(?:nao|n|nem) (?:fala|consegue falar|mexe)|a fala))" +
+      // Revisao RR1: o estado permanente dito ("o lado direito do meu rosto
+      // e mais caido") casa, com a excecao de antes que o agora desfaz.
+      `|${depoisDoPermanente("(?:lado|metade|banda) (?:esquerd[oa] |direit[oa] )?d[oa] (?:meu |minha |seu |sua )?(?:rosto|face|cara)")}(?:caido|caida|paralisad[oa]|paralizad[oa]|travad[oa]|mole)\\b`,
+    excecaoAntes: PERMANENTE_DITO_ANTES,
+    excecaoNaFrase: ESTETICA_NA_MESMA_MENSAGEM,
     semExcecaoCom: `${INICIO_SUBITO}|${OUTRO_SINAL_DE_AVC}`,
   },
   {
@@ -1239,7 +1392,7 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     nome: "fala_enrolada",
     tipo: "fisica",
     // Revisao R2 de d1a15f6 (A3): "a fala embolada", "a fala ta estranha".
-    fonte: `\\b(?:fala|falando) (?:${PALAVRA_DO_MEIO})?(?:enrolad[ao]|arastad[ao]|embolad[ao]|estranh[ao]|esquisit[ao])\\b`,
+    fonte: `\\b(?:fala|falando) (?:${PALAVRA_DO_MEIO})?(?:enrolad[ao]|arastad[ao]|embolad[ao]|estranh[ao]|esquisit[ao])\\b|\\benrolando (?:a lingua|a fala|pra falar|para falar|as palavras)\\b`,
   },
   {
     // A propria pessoa ("nao consigo falar"). So no fim da oracao: "nao
@@ -1257,8 +1410,12 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     fonte: `\\b${NAO} (?:consigo|to conseguindo|tou conseguindo|estou conseguindo) (?:mais )?falar?(?! direito)${FIM_LOGO_DEPOIS}`,
     excecaoAntes:
       "\\b(?:lig\\w*|telefon\\w*|chamada|chamadas|audio|whats|zap|zapzap|atend\\w*|recepc\\w*|secretaria|clinica|ninguem|voces|vcs|vc|doutor\\w*|dra|dr|medic\\w*)\\b",
+    // Revisao RR1: o telefone na oracao anterior da mesma frase ("tentei
+    // ligar varias vezes, nao consigo falar"); quem esta ocupado e a
+    // rouquidao na frase ("nao consigo falar, estou numa reuniao", "to
+    // rouca, nao consigo falar").
     excecaoNaOracaoAnterior: TELEFONE_OU_ATENDIMENTO,
-    excecaoNaMensagem: OCUPADO,
+    excecaoNaFrase: `${OCUPADO}|\\b(?:rouc[oa]|afonic[oa]|sem voz)\\b`,
     semExcecaoCom: `${PESSOA_NO_TELEFONE}|${INICIO_SUBITO}|${QUEIXA_DO_CORPO}`,
   },
   {
@@ -1276,9 +1433,9 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // nao consegue falar") fica de fora.
     nome: "nao_consegue_falar",
     tipo: "fisica",
-    fonte: `\\b${NAO} (?:consegue|conseguia|ta conseguindo|esta conseguindo) (?:mais )?falar?(?! direito)${FIM_LOGO_DEPOIS}`,
-    excecaoAntes:
-      "\\b(?:recepc\\w*|secretaria|atendente|clinica|consultorio|voces|vcs)\\b",
+    // Revisao RR1: a clinica como sujeito e lexica ("a sua secretaria nao
+    // consegue falar comigo").
+    fonte: `(?<!\\b(?:recepc\\w*|secretaria|atendente|clinica|consultorio|voces|vcs)\\b(?: \\S+){0,3} )\\b${NAO} (?:consegue|conseguia|ta conseguindo|esta conseguindo) (?:mais )?falar?(?! direito)${FIM_LOGO_DEPOIS}`,
     semExcecaoCom: `${PESSOA_NO_TELEFONE}|${INICIO_SUBITO}|${QUEIXA_DO_CORPO}`,
   },
   {
@@ -1304,7 +1461,7 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // de sempre (o braco que dormiu) e segue pelo portao.
     nome: "braco_ou_perna_fraco",
     tipo: "fisica",
-    fonte: `\\b${DE_REPENTE}(?: \\S+){0,6}? ${MEMBRO} (?:${PALAVRA_DO_MEIO}){0,4}?${FRACO}\\b|\\b${MEMBRO} (?:${PALAVRA_DO_MEIO}){0,6}?${FRACO}(?: \\S+){0,3}? ${DE_REPENTE}\\b|\\b(?:braco|bracos) (?:e|ou) (?:\\S+ )?(?:perna|pernas)\\b(?: (?!(?:nao|nem|nunca|jamais)\\b)\\S+){0,6}? ${FRACO}\\b|\\b(?:perna|pernas) (?:e|ou) (?:\\S+ )?(?:braco|bracos)\\b(?: (?!(?:nao|nem|nunca|jamais)\\b)\\S+){0,6}? ${FRACO}\\b|\\bperd(?:i|eu|endo|emos) (?:a )?forca d[oa]s? (?:\\S+ )?(?:braco|bracos|perna|pernas|mao|maos|lado)\\b`,
+    fonte: `\\b${DE_REPENTE}(?: \\S+){0,6}? ${MEMBRO} (?:${PALAVRA_DO_MEIO}){0,4}?${FRACO}\\b|\\b${MEMBRO} (?:${PALAVRA_DO_MEIO}){0,6}?${FRACO}(?: \\S+){0,3}? ${DE_REPENTE}\\b|\\b(?:braco|bracos) (?:e|ou) (?:\\S+ )?(?:perna|pernas)\\b(?: (?!(?:nao|nem|nunca|jamais)\\b)\\S+){0,6}? ${FRACO}\\b|\\b(?:perna|pernas) (?:e|ou) (?:\\S+ )?(?:braco|bracos)\\b(?: (?!(?:nao|nem|nunca|jamais)\\b)\\S+){0,6}? ${FRACO}\\b|\\bperd(?:i|eu|endo|emos) (?:a )?forca d[oa]s? (?:\\S+ )?(?:braco|bracos|perna|pernas|mao|maos|lado)\\b|\\b(?:braco|perna|mao) (?:esquerd[oa]|direit[oa]) (?:\\S+ ){0,2}?(?:mole|fraco|fraca|dormente|paralisad[oa]|sem forca|caido|caida)\\b`,
   },
   {
     // Revisao de 28/10/2026 (lacuna): o AVC ou o derrame AGORA, ou a
@@ -1314,10 +1471,9 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // o infarto); o derrame no olho tambem nao.
     nome: "avc",
     tipo: "fisica",
-    fonte: `${ANTES_DO_EVENTO}(?:${AVC})\\b|${eventoComOAgora(AVC)}`,
+    // Revisao RR1: o derrame no olho e lexico (na fonte).
+    fonte: `(?:${ANTES_DO_EVENTO}(?:${AVC})\\b|${eventoComOAgora(AVC)})(?!\\s*(?:(?:no|nos|na|nas) (?:olho|olhos|vista|pele|rosto|joelho|ombro)|ocular|pleural|articular)\\b)`,
     excecaoAntes: INFORMACAO_PERTO_DO_EVENTO,
-    excecaoDepois:
-      "^\\s*(?:(?:no|nos|na|nas) (?:olho|olhos|vista|pele|rosto|joelho|ombro)|ocular|pleural|articular)\\b",
   },
   // ---- visao (revisao de 6eae43d) ------------------------------------------
   {
@@ -1334,21 +1490,22 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     nome: "perdendo_a_visao",
     tipo: "fisica",
     fonte:
-      "\\b(?:perdi|perdeu|perdendo|perdemos|perderam) (?:a|minha|sua|toda a|parte da) (?:visao|vista)\\b" +
+      "(?:\\b(?:perdi|perdeu|perdendo|perdemos|perderam) (?:a|minha|sua|toda a|parte da) (?:visao|vista)\\b" +
       "|\\b(?:fiquei|ficou|ficaram|ficando) (?:\\S+ )?ceg[oa]s?\\b(?! de (?:raiva|amor|paixao|ciume|odio|sono|cansaco)\\b)" +
       "|\\bceg[oa]s? (?:de|do|da) (?:um|uma|1|o|a) (?:olho|vista|lado)\\b" +
-      "|\\b(?:vista|visao|vistas) (?:\\S+ ){0,2}?(?:escureceu|escurecendo|escureceram|(?:ficou|ficando|ta|esta) (?:tod[oa] |meio |bem )?(?:escura|preta|apagada)|apagou|apagando|sumiu|sumindo)\\b" +
+      `|\\b(?:vista|visao|vistas)${DE_QUEM} (?:\\S+ ){0,2}?(?:escureceu|escurecendo|escureceram|(?:ficou|ficando|ta|esta) (?:tod[oa] |meio |bem )?(?:escura|preta|apagada)|apagou|apagando|sumiu|sumindo)\\b` +
       "|\\b(?:escureceu|escurecendo|escureceram|deu uma escurecida)(?: \\S+){0,2}? (?:a |minha |na |da )?(?:vista|visao)\\b" +
       // Revisao R2 de d1a15f6 (A3): "to vendo tudo preto", "meu olho
       // direito apagou".
       "|\\b(?:to|tou|estou|ta|esta|fiquei|ficou|comecei a|comecou a) (?:ver|vendo) tudo (?:preto|escuro|apagado)\\b" +
-      "|\\bolho (?:direito |esquerdo )?(?:apagou|escureceu|ficou cego|ficou escuro|parou de enxergar)\\b",
+      "|\\bolho (?:direito |esquerdo )?(?:apagou|escureceu|ficou cego|ficou escuro|parou de enxergar)\\b)" +
+      NAO_E_A_PERDA_DA_VISAO,
     excecaoAntes: "\\b(?:sou|era|nasci|nasceu)\\b(?: \\S+){0,2}?\\s*$",
-    excecaoDepois: `${VISTA_DE_SEMPRE_DEPOIS}|${PERMANENTE_DEPOIS}`,
+    excecaoDepois: PERMANENTE_DEPOIS,
     // Revisao R2 de d1a15f6 (M2): a historia de outra pessoa com a pergunta
     // de informacao ("conheco uma moca que ficou cega depois de
     // preenchimento, isso e comum?") nao conta.
-    excecaoNaMensagem: `^(?!.*${UM_OLHO})(?=.*${VISTA_DE_SEMPRE_NA_MENSAGEM})|^${HISTORIA_DE_INFORMACAO}`,
+    excecaoNaFrase: `^(?!.*${UM_OLHO})(?=.*${VISTA_DE_SEMPRE_NA_MENSAGEM})|^${HISTORIA_DE_INFORMACAO}`,
     semExcecaoCom: `^(?!${HISTORIA_DE_INFORMACAO})(?=.*(?:${INICIO_SUBITO}|${PROCEDIMENTO_OU_CIRURGIA_FEITOS}|${VISAO_DE_AGORA}))`,
   },
   {
@@ -1360,7 +1517,7 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     nome: "nao_enxerga",
     tipo: "fisica",
     fonte:
-      `\\b${NAO} (?:(?:to|tou|estou|ta|tah|esta|tava|estava) )?enxergando\\b${TEXTO_DA_TELA}|\\b${NAO} (?:consigo|consegue|to conseguindo|tou conseguindo|estou conseguindo|ta conseguindo|esta conseguindo|consegui|conseguiu) (?:mais )?enxergar?\\b${TEXTO_DA_TELA}|\\b${NAO} enxergo (?:mais )?nada\\b|\\b(?:parei|parou|deixei|deixou) de enxergar\\b|\\b(?:fiquei|ficou) sem enxergar\\b` +
+      `(?:\\b${NAO} (?:(?:to|tou|estou|ta|tah|esta|tava|estava) )?enxergando\\b${TEXTO_DA_TELA}|\\b${NAO} (?:consigo|consegue|to conseguindo|tou conseguindo|estou conseguindo|ta conseguindo|esta conseguindo|consegui|conseguiu) (?:mais )?enxergar?\\b${TEXTO_DA_TELA}|\\b${NAO} enxergo (?:mais )?nada\\b|\\b(?:parei|parou|deixei|deixou) de enxergar\\b|\\b(?:fiquei|ficou|to|tou|estou|ta|esta) sem enxergar\\b` +
       // Revisao R2 de d1a15f6 (A3): "nao enxergo direito", "nao enxergo do
       // olho direito", "nao vejo nada do olho direito", "fiquei sem ver do
       // olho esquerdo". O "nao vejo" sozinho nao ("nao vejo a hora", "nao
@@ -1368,9 +1525,10 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
       `|\\b${NAO} (?:enxergo|enxerga)\\b${TEXTO_DA_TELA}` +
       `|\\b${NAO} (?:vejo|ve|to vendo|tou vendo|estou vendo|ta vendo|esta vendo|consigo ver|consegue ver)(?: mais)? nada\\b` +
       `|\\b${NAO} (?:enxergo|enxerga|vejo|ve|to vendo|tou vendo|estou vendo|ta vendo|esta vendo|consigo ver|consegue ver|to enxergando|estou enxergando)(?: mais)?(?: nada)? (?:do|de um|de uma|com o|com um|pelo|pela) (?:olho|olhos|vista|lado)\\b` +
-      "|\\b(?:fiquei|ficou|to|tou|estou|ta|esta) sem (?:ver|enxergar) (?:nada|do|de um|de uma|com o|pelo|pela|direito)\\b",
-    excecaoDepois: `${VISTA_DE_SEMPRE_DEPOIS}|${PERMANENTE_DEPOIS}`,
-    excecaoNaMensagem: `^(?!.*${UM_OLHO})(?=.*${VISTA_DE_SEMPRE_NA_MENSAGEM})|^${HISTORIA_DE_INFORMACAO}`,
+      "|\\b(?:fiquei|ficou|to|tou|estou|ta|esta) sem (?:ver|enxergar) (?:nada|do|de um|de uma|com o|pelo|pela|direito)\\b" +
+      `)${NAO_E_A_PERDA_DA_VISAO}`,
+    excecaoDepois: PERMANENTE_DEPOIS,
+    excecaoNaFrase: `^(?!.*${UM_OLHO})(?=.*${VISTA_DE_SEMPRE_NA_MENSAGEM})|^${HISTORIA_DE_INFORMACAO}`,
     semExcecaoCom: `^(?!${HISTORIA_DE_INFORMACAO})(?=.*(?:${INICIO_SUBITO}|${PROCEDIMENTO_OU_CIRURGIA_FEITOS}|${VISAO_DE_AGORA}))`,
   },
   // ---- a complicacao do preenchimento (revisao de 6eae43d) -----------------
@@ -1415,8 +1573,10 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // "vi no instagram", "isso e comum?") nao conta. O relato presente de
     // outra pessoa conta ("minha amiga fez preenchimento ontem e o labio ta
     // branco").
-    excecaoNaMensagem: `^(?!${PREENCHIMENTO_QUE_CONTA})|^${HISTORIA_DE_INFORMACAO}`,
-    semExcecaoCom: `^(?!${HISTORIA_DE_INFORMACAO})${PREENCHIMENTO_QUE_CONTA}`,
+    // Revisao RR1: o preenchimento feito e o REQUISITO (a leitura inteira);
+    // a historia de outra pessoa e a excecao (na frase, e o relato a desfaz).
+    requer: `^${PREENCHIMENTO_QUE_CONTA}`,
+    excecaoNaFrase: `^${HISTORIA_DE_INFORMACAO}`,
     semPergunta: true,
   },
   {
@@ -1430,8 +1590,8 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     nome: "mancha_depois_do_preenchimento",
     tipo: "fisica",
     fonte: `(?:\\b${LUGAR_DO_PREENCHIMENTO}\\b(?! (?:\\S+ )?(?:e|eh|era|sao|eram|sempre|sou|foi|fui|foram)\\b)(?: (?!(?:nao|nem|nunca|jamais|sem|eh|era|sao|eram|sempre|sou|foi|fui|foram)\\b)\\S+){0,4}? (?:manchad[oa]s?|com manchas|cheia de manchas|cheio de manchas)|(?<!\\b${NAO_E_A_PELE}(?: \\S+){0,2} )\\b(?:ficou|ficaram|ficando|ta|tah|esta|tao|estao) (?:tudo |toda |todo |meio |bem |muito )?manchad[oa]s?)\\b${MANCHA_DE_SEMPRE}`,
-    excecaoNaMensagem: `^(?!(?=.*(?:${PREENCHIMENTO_FEITO}))(?=.*${AGORA_DA_OCLUSAO}))|^${HISTORIA_DE_INFORMACAO}`,
-    semExcecaoCom: `^(?!${HISTORIA_DE_INFORMACAO})(?=.*(?:${PREENCHIMENTO_FEITO}))(?=.*${AGORA_DA_OCLUSAO})`,
+    requer: `^(?=.*(?:${PREENCHIMENTO_FEITO}))(?=.*${AGORA_DA_OCLUSAO})`,
+    excecaoNaFrase: `^${HISTORIA_DE_INFORMACAO}`,
     semPergunta: true,
   },
   // ---- alergia forte ------------------------------------------------------
@@ -1448,7 +1608,7 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     tipo: "fisica",
     // Revisao R2 de d1a15f6 (A3): "a lingua ta grossa".
     fonte: `\\b(?:garganta|lingua) (?:${PALAVRA_DO_MEIO}){0,2}?(?:inchada|inchado|inchadas|inchados|grosa|groso)\\b`,
-    excecaoNaMensagem:
+    excecaoNaFrase:
       "\\b(?:inflamad\\w*|amigdal\\w*|amidal\\w*|gripe|gripad[oa]|resfriad[oa]|dor de garganta|faringite|laringite|infecao|infecionad[oa]|pus)\\b",
   },
   {
@@ -1474,7 +1634,7 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     nome: "nao_para_de_sangrar",
     tipo: "fisica",
     fonte:
-      `\\b${NAO} (?:para|parou|ta parando|esta parando|quer parar|consigo parar|consegue parar|conseguimos parar|estanca|estancou) de sangrar?\\b|` +
+      `\\b${NAO} (?:para|parou|ta parando|esta parando|quer parar|consigo parar|consegue parar|conseguimos parar|estanca|estancou) de sangrar?\\b|\\bsangr\\w*(?: \\S+){0,5}? e ${NAO} (?:para|parou|estanca|estancou)\\b|` +
       "\\b(?:sangue|sangramento) (?:que )?(?:nao|nem) (?:para|parou|estanca|estancou)\\b",
     semAntecedente: true,
   },
@@ -1482,7 +1642,7 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     nome: "muito_sangue",
     tipo: "fisica",
     fonte:
-      "\\b(?:muito|mto|mt|bastante|tanto|um monte de) sangue\\b|\\bsangue (?:demais|pra todo lado|sem parar)\\b|\\b(?:jorando|jorou|esguichando|esguichou) sangue\\b|\\bsangue (?:jorando|esguichando)\\b",
+      "(?<!\\b(?:tirar|tira|tiram|tirou|tirei|colher|coleta|doar|doacao|doei|exame|exames)\\b(?: \\S+)? )\\b(?:muito|mto|mt|bastante|tanto|um monte de) sangue\\b|\\bsangue (?:demais|pra todo lado|sem parar)\\b|\\b(?:jorando|jorou|esguichando|esguichou) sangue\\b|\\bsangue (?:jorando|esguichando)\\b",
     semAntecedente: true,
   },
   {
@@ -1503,7 +1663,9 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // ("tomei um banho de...") e o acido da pele nao entram.
     nome: "engoliu_veneno",
     tipo: "fisica",
-    fonte: `\\b(?:engoli|engoliu|engoliram|engolindo|engolir|bebi|bebeu|beberam|bebendo|tomei|tomou|tomaram|tomando|ingeri|ingeriu|ingeriram|ingerindo|comi|comeu)(?: (?!banho\\b)\\S+){0,3}? ${VENENO}\\b`,
+    // Revisao RR1: o que so se bebe por engano ("meu filho bebeu acetona",
+    // "bebeu cloro").
+    fonte: `\\b(?:engoli|engoliu|engoliram|engolindo|engolir|bebi|bebeu|beberam|bebendo|tomei|tomou|tomaram|tomando|ingeri|ingeriu|ingeriram|ingerindo|comi|comeu)(?: (?!banho\\b)\\S+){0,3}? ${VENENO}\\b|\\b(?:bebi|bebeu|beberam|engoli|engoliu|engoliram|ingeriu)(?: \\S+){0,3}? (?:acetona|removedor|cloro|creolina|naftalina|thiner|tiner|aguaras|desengordurante|amaciante|candida|kiboa|alcol gel|alcol 70)\\b`,
   },
   // ---- ferimento grave (revisao de 6eae43d) ---------------------------------
   {
@@ -1517,15 +1679,20 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     nome: "ferimento_grave",
     tipo: "fisica",
     fonte:
-      "\\b(?:levei|levou|levaram|levamos|tomei|tomou|tomaram|acabei de levar|acabou de levar|acabei de tomar|acabou de tomar)(?: (?:um|uma|uns|umas|dois|duas|tres|varios|varias|muitos|muitas|alguns|algumas|\\d+))? (?:tiro|tiros|facada|facadas|balaco|balacos)\\b" +
+      `\\b(?:levei|levou|levaram|levamos|tomei|tomou|tomaram|acabei de levar|acabou de levar|acabei de tomar|acabou de tomar)(?: (?:um|uma|uns|umas|dois|duas|tres|varios|varias|muitos|muitas|alguns|algumas|\\d+))? (?:tiro|tiros|facada|facadas|balaco|balacos)\\b${DISPARO_DO_LASER}` +
       "|\\b(?:deram|meteram)(?: (?:um|uns|dois|tres|varios|muitos|uma|duas|varias))? (?:tiro|tiros|facada|facadas)\\b" +
       "|\\batiraram (?:nele|nela|neles|nelas|em mim|no|na|nos|nas|contra)\\b" +
       "|\\b(?:baleado|baleada|baleados|baleadas|esfaqueado|esfaqueada|esfaqueados|esfaqueadas|esfaquearam|esfaqueou)\\b" +
       "|\\b(?:atingid[oa]s?|ferid[oa]s?) (?:por|de|a|com) (?:um |uma )?(?:tiro|bala|disparo|faca|facada|arma)\\b" +
-      "|\\bbala perdida\\b|\\bferimento (?:de|por|a|com) (?:bala|tiro|faca|arma)\\b",
+      "|\\bbala perdida\\b|\\bferimento (?:de|por|a|com) (?:bala|tiro|faca|arma)\\b" +
+      // Revisao RR1: quem foi atingido no tiroteio ("teve um tiroteio aqui e
+      // meu primo foi atingido").
+      "|\\btiroteio\\b(?: \\S+){0,8}? (?:atingid[oa]s?|ferid[oa]s?|baleado|baleada)\\b|\\b(?:atingid[oa]s?|ferid[oa]s?)\\b(?: \\S+){0,4}? (?:no|num|durante o|pelo) tiroteio\\b",
+    // Revisao RR1: os disparos do laser e a figura sao lexicos, so dos tiros
+    // DELES (antes, o laser em qualquer ponto da mensagem apagava ate outro
+    // tiro: "meu irmao levou 12 tiros, cancela a sessao dele de laser").
     excecaoAntes: "\\bja\\s*$",
-    excecaoDepois: TIRO_FIGURADO_DEPOIS,
-    excecaoNaMensagem: DISPARO_DO_LASER,
+    figuraDepois: TIRO_FIGURADO_DEPOIS,
   },
   // ---- revisao R2 de d1a15f6 (A3): os sinais novos para o RT ---------------
   {
@@ -1544,9 +1711,7 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     nome: "pilha_engolida",
     tipo: "fisica",
     fonte:
-      "\\b(?:engoli|engoliu|engoliram|engolindo|engolir|comeu|ingeriu|colocou na boca|botou na boca)(?: \\S+){0,3}? (?:uma |um |a |o |as |os )?(?:pilha|pilhas|pilhinha|bateria|baterias|bateriazinha)\\b",
-    excecaoAntes:
-      "\\b(?:celular|telefone|cel|aparelho|controle|relogio|caro|notebok|computador|maquina)\\b(?: \\S+){0,2}?\\s*$",
+      "(?<!\\b(?:celular|telefone|cel|aparelho|controle|relogio|caro|notebok|computador|maquina)\\b(?: \\S+){0,2} )\\b(?:engoli|engoliu|engoliram|engolindo|engolir|comeu|ingeriu|colocou na boca|botou na boca)(?: \\S+){0,3}? (?:uma |um |a |o |as |os )?(?:pilha|pilhas|pilhinha|bateria|baterias|bateriazinha)\\b",
   },
   {
     // O atropelamento ("meu vizinho foi atropelado", "atropelaram meu
@@ -1557,6 +1722,8 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     fonte:
       "\\b(?:atropelad[oa]s?|atropelamento|atropelaram)\\b|\\b(?:caro|moto|onibus|caminhao|bicicleta|bike|van|uber|trem)(?: \\S+){0,2}? atropelou\\b",
     excecaoAntes: "\\bquase(?: (?:fui|foi|fomos|foram|ser|sendo))?\\s*$",
+    // Revisao RR1: "fui atropelada pelo preco kkk".
+    figuraDepois: `^\\s*(?:pel[oa]|com o|com a|de) (?:${FIGURA}|trabalho|semana|rotina|vida|prazo|prazos)\\b`,
   },
   {
     // A picada ou a mordida de cobra, escorpiao ou aranha ("fui picado por
@@ -1565,7 +1732,10 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // picada por escorpiao") nao conta.
     nome: "picada_de_animal",
     tipo: "fisica",
-    fonte: `\\b(?:picad[oa]s?|mordid[oa]s?|feroad[oa]s?|picada|picadas|mordida|mordidas|feroada)\\b(?: \\S+){0,3}? (?:por |de |pela |pelo |uma |um )?(?:\\S+ )?${BICHO_PECONHENTO}\\b|\\b${BICHO_PECONHENTO} (?:\\S+ ){0,2}?(?:picou|mordeu|ferou)\\b`,
+    // Revisao RR1: o bicho dito como quem picou ("picado POR cobra", "picada
+    // DE escorpiao", "a cobra mordeu"); "a picada doi? cobra a anestesia?" e
+    // o verbo cobrar.
+    fonte: `\\b(?:picad[oa]s?|mordid[oa]s?|feroad[oa]s?|picada|picadas|mordida|mordidas|feroada)\\b (?:(?:por|de|pela|pelo|numa|num)(?: uma| um| esa| ese| a| o)?|de uma|de um) (?:\\S+ )?${BICHO_PECONHENTO}\\b|\\b(?:uma|um|a|o|esa|ese|uns|umas) ${BICHO_PECONHENTO} (?:\\S+ ){0,2}?(?:picou|mordeu|ferou|me picou|me mordeu)\\b`,
     excecaoAntes: "\\bja(?: (?:fui|foi|fomos|foram))?\\s*$",
   },
   {
@@ -1584,8 +1754,7 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     tipo: "fisica",
     fonte:
       "\\b(?:vazamento de gas|gas (?:de cozinha |do fogao |de botijao |do botijao |de casa )?(?:ta |esta )?(?:vazando|vazou|escapando)|cheiro (?:forte )?de gas)\\b",
-    excecaoNaMensagem: `^(?!.*${SINTOMA_DO_GAS})`,
-    semExcecaoCom: SINTOMA_DO_GAS,
+    requer: SINTOMA_DO_GAS,
   },
   {
     // A gestante que sangra ("to gravida e to sangrando", "to de 8 meses e
@@ -1594,12 +1763,13 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // ("na minha primeira gravidez tive sangramento") nao contam.
     nome: "gestante_sangrando",
     tipo: "fisica",
+    // Revisao RR1: o sangue do exame, da doacao e da gengiva nao e o sinal
+    // ("fiz exame de sangue, to gravida", "quando sai o resultado do sangue?").
     fonte:
-      "\\b(?:sangrando|sangrou|sangramento|sangramentos|sangue|hemoragia|perdendo (?:muito )?(?:sangue|liquido)|bolsa (?:estourou|rompeu))\\b",
-    excecaoAntes:
-      "\\b(?:gengiva|gengivas|dente|dentes|exame|exames|doar|doacao|doei|tirar|tirei|colher|colhi|coleta)\\b(?: \\S+){0,3}?\\s*$",
-    excecaoNaMensagem: `^(?!.*${GESTACAO})|^(?=.*${GESTACAO_PASADA})`,
-    semExcecaoCom: `^(?!.*${GESTACAO_PASADA})(?=.*${GESTACAO})`,
+      "(?<!\\b(?:gengiva|gengivas|dente|dentes|exame|exames|doar|doacao|doei|tirar|tirei|colher|colhi|coleta|resultado|resultados)\\b(?: \\S+){0,3} )\\b(?:sangrando|sangrou|sangramento|sangramentos|sangue|hemoragia|perdendo (?:muito )?(?:sangue|liquido)|bolsa (?:estourou|rompeu))\\b",
+    requer: GESTACAO,
+    // A gravidez que ja passou, na frase (o relato de agora a desfaz).
+    excecaoNaFrase: GESTACAO_PASADA,
     semAntecedente: true,
   },
   {
@@ -1616,6 +1786,10 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     tipo: "fisica",
     fonte:
       "\\b(?:vomit\\w*|golfando|golfou|tosind\\w*|tosiu|tosi|cuspind\\w*|cuspiu|cuspi|escar\\w*)\\b(?: \\S+){0,2}? sangu\\w*|\\bvomito (?:com|de) sangue\\b|\\bsangue (?:no|na) (?:vomito|tose|cuspe)\\b",
+    // Revisao RR1: o sangue da escova e da gengiva ("escovei os dentes e
+    // cuspi sangue").
+    excecaoAntes:
+      "\\b(?:escov\\w*|dente|dentes|gengiva|gengivas|fio dental)\\b(?: \\S+){0,4}?\\s*$",
   },
   {
     // Os labios roxos ("meu bebe ta com os labios roxos", "a boca dela ta
@@ -1625,9 +1799,19 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // nao contam.
     nome: "labios_roxos",
     tipo: "fisica",
+    // Revisao RR1: o batom, a tinta, a fruta e o frio como causa sao lexicos
+    // (na fonte); o estado de sempre ("meus labios sao roxos", "ficam
+    // arroxeados naturalmente") e a excecao; a cirurgia ou o procedimento
+    // NUNCA apagam (a cianose depois da cirurgia e urgencia; o roxinho do
+    // preenchimento nao e "roxo").
     fonte:
-      "\\b(?:labio|labios|boca|boquinha|beico|beicos)\\b(?: (?!(?:nao|nem|nunca|e|eh|era|sempre)\\b)\\S+){0,3}? (?:rox[oa]s?|azul|azuis|azulad[oa]s?|aroxead[oa]s?|roxead[oa]s?)\\b",
-    excecaoNaMensagem: `\\b(?:batom|batons|glos|lapis|maquiagem|tinta|pintei|pintar|pinta|tatuagem|micropigmentacao|corante|acai|jabuticaba|amora|uva|vinho|picole|sorvete|hematoma|(?:de|do|com o|com|por causa do|pelo) frio)\\b|${PREENCHIMENTO_FEITO}|${PROCEDIMENTO_OU_CIRURGIA_FEITOS}`,
+      "\\b(?:labio|labios|boca|boquinha|beico|beicos)\\b(?: (?!(?:nao|nem|nunca|e|eh|era|sao|eram|sempre)\\b)\\S+){0,3}? (?:rox[oa]s?|azul|azuis|azulad[oa]s?|aroxead[oa]s?|roxead[oa]s?)\\b(?!(?: \\S+){0,2}? (?:de|do|da|com o|com|por causa do|pelo|pela) (?:batom|batons|glos|lapis|maquiagem|tinta|corante|acai|jabuticaba|amora|uva|vinho|picole|sorvete|frio)\\b)(?! onde\\b)" +
+      // Revisao RR1: o bebe roxo ("meu bebe de 3 meses ta roxinho e mole").
+      "|\\b(?:bebe|nenem|recem nascid[oa])\\b(?: \\S+){0,4}? (?:rox[oa]|roxinh[oa]|azul|azulad[oa]|aroxead[oa])\\b",
+    excecaoDepois:
+      "^\\s*(?:\\S+ )?(?:naturalmente|por natureza|de nascenca|desde (?:sempre|crianca|pequen[oa])|de familia)\\b",
+    excecaoAntes:
+      "\\b(?:sempre (?:foram|fora|tive|teve)|(?:meus|minhas|os|as) (?:labios|boca) (?:sao|eram|ficam))\\b(?: \\S+){0,2}?\\s*$|\\b(?:batom|batons|pintei|pintar)\\b(?: \\S+){0,4}?\\s*$",
   },
   {
     // A confusao de repente ("minha mae de repente nao fala coisa com
@@ -1641,7 +1825,10 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
   {
     nome: "emergencia",
     tipo: "fisica",
-    fonte: "\\bemergencias?\\b",
+    // Revisao RR1: o NOME de uma coisa e lexico, na fonte ("contato de
+    // emergencia", "kit de emergencia", "consulta de emergencia",
+    // "atendimento de urgencia e emergencia", o lugar "fui na emergencia").
+    fonte: `${NOME_COM_EMERGENCIA}\\bemergencias?\\b`,
     // O nome de uma coisa ("contato de emergencia", "saida de emergencia"),
     // a hipotese ("em caso de emergencia", "se for emergencia") e, na
     // revisao de 28/10/2026, a agenda ("encaixe de emergencia", "consulta
@@ -1651,13 +1838,10 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // atendimento de urgencia e emergencia?") e o lugar onde ja esteve ("fui
     // na emergencia ontem") nao sao a emergencia agora.
     excecaoAntes:
-      "\\b(?:(?:contato|contatos|telefone|telefones|numero|numeros|fone|celular|whats|whatsap|ramal|pesoa|saida|saidas|kit|luz|luzes|freio|botao|fundo|porta|portas|escada|plantao|servico|servicos) (?:de|da|pra|para)|(?:em|no|num) caso de(?: urgencia (?:e|ou))?|se (?:for|tiver|houver|der|acontecer|precisar)(?: de)?(?: uma| um| alguma| algum)?)\\s*$" +
-      "|\\b(?:encaixe|encaixes|encaixar|encaixa|horario|horarios|vaga|vagas|agenda|agendamento|marcacao|consulta|consultas|retorno) (?:de|em|para|pra)\\s*$" +
+      "\\b(?:(?:em|no|num) caso de(?: urgencia (?:e|ou))?|se (?:for|tiver|houver|der|acontecer|precisar)(?: de)?(?: uma| um| alguma| algum)?)\\s*$" +
       "|\\b(?:surgiu|surgiram|apareceu|aconteceu|tive|teve|tivemos|tinha|houve|deu|rolou|ocoreu)(?: (?:uma|um|umas|uns|outra|outro))?(?: (?:pequena|pequeno|grande|baita))?\\s*$" +
       "|\\b(?:atende|atendem|faz|fazem|cobre|cobrem|aceita|aceitam|oferece|oferecem|trabalha|trabalham)(?: \\S+){0,2}?\\s*$" +
-      "|\\b(?:voces|vcs|vc|clinica|consultorio) (?:tem|teriam)(?: \\S+){0,2}?\\s*$" +
-      "|\\b(?:fui|foi|fomos|foram|levei|levou|levaram|estive|esteve|pasei|pasou|sai|saiu|voltei|voltou|atendid[oa]|internad[oa]|(?:tive|teve|tivemos|precisei|precisou) (?:que |de )?ir) (?:\\S+ ){0,2}?(?:na|da|pra|para a|a|numa)\\s*$" +
-      "|\\b(?:atendimento|atendimentos|pronto atendimento|plantao|plantoes|servico|servicos|setor|ala|equipe|medico|medicos|hospital) (?:de|da|em|para|pra) (?:urgencia (?:e|ou) )?\\s*$",
+      "|\\b(?:voces|vcs|vc|clinica|consultorio) (?:tem|teriam)(?: \\S+){0,2}?\\s*$",
     // Depois: "emergencia familiar", "no trabalho", "do hospital" e o "nao"
     // que fecha a oracao ("e emergencia nao", "emergencia nenhuma"). Revisao
     // de 6eae43d (M2): a "emergencia estetica" (e "de beleza", "capilar").
@@ -1667,12 +1851,15 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // ("tenho uma emergencia, preciso remarcar"), sem o pedido de ajuda.
     // Revisao de 6eae43d (M2): tambem o pedido de horario ou de encaixe ("e
     // uma emergencia! Preciso de um horario pra amanha").
-    excecaoNaMensagem: AGENDA_DO_PACIENTE,
+    excecaoNaFrase: AGENDA_DO_PACIENTE,
     // O pedido de ajuda, em qualquer mensagem da rajada, desfaz. Revisao R2
     // de d1a15f6: tambem quem esta passando mal e o acidente ("aconteceu uma
     // emergencia, minha mae ta passando mal"; "e uma emergencia, minha filha
     // caiu, pode marcar um encaixe?").
-    semExcecaoCom: `${PEDIDO_DE_AJUDA}|\\b(?:pasando mal|pasou mal|pasei mal|nao ta bem|nao esta bem|caiu|desmai\\w*|machuc\\w*|sangr\\w*|bateu a cabeca|acidente|convuls\\w*|nao respira)\\b`,
+    // Revisao RR1: a agenda so vale SEM nenhuma palavra de sintoma na
+    // leitura ("tenho uma emergencia, preciso desmarcar, minha filha ta
+    // passando muito mal").
+    semExcecaoCom: `${PEDIDO_DE_AJUDA}|${SINTOMA_NA_AGENDA}`,
   },
   {
     nome: "chamar_o_socorro",
@@ -1689,7 +1876,9 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     tipo: "risco_de_vida",
     // Revisao R2 de d1a15f6 (A3): "kero morrer", "qro morrer", "quero
     // morre" (sem o "r": "more" na leitura).
-    fonte: `\\b(?:quero|qro|kero|kro|qero|queria|qria|keria|kria|qeria|quis|vontade de|to querendo|tou querendo|estou querendo|so quero|so queria|prefiro|preferia|desejo|pensando em|penso em|pensei em)(?: (?:muito|tanto|mesmo|so|logo))? (?:morer|more)\\b${EXAGERO_DE_MORRER}`,
+    // Revisao RR1: tambem a outra pessoa ("minha filha disse que quer
+    // morrer") e o "todo dia" ("eu penso em morrer todo dia").
+    fonte: `\\b(?:quero|qro|kero|kro|qero|quer|queria|qria|keria|kria|qeria|quis|vontade de|to querendo|tou querendo|estou querendo|so quero|so queria|prefiro|preferia|desejo|pensando em|penso em|pensei em|pensa em)(?: (?:muito|tanto|mesmo|so|logo))? (?:morer|more)\\b${EXAGERO_DE_MORRER}`,
   },
   {
     // Revisao de 28/10/2026 (lacuna): "melhor eu morrer", "seria melhor se
@@ -1739,8 +1928,9 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // Revisao R2 de d1a15f6 (A3): sem o "r" depois do verbo que pede o
     // infinitivo ("vou me mata", "to pensando em me mata").
     fonte: `\\bme mat(?:ar|o|ando)\\b${EXAGERO_DE_MATAR}|(?<=\\b${AUXILIAR_DO_INFINITIVO} )me mata\\b${EXAGERO_DE_MATAR}`,
-    excecaoAntes: `\\b(?:(?:(?:o|a|os|as) )?(?:meu|minha|meus|minhas|seu|sua|seus|suas|teu|tua|nosa|noso|nosas|nosos|ese|esa|eses|esas|este|esta|estes|estas|aquele|aquela|o|a|os|as) )?${SUJEITO_DE_EXAGERO}(?: (?!eu\\b)[a-z]+){0,3} (?:(?:ainda|asim|quase|ja) )?(?:vai|vao|ta|tao|esta|estao|vive)\\s*$`,
-    excecaoDepois: `^\\s*(?:com|de) (?:ese|esa|eses|esas|este|esta|tanto|tanta|tantos|tantas|o|a|os|as|seu|sua|meu|minha) ${SUJEITO_DE_EXAGERO}\\b`,
+    figuraAntes: `\\b(?:(?:(?:o|a|os|as) )?(?:meu|minha|meus|minhas|seu|sua|seus|suas|teu|tua|nosa|noso|nosas|nosos|ese|esa|eses|esas|este|esta|estes|estas|aquele|aquela|o|a|os|as) )?${SUJEITO_DE_EXAGERO}(?: (?!eu\\b)[a-z]+){0,3} (?:(?:ainda|asim|quase|ja) )?(?:vai|vao|ta|tao|esta|estao|vive)\\s*$`,
+    figuraDepois: `^\\s*(?:com|de) (?:ese|esa|eses|esas|este|esta|tanto|tanta|tantos|tantas|o|a|os|as|seu|sua|meu|minha) ${SUJEITO_DE_EXAGERO}\\b`,
+    excecaoAntes: `\\b(?:(?:(?:o|a|os|as) )?(?:meu|minha|meus|minhas|seu|sua|seus|suas|teu|tua|nosa|noso|nosas|nosos|ese|esa|aquele|aquela|o|a) )?${PESOA_DO_EXAGERO}(?: (?!eu\\b)[a-z]+){0,3} (?:(?:ainda|asim|quase|ja) )?(?:vai|vao|ta|tao|esta|estao|vive)\\s*$`,
     // Revisao R2 de d1a15f6 (M4): a ameaca de verdade e o pedido de ajuda, em
     // qualquer mensagem da rajada, desfazem o exagero ("meu marido disse que
     // vai me matar", "meu marido vai me matar, ele ta com uma faca").
@@ -1762,7 +1952,11 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     tipo: "risco_de_vida",
     fonte: `\\bme cort(?:ar|ando|o|a)\\b${CORTE_DO_CORPO}`,
     excecaoAntes:
-      "(?:\\b(?:medic\\w*|doutor\\w*|dra|dr|cirurgi\\w*|equipe|voces|vcs|eles|elas)\\b(?: \\S+){0,2}? (?:vai|vao|iria|iriam|precisa|precisam|tem que|teria que)|\\b(?:vao|iriam|precisam))\\s*$",
+      "(?:\\b(?:medic\\w*|doutor\\w*|dra|dr|cirurgi\\w*|equipe|voces|vcs|eles|elas|depilador\\w*|manicure|cabeleireir\\w*|barbeir\\w*|esteticista)\\b(?: \\S+){0,2}? (?:vai|vao|iria|iriam|precisa|precisam|tem que|teria que)|\\b(?:vao|iriam|precisam))\\s*$",
+    // Revisao RR1: a lamina e a depilacao na frase ("tenho medo de me cortar
+    // com a gilete").
+    excecaoNaFrase:
+      "\\b(?:lamina|gilete|navalha|barbeador|depil\\w*|raspar|tesoura|alicate|unha|unhas|cuticula)\\b",
   },
   {
     // A outra pessoa ("ela disse que vai se cortar", "ele ta se cortando"):
@@ -1796,8 +1990,10 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // viver", "kero", "nao aguento mais essa vida", "nao vale a pena viver"
     // e "nao tenho mais forcas pra viver".
     fonte:
-      `\\b(?:${NAO} (?:quero|qro|kero|queria|qria|aguento|consigo|tenho (?:mais )?vontade de|vejo sentido em)|sem vontade de|cansad[oa] de) (?:mais )?viver?\\b|\\b(?:vida|viver) nao (?:tem|faz) (?:mais )?sentido\\b` +
-      `|\\b${NAO} aguento mais (?:esa|esta|a|minha) vida\\b` +
+      `\\b(?:${NAO} (?:quero|qro|kero|queria|qria|aguento|consigo|tenho (?:mais )?vontade de|vejo sentido em)|sem vontade de|cansad[oa] de) (?:mais )?(?:viver?|existir)\\b|\\b(?:vida|viver) nao (?:tem|faz) (?:mais )?sentido\\b` +
+      // Revisao RR1: a vida de alguma coisa e a figura ("nao aguento mais
+      // essa vida de dieta").
+      `|\\b${NAO} aguento mais (?:esa|esta|a|minha) vida\\b(?! de (?:dieta|academia|regime|trabalho|estudante|solteir[oa]|casad[oa]|mae|pobre|cansaco|faculdade|plantao|rotina|coreria|transito|treino|concurseir[oa]|blogueir[oa])\\b)` +
       `|\\b${NAO} vale (?:mais )?a pena (?:viver|continuar vivendo|continuar viv[oa]|estar viv[oa])\\b|\\b(?:viver|a vida|minha vida) nao vale (?:mais )?a pena\\b` +
       `|\\b${NAO} tenho (?:mais )?(?:forca|forcas|animo|vontade) (?:pra|para|de) (?:viver|continuar)\\b`,
   },
@@ -1817,7 +2013,7 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     nome: "enforcar",
     tipo: "risco_de_vida",
     fonte:
-      "\\b(?:me|se) enforc(?:ar|o|a|ou|ando|aria|ei|aram)\\b|\\benforcamento\\b",
+      "(?<!\\b(?:cinta|gola|roupa|sutia|calca|colar|gravata|cinto|mascara|faixa|malha|blusa|camisa|camiseta|vestido|body|meia|bermuda|short|alca|elastico|corente|corentinha|coleira|gargantilha|lenco|cachecol|modelador\\w*)\\b(?: \\S+){0,3} )\\b(?:me|se) enforc(?:ar|o|a|ou|ando|aria|ei|aram)\\b|\\benforcamento\\b",
   },
   {
     // "Vou me jogar do predio", "vou pular da ponte", "ela ameacou se jogar
@@ -1829,7 +2025,10 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     tipo: "risco_de_vida",
     fonte:
       `\\b(?:pular|pulo|pulando|pulei|pulou|pularia|me jogar|me jogo|me jogando|me joguei|se jogar|se joga|se jogou|se jogando|se jogaria|me atirar|me atiro|se atirar|se atirou|(?<=\\b${AUXILIAR_DO_INFINITIVO} )(?:pula|me joga|me atira|se atira))(?: \\S+){0,3}? (?:d[oa]s?|de uma?|de cima d[oa]|do alto d[oa]|pela|pelo) (?:\\S+ )?(?:ponte|predio|predios|janela|janelas|sacada|varanda|viaduto|teraco|laje|telhado|edificio|penhasco|precipicio|abismo|andar)\\b` +
-      "|\\b(?:me jogar|me jogo|me joguei|me jogando|se jogar|se joga|se jogou|se jogando|me atirar|se atirar) na frente d[oe] (?:um |uma |o |a )?(?:caro|onibus|caminhao|trem|metro|moto)\\b",
+      "|\\b(?:me jogar|me jogo|me joguei|me jogando|se jogar|se joga|se jogou|se jogando|me atirar|se atirar) na frente d[oe] (?:um |uma |o |a )?(?:caro|onibus|caminhao|trem|metro|moto)\\b" +
+      // Revisao RR1: o lugar alto e a intencao ("to na ponte agora, vou
+      // pular", "to no telhado e vou me jogar").
+      "|\\b(?:to|tou|estou|ta|esta|estamos) (?:aqui )?(?:na|no|em cima d[oa]|no alto d[oa]|na beira d[oa]) (?:ponte|telhado|laje|viaduto|janela|sacada|varanda|beirada|parapeito|teraco|predio|marquise|trilho|trilhos|linha do trem)\\b(?: \\S+){0,6}? (?:vou|vo|quero|vontade de|pensando em|pra|para) (?:pular|me jogar|me atirar|me matar|acabar com tudo|me soltar)\\b",
   },
   {
     // O remedio de uma vez, em quantidade ("tomei 20 comprimidos de
@@ -1844,7 +2043,18 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     nome: "remedio_demais",
     tipo: "risco_de_vida",
     fonte:
-      `\\b${TOMAR}(?: \\S+){0,3}? ${MUITO_REMEDIO}(?: (?!${UNIDADE_DE_DOSE}\\b)\\S+){0,3}? ${REMEDIO}\\b|\\b${TOMAR}(?: \\S+){0,2}? ${REMEDIO} (?:demais|em exceso)\\b` +
+      `\\b${TOMAR}(?: \\S+){0,3}? ${MUITO_REMEDIO}(?: (?!${UNIDADE_DE_DOSE}\\b)\\S+){0,3}? ${REMEDIO}\\b|\\b${TOMAR}(?: \\S+){0,3}? ${TODOS_OS_REMEDIOS}(?: (?!${UNIDADE_DE_DOSE}\\b)\\S+){0,3}? ${REMEDIO}\\b${DA_RECEITA}|\\b${TOMAR}(?: \\S+){0,2}? ${REMEDIO} (?:demais|em exceso)\\b` +
+      // Revisao RR1: a quantidade depois do remedio ("tomei uns calmantes ai,
+      // uns oito, nove"); as gotas aos centos ("tomei 100 gotas de
+      // rivotril"); a dose com a intencao ("tomei 200 mg de diazepam de uma
+      // vez", "40 gotas de clonazepam pra dormir pra sempre"); e a crianca
+      // que bebeu ou engoliu o remedio, ou tomou o de outra pessoa ("meu
+      // filho bebeu 50 ml de dipirona", "tomou o remedio da avo").
+      `|\\b${TOMAR}(?: \\S+){0,2}? ${REMEDIO}\\b(?: \\S+){0,2}?,? (?:uns |umas |mais de |quase )?${NUMERO_DE_SOBRA}\\b` +
+      `|\\b(?:${TOMAR}|bebi|bebeu|beberam)(?: \\S+){0,2}? [1-9]\\d{2,} (?:gotas|gotinhas)\\b` +
+      `|\\b(?:${TOMAR}|bebi|bebeu|beberam)(?: \\S+){0,3}? \\d+ ?${UNIDADE_DE_DOSE}\\b(?: \\S+){0,3}? ${REMEDIO}\\b(?: \\S+){0,4}? (?:de uma (?:so )?vez|tudo junto|pra (?:morer|sumir|nao acordar|acabar com tudo|dormir pra sempre|dormir para sempre))\\b` +
+      `|\\b(?:meu filho|minha filha|meu bebe|minha bebe|o bebe|a bebe|a crianca|o menino|a menina|meu neto|minha neta|crianca)\\b(?: \\S+){0,3}? (?:bebeu|engoliu|comeu)(?: \\S+){0,4}? ${REMEDIO}\\b` +
+      `|\\b(?:meu filho|minha filha|meu bebe|minha bebe|o bebe|a bebe|a crianca|o menino|a menina|meu neto|minha neta|crianca)\\b(?: \\S+){0,3}? tomou(?: \\S+){0,3}? ${REMEDIO}\\b(?: \\S+){0,2}? (?:d[oa] (?:vo|vovo|avo|mae|pai|irma|irmao|tia|tio)|de alguem|escondido|sem querer|que achou|que estava)\\b` +
       // Revisao R2 de d1a15f6 (M5): o recipiente ou o remedio INTEIRO ("tomei
       // a caixa inteira", "tomou o xarope inteiro") e o remedio separado para
       // tomar de uma vez ("ja separei os comprimidos pra tomar tudo de uma
@@ -1867,9 +2077,8 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // overdose").
     nome: "overdose",
     tipo: "risco_de_vida",
-    fonte: "\\bover ?-?doses?\\b|\\b(?:super|sobre)dosage(?:m|ns)\\b",
+    fonte: `(?:\\bover ?-?doses?\\b|\\b(?:super|sobre)dosage(?:m|ns)\\b)(?!\\s*${OVERDOSE_FIGURADA})`,
     excecaoAntes: OVERDOSE_PERGUNTADA,
-    excecaoDepois: OVERDOSE_FIGURADA,
   },
   {
     // "Cortei os pulsos", "vou cortar o pulso", "pulsos cortados".
@@ -1917,6 +2126,22 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     fonte:
       "\\b(?:queria|quero|preferia|prefiro|gostaria de|melhor|devia|deveria|era pra|quisera)(?: (?:eu|que eu|se eu|mesmo))? (?:nao|nunca) (?:ter|tivese) nascido\\b|\\b(?:nao|nunca) (?:devia|deveria|devese) ter nascido\\b|\\b(?:pra|para|por) que (?:eu )?nasci(?=\\s*$|\\s*[.!?,;:])",
   },
+  // ---- risco de vida: revisao RR1 ----------------------------------------
+  {
+    // A intencao de tomar o veneno ("vou tomar chumbinho", "quero tomar
+    // veneno de rato").
+    nome: "tomar_veneno",
+    tipo: "risco_de_vida",
+    fonte: `\\b(?:vou|vo|quero|qro|kero|queria|vontade de|penso em|pensando em|pensei em|to pensando em|decidi|resolvi|vai|ia) (?:tomar|beber|engolir|comer)(?: \\S+){0,2}? ${VENENO}\\b`,
+  },
+  {
+    // "Hoje e o ultimo dia", "amanha vai ser o meu ultimo dia". O ultimo dia
+    // de alguma coisa ("de aula", "da promocao") nao.
+    nome: "ultimo_dia",
+    tipo: "risco_de_vida",
+    fonte:
+      "\\b(?:hoje|amanha) (?:e|eh|vai ser|sera) (?:o )?(?:meu )?ultimo dia\\b(?! d[eoa]s? \\S+)",
+  },
   // ---- risco de vida: revisao R2 de d1a15f6 (A3 e M4) ----------------------
   {
     // "Morrer seria um alivio", "seria um alivio se eu morresse".
@@ -1930,7 +2155,9 @@ export const SINAIS_DE_EMERGENCIA: readonly SinalDeEmergencia[] = [
     // tudo isso". O "sumir de vergonha" e o "sumir do mapa" nao.
     nome: "sumir",
     tipo: "risco_de_vida",
-    fonte: `\\b(?:${QUERER}|to pensando em|tou pensando em|estou pensando em|vou|vo)(?: so)? sumir (?:pra sempre|para sempre|dese mundo|deste mundo|do mundo|de vez|e nunca mais voltar|e acabar com tudo)\\b|\\bsumir,? (?:e |pra |para )?acabar com tudo\\b`,
+    // Revisao RR1: o objeto e a viagem ("quero sumir de vez com essas
+    // olheiras", "vou sumir do mundo no feriado") nao.
+    fonte: `\\b(?:${QUERER}|to pensando em|tou pensando em|estou pensando em|vou|vo)(?: so)? sumir (?:pra sempre|para sempre|dese mundo|deste mundo|do mundo|de vez|e nunca mais voltar|e acabar com tudo)\\b(?!(?: \\S+){0,2}? (?:com|no|na|nos|nas|do|da|nese|nesa|neste|nesta|ate|de|ese|esa) (?:\\S+ )?(?:olheiras?|manchas?|rugas?|espinhas?|acne|estrias?|celulite|gordura|gordurinhas?|papada|flacidez|pelos?|feriado|feriadao|ferias|fim de semana|final de semana|grupo|redes?|insta\\w*|face\\w*|whats\\w*|zap\\w*|trabalho|academia|cidade|mapa)\\b)|\\bsumir,? (?:e |pra |para )?acabar com tudo\\b`,
   },
   {
     // "Todo mundo ficaria melhor sem mim", "seria melhor pra todo mundo se
@@ -2124,6 +2351,16 @@ const PRIMEIRO_FIM_DA_ORACAO = new RegExp(FIM_DA_ORACAO.source);
 const FINS_DE_FRASE = new RegExp(FIM_DA_FRASE.source, "g");
 const RETOMADAS = new RegExp(RETOMADA.source, "g");
 
+/**
+ * Revisao RR1: o que desfaz QUALQUER excecao, na leitura inteira (o tempo
+ * recente, a terceira pessoa, o pedido de ajuda, o relato que retoma o sinal
+ * e a figura negada) e na oracao do sinal (a mudanca e o estado de agora).
+ */
+const DESFAZ_NA_LEITURA = new RegExp(
+  `${TEMPO_RECENTE}|${TERCEIRA_PESSOA}|${PEDIDO_DE_AJUDA_AMPLO}|${RELATO_ANAFORICO}|${NEGA_A_FIGURA}`,
+);
+const MUDANCA_OU_ESTADO = new RegExp(`${VERBO_DE_MUDANCA}|${ESTADO_ATUAL}`);
+
 function regexOuNulo(fonte: string | undefined): RegExp | null {
   return fonte === undefined ? null : new RegExp(fonte);
 }
@@ -2134,7 +2371,10 @@ const SINAIS_COMPILADOS = SINAIS_DE_EMERGENCIA.map((sinal) => ({
   excecaoAntes: regexOuNulo(sinal.excecaoAntes),
   excecaoDepois: regexOuNulo(sinal.excecaoDepois),
   excecaoNaOracaoAnterior: regexOuNulo(sinal.excecaoNaOracaoAnterior),
-  excecaoNaMensagem: regexOuNulo(sinal.excecaoNaMensagem),
+  excecaoNaFrase: regexOuNulo(sinal.excecaoNaFrase),
+  figuraAntes: regexOuNulo(sinal.figuraAntes),
+  figuraDepois: regexOuNulo(sinal.figuraDepois),
+  requer: regexOuNulo(sinal.requer),
   semExcecaoCom: regexOuNulo(sinal.semExcecaoCom),
 }));
 
@@ -2328,14 +2568,6 @@ function oracaoDepois(leitura: Leitura, posicao: number): string {
   return leitura.texto.slice(posicao, fimDaOracao(leitura, posicao));
 }
 
-/** A oracao inteira que acaba logo antes da oracao da posicao. */
-function oracaoAnterior(leitura: Leitura, posicao: number): Trecho {
-  const { fim } = inicioDaOracao(leitura, posicao);
-  return fim < 0
-    ? { inicio: 0, fim: 0 }
-    : { inicio: inicioDaOracao(leitura, fim).inicio, fim };
-}
-
 /**
  * O que depende so de um trecho FIXO da leitura (a leitura inteira, a
  * mensagem, a oracao anterior, a oracao, a parte da oracao), calculado uma
@@ -2396,6 +2628,33 @@ function leiturasDe(visoesPorTexto: readonly (readonly string[])[]): Leitura[] {
     }
   }
   return leituras;
+}
+
+/**
+ * A oracao que acaba logo antes da oracao da posicao, so se as duas estao na
+ * mesma frase (a oracao acabou na virgula, no ponto e virgula, nos dois
+ * pontos ou no "mas"; nunca no ".", no "!" ou no "?").
+ */
+function oracaoAnteriorNaFrase(leitura: Leitura, posicao: number): Trecho {
+  const { fim } = inicioDaOracao(leitura, posicao);
+  if (fim < 0 || /[.!?\n]/.test(leitura.texto.charAt(fim))) {
+    return { inicio: 0, fim: 0 };
+  }
+  return { inicio: inicioDaOracao(leitura, fim).inicio, fim };
+}
+
+/**
+ * A FRASE do sinal (revisao RR1): do fim de frase antes dele ao fim de frase
+ * depois dele, sem passar da mensagem dele.
+ */
+function fraseDoSinal(leitura: Leitura, inicio: number, fim: number): Trecho {
+  const mensagem = mensagemDoSinal(leitura, inicio, fim);
+  const antes = ultimoAte(leitura.indice.frases, inicio);
+  const depois = primeiroDesde(leitura.indice.frases, fim);
+  return {
+    inicio: Math.max(mensagem.inicio, antes === undefined ? 0 : antes.fim),
+    fim: Math.min(mensagem.fim, depois?.inicio ?? leitura.texto.length),
+  };
 }
 
 /**
@@ -2516,6 +2775,10 @@ function ehHistoria(leitura: Leitura, inicio: number, fim: number): boolean {
   }
   const retomada = primeiroDesde(indice.retomadas, corteDepois);
   return !(
+    // Revisao RR1: o tempo recente, a terceira pessoa, o pedido de ajuda e o
+    // relato ("ta assim") na leitura desfazem a historia ("ja desmaiei 3
+    // vezes essa manha").
+    desfazNaLeitura(leitura) ||
     testarUmaVez(leitura, "agora", AGORA, { inicio: comeco, fim: final }) ||
     testarUmaVez(leitura, "presente", PRESENTE, {
       inicio: corteAntes,
@@ -2529,8 +2792,38 @@ function ehHistoria(leitura: Leitura, inicio: number, fim: number): boolean {
 }
 
 /**
- * Uma excecao do sinal vale, e nada na leitura a desfaz (a excecao tira a
- * urgencia e le estreito; o que desfaz a devolve e le a leitura inteira).
+ * Revisao RR1: o que desfaz QUALQUER excecao, lido na leitura inteira (na
+ * juncao, a rajada toda): o tempo recente, a terceira pessoa, o pedido de
+ * ajuda e o relato ("minha mae ta assim").
+ */
+function desfazNaLeitura(leitura: Leitura): boolean {
+  return testarUmaVez(leitura, "desfaz", DESFAZ_NA_LEITURA, {
+    inicio: 0,
+    fim: leitura.texto.length,
+  });
+}
+
+/**
+ * Revisao RR1: o que desfaz QUALQUER excecao, lido na ORACAO do sinal (ligado
+ * a ele): o verbo de mudanca ("entortou", "ficou", "caiu", "piorou") e o
+ * estado de agora ("ta", "esta", "to").
+ */
+function desfazNaOracao(
+  leitura: Leitura,
+  inicio: number,
+  fim: number,
+): boolean {
+  return testarUmaVez(leitura, "mudanca", MUDANCA_OU_ESTADO, {
+    inicio: inicioDaOracao(leitura, inicio).inicio,
+    fim: fimDaOracao(leitura, fim),
+  });
+}
+
+/**
+ * Uma excecao do sinal vale, e nada a desfaz (revisao RR1: a excecao so vale
+ * com a prova positiva, so na oracao ou na frase do sinal, e qualquer marca
+ * de relato atual ou de evento recente a desfaz; a excecao tira a urgencia e
+ * le estreito, o que desfaz a devolve e le largo).
  */
 function excecaoVale(
   leitura: Leitura,
@@ -2538,16 +2831,10 @@ function excecaoVale(
   trechos: { inicio: number; fim: number; antes: string; depois: string },
 ): boolean {
   const { nome } = compilado.sinal;
-  if (
-    compilado.semExcecaoCom !== null &&
-    testarUmaVez(leitura, `${nome}:desfaz`, compilado.semExcecaoCom, {
-      inicio: 0,
-      fim: leitura.texto.length,
-    })
-  ) {
-    return false;
-  }
-  return (
+  const figura =
+    compilado.figuraAntes?.test(trechos.antes) === true ||
+    compilado.figuraDepois?.test(trechos.depois) === true;
+  const contexto =
     compilado.excecaoAntes?.test(trechos.antes) === true ||
     compilado.excecaoDepois?.test(trechos.depois) === true ||
     (compilado.excecaoNaOracaoAnterior !== null &&
@@ -2555,16 +2842,29 @@ function excecaoVale(
         leitura,
         `${nome}:anterior`,
         compilado.excecaoNaOracaoAnterior,
-        oracaoAnterior(leitura, trechos.inicio),
+        oracaoAnteriorNaFrase(leitura, trechos.inicio),
       )) ||
-    (compilado.excecaoNaMensagem !== null &&
+    (compilado.excecaoNaFrase !== null &&
       testarUmaVez(
         leitura,
-        `${nome}:mensagem`,
-        compilado.excecaoNaMensagem,
-        mensagemDoSinal(leitura, trechos.inicio, trechos.fim),
-      ))
-  );
+        `${nome}:frase`,
+        compilado.excecaoNaFrase,
+        fraseDoSinal(leitura, trechos.inicio, trechos.fim),
+      ));
+  if (
+    !(figura || contexto) ||
+    (compilado.semExcecaoCom !== null &&
+      testarUmaVez(leitura, `${nome}:desfaz`, compilado.semExcecaoCom, {
+        inicio: 0,
+        fim: leitura.texto.length,
+      })) ||
+    desfazNaLeitura(leitura)
+  ) {
+    return false;
+  }
+  // A figura so cai com o que desfaz na leitura; a excecao de contexto cai
+  // tambem com a mudanca e o estado de agora na oracao do sinal.
+  return figura || !desfazNaOracao(leitura, trechos.inicio, trechos.fim);
 }
 
 /**
@@ -2572,6 +2872,16 @@ function excecaoVale(
  * mesma mensagem) e, no fisico, da historia.
  */
 function sinalNaLeitura(leitura: Leitura, compilado: SinalCompilado): boolean {
+  // Revisao RR1: o requisito do sinal, na leitura inteira.
+  if (
+    compilado.requer !== null &&
+    !testarUmaVez(leitura, `${compilado.sinal.nome}:requer`, compilado.requer, {
+      inicio: 0,
+      fim: leitura.texto.length,
+    })
+  ) {
+    return false;
+  }
   for (const m of leitura.texto.matchAll(compilado.regex)) {
     const inicio = m.index ?? 0;
     const fim = inicio + m[0].length;
@@ -2588,7 +2898,9 @@ function sinalNaLeitura(leitura: Leitura, compilado: SinalCompilado): boolean {
       compilado.sinal.tipo === "fisica" &&
       compilado.sinal.semPergunta !== true &&
       (perguntaDoEfeito(leitura, antes, fim) || HIPOTESE_ANTES.test(antes)) &&
-      !lembrar(leitura, "relato", () => RELATO_DE_AGORA.test(leitura.texto))
+      !lembrar(leitura, "relato", () => RELATO_DE_AGORA.test(leitura.texto)) &&
+      !desfazNaLeitura(leitura) &&
+      !desfazNaOracao(leitura, inicio, fim)
     ) {
       continue;
     }
@@ -2674,6 +2986,8 @@ export const REGRAS_DE_LEITURA_DA_URGENCIA: readonly string[] = [
   FIM_DA_FRASE.source,
   HIPOTESE_ANTES.source,
   RELATO_DE_AGORA.source,
+  DESFAZ_NA_LEITURA.source,
+  MUDANCA_OU_ESTADO.source,
 ];
 
 /**
@@ -2691,7 +3005,10 @@ export const FONTES_DA_URGENCIA: readonly string[] = [
       sinal.excecaoAntes ?? "",
       sinal.excecaoDepois ?? "",
       sinal.excecaoNaOracaoAnterior ?? "",
-      sinal.excecaoNaMensagem ?? "",
+      sinal.excecaoNaFrase ?? "",
+      sinal.figuraAntes ?? "",
+      sinal.figuraDepois ?? "",
+      sinal.requer ?? "",
       sinal.semExcecaoCom ?? "",
       sinal.semAntecedente === true ? "sem antecedente" : "",
       sinal.semPergunta === true ? "sem pergunta" : "",

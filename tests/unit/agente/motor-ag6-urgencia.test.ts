@@ -474,11 +474,15 @@ describe("AG6a: o que não é urgência segue o turno de sempre", () => {
     "o SAMU fica perto daí?",
     "nunca tive convulsão, posso fazer botox?",
     // Revisao de 28/10/2026: os falsos positivos da estetica e da recepcao.
-    "fiz botox e minha boca ficou torta",
+    // Revisao de 88e9560 (RR1): "fiz botox e minha boca ficou torta" e "meu
+    // marido vai me matar" viraram urgencia pela politica das excecoes (so
+    // prova positiva de que nao e emergencia); ficam o sorriso de sempre e a
+    // figura do preco.
+    "minha boca fica torta quando eu sorrio",
     "papada e rosto caindo, o que vocês fazem?",
     "surgiu uma emergência familiar, preciso cancelar",
     "tentei ligar várias vezes, não consigo falar.",
-    "meu marido vai me matar",
+    "esse preço vai me matar",
     "já desmaiei tirando sangue",
     "minha mãe teve um AVC, ela pode fazer botox?",
   ])("%s: o turno roda (reserva e portão de sempre)", async (texto) => {

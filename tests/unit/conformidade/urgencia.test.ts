@@ -15,14 +15,20 @@ import {
   type SinalDeEmergencia,
 } from "@/lib/domain/conformidade/urgencia";
 
-/** Todas as fontes de um sinal: a dele, as excecoes e o que as desfaz. */
+/**
+ * Todas as fontes de um sinal: a dele, as excecoes (as de contexto e as
+ * figuras, revisao RR1), o que ele exige e o que desfaz as excecoes.
+ */
 function fontesDoSinal(sinal: SinalDeEmergencia): string[] {
   return [
     sinal.fonte,
     sinal.excecaoAntes,
     sinal.excecaoDepois,
+    sinal.figuraAntes,
+    sinal.figuraDepois,
     sinal.excecaoNaOracaoAnterior,
-    sinal.excecaoNaMensagem,
+    sinal.excecaoNaFrase,
+    sinal.requer,
     sinal.semExcecaoCom,
   ].filter((fonte): fonte is string => fonte !== undefined);
 }
@@ -256,10 +262,11 @@ describe("a junção das pendentes (na ordem)", () => {
     expect(detectarUrgencia(["no peito", "to com dor"])).toBeNull();
   });
 
-  // Revisao de 30/10/2026: a excecao da mensagem le so a MESMA mensagem do
-  // sinal, nunca a rajada inteira (na 2a revisao, o procedimento numa
-  // mensagem apagava a boca torta da outra).
-  it("a exceção da mensagem lê só a mensagem do sinal (o procedimento numa, a boca na outra: urgência)", () => {
+  // Revisao de 30/10/2026: a excecao le so a MESMA mensagem do sinal, nunca
+  // a rajada inteira (na 2a revisao, o procedimento numa mensagem apagava a
+  // boca torta da outra). Revisao RR1: so a FRASE do sinal, dentro da
+  // mensagem; e o procedimento feito deixou de ser excecao.
+  it("a exceção lê só a frase do sinal (o pedido numa mensagem ou frase, a boca na outra: urgência)", () => {
     expect(
       detectarUrgencia(["fiz botox semana passada", "e minha boca ficou torta"])
         ?.sinal,
@@ -270,17 +277,26 @@ describe("a junção das pendentes (na ordem)", () => {
         "minha mãe acordou com a boca torta agora",
       ])?.sinal,
     ).toBe("boca_torta");
-    // Na mesma mensagem, o efeito do procedimento (D-51) segue sem a marca.
+    expect(
+      detectarUrgencia(["quero fazer preenchimento", "tenho a boca torta"])
+        ?.sinal,
+    ).toBe("boca_torta");
+    expect(
+      urgente("quero fazer preenchimento. Tenho a boca torta")?.sinal,
+    ).toBe("boca_torta");
+    // Na mesma frase, o pedido com o objeto e sem marca nenhuma de agora.
+    expect(urgente("quero fazer preenchimento, tenho a boca torta")).toBeNull();
+    // Revisao RR1: o efeito do procedimento na mesma mensagem (antes sem a
+    // marca) e urgencia; o sinal que atravessa as mensagens le todas.
     expect(
       detectarUrgencia([
         "oi",
         "fiz botox semana passada e minha boca ficou torta",
-      ]),
-    ).toBeNull();
-    // O sinal que atravessa as mensagens le todas as que ele toca.
+      ])?.sinal,
+    ).toBe("boca_torta");
     expect(
-      detectarUrgencia(["fiz botox ontem e minha boca", "ficou torta"]),
-    ).toBeNull();
+      detectarUrgencia(["fiz botox ontem e minha boca", "ficou torta"])?.sinal,
+    ).toBe("boca_torta");
   });
 
   it("o que desfaz a exceção lê a rajada inteira (só devolve a urgência)", () => {
@@ -421,7 +437,9 @@ describe("o evento grave só com o agora ou a suspeita", () => {
     // O recente que nao e o agora, e a informacao.
     "minha mãe teve um AVC agora em setembro",
     "meu marido teve um infarto há pouco tempo, ele pode fazer harmonização?",
-    "vi uma reportagem sobre AVC hoje",
+    // Revisao RR1: sem o "hoje" (com ele, a reportagem e urgencia: o tempo
+    // recente desfaz qualquer excecao; no bloco da RR1, no fim).
+    "vi uma reportagem sobre AVC",
     "acho que vou ter um AVC de tanto estresse",
   ])("%s: não é urgência", (texto) => {
     expect(urgente(texto)).toBeNull();
@@ -430,7 +448,9 @@ describe("o evento grave só com o agora ou a suspeita", () => {
 
 describe("a outra pessoa", () => {
   it.each([
-    ["meu marido vai me matar", null],
+    // Revisao RR1: a figura so com o objeto dito ("o preco", "a dieta");
+    // "meu marido vai me matar", sem objeto, e a ameaca (urgencia).
+    ["meu marido vai me matar", "me_matar"],
     ["esse preço vai me matar", null],
     ["essa dieta tá me matando", null],
     ["meu ex quer me matar", "me_matar"],
@@ -480,8 +500,10 @@ describe("o antecedente só vale quando governa o sinal", () => {
     "Já tive falta de ar ano passado. Hoje estou bem, posso fazer botox?",
     "já desmaiei tirando sangue. Hoje quero marcar o exame, posso ir acompanhada?",
     "já tive dor no peito, mas agora estou bem",
-    "minha mãe parou de respirar ano passado e faleceu",
-    "uma vez ela tava morrendo de covid",
+    // Revisao RR1: a historia da terceira pessoa ("minha mae parou de
+    // respirar ano passado") virou urgencia (a terceira pessoa desfaz
+    // qualquer excecao; no bloco da RR1, no fim). A da propria pessoa fica.
+    "uma vez eu apaguei no shopping",
   ])("%s: a história continua história", (texto) => {
     expect(urgente(texto)).toBeNull();
   });
@@ -547,8 +569,9 @@ describe("o telefone só desfaz com a clínica como alvo", () => {
     "tentei ligar várias vezes, não consigo falar.",
     "a recepção não atende, não consigo falar",
     "liguei e não consigo falar",
-    // Quem esta ocupado, na mesma mensagem (antes ou depois).
-    "Agora não consigo falar, me manda mensagem",
+    // Quem esta ocupado, na mesma frase (antes ou depois). Revisao RR1: com
+    // o "agora" e urgencia (o tempo recente desfaz qualquer excecao).
+    "não consigo falar no momento, me manda mensagem",
     "Não consigo falar, estou numa reunião",
     "Estou no trabalho, não consigo falar, pode mandar mensagem",
     "não consigo falar, te ligo mais tarde",
@@ -557,14 +580,33 @@ describe("o telefone só desfaz com a clínica como alvo", () => {
   });
 });
 
-describe("o procedimento só na mesma mensagem, na primeira pessoa e recente", () => {
+// Revisao RR1: o procedimento feito deixou de ser excecao (nao e prova
+// positiva de que nao e emergencia): o efeito dele, antes "sintoma" sem a
+// marca, e urgencia. So o sorriso de sempre continua estetica.
+describe("o procedimento feito nunca apaga a boca ou o rosto torto (revisão RR1)", () => {
   it.each([
-    "fiz botox e minha boca ficou torta",
-    "minha boca ficou torta depois do botox",
-    "fiz harmonização e meu rosto ficou torto",
-    "Fiz preenchimento labial ontem. Hoje minha boca está torta.",
-  ])("%s: efeito do procedimento (sintoma, sem a marca)", (texto) => {
-    expect(urgente(texto)).toBeNull();
+    ["fiz botox e minha boca ficou torta", "boca_torta"],
+    ["minha boca ficou torta depois do botox", "boca_torta"],
+    ["fiz harmonização e meu rosto ficou torto", "rosto_torto"],
+    [
+      "Fiz preenchimento labial ontem. Hoje minha boca está torta.",
+      "boca_torta",
+    ],
+    // Sem marca nenhuma de agora: o procedimento sozinho nao e excecao.
+    ["o botox deixou minha boca torta", "boca_torta"],
+    ["o preenchimento deixou meu rosto torto", "rosto_torto"],
+    ["minha boca torta por causa do botox, isso passa?", "boca_torta"],
+    ["e normal a boca ficar torta depois do botox?", "boca_torta"],
+    // O sorriso de sempre com o "ontem" e o agora.
+    ["fiz botox ontem e minha boca fica torta quando sorrio", "boca_torta"],
+  ])("%s: urgência (%s)", (texto, sinal) => {
+    expect(urgente(texto)?.sinal).toBe(sinal);
+  });
+
+  it("o sorriso de sempre, mesmo depois do botox, continua estética", () => {
+    expect(
+      urgente("depois do botox minha boca fica torta quando sorrio"),
+    ).toBeNull();
   });
 
   it.each([
@@ -626,7 +668,8 @@ describe("o estado permanente e o nariz com a rinoplastia (estética)", () => {
 describe("a emergência da agenda do paciente (recepção)", () => {
   it.each([
     "Tenho uma emergência, preciso remarcar",
-    "Estou com uma emergência, não vou poder ir",
+    // Revisao RR1: "estou com uma emergencia" e o estado de agora (urgencia,
+    // no bloco da RR1, no fim).
     "Por motivo de emergência preciso cancelar",
     "preciso desmarcar, é uma emergência",
     "Vocês fazem atendimento de urgência e emergência?",
@@ -659,6 +702,9 @@ describe("o me matar: o eu, o sofrimento e o pronome continuam", () => {
     "a vida tá me matando",
     "isso vai me matar",
     "minha mãe vai me matar",
+    // Revisao RR1: a figura so com o objeto dito ("o preco", "a dieta"); o
+    // marido, sem objeto, e a ameaca.
+    "meu marido vai me matar",
   ])("%s: risco de vida", (texto) => {
     expect(urgente(texto)).toEqual({
       tipo: "risco_de_vida",
@@ -667,7 +713,6 @@ describe("o me matar: o eu, o sofrimento e o pronome continuam", () => {
   });
 
   it.each([
-    "meu marido vai me matar",
     "esse preço vai me matar",
     "essa dieta tá me matando",
     "esse trabalho vai me matar",
@@ -731,10 +776,11 @@ describe("as lacunas novas, com a negação, o antecedente e a terceira pessoa",
     "ele não tá morrendo",
     "ela não apagou",
     "não tou cum falta di ar",
-    // A historia (so nos fisicos).
-    "uma vez ela não acordou e levamos ao hospital",
-    "ano passado ele tava morrendo",
-    "uma vez ela apagou do nada no shopping",
+    // A historia (so nos fisicos). Revisao RR1: so a da propria pessoa (a da
+    // terceira pessoa, "uma vez ela nao acordou", e urgencia, no fim).
+    "uma vez eu não acordei e me levaram ao hospital",
+    "ano passado eu tava morrendo de covid",
+    "ano passado eu apaguei no shopping",
     "já tive falta di ar",
     // O que nao e o sinal.
     "tenho medo de dormir e não acordar na anestesia",
@@ -907,7 +953,9 @@ describe("os sinais físicos novos (A1)", () => {
     "a clínica não está respondendo",
     "minha filha não está respondendo minhas mensagens",
     "vou confirmar com minha mãe, ela não está respondendo",
-    "minha mãe não responde, depois eu te aviso",
+    // Revisao RR1: "minha mae nao responde, depois eu te aviso" e urgencia
+    // (a terceira pessoa desfaz o "depois"; no fim). As mensagens, nao.
+    "minha mãe não responde as mensagens, depois eu te aviso",
     "a ligação caiu e a moça não tá respondendo",
     "não consigo mexer a testa depois do botox, é normal?",
     "não consigo levantar o braço de dor no ombro",
@@ -1013,16 +1061,16 @@ describe("o outro sinal de AVC desfaz o procedimento e a estética (M1)", () => 
     ).toBe("rosto_torto");
   });
 
-  it("a dormência da boca ou do lábio é a anestesia do procedimento, não outro membro", () => {
+  it("revisão RR1: com o procedimento feito, a boca dormente e torta é urgência (o procedimento não é exceção)", () => {
     expect(
-      urgente("fiz preenchimento e minha boca ficou torta e dormente"),
-    ).toBeNull();
+      urgente("fiz preenchimento e minha boca ficou torta e dormente")?.sinal,
+    ).toBe("boca_torta");
     expect(
       detectarUrgencia([
         "fiz botox ontem e minha boca ficou torta",
         "e o lábio tá dormente",
-      ]),
-    ).toBeNull();
+      ])?.sinal,
+    ).toBe("boca_torta");
   });
 });
 
@@ -1032,15 +1080,23 @@ describe("a exceção estética da boca e do rosto: o pedido, a idade e o sorris
   // boca ta caindo de um lado com a idade" voltou a ser urgencia, abaixo).
   it.each([
     "minha boca fica torta quando eu sorrio",
-    "minha boca tá meio torta, quero fazer preenchimento",
-    "o lado esquerdo do meu rosto tá mais caído, quero fazer fios",
     "tenho o rosto torto e queria harmonizar",
-    "minha boca entortou um pouco com o tempo, preenchimento resolve?",
   ])("%s: não é urgência", (texto) => {
     expect(urgente(texto)).toBeNull();
   });
 
   it.each([
+    // Revisao RR1: o "ta" (o estado de agora) e o "entortou" (a mudanca)
+    // desfazem o pedido com o objeto.
+    ["minha boca tá meio torta, quero fazer preenchimento", "boca_torta"],
+    [
+      "o lado esquerdo do meu rosto tá mais caído, quero fazer fios",
+      "rosto_caido_de_um_lado",
+    ],
+    [
+      "minha boca entortou um pouco com o tempo, preenchimento resolve?",
+      "boca_torta",
+    ],
     // O "de repente" desfaz; "mais caido" sozinho nao e estetica.
     [
       "minha boca ficou torta de repente, quero fazer preenchimento",
@@ -1174,20 +1230,29 @@ describe("o me matando e o morrendo da estética e da dor (M2)", () => {
 });
 
 describe("a emergência com o pedido de horário (M2)", () => {
-  it.each([
-    "Oi, é uma emergência! Preciso de um horário pra amanhã, tenho casamento.",
-    "tenho uma emergência estética, preciso de um horário hoje",
-    "é uma emergência, preciso encaixar hoje",
-    "tenho uma emergência estética kkk",
-  ])("%s: não é urgência", (texto) => {
-    expect(urgente(texto)).toBeNull();
-  });
+  it.each(["tenho uma emergência estética kkk"])(
+    "%s: não é urgência",
+    (texto) => {
+      expect(urgente(texto)).toBeNull();
+    },
+  );
 
   it.each([
     "é uma emergência, me ajuda, preciso de um horário agora",
     "é uma emergência, preciso de atendimento",
   ])(
     "%s: urgência (o pedido de ajuda e o atendimento não são a agenda)",
+    (texto) => {
+      expect(urgente(texto)?.sinal).toBe("emergencia");
+    },
+  );
+
+  it.each([
+    "Oi, é uma emergência! Preciso de um horário pra amanhã, tenho casamento.",
+    "tenho uma emergência estética, preciso de um horário hoje",
+    "é uma emergência, preciso encaixar hoje",
+  ])(
+    "%s: urgência (revisão RR1: a agenda só na frase do sinal, e o hoje desfaz)",
     (texto) => {
       expect(urgente(texto)?.sinal).toBe("emergencia");
     },

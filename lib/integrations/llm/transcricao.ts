@@ -88,7 +88,12 @@ import { log } from "@/lib/log";
 // fala" e na transcricao (que pode ter descartado parte do audio: a fala
 // real com um segmento urgente no ruido). Sai so o TIPO (`urgencia`,
 // ausente quando nao ha); o texto descartado nunca sai daqui: nem no
-// resultado, nem no log, nem no banco, nem no agente.
+// resultado, nem no log, nem no banco, nem no agente. RR2 de 88e9560: quem
+// chama (a porta, lib/agente/midia.ts, urgenciaDaTranscricao) le tambem o
+// texto mantido, nao grava a leitura quando a urgencia esta so no
+// descartado (o job repetido transcreve de novo e acha de novo) e leva a
+// urgencia na falha que vem depois da transcricao (a gravacao recusada, o
+// corte durante a RPC).
 //
 // TRANSCRICAO_CALIBRADA (falsa ate a prova paga, D-100): com ela falsa, o
 // plano do turno (lib/agente/midia.ts) marca todo audio como fora, e nada

@@ -235,6 +235,10 @@ import {
 import type { PrecoDoModelo, UsoDoModelo } from "./uso";
 // [AG6b mídia] início
 import type { MotivoDaLeitura } from "@/lib/domain/agente/config";
+import {
+  detectarUrgencia,
+  type TipoDeUrgencia,
+} from "@/lib/domain/conformidade/urgencia";
 import { MAXIMO_DE_CHAMADAS_DO_LEITOR } from "@/lib/integrations/llm/leitor-de-midia";
 import {
   custoMaximoDaTranscricao,
@@ -628,6 +632,17 @@ export type EntradaDoTurno = {
    */
   modeloDosClassificadores?: string | null;
   prazoMs?: number;
+  /**
+   * RR2 de 88e9560 (baixo 6): o INSTANTE em que o turno acaba, no relogio
+   * `agora` (o mesmo de quem chama). O executor do WhatsApp conta o prazo do
+   * turno ANTES de umas idas ao banco (o estado, o nascimento, a reserva e o
+   * turno); contado do comeco do laco, o atraso delas saia da reserva das
+   * gravacoes e, com o banco lento, da do envio. Com o instante, o laco e o
+   * executor usam a mesma referencia, e essas idas ficam dentro da conta do
+   * turno. O turno acaba no que vier primeiro: este instante ou o comeco do
+   * laco mais `prazoMs`. Ausente (o simulador) ou invalido: so `prazoMs`.
+   */
+  prazoEmMs?: number;
   /** Relogio injetavel para teste. */
   agora?: () => number;
   // [AG6b mídia] início
@@ -1645,7 +1660,13 @@ async function turnoDoAgente(
     entrada.atendimento !== null && entrada.atendimento !== undefined;
   const agora = entrada.agora ?? Date.now;
   const inicio = agora();
-  const prazoEm = inicio + (entrada.prazoMs ?? PRAZO_DO_TURNO_MS);
+  const prazoPelaDuracao = inicio + (entrada.prazoMs ?? PRAZO_DO_TURNO_MS);
+  // RR2 de 88e9560 (baixo 6): o instante de quem chama, na mesma referencia
+  // (as idas ao banco antes do laco ficam dentro da conta do turno).
+  const prazoEm =
+    typeof entrada.prazoEmMs === "number" && Number.isFinite(entrada.prazoEmMs)
+      ? Math.min(prazoPelaDuracao, entrada.prazoEmMs)
+      : prazoPelaDuracao;
   const trilha: PassoDoTurno[] = [];
   const uso: UsoDoModelo[] = [];
   const ferramentasUsadas: FerramentaDoAgente[] = [];
@@ -1844,9 +1865,34 @@ async function turnoDoAgente(
    * de um audio do turno, inclusive no que as travas descartaram ("Quero
    * morrer." curto e incerto, "Socorro..." no ruido). So o tipo chegou (o
    * texto descartado nunca sai da integracao); o 1c passa a conversa como
-   * urgente, pelo caminho de sempre.
+   * urgente, pelo caminho de sempre. RR2 de 88e9560 (medio 2): tambem a
+   * urgencia que veio na FALHA depois da transcricao (a gravacao da leitura
+   * recusada, o corte durante a RPC).
    */
   let urgenciaNoAudio = false;
+  /**
+   * A urgencia de um audio do turno (so o tipo), ou null: a que a porta
+   * devolveu (o texto inteiro, inclusive o descartado, e a falha depois da
+   * transcricao) e, na transcricao, a do texto mantido, lida aqui de novo
+   * (a mesma lista do portao): no caminho do audio ruim (baixo 7) e no da
+   * falha de outro audio, o 1c nunca chega a ler esse texto.
+   */
+  const urgenciaDoAudio = (
+    feita: ResultadoDaTranscricao,
+  ): TipoDeUrgencia | null => {
+    switch (feita.tipo) {
+      case "transcrita":
+        return (
+          feita.urgencia ?? detectarUrgencia([feita.texto])?.tipo ?? null
+        );
+      case "sem_fala":
+        return feita.urgencia;
+      case "falhou":
+        return feita.urgencia ?? null;
+      default:
+        return null;
+    }
+  };
   /**
    * A urgencia do portao (1a e 1c) e a do audio acima: a conferencia de
    * sempre, o passo da urgencia e a passagem com o motivo urgencia (o banco
@@ -1895,22 +1941,40 @@ async function turnoDoAgente(
       return preparoCortado(preparo, PASSOS_DA_MIDIA.transcricaoFalhou);
     }
     const prontas = preparo.valor;
-    if (prontas.some((p) => p.tipo === "falhou")) {
-      trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.transcricaoFalhou });
-      return fraseFixa({ tipo: "falhou", motivo: motivoDoPreparo(prontas) });
-    }
-    // A porta prepara TODOS antes de chamar o modelo: um fora (o limite, o
-    // formato, os primeiros bytes) e nenhum e transcrito.
     const audios = prontas.filter(
       (p): p is Extract<MidiaPronta, { tipo: "audio" }> => p.tipo === "audio",
     );
-    if (audios.length !== prontas.length || audios.length !== lista.length) {
+    const algumPreparoFalhou = prontas.some((p) => p.tipo === "falhou");
+    const todosProntos =
+      !algumPreparoFalhou &&
+      audios.length === prontas.length &&
+      audios.length === lista.length;
+    /**
+     * O turno com um audio ruim, como sempre foi: o preparo que falhou (o
+     * Storage) e a falha tecnica; o audio fora da regra (o limite, o
+     * formato, os primeiros bytes) marca todos como fora, e o 1c escala como
+     * midia. Nenhuma transcricao vale como texto neste turno.
+     */
+    const comUmAudioRuim = (): ResultadoDoTurno | null => {
+      if (algumPreparoFalhou) {
+        trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.transcricaoFalhou });
+        return fraseFixa({ tipo: "falhou", motivo: motivoDoPreparo(prontas) });
+      }
       marcarComoFora(lista);
       return null;
+    };
+    // RR2 de 88e9560 (baixo 7): um audio ruim no turno nao impede mais a
+    // transcricao dos bons. Os bons sao transcritos SO para ler a urgencia
+    // (no mesmo prazo e com o mesmo corte; a reserva do gasto ja conta todo
+    // audio a transcrever do plano), e o turno passa para a equipe como
+    // sempre (comUmAudioRuim), ou como urgente. Sem audio bom, ou sem prazo
+    // para eles, fica como sempre.
+    if (!todosProntos && audios.length === 0) {
+      return comUmAudioRuim();
     }
     const prazo = prazoParaAMidia(true);
     if (prazo < 1_000) {
-      return falhar("prazo");
+      return todosProntos ? falhar("prazo") : comUmAudioRuim();
     }
     const feitas = await Promise.all(
       audios.map(async (audio) => {
@@ -1939,20 +2003,24 @@ async function turnoDoAgente(
       return falhar("liberacao_suspensa");
     }
     // Revisao R2 de d1a15f6 (M3): a urgencia que a transcricao leu no audio
-    // inteiro (so o tipo), no sem fala e na transcricao.
-    if (
-      feitas.some(
-        ({ feita }) =>
-          (feita.tipo === "transcrita" || feita.tipo === "sem_fala") &&
-          feita.urgencia !== null,
-      )
-    ) {
+    // inteiro (so o tipo), no sem fala e na transcricao. RR2 de 88e9560
+    // (medio 2): tambem a que veio na falha depois da transcricao.
+    if (feitas.some(({ feita }) => urgenciaDoAudio(feita) !== null)) {
       urgenciaNoAudio = true;
+    }
+    if (!todosProntos) {
+      // RR2 de 88e9560 (baixo 7): a urgencia de um audio bom vence o audio
+      // ruim (a falha do preparo ou o fora da regra), como vence a falha
+      // tecnica de outro audio.
+      return urgenciaNoAudio ? passarPorUrgencia() : comUmAudioRuim();
     }
     const falha = feitas.find(({ feita }) => feita.tipo === "falhou")?.feita;
     if (falha !== undefined && falha.tipo === "falhou") {
       // A urgencia de outro audio do turno vence a falha tecnica deste: a
-      // conversa passa como urgente (o lado seguro; as duas passam).
+      // conversa passa como urgente (o lado seguro; as duas passam). RR2 de
+      // 88e9560 (medio 2): tambem a urgencia do proprio audio que falhou
+      // depois de transcrito (a gravacao da leitura recusada, o corte
+      // durante a RPC).
       if (urgenciaNoAudio) {
         return passarPorUrgencia();
       }

@@ -16,7 +16,10 @@ import {
   type TipoDoLeitor,
 } from "@/lib/domain/agente/config";
 import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
-import type { TipoDeUrgencia } from "@/lib/domain/conformidade/urgencia";
+import {
+  detectarUrgencia,
+  type TipoDeUrgencia,
+} from "@/lib/domain/conformidade/urgencia";
 import type {
   MotivoDaFalha,
   UsoDoLlm,
@@ -113,6 +116,18 @@ import { USO_ZERADO, type UsoDoModelo } from "./uso";
 //    (RESERVA_DA_GRAVACAO_DA_LEITURA_MS, R3 1), descontada do prazo da
 //    integracao: a integracao que responde no limite dela ainda deixa a RPC
 //    gravar antes do corte da porta.
+//
+// Terceira rodada (revisao RR2 de 88e9560, a urgencia do audio em todos os
+// caminhos):
+//  - a urgencia que a transcricao leu vai tambem na FALHA que vem depois
+//    dela (a gravacao da leitura recusada, o corte durante a RPC, o sinal
+//    abortado): o laco passa a conversa como urgente (medio 2);
+//  - a leitura NAO e gravada quando a urgencia veio so do texto descartado
+//    (o sem fala urgente, ou a transcricao cujo texto mantido nao tem a
+//    urgencia): o job repetido (a excecao antes do 'decidido', a posse
+//    perdida, a invocacao que morreu) transcreve de novo e acha a urgencia
+//    de novo. Com a urgencia no texto mantido, grava como sempre: o portao
+//    do job repetido a acha no texto relido (medio 3; urgenciaDaTranscricao).
 
 // ---------------------------------------------------------------------------
 // Tipos
@@ -818,17 +833,25 @@ export type ResultadoDaTranscricao =
       texto: string;
       /** O texto com o nome do contato mascarado (o que os modelos leem). */
       textoParaOsModelos: string;
+      /**
+       * A leitura gravada (ou a reaproveitada). RR2 de 88e9560 (medio 3):
+       * com a urgencia so no texto descartado, a leitura NAO foi gravada (o
+       * job repetido transcreve de novo); o laco passa a conversa como
+       * urgente do mesmo jeito.
+       */
       leitura: LeituraGravada;
       uso: UsoDoModelo | null;
       /**
        * Revisao R2 de d1a15f6 (M3): o tipo da urgencia que a transcricao
        * leu no texto inteiro do audio, inclusive o que as travas
        * descartaram (o segmento urgente no ruido), ou null. So o tipo.
+       * RR2 de 88e9560: tambem a do texto mantido (urgenciaDaTranscricao).
        */
       urgencia: TipoDeUrgencia | null;
     }
   | {
       tipo: "sem_fala";
+      /** Como na transcrita: sem gravar quando ha urgencia (medio 3). */
       leitura: LeituraGravada;
       uso: UsoDoModelo | null;
       /**
@@ -838,7 +861,20 @@ export type ResultadoDaTranscricao =
        */
       urgencia: TipoDeUrgencia | null;
     }
-  | { tipo: "falhou"; motivo: MotivoDaFalha; uso: UsoDoModelo | null }
+  | {
+      tipo: "falhou";
+      motivo: MotivoDaFalha;
+      uso: UsoDoModelo | null;
+      /**
+       * RR2 de 88e9560 (medio 2): a urgencia que a transcricao JA tinha
+       * lido quando o resto falhou (a gravacao da leitura recusada, o corte
+       * da porta durante a RPC, o sinal abortado depois da transcricao). O
+       * laco passa a conversa como urgente: a urgencia vence a falha
+       * tecnica. Ausente quando a transcricao nao chegou a ser feita (ou
+       * nao leu urgencia). So o tipo.
+       */
+      urgencia?: TipoDeUrgencia;
+    }
   /** A gravacao recusou: a conversa saiu da IA (alguem assumiu). */
   | { tipo: "fora_da_ia"; uso: UsoDoModelo | null }
   /**
@@ -1146,6 +1182,36 @@ function somarUsos(usos: readonly (UsoDoLlm | null)[]): UsoDoLlm | null {
 }
 
 /**
+ * RR2 de 88e9560 (medio 2 e 3): a urgencia que ESTA transcricao leu, e se
+ * ela esta no texto MANTIDO (o que a leitura grava e o portao do job
+ * repetido rele como texto; o portao le cada mensagem sozinha com o mesmo
+ * detectarUrgencia, e a juncao com as outras so acrescenta).
+ *  - `tipo`: a da integracao (o texto inteiro, inclusive o descartado) ou,
+ *    sem ela, a do texto mantido (a excecao lida num segmento descartado
+ *    pode apagar no texto inteiro o sinal que o mantido tem: "fiz botox e"
+ *    no ruido, "minha boca ficou torta" na fala);
+ *  - `soNoDescartado`: ha urgencia e o texto mantido nao a tem (o sem fala
+ *    nao tem texto mantido). Ai a leitura NAO e gravada: gravada, o job
+ *    repetido le a transcricao (ou o sem fala) sem a urgencia e nao
+ *    transcreve de novo; sem ela, transcreve de novo e acha de novo (o
+ *    custo e uma transcricao a mais, so neste caso raro).
+ * Local (a lista deterministica), sem rede. So o tipo sai daqui.
+ */
+export function urgenciaDaTranscricao(
+  feito: Extract<
+    ResultadoDaTranscricaoNoModelo,
+    { tipo: "transcrita" | "sem_fala" }
+  >,
+): { tipo: TipoDeUrgencia | null; soNoDescartado: boolean } {
+  const noTextoMantido =
+    feito.tipo === "transcrita"
+      ? (detectarUrgencia([feito.texto])?.tipo ?? null)
+      : null;
+  const tipo = feito.urgencia ?? noTextoMantido;
+  return { tipo, soNoDescartado: tipo !== null && noTextoMantido === null };
+}
+
+/**
  * O uso da transcricao como ia_uso le (o papel, tokens 0, os segundos): o
  * da ultima chamada (a integracao ja estima a que falhou e pode ter sido
  * cobrada) mais o pior caso de cada chamada anterior sem resposta
@@ -1185,6 +1251,11 @@ function usoDaTranscricaoNoModelo(
  * que ela devolveu (se voltou) ou com o pior caso (MAXIMO_DE_CHAMADAS_*
  * chamadas, cada uma no pior caso), e nada mais e feito depois do corte
  * (nem o preparo, nem a gravacao da leitura).
+ *
+ * RR2 de 88e9560: a urgencia que a transcricao leu volta em TODO resultado
+ * que vem depois dela, inclusive a falha (a gravacao recusada, o corte
+ * durante a RPC); e a leitura com a urgencia so no texto descartado nao e
+ * gravada (urgenciaDaTranscricao).
  */
 export function portaDaMidiaDoWhatsapp(
   admin: SupabaseClient,
@@ -1374,6 +1445,13 @@ export function portaDaMidiaDoWhatsapp(
       }
       // O uso da chamada assim que ela volta (undefined: nao voltou).
       let usoDaChamada: UsoDoModelo | null | undefined;
+      // RR2 de 88e9560 (medio 2): a urgencia que a transcricao leu, assim
+      // que ela volta. Vai tambem na falha que vem DEPOIS da transcricao (a
+      // gravacao recusada, o corte da porta durante a RPC, o sinal
+      // abortado): a emergencia dita no audio nunca vira so falha tecnica.
+      let urgenciaDaChamada: TipoDeUrgencia | null = null;
+      const comAUrgencia = (): { urgencia?: TipoDeUrgencia } =>
+        urgenciaDaChamada === null ? {} : { urgencia: urgenciaDaChamada };
       const corrida = await correrComPrazo(
         async (corte): Promise<ResultadoDaTranscricao | null> => {
           const sinalDaChamada = sinalDoCorte(corte, sinal);
@@ -1397,8 +1475,11 @@ export function portaDaMidiaDoWhatsapp(
           if (feito.tipo === "falhou") {
             return { tipo: "falhou", motivo: feito.motivo, uso };
           }
+          const urgencia = urgenciaDaTranscricao(feito);
+          urgenciaDaChamada = urgencia.tipo;
           if (sinalDaChamada.aborted) {
-            // O corte ja respondeu: a leitura nao e gravada depois dele.
+            // O corte ja respondeu (com a urgencia acima, se ja tinha
+            // voltado): a leitura nao e gravada depois dele.
             return null;
           }
           const modelo = feito.uso?.modelo ?? "desconhecido";
@@ -1412,6 +1493,24 @@ export function portaDaMidiaDoWhatsapp(
             confianca: null,
             resumo: null,
           };
+          if (urgencia.soNoDescartado) {
+            // RR2 de 88e9560 (medio 3): a urgencia veio so do texto
+            // descartado. A leitura NAO e gravada (nenhuma coluna guarda a
+            // urgencia): o job repetido transcreve de novo e acha de novo. O
+            // laco passa a conversa como urgente; a bolha fica sem a linha
+            // da leitura (a equipe ouve o audio). Nada disto vai para log
+            // (a urgencia e dado de saude).
+            return feito.tipo === "transcrita"
+              ? {
+                  tipo: "transcrita",
+                  texto: feito.texto,
+                  textoParaOsModelos: d.mascarar(feito.texto),
+                  leitura,
+                  uso,
+                  urgencia: urgencia.tipo,
+                }
+              : { tipo: "sem_fala", leitura, uso, urgencia: urgencia.tipo };
+          }
           const gravada = await gravarLeitura(admin, d, {
             messageId: audio.messageId,
             midia: "audio",
@@ -1437,7 +1536,13 @@ export function portaDaMidiaDoWhatsapp(
               kind: "audio",
               error_code: gravada.codigo,
             });
-            return { tipo: "falhou", motivo: "desconhecida", uso };
+            // RR2 de 88e9560 (medio 2): a urgencia ja lida vai junto.
+            return {
+              tipo: "falhou",
+              motivo: "desconhecida",
+              uso,
+              ...comAUrgencia(),
+            };
           }
           // A primeira leitura vale (o job repetido nunca regrava).
           const valendo =
@@ -1445,7 +1550,6 @@ export function portaDaMidiaDoWhatsapp(
           // Revisao R2 de d1a15f6 (M3): a urgencia que ESTA chamada leu no
           // texto inteiro do audio (so o tipo), qualquer que seja a leitura
           // que vale: ela so acrescenta a marca de urgente.
-          const urgencia = feito.urgencia ?? null;
           if (valendo.tipo === "transcricao" && valendo.transcricao !== null) {
             return {
               tipo: "transcrita",
@@ -1453,10 +1557,15 @@ export function portaDaMidiaDoWhatsapp(
               textoParaOsModelos: d.mascarar(valendo.transcricao),
               leitura: valendo,
               uso,
-              urgencia,
+              urgencia: urgencia.tipo,
             };
           }
-          return { tipo: "sem_fala", leitura: valendo, uso, urgencia };
+          return {
+            tipo: "sem_fala",
+            leitura: valendo,
+            uso,
+            urgencia: urgencia.tipo,
+          };
         },
         prazoMs,
       );
@@ -1474,6 +1583,10 @@ export function portaDaMidiaDoWhatsapp(
           usoDaChamada !== undefined
             ? usoDaChamada
             : usoEstimadoDaTranscricao(audio),
+        // RR2 de 88e9560 (medio 2): a transcricao voltou antes do corte (o
+        // corte caiu na gravacao da leitura, ou o sinal abortou depois
+        // dela): a urgencia que ela leu vai junto.
+        ...comAUrgencia(),
       };
     },
 

@@ -84,8 +84,12 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  // Nenhum texto do paciente em log.
-  expect(escrito.join("")).not.toMatch(/presencial|Confirmo|CPF|529/);
+  // Nenhum texto do paciente em log. O CPF do teste inteiro (com ou sem
+  // pontos): so "529" casava com um id aleatorio de job ("...a535294e") e o
+  // teste falhava ao acaso.
+  expect(escrito.join("")).not.toMatch(
+    /presencial|Confirmo|CPF|529\.?982\.?247/,
+  );
 });
 
 // ---------------------------------------------------------------------------

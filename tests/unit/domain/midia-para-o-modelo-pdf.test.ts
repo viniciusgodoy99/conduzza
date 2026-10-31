@@ -146,13 +146,20 @@ describe("o PDF feito para travar o motor: bomba, rapido", () => {
       "\nendstream\nendobj\n",
     ]);
     const { resultado, ms } = cronometrar(() => preparar(arquivo));
-    expect(resultado).toMatchObject({ tipo: "pdf", paginas: 1 });
+    // A trava de tempo pode virar o arquivo pesado em "bomba" numa maquina
+    // lenta ou ocupada (so depois de passar dela).
+    if (!(resultado.tipo === "fora" && resultado.motivo === "bomba" && ms >= LIMITES_DA_MIDIA.tempoPorArquivoMs)) {
+      expect(resultado).toMatchObject({ tipo: "pdf", paginas: 1 });
+    }
     expect(ms).toBeLessThan(1500);
   });
 
-  it("os mesmos 5 MB varridos de novo a cada cabecalho falso: o orcamento de caracteres vira bomba", () => {
+  it("os mesmos 5 MB com um cabecalho falso a cada 4 KB: o primeiro dicionario que nao fecha, dentro do fluxo, ja deixa o PDF de fora", () => {
     // Um fluxo de verdade cujos dados tem cabecalhos de objeto com uma
-    // lista que nunca fecha: cada um varreria o arquivo ate o fim.
+    // lista que nunca fecha: cada um varreria o arquivo ate o fim. Desde a
+    // terceira rodada, o objeto malformado dentro de um fluxo e "formato"
+    // (o leitor tolerante pode achar ali um fluxo que esta leitura nao
+    // ve), entao a varredura para no primeiro.
     const isca = `1 0 obj << /A [${"x".repeat(4000)} `;
     const dados = isca.repeat(Math.floor((LIMITES_DA_MIDIA.pdf.maximoDeBytes - 8192) / isca.length));
     const arquivo = pdf([
@@ -162,7 +169,7 @@ describe("o PDF feito para travar o motor: bomba, rapido", () => {
       "\nendstream\nendobj\n",
     ]);
     const { resultado, ms } = cronometrar(() => preparar(arquivo));
-    expect(resultado).toEqual({ tipo: "fora", motivo: "bomba" });
+    expect(resultado).toEqual({ tipo: "fora", motivo: "formato" });
     expect(ms).toBeLessThan(1500);
   });
 
@@ -917,3 +924,210 @@ describe("BAIXO 6: o lugar por extenso com qualquer prefixo", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Terceira rodada (revisao RR2 da 88e9560): o lugar que escapava (o CDATA,
+// os nomes fora da lista, a coordenada fora do photoshop: e do xmp:, as
+// chaves do /Info) e o objeto que o leitor acha e esta leitura nao via
+// ---------------------------------------------------------------------------
+
+/** Os namespaces que o pacoteXmp nao declara (so para o XMP ficar como o de verdade). */
+const OUTROS_NAMESPACES =
+  ' xmlns:xmpDM="http://ns.adobe.com/xmp/1.0/DynamicMedia/" xmlns:pdfx="http://ns.adobe.com/pdfx/1.3/"';
+
+describe("RR2: o lugar no CDATA, com os nomes novos e a coordenada em qualquer propriedade", () => {
+  const casos: [string, string, string][] = [
+    ["o CDATA no elemento", "<photoshop:City><![CDATA[Fortaleza]]></photoshop:City>", ""],
+    [
+      "o CDATA no rdf:Alt do nome do local",
+      estruturaDeLugar(
+        "LocationShown",
+        '<Iptc4xmpExt:LocationName><rdf:Alt><rdf:li xml:lang="x-default"><![CDATA[Hospital Exemplo]]></rdf:li></rdf:Alt></Iptc4xmpExt:LocationName>',
+      ),
+      "",
+    ],
+    ["o CDATA sem o fim (na duvida, e lugar)", "<photoshop:City><![CDATA[   </photoshop:City>", ""],
+    ["o endereco do contato do autor", '<Iptc4xmpCore:CreatorContactInfo Iptc4xmpCore:CiAdrExtadr="Rua das Flores, 123"/>', ""],
+    ["a cidade do contato do autor", '<Iptc4xmpCore:CreatorContactInfo Iptc4xmpCore:CiAdrCity="Fortaleza"/>', ""],
+    ["o estado do contato do autor", "<Iptc4xmpCore:CreatorContactInfo><Iptc4xmpCore:CiAdrRegion>CE</Iptc4xmpCore:CiAdrRegion></Iptc4xmpCore:CreatorContactInfo>", ""],
+    ["o CEP do contato do autor", '<Iptc4xmpCore:CreatorContactInfo Iptc4xmpCore:CiAdrPcode="60000-000"/>', ""],
+    ["o pais do contato do autor", '<Iptc4xmpCore:CreatorContactInfo Iptc4xmpCore:CiAdrCtry="Brasil"/>', ""],
+    ["o lugar da filmagem (xmpDM:shotLocation)", "<xmpDM:shotLocation>Rua das Flores, 123, Fortaleza</xmpDM:shotLocation>", OUTROS_NAMESPACES],
+    ["a abrangencia do Dublin Core (dc:coverage)", "<dc:coverage>Fortaleza, CE</dc:coverage>", ""],
+    ["a coordenada com virgula decimal no xmp:Label", "", ' xmp:Label="-3,731900; -38,526700"'],
+    [
+      "a coordenada no dc:description (rdf:Alt)",
+      '<dc:description><rdf:Alt><rdf:li xml:lang="x-default">-3.731900, -38.526700</rdf:li></rdf:Alt></dc:description>',
+      "",
+    ],
+    ["a coordenada com o hemisferio e a virgula num prefixo qualquer", "<pdfx:Local>3,7319 S 38,5267 O</pdfx:Local>", OUTROS_NAMESPACES],
+    [
+      "graus, minutos e segundos com a virgula decimal no titulo",
+      `<dc:title><rdf:Alt><rdf:li xml:lang="x-default">3°43'54,8"S</rdf:li></rdf:Alt></dc:title>`,
+      "",
+    ],
+    ["a coordenada no CDATA", "<xmp:Nickname><![CDATA[-3.731900, -38.526700]]></xmp:Nickname>", ""],
+  ];
+  for (const [nome, elementos, atributos] of casos) {
+    it(`${nome}: formato (sem compressao e comprimido)`, () => {
+      const xmp = utf8(pacoteXmp(`${XMP_SEM_LOCAL}\n${elementos}`, atributos));
+      expect(preparar(pdfComXmp(xmp))).toEqual(FORA_DO_FORMATO);
+      expect(preparar(pdfComXmp(xmp, { comprimido: true }))).toEqual(FORA_DO_FORMATO);
+    });
+  }
+
+  it("o CDATA vazio ou so de brancos, os nomes novos vazios e os numeros que nao sao coordenada nao contam: sai", () => {
+    const vazios = [
+      "<photoshop:City><![CDATA[]]></photoshop:City>",
+      "<photoshop:State><![CDATA[  \n ]]></photoshop:State>",
+      '<Iptc4xmpCore:CreatorContactInfo Iptc4xmpCore:CiAdrCity="" Iptc4xmpCore:CiAdrCtry=" "/>',
+      "<xmpDM:shotLocation/>",
+      "<dc:coverage></dc:coverage>",
+      "<ns2:coverageNote>Fortaleza</ns2:coverageNote>",
+      "<ns2:CiAdrCityX>Fortaleza</ns2:CiAdrCityX>",
+      '<dc:description><rdf:Alt><rdf:li xml:lang="x-default">Pedido 1.234, 2 vias, R$ 1.234,56, versao 2.10</rdf:li></rdf:Alt></dc:description>',
+    ].join("\n");
+    for (const comprimido of [false, true]) {
+      const arquivo = pdfComXmp(utf8(pacoteXmp(`${XMP_SEM_LOCAL}\n${vazios}`, OUTROS_NAMESPACES)), { comprimido });
+      const preparado = preparar(arquivo);
+      expect(preparado, `comprimido: ${comprimido}`).toMatchObject({ tipo: "pdf", paginas: 1 });
+      if (preparado.tipo === "pdf") {
+        expect(preparado.bytes).toEqual(arquivo);
+      }
+    }
+  });
+});
+
+describe("RR2: o lugar no /Info e na assinatura", () => {
+  const casos: [string, string][] = [
+    ["/Location", "<< /Producer (x) /Location (Rua das Flores, 123, Fortaleza) >>"],
+    ["/Country e /State", "<< /Producer (x) /Country (Brasil) /State (CE) >>"],
+    ["/Latitude e /Longitude", "<< /Producer (x) /Latitude (-3.731900) /Longitude (-38.526700) >>"],
+    ["/Location escrita com #xx", "<< /Producer (x) /Lo#63ation (Fortaleza) >>"],
+    ["/State em hexadecimal (UTF-16)", "<< /State <FEFF00430045> >>"],
+  ];
+  for (const [nome, info] of casos) {
+    it(`${nome}, no arquivo e no fluxo de objetos: formato`, () => {
+      expect(preparar(pdf([...arvore(1), `9 0 obj\n${info}\nendobj\n`]))).toEqual(FORA_DO_FORMATO);
+      expect(preparar(pdfComInfoNoFluxoDeObjetos(info))).toEqual(FORA_DO_FORMATO);
+    });
+  }
+
+  it("o /Location da assinatura (/Type /Sig): formato", () => {
+    const assinatura =
+      "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /Name (Fulano) /Location (Fortaleza, CE) /Reason (Assinado) /M (D:20261030100000-03'00') /Contents <00> /ByteRange [0 0 0 0] >>";
+    expect(preparar(pdf([...arvore(1), `9 0 obj\n${assinatura}\nendobj\n`]))).toEqual(FORA_DO_FORMATO);
+  });
+
+  it("o valor vazio, o null e os nomes parecidos (ou o nome numa string) nao contam: sai", () => {
+    for (const info of [
+      "<< /Location () /State null /Country <FEFF> /Latitude ( ) >>",
+      "<< /Statement (x) /Locations (y) /Longitudes (z) >>",
+      "<< /Title (Location, State, Country) /Subject (Latitude e Longitude) >>",
+    ]) {
+      expect(preparar(pdfComInfoNoFluxoDeObjetos(info)), info).toMatchObject({ tipo: "pdf", paginas: 1 });
+      expect(preparar(pdf([...arvore(1), `9 0 obj\n${info}\nendobj\n`])), info).toMatchObject({ tipo: "pdf", paginas: 1 });
+    }
+  });
+});
+
+describe("RR2: o objeto que o leitor acha (pela xref) e esta leitura nao via", () => {
+  /** O PDF com a foto com segredos no objeto 9, com o cabecalho dado. */
+  function pdfComFotoECabecalho(cabecalho: string): Uint8Array {
+    const foto = fotoComSegredos();
+    return pdf([
+      ...arvore(1),
+      juntar(
+        texto(
+          `${cabecalho}\n<< /Type /XObject /Subtype /Image /Width 16 /Height 16 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /DCTDecode /Length ${foto.length} >>\nstream\n`,
+        ),
+        foto,
+        texto("\nendstream\nendobj\n"),
+      ),
+    ]);
+  }
+
+  it("o controle: o cabecalho comum, e a foto sai limpa", () => {
+    const preparado = preparar(pdfComFotoECabecalho("9 0 obj"));
+    expect(preparado).toMatchObject({ tipo: "pdf", paginas: 1 });
+    if (preparado.tipo === "pdf") {
+      expect(contem(preparado.bytes, "GPS-")).toBe(false);
+    }
+  });
+
+  it("revisao: o comentario entre as partes do cabecalho (a especificacao conta como branco): formato", () => {
+    for (const cabecalho of ["9 0 %x\nobj", "9 %x\n0 obj", "9%x\r0%y\robj", "9 \n% um\n% dois\n0 obj"]) {
+      expect(preparar(pdfComFotoECabecalho(cabecalho)), JSON.stringify(cabecalho)).toEqual(FORA_DO_FORMATO);
+    }
+  });
+
+  it("o objeto sem fluxo com comentario no cabecalho (o catalogo escondido): formato", () => {
+    const arquivo = pdf([
+      "1 0 %x\nobj\n<< /Type /Catalog /Pages 2 0 R /Metadata 20 0 R >>\nendobj\n",
+      "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+      "3 0 obj\n<< /Type /Page /Parent 2 0 R >>\nendobj\n",
+    ]);
+    expect(preparar(arquivo)).toEqual(FORA_DO_FORMATO);
+  });
+
+  it("revisao: 33 brancos ou mais entre as partes, e a geracao com 6 digitos: a foto e lida e limpa", () => {
+    for (const cabecalho of [`9${" ".repeat(33)}0 obj`, `9 0${"\n".repeat(40)}obj`, "9 000000 obj"]) {
+      const preparado = preparar(pdfComFotoECabecalho(cabecalho));
+      expect(preparado, JSON.stringify(cabecalho)).toMatchObject({ tipo: "pdf", paginas: 1 });
+      if (preparado.tipo === "pdf") {
+        expect(contem(preparado.bytes, "GPS-"), JSON.stringify(cabecalho)).toBe(false);
+      }
+    }
+  });
+
+  it("o fluxo que esta leitura nao reconhece (a marca 'endstream' que sobra): formato", () => {
+    // "9 0obj" (sem o branco antes do obj): o leitor tolerante le o objeto;
+    // esta leitura nao, e o "endstream" dele sobra.
+    expect(preparar(pdfComFotoECabecalho("9 0obj"))).toEqual(FORA_DO_FORMATO);
+    // A marca solta, fora de qualquer fluxo, tambem.
+    expect(preparar(pdf([...arvore(1), "9 0 obj\n<< /A 1 >>\nendobj\nendstream\n"]))).toEqual(FORA_DO_FORMATO);
+  });
+
+  /** A foto num objeto dentro dos dados de outro fluxo, com "stream" escrito como dado. */
+  function fotoDentroDeOutroFluxo(palavra: string): Uint8Array {
+    const foto = fotoComSegredos();
+    const dentro = juntar(
+      texto(`20 0 obj << /Type /XObject /Subtype /Image /Filter /DCTDecode /Length ${foto.length} >> ${palavra}`),
+      foto,
+      texto("\nendstream\nendobj\n"),
+    );
+    return pdf([...arvore(1), juntar(texto(`9 0 obj\n<< /Length ${dentro.length} >>\nstream\n`), dentro, texto("endobj\n"))]);
+  }
+
+  it("revisao: 'stream%x' (sem o fim de linha) num objeto dentro de outro fluxo: formato", () => {
+    for (const palavra of ["stream%x\n", "stream \0\n", "stream/x\n"]) {
+      expect(preparar(fotoDentroDeOutroFluxo(palavra)), JSON.stringify(palavra)).toEqual(FORA_DO_FORMATO);
+    }
+  });
+
+  it("o dicionario malformado num objeto dentro de outro fluxo: formato", () => {
+    const arquivo = pdf([...arvore(1), fluxoComDados("xx 20 0 obj << /Filter /DCTDecode /A >> stream\nab\nyy")]);
+    expect(preparar(arquivo)).toEqual(FORA_DO_FORMATO);
+  });
+
+  it("os comentarios de sempre (a marca binaria, o %%EOF da atualizacao incremental, a porcentagem numa string, a linha solta) nao atrapalham: sai igual", () => {
+    const arquivo = juntar(
+      texto("%PDF-1.7\n%\xe2\xe3\xcf\xd3\n"),
+      ...arvore(1).map(texto),
+      texto("4 0 obj\n<< /Producer (100% digital) /Title (50%)\n>>\nendobj\n"),
+      texto("% um comentario solto\n5 0 obj\n<< /A 1 >>\nendobj\n"),
+      texto("trailer\n<< /Root 1 0 R >>\nstartxref\n12345\n%%EOF\n"),
+      texto("6 0 obj\n<< /B 2 >>\nendobj\n7 0 obj << /C 3 >> endobj\ntrailer\n<< /Root 1 0 R /Prev 12345 >>\nstartxref\n23456\n%%EOF\n"),
+    );
+    const preparado = preparar(arquivo);
+    expect(preparado).toMatchObject({ tipo: "pdf", paginas: 1 });
+    if (preparado.tipo === "pdf") {
+      expect(preparado.bytes).toEqual(arquivo);
+    }
+  });
+});
+
+/** Um fluxo sem filtro com os dados dados (o objeto 9). */
+function fluxoComDados(dados: string): string {
+  return `9 0 obj\n<< /Length ${dados.length} >>\nstream\n${dados}\nendstream\nendobj\n`;
+}

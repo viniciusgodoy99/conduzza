@@ -33,10 +33,11 @@ import {
   type CasoDeSaida,
 } from "@/tests/fixtures/ia/conformidade/casos";
 import {
+  BARRADOS_DE_PROPOSITO_NA_REVISAO_FINAL,
   CONTEXTO_DO_EXAME_DA_REVISAO_R2,
   CONTROLES_DA_MIDIA,
+  CONTROLES_DA_REVISAO_FINAL,
   CONTROLES_DA_TRIAGEM_DA_REVISAO_R2,
-  CONTROLES_DO_PONTO_DE_REFERENCIA,
   CONTROLES_DO_RESULTADO,
   CONTROLES_DO_RESULTADO_DA_REVISAO_R2,
   ENTRADAS_POR_AUDIO,
@@ -45,6 +46,7 @@ import {
   LEGENDAS_QUE_ESCALAM,
   LEGENDAS_QUE_PASSAM,
   LUGAR_SEM_A_FERRAMENTA_QUE_BLOQUEIA,
+  PONTO_DE_REFERENCIA_COM_A_FERRAMENTA_QUE_BLOQUEIA,
   RASCUNHOS_DO_LUGAR_DA_REVISAO_R2,
   SAIDAS_DA_MIDIA_QUE_BLOQUEIAM,
   SAIDAS_DA_TRIAGEM_DA_REVISAO_R2,
@@ -186,13 +188,15 @@ describe("bateria AG6b: os ids e a cobertura", () => {
       ...SAIDAS_DO_LUGAR_QUE_BLOQUEIAM,
       ...LUGAR_SEM_A_FERRAMENTA_QUE_BLOQUEIA,
       ...RASCUNHOS_DO_LUGAR_DA_REVISAO_R2,
-      ...CONTROLES_DO_PONTO_DE_REFERENCIA,
+      ...PONTO_DE_REFERENCIA_COM_A_FERRAMENTA_QUE_BLOQUEIA,
       ...SAIDAS_DO_PONTO_DE_REFERENCIA_QUE_BLOQUEIAM,
       ...CONTROLES_DO_RESULTADO,
       ...SAIDAS_DO_RESULTADO_DA_REVISAO_R2,
       ...CONTROLES_DO_RESULTADO_DA_REVISAO_R2,
       ...SAIDAS_DA_TRIAGEM_DA_REVISAO_R2,
       ...CONTROLES_DA_TRIAGEM_DA_REVISAO_R2,
+      ...CONTROLES_DA_REVISAO_FINAL,
+      ...BARRADOS_DE_PROPOSITO_NA_REVISAO_FINAL,
     ].map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
     // Revisao R2 de d1a15f6: os numeros da revisao.
@@ -537,11 +541,12 @@ async function passaNasRegras(caso: CasoDeControle) {
   expect(decisao.aprovado).toBe(true);
 }
 
-// A2: a troca larga do ponto de referencia saiu. Qualquer mencao a UPA, ao
-// pronto-socorro, ao SAMU ou ao hospital como destino barra como no main; so
-// o texto EXATO do ponto de referencia que consultar_unidades trouxe no turno
-// passa.
-describe("bateria AG6b (revisão R2): o lugar como no main, menos o ponto de referência da ferramenta (A2)", () => {
+// A2: a troca larga do ponto de referencia saiu (revisao R2) e, na revisao
+// final de 31/10/2026, a mascara do ponto de referencia da ferramenta
+// tambem: qualquer mencao a UPA, ao pronto-socorro, ao SAMU ou ao hospital
+// como destino barra como no main, com ou sem consultar_unidades no turno.
+// Liberar a referencia perto de UPA e PROPOSTA para o dono.
+describe("bateria AG6b (revisão final): o lugar como no main, com ou sem a ferramenta (A2)", () => {
   it.each(RASCUNHOS_DO_LUGAR_DA_REVISAO_R2.map((c) => [c.id, c] as const))(
     "%s: o rascunho do revisor barra (pronto_socorro), como no main",
     async (_id, caso) => {
@@ -556,10 +561,17 @@ describe("bateria AG6b (revisão R2): o lugar como no main, menos o ponto de ref
     },
   );
 
-  it.each(CONTROLES_DO_PONTO_DE_REFERENCIA.map((c) => [c.id, c] as const))(
-    "controle %s: o ponto de referencia exato da ferramenta passa",
+  it.each(
+    PONTO_DE_REFERENCIA_COM_A_FERRAMENTA_QUE_BLOQUEIA.map(
+      (c) => [c.id, c] as const,
+    ),
+  )(
+    "%s: com o ponto de referencia da ferramenta no turno, barra como no main",
     async (_id, caso) => {
-      await passaNasRegras(caso);
+      await barraPelaRegra(
+        caso,
+        caso.categoria === "triagem" ? "pronto_socorro" : undefined,
+      );
     },
   );
 
@@ -618,18 +630,38 @@ describe("bateria AG6b (revisão R2): a triagem que passava também no main (B1)
   });
 });
 
-// As versoes conferidas na revisao de 6eae43d e na revisao R2 de d1a15f6
-// ficaram para tras: o portao mudou (as trocas do exame da 3a rodada
-// desfeitas, o "que vem" do tempo) e as regras tambem (a troca larga do
-// lugar saiu, o ponto de referencia da ferramenta, o resultado comentado e a
-// triagem da revisao R2).
-describe("bateria AG6b: as versões da revisão R2", () => {
-  it("o portão e as regras mudaram desde as revisões de 6eae43d e de d1a15f6", () => {
+// Revisao final de 31/10/2026: os alarmes falsos das regras novas de saida
+// passam, e o que fica barrado de proposito continua barrado.
+describe("bateria AG6b (revisão final): os alarmes falsos das regras novas", () => {
+  it.each(CONTROLES_DA_REVISAO_FINAL.map((c) => [c.id, c] as const))(
+    "controle %s: a recepcao passa",
+    async (_id, caso) => {
+      await passaNasRegras(caso);
+    },
+  );
+
+  it.each(
+    BARRADOS_DE_PROPOSITO_NA_REVISAO_FINAL.map((c) => [c.id, c] as const),
+  )("%s: fica barrado de proposito", async (_id, caso) => {
+    await barraPelaRegra(caso);
+  });
+});
+
+// As versoes conferidas na revisao de 6eae43d, na revisao R2 de d1a15f6 e
+// na revisao final (88e9560) ficaram para tras: o portao mudou (as trocas do
+// exame da 3a rodada desfeitas, o "que vem" do tempo, a guarda lida em
+// codigo) e as regras tambem (a troca larga do lugar e a mascara do ponto de
+// referencia sairam, o resultado comentado e a triagem sem os alarmes
+// falsos, a saida cedo do rascunho longo).
+describe("bateria AG6b: as versões da revisão final", () => {
+  it("o portão e as regras mudaram desde as revisões de 6eae43d, de d1a15f6 e de 88e9560", () => {
     expect(versaoDoPortao()).toMatch(/^portao-[0-9a-f]{12}$/);
     expect(versaoDasRegras()).toMatch(/^regras-[0-9a-f]{12}$/);
     expect(versaoDoPortao()).not.toBe("portao-d2a3ee0b28c5");
     expect(versaoDasRegras()).not.toBe("regras-ed143ad51147");
     expect(versaoDoPortao()).not.toBe("portao-04348f7f6108");
     expect(versaoDasRegras()).not.toBe("regras-866a8602fec2");
+    expect(versaoDoPortao()).not.toBe("portao-0f66fa91734d");
+    expect(versaoDasRegras()).not.toBe("regras-86ba99a67793");
   });
 });

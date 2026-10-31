@@ -38,11 +38,13 @@ import {
   FALSOS_POSITIVOS_ACEITOS,
   FALSOS_POSITIVOS_QUE_FICAM,
   MATRIZES_DA_URGENCIA,
+  MATRIZES_DO_RR1,
   NAO_REGRESSAO_DA_URGENCIA,
   RAJADAS_DE_URGENCIA,
   RAJADAS_SEM_URGENCIA,
   SAIDAS_DA_URGENCIA_QUE_BLOQUEIAM,
   TENTATIVAS_DE_TRIAGEM,
+  VIRARAM_URGENCIA_NA_RR1,
 } from "@/tests/fixtures/ia/conformidade/casos-ag6";
 
 // Bateria do CFM da AG6a (a urgencia; no prebuild): os sinais de emergencia
@@ -315,10 +317,26 @@ describe("bateria AG6: a revisão de 6eae43d (A1, M1 e M2)", () => {
 
   it("M2: toda frase que a edd123c marcava e deixou de marcar está nos aceitos, com a área e o motivo", () => {
     expect(daRevisao("M2")).toHaveLength(19);
+    // Revisao RR1 (a politica nova das excecoes): seis voltaram a ser
+    // urgencia (o "ta", o "entortou", o "hoje" e a agenda em outra frase) e
+    // sairam dos aceitos.
+    const viraramNaRR1 = new Set([
+      "AG6-NR240",
+      "AG6-NR241",
+      "AG6-NR256",
+      "AG6-NR257",
+      "AG6-NR289",
+      "AG6-NR291",
+    ]);
     for (const frase of [
       ...daRevisao("M2"),
       ...daRevisao("corpus do revisor"),
     ]) {
+      if (viraramNaRR1.has(frase.id)) {
+        expect(aceitos.has(frase.id), frase.id).toBe(false);
+        expect(detectarUrgencia(frase.textos)?.tipo, frase.id).toBe(frase.tipo);
+        continue;
+      }
       expect(aceitos.has(frase.id), frase.id).toBe(true);
       expect(detectarUrgencia(frase.textos), frase.id).toBeNull();
     }
@@ -341,7 +359,10 @@ describe("bateria AG6: a revisão R2 de d1a15f6 (A1, A3, M2, M4 e M5)", () => {
   it("toda frase do revisor que a edd123c marcava está na não regressão; só os alarmes falsos dele deixam de ser urgência, cada um com a área e o motivo", () => {
     expect(daR2).toHaveLength(111);
     const aceitasDaR2 = daR2.filter((frase) => aceitos.has(frase.id));
-    expect(aceitasDaR2).toHaveLength(31);
+    // Revisao RR1: 7 das 31 aceitas voltaram a ser urgencia (AG6-NR360,
+    // NR366, NR409, NR412, NR413, NR416 e NR420: a agenda em outra frase, a
+    // terceira pessoa, o "ta" e o procedimento, que deixou de ser excecao).
+    expect(aceitasDaR2).toHaveLength(24);
     for (const frase of aceitasDaR2) {
       expect(detectarUrgencia(frase.textos), frase.id).toBeNull();
     }
@@ -394,6 +415,103 @@ describe("bateria AG6: a revisão R2 de d1a15f6 (A1, A3, M2, M4 e M5)", () => {
     expect(MATRIZES_DA_URGENCIA.boca_e_rosto_x_final_generico).toHaveLength(
       100,
     );
+  });
+});
+
+// Revisao RR1 (a politica nova das excecoes, decisao do coordenador): a
+// excecao so vale com a PROVA POSITIVA (o estado de sempre, a pergunta pura,
+// a figura com o objeto dito, a agenda sem sintoma), so na oracao ou na
+// frase do sinal, e qualquer marca de relato atual ou de evento recente a
+// desfaz (o tempo recente, a terceira pessoa, o pedido de ajuda, o relato
+// que retoma o sinal, a mudanca e o estado de agora). As matrizes do revisor
+// (MATRIZES_DO_RR1) estao em urgencia-matrizes.test.ts.
+describe("bateria AG6: a revisão RR1 (a política nova das exceções)", () => {
+  const aceitos = new Set(FALSOS_POSITIVOS_ACEITOS.map((f) => f.id));
+  const daRR1 = NAO_REGRESSAO_DA_URGENCIA.filter(
+    (frase) => frase.origem === "revisão RR1",
+  );
+
+  it("toda frase do revisor que a edd123c marcava está na não regressão; só as de prova positiva deixam de ser urgência, cada uma com a área e o motivo", () => {
+    expect(daRR1).toHaveLength(140);
+    const aceitas = daRR1.filter((frase) => aceitos.has(frase.id));
+    expect(aceitas).toHaveLength(27);
+    for (const frase of aceitas) {
+      expect(detectarUrgencia(frase.textos), frase.id).toBeNull();
+    }
+    for (const frase of daRR1.filter((f) => !aceitos.has(f.id))) {
+      expect(detectarUrgencia(frase.textos)?.tipo, frase.id).toBe(frase.tipo);
+    }
+  });
+
+  it("os 29 aceitos de antes que voltaram a ser urgência saíram da lista, e cada um é urgência do tipo da edd123c", () => {
+    const sairam = [
+      "AG6-NR074",
+      "AG6-NR077",
+      "AG6-NR126",
+      "AG6-NR127",
+      "AG6-NR135",
+      "AG6-NR147",
+      "AG6-NR161",
+      "AG6-NR162",
+      "AG6-NR163",
+      "AG6-NR172",
+      "AG6-NR240",
+      "AG6-NR241",
+      "AG6-NR256",
+      "AG6-NR257",
+      "AG6-NR258",
+      "AG6-NR259",
+      "AG6-NR289",
+      "AG6-NR291",
+      "AG6-NR302",
+      "AG6-NR303",
+      "AG6-NR304",
+      "AG6-NR314",
+      "AG6-NR360",
+      "AG6-NR366",
+      "AG6-NR409",
+      "AG6-NR412",
+      "AG6-NR413",
+      "AG6-NR416",
+      "AG6-NR420",
+    ];
+    expect(new Set(sairam).size).toBe(29);
+    for (const id of sairam) {
+      expect(aceitos.has(id), id).toBe(false);
+      const frase = NAO_REGRESSAO_DA_URGENCIA.find((f) => f.id === id);
+      expect(frase, id).toBeDefined();
+      expect(detectarUrgencia(frase?.textos ?? [])?.tipo, id).toBe(frase?.tipo);
+    }
+  });
+
+  it.each(
+    VIRARAM_URGENCIA_NA_RR1.map((caso) => [caso.id, caso.antes, caso] as const),
+  )("%s (antes %s) virou urgência, com o motivo", (_id, _antes, caso) => {
+    expect(detectarUrgencia(caso.textos)).not.toBeNull();
+    expect(
+      detectarGatilhosDeEntrada({
+        mensagens: caso.textos.map((texto) => ({ tipo: "texto", texto })),
+      })[0],
+    ).toBe("urgencia");
+    expect(caso.motivo.trim().length).toBeGreaterThan(10);
+    expect(caso.motivo).not.toMatch(/[–—]/);
+  });
+
+  it("as seis emergências que não escalavam por nada são urgência, e os sinais novos têm caso na bateria", () => {
+    const seis = MATRIZES_DO_RR1.seis_que_nao_escalavam ?? [];
+    expect(seis).toHaveLength(6);
+    for (const textos of seis) {
+      expect(detectarUrgencia(textos), textos.join(" ")).not.toBeNull();
+    }
+    const sinais = new Map(
+      CASOS_DE_URGENCIA.map((caso) => [
+        detectarUrgencia([caso.texto])?.sinal,
+        caso.tipo,
+      ]),
+    );
+    for (const sinal of ["tomar_veneno", "ultimo_dia"]) {
+      expect(sinais.get(sinal), sinal).toBe("risco_de_vida");
+    }
   });
 });
 
@@ -853,5 +971,12 @@ describe("bateria AG6: as versões da revisão", () => {
   // a leitura linear, B5): a versao do portao da d1a15f6 ficou para tras.
   it("o portão mudou desde a d1a15f6 (revisão R2)", () => {
     expect(versaoDoPortao()).not.toBe("portao-04348f7f6108");
+  });
+
+  // Revisao RR1: a lista de urgencia mudou (a politica nova das excecoes, os
+  // sinais novos e os alargados): a versao do portao da 88e9560 ficou para
+  // tras.
+  it("o portão mudou desde a 88e9560 (revisão RR1)", () => {
+    expect(versaoDoPortao()).not.toBe("portao-4e98a801c92c");
   });
 });

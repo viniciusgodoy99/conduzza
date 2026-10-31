@@ -406,6 +406,8 @@ export const FONTES_DAS_REGRAS_EM_CODIGO: readonly string[] = [
   SEQUENCIA_DE_DIGITOS.source,
   [...CATEGORIAS_SEM_MASCARA].join(","),
   `sem o endereco da ferramenta: ${[...CATEGORIAS_SEM_O_ENDERECO].join(",")}`,
+  // Revisao final de 31/10/2026: a saida cedo do rascunho longo.
+  `com os fatos, acima de ${LIMITE_DO_RASCUNHO} caracteres: so formato_invalido/longo, sem ler o resto`,
   CNPJ_COM_MASCARA.source,
   ...NEUTRALIZACOES_DE_SAIDA.map(({ nome, fonte, troca }) =>
     [nome, fonte, troca].join(" "),
@@ -500,6 +502,25 @@ export function avaliarRegras(
   rascunho: string,
   contexto: ContextoDasRegras,
 ): ResultadoDasRegras {
+  // Revisao final de 31/10/2026 (desempenho): no turno da IA (com os fatos),
+  // o rascunho acima do limite ja barra como "longo" (formato_invalido), e
+  // o resto nao muda a decisao: sai aqui, sem ler o resto. O rascunho chega
+  // a uns 32 mil caracteres (MAX_TOKENS_DO_AGENTE, 8.192) e as regras dos
+  // fatos leem frase a frase (". " repetido levava 31,6 s em 65.536
+  // caracteres). So muda a categoria registrada do bloqueio de um rascunho
+  // longo (formato_invalido, e nao a primeira das outras). Sem os fatos (os
+  // textos da Tela 6 e do Cadastro, problemaNoTextoDoAgente, em que as
+  // instrucoes passam do limite e quem chama descarta o "longo"; a retomada
+  // do envio), todas as regras continuam lidas, como antes.
+  if (
+    contexto.fatos !== undefined &&
+    Array.from(rascunho).length > LIMITE_DO_RASCUNHO
+  ) {
+    return {
+      categorias: ["formato_invalido"],
+      achados: [{ categoria: "formato_invalido", regra: "longo" }],
+    };
+  }
   const achados: AchadoDaRegra[] = [];
   const visoes = visoesDoTexto(
     rascunho,

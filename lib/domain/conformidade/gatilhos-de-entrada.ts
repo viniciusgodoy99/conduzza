@@ -514,6 +514,17 @@ export const FONTES_DO_PORTAO_EM_CODIGO: readonly string[] = [
   A_PESSOA_TEM_CONSULTA.source,
   NEGACAO_ANTES_DA_CONSULTA.source,
   "outra pessoa adulta: a consulta dela (colada: a consulta da minha mae, cancela a da minha mae), a pessoa que quer cancelar ou remarcar e a que tem consulta com o pedido de cancelar nas mensagens do turno, fora da negacao",
+  // Revisao de desempenho de 31/10/2026: a guarda de janela das trocas (a
+  // intencao clinica perto do exame da pergunta de preco) e lida em codigo
+  // (normalizar.ts), fora da fonte da troca; a versao do portao le as
+  // trocas so pelo nome, pela fonte e pela troca.
+  ...NEUTRALIZACOES_DE_ENTRADA.flatMap(({ nome, semPorPerto }) =>
+    semPorPerto === undefined
+      ? []
+      : [
+          `${nome}: sem ${semPorPerto.fonte} ate ${semPorPerto.janela} caracteres do fim do casamento`,
+        ],
+  ),
 ];
 
 /** Atalho para o filtro de saida: gatilhos de um conjunto de textos. */

@@ -1,6 +1,6 @@
 import { deflateSync } from "node:zlib";
 
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import {
   LIMITES_DA_MIDIA,
@@ -25,6 +25,13 @@ import {
 
 const MB = 1024 * 1024;
 const PRAZO_MS = 1500;
+
+// O PRAZO_MS vale para cada preparo. O teste inteiro tem mais folga que os
+// 5 s padrao do vitest: varios casos MONTAM arquivos de 5 MB (as 4 variantes
+// das 71 fotos, por exemplo), e com a suite inteira em paralelo e a maquina
+// em modo de pouca energia a montagem passou de 5 s sem o preparo passar
+// do prazo.
+vi.setConfig({ testTimeout: 60_000 });
 
 const texto = (t: string) => Uint8Array.from(Buffer.from(t, "latin1"));
 const bytes = (...b: number[]) => Uint8Array.from(b);
@@ -89,6 +96,18 @@ function resultadoValido(resultado: MidiaPreparada): boolean {
 afterAll(() => {
   console.log(`[midia-para-o-modelo-cpu] pior tempo: ${pior.ms.toFixed(1)} ms (${pior.caso})`);
 });
+
+/**
+ * O resultado esperado, ou a trava de tempo: o arquivo pesado que passou de
+ * LIMITES_DA_MIDIA.tempoPorArquivoMs (a maquina lenta ou ocupada) vira
+ * "bomba" de proposito; a "bomba" antes disso continua sendo erro.
+ */
+function esperarOuTrava(resultado: MidiaPreparada, ms: number, esperado: Record<string, unknown>): void {
+  if (resultado.tipo === "fora" && resultado.motivo === "bomba" && ms >= LIMITES_DA_MIDIA.tempoPorArquivoMs) {
+    return;
+  }
+  expect(resultado).toMatchObject(esperado);
+}
 
 // ---------------------------------------------------------------------------
 // Geradores
@@ -366,13 +385,13 @@ describe("ALTO 2: a lista e o /Count indiretos lidos uma vez por numero de objet
     const arquivo = pdfKids(1000, 700_000);
     expect(arquivo.length).toBeLessThan(LIMITES_DA_MIDIA.pdf.maximoDeBytes);
     const { resultado, ms } = cronometrar("Kids: 1.000 nos x 700 mil", "pdf", arquivo);
-    expect(resultado).toEqual({ tipo: "fora", motivo: "paginas_demais" });
+    esperarOuTrava(resultado, ms, { tipo: "fora", motivo: "paginas_demais" });
     expect(ms).toBeLessThan(PRAZO_MS);
   });
 
   it("revisao: 9.900 versoes do mesmo no e do mesmo /Count indireto: em menos de 1,5 s", () => {
     const { resultado, ms } = cronometrar("Kids: 9.900 versoes", "pdf", pdfVersoes(9900));
-    expect(resultado).toMatchObject({ tipo: "pdf", paginas: 1 });
+    esperarOuTrava(resultado, ms, { tipo: "pdf", paginas: 1 });
     expect(ms).toBeLessThan(PRAZO_MS);
   });
 
@@ -452,7 +471,7 @@ describe("ALTO 3: o fluxo que comeca dentro de outro e PDF malformado", () => {
     const foto = juntar(bytes(0xff, 0xd8), DQT, SOF0, SOS, dados, bytes(0xff, 0xd9));
     const arquivo = pdf([CATALOGO, RAIZ, PAGINA, fluxo("/Type /XObject /Subtype /Image /Filter /DCTDecode", foto)]);
     const { resultado, ms } = cronometrar("uma foto de 4,8 MB", "pdf", arquivo);
-    expect(resultado).toMatchObject({ tipo: "pdf", paginas: 1 });
+    esperarOuTrava(resultado, ms, { tipo: "pdf", paginas: 1 });
     expect(ms).toBeLessThan(PRAZO_MS);
   });
 
@@ -568,8 +587,10 @@ describe("o orcamento de trabalho: um por arquivo, cobrado em todo laco", () => 
   it("o orcamento e de cada arquivo: o segundo preparo nao herda o gasto do primeiro", () => {
     const pesado = pdf([CATALOGO, RAIZ, PAGINA, `<< /V [${repetir("0 ", 3.5 * MB)}] >>`]);
     const leve = pdf([CATALOGO, RAIZ, PAGINA]);
-    expect(cronometrar("x", "pdf", pesado).resultado).toMatchObject({ tipo: "pdf" });
-    expect(cronometrar("x", "pdf", pesado).resultado).toMatchObject({ tipo: "pdf" });
+    for (const arquivo of [pesado, pesado]) {
+      const { resultado, ms } = cronometrar("o orcamento de cada arquivo", "pdf", arquivo);
+      esperarOuTrava(resultado, ms, { tipo: "pdf" });
+    }
     expect(cronometrar("x", "pdf", leve).resultado).toMatchObject({ tipo: "pdf" });
   });
 });
@@ -752,6 +773,191 @@ describe("o fuzz deterministico (semente fixa): cada caso em menos de 1,5 s, sem
       const arquivo = caso.gerar();
       if (arquivo.length > LIMITES_DA_MIDIA.pdf.maximoDeBytes) {
         // Acima do tamanho maximo nem e lido (e o mesmo para os outros formatos).
+        expect(cronometrar(caso.nome, caso.formato, arquivo).resultado).toEqual({ tipo: "fora", motivo: "grande_demais" });
+        return;
+      }
+      const { resultado, ms } = cronometrar(caso.nome, caso.formato, arquivo);
+      expect(resultadoValido(resultado), JSON.stringify(resultado)).toBe(true);
+      expect(ms).toBeLessThan(PRAZO_MS);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Terceira rodada (revisao RR2 da 88e9560): o trabalho que o orcamento nao
+// cobrava (as chaves com #xx, os comentarios, o APP0 que nao e JFIF) e a
+// trava de tempo
+// ---------------------------------------------------------------------------
+
+/** O JPEG com `quantos` segmentos do marcador (corpo de 14 bytes "A") antes do quadro. */
+function jpegComSegmentos(marcador: number, quantos: number): Uint8Array {
+  const segmento = juntar(bytes(0xff, marcador, 0x00, 0x10), new Uint8Array(14).fill(0x41));
+  return juntar(bytes(0xff, 0xd8), repetido(segmento, quantos), DQT, SOF0, SOS, bytes(0x12, 0xff, 0xd9));
+}
+
+/** O PDF com a mesma foto repetida ate perto do tamanho. */
+function pdfComFotos(foto: Uint8Array, tamanho: number): Uint8Array {
+  const quantas = Math.max(1, Math.floor(tamanho / (foto.length + 160)));
+  const fotos = Array.from({ length: quantas }, () =>
+    fluxo("/Type /XObject /Subtype /Image /Width 1 /Height 1 /Filter /DCTDecode", foto),
+  );
+  return pdf([CATALOGO, RAIZ, PAGINA, ...fotos]);
+}
+
+describe("RR2: o trabalho que o orcamento nao cobrava", () => {
+  const CHAVE_COM_ESCAPES = `/${"#41".repeat(13)}`;
+  const dicionarioDeChaves = (tamanho: number) => `<<${repetir(`${CHAVE_COM_ESCAPES} 1`, tamanho)}>>`;
+
+  it("revisao: 19.990 objetos no mesmo dicionario de 1 KB e de 3 KB de chaves /#41 x 13: em menos de 1,5 s", () => {
+    for (const tamanho of [1000, 3000]) {
+      const { resultado, ms } = cronometrar(
+        `RR2: 19.990 x chaves #41 em ${tamanho} B`,
+        "pdf",
+        pdfObjStmMesmoDicionario(19_990, dicionarioDeChaves(tamanho)),
+      );
+      expect(resultadoValido(resultado), JSON.stringify(resultado)).toBe(true);
+      expect(ms).toBeLessThan(PRAZO_MS);
+    }
+  });
+
+  it("revisao: um dicionario de 4,9 MB de chaves /#41 x 13, sem fluxo de objetos: em menos de 1,5 s", () => {
+    const { resultado, ms } = cronometrar("RR2: 4,9 MB de chaves #41", "pdf", pdf([CATALOGO, RAIZ, PAGINA, dicionarioDeChaves(4.9 * MB)]));
+    expect(resultadoValido(resultado), JSON.stringify(resultado)).toBe(true);
+    expect(ms).toBeLessThan(PRAZO_MS);
+  });
+
+  it("a chave escrita so com #xx que e uma das lidas (decodificada uma vez e guardada) continua lida", () => {
+    // /Type /Pages /Kids [...] /Count 4, tudo com escapes: 4 paginas.
+    const no = "<< /#54#79#70#65 /#50#61#67#65#73 /#4b#69#64#73 [3 0 R 4 0 R 5 0 R 6 0 R] /#43#6f#75#6e#74 4 >>";
+    const paginas = Array.from({ length: 4 }, () => PAGINA);
+    expect(cronometrar("x", "pdf", pdf([CATALOGO, no, ...paginas])).resultado).toEqual({
+      tipo: "fora",
+      motivo: "paginas_demais",
+    });
+    // A mesma chave em 2.000 objetos (decodificada uma vez, guardada): cada
+    // um conta como pagina, mais a pagina 3 da arvore.
+    expect(paginasDoPdf(pdfObjStmMesmoDicionario(2000, "<</#54#79#70#65/Page>>"))).toEqual({ paginas: 2001 });
+  });
+
+  it("revisao: 19.990 objetos no mesmo dicionario de 3 KB de comentarios %\\n: em menos de 1,5 s", () => {
+    for (const comentario of ["%\n", "%\r", `%${"x".repeat(60)}\n`]) {
+      const { resultado, ms } = cronometrar(
+        `RR2: 19.990 x comentarios ${JSON.stringify(comentario)}`,
+        "pdf",
+        pdfObjStmMesmoDicionario(19_990, `<<${repetir(comentario, 3000)}>>`),
+      );
+      expect(resultadoValido(resultado), JSON.stringify(resultado)).toBe(true);
+      expect(ms).toBeLessThan(PRAZO_MS);
+    }
+  });
+
+  it("revisao: 71 fotos com 4.000 APP0 que nao sao JFIF (e o mesmo com APP1, APP14 e COM): em menos de 1,5 s", () => {
+    for (const marcador of [0xe0, 0xe1, 0xee, 0xfe]) {
+      const foto = jpegComSegmentos(marcador, 4000);
+      const { resultado, ms } = cronometrar(`RR2: fotos com 4.000 segmentos 0x${marcador.toString(16)}`, "pdf", pdfComFotos(foto, 4.9 * MB));
+      expect(resultadoValido(resultado), JSON.stringify(resultado)).toBe(true);
+      expect(ms).toBeLessThan(PRAZO_MS);
+      expect(cronometrar("x", "jpeg", foto).resultado).toMatchObject({ tipo: "imagem" });
+    }
+  });
+});
+
+describe("a trava de tempo (a segunda trava, contra o peso mal calibrado)", () => {
+  /** Um PDF com trabalho de sobra para o relogio ser conferido (umas 300 mil unidades). */
+  const arquivo = pdf([CATALOGO, RAIZ, PAGINA, fluxo("", repetir("0.5 0.25 rg 100 200 m 300 400 l S\n", 256 * 1024))]);
+
+  it("o relogio passou da trava: bomba", () => {
+    // O relogio simulado anda 1 s a cada leitura: a primeira conferencia ja passou dos 400 ms.
+    let agora = 0;
+    const relogio = vi.spyOn(performance, "now").mockImplementation(() => (agora += 1000));
+    try {
+      expect(prepararMidia({ midia: "documento", bytes: arquivo, mimetype: "application/pdf" })).toEqual({
+        tipo: "fora",
+        motivo: "bomba",
+      });
+      expect(paginasDoPdf(arquivo)).toEqual({ erro: "bomba" });
+    } finally {
+      relogio.mockRestore();
+    }
+  });
+
+  it("o relogio de verdade (o controle): o mesmo arquivo sai", () => {
+    expect(LIMITES_DA_MIDIA.tempoPorArquivoMs).toBe(400);
+    expect(cronometrar("trava de tempo: controle", "pdf", arquivo).resultado).toMatchObject({ tipo: "pdf", paginas: 1 });
+  });
+});
+
+/** Os geradores da terceira rodada: as chaves e os nomes com #xx, os comentarios e os segmentos APPn. */
+function casosDoFuzzRr2(semente: number, quantos: number): CasoDoFuzz[] {
+  const sorteio = aleatorio(semente);
+  const inteiro = (de: number, ate: number) => de + Math.floor(sorteio() * (ate - de + 1));
+  const escolher = <T,>(lista: readonly T[]): T => lista[Math.floor(sorteio() * lista.length)] as T;
+  /** Um nome com letras e escapes #xx sorteados (inclusive os de delimitador, como #25 e #2f). */
+  const nomeComEscapes = (tamanho: number) =>
+    `/${Array.from({ length: tamanho }, () =>
+      sorteio() < 0.6
+        ? `#${inteiro(0x21, 0x7e).toString(16).padStart(2, "0")}`
+        : String.fromCharCode(inteiro(0x41, 0x5a)),
+    ).join("")}`;
+  const COMENTARIOS = ["%\n", "%\r", "%\r\n", "%x\n", `%${"y".repeat(60)}\n`, "%%EOF\n"];
+  const familias: ((n: number) => CasoDoFuzz)[] = [
+    (n) => {
+      const chave = nomeComEscapes(inteiro(1, 20));
+      const tamanho = inteiro(1, 48) * 100_000;
+      return { nome: `fuzz RR2 ${n}: chaves ${JSON.stringify(chave)} num dicionario de ${tamanho} B`, formato: "pdf", gerar: () => pdf([CATALOGO, RAIZ, PAGINA, `<<${repetir(`${chave} 1`, tamanho)}>>`]) };
+    },
+    (n) => {
+      const chave = nomeComEscapes(inteiro(1, 16));
+      const objetos = inteiro(2, 19_990);
+      const tamanho = inteiro(10, 3000);
+      return { nome: `fuzz RR2 ${n}: ${objetos} objetos no dicionario de ${tamanho} B de chaves ${JSON.stringify(chave)}`, formato: "pdf", gerar: () => pdfObjStmMesmoDicionario(objetos, `<<${repetir(`${chave} 1`, tamanho)}>>`) };
+    },
+    (n) => {
+      const chave = escolher(["/Type", "/Subtype", "/Filter", "/Ty#70e"]);
+      const nome = nomeComEscapes(inteiro(1, 30));
+      const objetos = inteiro(2, 19_990);
+      const tamanho = inteiro(10, 3000);
+      return { nome: `fuzz RR2 ${n}: ${objetos} objetos com ${chave} [${JSON.stringify(nome)}...] de ${tamanho} B`, formato: "pdf", gerar: () => pdfObjStmMesmoDicionario(objetos, `<<${chave}[${repetir(nome, tamanho)}]>>`) };
+    },
+    (n) => {
+      const comentario = escolher(COMENTARIOS);
+      const lugar = escolher(["chave", "valor", "lista", "dicionario"] as const);
+      const tamanho = inteiro(1, 48) * 100_000;
+      const corpo = repetir(comentario, tamanho);
+      const dicionario =
+        lugar === "chave" ? `<<${corpo}>>` : lugar === "valor" ? `<< /A ${corpo}1 >>` : lugar === "lista" ? `<< /A [${corpo}] >>` : `<< /A <<${corpo}>> >>`;
+      return { nome: `fuzz RR2 ${n}: comentarios ${JSON.stringify(comentario)} no lugar de ${lugar} (${tamanho} B)`, formato: "pdf", gerar: () => pdf([CATALOGO, RAIZ, PAGINA, dicionario]) };
+    },
+    (n) => {
+      const comentario = escolher(COMENTARIOS);
+      const objetos = inteiro(2, 19_990);
+      const tamanho = inteiro(10, 3000);
+      return { nome: `fuzz RR2 ${n}: ${objetos} objetos no dicionario de ${tamanho} B de comentarios ${JSON.stringify(comentario)}`, formato: "pdf", gerar: () => pdfObjStmMesmoDicionario(objetos, `<</A${repetir(`${comentario}1`, tamanho)}>>`) };
+    },
+    (n) => {
+      const padrao = Array.from({ length: inteiro(1, 6) }, () => escolher(["1", "0", "12", " ", "\n", "\r", "%", "%x\n", "obj", "/A"])).join("");
+      return { nome: `fuzz RR2 ${n}: numeros, brancos e comentarios ${JSON.stringify(padrao)}`, formato: "pdf", gerar: () => pdfComTextoSolto(repetir(padrao, 4.8 * MB)) };
+    },
+    (n) => {
+      const marcador = escolher([0xe0, 0xe1, 0xe2, 0xed, 0xee, 0xef, 0xfe]);
+      const quantos = inteiro(1, 4000);
+      return { nome: `fuzz RR2 ${n}: JPEG com ${quantos} segmentos 0x${marcador.toString(16)}`, formato: "jpeg", gerar: () => jpegComSegmentos(marcador, quantos) };
+    },
+    (n) => {
+      const marcador = escolher([0xe0, 0xe1, 0xe2, 0xed, 0xee, 0xef, 0xfe]);
+      const quantos = inteiro(1, 4000);
+      const tamanho = inteiro(1, 48) * 100_000;
+      return { nome: `fuzz RR2 ${n}: PDF de ${tamanho} B com fotos de ${quantos} segmentos 0x${marcador.toString(16)}`, formato: "pdf", gerar: () => pdfComFotos(jpegComSegmentos(marcador, quantos), tamanho) };
+    },
+  ];
+  return Array.from({ length: quantos }, (_, n) => escolher(familias)(n));
+}
+
+describe("o fuzz da terceira rodada (#xx, comentarios e APPn; semente fixa): cada caso em menos de 1,5 s, sem excecao", () => {
+  for (const caso of casosDoFuzzRr2(20261031, 40)) {
+    it(caso.nome, () => {
+      const arquivo = caso.gerar();
+      if (arquivo.length > LIMITES_DA_MIDIA.pdf.maximoDeBytes) {
         expect(cronometrar(caso.nome, caso.formato, arquivo).resultado).toEqual({ tipo: "fora", motivo: "grande_demais" });
         return;
       }
