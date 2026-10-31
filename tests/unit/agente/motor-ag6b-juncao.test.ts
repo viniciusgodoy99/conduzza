@@ -10,14 +10,9 @@ vi.mock("@/lib/agente/contexto", () => ({
   carregarCatalogoDoAgente: async () => estado.catalogo,
 }));
 
-// Os tetos de tokens do leitor como se a prova paga os tivesse medido (os
-// mesmos do cenario do executor, 1.600 e 1.800): sem eles o corte do laco
-// nao tem o pior caso do arquivo. O leitor de verdade continua o mesmo.
-vi.mock("@/lib/integrations/llm/leitor-de-midia", async (original) => ({
-  ...(await original<typeof import("@/lib/integrations/llm/leitor-de-midia")>()),
-  TETO_DE_TOKENS_POR_IMAGEM: 1_600,
-  TETO_DE_TOKENS_POR_PAGINA: 1_800,
-}));
+// Revisao R3 de d1a15f6 (2): sem o vi.mock dos tetos do leitor. O corte do
+// laco usa os tetos INJETADOS (os do executor, 1.600 e 1.800, os mesmos do
+// plano, da reserva e da porta); as constantes do modulo continuam nulas.
 
 import { usoEstimadoDoLeitor } from "@/lib/agente/gasto";
 import {
@@ -33,6 +28,7 @@ import {
   MARGEM_ENTRE_OS_CORTES_MS,
   MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA,
   prazoParaAIntegracao,
+  RESERVA_DA_GRAVACAO_DA_LEITURA_MS,
   type PortaDaMidia,
 } from "@/lib/agente/midia";
 import { custoEmMicrodolar, USO_ZERADO } from "@/lib/agente/uso";
@@ -45,6 +41,7 @@ import {
   FOLGA_DO_CORTE_DO_LEITOR_MS,
   lerArquivoComOModelo,
   MAXIMO_DE_CHAMADAS_DO_LEITOR,
+  TETO_DE_TOKENS_POR_IMAGEM,
   type ClienteDoLeitor,
 } from "@/lib/integrations/llm/leitor-de-midia";
 import {
@@ -225,7 +222,7 @@ function leitorDeVerdade(
 }
 
 describe("os cortes em ordem: a integracao, a porta e o laco", () => {
-  it("o corte duro da integracao cai a margem antes do da porta, e o da porta a folga antes do do laco", () => {
+  it("o corte duro da integracao cai a margem e a fatia da gravacao antes do da porta, e o da porta a folga antes do do laco", () => {
     for (const prazoDoLaco of [2_500, 9_000, 13_500, 16_500, 27_000]) {
       const prazoDaPorta = prazoDoLaco - FOLGA_DO_CORTE_DA_MIDIA_MS;
       for (const folga of [
@@ -233,8 +230,14 @@ describe("os cortes em ordem: a integracao, a porta e o laco", () => {
         FOLGA_DO_CORTE_DA_TRANSCRICAO_NA_PORTA_MS,
       ]) {
         const corteDaIntegracao = prazoParaAIntegracao(prazoDaPorta, folga) + folga;
-        expect(prazoDaPorta - corteDaIntegracao).toBe(MARGEM_ENTRE_OS_CORTES_MS);
+        // Revisao R3 de d1a15f6 (1): entre o corte da integracao e o da
+        // porta, a margem (a volta do resultado) e a fatia da gravacao da
+        // leitura (a RPC que trava a mensagem e a conversa).
+        expect(prazoDaPorta - corteDaIntegracao).toBe(
+          MARGEM_ENTRE_OS_CORTES_MS + RESERVA_DA_GRAVACAO_DA_LEITURA_MS,
+        );
         expect(MARGEM_ENTRE_OS_CORTES_MS).toBeGreaterThan(0);
+        expect(RESERVA_DA_GRAVACAO_DA_LEITURA_MS).toBe(1_500);
         expect(prazoDoLaco - prazoDaPorta).toBe(FOLGA_DO_CORTE_DA_MIDIA_MS);
       }
     }
@@ -367,6 +370,9 @@ describe("o leitor de verdade dentro da porta (o corte dele vence o da porta)", 
       uso: null,
     });
     const agente = agenteQueResponde("Claro, posso ajudar.");
+    // As constantes do modulo continuam nulas (nenhum vi.mock): o pior caso
+    // vem dos tetos que o executor injeta.
+    expect(TETO_DE_TOKENS_POR_IMAGEM).toBeNull();
     const promessa = executarTurnoDoAgente({
       cliente: agente.cliente,
       modelo: "gpt-6-luna",
@@ -382,6 +388,9 @@ describe("o leitor de verdade dentro da porta (o corte dele vence o da porta)", 
       // O executor sempre passa o modelo do leitor (o do verificador).
       modeloDosClassificadores: "gpt-6-luna",
       midia: { ...porta, ler },
+      // Revisao R3 de d1a15f6 (2): os tetos do executor (o plano e a
+      // reserva usam os mesmos).
+      tetosDoLeitor: { imagem: 1_600, pagina: 1_800 },
     });
     await vi.advanceTimersByTimeAsync(
       PRAZO_DO_TURNO_MS - RESERVA_DO_FILTRO_MS - RESERVA_DO_AGENTE_DEPOIS_DA_MIDIA_MS,

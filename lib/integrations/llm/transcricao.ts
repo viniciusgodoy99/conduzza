@@ -10,6 +10,10 @@ import {
   FONTES_DA_QUALIDADE_DA_TRANSCRICAO,
 } from "@/lib/domain/conformidade/qualidade-da-transcricao";
 import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
+import {
+  detectarUrgencia,
+  type TipoDeUrgencia,
+} from "@/lib/domain/conformidade/urgencia";
 import type { MotivoDaFalha } from "@/lib/domain/conformidade/veredicto";
 import {
   classificarErroDoLlm,
@@ -75,12 +79,24 @@ import { log } from "@/lib/log";
 // erro, prazo, cota ou saida invalida devolvem "falhou" e a conversa vai
 // para a equipe (quem chama decide).
 //
+// A URGENCIA NO TEXTO DESCARTADO (revisao R2 de d1a15f6, M3): as travas
+// descartam a fala curta incerta ("Quero morrer." com no_speech_prob 0,35)
+// e o segmento em silencio ("Socorro, minha mae desmaiou" com 0,65 e ruido
+// de fundo), e o texto descartado nunca chega ao portao do laco. Por isso a
+// urgencia (lib/domain/conformidade/urgencia.ts, local) e lida AQUI, no
+// texto inteiro de todos os segmentos, inclusive os descartados, no "sem
+// fala" e na transcricao (que pode ter descartado parte do audio: a fala
+// real com um segmento urgente no ruido). Sai so o TIPO (`urgencia`,
+// ausente quando nao ha); o texto descartado nunca sai daqui: nem no
+// resultado, nem no log, nem no banco, nem no agente.
+//
 // TRANSCRICAO_CALIBRADA (falsa ate a prova paga, D-100): com ela falsa, o
 // plano do turno (lib/agente/midia.ts) marca todo audio como fora, e nada
 // chega aqui.
 //
 // LGPD: log so com ids, o resultado, os segundos, a tentativa e a duracao
-// da chamada; nunca o texto, nem error.message.
+// da chamada; nunca o texto, nem error.message, nem a urgencia (e dado de
+// saude derivado do texto).
 
 /** So audio.transcriptions; os testes injetam um falso. */
 export type ClienteDaTranscricao = Pick<OpenAI, "audio">;
@@ -203,6 +219,11 @@ export type UsoDaTranscricao = { modelo: string; segundos: number };
  * chamada, 5xx, 408, 409; nunca o 429, que a API recusa antes de
  * processar). Quem chama soma o pior caso de uma chamada (a duracao medida)
  * para cada uma. Falha "prazo": nenhuma chamada saiu.
+ *
+ * `urgencia` (revisao R2 de d1a15f6, M3), so quando houver: o TIPO da
+ * urgencia lida no texto inteiro dos segmentos, inclusive os que as travas
+ * descartaram. Quem chama passa a conversa como urgente. O texto descartado
+ * nunca sai daqui.
  */
 export type ResultadoDaTranscricaoNoModelo =
   | {
@@ -210,12 +231,14 @@ export type ResultadoDaTranscricaoNoModelo =
       texto: string;
       segundos: number;
       uso: UsoDaTranscricao | null;
+      urgencia?: TipoDeUrgencia;
       tentativasSemUso?: number;
     }
   | {
       tipo: "sem_fala";
       segundos: number;
       uso: UsoDaTranscricao | null;
+      urgencia?: TipoDeUrgencia;
       tentativasSemUso?: number;
     }
   | {
@@ -263,6 +286,24 @@ function idsDoLog(ids: IdsDaTranscricao) {
 /** Os segundos cobrados, sempre inteiros e para cima. */
 function segundosInteiros(segundos: number): number {
   return Math.max(1, Math.ceil(segundos));
+}
+
+/**
+ * Revisao R2 de d1a15f6 (M3): a urgencia no texto INTEIRO do audio, os
+ * segmentos na ordem, inclusive os que as travas descartaram (o silencio, o
+ * segmento ruim, a fala curta incerta, a frase-fantasma); sem segmentos, o
+ * `text` da resposta. Local (a lista deterministica), sem rede. So o tipo
+ * sai daqui; o texto, nunca.
+ */
+function urgenciaNoAudio(resposta: {
+  text: string;
+  segments: readonly { text: string }[];
+}): TipoDeUrgencia | null {
+  const texto =
+    resposta.segments.length > 0
+      ? resposta.segments.map((segmento) => segmento.text).join(" ")
+      : resposta.text;
+  return detectarUrgencia([texto])?.tipo ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -720,6 +761,10 @@ export async function transcreverAudio(entrada: {
       usageSeconds: lida.data.usage?.seconds ?? null,
     });
     const qualidade = avaliarTranscricao({ segmentos: lida.data.segments });
+    // Revisao R2 de d1a15f6 (M3): a urgencia no texto inteiro, inclusive o
+    // descartado. So o tipo vai no resultado; nada dela vai ao log.
+    const urgencia = urgenciaNoAudio(lida.data);
+    const comUrgencia = urgencia === null ? {} : { urgencia };
     log.info("ia_transcricao", {
       ...comuns,
       status: qualidade.tipo,
@@ -733,9 +778,10 @@ export async function transcreverAudio(entrada: {
           texto: qualidade.texto,
           segundos,
           uso,
+          ...comUrgencia,
           ...semUso(),
         }
-      : { tipo: "sem_fala", segundos, uso, ...semUso() };
+      : { tipo: "sem_fala", segundos, uso, ...comUrgencia, ...semUso() };
   } catch {
     // Rede de seguranca: excecao inesperada (inclusive sincrona) vira falha
     // fechada, com o uso estimado (pode ter saido). Nunca olha a mensagem

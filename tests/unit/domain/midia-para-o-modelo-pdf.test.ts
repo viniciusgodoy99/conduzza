@@ -773,3 +773,147 @@ describe("o lugar vazio, ou a chave sem valor: o PDF sai (controle)", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Segunda revisao da d1a15f6: a entrada nunca muda (BAIXO 4), a localizacao
+// dentro dos fluxos de objetos (BAIXO 5) e o lugar com qualquer prefixo
+// (BAIXO 6)
+// ---------------------------------------------------------------------------
+
+describe("BAIXO 4: a limpeza no lugar nunca altera os bytes de quem chama", () => {
+  it("o PDF com foto num Buffer (como o readFileSync entrega): a entrada fica igual e a saida sai limpa", () => {
+    const { arquivo } = pdfComFoto(fotoComSegredos());
+    const entrada = Buffer.from(arquivo);
+    const copia = Buffer.from(entrada);
+    const preparado = prepararMidia({ midia: "documento", bytes: entrada, mimetype: "application/pdf" });
+    expect(preparado.tipo).toBe("pdf");
+    expect(entrada.equals(copia)).toBe(true);
+    if (preparado.tipo === "pdf") {
+      expect(contem(preparado.bytes, "GPS-")).toBe(false);
+      expect(preparado.bytes.length).toBe(entrada.length);
+    }
+  });
+
+  it("o Buffer pequeno (do pool compartilhado, com deslocamento): nem ele nem o vizinho no pool mudam", () => {
+    const { arquivo } = pdfComFoto(fotoComSegredos());
+    expect(arquivo.length).toBeLessThan(4096);
+    const vizinho = Buffer.from("vizinho no pool");
+    const entrada = Buffer.from(arquivo);
+    const copiaDaEntrada = Buffer.from(entrada);
+    const copiaDoVizinho = Buffer.from(vizinho);
+    const preparado = prepararMidia({ midia: "documento", bytes: entrada, mimetype: "application/pdf" });
+    expect(preparado.tipo).toBe("pdf");
+    expect(entrada.equals(copiaDaEntrada)).toBe(true);
+    expect(vizinho.equals(copiaDoVizinho)).toBe(true);
+    if (preparado.tipo === "pdf") {
+      expect(Buffer.from(preparado.bytes.buffer).includes(Buffer.from("GPS-"))).toBe(false);
+    }
+  });
+});
+
+/** Um PDF "de banco" no molde do iText: os objetos num fluxo de objetos, o /Info entre eles. */
+function pdfComInfoNoFluxoDeObjetos(info: string): Uint8Array {
+  return pdf(
+    [
+      fluxoDeObjetos(9, [
+        [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+        [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+        [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>"],
+        [4, info],
+      ]),
+    ],
+    "<< /Root 1 0 R /Info 4 0 R >>",
+  );
+}
+
+describe("BAIXO 5: o GPS e o lugar dentro do fluxo de objetos tambem deixam o PDF de fora", () => {
+  const casos: [string, string][] = [
+    ["revisao: /GPSLatitude e /City no /Info", "<< /Producer (app de digitalizacao) /GPSLatitude (3.7319 S) /GPSLongitude (38.5267 W) /City (Fortaleza) >>"],
+    ["so a /City", "<< /Producer (x) /City (Fortaleza) >>"],
+    ["outra chave /GPS... (/GPSAltitude)", "<< /Producer (x) /GPSAltitude (12) >>"],
+    ["a /City em hexadecimal (UTF-16)", "<< /City <FEFF0046006F007200740061006C657A0061> >>"],
+    ["a /City escrita com #xx", "<< /Ci#74y (Fortaleza) >>"],
+    ["o lugar do XMP numa string do fluxo de objetos", "<< /Nota (<ns2:City>Fortaleza</ns2:City>) >>"],
+    ["o exif:GPS numa string do fluxo de objetos", "<< /Nota (exif:GPSLatitude=\"3,43.914S\") >>"],
+  ];
+  for (const [nome, info] of casos) {
+    it(`${nome}: formato`, () => {
+      expect(preparar(pdfComInfoNoFluxoDeObjetos(info))).toEqual(FORA_DO_FORMATO);
+    });
+  }
+
+  it("o /Info no arquivo sem compressao tambem: formato", () => {
+    const arquivo = pdf([...arvore(1), "9 0 obj\n<< /Producer (x) /City (Fortaleza) >>\nendobj\n"]);
+    expect(preparar(arquivo)).toEqual(FORA_DO_FORMATO);
+  });
+
+  it("a chave vazia, o null, o nome parecido e a palavra numa string nao contam: sai", () => {
+    for (const info of [
+      "<< /Producer (iText 7.2.5) /City () >>",
+      "<< /City (   ) /GPSAltitude <> >>",
+      "<< /City <FEFF> >>",
+      "<< /City null >>",
+      "<< /Cityscape (Praia) /Producer (City of God) /Title (Location) >>",
+    ]) {
+      const preparado = preparar(pdfComInfoNoFluxoDeObjetos(info));
+      expect(preparado, info).toMatchObject({ tipo: "pdf", paginas: 1 });
+    }
+  });
+});
+
+describe("BAIXO 6: o lugar por extenso com qualquer prefixo", () => {
+  it("revisao: ns2: no namespace do photoshop:, como atributo: formato", () => {
+    const xmp = pacoteXmp(
+      XMP_SEM_LOCAL,
+      ' xmlns:ns2="http://ns.adobe.com/photoshop/1.0/" ns2:City="Fortaleza" ns2:State="CE"',
+    );
+    expect(preparar(pdfComXmp(utf8(xmp), { comprimido: true }))).toEqual(FORA_DO_FORMATO);
+  });
+
+  const NOMES = [
+    "City",
+    "State",
+    "Country",
+    "CountryCode",
+    "CountryName",
+    "ProvinceState",
+    "Sublocation",
+    "Location",
+    "LocationName",
+    "WorldRegion",
+  ];
+  for (const nome of NOMES) {
+    it(`${nome} com outro prefixo (atributo e elemento) e sem prefixo (elemento): formato`, () => {
+      for (const [elementos, atributos] of [
+        ["", ` xmlns:pfx="http://exemplo/" pfx:${nome}='Fortaleza'`],
+        [`<ns9:${nome}>Fortaleza</ns9:${nome}>`, ""],
+        [`<${nome} xmlns="http://ns.adobe.com/photoshop/1.0/">Fortaleza</${nome}>`, ""],
+      ] as const) {
+        const xmp = utf8(pacoteXmp(`${XMP_SEM_LOCAL}\n${elementos}`, atributos));
+        expect(preparar(pdfComXmp(xmp)), `${nome}: ${elementos}${atributos}`).toEqual(FORA_DO_FORMATO);
+        expect(preparar(pdfComXmp(xmp, { comprimido: true })), `${nome} comprimido`).toEqual(FORA_DO_FORMATO);
+      }
+    });
+  }
+
+  it("o valor vazio, a chave sem valor, o fechamento sozinho e o nome mais longo nao contam: sai", () => {
+    const vazios = [
+      "<ns2:City></ns2:City>",
+      "<ns2:State/>",
+      "<Country>  </Country>",
+      "</ns2:Location>",
+      "<ns2:CityCode>Fortaleza</ns2:CityCode>",
+      "<ns2:MyCity>Fortaleza</ns2:MyCity>",
+      "<dc:subject><rdf:Bag><rdf:li>City tour, State fair</rdf:li></rdf:Bag></dc:subject>",
+    ].join("\n");
+    const atributos = ' xmlns:ns2="http://ns.adobe.com/photoshop/1.0/" ns2:City="" ns2:State=\'  \' ns2:Citizen="x"';
+    for (const comprimido of [false, true]) {
+      const arquivo = pdfComXmp(utf8(pacoteXmp(`${XMP_SEM_LOCAL}\n${vazios}`, atributos)), { comprimido });
+      const preparado = preparar(arquivo);
+      expect(preparado, `comprimido: ${comprimido}`).toMatchObject({ tipo: "pdf", paginas: 1 });
+      if (preparado.tipo === "pdf") {
+        expect(preparado.bytes).toEqual(arquivo);
+      }
+    }
+  });
+});

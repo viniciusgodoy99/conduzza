@@ -8,6 +8,17 @@
 // lista diz; o inesperado deixa o arquivo de fora (falha fechada) e nunca
 // passa como esta.
 //
+// A CPU (segunda revisao da d1a15f6): o preparo e SINCRONO e roda dentro do
+// motor (a rota tem maxDuration de 60 s e roda jobs de varias clinicas
+// juntos); o corte duro do motor nao interrompe CPU. Por isso cada arquivo
+// tem UM orcamento de trabalho (LIMITES_DA_MIDIA.trabalhoPorArquivo),
+// passado a toda funcao de leitura (PDF, JPEG, PNG, WebP, MP3, XMP e as
+// fotos de dentro do PDF) e cobrado em cada laco (bytes, objetos,
+// referencias, casamentos de expressao): acabou, o arquivo nao sai
+// ("bomba"). Nenhuma expressao tem quantificadores que se sobrepoem (nada e
+// varrido de novo a cada tentativa), e a entrada nunca e alterada (a
+// limpeza no lugar trabalha numa copia).
+//
 // Regras (D-59, D-92, D-98, D-101):
 //  - o tipo vem dos PRIMEIROS BYTES e do media_mimetype da mensagem; os dois
 //    tem de dizer o mesmo, senao o arquivo nao sai (nao suportado). HEIC,
@@ -19,7 +30,8 @@
 //    seguinte. ID3v2 (no comeco, no meio ou no fim), ID3v1, APE, Lyrics3 e
 //    qualquer byte fora de quadro nunca saem. A duracao e a soma dos
 //    quadros (vale para CBR e VBR). Sem quadros ou lixo demais: nao
-//    suportado. De 1 a 120 s e ate 5 MB;
+//    suportado (a leitura para assim que o lixo passa do aceito). De 1 a
+//    120 s e ate 5 MB;
 //  - IMAGEM, ate 5 MB; o local e o aparelho nunca saem:
 //    . JPEG: antes da primeira varredura ficam SOF0 a SOF2, DHT, DQT, DRI, o
 //      APP0 JFIF (sem a miniatura) e o APP14 Adobe (de que a decodificacao
@@ -32,37 +44,44 @@
 //    . PNG: ficam IHDR, PLTE, IDAT, IEND e os auxiliares de exibicao tRNS,
 //      gAMA, cHRM, sRGB, sBIT, bKGD e pHYs. O resto nunca sai (texto, EXIF,
 //      data, perfil ICC, C2PA, pedacos privados) e nada depois do IEND. PNG
-//      animado (APNG) ou pedaco critico desconhecido: nao suportado;
+//      animado (APNG), pedaco critico desconhecido ou mais de 65.536
+//      pedacos: nao suportado;
 //    . WebP: ficam VP8X (so a marca de alfa), ALPH e um VP8 ou VP8L; ICCP,
 //      EXIF e XMP nunca saem, nem nada depois do RIFF; o tamanho do RIFF e
-//      corrigido. Outro pedaco: nao suportado;
+//      corrigido. Outro pedaco, ou mais de 65.536: nao suportado;
 //  - FIGURINHA (D-98): WebP de exatamente 512 por 512 ou WebP animado. Nao
 //    vai a modelo nenhum (a leitura e local);
 //  - PDF, ate 5 MB e 3 paginas, sem criptografia (/Encrypt). As paginas sao
 //    a MAIOR entre o /Count dos nos /Type /Pages, os objetos /Type /Page e
 //    os filhos das listas /Kids que nao sao no, cada objeto pelo numero (o
-//    reescrito numa atualizacao incremental conta uma vez), no texto e
-//    dentro dos fluxos de objetos (/Type /ObjStm, descomprimidos com
-//    node:zlib). Sem /Count: nao suportado. Tetos contra o arquivo feito
-//    para travar o motor (fluxos, objetos, caracteres varridos, o
-//    descomprimido no total e a sobra do fluxo de objetos): "bomba". A foto
-//    embutida (fluxo so com /DCTDecode) e limpa no lugar, sem mudar o
-//    tamanho (o /Length e a xref continuam certos): APP1 a APP15 e COM viram
-//    um COM zerado do mesmo tamanho (ficam o APP0 JFIF, sem a miniatura, e o
-//    APP14 Adobe) e o que vem depois do primeiro EOI vira zero. /DCTDecode
-//    numa cadeia de filtros, ou /JPXDecode: nao suportado. Os metadados do
-//    PDF ficam (D-101: tirar exigiria biblioteca nova), MENOS a localizacao
-//    e o anexo, que deixam o PDF de fora (nao suportado):
+//    reescrito numa atualizacao incremental conta uma vez; a lista ou o
+//    /Count indireto e lido uma vez por numero), no texto e dentro dos
+//    fluxos de objetos (/Type /ObjStm, descomprimidos com node:zlib). Sem
+//    /Count: nao suportado. Tetos contra o arquivo feito para travar o motor
+//    (fluxos, objetos, o descomprimido no total, o XMP de cada fluxo de
+//    metadados, a sobra do fluxo de objetos e o orcamento de trabalho):
+//    "bomba". Um fluxo que comeca dentro de outro (no dicionario ou nos
+//    dados): nao suportado. A foto embutida (fluxo so com /DCTDecode) e
+//    limpa no lugar, numa copia e sem mudar o tamanho (o /Length e a xref
+//    continuam certos): APP1 a APP15 e COM viram um COM zerado do mesmo
+//    tamanho (ficam o APP0 JFIF, sem a miniatura, e o APP14 Adobe) e o que
+//    vem depois do primeiro EOI vira zero. /DCTDecode numa cadeia de
+//    filtros, ou /JPXDecode: nao suportado. Os metadados do PDF ficam
+//    (D-101: tirar exigiria biblioteca nova), MENOS a localizacao e o
+//    anexo, que deixam o PDF de fora (nao suportado):
 //    . a localizacao: exif:GPS, GPSLatitude, GPSLongitude, a coordenada no
 //      formato do XMP ("3,43.914S"), uma coordenada numa propriedade
-//      photoshop: ou xmp:, ou o lugar escrito por extenso com valor (cidade,
-//      estado, pais e local do photoshop: e do IPTC Core, e os campos de
-//      Iptc4xmpExt:LocationShown e LocationCreated; o valor vazio e a chave
-//      sem valor nao contam), no XMP de cada fluxo de metadados (/Type
-//      /Metadata, /Subtype /XML ou o que um /Metadata aponta: do catalogo,
-//      da pagina, da foto; descomprimido com o teto) e, as propriedades de
-//      GPS e de lugar, em qualquer lugar do arquivo sem compressao. Metadado
-//      que nao da para ler (outro filtro): nao suportado;
+//      photoshop: ou xmp:, ou o lugar escrito por extenso com valor (City,
+//      State, Country, CountryCode, CountryName, ProvinceState,
+//      Sublocation, Location, LocationName, LocationId e WorldRegion, com
+//      qualquer prefixo: photoshop:, Iptc4xmpCore:, Iptc4xmpExt:, ns2:...;
+//      o valor vazio e a chave sem valor nao contam), no XMP de cada fluxo
+//      de metadados (/Type /Metadata, /Subtype /XML ou o que um /Metadata
+//      aponta: do catalogo, da pagina, da foto; descomprimido com o teto) e,
+//      as propriedades de GPS, o lugar e as chaves /City e /GPS... do
+//      dicionario /Info (com valor), em qualquer lugar do arquivo sem
+//      compressao e dentro dos fluxos de objetos. Metadado que nao da para
+//      ler (outro filtro): nao suportado;
 //    . o anexo: /EmbeddedFile, /EmbeddedFiles ou /FileAttachment (tambem
 //      escritos com #xx), no arquivo e nos fluxos de objetos, ou a chave /EF
 //      de um /Filespec.
@@ -95,8 +114,8 @@ export const LIMITES_DA_MIDIA = {
   porTurno: 3,
   /**
    * Teto descomprimido do PDF, somados os fluxos de objetos e os de
-   * metadados (bomba de compressao). Nos PDFs reais conferidos, o maior foi
-   * de 295 bytes.
+   * metadados (bomba de compressao). Nos PDFs reais conferidos, o maior
+   * fluxo de objetos tinha 295 bytes e o maior XMP 357 KB.
    */
   pdfDescomprimidoNoTotal: 8 * MB,
   /** Teto de fluxos de objetos lidos num PDF. */
@@ -105,10 +124,23 @@ export const LIMITES_DA_MIDIA = {
   pdfFluxos: 2_000,
   /** Teto de objetos num PDF: os cabecalhos "N G obj" e os de dentro dos fluxos de objetos. */
   pdfObjetos: 20_000,
-  /** Teto de caracteres varridos nos dicionarios do PDF, somados (a CPU sincrona do motor). */
-  pdfCaracteresVarridos: 64 * MB,
+  /**
+   * Teto do XMP de UM fluxo de metadados (descomprimido): passou, "bomba".
+   * O maior dos PDFs reais conferidos (880) tinha 357 KB.
+   */
+  pdfXmp: 2 * MB,
   /** O que pode sobrar num fluxo de objetos depois do ultimo objeto declarado. */
   pdfSobraNoFluxoDeObjetos: 64 * 1024,
+  /**
+   * O orcamento de trabalho de UM arquivo, de qualquer tipo, em unidades de
+   * CUSTO (mais ou menos um caractere andado por um laco em JS). Cada laco
+   * da leitura cobra dele; acabou: "bomba". Calibrado medindo o pior caso
+   * de cada laco contra um laco de referencia (uma unidade por caractere):
+   * nenhum passou de 2 vezes a referencia por unidade, e o pior arquivo de
+   * ate 5 MB fica abaixo de 300 ms num Apple M3 mesmo com a maquina ocupada.
+   * O arquivo real mais caro dos 5.327 conferidos gastou 2,3 milhoes.
+   */
+  trabalhoPorArquivo: 64_000_000,
 } as const;
 
 /** O maior arquivo que o motor aceita baixar do Storage, de qualquer tipo. */
@@ -158,6 +190,64 @@ function fora(motivo: MotivoDeFora): MidiaPreparada {
 }
 
 // ---------------------------------------------------------------------------
+// O orcamento de trabalho
+// ---------------------------------------------------------------------------
+
+/** O arquivo fica de fora: lancado de dentro da leitura, convertido em prepararMidia. */
+class MidiaDeFora extends Error {
+  constructor(readonly motivo: MotivoDeFora) {
+    super(motivo);
+  }
+}
+
+/** O trabalho que ainda cabe no preparo de UM arquivo (em unidades de CUSTO). */
+type Trabalho = { restante: number };
+
+function novoTrabalho(): Trabalho {
+  return { restante: LIMITES_DA_MIDIA.trabalhoPorArquivo };
+}
+
+/**
+ * O preco de cada coisa no orcamento, em unidades. Uma unidade e mais ou
+ * menos um caractere andado por um laco em JS; o codigo nativo (indexOf,
+ * copia, zlib, expressao sem volta atras) anda mais por unidade, e a volta
+ * que aloca (um objeto, um casamento, um quadro) custa mais. Os pesos vem
+ * da medida do pior caso de cada laco (o laco de referencia e o fimDaString:
+ * uma unidade por caractere).
+ */
+const CUSTO = {
+  /** Um caractere (ou byte) andado por um laco em JS. */
+  caractere: 1,
+  /** Um byte andado por codigo nativo: indexOf, copia, latin1. */
+  nativo: 1 / 16,
+  /** Um caractere varrido por uma expressao sem volta atras. */
+  expressao: 1 / 2,
+  /** Um byte entregue pelo zlib. */
+  zlib: 1 / 4,
+  /**
+   * Um caractere de um valor lido como lista de nomes: cada nome ("/A", dois
+   * caracteres) vira um texto novo, cobrado antes de criar.
+   */
+  nome: 24,
+  /** Uma volta de laco que nao aloca nem chama nada (um passo de uma procura). */
+  passo: 4,
+  /** Uma volta de laco que chama codigo nativo (um indexOf, uma copia). */
+  chamada: 16,
+  /** Uma volta de laco que aloca (um quadro, um segmento, um pedaco, uma chave). */
+  volta: 48,
+  /** Um objeto do PDF (o casamento do cabecalho, o dicionario, o objeto). */
+  objeto: 256,
+} as const;
+
+/** Cobra o trabalho; acabou: "bomba". */
+function gastar(trabalho: Trabalho, unidades: number): void {
+  trabalho.restante -= unidades;
+  if (trabalho.restante < 0) {
+    throw new MidiaDeFora("bomba");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Bytes
 // ---------------------------------------------------------------------------
 
@@ -188,20 +278,20 @@ function u32le(bytes: Uint8Array, p: number): number {
 
 /** Um inteiro "syncsafe" de 4 bytes (7 bits por byte), ou null. */
 function syncsafe(bytes: Uint8Array, p: number): number | null {
-  const partes = [0, 1, 2, 3].map((i) => bytes[p + i] ?? 0x80);
-  if (partes.some((b) => b >= 0x80)) {
+  const b0 = bytes[p] ?? 0x80;
+  const b1 = bytes[p + 1] ?? 0x80;
+  const b2 = bytes[p + 2] ?? 0x80;
+  const b3 = bytes[p + 3] ?? 0x80;
+  if ((b0 | b1 | b2 | b3) >= 0x80) {
     return null;
   }
-  return (
-    ((partes[0] ?? 0) << 21) |
-    ((partes[1] ?? 0) << 14) |
-    ((partes[2] ?? 0) << 7) |
-    (partes[3] ?? 0)
-  );
+  return (b0 << 21) | (b1 << 14) | (b2 << 7) | b3;
 }
 
-function juntar(partes: readonly Uint8Array[]): Uint8Array {
+/** Junta as partes num arquivo novo (cada parte e a copia sao cobradas). */
+function juntar(partes: readonly Uint8Array[], trabalho: Trabalho): Uint8Array {
   const total = partes.reduce((soma, parte) => soma + parte.length, 0);
+  gastar(trabalho, partes.length * CUSTO.chamada + total * CUSTO.nativo);
   const saida = new Uint8Array(total);
   let p = 0;
   for (const parte of partes) {
@@ -293,7 +383,8 @@ export function mimetypeAceito(
 
 /**
  * Prepara o arquivo para o modelo, ou diz por que ele nao sai. Nunca lanca:
- * qualquer excecao na leitura vira "corrompido".
+ * o que passa do orcamento de trabalho vira "bomba", e qualquer outra
+ * excecao na leitura vira "corrompido". A entrada nunca e alterada.
  */
 export function prepararMidia(entrada: {
   midia: MidiaDaMensagem;
@@ -301,17 +392,20 @@ export function prepararMidia(entrada: {
   mimetype: string | null | undefined;
 }): MidiaPreparada {
   try {
-    return prepararSemRede(entrada);
-  } catch {
-    return fora("corrompido");
+    return prepararSemRede(entrada, novoTrabalho());
+  } catch (erro) {
+    return fora(erro instanceof MidiaDeFora ? erro.motivo : "corrompido");
   }
 }
 
-function prepararSemRede(entrada: {
-  midia: MidiaDaMensagem;
-  bytes: Uint8Array;
-  mimetype: string | null | undefined;
-}): MidiaPreparada {
+function prepararSemRede(
+  entrada: {
+    midia: MidiaDaMensagem;
+    bytes: Uint8Array;
+    mimetype: string | null | undefined;
+  },
+  trabalho: Trabalho,
+): MidiaPreparada {
   const { bytes, midia } = entrada;
   if (bytes.length === 0) {
     return fora("vazio");
@@ -332,15 +426,15 @@ function prepararSemRede(entrada: {
   }
   switch (pelosBytes) {
     case "mp3":
-      return prepararAudio(bytes);
+      return prepararAudio(bytes, trabalho);
     case "jpeg":
-      return prepararJpeg(bytes);
+      return prepararJpeg(bytes, trabalho);
     case "png":
-      return prepararPng(bytes);
+      return prepararPng(bytes, trabalho);
     case "webp":
-      return prepararWebp(bytes);
+      return prepararWebp(bytes, trabalho);
     case "pdf":
-      return prepararPdf(bytes);
+      return prepararPdf(bytes, trabalho);
   }
 }
 
@@ -348,9 +442,21 @@ function prepararSemRede(entrada: {
 // Audio: MP3, so os quadros
 // ---------------------------------------------------------------------------
 
+/** As assinaturas das etiquetas (montadas uma vez: o laco dos quadros as usa a cada byte). */
+const ETIQUETA = {
+  id3: ascii("ID3"),
+  id3NoFim: ascii("3DI"),
+  ape: ascii("APETAGEX"),
+  id3v1: ascii("TAG"),
+  id3v1Estendida: ascii("TAG+"),
+  lyricsComeco: ascii("LYRICSBEGIN"),
+  lyrics2: ascii("LYRICS200"),
+  lyricsFim: ascii("LYRICSEND"),
+} as const;
+
 /** O tamanho de uma etiqueta ID3v2 que comeca em p, com o cabecalho e o rodape. */
 function tamanhoDoId3v2(bytes: Uint8Array, p: number): number | null {
-  if (!comecaCom(bytes, ascii("ID3"), p) || bytes.length < p + 10) {
+  if (bytes[p] !== 0x49 || !comecaCom(bytes, ETIQUETA.id3, p) || bytes.length < p + 10) {
     return null;
   }
   // Versao e revisao nunca sao 0xFF.
@@ -368,7 +474,7 @@ function tamanhoDoId3v2(bytes: Uint8Array, p: number): number | null {
 
 /** A etiqueta APE que comeca em p (pelo cabecalho): o tamanho, ou null. */
 function tamanhoDoApeNoComeco(bytes: Uint8Array, p: number, fim: number): number | null {
-  if (p + 32 > fim || !comecaCom(bytes, ascii("APETAGEX"), p)) {
+  if (p + 32 > fim || !comecaCom(bytes, ETIQUETA.ape, p)) {
     return null;
   }
   const marcas = u32le(bytes, p + 20);
@@ -383,7 +489,7 @@ function tamanhoDoApeNoComeco(bytes: Uint8Array, p: number, fim: number): number
 /** A etiqueta APE que termina em fim (pelo rodape): o tamanho, ou null. */
 function tamanhoDoApeNoFim(bytes: Uint8Array, inicio: number, fim: number): number | null {
   const rodape = fim - 32;
-  if (rodape < inicio || !comecaCom(bytes, ascii("APETAGEX"), rodape)) {
+  if (rodape < inicio || !comecaCom(bytes, ETIQUETA.ape, rodape)) {
     return null;
   }
   const marcas = u32le(bytes, rodape + 20);
@@ -395,9 +501,14 @@ function tamanhoDoApeNoFim(bytes: Uint8Array, inicio: number, fim: number): numb
 }
 
 /** A etiqueta Lyrics3 (v1 ou v2) que termina em fim: o tamanho, ou null. */
-function tamanhoDoLyrics3NoFim(bytes: Uint8Array, inicio: number, fim: number): number | null {
-  const comeco = ascii("LYRICSBEGIN");
-  if (fim - 15 >= inicio && comecaCom(bytes, ascii("LYRICS200"), fim - 9)) {
+function tamanhoDoLyrics3NoFim(
+  bytes: Uint8Array,
+  inicio: number,
+  fim: number,
+  trabalho: Trabalho,
+): number | null {
+  const comeco = ETIQUETA.lyricsComeco;
+  if (fim - 15 >= inicio && comecaCom(bytes, ETIQUETA.lyrics2, fim - 9)) {
     // v2: o tamanho em 6 digitos antes de "LYRICS200" (com o "LYRICSBEGIN").
     const digitos = String.fromCharCode(...bytes.subarray(fim - 15, fim - 9));
     if (!/^\d{6}$/.test(digitos)) {
@@ -406,9 +517,11 @@ function tamanhoDoLyrics3NoFim(bytes: Uint8Array, inicio: number, fim: number): 
     const total = Number(digitos) + 15;
     return fim - total >= inicio && comecaCom(bytes, comeco, fim - total) ? total : null;
   }
-  if (fim - 20 >= inicio && comecaCom(bytes, ascii("LYRICSEND"), fim - 9)) {
+  if (fim - 20 >= inicio && comecaCom(bytes, ETIQUETA.lyricsFim, fim - 9)) {
     // v1: "LYRICSBEGIN" ate 5.100 bytes antes de "LYRICSEND".
-    for (let p = fim - 9 - comeco.length; p >= Math.max(inicio, fim - 9 - 5100 - comeco.length); p -= 1) {
+    const ate = Math.max(inicio, fim - 9 - 5100 - comeco.length);
+    for (let p = fim - 9 - comeco.length; p >= ate; p -= 1) {
+      gastar(trabalho, CUSTO.passo);
       if (comecaCom(bytes, comeco, p)) {
         return fim - p;
       }
@@ -420,7 +533,7 @@ function tamanhoDoLyrics3NoFim(bytes: Uint8Array, inicio: number, fim: number): 
 /** A etiqueta ID3v2 anexada no fim (rodape "3DI"): o tamanho, ou null. */
 function tamanhoDoId3v2NoFim(bytes: Uint8Array, inicio: number, fim: number): number | null {
   const rodape = fim - 10;
-  if (rodape < inicio || !comecaCom(bytes, ascii("3DI"), rodape)) {
+  if (rodape < inicio || !comecaCom(bytes, ETIQUETA.id3NoFim, rodape)) {
     return null;
   }
   const corpo = syncsafe(bytes, rodape + 6);
@@ -428,7 +541,7 @@ function tamanhoDoId3v2NoFim(bytes: Uint8Array, inicio: number, fim: number): nu
     return null;
   }
   const total = 10 + corpo + 10;
-  return fim - total >= inicio && comecaCom(bytes, ascii("ID3"), fim - total) ? total : null;
+  return fim - total >= inicio && comecaCom(bytes, ETIQUETA.id3, fim - total) ? total : null;
 }
 
 /**
@@ -436,9 +549,10 @@ function tamanhoDoId3v2NoFim(bytes: Uint8Array, inicio: number, fim: number): nu
  * com cabecalho) e do fim (ID3v1 e o "TAG+", APE, Lyrics3, ID3v2 com
  * rodape), em qualquer ordem.
  */
-function regiaoDoAudio(bytes: Uint8Array): { inicio: number; fim: number } {
+function regiaoDoAudio(bytes: Uint8Array, trabalho: Trabalho): { inicio: number; fim: number } {
   let inicio = 0;
   for (let i = 0; i < 8; i += 1) {
+    gastar(trabalho, CUSTO.volta);
     const id3 = tamanhoDoId3v2(bytes, inicio);
     if (id3 !== null) {
       inicio = Math.min(bytes.length, inicio + id3);
@@ -453,17 +567,18 @@ function regiaoDoAudio(bytes: Uint8Array): { inicio: number; fim: number } {
   }
   let fim = bytes.length;
   for (let i = 0; i < 8; i += 1) {
-    if (fim - 128 >= inicio && comecaCom(bytes, ascii("TAG"), fim - 128)) {
+    gastar(trabalho, CUSTO.volta);
+    if (fim - 128 >= inicio && comecaCom(bytes, ETIQUETA.id3v1, fim - 128)) {
       fim -= 128;
       continue;
     }
-    if (fim - 227 >= inicio && comecaCom(bytes, ascii("TAG+"), fim - 227)) {
+    if (fim - 227 >= inicio && comecaCom(bytes, ETIQUETA.id3v1Estendida, fim - 227)) {
       fim -= 227;
       continue;
     }
     const etiqueta =
       tamanhoDoApeNoFim(bytes, inicio, fim) ??
-      tamanhoDoLyrics3NoFim(bytes, inicio, fim) ??
+      tamanhoDoLyrics3NoFim(bytes, inicio, fim, trabalho) ??
       tamanhoDoId3v2NoFim(bytes, inicio, fim);
     if (etiqueta === null) {
       break;
@@ -481,6 +596,11 @@ const TAXAS_KBPS: Readonly<Record<string, readonly number[]>> = {
   "2-2": [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
   "2-3": [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160],
 };
+
+/** As mesmas taxas por versao (0: MPEG-1; 1: MPEG-2 e 2.5) e camada (1 a 3), sem montar texto a cada quadro. */
+const TAXAS_POR_VERSAO_E_CAMADA: readonly (readonly (readonly number[])[])[] = [1, 2].map(
+  (versao) => [1, 2, 3].map((camada) => TAXAS_KBPS[`${versao}-${camada}`] ?? []),
+);
 
 const FREQUENCIAS: Readonly<Record<string, readonly number[]>> = {
   mpeg1: [44100, 48000, 32000],
@@ -526,7 +646,7 @@ function quadroMpeg(bytes: Uint8Array, p: number): QuadroMpeg | null {
   const mpeg1 = versao === 0x03;
   const numeroDaCamada = camada === 0x03 ? 1 : camada === 0x02 ? 2 : 3;
   const taxa =
-    (TAXAS_KBPS[`${mpeg1 ? 1 : 2}-${numeroDaCamada}`]?.[indiceDaTaxa] ?? 0) *
+    (TAXAS_POR_VERSAO_E_CAMADA[mpeg1 ? 0 : 1]?.[numeroDaCamada - 1]?.[indiceDaTaxa] ?? 0) *
     1000;
   const frequencia =
     FREQUENCIAS[mpeg1 ? "mpeg1" : versao === 0x02 ? "mpeg2" : "mpeg25"]?.[
@@ -597,10 +717,16 @@ function quadroConfirmado(
  */
 const LIXO_ACEITO = { fracao: 0.01, piso: 2048 } as const;
 
+/** O lixo que a regiao dos quadros aceita, em bytes. */
+function lixoAceito(regiao: number): number {
+  return Math.max(LIXO_ACEITO.piso, regiao * LIXO_ACEITO.fracao);
+}
+
 type AnaliseDoMp3 = {
   /** Os quadros, na ordem (a lista do que fica). */
   quadros: Uint8Array[];
   segundos: number;
+  /** O lixo achado (passou do aceito: a analise parou ali). */
   lixo: number;
   /** O tamanho da regiao dos quadros (sem as etiquetas). */
   regiao: number;
@@ -608,14 +734,16 @@ type AnaliseDoMp3 = {
 
 /**
  * Os quadros do MP3. null: nenhum quadro confirmado perto do comeco da
- * regiao (depois das etiquetas).
+ * regiao (depois das etiquetas). A leitura para assim que o lixo passa do
+ * aceito: o arquivo nao sai, e andar o resto byte a byte seria so CPU.
  */
-function analisarMp3(bytes: Uint8Array): AnaliseDoMp3 | null {
-  const { inicio, fim } = regiaoDoAudio(bytes);
+function analisarMp3(bytes: Uint8Array, trabalho: Trabalho): AnaliseDoMp3 | null {
+  const { inicio, fim } = regiaoDoAudio(bytes, trabalho);
   let p = -1;
   let fluxo: QuadroMpeg | null = null;
   const limite = Math.min(fim - 4, inicio + LIXO_ACEITO.piso);
   for (let q = inicio; q <= limite; q += 1) {
+    gastar(trabalho, 2 * CUSTO.volta);
     const quadro = quadroConfirmado(bytes, q, fim, null);
     if (quadro !== null) {
       p = q;
@@ -626,11 +754,14 @@ function analisarMp3(bytes: Uint8Array): AnaliseDoMp3 | null {
   if (fluxo === null) {
     return null;
   }
+  const regiao = fim - inicio;
+  const teto = lixoAceito(regiao);
   const vista = bytes.subarray(0, fim);
   const quadros: Uint8Array[] = [];
   let segundos = 0;
   let lixo = p - inicio;
   while (p + 4 <= fim) {
+    gastar(trabalho, 2 * CUSTO.volta);
     // Todo quadro confirmado pelo seguinte, ate o que vem logo depois de
     // outro (lixo que comeca com FF FB nao passa por quadro).
     const quadro = quadroConfirmado(bytes, p, fim, fluxo);
@@ -649,47 +780,74 @@ function analisarMp3(bytes: Uint8Array): AnaliseDoMp3 | null {
     // Fora de quadro: o lixo vai ate o proximo 0xFF (nunca sai).
     const proximo = vista.indexOf(0xff, p + 1);
     const ate = proximo < 0 ? fim : proximo;
+    gastar(trabalho, (ate - p) * CUSTO.nativo);
     lixo += ate - p;
     p = ate;
+    if (lixo > teto) {
+      return { quadros, segundos, lixo, regiao };
+    }
   }
   lixo += Math.max(0, fim - p);
-  return { quadros, segundos, lixo, regiao: fim - inicio };
+  return { quadros, segundos, lixo, regiao };
 }
 
 function lixoDemais(analise: AnaliseDoMp3): boolean {
-  return analise.lixo > Math.max(LIXO_ACEITO.piso, analise.regiao * LIXO_ACEITO.fracao);
+  return analise.lixo > lixoAceito(analise.regiao);
+}
+
+/** A analise do MP3 com um orcamento so dela; o que passa dele: null. */
+function analisarMp3Sozinho(bytes: Uint8Array): AnaliseDoMp3 | null {
+  try {
+    return analisarMp3(bytes, novoTrabalho());
+  } catch (erro) {
+    if (erro instanceof MidiaDeFora) {
+      return null;
+    }
+    throw erro;
+  }
 }
 
 /**
  * Os bytes do MP3 so com os quadros MPEG (lista do que fica): sem ID3v2,
- * ID3v1, APE, Lyrics3 e nada entre os quadros. Sem quadro: vazio. (O nome
- * ficou da primeira versao, que so tirava o ID3.)
+ * ID3v1, APE, Lyrics3 e nada entre os quadros. Sem quadro, com lixo demais
+ * (o arquivo nao sairia) ou trabalho demais: vazio. (O nome ficou da
+ * primeira versao, que so tirava o ID3.)
  */
 export function semEtiquetasId3(bytes: Uint8Array): Uint8Array {
-  const analise = analisarMp3(bytes);
-  return analise === null ? new Uint8Array(0) : juntar(analise.quadros);
+  const analise = analisarMp3Sozinho(bytes);
+  if (analise === null || lixoDemais(analise)) {
+    return new Uint8Array(0);
+  }
+  try {
+    return juntar(analise.quadros, novoTrabalho());
+  } catch (erro) {
+    if (erro instanceof MidiaDeFora) {
+      return new Uint8Array(0);
+    }
+    throw erro;
+  }
 }
 
 /**
- * A duracao do MP3, somando os quadros. null quando nao ha quadro nenhum ou
- * o lixo passa do aceito.
+ * A duracao do MP3, somando os quadros. null quando nao ha quadro nenhum, o
+ * lixo passa do aceito ou o trabalho passa do orcamento.
  */
 export function duracaoDoMp3(bytes: Uint8Array): {
   segundos: number;
   quadros: number;
 } | null {
-  const analise = analisarMp3(bytes);
+  const analise = analisarMp3Sozinho(bytes);
   if (analise === null || analise.quadros.length === 0 || lixoDemais(analise)) {
     return null;
   }
   return { segundos: analise.segundos, quadros: analise.quadros.length };
 }
 
-function prepararAudio(bytes: Uint8Array): MidiaPreparada {
+function prepararAudio(bytes: Uint8Array, trabalho: Trabalho): MidiaPreparada {
   if (bytes.length > LIMITES_DA_MIDIA.audio.maximoDeBytes) {
     return fora("grande_demais");
   }
-  const analise = analisarMp3(bytes);
+  const analise = analisarMp3(bytes, trabalho);
   if (analise === null || analise.quadros.length === 0) {
     return fora("sem_quadros");
   }
@@ -702,7 +860,11 @@ function prepararAudio(bytes: Uint8Array): MidiaPreparada {
   if (analise.segundos > LIMITES_DA_MIDIA.audio.maximoDeSegundos) {
     return fora("longo_demais");
   }
-  return { tipo: "audio", bytes: juntar(analise.quadros), segundos: analise.segundos };
+  return {
+    tipo: "audio",
+    bytes: juntar(analise.quadros, trabalho),
+    segundos: analise.segundos,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -766,12 +928,14 @@ type PedacoDoJpeg =
  * segmentos e os dados comprimidos de cada varredura (FF00 e preenchimento,
  * FFD0 a FFD7 sao RST e fazem parte dos dados, FF repetidos antes de um
  * marcador sao enchimento). Marcador fora da lista: "formato". Estrutura
- * quebrada ou sem EOI ate `ate`: "corrompido".
+ * quebrada ou sem EOI ate `ate`: "corrompido". Cada segmento e cada 0xFF
+ * dos dados cobram do orcamento.
  */
 function andarPeloJpeg(
   bytes: Uint8Array,
   de: number,
   ate: number,
+  trabalho: Trabalho,
 ): { pedacos: PedacoDoJpeg[]; fimDoEoi: number } | { motivo: MotivoDeFora } {
   if (ate - de < 4 || bytes[de] !== 0xff || bytes[de + 1] !== SOI) {
     return { motivo: "corrompido" };
@@ -782,6 +946,7 @@ function andarPeloJpeg(
   let quadros = 0;
   let varreduras = 0;
   for (;;) {
+    gastar(trabalho, CUSTO.volta);
     if (p >= ate || vista[p] !== 0xff) {
       return { motivo: "corrompido" };
     }
@@ -789,6 +954,7 @@ function andarPeloJpeg(
     while (q < ate && vista[q] === 0xff) {
       q += 1;
     }
+    gastar(trabalho, (q - p) * CUSTO.caractere);
     if (q >= ate) {
       return { motivo: "corrompido" };
     }
@@ -853,6 +1019,7 @@ function andarPeloJpeg(
       while (s < ate && vista[s] === 0xff) {
         s += 1;
       }
+      gastar(trabalho, CUSTO.chamada + (ff - r) * CUSTO.nativo + (s - ff) * CUSTO.caractere);
       if (s >= ate) {
         return { motivo: "corrompido" };
       }
@@ -924,7 +1091,7 @@ export function orientacaoDoExif(app1: Uint8Array): number | null {
     return null;
   }
   const entradas = u16(ifd0);
-  for (let i = 0; i < entradas && i < 512; i += 1) {
+  for (let i = 0; i < entradas && i < ENTRADAS_DO_IFD; i += 1) {
     const e = ifd0 + 2 + i * 12;
     if (e + 12 > app1.length) {
       return null;
@@ -941,6 +1108,9 @@ export function orientacaoDoExif(app1: Uint8Array): number | null {
   }
   return null;
 }
+
+/** Quantas entradas do IFD0 se olham procurando a orientacao. */
+const ENTRADAS_DO_IFD = 512;
 
 /** O APP1 minimo, so com a Orientacao (TIFF big-endian, um IFD, uma tag). */
 export function app1SoComAOrientacao(orientacao: number): Uint8Array {
@@ -982,11 +1152,11 @@ export function app1SoComAOrientacao(orientacao: number): Uint8Array {
   return Uint8Array.from([0xff, 0xe1, (tamanho >> 8) & 0xff, tamanho & 0xff, ...corpo]);
 }
 
-function prepararJpeg(bytes: Uint8Array): MidiaPreparada {
+function prepararJpeg(bytes: Uint8Array, trabalho: Trabalho): MidiaPreparada {
   if (bytes.length > LIMITES_DA_MIDIA.imagem.maximoDeBytes) {
     return fora("grande_demais");
   }
-  const andado = andarPeloJpeg(bytes, 0, bytes.length);
+  const andado = andarPeloJpeg(bytes, 0, bytes.length, trabalho);
   if ("motivo" in andado) {
     return fora(andado.motivo);
   }
@@ -1024,6 +1194,7 @@ function prepararJpeg(bytes: Uint8Array): MidiaPreparada {
     if (ehApp(marcador) || marcador === COM) {
       // Nunca sai; do APP1 antes da varredura so se le a orientacao.
       if (marcador === APP1 && antesDaVarredura && orientacao === null) {
+        gastar(trabalho, CUSTO.volta + Math.min(corpo.length, 8 + ENTRADAS_DO_IFD * 12) * CUSTO.passo / 12);
         orientacao = orientacaoDoExif(corpo);
       }
       continue;
@@ -1034,7 +1205,7 @@ function prepararJpeg(bytes: Uint8Array): MidiaPreparada {
   if (orientacao !== null && orientacao !== 1) {
     partes.splice(posicaoDoApp1, 0, app1SoComAOrientacao(orientacao));
   }
-  return { tipo: "imagem", formato: "jpeg", bytes: juntar(partes) };
+  return { tipo: "imagem", formato: "jpeg", bytes: juntar(partes, trabalho) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1059,14 +1230,27 @@ const PEDACOS_DO_PNG_QUE_FICAM: ReadonlySet<string> = new Set([
 /** Os pedacos do PNG animado (APNG): o arquivo nao sai. */
 const PEDACOS_DO_PNG_ANIMADO: ReadonlySet<string> = new Set(["acTL", "fcTL", "fdAT"]);
 
-function prepararPng(bytes: Uint8Array): MidiaPreparada {
+/**
+ * Teto de pedacos num PNG ou num WebP (o de verdade tem dezenas: o maior dos
+ * 4.311 PNGs reais conferidos tinha 95; o WebP animado, um por quadro).
+ * Mais que isso e arquivo feito para alocar: nao suportado.
+ */
+const PEDACOS_DA_IMAGEM = 65_536;
+
+function prepararPng(bytes: Uint8Array, trabalho: Trabalho): MidiaPreparada {
   if (bytes.length > LIMITES_DA_MIDIA.imagem.maximoDeBytes) {
     return fora("grande_demais");
   }
   const partes: Uint8Array[] = [bytes.subarray(0, 8)];
   let p = 8;
   let fimDoPng = false;
+  let pedacos = 0;
   while (p < bytes.length) {
+    gastar(trabalho, CUSTO.volta);
+    pedacos += 1;
+    if (pedacos > PEDACOS_DA_IMAGEM) {
+      return fora("formato");
+    }
     if (p + 12 > bytes.length) {
       return fora("corrompido");
     }
@@ -1076,11 +1260,21 @@ function prepararPng(bytes: Uint8Array): MidiaPreparada {
         ((bytes[p + 2] ?? 0) << 8) |
         (bytes[p + 3] ?? 0)) >>>
       0;
-    const tipo = String.fromCharCode(...bytes.subarray(p + 4, p + 8));
+    const l0 = bytes[p + 4] ?? 0;
+    const l1 = bytes[p + 5] ?? 0;
+    const l2 = bytes[p + 6] ?? 0;
+    const l3 = bytes[p + 7] ?? 0;
     const fim = p + 12 + tamanho;
-    if (fim > bytes.length || !/^[A-Za-z]{4}$/.test(tipo)) {
+    if (
+      fim > bytes.length ||
+      !letraAscii(l0) ||
+      !letraAscii(l1) ||
+      !letraAscii(l2) ||
+      !letraAscii(l3)
+    ) {
       return fora("corrompido");
     }
+    const tipo = String.fromCharCode(l0, l1, l2, l3);
     if (p === 8 && tipo !== "IHDR") {
       return fora("corrompido");
     }
@@ -1104,7 +1298,7 @@ function prepararPng(bytes: Uint8Array): MidiaPreparada {
   if (!fimDoPng) {
     return fora("corrompido");
   }
-  return { tipo: "imagem", formato: "png", bytes: juntar(partes) };
+  return { tipo: "imagem", formato: "png", bytes: juntar(partes, trabalho) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1121,8 +1315,12 @@ const PEDACOS_DO_WEBP_QUE_SAEM: ReadonlySet<string> = new Set(["ICCP", "EXIF", "
 
 type PedacoDoWebp = { tipo: string; inicio: number; fim: number; dados: number };
 
-/** Os pedacos de dentro do RIFF (o que vem depois do RIFF fica de fora). */
-function pedacosDoWebp(bytes: Uint8Array): PedacoDoWebp[] | null {
+/**
+ * Os pedacos de dentro do RIFF (o que vem depois do RIFF fica de fora).
+ * Cada pedaco cobra a volta dele e as passadas de depois (a procura do
+ * VP8X, do VP8, do VP8L e da animacao). Pedacos demais: "formato".
+ */
+function pedacosDoWebp(bytes: Uint8Array, trabalho: Trabalho): PedacoDoWebp[] | null | "demais" {
   const fimDoRiff = 8 + u32le(bytes, 4);
   if (fimDoRiff < 12 || fimDoRiff > bytes.length) {
     return null;
@@ -1130,10 +1328,14 @@ function pedacosDoWebp(bytes: Uint8Array): PedacoDoWebp[] | null {
   const pedacos: PedacoDoWebp[] = [];
   let p = 12;
   while (p < fimDoRiff) {
+    gastar(trabalho, CUSTO.volta + 4 * CUSTO.passo);
+    if (pedacos.length >= PEDACOS_DA_IMAGEM) {
+      return "demais";
+    }
     if (p + 8 > fimDoRiff) {
       return null;
     }
-    const tipo = String.fromCharCode(...bytes.subarray(p, p + 4));
+    const tipo = String.fromCharCode(bytes[p] ?? 0, bytes[p + 1] ?? 0, bytes[p + 2] ?? 0, bytes[p + 3] ?? 0);
     const tamanho = u32le(bytes, p + 4);
     const fimDosDados = p + 8 + tamanho;
     if (fimDosDados > fimDoRiff) {
@@ -1190,11 +1392,14 @@ function dimensoesDoWebp(
 /** O tamanho da figurinha do WhatsApp (D-98). */
 export const LADO_DA_FIGURINHA = 512;
 
-function prepararWebp(bytes: Uint8Array): MidiaPreparada {
+function prepararWebp(bytes: Uint8Array, trabalho: Trabalho): MidiaPreparada {
   if (bytes.length > LIMITES_DA_MIDIA.imagem.maximoDeBytes) {
     return fora("grande_demais");
   }
-  const pedacos = pedacosDoWebp(bytes);
+  const pedacos = pedacosDoWebp(bytes, trabalho);
+  if (pedacos === "demais") {
+    return fora("formato");
+  }
   if (pedacos === null || pedacos.length === 0) {
     return fora("corrompido");
   }
@@ -1214,9 +1419,12 @@ function prepararWebp(bytes: Uint8Array): MidiaPreparada {
   ) {
     return { tipo: "figurinha" };
   }
-  const partes: Uint8Array[] = [bytes.slice(0, 12)];
+  // So vistas da entrada: as marcas do VP8X e o tamanho do RIFF sao
+  // corrigidos na saida (uma copia), nunca na entrada.
+  const partes: Uint8Array[] = [bytes.subarray(0, 12)];
   let imagens = 0;
   for (const [indice, pedaco] of pedacos.entries()) {
+    gastar(trabalho, CUSTO.volta);
     if (PEDACOS_DO_WEBP_QUE_SAEM.has(pedaco.tipo)) {
       continue;
     }
@@ -1229,17 +1437,17 @@ function prepararWebp(bytes: Uint8Array): MidiaPreparada {
     if (pedaco.tipo === "VP8 " || pedaco.tipo === "VP8L") {
       imagens += 1;
     }
-    const copia = bytes.slice(pedaco.inicio, pedaco.fim);
-    if (pedaco.tipo === "VP8X") {
-      // So a marca de alfa fica (ICC, EXIF e XMP sairam; animacao e figurinha).
-      copia[8] = (copia[8] ?? 0) & MARCA_ALFA;
-    }
-    partes.push(copia);
+    partes.push(bytes.subarray(pedaco.inicio, pedaco.fim));
   }
   if (imagens !== 1) {
     return fora("corrompido");
   }
-  const saida = juntar(partes);
+  const saida = juntar(partes, trabalho);
+  if (vp8x !== undefined) {
+    // O VP8X e o primeiro pedaco (12 do RIFF e 8 do cabecalho dele): so a
+    // marca de alfa fica (ICC, EXIF e XMP sairam; animacao e figurinha).
+    saida[20] = (saida[20] ?? 0) & MARCA_ALFA;
+  }
   // O tamanho do RIFF: tudo depois dos 8 primeiros bytes.
   const riff = saida.length - 8;
   saida[4] = riff & 0xff;
@@ -1252,23 +1460,6 @@ function prepararWebp(bytes: Uint8Array): MidiaPreparada {
 // ---------------------------------------------------------------------------
 // PDF: a leitura (uma passada, com tetos), as paginas e a foto embutida
 // ---------------------------------------------------------------------------
-
-/** O PDF fica de fora: lancado de dentro da leitura, convertido em prepararPdf. */
-class PdfDeFora extends Error {
-  constructor(readonly motivo: MotivoDeFora) {
-    super(motivo);
-  }
-}
-
-/** O orcamento de caracteres varridos (o teto de CPU da leitura do PDF). */
-type Orcamento = { restante: number };
-
-function gastar(orcamento: Orcamento, caracteres: number): void {
-  orcamento.restante -= caracteres;
-  if (orcamento.restante < 0) {
-    throw new PdfDeFora("bomba");
-  }
-}
 
 /** Branco do PDF: NUL, tab, LF, FF, CR e espaco. */
 function brancoDoPdf(c: number): boolean {
@@ -1291,16 +1482,93 @@ function delimitadorDoPdf(c: number): boolean {
   );
 }
 
+/** Caractere regular do PDF (parte de uma palavra); o fim do texto (NaN) nao e. */
+function regularDoPdf(c: number): boolean {
+  return !Number.isNaN(c) && !brancoDoPdf(c) && !delimitadorDoPdf(c);
+}
+
 const BRANCO = "[\\0\\t\\n\\f\\r ]";
 const SEM_PALAVRA_DEPOIS = "(?![^\\0\\t\\n\\f\\r ()<>\\[\\]{}/%])";
 
-/** O cabecalho de um objeto ("12 0 obj"); limites nos numeros e nos brancos. */
-const CABECALHO_DE_OBJETO = new RegExp(
-  `(\\d{1,10})${BRANCO}{1,32}(\\d{1,5})${BRANCO}{1,32}obj${SEM_PALAVRA_DEPOIS}`,
-  "g",
-);
-/** Uma referencia ("12 0 R") no meio de uma lista. */
-const REFERENCIA = new RegExp(`(\\d{1,10})${BRANCO}+(\\d{1,5})${BRANCO}+R${SEM_PALAVRA_DEPOIS}`, "g");
+function digito(c: number): boolean {
+  return c >= 0x30 && c <= 0x39;
+}
+
+/** Os brancos que cabem entre as partes do cabecalho de um objeto. */
+const BRANCOS_DO_CABECALHO = 32;
+
+/**
+ * O proximo cabecalho de objeto ("12 0 obj") a partir de `de`: a mesma
+ * leitura da expressao (\d{1,10}) branco{1,32} (\d{1,5}) branco{1,32} obj,
+ * sem palavra depois, da esquerda para a direita, feita a mao numa passada
+ * (a expressao voltava atras em cada digito de um texto de numeros e
+ * brancos: 5 MB disso levavam mais de 300 ms). O numero sao os ultimos 10
+ * digitos da sequencia, e o casamento comeca neles; o segundo numero que
+ * nao fecha um cabecalho pode abrir o seguinte.
+ */
+function proximoCabecalho(
+  t: string,
+  de: number,
+  trabalho: Trabalho,
+): { indice: number; numero: number; fim: number } | null {
+  const n = t.length;
+  let i = de;
+  for (;;) {
+    // O primeiro numero (a, b) e o branco depois dele (b, c).
+    let a = i;
+    while (a < n && !digito(t.charCodeAt(a))) {
+      a += 1;
+    }
+    if (a >= n) {
+      gastar(trabalho, (n - i) * CUSTO.caractere);
+      return null;
+    }
+    let b = a;
+    while (b < n && digito(t.charCodeAt(b))) {
+      b += 1;
+    }
+    let c = b;
+    while (c < n && brancoDoPdf(t.charCodeAt(c))) {
+      c += 1;
+    }
+    gastar(trabalho, CUSTO.passo + (c - i) * CUSTO.caractere);
+    for (;;) {
+      if (c === b || c - b > BRANCOS_DO_CABECALHO) {
+        break;
+      }
+      // O segundo numero (c, d) e o branco depois dele (d, e).
+      let d = c;
+      while (d < n && digito(t.charCodeAt(d))) {
+        d += 1;
+      }
+      if (d === c) {
+        break;
+      }
+      let e = d;
+      while (e < n && brancoDoPdf(t.charCodeAt(e))) {
+        e += 1;
+      }
+      gastar(trabalho, CUSTO.passo + (e - c) * CUSTO.caractere);
+      if (
+        d - c <= 5 &&
+        e > d &&
+        e - d <= BRANCOS_DO_CABECALHO &&
+        t.startsWith("obj", e) &&
+        !regularDoPdf(t.charCodeAt(e + 3))
+      ) {
+        const indice = Math.max(a, b - 10);
+        return { indice, numero: Number(t.slice(indice, b)), fim: e + 3 };
+      }
+      // Nao fechou: o segundo numero e o primeiro da tentativa seguinte
+      // (ja lido, nao se le de novo).
+      a = c;
+      b = d;
+      c = e;
+    }
+    i = c;
+  }
+}
+
 /** Um valor que e so uma referencia. */
 const SO_REFERENCIA = new RegExp(`^(\\d{1,10})${BRANCO}+(\\d{1,5})${BRANCO}+R$`);
 /** Um nome ("/FlateDecode"). */
@@ -1318,7 +1586,7 @@ function nomeDecodificado(nome: string): string {
 }
 
 /** Pula brancos e comentarios a partir de i. */
-function pularBrancos(t: string, i: number, orcamento: Orcamento): number {
+function pularBrancos(t: string, i: number, trabalho: Trabalho): number {
   let j = i;
   while (j < t.length) {
     const c = t.charCodeAt(j);
@@ -1335,7 +1603,7 @@ function pularBrancos(t: string, i: number, orcamento: Orcamento): number {
     }
     break;
   }
-  gastar(orcamento, j - i);
+  gastar(trabalho, CUSTO.passo + (j - i) * CUSTO.caractere);
   return j;
 }
 
@@ -1426,8 +1694,8 @@ function fimDoComposto(t: string, i: number): number {
   return -1;
 }
 
-/** O fim do valor que comeca em i (ja sem brancos), ou -1 (malformado). Gasta o orcamento. */
-function fimDoValor(t: string, i: number, orcamento: Orcamento): number {
+/** O fim do valor que comeca em i (ja sem brancos), ou -1 (malformado). Cobra o que andou. */
+function fimDoValor(t: string, i: number, trabalho: Trabalho): number {
   let fim: number;
   const c = t.charCodeAt(i);
   if (i >= t.length) {
@@ -1445,7 +1713,7 @@ function fimDoValor(t: string, i: number, orcamento: Orcamento): number {
     const k = fimDaPalavra(t, i);
     fim = k === i ? -1 : k;
   }
-  gastar(orcamento, (fim < 0 ? t.length : fim) - i);
+  gastar(trabalho, CUSTO.passo + ((fim < 0 ? t.length : fim) - i) * CUSTO.caractere);
   return fim;
 }
 
@@ -1468,17 +1736,18 @@ function soDigitos(t: string, i: number, fim: number): boolean {
  * senao, fim. Os numeros podem ser longos (ha gerador que escreve
  * "/Pg 18446744073386459286 0 R").
  */
-function fimComReferencia(t: string, i: number, fim: number, orcamento: Orcamento): number {
+function fimComReferencia(t: string, i: number, fim: number, trabalho: Trabalho): number {
+  gastar(trabalho, (fim - i) * CUSTO.caractere);
   if (!soDigitos(t, i, fim)) {
     return fim;
   }
-  const g = pularBrancos(t, fim, orcamento);
+  const g = pularBrancos(t, fim, trabalho);
   const fimDoG = fimDaPalavra(t, g);
-  gastar(orcamento, fimDoG - g);
+  gastar(trabalho, (fimDoG - g) * 2 * CUSTO.caractere);
   if (!soDigitos(t, g, fimDoG)) {
     return fim;
   }
-  const r = pularBrancos(t, fimDoG, orcamento);
+  const r = pularBrancos(t, fimDoG, trabalho);
   const depois = t.charCodeAt(r + 1);
   if (
     t.charCodeAt(r) !== 0x52 ||
@@ -1510,17 +1779,17 @@ type DicionarioDoPdf = Map<string, string[]>;
 /**
  * Le o dicionario que comeca em i ("<<"). Onde devia vir uma chave e vem
  * outra coisa, ela e pulada, como os leitores fazem. null: malformado (o
- * valor ou o dicionario nao fecham).
+ * valor ou o dicionario nao fecham). Cada chave cobra do orcamento.
  */
 function lerDicionario(
   t: string,
   i: number,
-  orcamento: Orcamento,
+  trabalho: Trabalho,
 ): { dicionario: DicionarioDoPdf; fim: number } | null {
   const dicionario: DicionarioDoPdf = new Map();
   let j = i + 2;
   for (;;) {
-    j = pularBrancos(t, j, orcamento);
+    j = pularBrancos(t, j, trabalho);
     if (j >= t.length) {
       return null;
     }
@@ -1529,24 +1798,25 @@ function lerDicionario(
       return { dicionario, fim: j + 2 };
     }
     if (c !== 0x2f) {
-      const fimDoSolto = fimDoValor(t, j, orcamento);
+      const fimDoSolto = fimDoValor(t, j, trabalho);
       if (fimDoSolto < 0) {
         return null;
       }
       j = fimDoSolto;
       continue;
     }
+    gastar(trabalho, CUSTO.volta);
     const fimDaChave = fimDaPalavra(t, j + 1);
-    gastar(orcamento, fimDaChave - j);
+    gastar(trabalho, (fimDaChave - j) * CUSTO.caractere);
     // A chave mais longa lida, com todos os escapes, cabe em 40.
     const chave =
       fimDaChave - j - 1 <= 40 ? nomeDecodificado(t.slice(j + 1, fimDaChave)) : "";
-    const inicioDoValor = pularBrancos(t, fimDaChave, orcamento);
-    const fimDoValorLido = fimDoValor(t, inicioDoValor, orcamento);
+    const inicioDoValor = pularBrancos(t, fimDaChave, trabalho);
+    const fimDoValorLido = fimDoValor(t, inicioDoValor, trabalho);
     if (fimDoValorLido < 0) {
       return null;
     }
-    const fim = fimComReferencia(t, inicioDoValor, fimDoValorLido, orcamento);
+    const fim = fimComReferencia(t, inicioDoValor, fimDoValorLido, trabalho);
     if (CHAVES_LIDAS.has(chave)) {
       const valor = t.slice(inicioDoValor, fim);
       const valores = dicionario.get(chave);
@@ -1560,8 +1830,12 @@ function lerDicionario(
   }
 }
 
-/** Os nomes de um valor (um nome, ou uma lista so de nomes), sem a barra; null: outra coisa. */
-function nomesDoValor(valor: string): string[] | null {
+/**
+ * Os nomes de um valor (um nome, ou uma lista so de nomes), sem a barra;
+ * null: outra coisa. Cobra o valor inteiro (cada nome vira um texto novo).
+ */
+function nomesDoValor(valor: string, trabalho: Trabalho): string[] | null {
+  gastar(trabalho, CUSTO.volta + valor.length * CUSTO.nome);
   if (valor.startsWith("/")) {
     return [nomeDecodificado(valor.slice(1))];
   }
@@ -1576,12 +1850,12 @@ function nomesDoValor(valor: string): string[] | null {
 }
 
 /** Os nomes da chave (o /Type, o /Subtype), sem a barra. */
-function nomesDaChave(d: DicionarioDoPdf, chave: string): string[] {
-  return (d.get(chave) ?? []).flatMap((valor) => nomesDoValor(valor) ?? []);
+function nomesDaChave(d: DicionarioDoPdf, chave: string, trabalho: Trabalho): string[] {
+  return (d.get(chave) ?? []).flatMap((valor) => nomesDoValor(valor, trabalho) ?? []);
 }
 
-function tiposDoDicionario(d: DicionarioDoPdf): string[] {
-  return nomesDaChave(d, "Type");
+function tiposDoDicionario(d: DicionarioDoPdf, trabalho: Trabalho): string[] {
+  return nomesDaChave(d, "Type", trabalho);
 }
 
 /** Os filtros abreviados (a forma curta vale para os leitores tambem). */
@@ -1596,21 +1870,22 @@ const ABREVIACOES_DE_FILTRO: Readonly<Record<string, string>> = {
 };
 
 /** Os filtros do fluxo, na ordem. /Filter que nao da para ler sem resolver: "formato". */
-function filtrosDoFluxo(d: DicionarioDoPdf): string[] {
+function filtrosDoFluxo(d: DicionarioDoPdf, trabalho: Trabalho): string[] {
   const valores = d.get("Filter");
   if (valores === undefined) {
     return [];
   }
-  const nomes = valores.length === 1 ? nomesDoValor(valores[0] ?? "") : null;
+  const nomes = valores.length === 1 ? nomesDoValor(valores[0] ?? "", trabalho) : null;
   if (nomes === null) {
-    throw new PdfDeFora("formato");
+    throw new MidiaDeFora("formato");
   }
   return nomes.map((nome) => ABREVIACOES_DE_FILTRO[nome] ?? nome);
 }
 
 /** O fluxo tem preditor (ou parametros que so resolvendo a referencia)? */
-function comPreditor(d: DicionarioDoPdf): boolean {
+function comPreditor(d: DicionarioDoPdf, trabalho: Trabalho): boolean {
   return (d.get("DecodeParms") ?? []).some((valor) => {
+    gastar(trabalho, CUSTO.volta + valor.length * CUSTO.expressao);
     if (SO_REFERENCIA.test(valor)) {
       return true;
     }
@@ -1626,20 +1901,6 @@ function inteiroDaChave(d: DicionarioDoPdf, chave: string): number | null {
   return INTEIRO.test(valor) ? Number(valor) : null;
 }
 
-/** Os inteiros do valor: direto, ou pela referencia a um objeto que e so um inteiro. */
-function inteirosDoValor(valor: string, soValores: ReadonlyMap<number, string[]>): number[] {
-  if (INTEIRO.test(valor)) {
-    return [Number(valor)];
-  }
-  const referencia = SO_REFERENCIA.exec(valor);
-  if (referencia === null) {
-    return [];
-  }
-  return (soValores.get(Number(referencia[1])) ?? [])
-    .filter((v) => INTEIRO.test(v))
-    .map(Number);
-}
-
 type ObjetoDoPdf = {
   numero: number;
   dicionario: DicionarioDoPdf | null;
@@ -1649,8 +1910,9 @@ type ObjetoDoPdf = {
   fluxo: { inicio: number; fim: number } | null;
 };
 
-/** O texto latin1 (um caractere por byte), sem copiar os bytes antes. */
-function latin1(bytes: Uint8Array): string {
+/** O texto latin1 (um caractere por byte), sem copiar os bytes antes. Cobra a conversao. */
+function latin1(bytes: Uint8Array, trabalho: Trabalho): string {
+  gastar(trabalho, bytes.length * CUSTO.nativo);
   return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("latin1");
 }
 
@@ -1674,7 +1936,7 @@ function primeiroDesde(lista: readonly number[], de: number): number {
  * CRLF, LF ou so CR, com espacos antes tolerados). "nao": nao e fluxo;
  * "malformado": "stream" sem o fim de linha.
  */
-function comecoDosDados(t: string, s: number, orcamento: Orcamento): number | "nao" | "malformado" {
+function comecoDosDados(t: string, s: number, trabalho: Trabalho): number | "nao" | "malformado" {
   if (!t.startsWith("stream", s)) {
     return "nao";
   }
@@ -1686,7 +1948,7 @@ function comecoDosDados(t: string, s: number, orcamento: Orcamento): number | "n
   while (t.charCodeAt(k) === 0x20 || t.charCodeAt(k) === 0x09) {
     k += 1;
   }
-  gastar(orcamento, k - s);
+  gastar(trabalho, k - s);
   if (t.charCodeAt(k) === 0x0d) {
     return t.charCodeAt(k + 1) === 0x0a ? k + 2 : k + 1;
   }
@@ -1696,19 +1958,25 @@ function comecoDosDados(t: string, s: number, orcamento: Orcamento): number | "n
   return "malformado";
 }
 
-/** Descomprime (FlateDecode) com o teto. Passou do teto: "bomba"; nao descomprime: "corrompido". */
-function descomprimir(dados: Uint8Array, teto: number): Uint8Array {
+/**
+ * Descomprime (FlateDecode) com o teto. Passou do teto: "bomba"; nao
+ * descomprime: "corrompido". O que sai cobra do orcamento.
+ */
+function descomprimir(dados: Uint8Array, teto: number, trabalho: Trabalho): Uint8Array {
+  let saida: Uint8Array;
   try {
-    return inflateSync(dados, { maxOutputLength: teto });
+    saida = inflateSync(dados, { maxOutputLength: teto });
   } catch (erro) {
     if (
       erro instanceof RangeError ||
       (erro as { code?: unknown }).code === "ERR_BUFFER_TOO_LARGE"
     ) {
-      throw new PdfDeFora("bomba");
+      throw new MidiaDeFora("bomba");
     }
-    throw new PdfDeFora("corrompido");
+    throw new MidiaDeFora("corrompido");
   }
+  gastar(trabalho, dados.length * CUSTO.nativo + saida.length * CUSTO.zlib);
+  return saida;
 }
 
 /**
@@ -1719,102 +1987,156 @@ function descomprimir(dados: Uint8Array, teto: number): Uint8Array {
 function lerFluxoDeObjetos(
   texto: string,
   d: DicionarioDoPdf,
-  orcamento: Orcamento,
+  trabalho: Trabalho,
   saida: ObjetoDoPdf[],
   jaLidos: number,
 ): void {
   const n = inteiroDaChave(d, "N") ?? -1;
   const primeiro = inteiroDaChave(d, "First") ?? -1;
   if (n < 0 || primeiro < 0 || primeiro > texto.length) {
-    throw new PdfDeFora("corrompido");
+    throw new MidiaDeFora("corrompido");
   }
   if (jaLidos + saida.length + n > LIMITES_DA_MIDIA.pdfObjetos) {
-    throw new PdfDeFora("bomba");
+    throw new MidiaDeFora("bomba");
   }
   const cabecalho = texto.slice(0, primeiro);
-  gastar(orcamento, primeiro);
+  gastar(trabalho, primeiro * CUSTO.expressao);
   const numeros = /\d{1,10}/g;
   let fimDoUltimo = primeiro;
   for (let k = 0; k < n; k += 1) {
+    gastar(trabalho, CUSTO.objeto);
     const numero = numeros.exec(cabecalho);
     const deslocamento = numero === null ? null : numeros.exec(cabecalho);
     if (numero === null || deslocamento === null) {
-      throw new PdfDeFora("corrompido");
+      throw new MidiaDeFora("corrompido");
     }
     const inicio = primeiro + Number(deslocamento[0]);
     if (inicio >= texto.length) {
-      throw new PdfDeFora("corrompido");
+      throw new MidiaDeFora("corrompido");
     }
-    const v = pularBrancos(texto, inicio, orcamento);
+    const v = pularBrancos(texto, inicio, trabalho);
     let fim: number;
     if (texto.startsWith("<<", v)) {
-      const lido = lerDicionario(texto, v, orcamento);
+      const lido = lerDicionario(texto, v, trabalho);
       if (lido === null) {
-        throw new PdfDeFora("corrompido");
+        throw new MidiaDeFora("corrompido");
       }
       saida.push({ numero: Number(numero[0]), dicionario: lido.dicionario, valor: null, fluxo: null });
       fim = lido.fim;
     } else {
-      const fimDoValorLido = fimDoValor(texto, v, orcamento);
+      const fimDoValorLido = fimDoValor(texto, v, trabalho);
       if (fimDoValorLido < 0) {
-        throw new PdfDeFora("corrompido");
+        throw new MidiaDeFora("corrompido");
       }
-      fim = fimComReferencia(texto, v, fimDoValorLido, orcamento);
+      fim = fimComReferencia(texto, v, fimDoValorLido, trabalho);
       saida.push({ numero: Number(numero[0]), dicionario: null, valor: texto.slice(v, fim), fluxo: null });
     }
     fimDoUltimo = Math.max(fimDoUltimo, fim);
   }
   if (texto.length - fimDoUltimo > LIMITES_DA_MIDIA.pdfSobraNoFluxoDeObjetos) {
-    throw new PdfDeFora("bomba");
+    throw new MidiaDeFora("bomba");
   }
 }
 
 /**
  * As paginas: a MAIOR entre o /Count dos nos /Type /Pages, os objetos /Type
  * /Page (cada numero uma vez) e os filhos das listas /Kids que nao sao no
- * (cada no pelo numero, a maior das suas versoes). Sem /Count: "sem_paginas".
+ * (cada no pelo numero, a maior das suas versoes). A lista e o /Count
+ * indiretos sao lidos uma vez por numero de objeto (mil nos apontando a
+ * mesma lista de 700 mil referencias leem a lista uma vez), e cada
+ * resolucao cobra do orcamento. Sem /Count: "sem_paginas".
  */
-function contarPaginas(objetos: readonly ObjetoDoPdf[]): number {
+function contarPaginas(objetos: readonly ObjetoDoPdf[], trabalho: Trabalho): number {
   const soValores = new Map<number, string[]>();
   const nos = new Map<number, DicionarioDoPdf[]>();
   const paginas = new Set<number>();
   for (const objeto of objetos) {
+    gastar(trabalho, CUSTO.volta);
     if (objeto.dicionario === null) {
       if (objeto.valor !== null) {
-        soValores.set(objeto.numero, [...(soValores.get(objeto.numero) ?? []), objeto.valor]);
+        const valores = soValores.get(objeto.numero);
+        if (valores === undefined) {
+          soValores.set(objeto.numero, [objeto.valor]);
+        } else {
+          valores.push(objeto.valor);
+        }
       }
       continue;
     }
-    const tipos = tiposDoDicionario(objeto.dicionario);
+    const tipos = tiposDoDicionario(objeto.dicionario, trabalho);
     if (tipos.includes("Pages")) {
-      nos.set(objeto.numero, [...(nos.get(objeto.numero) ?? []), objeto.dicionario]);
+      const versoes = nos.get(objeto.numero);
+      if (versoes === undefined) {
+        nos.set(objeto.numero, [objeto.dicionario]);
+      } else {
+        versoes.push(objeto.dicionario);
+      }
     }
     if (tipos.includes("Page")) {
       paginas.add(objeto.numero);
     }
   }
+  const resolvidos: Resolvidos = { filhos: new Map(), inteiros: new Map() };
   let contagem: number | null = null;
   let folhas = 0;
   for (const versoes of nos.values()) {
     let filhos = 0;
     for (const d of versoes) {
+      gastar(trabalho, CUSTO.volta);
       for (const valor of d.get("Count") ?? []) {
-        for (const n of inteirosDoValor(valor, soValores)) {
-          if (n >= 1) {
-            contagem = Math.max(contagem ?? 0, n);
-          }
+        const n = maiorInteiroDoValor(valor, soValores, resolvidos, trabalho);
+        if (n !== null && n >= 1) {
+          contagem = Math.max(contagem ?? 0, n);
         }
       }
       for (const valor of d.get("Kids") ?? []) {
-        filhos = Math.max(filhos, filhosQueNaoSaoNo(valor, soValores, nos));
+        filhos = Math.max(filhos, filhosQueNaoSaoNo(valor, soValores, nos, resolvidos, trabalho));
       }
     }
     folhas += filhos;
   }
   if (contagem === null) {
-    throw new PdfDeFora("sem_paginas");
+    throw new MidiaDeFora("sem_paginas");
   }
   return Math.max(contagem, paginas.size, folhas);
+}
+
+/** O que ja foi resolvido por numero de objeto (cada um e lido uma vez so). */
+type Resolvidos = {
+  /** A maior contagem de filhos entre as listas (versoes) do objeto. */
+  filhos: Map<number, number>;
+  /** O maior inteiro entre as versoes do objeto (null: nenhum). */
+  inteiros: Map<number, number | null>;
+};
+
+/** O maior inteiro do valor: direto, ou pela referencia a um objeto que e so um inteiro. */
+function maiorInteiroDoValor(
+  valor: string,
+  soValores: ReadonlyMap<number, string[]>,
+  resolvidos: Resolvidos,
+  trabalho: Trabalho,
+): number | null {
+  gastar(trabalho, CUSTO.volta);
+  if (INTEIRO.test(valor)) {
+    return Number(valor);
+  }
+  const referencia = SO_REFERENCIA.exec(valor);
+  if (referencia === null) {
+    return null;
+  }
+  const numero = Number(referencia[1]);
+  if (resolvidos.inteiros.has(numero)) {
+    return resolvidos.inteiros.get(numero) ?? null;
+  }
+  let maior: number | null = null;
+  for (const versao of soValores.get(numero) ?? []) {
+    gastar(trabalho, CUSTO.passo);
+    if (INTEIRO.test(versao)) {
+      maior = Math.max(maior ?? Number(versao), Number(versao));
+    }
+  }
+  resolvidos.inteiros.set(numero, maior);
+  return maior;
 }
 
 /** Quantas referencias da lista /Kids (direta ou indireta) nao sao no /Type /Pages. */
@@ -1822,30 +2144,118 @@ function filhosQueNaoSaoNo(
   valor: string,
   soValores: ReadonlyMap<number, string[]>,
   nos: ReadonlyMap<number, unknown>,
+  resolvidos: Resolvidos,
+  trabalho: Trabalho,
 ): number {
-  let listas: string[];
+  gastar(trabalho, CUSTO.volta);
   if (valor.startsWith("[")) {
-    listas = [valor];
-  } else {
-    const referencia = SO_REFERENCIA.exec(valor);
-    listas = (referencia === null ? [] : (soValores.get(Number(referencia[1])) ?? [])).filter(
-      (v) => v.startsWith("["),
-    );
-    if (listas.length === 0) {
-      throw new PdfDeFora("corrompido");
+    return referenciasQueNaoSaoNo(valor, nos, trabalho);
+  }
+  const referencia = SO_REFERENCIA.exec(valor);
+  if (referencia === null) {
+    throw new MidiaDeFora("corrompido");
+  }
+  const numero = Number(referencia[1]);
+  const conhecido = resolvidos.filhos.get(numero);
+  if (conhecido !== undefined) {
+    return conhecido;
+  }
+  let maior = -1;
+  for (const versao of soValores.get(numero) ?? []) {
+    gastar(trabalho, CUSTO.passo);
+    if (versao.startsWith("[")) {
+      maior = Math.max(maior, referenciasQueNaoSaoNo(versao, nos, trabalho));
     }
   }
-  let maior = 0;
-  for (const lista of listas) {
-    let filhos = 0;
-    for (const referencia of lista.matchAll(REFERENCIA)) {
-      if (!nos.has(Number(referencia[1]))) {
+  if (maior < 0) {
+    throw new MidiaDeFora("corrompido");
+  }
+  resolvidos.filhos.set(numero, maior);
+  return maior;
+}
+
+/**
+ * Quantas referencias "N G R" da lista nao apontam para um no /Pages. A
+ * mesma leitura da expressao (\d{1,10}) branco+ (\d{1,5}) branco+ R sem
+ * palavra depois, da esquerda para a direita e sem sobrepor, feita a mao
+ * numa passada so (a expressao criava um casamento por referencia): o
+ * primeiro numero sao os ultimos 10 digitos de uma sequencia de digitos
+ * seguida de branco, e o segundo, de 1 a 5 digitos entre brancos.
+ */
+function referenciasQueNaoSaoNo(
+  lista: string,
+  nos: ReadonlyMap<number, unknown>,
+  trabalho: Trabalho,
+): number {
+  // Medido: cada caractere desta maquina de estados custa umas 3,5 vezes o
+  // do laco de referencia.
+  gastar(trabalho, CUSTO.volta + lista.length * 4 * CUSTO.caractere);
+  let filhos = 0;
+  // 0: nada; 1: um numero; 2: numero e branco; 3: numero, branco e numero;
+  // 4: numero, branco, numero e branco (falta o R).
+  let estado = 0;
+  let primeiro = 0;
+  let segundo = 0;
+  let digitosDoSegundo = 0;
+  let i = 0;
+  const fim = lista.length;
+  while (i < fim) {
+    const c = lista.charCodeAt(i);
+    if (c >= 0x30 && c <= 0x39) {
+      let valor = 0;
+      let digitos = 0;
+      while (i < fim) {
+        const d = lista.charCodeAt(i);
+        if (d < 0x30 || d > 0x39) {
+          break;
+        }
+        valor = valor * 10 + (d - 0x30);
+        if (valor >= 1e10) {
+          valor %= 1e10; // so os ultimos 10 digitos
+        }
+        digitos += 1;
+        i += 1;
+      }
+      if (estado === 2 || estado === 4) {
+        // No 4 a tentativa com o primeiro falhou: o segundo vira o primeiro.
+        if (estado === 4) {
+          primeiro = segundo;
+        }
+        estado = 3;
+        segundo = valor;
+        digitosDoSegundo = digitos;
+      } else {
+        estado = 1;
+        primeiro = valor;
+      }
+      continue;
+    }
+    if (brancoDoPdf(c)) {
+      while (i < fim && brancoDoPdf(lista.charCodeAt(i))) {
+        i += 1;
+      }
+      if (estado === 1) {
+        estado = 2;
+      } else if (estado === 3) {
+        if (digitosDoSegundo <= 5) {
+          estado = 4;
+        } else {
+          // O segundo longo demais: ele pode ser o primeiro de outra.
+          primeiro = segundo;
+          estado = 2;
+        }
+      }
+      continue;
+    }
+    if (c === 0x52 && estado === 4 && !regularDoPdf(lista.charCodeAt(i + 1))) {
+      if (!nos.has(primeiro)) {
         filhos += 1;
       }
     }
-    maior = Math.max(maior, filhos);
+    estado = 0;
+    i += 1;
   }
-  return maior;
+  return filhos;
 }
 
 type PdfLido = {
@@ -1853,7 +2263,7 @@ type PdfLido = {
   objetos: ObjetoDoPdf[];
   /** Os do arquivo e os de dentro dos fluxos de objetos. */
   todos: ObjetoDoPdf[];
-  /** O texto descomprimido de cada fluxo de objetos (para os anexos). */
+  /** O texto descomprimido de cada fluxo de objetos (para os anexos e a localizacao). */
   textosDeDentro: string[];
   /** O que ainda cabe no teto do descomprimido (para os metadados). */
   descomprimidoRestante: number;
@@ -1861,72 +2271,83 @@ type PdfLido = {
 };
 
 /**
- * A leitura do PDF numa passada, com tetos: os objetos (pelos cabecalhos
- * "N G obj" em qualquer lugar do arquivo, ate dentro dos dados de outro
- * fluxo, onde um leitor tambem os acharia pela xref), os fluxos (o fim de
- * cada um e a primeira marca "endstream" depois do comeco), os objetos dos
- * fluxos de objetos e a contagem das paginas. Lanca PdfDeFora.
+ * A leitura do PDF numa passada, com tetos e o orcamento: os objetos (pelos
+ * cabecalhos "N G obj" em qualquer lugar do arquivo, ate dentro dos dados
+ * de outro fluxo, onde um leitor tambem os acharia pela xref), os fluxos (o
+ * fim de cada um e a primeira marca "endstream" depois do comeco), os
+ * objetos dos fluxos de objetos e a contagem das paginas. Um FLUXO que
+ * comeca dentro de outro (no dicionario ou nos dados) e PDF malformado: os
+ * dois acabariam no mesmo "endstream", e as fotos aninhadas seriam lidas de
+ * novo a cada nivel ("formato"). Lanca MidiaDeFora.
  */
-function lerPdf(bytes: Uint8Array): PdfLido {
-  const t = latin1(bytes);
+function lerPdf(bytes: Uint8Array, trabalho: Trabalho): PdfLido {
+  const t = latin1(bytes, trabalho);
   // /Encrypt mora no trailer ou no dicionario do fluxo de referencias:
   // procurado no arquivo inteiro (o lado seguro).
+  gastar(trabalho, t.length * CUSTO.nativo);
   if (ENCRYPT.test(t)) {
-    throw new PdfDeFora("cifrado");
+    throw new MidiaDeFora("cifrado");
   }
-  const orcamento: Orcamento = { restante: LIMITES_DA_MIDIA.pdfCaracteresVarridos };
   const marcas: number[] = [];
   for (let k = t.indexOf("endstream"); k >= 0; k = t.indexOf("endstream", k + 9)) {
     marcas.push(k);
     if (marcas.length > LIMITES_DA_MIDIA.pdfFluxos) {
-      throw new PdfDeFora("bomba");
+      throw new MidiaDeFora("bomba");
     }
   }
+  gastar(trabalho, t.length * CUSTO.nativo + marcas.length * CUSTO.passo);
   const objetos: ObjetoDoPdf[] = [];
   let fluxos = 0;
   // Ate onde vai o fluxo mais longo ja visto: o que esta antes disso esta
-  // dentro dos dados de um fluxo (malformado ali e so ignorado).
+  // dentro de um fluxo (malformado ali e so ignorado; outro fluxo, fora).
   let fimDosFluxos = 0;
-  const cabecalho = new RegExp(CABECALHO_DE_OBJETO);
-  for (let achado = cabecalho.exec(t); achado !== null; achado = cabecalho.exec(t)) {
+  for (
+    let achado = proximoCabecalho(t, 0, trabalho);
+    achado !== null;
+    achado = proximoCabecalho(t, achado.fim, trabalho)
+  ) {
+    gastar(trabalho, CUSTO.objeto);
     if (objetos.length >= LIMITES_DA_MIDIA.pdfObjetos) {
-      throw new PdfDeFora("bomba");
+      throw new MidiaDeFora("bomba");
     }
-    const numero = Number(achado[1]);
-    const dentroDeFluxo = achado.index < fimDosFluxos;
-    const v = pularBrancos(t, cabecalho.lastIndex, orcamento);
+    const numero = achado.numero;
+    const dentroDeFluxo = achado.indice < fimDosFluxos;
+    const v = pularBrancos(t, achado.fim, trabalho);
     if (!t.startsWith("<<", v)) {
-      const fimDoValorLido = fimDoValor(t, v, orcamento);
+      const fimDoValorLido = fimDoValor(t, v, trabalho);
       objetos.push({
         numero,
         dicionario: null,
         valor:
           fimDoValorLido < 0
             ? null
-            : t.slice(v, fimComReferencia(t, v, fimDoValorLido, orcamento)),
+            : t.slice(v, fimComReferencia(t, v, fimDoValorLido, trabalho)),
         fluxo: null,
       });
       continue;
     }
     // Malformado (o dicionario, o "stream" sem fim de linha ou sem
-    // "endstream" depois): fora, a nao ser dentro dos dados de um fluxo.
-    const lido = lerDicionario(t, v, orcamento);
+    // "endstream" depois): fora, a nao ser dentro de um fluxo.
+    const lido = lerDicionario(t, v, trabalho);
     const dados =
       lido === null
         ? "malformado"
-        : comecoDosDados(t, pularBrancos(t, lido.fim, orcamento), orcamento);
+        : comecoDosDados(t, pularBrancos(t, lido.fim, trabalho), trabalho);
     const fim = typeof dados === "number" ? primeiroDesde(marcas, dados) : -1;
     if (lido === null || dados === "malformado" || (dados !== "nao" && fim < 0)) {
       if (dentroDeFluxo) {
         continue;
       }
-      throw new PdfDeFora("corrompido");
+      throw new MidiaDeFora("corrompido");
     }
     let fluxo: ObjetoDoPdf["fluxo"] = null;
     if (dados !== "nao") {
+      if (dentroDeFluxo) {
+        throw new MidiaDeFora("formato");
+      }
       fluxos += 1;
       if (fluxos > LIMITES_DA_MIDIA.pdfFluxos) {
-        throw new PdfDeFora("bomba");
+        throw new MidiaDeFora("bomba");
       }
       fluxo = { inicio: dados, fim };
       fimDosFluxos = Math.max(fimDosFluxos, fim);
@@ -1940,47 +2361,53 @@ function lerPdf(bytes: Uint8Array): PdfLido {
   let restante: number = LIMITES_DA_MIDIA.pdfDescomprimidoNoTotal;
   let fluxosDeObjetos = 0;
   for (const objeto of objetos) {
+    gastar(trabalho, CUSTO.passo);
     const d = objeto.dicionario;
     if (objeto.fluxo === null || d === null) {
       continue;
     }
-    if (!tiposDoDicionario(d).includes("ObjStm") && !(d.has("N") && d.has("First"))) {
+    if (!tiposDoDicionario(d, trabalho).includes("ObjStm") && !(d.has("N") && d.has("First"))) {
       continue;
     }
     fluxosDeObjetos += 1;
     if (fluxosDeObjetos > LIMITES_DA_MIDIA.pdfFluxosDeObjetos) {
-      throw new PdfDeFora("bomba");
+      throw new MidiaDeFora("bomba");
     }
-    const filtros = filtrosDoFluxo(d);
-    if (filtros.length > 1 || filtros.some((f) => f !== "FlateDecode") || comPreditor(d)) {
-      throw new PdfDeFora("formato");
+    const filtros = filtrosDoFluxo(d, trabalho);
+    if (
+      filtros.length > 1 ||
+      filtros.some((f) => f !== "FlateDecode") ||
+      comPreditor(d, trabalho)
+    ) {
+      throw new MidiaDeFora("formato");
     }
     let dados: Uint8Array = bytes.subarray(objeto.fluxo.inicio, objeto.fluxo.fim);
     if (filtros.length === 1) {
       if (restante <= 0) {
-        throw new PdfDeFora("bomba");
+        throw new MidiaDeFora("bomba");
       }
-      dados = descomprimir(dados, restante);
+      dados = descomprimir(dados, restante, trabalho);
     }
     restante -= dados.length;
     if (restante < 0) {
-      throw new PdfDeFora("bomba");
+      throw new MidiaDeFora("bomba");
     }
-    const texto = latin1(dados);
+    const texto = latin1(dados, trabalho);
     textosDeDentro.push(texto);
-    lerFluxoDeObjetos(texto, d, orcamento, deDentro, objetos.length);
+    lerFluxoDeObjetos(texto, d, trabalho, deDentro, objetos.length);
   }
   const todos = objetos.concat(deDentro);
   // O /Encrypt escrito com escape ("/Encr#79pt") tambem e criptografia.
+  gastar(trabalho, todos.length * CUSTO.passo);
   if (todos.some((objeto) => objeto.dicionario?.has("Encrypt") === true)) {
-    throw new PdfDeFora("cifrado");
+    throw new MidiaDeFora("cifrado");
   }
   return {
     objetos,
     todos,
     textosDeDentro,
     descomprimidoRestante: restante,
-    paginas: contarPaginas(todos),
+    paginas: contarPaginas(todos, trabalho),
   };
 }
 
@@ -1993,9 +2420,9 @@ export function paginasDoPdf(
   bytes: Uint8Array,
 ): { paginas: number } | { erro: MotivoDeFora } {
   try {
-    return { paginas: lerPdf(bytes).paginas };
+    return { paginas: lerPdf(bytes, novoTrabalho()).paginas };
   } catch (erro) {
-    if (erro instanceof PdfDeFora) {
+    if (erro instanceof MidiaDeFora) {
       return { erro: erro.motivo };
     }
     throw erro;
@@ -2003,20 +2430,26 @@ export function paginasDoPdf(
 }
 
 /**
- * Limpa NO LUGAR a foto (JPEG) que esta em [de, ate) dentro do PDF, sem
+ * Limpa NO LUGAR a foto (JPEG) que esta em [de, ate) da copia do PDF, sem
  * mudar o tamanho: APP1 a APP15 e COM viram um COM zerado do mesmo tamanho
  * (o APP0 JFIF fica sem a miniatura e o APP14 Adobe fica), e o que vem
  * depois do primeiro EOI vira zero (menos o fim de linha antes de
  * "endstream"). null: limpo; senao, o motivo.
  */
-function limparFotoNoLugar(saida: Uint8Array, de: number, ate: number): MotivoDeFora | null {
-  const andado = andarPeloJpeg(saida, de, ate);
+function limparFotoNoLugar(
+  saida: Uint8Array,
+  de: number,
+  ate: number,
+  trabalho: Trabalho,
+): MotivoDeFora | null {
+  const andado = andarPeloJpeg(saida, de, ate, trabalho);
   if ("motivo" in andado) {
     return andado.motivo;
   }
   let comJfif = false;
   let comAdobe = false;
   for (const pedaco of andado.pedacos) {
+    gastar(trabalho, CUSTO.passo);
     if (pedaco.tipo !== "segmento") {
       continue;
     }
@@ -2025,6 +2458,7 @@ function limparFotoNoLugar(saida: Uint8Array, de: number, ate: number): MotivoDe
       continue;
     }
     const corpo = inicio + 4;
+    gastar(trabalho, (fim - corpo) * CUSTO.nativo);
     if (
       marcador === APP0 &&
       antesDaVarredura &&
@@ -2060,34 +2494,48 @@ function limparFotoNoLugar(saida: Uint8Array, de: number, ate: number): MotivoDe
   ) {
     fimDosDados -= 1;
   }
+  gastar(trabalho, (ate - fimDosDados) * CUSTO.caractere + (fimDosDados - andado.fimDoEoi) * CUSTO.nativo);
   saida.fill(0, andado.fimDoEoi, fimDosDados);
   return null;
 }
 
 /**
- * O PDF com as fotos limpas (so os fluxos com /DCTDecode sozinho). Sem foto,
- * os mesmos bytes. /JPXDecode ou /DCTDecode numa cadeia: "formato".
+ * O PDF com as fotos limpas (so os fluxos com /DCTDecode sozinho), numa
+ * COPIA dos bytes (a entrada nunca muda: o slice de um Buffer e uma vista).
+ * Sem foto, os mesmos bytes. /JPXDecode ou /DCTDecode numa cadeia:
+ * "formato". As fotos estao em regioes que nao se sobrepoem (lerPdf recusa
+ * o fluxo dentro de outro); conferido de novo aqui, o lado seguro.
  */
-function semMetadadosDasFotos(bytes: Uint8Array, objetos: readonly ObjetoDoPdf[]): Uint8Array {
+function semMetadadosDasFotos(
+  bytes: Uint8Array,
+  objetos: readonly ObjetoDoPdf[],
+  trabalho: Trabalho,
+): Uint8Array {
   let saida: Uint8Array | null = null;
+  let fimDaUltimaFoto = 0;
   for (const objeto of objetos) {
+    gastar(trabalho, CUSTO.passo);
     if (objeto.fluxo === null || objeto.dicionario === null) {
       continue;
     }
-    const filtros = filtrosDoFluxo(objeto.dicionario);
+    const filtros = filtrosDoFluxo(objeto.dicionario, trabalho);
     if (filtros.includes("JPXDecode")) {
-      throw new PdfDeFora("formato");
+      throw new MidiaDeFora("formato");
     }
     if (!filtros.includes("DCTDecode")) {
       continue;
     }
-    if (filtros.length !== 1) {
-      throw new PdfDeFora("formato");
+    if (filtros.length !== 1 || objeto.fluxo.inicio < fimDaUltimaFoto) {
+      throw new MidiaDeFora("formato");
     }
-    saida ??= bytes.slice();
-    const motivo = limparFotoNoLugar(saida, objeto.fluxo.inicio, objeto.fluxo.fim);
+    fimDaUltimaFoto = objeto.fluxo.fim;
+    if (saida === null) {
+      gastar(trabalho, bytes.length * CUSTO.nativo);
+      saida = new Uint8Array(bytes);
+    }
+    const motivo = limparFotoNoLugar(saida, objeto.fluxo.inicio, objeto.fluxo.fim, trabalho);
     if (motivo !== null) {
-      throw new PdfDeFora(motivo);
+      throw new MidiaDeFora(motivo);
     }
   }
   return saida ?? bytes;
@@ -2107,95 +2555,313 @@ const ANEXO = new RegExp(
   `\\/(?:${nomeComEscapes("EmbeddedFile")}(?:s|#73)?|${nomeComEscapes("FileAttachment")})${SEM_PALAVRA_DEPOIS}`,
 );
 
+/** A expressao (sem volta atras) passada no texto inteiro: o casamento, cobrado. */
+function casaNoTexto(expressao: RegExp, texto: string, trabalho: Trabalho): boolean {
+  gastar(trabalho, CUSTO.volta + texto.length * CUSTO.expressao);
+  return expressao.test(texto);
+}
+
 /**
  * O anexo no PDF: o nome no arquivo e dentro dos fluxos de objetos, ou a
  * chave /EF (o arquivo embutido de um /Filespec).
  */
-function comAnexo(texto: string, lido: PdfLido): boolean {
-  return (
-    ANEXO.test(texto) ||
-    lido.textosDeDentro.some((dentro) => ANEXO.test(dentro)) ||
-    lido.todos.some((objeto) => objeto.dicionario?.has("EF") === true)
-  );
+function comAnexo(texto: string, lido: PdfLido, trabalho: Trabalho): boolean {
+  if (casaNoTexto(ANEXO, texto, trabalho)) {
+    return true;
+  }
+  if (lido.textosDeDentro.some((dentro) => casaNoTexto(ANEXO, dentro, trabalho))) {
+    return true;
+  }
+  gastar(trabalho, lido.todos.length * CUSTO.passo);
+  return lido.todos.some((objeto) => objeto.dicionario?.has("EF") === true);
 }
+
+// ---------------------------------------------------------------------------
+// PDF: a localizacao (no XMP, no /Info e solta no arquivo)
+// ---------------------------------------------------------------------------
 
 /** As propriedades de GPS em qualquer XMP (do EXIF, do IPTC, do drone). */
 const GPS_NO_XMP = /exif:GPS|GPS(?:Latitude|Longitude|Longtitude)/i;
 /** A coordenada no formato do XMP (GPSCoordinate): "3,43.914S", "38,31,36W". */
 const COORDENADA_DO_XMP =
   /(?:^|[^\d.,])\d{1,3},\d{1,2}(?:\.\d+)?(?:,\d{1,2}(?:\.\d+)?)?[NSEW](?![A-Za-z])/;
-/** Uma propriedade photoshop: ou xmp: e o valor (atributo ou elemento). */
-const PROPRIEDADE_PHOTOSHOP_OU_XMP =
-  /(?:photoshop|xmp):[A-Za-z][\w.-]*\s*=\s*(?:"([^"]*)"|'([^']*)')|<(?:photoshop|xmp):[A-Za-z][\w.-]*[^>]*>([^<]*)</g;
 /**
  * O valor com coordenada: o par em graus decimais ("-3.731900, -38.526700"),
  * os graus decimais com o hemisferio ("3.7319 S") ou graus, minutos e
  * segundos (3°43'54"S). O "°" do UTF-8 lido em latin1 vem depois de um "Â".
+ * Sem quantificadores que se sobrepoem: o separador do par e "brancos, uma
+ * virgula ou um ponto e virgula, brancos" OU "brancos sem o espaco, um
+ * espaco, brancos" (a mesma lingua de \s*[,; ]\s*), e os brancos dos dois
+ * lados do grau so existem com o grau no meio. Assim nenhuma tentativa
+ * volta atras mais do que o comprimento do valor.
  */
-const COORDENADA_NO_VALOR = new RegExp(
-  [
-    "[-+]?\\d{1,3}\\.\\d{4,}\\s*[,; ]\\s*[-+]?\\d{1,3}\\.\\d{4,}",
-    "\\d{1,3}\\.\\d{3,}\\s*\\u00c2?\\u00b0?\\s*[NSEWLO](?![A-Za-z])",
-    "\\d{1,3}\\s*\\u00c2?\\u00b0\\s*\\d{1,2}\\D{1,8}\\d{1,2}(?:\\.\\d+)?\\D{0,8}[NSEWLO](?![A-Za-z])",
-  ].join("|"),
-);
+const COORDENADAS_NO_VALOR: readonly RegExp[] = [
+  /[-+]?\d{1,3}\.\d{4,}(?:\s*[,;]|[^\S ]* )\s*[-+]?\d{1,3}\.\d{4,}/,
+  /\d{1,3}\.\d{3,}\s*(?:(?:Â°?|°)\s*)?[NSEWLO](?![A-Za-z])/,
+  /\d{1,3}\s*Â?°\s*\d{1,2}\D{1,8}\d{1,2}(?:\.\d+)?\D{0,8}[NSEWLO](?![A-Za-z])/,
+];
+
+/** O valor tem coordenada? (Cada expressao anda o valor no maximo umas vezes.) */
+function coordenadaNoValor(valor: string, trabalho: Trabalho): boolean {
+  gastar(trabalho, CUSTO.volta + valor.length * COORDENADAS_NO_VALOR.length * 4 * CUSTO.expressao);
+  return COORDENADAS_NO_VALOR.some((expressao) => expressao.test(valor));
+}
+
+/** Branco do \s das expressoes e do trim() que cabe em latin1. */
+function brancoDoXml(c: number): boolean {
+  return c === 0x20 || (c >= 0x09 && c <= 0x0d) || c === 0xa0;
+}
+
+/** Letra ASCII ([A-Za-z]). */
+function letraAscii(c: number): boolean {
+  return (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a);
+}
+
+/** Caractere de nome das propriedades ([\w.-]). */
+function caractereDeNome(c: number): boolean {
+  return letraAscii(c) || (c >= 0x30 && c <= 0x39) || c === 0x5f || c === 0x2e || c === 0x2d;
+}
+
+/** Caractere de prefixo de nome XML: tudo menos brancos, < > / = aspas e dois-pontos. */
+function caractereDePrefixo(c: number): boolean {
+  return (
+    !Number.isNaN(c) &&
+    !brancoDoXml(c) &&
+    c !== 0x3c &&
+    c !== 0x3e &&
+    c !== 0x2f &&
+    c !== 0x3d &&
+    c !== 0x22 &&
+    c !== 0x27 &&
+    c !== 0x3a
+  );
+}
 
 /**
- * O lugar escrito por extenso (uma cidade tambem e localizacao): a cidade,
- * o estado, o pais e o local do photoshop: e do IPTC Core, e os campos de
- * Iptc4xmpExt:LocationShown e LocationCreated (sublocal, cidade, estado,
- * pais, regiao, nome e identificador do local). O exif:GPSAreaInformation ja
- * conta pelo exif:GPS, com qualquer valor.
+ * Um indexOf que lembra o ultimo achado: com as procuras sempre para a
+ * frente, cada trecho do texto e varrido uma vez so (a varredura inteira e
+ * linear). Cobra o que anda.
  */
-const PROPRIEDADES_DE_LUGAR = [
-  "photoshop:City",
-  "photoshop:State",
-  "photoshop:Country",
-  "Iptc4xmpCore:Location",
-  "Iptc4xmpCore:CountryCode",
-  "Iptc4xmpExt:Sublocation",
-  "Iptc4xmpExt:City",
-  "Iptc4xmpExt:ProvinceState",
-  "Iptc4xmpExt:CountryName",
-  "Iptc4xmpExt:CountryCode",
-  "Iptc4xmpExt:WorldRegion",
-  "Iptc4xmpExt:LocationName",
-  "Iptc4xmpExt:LocationId",
+function procurador(texto: string, alvo: string, trabalho: Trabalho): (de: number) => number {
+  let desde = 0;
+  let achado = -2; // -2: nunca procurado; -1: nao ha mais depois de "desde"
+  return (de) => {
+    if (achado !== -2 && de >= desde && (achado === -1 || achado >= de)) {
+      return achado;
+    }
+    const novo = texto.indexOf(alvo, de);
+    gastar(trabalho, CUSTO.chamada + Math.max(0, (novo < 0 ? texto.length : novo) - de) * CUSTO.nativo);
+    desde = de;
+    achado = novo;
+    return novo;
+  };
+}
+
+/** Os prefixos das propriedades em que a coordenada conta. */
+const PREFIXOS_DA_COORDENADA = ["photoshop:", "xmp:"] as const;
+
+/**
+ * Algum valor de propriedade photoshop: ou xmp: tem coordenada? O atributo
+ * (prefixo:Nome="valor", com brancos em volta do "=") e o elemento
+ * (<prefixo:Nome ...>valor<), lidos da esquerda para a direita, um depois
+ * do outro, como a expressao de antes fazia, mas a mao: cada delimitador e
+ * procurado uma vez so (procurador), e nada volta atras.
+ */
+function coordenadaNasPropriedades(texto: string, trabalho: Trabalho): boolean {
+  const prefixos = PREFIXOS_DA_COORDENADA.map((alvo) => ({
+    tamanho: alvo.length,
+    achar: procurador(texto, alvo, trabalho),
+  }));
+  const proximoMaior = procurador(texto, ">", trabalho);
+  const proximoMenor = procurador(texto, "<", trabalho);
+  const proximaAspa = procurador(texto, '"', trabalho);
+  const proximoApostrofo = procurador(texto, "'", trabalho);
+  let cursor = 0;
+  for (;;) {
+    gastar(trabalho, CUSTO.volta);
+    let q = -1;
+    let tamanho = 0;
+    for (const prefixo of prefixos) {
+      const achado = prefixo.achar(cursor);
+      if (achado >= 0 && (q < 0 || achado < q)) {
+        q = achado;
+        tamanho = prefixo.tamanho;
+      }
+    }
+    if (q < 0) {
+      return false;
+    }
+    const nome = q + tamanho;
+    let valor: string | null = null;
+    let depois = q + 1;
+    if (letraAscii(texto.charCodeAt(nome))) {
+      if (q - 1 >= cursor && texto.charCodeAt(q - 1) === 0x3c) {
+        // Elemento: o ">" do fim da tag e o valor ate o proximo "<".
+        const maior = proximoMaior(nome + 1);
+        const menor = maior < 0 ? -1 : proximoMenor(maior + 1);
+        if (menor >= 0) {
+          valor = texto.slice(maior + 1, menor);
+          depois = menor + 1;
+        }
+      }
+      if (valor === null) {
+        // Atributo: o nome, brancos, "=", brancos e o valor entre aspas.
+        let j = nome + 1;
+        while (caractereDeNome(texto.charCodeAt(j))) {
+          j += 1;
+        }
+        while (brancoDoXml(texto.charCodeAt(j))) {
+          j += 1;
+        }
+        if (texto.charCodeAt(j) === 0x3d) {
+          j += 1;
+          while (brancoDoXml(texto.charCodeAt(j))) {
+            j += 1;
+          }
+          const aspa = texto.charCodeAt(j);
+          const fecha =
+            aspa === 0x22 ? proximaAspa(j + 1) : aspa === 0x27 ? proximoApostrofo(j + 1) : -1;
+          if (fecha >= 0) {
+            valor = texto.slice(j + 1, fecha);
+            depois = fecha + 1;
+          }
+        }
+        gastar(trabalho, (j - nome) * CUSTO.caractere);
+      }
+    }
+    if (valor !== null && coordenadaNoValor(valor, trabalho)) {
+      return true;
+    }
+    cursor = depois;
+  }
+}
+
+/**
+ * Os nomes (locais) do lugar escrito por extenso, com qualquer prefixo (o
+ * XMP de outro programa pode usar ns2: para o mesmo namespace do
+ * photoshop:): cidade, estado, pais, codigo e nome do pais, estado ou
+ * provincia, sublocal, local, nome e identificador do local e regiao. O
+ * exif:GPSAreaInformation ja conta pelo exif:GPS, com qualquer valor.
+ */
+const NOMES_DE_LUGAR = [
+  "City",
+  "State",
+  "Country",
+  "CountryCode",
+  "CountryName",
+  "ProvinceState",
+  "Sublocation",
+  "Location",
+  "LocationName",
+  "LocationId",
+  "WorldRegion",
 ] as const;
-const NOMES_DE_LUGAR = PROPRIEDADES_DE_LUGAR.join("|");
-/** A propriedade de lugar como atributo (nome="valor"): o grupo e a aspa. */
-const LUGAR_EM_ATRIBUTO = new RegExp(`(?:^|[\\s"'])(?:${NOMES_DE_LUGAR})\\s*=\\s*(["'])`, "g");
-/** A propriedade de lugar como elemento (<nome ...>): o grupo e o nome. */
-const LUGAR_EM_ELEMENTO = new RegExp(`<(${NOMES_DE_LUGAR})(?=[\\s/>])`, "g");
+/** Os nomes numa expressao so (o mais longo antes: CountryCode antes de Country). */
+const NOME_DE_LUGAR = new RegExp(
+  [...NOMES_DE_LUGAR].sort((a, b) => b.length - a.length).join("|"),
+  "g",
+);
 /** Quantas ocorrencias se olham (mais que isso: na duvida, e lugar). */
 const OCORRENCIAS_DE_LUGAR = 256;
 /** Ate onde se procura o fim do valor (mais longe: na duvida, e lugar). */
 const JANELA_DO_LUGAR = 4096;
 
-/**
- * Ha lugar escrito por extenso com valor? O valor vazio (ou so brancos) e a
- * chave sem valor (<photoshop:City/>) nao contam.
- */
-function lugarNoXmp(texto: string): boolean {
-  let ocorrencias = 0;
-  for (const achado of texto.matchAll(LUGAR_EM_ATRIBUTO)) {
-    ocorrencias += 1;
-    if (ocorrencias > OCORRENCIAS_DE_LUGAR) {
+/** O trecho tem texto fora das tags? (O "<" sem ">" depois fica como texto.) */
+function temTextoForaDasTags(trecho: string): boolean {
+  let i = 0;
+  while (i < trecho.length) {
+    const c = trecho.charCodeAt(i);
+    if (c === 0x3c) {
+      const fim = trecho.indexOf(">", i + 1);
+      if (fim < 0) {
+        return true;
+      }
+      i = fim + 1;
+      continue;
+    }
+    if (!brancoDoXml(c)) {
       return true;
     }
-    const inicio = (achado.index ?? 0) + achado[0].length;
-    const janela = texto.slice(inicio, inicio + JANELA_DO_LUGAR);
-    const fim = janela.indexOf(achado[1] ?? '"');
-    if (fim < 0 || janela.slice(0, fim).trim() !== "") {
-      return true;
-    }
+    i += 1;
   }
-  for (const achado of texto.matchAll(LUGAR_EM_ELEMENTO)) {
+  return false;
+}
+
+/**
+ * Ha lugar escrito por extenso com valor? O atributo (prefixo:Nome="valor",
+ * ou Nome="valor") e o elemento (<prefixo:Nome ...>valor</prefixo:Nome>, ou
+ * sem o prefixo), achados pelo nome local e conferidos a mao em volta (o
+ * prefixo para tras, ate o "<" ou o branco). O valor vazio (ou so brancos)
+ * e a chave sem valor (<photoshop:City/>) nao contam; o fechamento que nao
+ * aparece na janela, sim (na duvida, e lugar).
+ */
+function lugarNoTexto(texto: string, trabalho: Trabalho): boolean {
+  const nomes = new RegExp(NOME_DE_LUGAR);
+  let ocorrencias = 0;
+  let varrido = 0;
+  for (let achado = nomes.exec(texto); achado !== null; achado = nomes.exec(texto)) {
+    gastar(trabalho, CUSTO.volta + (nomes.lastIndex - varrido) * CUSTO.expressao);
+    varrido = nomes.lastIndex;
+    const local = achado.index;
+    const fimDoNome = nomes.lastIndex;
+    let inicio = local;
+    if (texto.charCodeAt(local - 1) === 0x3a) {
+      let i = local - 2;
+      while (i >= 0 && caractereDePrefixo(texto.charCodeAt(i))) {
+        i -= 1;
+      }
+      gastar(trabalho, (local - 2 - i) * CUSTO.caractere);
+      if (i === local - 2) {
+        continue; // ":City" sem prefixo nao e nome
+      }
+      inicio = i + 1;
+    }
+    const antes = inicio > 0 ? texto.charCodeAt(inicio - 1) : -1;
+    const seguinte = texto.charCodeAt(fimDoNome);
+    let elemento = false;
+    let inicioDoValor = -1;
+    let aspa = "";
+    if (antes === 0x3c) {
+      if (!brancoDoXml(seguinte) && seguinte !== 0x2f && seguinte !== 0x3e) {
+        continue;
+      }
+      elemento = true;
+    } else if (antes === -1 || brancoDoXml(antes) || antes === 0x22 || antes === 0x27) {
+      let j = fimDoNome;
+      while (brancoDoXml(texto.charCodeAt(j))) {
+        j += 1;
+      }
+      if (texto.charCodeAt(j) !== 0x3d) {
+        continue;
+      }
+      j += 1;
+      while (brancoDoXml(texto.charCodeAt(j))) {
+        j += 1;
+      }
+      gastar(trabalho, (j - fimDoNome) * CUSTO.caractere);
+      const c = texto.charCodeAt(j);
+      if (c !== 0x22 && c !== 0x27) {
+        continue;
+      }
+      aspa = c === 0x22 ? '"' : "'";
+      inicioDoValor = j + 1;
+    } else {
+      continue;
+    }
     ocorrencias += 1;
     if (ocorrencias > OCORRENCIAS_DE_LUGAR) {
       return true;
     }
-    const janela = texto.slice(achado.index ?? 0, (achado.index ?? 0) + JANELA_DO_LUGAR);
+    gastar(trabalho, CUSTO.volta + JANELA_DO_LUGAR * 2 * CUSTO.caractere);
+    if (!elemento) {
+      const janela = texto.slice(inicioDoValor, inicioDoValor + JANELA_DO_LUGAR);
+      const fim = janela.indexOf(aspa);
+      if (fim < 0 || janela.slice(0, fim).trim() !== "") {
+        return true;
+      }
+      continue;
+    }
+    const janela = texto.slice(inicio - 1, inicio - 1 + JANELA_DO_LUGAR);
     const fimDaTag = janela.indexOf(">");
     if (fimDaTag < 0) {
       return true;
@@ -2203,47 +2869,182 @@ function lugarNoXmp(texto: string): boolean {
     if (janela.charCodeAt(fimDaTag - 1) === 0x2f) {
       continue; // <photoshop:City/>: a chave sem valor
     }
-    const fechamento = janela.indexOf(`</${achado[1] ?? ""}`, fimDaTag);
+    const fechamento = janela.indexOf(`</${texto.slice(inicio, fimDoNome)}`, fimDaTag);
     if (fechamento < 0) {
       return true;
     }
     // O texto de dentro, sem as tags (o LocationName vem num rdf:Alt).
-    if (janela.slice(fimDaTag + 1, fechamento).replace(/<[^>]*>/g, "").trim() !== "") {
+    if (temTextoForaDasTags(janela.slice(fimDaTag + 1, fechamento))) {
       return true;
     }
   }
+  gastar(trabalho, (texto.length - varrido) * CUSTO.expressao);
+  return false;
+}
+
+/** As chaves de lugar do dicionario /Info: /City e as /GPS... (tambem com #xx). */
+const LUGAR_NO_INFO = new RegExp(
+  `\\/(?:${nomeComEscapes("City")}|${nomeComEscapes("GPS")}[^\\0\\t\\n\\f\\r ()<>\\[\\]{}/%]*)${SEM_PALAVRA_DEPOIS}`,
+  "g",
+);
+
+/** O texto (de uma string do PDF) tem conteudo? A marca do UTF-16/UTF-8, os zeros e os brancos nao contam. */
+function textoComConteudo(texto: string): boolean {
+  let sem = texto;
+  if (sem.startsWith("\xfe\xff") || sem.startsWith("\xff\xfe")) {
+    sem = sem.slice(2);
+  } else if (sem.startsWith("\xef\xbb\xbf")) {
+    sem = sem.slice(3);
+  }
+  return sem.replace(/\0/g, "").trim() !== "";
+}
+
+/** O valor de um digito hexadecimal, ou -1. */
+function valorHexadecimal(c: number): number {
+  if (c >= 0x30 && c <= 0x39) {
+    return c - 0x30;
+  }
+  if (c >= 0x41 && c <= 0x46) {
+    return c - 0x37;
+  }
+  if (c >= 0x61 && c <= 0x66) {
+    return c - 0x57;
+  }
+  return -1;
+}
+
+/**
+ * A string hexadecimal do PDF (sem os < >) tem conteudo? Lida par a par, sem
+ * montar texto: a marca do UTF-16 (FEFF ou FFFE) ou do UTF-8 (EFBBBF) no
+ * comeco, o zero e os brancos nao contam; o que nao e hexadecimal: na
+ * duvida, sim.
+ */
+function hexadecimalComConteudo(hexa: string): boolean {
+  const marcas = [
+    [0xfe, 0xff],
+    [0xff, 0xfe],
+    [0xef, 0xbb, 0xbf],
+  ];
+  const comeco: number[] = [];
+  let alto = -1;
+  for (let i = 0; i < hexa.length; i += 1) {
+    const c = hexa.charCodeAt(i);
+    if (brancoDoPdf(c)) {
+      continue;
+    }
+    const valor = valorHexadecimal(c);
+    if (valor < 0) {
+      return true;
+    }
+    if (alto < 0) {
+      alto = valor;
+      continue;
+    }
+    const byte = alto * 16 + valor;
+    alto = -1;
+    if (comeco.length < 3) {
+      comeco.push(byte);
+      continue;
+    }
+    if (byte !== 0x00 && !brancoDoXml(byte)) {
+      return true;
+    }
+  }
+  if (alto >= 0) {
+    comeco.push(alto * 16);
+  }
+  // Os primeiros bytes: sem a marca, o resto tem de ser zero ou branco.
+  const marca = marcas.find((m) => m.every((b, i) => comeco[i] === b));
+  return comeco.slice(marca?.length ?? 0).some((byte) => byte !== 0x00 && !brancoDoXml(byte));
+}
+
+/**
+ * O valor do PDF que comeca em i (logo depois da chave) tem conteudo? A
+ * string vazia ("()", "<>", so brancos ou so a marca do UTF-16), o null e a
+ * chave sem valor (">>", "]", o fim) nao contam; o resto conta (um nome, um
+ * numero, uma referencia, uma lista: na duvida, e lugar).
+ */
+function valorComConteudo(t: string, i: number, trabalho: Trabalho): boolean {
+  const v = pularBrancos(t, i, trabalho);
+  if (v >= t.length) {
+    return false;
+  }
+  const c = t.charCodeAt(v);
+  if ((c === 0x3e && t.charCodeAt(v + 1) === 0x3e) || c === 0x5d || c === 0x7d || c === 0x29) {
+    return false;
+  }
+  if (c === 0x28) {
+    const fim = fimDaString(t, v);
+    gastar(trabalho, ((fim < 0 ? t.length : fim) - v) * 2 * CUSTO.caractere);
+    return fim < 0 || textoComConteudo(t.slice(v + 1, fim - 1));
+  }
+  if (c === 0x3c && t.charCodeAt(v + 1) !== 0x3c) {
+    const fim = t.indexOf(">", v + 1);
+    gastar(trabalho, ((fim < 0 ? t.length : fim) - v) * 2 * CUSTO.caractere);
+    return fim < 0 || hexadecimalComConteudo(t.slice(v + 1, fim));
+  }
+  if (t.startsWith("null", v) && !regularDoPdf(t.charCodeAt(v + 4))) {
+    return false;
+  }
+  return true;
+}
+
+/** Uma chave /City ou /GPS... com valor (o dicionario /Info, solto ou num fluxo de objetos)? */
+function lugarNoInfo(texto: string, trabalho: Trabalho): boolean {
+  const chaves = new RegExp(LUGAR_NO_INFO);
+  let varrido = 0;
+  for (let achado = chaves.exec(texto); achado !== null; achado = chaves.exec(texto)) {
+    gastar(trabalho, CUSTO.volta + (chaves.lastIndex - varrido) * CUSTO.expressao);
+    varrido = chaves.lastIndex;
+    if (valorComConteudo(texto, chaves.lastIndex, trabalho)) {
+      return true;
+    }
+  }
+  gastar(trabalho, (texto.length - varrido) * CUSTO.expressao);
   return false;
 }
 
 /** O XMP tem a localizacao? (Em UTF-16, os zeros saem e sobra o ASCII.) */
-function localizacaoNoXmp(xmp: string): boolean {
+function localizacaoNoXmp(xmp: string, trabalho: Trabalho): boolean {
+  gastar(trabalho, xmp.length * CUSTO.nativo);
   const texto = xmp.includes("\0") ? xmp.replace(/\0/g, "") : xmp;
-  if (GPS_NO_XMP.test(texto) || COORDENADA_DO_XMP.test(texto) || lugarNoXmp(texto)) {
-    return true;
-  }
-  for (const achado of texto.matchAll(PROPRIEDADE_PHOTOSHOP_OU_XMP)) {
-    if (COORDENADA_NO_VALOR.test(achado[1] ?? achado[2] ?? achado[3] ?? "")) {
-      return true;
-    }
-  }
-  return false;
+  return (
+    casaNoTexto(GPS_NO_XMP, texto, trabalho) ||
+    casaNoTexto(COORDENADA_DO_XMP, texto, trabalho) ||
+    lugarNoTexto(texto, trabalho) ||
+    coordenadaNasPropriedades(texto, trabalho)
+  );
 }
 
 /**
  * A localizacao no PDF (ja sem a das fotos, que a limpeza zerou): as
- * propriedades de GPS e o lugar por extenso em qualquer lugar do arquivo sem
- * compressao, e o XMP de cada fluxo de metadados (/Type /Metadata, /Subtype
+ * propriedades de GPS, o lugar por extenso e as chaves /City e /GPS... do
+ * /Info em qualquer lugar do arquivo sem compressao e dentro dos fluxos de
+ * objetos, e o XMP de cada fluxo de metadados (/Type /Metadata, /Subtype
  * /XML ou o que um /Metadata aponta: do catalogo, da pagina, da foto),
- * descomprimido com o teto. O fluxo de metadados que nao da para ler:
- * "formato".
+ * descomprimido com os tetos (o do XMP e o do total). O fluxo de metadados
+ * que nao da para ler: "formato".
  */
-function comLocalizacao(texto: string, saida: Uint8Array, lido: PdfLido): boolean {
-  if (GPS_NO_XMP.test(texto) || lugarNoXmp(texto)) {
-    return true;
+function comLocalizacao(
+  texto: string,
+  saida: Uint8Array,
+  lido: PdfLido,
+  trabalho: Trabalho,
+): boolean {
+  for (const solto of [texto, ...lido.textosDeDentro]) {
+    if (
+      casaNoTexto(GPS_NO_XMP, solto, trabalho) ||
+      lugarNoTexto(solto, trabalho) ||
+      lugarNoInfo(solto, trabalho)
+    ) {
+      return true;
+    }
   }
   const apontados = new Set<number>();
   for (const objeto of lido.todos) {
+    gastar(trabalho, CUSTO.passo);
     for (const valor of objeto.dicionario?.get("Metadata") ?? []) {
+      gastar(trabalho, CUSTO.volta);
       const referencia = SO_REFERENCIA.exec(valor);
       if (referencia !== null) {
         apontados.add(Number(referencia[1]));
@@ -2252,61 +3053,62 @@ function comLocalizacao(texto: string, saida: Uint8Array, lido: PdfLido): boolea
   }
   let restante = lido.descomprimidoRestante;
   for (const objeto of lido.objetos) {
+    gastar(trabalho, CUSTO.passo);
     const d = objeto.dicionario;
     if (objeto.fluxo === null || d === null) {
       continue;
     }
     if (
-      !tiposDoDicionario(d).includes("Metadata") &&
-      !nomesDaChave(d, "Subtype").includes("XML") &&
+      !tiposDoDicionario(d, trabalho).includes("Metadata") &&
+      !nomesDaChave(d, "Subtype", trabalho).includes("XML") &&
       !apontados.has(objeto.numero)
     ) {
       continue;
     }
-    const filtros = filtrosDoFluxo(d);
-    if (filtros.length > 1 || filtros.some((f) => f !== "FlateDecode") || comPreditor(d)) {
-      throw new PdfDeFora("formato");
+    const filtros = filtrosDoFluxo(d, trabalho);
+    if (
+      filtros.length > 1 ||
+      filtros.some((f) => f !== "FlateDecode") ||
+      comPreditor(d, trabalho)
+    ) {
+      throw new MidiaDeFora("formato");
     }
     let dados: Uint8Array = saida.subarray(objeto.fluxo.inicio, objeto.fluxo.fim);
     if (filtros.length === 1) {
       if (restante <= 0) {
-        throw new PdfDeFora("bomba");
+        throw new MidiaDeFora("bomba");
       }
-      dados = descomprimir(dados, restante);
+      dados = descomprimir(dados, Math.min(restante, LIMITES_DA_MIDIA.pdfXmp), trabalho);
+    }
+    if (dados.length > LIMITES_DA_MIDIA.pdfXmp) {
+      throw new MidiaDeFora("bomba");
     }
     restante -= dados.length;
     if (restante < 0) {
-      throw new PdfDeFora("bomba");
+      throw new MidiaDeFora("bomba");
     }
-    if (localizacaoNoXmp(latin1(dados))) {
+    if (localizacaoNoXmp(latin1(dados, trabalho), trabalho)) {
       return true;
     }
   }
   return false;
 }
 
-function prepararPdf(bytes: Uint8Array): MidiaPreparada {
+function prepararPdf(bytes: Uint8Array, trabalho: Trabalho): MidiaPreparada {
   if (bytes.length > LIMITES_DA_MIDIA.pdf.maximoDeBytes) {
     return fora("grande_demais");
   }
-  try {
-    const lido = lerPdf(bytes);
-    if (lido.paginas > LIMITES_DA_MIDIA.pdf.maximoDePaginas) {
-      return fora("paginas_demais");
-    }
-    const saida = semMetadadosDasFotos(bytes, lido.objetos);
-    // Depois da limpeza das fotos: o Exif e o XMP de dentro delas ja sao zero.
-    const texto = latin1(saida);
-    if (comAnexo(texto, lido) || comLocalizacao(texto, saida, lido)) {
-      return fora("formato");
-    }
-    return { tipo: "pdf", bytes: saida, paginas: lido.paginas };
-  } catch (erro) {
-    if (erro instanceof PdfDeFora) {
-      return fora(erro.motivo);
-    }
-    throw erro;
+  const lido = lerPdf(bytes, trabalho);
+  if (lido.paginas > LIMITES_DA_MIDIA.pdf.maximoDePaginas) {
+    return fora("paginas_demais");
   }
+  const saida = semMetadadosDasFotos(bytes, lido.objetos, trabalho);
+  // Depois da limpeza das fotos: o Exif e o XMP de dentro delas ja sao zero.
+  const texto = latin1(saida, trabalho);
+  if (comAnexo(texto, lido, trabalho) || comLocalizacao(texto, saida, lido, trabalho)) {
+    return fora("formato");
+  }
+  return { tipo: "pdf", bytes: saida, paginas: lido.paginas };
 }
 
 // ---------------------------------------------------------------------------
@@ -2330,6 +3132,7 @@ export const VERSAO_DA_FIGURINHA = `figurinha-${createHash("sha256")
 /** O preparo inteiro (limites, listas do que fica, paginas), para as versoes. */
 export const FONTES_DO_PREPARO = {
   limites: LIMITES_DA_MIDIA,
+  trabalho: { porArquivo: LIMITES_DA_MIDIA.trabalhoPorArquivo, custo: CUSTO },
   formatos: FORMATOS_DA_MIDIA,
   jpeg: {
     quadros: [...SOF_ACEITOS],
@@ -2337,18 +3140,29 @@ export const FONTES_DO_PREPARO = {
     orientacao: "APP1 minimo com a orientacao diferente de 1",
     segmentos: SEGMENTOS_DO_JPEG,
   },
-  png: { ficam: [...PEDACOS_DO_PNG_QUE_FICAM], animado: [...PEDACOS_DO_PNG_ANIMADO] },
-  webp: { ficam: [...PEDACOS_DO_WEBP_QUE_FICAM], saem: [...PEDACOS_DO_WEBP_QUE_SAEM] },
+  png: {
+    ficam: [...PEDACOS_DO_PNG_QUE_FICAM],
+    animado: [...PEDACOS_DO_PNG_ANIMADO],
+    pedacos: PEDACOS_DA_IMAGEM,
+  },
+  webp: {
+    ficam: [...PEDACOS_DO_WEBP_QUE_FICAM],
+    saem: [...PEDACOS_DO_WEBP_QUE_SAEM],
+    pedacos: PEDACOS_DA_IMAGEM,
+  },
   mp3: { ficam: "so os quadros MPEG do mesmo fluxo", lixo: LIXO_ACEITO },
   pdf: {
     paginas: "a maior entre /Count, /Type /Page e /Kids, no texto e nos fluxos de objetos",
-    fora: "/Encrypt; /JPXDecode; cadeia com /DCTDecode; metadado com outro filtro",
-    foto: "/DCTDecode limpa no lugar (APP1 a APP15 e COM zerados, nada depois do EOI)",
+    fora: "/Encrypt; /JPXDecode; cadeia com /DCTDecode; metadado com outro filtro; fluxo dentro de outro",
+    foto: "/DCTDecode limpa no lugar numa copia (APP1 a APP15 e COM zerados, nada depois do EOI)",
     localizacao: {
       gps: GPS_NO_XMP.source,
       coordenadaDoXmp: COORDENADA_DO_XMP.source,
-      photoshopOuXmp: COORDENADA_NO_VALOR.source,
-      lugarComValor: [...PROPRIEDADES_DE_LUGAR],
+      photoshopOuXmp: COORDENADAS_NO_VALOR.map((expressao) => expressao.source),
+      lugarComValor: [...NOMES_DE_LUGAR],
+      lugarComQualquerPrefixo: true,
+      info: LUGAR_NO_INFO.source,
+      soltaNoArquivoENosFluxosDeObjetos: true,
     },
     anexo: { nomes: ANEXO.source, chave: "/EF" },
     residual: "imagem embutida no conteudo (BI ... EI) nao e limpa",

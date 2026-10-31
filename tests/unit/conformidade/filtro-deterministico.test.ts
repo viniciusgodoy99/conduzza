@@ -7,6 +7,7 @@ import {
   temContatoPorExtenso,
   valoresEmDinheiro,
 } from "@/lib/domain/conformidade/filtro-deterministico";
+import { fatosVazios } from "@/lib/domain/conformidade/fatos-do-turno";
 import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
 import {
   CASOS_DE_SAIDA,
@@ -822,6 +823,52 @@ describe("AG6b (3a rodada): o resultado do exame comentado pela IA", () => {
       ).categorias,
     ).toContain("orientacao_clinica");
   });
+
+  // Revisao R2 de d1a15f6 (M6): as bordas das formas novas (a bateria tem
+  // os casos da revisao).
+  it.each([
+    "Seus exames vieram excelentes.",
+    "O resultado está tranquilo.",
+    "Glicose 99, normal.",
+    "Exames normais.",
+    "O teste não acusou nada.",
+  ])("R2, normal (triagem): %s", (texto) => {
+    expect(regras(texto)).toContain("resultado_de_exame_normal");
+  });
+
+  it.each([
+    "Hemoglobina glicada: 7,5% (alta).",
+    "Teste reagente.",
+    "Colesterol um pouco alto.",
+    "O TSH veio 9, acima.",
+  ])("R2, alterado (diagnostico): %s", (texto) => {
+    expect(regras(texto)).toContain("resultado_de_exame_alterado");
+  });
+
+  it.each([
+    "O exame das 9h está ok?",
+    "Seu exame está bom para terça?",
+    "O exame está ótimo pra você na sexta?",
+    "Ótimo, no exame de amanhã traga o pedido.",
+    "O exame não tem nada a ver com a consulta.",
+    "Você prefere o ultrassom normal ou o morfológico?",
+    "O exame leva 30 minutos.",
+    "O resultado sai em 3 dias, ok?",
+    "O preço do exame está acima de R$ 50,00.",
+  ])("R2, controle: a recepcao com o exame passa: %s", (texto) => {
+    expect(regras(texto)).toEqual([]);
+  });
+
+  it("R2: o nome do Cadastro (o marcador) colado no valor nao e o resultado", () => {
+    expect(
+      regras("Prefere a Limpeza de pele normal ou a profunda?", [
+        "Limpeza de pele",
+      ]),
+    ).toEqual([]);
+    expect(
+      regras("A Limpeza de pele normal custa R$ 50,00.", ["Limpeza de pele"]),
+    ).toEqual([]);
+  });
 });
 
 // 3a rodada da AG6b (revisao de 6eae43d, M5): a troca do ponto de
@@ -850,6 +897,9 @@ describe("AG6b (3a rodada): a ida ao lugar no rascunho inteiro", () => {
     expect(prontoSocorro(texto)).toBe(true);
   });
 
+  // Revisao R2 de d1a15f6 (A2): a troca larga do ponto de referencia saiu.
+  // Os antigos controles (o endereco sem a ida) barram como no main quando
+  // nenhuma ferramenta do turno trouxe o ponto de referencia.
   it.each([
     "Ficamos na Rua X, em frente à UPA do bairro. Seu horário é às 14h.",
     "A clínica fica perto da UPA do Centro, no segundo andar.",
@@ -858,8 +908,94 @@ describe("AG6b (3a rodada): a ida ao lugar no rascunho inteiro", () => {
     "Ficamos ao lado da UPA. O lembrete vai no dia anterior.",
     "Ficamos ao lado da UPA. Você vai ver a placa azul.",
     "A clínica fica ao lado da UPA. Sua consulta está marcada; é só confirmá-la por aqui.",
-  ])("controle: o endereco sem a ida passa: %s", (texto) => {
-    expect(avaliarRegras(texto, CONTEXTO_PADRAO).achados).toEqual([]);
+  ])(
+    "revisao R2: sem a ferramenta, o lugar barra como no main: %s",
+    (texto) => {
+      expect(prontoSocorro(texto)).toBe(true);
+    },
+  );
+});
+
+// Revisao R2 de d1a15f6 (A2): a unica excecao da UPA, do pronto-socorro, do
+// SAMU e do hospital e o texto EXATO do ponto de referencia que
+// consultar_unidades trouxe no turno (trechosDeEnderecoDasFerramentas).
+describe("revisão R2 (A2): o ponto de referência exato da ferramenta", () => {
+  const unidade = (referencia: string) =>
+    JSON.stringify({
+      resultado: "unidades",
+      unidades: [
+        {
+          codigo: "u1",
+          nome: "Centro",
+          endereco: "Rua X, 123, Centro, Fortaleza, CE",
+          ponto_de_referencia: referencia,
+          horario_de_funcionamento: "Segunda a sexta: 8h às 18h",
+        },
+      ],
+    });
+  const regras = (texto: string, referencia: string | null) =>
+    avaliarRegras(texto, {
+      ...CONTEXTO_PADRAO,
+      fatos: {
+        ...fatosVazios(2026),
+        saidasDasFerramentas: referencia === null ? [] : [unidade(referencia)],
+      },
+    }).achados.map((a) => a.regra);
+
+  it("a IA repete o ponto de referencia da ferramenta: passa", () => {
+    expect(
+      regras(
+        "Ficamos na Rua X, 123, em frente à UPA do Centro.",
+        "Em frente à UPA do Centro.",
+      ),
+    ).toEqual([]);
+    expect(
+      regras(
+        "Ficamos na Rua X, 123 (em frente à UPA do Centro).",
+        "Em frente à UPA do Centro",
+      ),
+    ).toEqual([]);
+  });
+
+  it("o mesmo texto sem a ferramenta no turno barra", () => {
+    expect(
+      regras("Ficamos na Rua X, 123, em frente à UPA do Centro.", null),
+    ).toContain("pronto_socorro");
+    expect(
+      avaliarRegras(
+        "Ficamos na Rua X, 123, em frente à UPA do Centro.",
+        CONTEXTO_PADRAO,
+      ).achados.map((a) => a.regra),
+    ).toContain("pronto_socorro");
+  });
+
+  it("outro texto, outra mencao no rascunho e a condicao fora do trecho continuam lendo", () => {
+    const referencia = "Em frente à UPA do Centro.";
+    expect(
+      regras("Ficamos na Rua X, 123, ao lado da UPA do Centro.", referencia),
+    ).toContain("pronto_socorro");
+    expect(
+      regras(
+        "Vá à UPA do Centro. Ficamos na Rua X, 123, em frente à UPA do Centro.",
+        referencia,
+      ),
+    ).toContain("pronto_socorro");
+    // O sintoma em volta do trecho continua lido.
+    expect(
+      regras(
+        "Se estiver com dor, ficamos na Rua X, 123, em frente à UPA do Centro.",
+        referencia,
+      ),
+    ).toContain("sintoma_citado");
+  });
+
+  it("o nome solto do servico de saude (sem a palavra de lugar) nao sai das regras", () => {
+    expect(regras("Vá ao Hospital Geral agora.", "Hospital Geral")).toContain(
+      "pronto_socorro",
+    );
+    expect(regras("Corra pro Hospital Geral.", "Hospital Geral")).toContain(
+      "pronto_socorro",
+    );
   });
 });
 // [AG6b mídia] fim

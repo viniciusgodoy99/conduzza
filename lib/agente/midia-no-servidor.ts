@@ -38,15 +38,22 @@ export const CALIBRAGEM_DO_SERVIDOR: CalibragemDaMidia = {
 
 /**
  * O que vale no servidor: o audio, com a transcricao calibrada; a foto e o
- * documento, so com os DOIS tetos (a imagem e a pagina do PDF), o lado
- * conservador. Os dois sao medidos na mesma prova; com um so, parte dos
- * arquivos continuaria indo para a equipe, e a dica continua.
+ * documento, com QUALQUER um dos tetos (a imagem ou a pagina do PDF).
+ *
+ * Revisao R3 de d1a15f6 (3): a dica "Ainda nao esta valendo" diz que foto e
+ * documento vao para a equipe, entao so aparece quando NADA do grupo sai do
+ * servidor. O plano do turno libera cada tipo pelo seu teto
+ * (tokensDoArquivoNaReserva, lib/agente/midia.ts): com so o teto da imagem,
+ * a foto ja vai para a OpenAI, e a dica com os dois tetos exigidos
+ * prometia uma privacidade que o servidor nao cumpria. A tela nunca promete
+ * mais privacidade do que o servidor cumpre: com um teto so, sem dica (o
+ * PDF ainda vai para a equipe, o lado que so protege mais).
  */
 export function midiaNoServidor(
   calibragem: CalibragemDaMidia = CALIBRAGEM_DO_SERVIDOR,
 ): MidiaNoServidor {
   return {
     audio: calibragem.transcricaoCalibrada,
-    arquivo: calibragem.tetoPorImagem !== null && calibragem.tetoPorPagina !== null,
+    arquivo: calibragem.tetoPorImagem !== null || calibragem.tetoPorPagina !== null,
   };
 }

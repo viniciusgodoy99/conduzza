@@ -16,6 +16,7 @@ import {
   type TipoDoLeitor,
 } from "@/lib/domain/agente/config";
 import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
+import type { TipoDeUrgencia } from "@/lib/domain/conformidade/urgencia";
 import type {
   MotivoDaFalha,
   UsoDoLlm,
@@ -102,6 +103,16 @@ import { USO_ZERADO, type UsoDoModelo } from "./uso";
 //  - o GASTO da nova tentativa: o uso da ultima chamada e o pior caso de cada
 //    chamada anterior sem resposta (a duracao medida, no audio; o teto do
 //    arquivo, no leitor).
+//
+// Segunda rodada da revisao (R2 e R3 de d1a15f6):
+//  - a URGENCIA lida pela transcricao no texto inteiro do audio, inclusive
+//    o descartado pelas travas (R2, M3): a porta repassa so o tipo
+//    (`urgencia` na transcrita e no sem fala), e o laco passa a conversa
+//    como urgente. O texto descartado nunca chega aqui;
+//  - a GRAVACAO da leitura tem uma fatia propria do prazo da porta
+//    (RESERVA_DA_GRAVACAO_DA_LEITURA_MS, R3 1), descontada do prazo da
+//    integracao: a integracao que responde no limite dela ainda deixa a RPC
+//    gravar antes do corte da porta.
 
 // ---------------------------------------------------------------------------
 // Tipos
@@ -231,20 +242,39 @@ export const MARGEM_ENTRE_OS_CORTES_MS = 500;
  */
 export const FOLGA_DO_CORTE_DA_TRANSCRICAO_NA_PORTA_MS = 500;
 export const MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA = 1 + TENTATIVAS_EXTRAS;
+/**
+ * Revisao R3 de d1a15f6 (1): a fatia do prazo da porta que fica para a
+ * gravacao da leitura (gravar_leitura_da_midia, que trava a mensagem e a
+ * conversa), descontada do prazo da integracao. Antes, a integracao que
+ * respondia no limite dela deixava so a margem (uns 1 s) para a RPC: a RPC
+ * mais lenta que isso gravava DEPOIS do corte da porta, e a bolha mostrava a
+ * leitura numa conversa cuja trilha dizia que a midia falhou. Com a fatia, a
+ * RPC tem a margem e a fatia (2 s) ate o corte da porta. PROPOSTA, a medir
+ * na prova paga (D-100) junto com os prazos da midia. A RPC que passa disso
+ * (trava longa no banco) ainda pode gravar depois do corte: o corte e do
+ * cliente, e a RPC que ja saiu nao volta.
+ */
+export const RESERVA_DA_GRAVACAO_DA_LEITURA_MS = 1_500;
 
 /**
  * O prazo que a porta passa a integracao do modelo (a transcricao ou o
  * leitor), dado o prazo da porta e a folga do corte duro da integracao: o
  * corte da integracao (o prazo que ela recebe mais a folga dela) cai
- * MARGEM_ENTRE_OS_CORTES_MS antes do corte da porta. Pode dar menos que o
- * minimo de uma chamada: a integracao entao nao chama nada ("prazo", sem
- * custo).
+ * MARGEM_ENTRE_OS_CORTES_MS mais RESERVA_DA_GRAVACAO_DA_LEITURA_MS antes do
+ * corte da porta (a volta do resultado e a gravacao da leitura). Pode dar
+ * menos que o minimo de uma chamada: a integracao entao nao chama nada
+ * ("prazo", sem custo).
  */
 export function prazoParaAIntegracao(
   prazoDaPortaMs: number,
   folgaDoCorteDaIntegracaoMs: number,
 ): number {
-  return prazoDaPortaMs - folgaDoCorteDaIntegracaoMs - MARGEM_ENTRE_OS_CORTES_MS;
+  return (
+    prazoDaPortaMs -
+    folgaDoCorteDaIntegracaoMs -
+    MARGEM_ENTRE_OS_CORTES_MS -
+    RESERVA_DA_GRAVACAO_DA_LEITURA_MS
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -790,8 +820,24 @@ export type ResultadoDaTranscricao =
       textoParaOsModelos: string;
       leitura: LeituraGravada;
       uso: UsoDoModelo | null;
+      /**
+       * Revisao R2 de d1a15f6 (M3): o tipo da urgencia que a transcricao
+       * leu no texto inteiro do audio, inclusive o que as travas
+       * descartaram (o segmento urgente no ruido), ou null. So o tipo.
+       */
+      urgencia: TipoDeUrgencia | null;
     }
-  | { tipo: "sem_fala"; leitura: LeituraGravada; uso: UsoDoModelo | null }
+  | {
+      tipo: "sem_fala";
+      leitura: LeituraGravada;
+      uso: UsoDoModelo | null;
+      /**
+       * Revisao R2 de d1a15f6 (M3): o tipo da urgencia no texto descartado
+       * ("Quero morrer." curto e incerto, "Socorro..." no ruido), ou null.
+       * O laco passa a conversa como urgente; o texto nunca chega aqui.
+       */
+      urgencia: TipoDeUrgencia | null;
+    }
   | { tipo: "falhou"; motivo: MotivoDaFalha; uso: UsoDoModelo | null }
   /** A gravacao recusou: a conversa saiu da IA (alguem assumiu). */
   | { tipo: "fora_da_ia"; uso: UsoDoModelo | null }
@@ -863,8 +909,10 @@ export type DependenciasDaPortaDoWhatsapp = {
   /**
    * lib/integrations/llm/transcricao.ts (transcreverAudio, com o cliente).
    * `prazoMs` ja e o da integracao (prazoParaAIntegracao: o corte duro dela
-   * cai antes do da porta); `sinal` aborta no corte da porta ou do laco, e
-   * a integracao termina na hora.
+   * cai antes do da porta, com a margem e a fatia da gravacao da leitura);
+   * `sinal` aborta no corte da porta ou do laco, e a integracao termina na
+   * hora. O resultado traz `urgencia` (so o tipo) quando o texto inteiro do
+   * audio, inclusive o descartado, tem urgencia (revisao R2 de d1a15f6).
    */
   transcrever: (entrada: {
     messageId: string;
@@ -1129,13 +1177,14 @@ function usoDaTranscricaoNoModelo(
  * leitura correm com corte duro (correrComPrazo) em `prazoMs`, e o sinal do
  * corte (junto com o de quem chama) vai as integracoes. O Storage recebe no
  * maximo PRAZO_MAXIMO_DO_STORAGE_MS. A transcricao e o leitor recebem
- * prazoParaAIntegracao (o corte duro deles cai MARGEM_ENTRE_OS_CORTES_MS
- * antes do desta porta), entao o resultado deles, com o uso e as
- * tentativasSemUso, sempre chega. Cortada mesmo assim (a integracao que nao
- * respeita nada), a chamada ao modelo entra com o uso que ela devolveu (se
- * voltou) ou com o pior caso (MAXIMO_DE_CHAMADAS_* chamadas, cada uma no
- * pior caso), e nada mais e feito depois do corte (nem o preparo, nem a
- * gravacao da leitura).
+ * prazoParaAIntegracao (o corte duro deles cai MARGEM_ENTRE_OS_CORTES_MS e
+ * RESERVA_DA_GRAVACAO_DA_LEITURA_MS antes do desta porta), entao o
+ * resultado deles, com o uso e as tentativasSemUso, sempre chega, e a
+ * gravacao da leitura cabe antes do corte. Cortada mesmo assim (a
+ * integracao que nao respeita nada), a chamada ao modelo entra com o uso
+ * que ela devolveu (se voltou) ou com o pior caso (MAXIMO_DE_CHAMADAS_*
+ * chamadas, cada uma no pior caso), e nada mais e feito depois do corte
+ * (nem o preparo, nem a gravacao da leitura).
  */
 export function portaDaMidiaDoWhatsapp(
   admin: SupabaseClient,
@@ -1393,6 +1442,10 @@ export function portaDaMidiaDoWhatsapp(
           // A primeira leitura vale (o job repetido nunca regrava).
           const valendo =
             gravada.tipo === "reutilizada" ? gravada.leitura : leitura;
+          // Revisao R2 de d1a15f6 (M3): a urgencia que ESTA chamada leu no
+          // texto inteiro do audio (so o tipo), qualquer que seja a leitura
+          // que vale: ela so acrescenta a marca de urgente.
+          const urgencia = feito.urgencia ?? null;
           if (valendo.tipo === "transcricao" && valendo.transcricao !== null) {
             return {
               tipo: "transcrita",
@@ -1400,9 +1453,10 @@ export function portaDaMidiaDoWhatsapp(
               textoParaOsModelos: d.mascarar(valendo.transcricao),
               leitura: valendo,
               uso,
+              urgencia,
             };
           }
-          return { tipo: "sem_fala", leitura: valendo, uso };
+          return { tipo: "sem_fala", leitura: valendo, uso, urgencia };
         },
         prazoMs,
       );

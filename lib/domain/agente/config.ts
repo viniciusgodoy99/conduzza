@@ -548,8 +548,10 @@ export type MidiaNoServidor = {
   /** A transcricao foi calibrada (TRANSCRICAO_CALIBRADA). */
   audio: boolean;
   /**
-   * O leitor tem os tetos de tokens medidos, o da imagem e o da pagina do
-   * PDF (TETO_DE_TOKENS_POR_IMAGEM e TETO_DE_TOKENS_POR_PAGINA).
+   * O leitor tem ALGUM teto de tokens medido, o da imagem ou o da pagina do
+   * PDF (TETO_DE_TOKENS_POR_IMAGEM, TETO_DE_TOKENS_POR_PAGINA): com qualquer
+   * um, parte dos arquivos ja sai para a OpenAI, e a tela nunca pode dizer
+   * que nada sai (revisao de d1a15f6, R3 3).
    */
   arquivo: boolean;
 };

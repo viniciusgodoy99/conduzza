@@ -503,6 +503,8 @@ describe("o antecedente só vale quando governa o sinal", () => {
     ).toEqual(
       [
         "chamar_o_socorro",
+        // Revisao R2 de d1a15f6: a gestante que sangra.
+        "gestante_sangrando",
         "hemorragia",
         "muito_sangue",
         "nao_para_de_sangrar",
@@ -798,6 +800,8 @@ describe("a versão do portão", () => {
     expect(versaoDoPortao()).not.toBe("portao-39dcded69204");
     // A da 6eae43d, antes da correcao da lista (A1, M1 e M2).
     expect(versaoDoPortao()).not.toBe("portao-d2a3ee0b28c5");
+    // A da d1a15f6, antes da revisao R2 (A1, A3, M2, M4, M5 e B5).
+    expect(versaoDoPortao()).not.toBe("portao-04348f7f6108");
     expect(versaoDoPortao()).toMatch(/^portao-[0-9a-f]{12}$/);
   });
 });
@@ -915,10 +919,10 @@ describe("os sinais físicos novos (A1)", () => {
     "tomei sol depois do ácido, é normal arder?",
     "tomei refrigerante, que é veneno",
     "comprei veneno de rato pra casa",
-    // O "caindo" de outra pessoa e a flacidez; a idade e o pedido sao a
-    // estetica.
+    // O "caindo" de outra pessoa e a flacidez. Revisao R2 de d1a15f6 (A1):
+    // "o rosto dela caiu muito com a idade, vocês fazem fios?" voltou a ser
+    // urgencia (a terceira pessoa nunca e estetica; urgencia-r2.test.ts).
     "o rosto da minha mãe tá caindo, vocês fazem lifting?",
-    "o rosto dela caiu muito com a idade, vocês fazem fios?",
   ])("%s: não é urgência", (texto) => {
     expect(urgente(texto)).toBeNull();
   });
@@ -999,10 +1003,12 @@ describe("o outro sinal de AVC desfaz o procedimento e a estética (M1)", () => 
         "meu braço tá dormente",
       ])?.sinal,
     ).toBe("boca_torta");
+    // Revisao R2 de d1a15f6 (A3): "a fala ta estranha" virou sinal proprio
+    // (fala_enrolada); o formigamento da mao continua so desfazendo.
     expect(
       detectarUrgencia([
         "fiz harmonização e meu rosto ficou torto",
-        "e minha fala tá estranha",
+        "e minha mão tá formigando",
       ])?.sinal,
     ).toBe("rosto_torto");
   });
@@ -1021,10 +1027,12 @@ describe("o outro sinal de AVC desfaz o procedimento e a estética (M1)", () => 
 });
 
 describe("a exceção estética da boca e do rosto: o pedido, a idade e o sorriso (M2)", () => {
+  // Revisao R2 de d1a15f6 (A1): so com o OBJETO estetico ou o sorriso de
+  // sempre, nunca com o agora, o lado, a queda ou a terceira pessoa ("minha
+  // boca ta caindo de um lado com a idade" voltou a ser urgencia, abaixo).
   it.each([
     "minha boca fica torta quando eu sorrio",
     "minha boca tá meio torta, quero fazer preenchimento",
-    "minha boca tá caindo de um lado com a idade, o que vocês indicam?",
     "o lado esquerdo do meu rosto tá mais caído, quero fazer fios",
     "tenho o rosto torto e queria harmonizar",
     "minha boca entortou um pouco com o tempo, preenchimento resolve?",
@@ -1047,6 +1055,11 @@ describe("a exceção estética da boca e do rosto: o pedido, a idade e o sorris
     ],
     // A consulta nao e o pedido de procedimento.
     ["a boca do meu pai ficou torta, quero uma consulta", "boca_torta"],
+    // Revisao R2 de d1a15f6 (A1): o lado nunca e estetica (antes AG6-C192).
+    [
+      "minha boca tá caindo de um lado com a idade, o que vocês indicam?",
+      "boca_torta",
+    ],
   ])("%s: urgência (%s)", (texto, sinal) => {
     expect(urgente(texto)?.sinal).toBe(sinal);
   });
@@ -1268,7 +1281,6 @@ describe("a complicação do preenchimento feito (a oclusão vascular)", () => {
     "fiz preenchimento labial e o lábio ficou branco",
     "depois do preenchimento a pele ficou esbranquiçada",
     "fiz preenchimento no bigode chinês e a pele tá pálida",
-    "fiz a boca ontem e ela tá toda manchada",
     "fiz preenchimento e a pele tá rendilhada",
     "fiz preenchimento ontem e hoje o lábio tá roxo e frio",
     "fiz preenchimento ontem, tá roxo e espalhando",
@@ -1283,6 +1295,15 @@ describe("a complicação do preenchimento feito (a oclusão vascular)", () => {
     expect(urgente(texto)).toEqual({
       tipo: "fisica",
       sinal: "oclusao_do_preenchimento",
+    });
+  });
+
+  // Revisao R2 de d1a15f6 (M2): a mancha sozinha so conta com o
+  // preenchimento recente dito (sinal proprio).
+  it("fiz a boca ontem e ela tá toda manchada: física (a mancha do preenchimento recente)", () => {
+    expect(urgente("fiz a boca ontem e ela tá toda manchada")).toEqual({
+      tipo: "fisica",
+      sinal: "mancha_depois_do_preenchimento",
     });
   });
 
@@ -1327,6 +1348,10 @@ describe("a complicação do preenchimento feito (a oclusão vascular)", () => {
       SINAIS_DE_EMERGENCIA.filter((s) => s.semPergunta === true).map(
         (s) => s.nome,
       ),
-    ).toEqual(["oclusao_do_preenchimento"]);
+    ).toEqual([
+      "oclusao_do_preenchimento",
+      // Revisao R2 de d1a15f6 (M2): a mancha do preenchimento recente.
+      "mancha_depois_do_preenchimento",
+    ]);
   });
 });

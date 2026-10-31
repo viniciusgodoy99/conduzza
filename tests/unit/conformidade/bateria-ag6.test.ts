@@ -37,6 +37,7 @@ import {
   CONTROLES_DA_URGENCIA,
   FALSOS_POSITIVOS_ACEITOS,
   FALSOS_POSITIVOS_QUE_FICAM,
+  MATRIZES_DA_URGENCIA,
   NAO_REGRESSAO_DA_URGENCIA,
   RAJADAS_DE_URGENCIA,
   RAJADAS_SEM_URGENCIA,
@@ -324,6 +325,78 @@ describe("bateria AG6: a revisão de 6eae43d (A1, M1 e M2)", () => {
   });
 });
 
+// Revisao R2 de d1a15f6 (a segunda rodada da correcao da lista): A1, a
+// excecao estetica so com o objeto e nunca com o agora, o lado, a queda ou a
+// terceira pessoa; A3, as grafias do risco de vida e os sinais novos para o
+// RT; M2, o preenchimento antigo, a mancha sozinha e a historia de outra
+// pessoa; M4, a ameaca de verdade; M5, o recipiente nos dois generos. A trava
+// compara a frase exata: por isso as matrizes geradas (casos-ag6.ts,
+// MATRIZES_DA_URGENCIA; urgencia-matrizes.test.ts) e as frases do revisor.
+describe("bateria AG6: a revisão R2 de d1a15f6 (A1, A3, M2, M4 e M5)", () => {
+  const aceitos = new Set(FALSOS_POSITIVOS_ACEITOS.map((f) => f.id));
+  const daR2 = NAO_REGRESSAO_DA_URGENCIA.filter((frase) =>
+    frase.origem.startsWith("revisão R2 de d1a15f6"),
+  );
+
+  it("toda frase do revisor que a edd123c marcava está na não regressão; só os alarmes falsos dele deixam de ser urgência, cada um com a área e o motivo", () => {
+    expect(daR2).toHaveLength(111);
+    const aceitasDaR2 = daR2.filter((frase) => aceitos.has(frase.id));
+    expect(aceitasDaR2).toHaveLength(31);
+    for (const frase of aceitasDaR2) {
+      expect(detectarUrgencia(frase.textos), frase.id).toBeNull();
+    }
+    for (const frase of daR2.filter((f) => !aceitos.has(f.id))) {
+      expect(detectarUrgencia(frase.textos)?.tipo, frase.id).toBe(frase.tipo);
+    }
+  });
+
+  it("A1: o rosto da outra pessoa voltou a ser urgência (o AG6-NR305 saiu dos aceitos)", () => {
+    expect(aceitos.has("AG6-NR305")).toBe(false);
+    const frase = NAO_REGRESSAO_DA_URGENCIA.find((f) => f.id === "AG6-NR305");
+    expect(detectarUrgencia(frase?.textos ?? [])?.sinal).toBe(
+      "rosto_caido_de_outra_pessoa",
+    );
+  });
+
+  it("A3: cada sinal novo tem caso na bateria e é o tipo esperado", () => {
+    const sinais = new Map(
+      CASOS_DE_URGENCIA.map((caso) => [
+        detectarUrgencia([caso.texto])?.sinal,
+        caso.tipo,
+      ]),
+    );
+    for (const [sinal, tipo] of [
+      ["engasgo", "fisica"],
+      ["pilha_engolida", "fisica"],
+      ["atropelado", "fisica"],
+      ["picada_de_animal", "fisica"],
+      ["gas_inalado", "fisica"],
+      ["vazamento_de_gas", "fisica"],
+      ["gestante_sangrando", "fisica"],
+      ["bebe_parou_de_mexer", "fisica"],
+      ["vomito_com_sangue", "fisica"],
+      ["labios_roxos", "fisica"],
+      ["confusao_mental", "fisica"],
+      ["mancha_depois_do_preenchimento", "fisica"],
+      ["morrer_seria_alivio", "risco_de_vida"],
+      ["sumir", "risco_de_vida"],
+      ["melhor_sem_mim", "risco_de_vida"],
+      ["corda", "risco_de_vida"],
+      ["ameaca_de_morte", "risco_de_vida"],
+    ] as const) {
+      expect(sinais.get(sinal), sinal).toBe(tipo);
+    }
+  });
+
+  it("as matrizes geradas entram na bateria (e na prova de honestidade)", () => {
+    const frases = Object.values(MATRIZES_DA_URGENCIA).flat();
+    expect(frases.length).toBeGreaterThanOrEqual(700);
+    expect(MATRIZES_DA_URGENCIA.boca_e_rosto_x_final_generico).toHaveLength(
+      100,
+    );
+  });
+});
+
 /**
  * O laco com o LLM FALSO numa urgencia: a frase de sempre, sem chamar modelo
  * nenhum (o create, o classificador e o verificador lancam se chamados).
@@ -557,8 +630,10 @@ describe("bateria AG6: o que a IA nunca escreve sobre emergência", () => {
 
 // Revisao de 28/10/2026: as regras novas da AG6a (o CVV e o 188; a conduta
 // com o corpo e os primeiros socorros; o remedio sem o nome) so BLOQUEIAM, e
-// o lugar citado como referencia de endereco deixou de cair (decisao desta
-// frente: "a clinica fica perto da UPA" nao e instrucao).
+// o lugar citado como referencia de endereco so passa com o texto exato do
+// ponto de referencia que a ferramenta trouxe no turno (revisao de d1a15f6,
+// A2; o caso com a ferramenta esta na bateria-ag6b). Sem ele, barra como no
+// main.
 describe("bateria AG6: as regras novas da revisão", () => {
   const REGRAS_NOVAS = [
     ["servico_de_emergencia", "triagem"],
@@ -606,12 +681,13 @@ describe("bateria AG6: as regras novas da revisão", () => {
   );
 
   it.each([
-    // O lugar como referencia de endereco passa...
-    ["A clínica fica perto da UPA.", []],
-    ["Ficamos ao lado do Pronto Atendimento 24h.", []],
-    ["Em frente ao Hospital Geral.", []],
-    ["Fica próximo ao posto de saúde do bairro.", []],
-    // ...e o mesmo lugar como destino continua barrado.
+    // Sem a ferramenta no turno, o lugar como referencia barra como no main
+    // (revisao de d1a15f6, A2)...
+    ["A clínica fica perto da UPA.", ["pronto_socorro"]],
+    ["Ficamos ao lado do Pronto Atendimento 24h.", ["pronto_socorro"]],
+    ["Em frente ao Hospital Geral.", ["pronto_socorro"]],
+    ["Fica próximo ao posto de saúde do bairro.", ["pronto_socorro"]],
+    // ...e o lugar como destino tambem.
     ["Vá à UPA.", ["pronto_socorro"]],
     ["Procure o pronto-socorro mais perto.", ["pronto_socorro"]],
     ["Corra para perto do pronto-socorro.", ["pronto_socorro"]],
@@ -660,15 +736,16 @@ describe("bateria AG6: as regras novas da revisão", () => {
     ],
     ["Se piorar, a UPA fica ao lado.", ["pronto_socorro"]],
     ["Numa emergência, o hospital fica em frente.", ["pronto_socorro"]],
-    // A condicao em outra frase (ou depois do ponto e virgula) nao conta.
-    ["Estamos em frente ao Pronto-Socorro.", []],
+    // Sem a ferramenta, a condicao em outra frase tambem barra (revisao de
+    // d1a15f6, A2: como no main).
+    ["Estamos em frente ao Pronto-Socorro.", ["pronto_socorro"]],
     [
       "Ficamos em frente ao Hospital Geral; se precisar de algo, é só chamar.",
-      [],
+      ["pronto_socorro"],
     ],
     [
       "Qualquer coisa, me chama aqui. A clínica fica em frente ao Hospital Geral.",
-      [],
+      ["pronto_socorro"],
     ],
     // "Qualquer duvida" nao e condicao de socorro.
     ["Qualquer dúvida, estamos ao lado do Hospital São José.", []],
@@ -689,7 +766,7 @@ describe("bateria AG6: as regras novas da revisão", () => {
     ["Ficamos ao lado do Hospital Geral, segue a localização.", []],
     [
       "A clínica fica em frente ao Hospital Geral, procure a recepção no térreo.",
-      [],
+      ["pronto_socorro"],
     ],
     ["Ficamos ao lado do Hospital Geral. Pode vir de ônibus até lá.", []],
   ] as const)("o lugar com a condição: %s", (rascunho, esperadas) => {
@@ -770,5 +847,11 @@ describe("bateria AG6: as versões da revisão", () => {
   it("o portão e as regras mudaram desde a 2a revisão (2ca2097)", () => {
     expect(versaoDoPortao()).not.toBe("portao-39dcded69204");
     expect(versaoDasRegras()).not.toBe("regras-342236c82294");
+  });
+
+  // Revisao R2 de d1a15f6: a lista de urgencia mudou (A1, A3, M2, M4, M5 e
+  // a leitura linear, B5): a versao do portao da d1a15f6 ficou para tras.
+  it("o portão mudou desde a d1a15f6 (revisão R2)", () => {
+    expect(versaoDoPortao()).not.toBe("portao-04348f7f6108");
   });
 });

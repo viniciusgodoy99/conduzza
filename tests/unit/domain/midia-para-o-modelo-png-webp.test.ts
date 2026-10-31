@@ -227,3 +227,22 @@ describe("o WebP: so VP8X, ALPH e a imagem", () => {
     ).toEqual({ tipo: "figurinha" });
   });
 });
+
+describe("BAIXO 4: o WebP num Buffer nao muda (as marcas do VP8X saem so na copia)", () => {
+  it("a entrada fica igual; a saida sai sem as marcas de ICC, EXIF e XMP", () => {
+    const original = webp(
+      vp8x(0x20 | 0x10 | 0x08 | 0x04, 300, 200),
+      vp8(300, 200),
+      pedacoWebp("EXIF", texto("GPS LATITUDE")),
+    );
+    const entrada = Buffer.from(original);
+    const copia = Buffer.from(entrada);
+    const preparado = prepararMidia({ midia: "imagem", bytes: entrada, mimetype: "image/webp" });
+    expect(preparado.tipo).toBe("imagem");
+    expect(entrada.equals(copia)).toBe(true);
+    if (preparado.tipo === "imagem") {
+      expect(preparado.bytes[20]).toBe(0x10);
+      expect(contem(preparado.bytes, "LATITUDE")).toBe(false);
+    }
+  });
+});

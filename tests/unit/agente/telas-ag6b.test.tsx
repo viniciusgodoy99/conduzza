@@ -55,6 +55,8 @@ const { AbaHabilidades, descricaoDaChave, notaDaFaseDeTeste } =
   await import("@/components/agente/aba-habilidades");
 const { CALIBRAGEM_DO_SERVIDOR, midiaNoServidor } =
   await import("@/lib/agente/midia-no-servidor");
+// Revisao R3 de d1a15f6 (3): o plano do turno, para a dica bater com ele.
+const { tokensDoArquivoNaReserva } = await import("@/lib/agente/midia");
 const { PainelDoAgente } = await import("@/components/agente/painel-do-agente");
 const { Simulador } = await import("@/components/agente/simulador");
 const {
@@ -396,19 +398,44 @@ describe("a habilidade que o servidor ainda não deixa valer (item 3)", () => {
         tetoPorPagina: null,
       }),
     ).toEqual({ audio: true, arquivo: false });
-    // Um teto so: a foto ou o PDF continuaria indo para a equipe (o lado
-    // conservador: a dica continua).
+    // Revisao R3 de d1a15f6 (3): um teto so ja faz um tipo de arquivo sair
+    // para a OpenAI (o plano libera cada tipo pelo seu teto). A dica "Ainda
+    // nao esta valendo" (foto e documento vao para a equipe) prometeria mais
+    // privacidade do que o servidor cumpre: com um teto, sem dica.
     for (const [tetoPorImagem, tetoPorPagina] of [
       [1_600, null],
       [null, 2_000],
     ] as const) {
-      expect(
-        midiaNoServidor({
-          transcricaoCalibrada: false,
-          tetoPorImagem,
-          tetoPorPagina,
-        }).arquivo,
-      ).toBe(false);
+      const noServidor = midiaNoServidor({
+        transcricaoCalibrada: false,
+        tetoPorImagem,
+        tetoPorPagina,
+      });
+      expect(noServidor.arquivo).toBe(true);
+      expect(dicaDaMidiaNoServidor(HABILIDADE_DO_ARQUIVO, noServidor)).toBeNull();
+    }
+  });
+
+  it("a dica so aparece quando NADA de foto e documento sai pelo plano do turno (a tela nunca promete mais privacidade do que o servidor cumpre)", () => {
+    for (const tetoPorImagem of [null, 1_600]) {
+      for (const tetoPorPagina of [null, 2_000]) {
+        const tetos = { imagem: tetoPorImagem, pagina: tetoPorPagina };
+        // O que o plano do turno deixa ir ao leitor (lib/agente/midia.ts):
+        // a foto pelo teto da imagem, o PDF pelo da pagina.
+        const algumSai =
+          tokensDoArquivoNaReserva("imagem", "image/jpeg", tetos) !== null ||
+          tokensDoArquivoNaReserva("documento", "application/pdf", tetos) !==
+            null;
+        const dica = dicaDaMidiaNoServidor(
+          HABILIDADE_DO_ARQUIVO,
+          midiaNoServidor({
+            transcricaoCalibrada: false,
+            tetoPorImagem,
+            tetoPorPagina,
+          }),
+        );
+        expect(dica === null).toBe(algumSai);
+      }
     }
   });
 

@@ -275,32 +275,46 @@ export const PRAZO_MINIMO_DO_TURNO_MS = 20_000;
  *    (TURNO_SEM_A_MIDIA_MS). No arquivo o classificador roda ANTES do leitor
  *    e gasta do mesmo turno ate os mesmos 8 s: a conta e a mesma;
  *  - o modelo da midia no pior caso: 12 s de prazo (PRAZO_DA_TRANSCRICAO_MS
- *    e PRAZO_DO_LEITOR_MS, propostas) mais os tres cortes em ordem, cada um
- *    0,5 s depois do anterior: o corte duro da integracao (a folga dela), o
- *    da porta (MARGEM_ENTRE_OS_CORTES_MS, lib/agente/midia.ts) e o do laco
- *    (FOLGA_DO_CORTE_DA_MIDIA_MS): 13,5 s;
- *  - 21 + 13,5 = 34,5 s, mais 1,5 s para o Storage no caso comum: 36 s.
- *    Revisao da juncao (30/10/2026): era 35 s, com o corte duro da
- *    integracao caindo junto com o do laco e DEPOIS do da porta (a porta
- *    cortava primeiro e o resultado da integracao, com a nova tentativa
- *    dela, se perdia). Com os cortes em ordem, o pior caso do modelo leva
- *    1 s a mais (as margens), e o minimo sobe 1 s para o Storage continuar
- *    com 1,5 s.
+ *    e PRAZO_DO_LEITOR_MS, propostas) mais os cortes em ordem: o corte duro
+ *    da integracao (a folga dela, 0,5 s), a margem e a fatia da gravacao da
+ *    leitura antes do corte da porta (MARGEM_ENTRE_OS_CORTES_MS, 0,5 s, e
+ *    RESERVA_DA_GRAVACAO_DA_LEITURA_MS, 1,5 s; lib/agente/midia.ts) e o
+ *    corte do laco (FOLGA_DO_CORTE_DA_MIDIA_MS, 0,5 s): 15 s;
+ *  - 21 + 15 = 36 s. Revisao da juncao (30/10/2026): era 35 s, com o corte
+ *    duro da integracao caindo junto com o do laco e DEPOIS do da porta (a
+ *    porta cortava primeiro e o resultado da integracao, com a nova
+ *    tentativa dela, se perdia). Segunda rodada (R3 de d1a15f6, 1): a fatia
+ *    da gravacao da leitura (1,5 s) sai do prazo da integracao, e o minimo
+ *    continua 36 s. No minimo exato o Storage sai do prazo da integracao
+ *    (com 1,5 s de Storage, a transcricao tem 10,5 s); a integracao com os
+ *    12 s inteiros e 1,5 s de Storage pede 37,5 s, e o maior turno (38 s)
+ *    da os 12 s com ate 2 s de Storage.
+ * A MARGEM DE 2 s ANTES DO TURNO (R3 de d1a15f6, 5), a medir na prova paga
+ * (D-100): o turno com midia so comeca com 36 s, e o maior turno possivel e
+ * 38 s (os 55 s da invocacao menos os 14 s do envio e os 3 s das
+ * gravacoes). Tudo o que vem antes do turno na invocacao (o claim, o
+ * historico, o plano da midia, o teto e a reserva) tem de caber nos 2 s do
+ * comeco dela; senao o job volta para a fila (orcamento_da_passagem). Se
+ * esses 2 s bastam, e se o minimo fica em 36 s, so a prova paga diz. O
+ * minimo nunca pode passar do maior turno (o turno com midia nunca
+ * comecaria).
  * O que NAO cabe, e depende da prova paga (medir o Storage e o modelo e
  * baixar os prazos) ou de subir o maxDuration da rota da IA (decisao de
  * infraestrutura, desenho 12): o Storage no pior caso proposto (8 s) junto
- * com o modelo no pior caso, 42,5 s; e audio e arquivo no mesmo turno. O
- * maior turno possivel e 38 s (os 55 s da invocacao menos os 14 s do envio
- * e os 3 s das gravacoes), e o minimo nao pode passar dele (o turno com
- * midia nunca comecaria). Nesses casos a midia e cortada no prazo dela
- * (falha fechada, a frase de sempre), sem pagar o classificador e o agente,
- * e a reserva das gravacoes e a do envio ficam inteiras.
+ * com o modelo no pior caso, 44 s; e audio e arquivo no mesmo turno. Nesses
+ * casos a midia e cortada no prazo dela (falha fechada, a frase de sempre),
+ * sem pagar o agente, e a reserva das gravacoes e a do envio ficam
+ * inteiras. O classificador so fica sem pagar quando o corte e no audio (a
+ * transcricao vem antes dele, no 2b); no arquivo, sozinho ou com o audio no
+ * mesmo turno, o classificador ja rodou (e foi pago) quando o leitor (3b)
+ * falha por prazo.
  */
 export const PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS = 36_000;
 /**
  * Revisao da AG6b: a parte do turno que a midia nunca usa no pior caso (a
  * conta de cima, para o teste conferir que o minimo cobre o modelo da
- * midia com folga e cabe no maior turno possivel).
+ * midia no pior caso, com a fatia da gravacao, e cabe no maior turno
+ * possivel).
  */
 export const TURNO_SEM_A_MIDIA_MS =
   RESERVA_DO_FILTRO_MS +
@@ -395,6 +409,12 @@ export function dependenciasPadraoDaIa(entrada: {
     return cliente;
   };
   const modeloDosClassificadores = modeloDoVerificador(env);
+  // [AG6b mídia] Revisao R3 de d1a15f6 (2): os tetos do leitor numa fonte
+  // so, para o plano, a reserva, o corte do laco e a porta.
+  const tetosDoLeitor = {
+    imagem: TETO_DE_TOKENS_POR_IMAGEM,
+    pagina: TETO_DE_TOKENS_POR_PAGINA,
+  };
   return {
     admin: entrada.admin,
     // Sem a lista: nenhuma clinica passa (falha fechada). A lista vem do
@@ -424,10 +444,7 @@ export function dependenciasPadraoDaIa(entrada: {
     // [AG6b mídia] início
     midia: {
       transcricaoCalibrada: TRANSCRICAO_CALIBRADA,
-      tetosDoLeitor: {
-        imagem: TETO_DE_TOKENS_POR_IMAGEM,
-        pagina: TETO_DE_TOKENS_POR_PAGINA,
-      },
+      tetosDoLeitor,
       modeloDaTranscricao: modeloDaTranscricao(env),
       modeloDoLeitor: modeloDosClassificadores,
       criarPorta: (e) =>
@@ -488,10 +505,7 @@ export function dependenciasPadraoDaIa(entrada: {
           modeloDoLeitor: modeloDosClassificadores ?? "desconhecido",
           // Revisao da AG6b: a estimativa da chamada cortada.
           modeloDaTranscricao: modeloDaTranscricao(env),
-          tetosDoLeitor: {
-            imagem: TETO_DE_TOKENS_POR_IMAGEM,
-            pagina: TETO_DE_TOKENS_POR_PAGINA,
-          },
+          tetosDoLeitor,
         }),
     },
     // [AG6b mídia] fim
@@ -1119,6 +1133,9 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
       agora: c.deps.agora,
       // [AG6b mídia]
       midia: portaDaMidia,
+      // Revisao R3 de d1a15f6 (2): os tetos do leitor do plano e da reserva
+      // tambem no corte da leitura pelo laco (uma fonte so).
+      tetosDoLeitor: c.deps.midia?.tetosDoLeitor,
     });
   } catch {
     // O laco tem a propria rede; isto nao deveria acontecer. A reserva fica

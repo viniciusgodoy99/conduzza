@@ -302,8 +302,9 @@ export const RESERVA_DO_AGENTE_DEPOIS_DA_MIDIA_MS = 3_000;
  * corta ali, com o uso da chamada) e o laco corta de novo no prazo inteiro,
  * para a porta que nao cumprir o prazo nunca levar o turno alem dele. Os
  * cortes em ordem (revisao da juncao): a integracao do modelo corta
- * MARGEM_ENTRE_OS_CORTES_MS antes da porta (lib/agente/midia.ts,
- * prazoParaAIntegracao), a porta corta esta folga antes do laco.
+ * MARGEM_ENTRE_OS_CORTES_MS e RESERVA_DA_GRAVACAO_DA_LEITURA_MS antes da
+ * porta (lib/agente/midia.ts, prazoParaAIntegracao; a fatia da gravacao e
+ * da segunda rodada, R3 de d1a15f6), a porta corta esta folga antes do laco.
  */
 export const FOLGA_DO_CORTE_DA_MIDIA_MS = 500;
 // [AG6b mídia] fim
@@ -636,6 +637,13 @@ export type EntradaDoTurno = {
    * continua escalando como hoje. Ausente ou nula: nenhuma midia sai.
    */
   midia?: PortaDaMidia | null;
+  /**
+   * Revisao R3 de d1a15f6 (2): os tetos de tokens do leitor que o executor
+   * injetou, os MESMOS do plano, da reserva e da porta (o pior caso do
+   * arquivo quando o laco corta a leitura). Ausentes: as constantes do
+   * leitor (TETO_DE_TOKENS_POR_IMAGEM e _POR_PAGINA), como na porta.
+   */
+  tetosDoLeitor?: { imagem: number | null; pagina: number | null };
   // [AG6b mídia] fim
 };
 
@@ -1783,7 +1791,9 @@ async function turnoDoAgente(
    * A leitura que a porta nao devolveu no prazo (ou que lancou): falha, com
    * o pior caso do arquivo em cada chamada que pode ter saido
    * (MAXIMO_DE_CHAMADAS_DO_LEITOR, a mesma conta da reserva; a figurinha nao
-   * chama modelo).
+   * chama modelo). Revisao R3 de d1a15f6 (2): pelos tetos INJETADOS
+   * (entrada.tetosDoLeitor, os do plano, da reserva e da porta), nunca pelas
+   * constantes do modulo quando o executor deu outros.
    */
   const leituraCortada = (
     arquivo: Extract<MidiaPronta, { tipo: "arquivo" | "figurinha" }>,
@@ -1797,6 +1807,7 @@ async function turnoDoAgente(
             tokensDoArquivo: tokensDoArquivoNaReserva(
               arquivo.midia,
               arquivo.arquivo.tipo === "pdf" ? "application/pdf" : "image/jpeg",
+              entrada.tetosDoLeitor,
             ),
           })
         : null;
@@ -1828,11 +1839,35 @@ async function turnoDoAgente(
     ...fraseFixa({ tipo: "falhou", motivo: "liberacao_suspensa" }),
     jobAntigo: true,
   });
+  /**
+   * Revisao R2 de d1a15f6 (M3): a transcricao leu urgencia no texto inteiro
+   * de um audio do turno, inclusive no que as travas descartaram ("Quero
+   * morrer." curto e incerto, "Socorro..." no ruido). So o tipo chegou (o
+   * texto descartado nunca sai da integracao); o 1c passa a conversa como
+   * urgente, pelo caminho de sempre.
+   */
+  let urgenciaNoAudio = false;
+  /**
+   * A urgencia do portao (1a e 1c) e a do audio acima: a conferencia de
+   * sempre, o passo da urgencia e a passagem com o motivo urgencia (o banco
+   * marca como Urgente e nunca atribui).
+   */
+  const passarPorUrgencia = (): ResultadoDoTurno => {
+    trilha.push({ tipo: "outro", texto: PASSO_DA_CONFERENCIA_DA_ENTRADA });
+    trilha.push({ tipo: "equipe", texto: PASSO_DA_URGENCIA });
+    return fraseFixa({
+      tipo: "escalou",
+      motivo: "urgencia",
+      gatilho: "urgencia",
+      origem: "portao",
+    });
+  };
 
   /**
    * 2b. Transcreve os audios a transcrever. Devolve o desfecho quando o
    * turno para aqui (falha fechada, a conversa saiu da IA, o prazo), ou null
-   * para seguir (o 1c confere o texto transcrito, o sem fala e o fora).
+   * para seguir (o 1c confere o texto transcrito, o sem fala, o fora e a
+   * urgencia que a transcricao leu no audio).
    */
   const transcreverAsPendentes = async (
     lista: readonly MensagemDaConversa[],
@@ -1903,8 +1938,24 @@ async function turnoDoAgente(
     if (feitas.some(({ feita }) => feita.tipo === "fora_da_ia")) {
       return falhar("liberacao_suspensa");
     }
+    // Revisao R2 de d1a15f6 (M3): a urgencia que a transcricao leu no audio
+    // inteiro (so o tipo), no sem fala e na transcricao.
+    if (
+      feitas.some(
+        ({ feita }) =>
+          (feita.tipo === "transcrita" || feita.tipo === "sem_fala") &&
+          feita.urgencia !== null,
+      )
+    ) {
+      urgenciaNoAudio = true;
+    }
     const falha = feitas.find(({ feita }) => feita.tipo === "falhou")?.feita;
     if (falha !== undefined && falha.tipo === "falhou") {
+      // A urgencia de outro audio do turno vence a falha tecnica deste: a
+      // conversa passa como urgente (o lado seguro; as duas passam).
+      if (urgenciaNoAudio) {
+        return passarPorUrgencia();
+      }
       trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.transcricaoFalhou });
       return fraseFixa({ tipo: "falhou", motivo: falha.motivo });
     }
@@ -2127,27 +2178,23 @@ async function turnoDoAgente(
           entrada.hojeNaClinica ?? hojeNoFuso(entrada.agoraMs, entrada.fuso),
       });
       const gatilho = gatilhos[0];
+      // [AG6 urgência] início
+      // AG6a: o sinal de emergencia vem primeiro na ordem dos gatilhos. A
+      // conversa passa com o motivo urgencia (o banco marca como Urgente e
+      // nunca atribui) e a frase de sempre. No WhatsApp o executor ja passou
+      // antes do teto e da reserva; aqui e a segunda trava, o simulador e
+      // (AG6b) a urgencia falada no audio. Revisao R2 de d1a15f6 (M3): e a
+      // urgencia que a transcricao leu no texto descartado do audio (o
+      // portao nunca ve esse texto), pelo mesmo caminho.
+      if (gatilho === "urgencia" || urgenciaNoAudio) {
+        return passarPorUrgencia();
+      }
+      // [AG6 urgência] fim
       if (gatilho !== undefined) {
         trilha.push({
           tipo: "outro",
-          texto: "A mensagem foi conferida antes de chegar ao assistente.",
+          texto: PASSO_DA_CONFERENCIA_DA_ENTRADA,
         });
-        // [AG6 urgência] início
-        // AG6a: o sinal de emergencia vem primeiro na ordem dos gatilhos. A
-        // conversa passa com o motivo urgencia (o banco marca como Urgente
-        // e nunca atribui) e a frase de sempre. No WhatsApp o executor ja
-        // passou antes do teto e da reserva; aqui e a segunda trava, o
-        // simulador e (AG6b) a urgencia falada no audio.
-        if (gatilho === "urgencia") {
-          trilha.push({ tipo: "equipe", texto: PASSO_DA_URGENCIA });
-          return fraseFixa({
-            tipo: "escalou",
-            motivo: "urgencia",
-            gatilho,
-            origem: "portao",
-          });
-        }
-        // [AG6 urgência] fim
         // O audio em que nao deu para entender fala (as travas da saida da
         // transcricao): o passo proprio, o motivo de sempre da midia.
         if (

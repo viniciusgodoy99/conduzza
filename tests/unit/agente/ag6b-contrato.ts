@@ -10,6 +10,7 @@ import type {
   ResultadoDaTranscricao,
 } from "@/lib/agente/midia";
 import type { UsoDoModelo } from "@/lib/agente/uso";
+import type { TipoDeUrgencia } from "@/lib/domain/conformidade/urgencia";
 import {
   CONFIANCAS_DA_LEITURA,
   MIDIAS_LIDAS,
@@ -601,6 +602,7 @@ export function portaFalsa(roteiro: RoteiroDaPorta = {}) {
       textoParaOsModelos: mascarar(texto),
       leitura: leituraDaTranscricao(texto),
       uso: usoDaTranscricao(),
+      urgencia: null,
     };
   });
   const ler = vi.fn<PortaDaMidia["ler"]>(async (arquivo) => {
@@ -634,6 +636,7 @@ export function portaFalsa(roteiro: RoteiroDaPorta = {}) {
 export function transcrita(
   texto: string,
   mascarar: (t: string) => string = (t) => t,
+  urgencia: TipoDeUrgencia | null = null,
 ): ResultadoDaTranscricao {
   return {
     tipo: "transcrita",
@@ -641,6 +644,23 @@ export function transcrita(
     textoParaOsModelos: mascarar(texto),
     leitura: leituraDaTranscricao(texto),
     uso: usoDaTranscricao(),
+    urgencia,
+  };
+}
+
+/**
+ * Revisao R2 de d1a15f6 (M3): o "sem fala" da porta, com o tipo da urgencia
+ * que a transcricao leu no texto descartado (null: nenhuma).
+ */
+export function semFala(
+  urgencia: TipoDeUrgencia | null = null,
+  segundos = 15,
+): ResultadoDaTranscricao {
+  return {
+    tipo: "sem_fala",
+    leitura: leituraDaTranscricao(null, segundos),
+    uso: usoDaTranscricao(segundos),
+    urgencia,
   };
 }
 

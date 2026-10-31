@@ -17,6 +17,7 @@ import {
 import {
   avaliarTranscricao,
   FRASES_FANTASMA,
+  FRASES_FANTASMA_INTEIRAS,
   LIMITES_DA_QUALIDADE,
   MOTIVOS_DO_SEM_FALA,
   segmentoEmSilencio,
@@ -1101,5 +1102,54 @@ describe("a versao", () => {
   // elas (a de 6eae43d ficou para tras).
   it("as travas mudaram desde a revisao de 6eae43d", () => {
     expect(VERSAO_DA_QUALIDADE_DA_TRANSCRICAO).not.toBe("qualidade-19ca28f472a1");
+  });
+});
+
+// Revisao R2 de d1a15f6 (B2): as despedidas que o Whisper inventa no fim do
+// silencio ou da musica so contam quando sao a transcricao INTEIRA
+// (igualdade depois de normalizar), nunca como pedaco da fala real.
+describe("as frases-fantasma inteiras da revisao R2", () => {
+  it("a lista: tchau, tchau e ate a proxima", () => {
+    expect(FRASES_FANTASMA_INTEIRAS).toEqual(["tchau tchau", "ate a proxima"]);
+  });
+
+  it.each([
+    " Tchau, tchau!",
+    " Tchau tchau.",
+    " TCHAU, TCHAU",
+    " Até a próxima!",
+    " até a próxima.",
+    " Até a próxima...",
+  ])("%s sozinha: sem fala (frase_fantasma)", (texto) => {
+    expect(avaliarTranscricao({ segmentos: [segmento(texto)] })).toEqual({
+      tipo: "sem_fala",
+      motivo: "frase_fantasma",
+    });
+  });
+
+  it("a frase inteira em dois segmentos tambem conta", () => {
+    expect(
+      avaliarTranscricao({
+        segmentos: [segmento(" Tchau,"), segmento(" tchau!")],
+      }),
+    ).toEqual({ tipo: "sem_fala", motivo: "frase_fantasma" });
+  });
+
+  it.each([
+    " Quero remarcar para sexta. Tchau, tchau!",
+    " Obrigada, até a próxima consulta.",
+    " Até a próxima semana, então. Pode confirmar?",
+    " Tchau.",
+  ])("controle %s: a fala real com a despedida passa", (texto) => {
+    expect(avaliarTranscricao({ segmentos: [segmento(texto)] })).toEqual({
+      tipo: "transcrita",
+      texto: texto.trim(),
+    });
+  });
+
+  it("as travas mudaram desde a revisao R2 de d1a15f6", () => {
+    expect(VERSAO_DA_QUALIDADE_DA_TRANSCRICAO).not.toBe(
+      "qualidade-5ca3cb77ed57",
+    );
   });
 });

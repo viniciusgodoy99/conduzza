@@ -2595,6 +2595,34 @@ function camposDaSaida(saida: string, chaves: ReadonlySet<string>): string[] {
 
 const CAMPOS_DE_ENDERECO: ReadonlySet<string> = new Set(["endereco"]);
 const CAMPOS_DE_LUGAR: ReadonlySet<string> = new Set(["bairro", "cidade"]);
+// [AG6 urgência] início
+/**
+ * Revisao R2 de d1a15f6 (A2, 30/10/2026): o ponto de referencia da unidade
+ * que consultar_unidades trouxe ("Em frente a UPA do Centro"). E a UNICA
+ * excecao da UPA, do pronto-socorro, do SAMU e do hospital na saida (a troca
+ * larga servico_de_saude_de_referencia saiu de padroes.ts): so o texto
+ * EXATO do campo, quando o rascunho o repete inteiro, sai das vedacoes
+ * clinicas, como o endereco. Qualquer outra mencao barra como no main
+ * ("Ficamos ao lado da UPA" sem a ferramenta no turno, ou com outro texto).
+ */
+const CAMPOS_DE_REFERENCIA: ReadonlySet<string> = new Set([
+  "ponto_de_referencia",
+]);
+/**
+ * O ponto de referencia so vale como trecho quando COMECA pela palavra de
+ * lugar ("em frente a", "ao lado de", "perto do", "na esquina", "atras",
+ * "dentro do"). O nome solto ("Hospital Geral") nao sai: a regra
+ * pronto_socorro do main le a ida colada nele ("Va ao Hospital Geral",
+ * "corra pro Hospital Geral"), e a mascara do nome inteiro engoliria o
+ * "hospital" dessa leitura.
+ */
+const REFERENCIA_QUE_COMECA_PELO_LUGAR =
+  /^(?:(?:fica|ficamos|estamos|esta|bem|logo) )?(?:(?:em|ao|a|do|da|de|no|na|nos|nas) )?(?:lado|frente|perto|proxim[oa]s?|vizinh[oa]s?|esquina|cima|embaixo|atras|junto|colad[oa]s?|dentro|defronte|diante|depois|antes)\b/;
+/** Sem a pontuacao em volta do texto do campo ("Em frente a praca."). */
+function semPontuacaoEmVolta(texto: string): string {
+  return texto.replace(/^[^a-z0-9]+/, "").replace(/[^a-z0-9]+$/, "");
+}
+// [AG6 urgência] fim
 
 /**
  * Revisao 2 da AG2: a parte do endereco da ferramenta (bairro, cidade) que
@@ -2662,6 +2690,13 @@ export function semPalavrasClinicasDeLugar(texto: string): string {
  * continua lido ("Rua das Dores, 100. Tome dipirona" barra). O endereco da
  * ferramenta ja passou pelas regras do filtro no carregamento, com a unica
  * excecao de PALAVRAS_CLINICAS_DE_NOME_DE_LUGAR.
+ *
+ * Revisao R2 de d1a15f6 (A2): tambem o ponto de referencia que a ferramenta
+ * trouxe (campo "ponto_de_referencia"), so o texto EXATO e so quando ele
+ * comeca pela palavra de lugar (REFERENCIA_QUE_COMECA_PELO_LUGAR): "Ficamos
+ * na Rua X, 123, em frente a UPA do Centro", com "Em frente a UPA do
+ * Centro" vindo da ferramenta, passa; o mesmo rascunho sem a ferramenta, ou
+ * com outro texto ("ao lado da UPA"), barra como no main.
  */
 export function trechosDeEnderecoDasFerramentas(
   rascunho: string,
@@ -2683,7 +2718,17 @@ export function trechosDeEnderecoDasFerramentas(
     .flatMap((saida) => camposDaSaida(saida, CAMPOS_DE_LUGAR))
     .map((parte) => normalizarBase(parte))
     .filter((parte) => parteQueENomeDeLugar(parte) && citado(parte));
-  return [...new Set([...completos, ...logradouros, ...lugares])];
+  // [AG6 urgência] Revisao R2 de d1a15f6 (A2): o ponto de referencia exato.
+  const referencias = fatos.saidasDasFerramentas
+    .flatMap((saida) => camposDaSaida(saida, CAMPOS_DE_REFERENCIA))
+    .map((referencia) => semPontuacaoEmVolta(normalizarBase(referencia)))
+    .filter(
+      (referencia) =>
+        REFERENCIA_QUE_COMECA_PELO_LUGAR.test(referencia) && citado(referencia),
+    );
+  return [
+    ...new Set([...completos, ...logradouros, ...lugares, ...referencias]),
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -6663,6 +6708,10 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   [...CAMPOS_DE_LUGAR].join(","),
   "lugar da ferramenta: duas palavras de nome, a palavra clinica so no fim",
   PALAVRAS_CLINICAS_DE_NOME_DE_LUGAR.join(","),
+  // [AG6 urgência] Revisao R2 de d1a15f6 (A2): o ponto de referencia exato.
+  [...CAMPOS_DE_REFERENCIA].join(","),
+  "ponto de referencia da ferramenta: so o texto exato, sem a pontuacao em volta, comecando pela palavra de lugar",
+  REFERENCIA_QUE_COMECA_PELO_LUGAR.source,
   ...PADROES_DE_ACAO.map(
     (p) =>
       `${p.nome} ${p.acao ?? "estado"} ${p.regex.source}${p.soComAgendaNaFrase ? " so com agenda na frase" : ""}${p.estadoDaEspera === true ? " estado da lista de espera" : ""}`,

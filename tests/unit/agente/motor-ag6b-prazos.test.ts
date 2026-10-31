@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -62,8 +63,10 @@ import {
   MARGEM_ENTRE_OS_CORTES_MS,
   MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA,
   PASSOS_DA_MIDIA,
+  portaDaMidiaDoWhatsapp,
   prazoParaAIntegracao,
   PRAZO_MAXIMO_DO_STORAGE_MS,
+  RESERVA_DA_GRAVACAO_DA_LEITURA_MS,
   type PortaDaMidia,
 } from "@/lib/agente/midia";
 import {
@@ -83,6 +86,7 @@ import {
   FOLGA_DO_CORTE_DO_LEITOR_MS,
   MAXIMO_DE_CHAMADAS_DO_LEITOR,
   PRAZO_DO_LEITOR_MS,
+  TETO_DE_TOKENS_POR_IMAGEM,
 } from "@/lib/integrations/llm/leitor-de-midia";
 import {
   FOLGA_DO_CORTE_DA_TRANSCRICAO_MS,
@@ -108,6 +112,7 @@ import {
 import {
   AGORA,
   CATALOGO_DA_AG6B,
+  configComMidia,
   decisaoDo,
   EXECUTOR,
   montarCenario,
@@ -253,11 +258,15 @@ describe("pelo executor: o Storage e o leitor que travam (a porta de verdade)", 
     expect(await promessa).toEqual({ ok: true });
     expect(recebidos).toHaveLength(1);
     // O leitor recebeu o prazo da midia do arquivo menos a folga do corte do
-    // laco (o prazo da porta) e menos a folga do corte dele e a margem (o
-    // corte dele cai antes do da porta), e o sinal do corte, abortado.
+    // laco (o prazo da porta) e menos a folga do corte dele, a margem e a
+    // fatia da gravacao (o corte dele cai antes do da porta, com tempo para a
+    // RPC), e o sinal do corte, abortado.
     const prazoDaPorta = midiaDoArquivo - FOLGA_DO_CORTE_DA_MIDIA_MS;
     expect(recebidos[0]?.prazoMs).toBe(
-      prazoDaPorta - FOLGA_DO_CORTE_DO_LEITOR_MS - MARGEM_ENTRE_OS_CORTES_MS,
+      prazoDaPorta -
+        FOLGA_DO_CORTE_DO_LEITOR_MS -
+        MARGEM_ENTRE_OS_CORTES_MS -
+        RESERVA_DA_GRAVACAO_DA_LEITURA_MS,
     );
     expect(recebidos[0]?.sinal?.aborted).toBe(true);
     // Nada gravado depois do corte; nada do agente.
@@ -519,7 +528,7 @@ describe("no laco: a porta que nao cumpre o prazo (o corte do laco)", () => {
 });
 
 describe("a conta do prazo minimo do turno com midia (achado baixo 6)", () => {
-  it("o minimo cobre o que a midia nunca usa e o modelo no pior caso, com folga para o Storage, e cabe no maior turno", () => {
+  it("o minimo cobre o que a midia nunca usa e o modelo no pior caso (com a fatia da gravacao), e cabe no maior turno", () => {
     // O que a midia nunca usa: o filtro, a janela do agente e o
     // classificador que vem depois da transcricao.
     expect(TURNO_SEM_A_MIDIA_MS).toBe(
@@ -527,9 +536,10 @@ describe("a conta do prazo minimo do turno com midia (achado baixo 6)", () => {
         RESERVA_DO_AGENTE_DEPOIS_DA_MIDIA_MS +
         PRAZO_DO_CLASSIFICADOR_NO_PORTAO_MS,
     );
-    // O modelo da midia no pior caso (revisao da juncao): o prazo dele e os
-    // tres cortes em ordem, o duro da integracao (a folga dela), o da porta
-    // (a margem) e o do laco (a folga do laco).
+    // O modelo da midia no pior caso (revisao da juncao e segunda rodada): o
+    // prazo dele e os cortes em ordem, o duro da integracao (a folga dela),
+    // a margem e a fatia da gravacao da leitura antes do da porta (R3 de
+    // d1a15f6, 1) e o do laco (a folga do laco).
     const folgaDaIntegracao = Math.max(
       FOLGA_DO_CORTE_DA_TRANSCRICAO_MS,
       FOLGA_DO_CORTE_DO_LEITOR_MS,
@@ -538,13 +548,19 @@ describe("a conta do prazo minimo do turno com midia (achado baixo 6)", () => {
       Math.max(PRAZO_DA_TRANSCRICAO_MS, PRAZO_DO_LEITOR_MS) +
       folgaDaIntegracao +
       MARGEM_ENTRE_OS_CORTES_MS +
+      RESERVA_DA_GRAVACAO_DA_LEITURA_MS +
       FOLGA_DO_CORTE_DA_MIDIA_MS;
-    expect(modeloNoPiorCaso).toBe(13_500);
-    // O que sobra para o Storage no minimo: 1,5 s (era 1,5 s na conta antiga
-    // de 35 s, que ignorava as duas margens).
+    expect(modeloNoPiorCaso).toBe(15_000);
+    // O minimo (36 s, a medir na prova paga) cobre o pior caso do modelo; o
+    // Storage, no minimo exato, sai do prazo da integracao (a fatia da
+    // gravacao saiu dele, e o minimo nao subiu: a margem de 2 s antes do
+    // turno, comentario de PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS).
     const folga =
       PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS - TURNO_SEM_A_MIDIA_MS - modeloNoPiorCaso;
-    expect(folga).toBeGreaterThanOrEqual(1_500);
+    expect(folga).toBeGreaterThanOrEqual(0);
+    expect(PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS).toBe(36_000);
+    // No maior turno, o Storage tem ate 2 s com o prazo inteiro do modelo.
+    expect(MAIOR_TURNO_MS - TURNO_SEM_A_MIDIA_MS - modeloNoPiorCaso).toBe(2_000);
     // O minimo nunca passa do maior turno possivel (senao o turno com
     // midia nunca comecaria) nem do prazo do turno.
     expect(PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS).toBeLessThanOrEqual(MAIOR_TURNO_MS);
@@ -557,7 +573,7 @@ describe("a conta do prazo minimo do turno com midia (achado baixo 6)", () => {
     ).toBeGreaterThan(MAIOR_TURNO_MS);
   });
 
-  it("no minimo exato a transcricao recebe o prazo inteiro dela (com 1,5 s para o Storage); um milissegundo abaixo, volta para a fila sem custo", async () => {
+  it("no minimo exato a transcricao recebe o prazo inteiro dela (o relogio parado); no maior turno, com 2 s para o Storage; um milissegundo abaixo do minimo, volta para a fila sem custo", async () => {
     const noMinimo = rodar({
       mensagens: [audio()],
       prazoFinalMs:
@@ -568,10 +584,21 @@ describe("a conta do prazo minimo do turno com midia (achado baixo 6)", () => {
     });
     expect(await noMinimo.promessa).toEqual({ ok: true });
     // O prazo que a integracao recebe ja e o das chamadas dela (o corte duro
-    // dela vem depois, ainda antes do da porta): o inteiro, mesmo se o
-    // Storage levasse 1,5 s (o relogio deste teste fica parado).
+    // dela vem depois e, com a margem e a fatia da gravacao, o da porta). No
+    // minimo exato (o relogio deste teste fica parado: o Storage nao gasta
+    // nada), o inteiro; o Storage de verdade sai dele (R3 de d1a15f6, 1).
     const prazo = Number(noMinimo.cenario.transcrever.mock.calls[0]?.[0]?.prazoMs);
-    expect(prazo - 1_500).toBeGreaterThanOrEqual(PRAZO_DA_TRANSCRICAO_MS);
+    expect(prazo).toBe(PRAZO_DA_TRANSCRICAO_MS);
+
+    const noMaior = rodar({
+      mensagens: [audio()],
+      prazoFinalMs: AGORA + PRAZO_DA_INVOCACAO_MS,
+    });
+    expect(await noMaior.promessa).toEqual({ ok: true });
+    const prazoNoMaior = Number(
+      noMaior.cenario.transcrever.mock.calls[0]?.[0]?.prazoMs,
+    );
+    expect(prazoNoMaior - 2_000).toBe(PRAZO_DA_TRANSCRICAO_MS);
 
     const abaixo = rodar({
       mensagens: [audio()],
@@ -672,10 +699,330 @@ describe("a fiacao de producao (dependenciasPadraoDaIa)", () => {
     expect(fiacao.transcricao[0]?.prazoMs).toBe(PRAZO_DA_TRANSCRICAO_MS);
     expect(fiacao.transcricao[0]?.sinal).toBeInstanceOf(AbortSignal);
     // Prazo curto: o corte duro da transcricao (o prazo dela mais a folga)
-    // cai a margem antes do corte da porta.
+    // cai a margem e a fatia da gravacao antes do corte da porta.
     await porta.transcrever(pronta, 9_000);
     const curto = Number(fiacao.transcricao[1]?.prazoMs);
-    expect(curto + FOLGA_DO_CORTE_DA_TRANSCRICAO_MS + MARGEM_ENTRE_OS_CORTES_MS).toBe(9_000);
+    expect(
+      curto +
+        FOLGA_DO_CORTE_DA_TRANSCRICAO_MS +
+        MARGEM_ENTRE_OS_CORTES_MS +
+        RESERVA_DA_GRAVACAO_DA_LEITURA_MS,
+    ).toBe(9_000);
     expect(fiacao.transcricao[1]?.sinal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+// Segunda rodada da revisao (R3 de d1a15f6, 1): a gravacao da leitura
+// (gravar_leitura_da_midia trava a mensagem e a conversa) tem uma fatia
+// propria do prazo da porta, descontada do prazo da integracao. O caso do
+// revisor: a integracao responde 10 ms antes do prazo DELA e a RPC leva
+// 1,1 s. Antes, a porta cortava com a RPC no ar (falhou) e a RPC gravava
+// assim mesmo; agora a resposta e coerente: gravou e devolve o resultado.
+describe("a gravacao da leitura cabe no prazo da porta (R3 de d1a15f6, 1)", () => {
+  /** O admin cuja RPC grava depois de `demoraMs` (a trava no banco). */
+  function adminQueDemora(demoraMs: number) {
+    const gravadas: unknown[] = [];
+    const admin = {
+      rpc: (nome: string, args: Record<string, unknown>) =>
+        new Promise((resolve) =>
+          setTimeout(() => {
+            if (nome === "gravar_leitura_da_midia") {
+              gravadas.push(args.p_transcricao ?? args.p_tipo);
+            }
+            resolve({ data: { ok: true, reutilizado: false, id: "x" }, error: null });
+          }, demoraMs),
+        ),
+    } as unknown as SupabaseClient;
+    return { admin, gravadas };
+  }
+
+  function portaDeVerdade(
+    admin: SupabaseClient,
+    integracoes: Partial<
+      Pick<
+        Parameters<typeof portaDaMidiaDoWhatsapp>[1],
+        "transcrever" | "lerComOModelo"
+      >
+    >,
+  ) {
+    return portaDaMidiaDoWhatsapp(admin, {
+      clinicId: CLINICA,
+      conversationId: CONVERSA,
+      jobId: JOB,
+      workerId: EXECUTOR,
+      mascarar: (t) => t,
+      lerArquivo: async () => ({ tipo: "ok", bytes: new Uint8Array() }),
+      transcrever:
+        integracoes.transcrever ??
+        (async () => {
+          throw new Error("nao usado");
+        }),
+      lerComOModelo:
+        integracoes.lerComOModelo ??
+        (async () => {
+          throw new Error("nao usado");
+        }),
+      versaoDaTranscricao: "transcricao-0123456789ab",
+      modeloDoLeitor: "gpt-6-luna",
+      modeloDaTranscricao: "whisper-1",
+      tetosDoLeitor: { imagem: 1_600, pagina: 1_800 },
+    });
+  }
+
+  const PRAZO_DA_PORTA = 10_000;
+  const AUDIO_PRONTO = {
+    tipo: "audio" as const,
+    messageId: AUDIO,
+    bytes: new Uint8Array(),
+    segundos: 10,
+  };
+
+  it("o caso do revisor: a transcricao responde 10 ms antes do prazo dela e a RPC leva 1,1 s; gravou e devolve a transcricao", async () => {
+    vi.useFakeTimers({ now: 0, toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const { admin, gravadas } = adminQueDemora(1_100);
+    const recebidos: number[] = [];
+    const porta = portaDeVerdade(admin, {
+      transcrever: (t) => {
+        recebidos.push(t.prazoMs);
+        return new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                tipo: "transcrita",
+                texto: "texto do paciente",
+                segundos: 10,
+                uso: { modelo: "whisper-1", segundos: 10 },
+              }),
+            t.prazoMs - 10,
+          ),
+        );
+      },
+    });
+    const promessa = porta.transcrever(AUDIO_PRONTO, PRAZO_DA_PORTA);
+    await vi.advanceTimersByTimeAsync(PRAZO_DA_PORTA + 1_000);
+    const r = await promessa;
+    // A integracao recebeu o prazo da porta sem a folga dela, a margem e a
+    // fatia da gravacao.
+    expect(recebidos).toEqual([
+      PRAZO_DA_PORTA -
+        FOLGA_DO_CORTE_DA_TRANSCRICAO_NA_PORTA_MS -
+        MARGEM_ENTRE_OS_CORTES_MS -
+        RESERVA_DA_GRAVACAO_DA_LEITURA_MS,
+    ]);
+    // Coerente: gravou E devolveu o resultado (nunca "falhou" com a leitura
+    // gravada).
+    expect(gravadas).toEqual(["texto do paciente"]);
+    expect(r).toMatchObject({ tipo: "transcrita", texto: "texto do paciente" });
+    expect(escrito.join("")).not.toContain("ia_midia_cortada");
+  });
+
+  it("no limite: a transcricao responde 10 ms antes do corte duro dela e a RPC leva 1,9 s (menos que a margem e a fatia); gravou e devolve", async () => {
+    vi.useFakeTimers({ now: 0, toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const { admin, gravadas } = adminQueDemora(
+      MARGEM_ENTRE_OS_CORTES_MS + RESERVA_DA_GRAVACAO_DA_LEITURA_MS - 100,
+    );
+    const porta = portaDeVerdade(admin, {
+      transcrever: (t) =>
+        new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                tipo: "sem_fala",
+                segundos: 10,
+                uso: { modelo: "whisper-1", segundos: 10 },
+              }),
+            t.prazoMs + FOLGA_DO_CORTE_DA_TRANSCRICAO_NA_PORTA_MS - 10,
+          ),
+        ),
+    });
+    const promessa = porta.transcrever(AUDIO_PRONTO, PRAZO_DA_PORTA);
+    await vi.advanceTimersByTimeAsync(PRAZO_DA_PORTA + 1_000);
+    const r = await promessa;
+    expect(gravadas).toEqual(["sem_fala"]);
+    expect(r).toMatchObject({ tipo: "sem_fala", urgencia: null });
+  });
+
+  it("o leitor: responde 10 ms antes do prazo dele e a RPC leva 1,1 s; gravou e devolve a leitura", async () => {
+    vi.useFakeTimers({ now: 0, toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const { admin, gravadas } = adminQueDemora(1_100);
+    const recebidos: number[] = [];
+    const porta = portaDeVerdade(admin, {
+      lerComOModelo: (l) => {
+        recebidos.push(l.prazoMs);
+        return new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                tipo: "lido",
+                leitura: {
+                  tipo: "receita",
+                  procedimentos: [],
+                  codigos: [],
+                  foraDoCadastro: 0,
+                  confianca: "alta",
+                },
+                modelo: "gpt-6-luna",
+                uso: {
+                  tokensEntrada: 1_900,
+                  tokensSaida: 20,
+                  tokensCacheLidos: 0,
+                  tokensCacheGravados: 0,
+                },
+              }),
+            l.prazoMs - 10,
+          ),
+        );
+      },
+    });
+    const promessa = porta.ler(
+      {
+        tipo: "arquivo",
+        messageId: FOTO,
+        midia: "imagem",
+        arquivo: { tipo: "imagem", formato: "jpeg", bytes: jpegSintetico() },
+        paginas: 1,
+      },
+      [],
+      PRAZO_DA_PORTA,
+    );
+    await vi.advanceTimersByTimeAsync(PRAZO_DA_PORTA + 1_000);
+    const r = await promessa;
+    expect(recebidos).toEqual([
+      PRAZO_DA_PORTA -
+        FOLGA_DO_CORTE_DO_LEITOR_MS -
+        MARGEM_ENTRE_OS_CORTES_MS -
+        RESERVA_DA_GRAVACAO_DA_LEITURA_MS,
+    ]);
+    expect(gravadas).toEqual(["receita"]);
+    expect(r).toMatchObject({ tipo: "lido", leitura: { tipo: "receita" } });
+  });
+});
+
+// Segunda rodada da revisao (R3 de d1a15f6, 2): o corte da leitura pelo
+// laco contava o pior caso do arquivo pelas CONSTANTES do modulo do leitor
+// (nulas ate a prova paga), e nao pelos tetos que o executor injeta no
+// plano, na reserva e na porta: o gasto do arquivo sumia do acerto. Os
+// testes de antes so passavam com o vi.mock das constantes. Aqui, sem
+// vi.mock: as constantes continuam nulas.
+describe("o corte do laco no leitor pelos tetos injetados (R3 de d1a15f6, 2)", () => {
+  const LIMPO: ResultadoDoClassificador = {
+    tipo: "classificacao",
+    classificacao: { gatilhos: ["nenhum"], confianca: "alta" },
+    modelo: "gpt-6-luna",
+    uso: null,
+  };
+  const verificador: Verificador = async (): Promise<ResultadoDoVerificador> => ({
+    tipo: "veredicto",
+    veredicto: { aprovado: true, violacoes: [], confianca: "alta" },
+    modelo: "gpt-6-luna",
+    uso: null,
+  });
+  const umaChamada = (tokensDoArquivo: number) =>
+    usoEstimadoDoLeitor({
+      catalogo: itensDoCatalogo(CATALOGO_DA_AG6B),
+      tokensDoArquivo,
+    });
+
+  it.each([
+    [
+      "a foto (o teto da imagem)",
+      { tipo: "imagem", formato: "jpeg", bytes: jpegSintetico() } as const,
+      1,
+      1_600,
+    ],
+    [
+      "o PDF de 3 paginas (o teto da pagina, 3 vezes)",
+      { tipo: "pdf", bytes: new Uint8Array([0x25, 0x50, 0x44, 0x46]) } as const,
+      3,
+      3 * 1_800,
+    ],
+  ])(
+    "o caso do revisor, %s: a porta que nao volta; o laco corta e conta o pior caso pelos tetos do executor",
+    async (_nome, arquivo, paginas, tokensDoArquivo) => {
+      relogioFalso();
+      expect(TETO_DE_TOKENS_POR_IMAGEM).toBeNull();
+      const { porta } = portaFalsa({
+        preparo: {
+          [FOTO]: {
+            tipo: "arquivo",
+            messageId: FOTO,
+            midia: arquivo.tipo === "pdf" ? "documento" : "imagem",
+            arquivo,
+            paginas,
+          },
+        },
+      });
+      const ler = vi.fn<PortaDaMidia["ler"]>(() => nunca());
+      const agente = agenteQueResponde("Claro.");
+      const promessa = executarTurnoDoAgente({
+        cliente: agente.cliente,
+        modelo: "gpt-6-luna",
+        clinicId: CLINICA,
+        identificadorDeSeguranca: "a".repeat(64),
+        config: configComMidia(),
+        catalogo: CATALOGO_DA_AG6B,
+        mensagens: [fotoNoLaco(FOTO, "quanto fica?")],
+        agoraMs: AGORA,
+        fuso: "America/Fortaleza",
+        verificador,
+        classificador: async () => LIMPO,
+        modeloDosClassificadores: "gpt-6-luna",
+        midia: { ...porta, ler },
+        tetosDoLeitor: { imagem: 1_600, pagina: 1_800 },
+      });
+      await vi.advanceTimersByTimeAsync(
+        PRAZO_DO_TURNO_MS - RESERVA_DO_FILTRO_MS - RESERVA_DO_AGENTE_DEPOIS_DA_MIDIA_MS,
+      );
+      const r = await promessa;
+      expect(r.desfecho).toEqual({ tipo: "falhou", motivo: "timeout" });
+      expect(ler).toHaveBeenCalledTimes(1);
+      const estimado = umaChamada(tokensDoArquivo);
+      expect(estimado).not.toBeNull();
+      // O gasto do arquivo nao some: MAXIMO_DE_CHAMADAS_DO_LEITOR chamadas
+      // no teto que o executor deu.
+      expect(r.uso.filter((u) => u.papel === "leitor_de_midia")).toEqual([
+        {
+          papel: "leitor_de_midia",
+          modelo: "gpt-6-luna",
+          uso: {
+            tokensEntrada: MAXIMO_DE_CHAMADAS_DO_LEITOR * (estimado?.tokensEntrada ?? NaN),
+            tokensSaida: MAXIMO_DE_CHAMADAS_DO_LEITOR * (estimado?.tokensSaida ?? NaN),
+            tokensCacheLidos:
+              MAXIMO_DE_CHAMADAS_DO_LEITOR * (estimado?.tokensCacheLidos ?? NaN),
+            tokensCacheGravados:
+              MAXIMO_DE_CHAMADAS_DO_LEITOR * (estimado?.tokensCacheGravados ?? NaN),
+          },
+        },
+      ]);
+      expect(agente.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it("pelo executor: os tetos do plano e da reserva chegam ao corte do laco, e o acerto conta o pior caso do arquivo", async () => {
+    relogioFalso();
+    expect(TETO_DE_TOKENS_POR_IMAGEM).toBeNull();
+    const ler = vi.fn<PortaDaMidia["ler"]>(() => nunca());
+    const { cenario, promessa } = rodar({
+      mensagens: [foto()],
+      tempo: () => Date.now(),
+      // A porta que nao volta (nem ao sinal): so o corte do laco termina.
+      midia: { criarPorta: () => ({ ...portaFalsa().porta, ler }) },
+    });
+    await vi.advanceTimersByTimeAsync(PRAZO_DA_INVOCACAO_MS);
+    expect(await promessa).toEqual({ ok: true });
+    expect(ler).toHaveBeenCalledTimes(1);
+    expect(decisaoDo(cenario.banco)).toMatchObject({
+      desfecho: "falhou",
+      motivo_da_falha: "timeout",
+    });
+    const estimado = umaChamada(1_600);
+    const [acerto] = cenario.banco.chamadasDe("acertar_gasto_da_ia");
+    expect(acerto?.p_linhas).toContainEqual(
+      expect.objectContaining({
+        papel: "leitor_de_midia",
+        tokens_entrada: MAXIMO_DE_CHAMADAS_DO_LEITOR * (estimado?.tokensEntrada ?? NaN),
+        tokens_saida: MAXIMO_DE_CHAMADAS_DO_LEITOR * (estimado?.tokensSaida ?? NaN),
+      }),
+    );
   });
 });

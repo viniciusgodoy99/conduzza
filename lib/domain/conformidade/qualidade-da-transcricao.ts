@@ -15,7 +15,9 @@
 //    repetido) ou avg_logprob abaixo de -1 (baixa confianca). O audio
 //    inteiro vira "sem fala";
 //  - o texto final vazio, so pontuacao, acima de 4.000 caracteres, ou com
-//    uma frase-fantasma da lista fechada: "sem fala";
+//    uma frase-fantasma da lista fechada: "sem fala". As despedidas
+//    ("Tchau, tchau!", "Ate a proxima!") so quando sao a transcricao
+//    INTEIRA (revisao R2 de d1a15f6, B2);
 //  - o texto final CURTO (ate 3 palavras, o tamanho de "sim", "ok" ou "sim,
 //    pode cancelar") so vale com no_speech_prob baixo (ate 0,2) em TODOS os
 //    segmentos: e ele que vira o "sim" falado do cancelamento, da lista de
@@ -86,6 +88,19 @@ export const FRASES_FANTASMA = [
   "\u266b",
 ] as const;
 
+/**
+ * Revisao R2 de d1a15f6 (B2): as despedidas que o Whisper inventa no fim do
+ * silencio ou da musica ("Tchau, tchau!", "Ate a proxima!"). So contam
+ * quando a transcricao INTEIRA e a frase (igualdade depois de normalizar:
+ * sem acento, minusculas, a pontuacao como espaco), nunca como pedaco: a
+ * pessoa diz "tchau" no fim de um audio de verdade ("Quero remarcar para
+ * sexta. Tchau, tchau!" passa). PROPOSTA, como a lista acima.
+ */
+export const FRASES_FANTASMA_INTEIRAS = [
+  "tchau tchau",
+  "ate a proxima",
+] as const;
+
 /** As metricas de um segmento do verbose_json que as travas leem. */
 export type SegmentoDaTranscricao = {
   text: string;
@@ -134,6 +149,16 @@ export function segmentoEmSilencio(segmento: SegmentoDaTranscricao): boolean {
 /** As palavras do texto (letras ou digitos seguidos). */
 function contarPalavras(texto: string): number {
   return texto.match(/[\p{L}\p{N}]+/gu)?.length ?? 0;
+}
+
+/**
+ * O texto inteiro e uma das FRASES_FANTASMA_INTEIRAS: so as palavras, sem
+ * acento, em minusculas e separadas por um espaco ("Tchau, tchau!" vira
+ * "tchau tchau").
+ */
+function eFraseFantasmaInteira(normal: string): boolean {
+  const palavras = (normal.match(/[\p{L}\p{N}]+/gu) ?? []).join(" ");
+  return FRASES_FANTASMA_INTEIRAS.some((frase) => palavras === frase);
 }
 
 /**
@@ -187,7 +212,10 @@ export function avaliarTranscricao(entrada: {
     return { tipo: "sem_fala", motivo: "longo" };
   }
   const normal = normalizar(texto);
-  if (FRASES_FANTASMA.some((frase) => normal.includes(frase))) {
+  if (
+    FRASES_FANTASMA.some((frase) => normal.includes(frase)) ||
+    eFraseFantasmaInteira(normal)
+  ) {
     return { tipo: "sem_fala", motivo: "frase_fantasma" };
   }
   // A resposta curta ("Sim.", "Ok.", "Certo.") so com no_speech_prob baixo
@@ -208,11 +236,13 @@ export function avaliarTranscricao(entrada: {
 export const FONTES_DA_QUALIDADE_DA_TRANSCRICAO = {
   limites: LIMITES_DA_QUALIDADE,
   frases: FRASES_FANTASMA,
+  frasesInteiras: FRASES_FANTASMA_INTEIRAS,
   regras: [
     "silencio: no_speech_prob acima, qualquer que seja o avg_logprob; o texto sai",
     "todo o texto vinha do silencio: sem fala (silencio)",
     "fora do silencio: compression_ratio acima ou avg_logprob abaixo; o audio inteiro sem fala",
     "texto final vazio, so pontuacao, longo ou com frase-fantasma: sem fala",
+    "frase-fantasma inteira: so quando a transcricao inteira e a frase (so as palavras, sem acento, em minusculas)",
     "texto final curto: no_speech_prob baixo em todos os segmentos, senao sem fala (curta_incerta)",
     "sem segmentos: sem fala",
     "nunca conserta o texto",

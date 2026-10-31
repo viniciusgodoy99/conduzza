@@ -763,3 +763,70 @@ describe("calibragem da revisão 2: o que as regras novas não podem barrar", ()
     ]);
   });
 });
+
+// Revisao R2 de d1a15f6 (A2, 30/10/2026): o ponto de referencia que
+// consultar_unidades trouxe e a unica excecao da UPA, do pronto-socorro, do
+// SAMU e do hospital na saida. So o texto EXATO do campo, sem a pontuacao em
+// volta e comecando pela palavra de lugar, vira trecho de endereco.
+describe("revisão R2 (A2): o ponto de referência da ferramenta", () => {
+  const saida = (referencia: string) =>
+    JSON.stringify({
+      resultado: "unidades",
+      unidades: [
+        {
+          codigo: "u1",
+          nome: "Centro",
+          endereco: "Rua X, 123, Centro, Fortaleza, CE",
+          ponto_de_referencia: referencia,
+          horario_de_funcionamento: null,
+        },
+      ],
+    });
+  const trechos = (rascunho: string, referencia: string) =>
+    trechosDeEnderecoDasFerramentas(
+      rascunho,
+      fatos({ saidasDasFerramentas: [saida(referencia)] }),
+    );
+
+  it("o texto exato do campo, citado, sai sem a pontuacao em volta", () => {
+    expect(
+      trechos(
+        "Ficamos na Rua X, 123, em frente à UPA do Centro!",
+        "Em frente à UPA do Centro.",
+      ),
+    ).toContain("em frente a upa do centro");
+    expect(
+      trechos(
+        "A unidade fica ao lado do Pronto-Socorro.",
+        "Ao lado do Pronto-Socorro",
+      ),
+    ).toEqual(["ao lado do pronto-socorro"]);
+  });
+
+  it("outro texto, o campo nao citado e o nome solto nao saem", () => {
+    expect(
+      trechos(
+        "Ficamos ao lado da UPA do Centro.",
+        "Em frente à UPA do Centro.",
+      ),
+    ).toEqual([]);
+    expect(trechos("Ficamos na Rua X.", "Em frente à UPA do Centro.")).toEqual(
+      [],
+    );
+    expect(trechos("Vá ao Hospital Geral agora.", "Hospital Geral")).toEqual(
+      [],
+    );
+    expect(
+      trechos("A UPA do Centro fica ao lado.", "UPA do Centro, ao lado"),
+    ).toEqual([]);
+  });
+
+  it("sem consultar_unidades no turno, nada sai", () => {
+    expect(
+      trechosDeEnderecoDasFerramentas(
+        "Ficamos em frente à UPA do Centro.",
+        fatos({}),
+      ),
+    ).toEqual([]);
+  });
+});

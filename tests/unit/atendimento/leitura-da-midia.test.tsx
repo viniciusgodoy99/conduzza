@@ -3,7 +3,17 @@ import { readFileSync } from "node:fs";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type MockInstance,
+} from "vitest";
 
 vi.mock("@/app/(app)/atendimento/actions", () => ({
   assumirConversaAction: vi.fn(),
@@ -271,19 +281,6 @@ describe("áudio do paciente: Transcrição do assistente", () => {
     expect(transcricaoPareceLonga("sim\nnão")).toBe(true);
     // A transcricao do teste de cima passa: o ver mais aparece.
     expect(transcricaoPareceLonga(leitura().transcricao ?? "")).toBe(true);
-  });
-
-  it("o componente mede depois de montar e a cada mudança de tamanho (o molde do Ver tudo das agendadas)", () => {
-    const codigo = readFileSync(
-      "components/atendimento/media/leitura-do-assistente.tsx",
-      "utf8",
-    );
-    expect(codigo).toContain("useLayoutEffect(");
-    expect(codigo).toContain(
-      "setCortada(elemento.scrollHeight > elemento.clientHeight + 1)",
-    );
-    expect(codigo).toContain("new ResizeObserver(medir)");
-    expect(codigo).toContain("{cortada || aberta ? (");
   });
 
   it("a transcrição antiga da uazapi continua como Transcrição:, junto da do assistente", () => {
@@ -887,5 +884,452 @@ describe("tema e tokens", () => {
     expect(renderToStaticMarkup(<LeituraDoAssistente leitura={null} />)).toBe(
       "",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O "ver mais" medido, num DOM de verdade (revisao R3 de d1a15f6, 4)
+// ---------------------------------------------------------------------------
+//
+// O teste de antes so lia o codigo-fonte. Aqui o componente monta de
+// verdade (react-dom/client, com o act do React): o useLayoutEffect mede, o
+// ResizeObserver avisa a troca de tamanho e o clique abre e fecha. O
+// projeto nao tem jsdom (e nao ganha dependencia por isto): um DOM minimo,
+// so o que o react-dom/client usa com estes elementos (div, p, span, button
+// e texto), e um layout falso que o teste controla: a largura da bolha em
+// caracteres por linha, a altura de cada linha e o line-clamp-2 (a caixa do
+// paragrafo fecha em duas linhas; o conteudo, nao).
+
+const NO_ELEMENTO = 1;
+const NO_TEXTO = 3;
+const NO_DOCUMENTO = 9;
+const ALTURA_DA_LINHA = 20;
+/** A largura da bolha, em caracteres por linha (o teste muda). */
+const layout = { largura: 40 };
+
+type EventoFalso = {
+  type: string;
+  bubbles: boolean;
+  cancelable: boolean;
+  target: NoFalso | null;
+  currentTarget: NoFalso | null;
+  defaultPrevented: boolean;
+  parado: boolean;
+  timeStamp: number;
+  button: number;
+  preventDefault(): void;
+  stopPropagation(): void;
+};
+
+type Ouvinte = {
+  tipo: string;
+  fn: (evento: EventoFalso) => void;
+  captura: boolean;
+};
+
+class NoFalso {
+  parentNode: NoFalso | null = null;
+  childNodes: NoFalso[] = [];
+  ouvintes: Ouvinte[] = [];
+  constructor(
+    readonly nodeType: number,
+    readonly nodeName: string,
+    public ownerDocument: DocumentoFalso | null,
+  ) {}
+  get firstChild(): NoFalso | null {
+    return this.childNodes[0] ?? null;
+  }
+  get lastChild(): NoFalso | null {
+    return this.childNodes[this.childNodes.length - 1] ?? null;
+  }
+  get nextSibling(): NoFalso | null {
+    const irmaos = this.parentNode?.childNodes ?? [];
+    return irmaos[irmaos.indexOf(this) + 1] ?? null;
+  }
+  appendChild<T extends NoFalso>(filho: T): T {
+    filho.parentNode?.removeChild(filho);
+    this.childNodes.push(filho);
+    filho.parentNode = this;
+    return filho;
+  }
+  insertBefore<T extends NoFalso>(filho: T, antes: NoFalso | null): T {
+    if (antes === null) {
+      return this.appendChild(filho);
+    }
+    filho.parentNode?.removeChild(filho);
+    this.childNodes.splice(this.childNodes.indexOf(antes), 0, filho);
+    filho.parentNode = this;
+    return filho;
+  }
+  removeChild<T extends NoFalso>(filho: T): T {
+    const i = this.childNodes.indexOf(filho);
+    if (i >= 0) {
+      this.childNodes.splice(i, 1);
+    }
+    filho.parentNode = null;
+    return filho;
+  }
+  get textContent(): string {
+    return this.childNodes.map((filho) => filho.textContent).join("");
+  }
+  set textContent(valor: string) {
+    for (const filho of this.childNodes) {
+      filho.parentNode = null;
+    }
+    this.childNodes = [];
+    if (valor !== "" && this.ownerDocument !== null) {
+      this.appendChild(this.ownerDocument.createTextNode(valor));
+    }
+  }
+  addEventListener(
+    tipo: string,
+    fn: (evento: EventoFalso) => void,
+    opcoes?: boolean | { capture?: boolean },
+  ): void {
+    const captura =
+      typeof opcoes === "boolean" ? opcoes : Boolean(opcoes?.capture);
+    this.ouvintes.push({ tipo, fn, captura });
+  }
+  removeEventListener(
+    tipo: string,
+    fn: (evento: EventoFalso) => void,
+    opcoes?: boolean | { capture?: boolean },
+  ): void {
+    const captura =
+      typeof opcoes === "boolean" ? opcoes : Boolean(opcoes?.capture);
+    this.ouvintes = this.ouvintes.filter(
+      (o) => !(o.tipo === tipo && o.fn === fn && o.captura === captura),
+    );
+  }
+  /** A captura do topo ao alvo e a bolha do alvo ao topo, como no navegador. */
+  dispatchEvent(evento: EventoFalso): boolean {
+    evento.target = this;
+    const caminho: NoFalso[] = [this];
+    for (let pai = this.parentNode; pai !== null; pai = pai.parentNode) {
+      caminho.push(pai);
+    }
+    const chamar = (no: NoFalso, captura: boolean) => {
+      evento.currentTarget = no;
+      for (const o of no.ouvintes.filter(
+        (o) => o.tipo === evento.type && o.captura === captura,
+      )) {
+        o.fn(evento);
+      }
+    };
+    for (const no of [...caminho].reverse()) {
+      if (!evento.parado) {
+        chamar(no, true);
+      }
+    }
+    for (const no of caminho) {
+      if (!evento.parado && (evento.bubbles || no === this)) {
+        chamar(no, false);
+      }
+    }
+    return !evento.defaultPrevented;
+  }
+}
+
+class TextoFalso extends NoFalso {
+  constructor(
+    public nodeValue: string,
+    dono: DocumentoFalso,
+  ) {
+    super(NO_TEXTO, "#text", dono);
+  }
+  override get textContent(): string {
+    return this.nodeValue;
+  }
+  override set textContent(valor: string) {
+    this.nodeValue = valor;
+  }
+}
+
+class ElementoFalso extends NoFalso {
+  readonly namespaceURI = "http://www.w3.org/1999/xhtml";
+  readonly atributos = new Map<string, string>();
+  readonly style: Record<string, string> = {};
+  constructor(
+    readonly tagName: string,
+    dono: DocumentoFalso,
+  ) {
+    super(NO_ELEMENTO, tagName, dono);
+  }
+  setAttribute(nome: string, valor: unknown): void {
+    this.atributos.set(nome, String(valor));
+  }
+  getAttribute(nome: string): string | null {
+    return this.atributos.get(nome) ?? null;
+  }
+  removeAttribute(nome: string): void {
+    this.atributos.delete(nome);
+  }
+  hasAttribute(nome: string): boolean {
+    return this.atributos.has(nome);
+  }
+  get classes(): string[] {
+    return (this.getAttribute("class") ?? "").split(/\s+/);
+  }
+  /** As linhas do conteudo na largura de agora (o layout falso). */
+  private get linhas(): number {
+    return Math.max(1, Math.ceil(this.textContent.length / layout.largura));
+  }
+  /** A altura do conteudo inteiro. */
+  get scrollHeight(): number {
+    return this.linhas * ALTURA_DA_LINHA;
+  }
+  /** A altura da caixa: o line-clamp-2 fecha em duas linhas. */
+  get clientHeight(): number {
+    const linhas = this.classes.includes("line-clamp-2")
+      ? Math.min(2, this.linhas)
+      : this.linhas;
+    return linhas * ALTURA_DA_LINHA;
+  }
+}
+
+class DocumentoFalso extends NoFalso {
+  readonly documentElement: ElementoFalso;
+  readonly body: ElementoFalso;
+  activeElement: ElementoFalso | null = null;
+  defaultView: Record<string, unknown> | null = null;
+  constructor() {
+    super(NO_DOCUMENTO, "#document", null);
+    this.ownerDocument = null;
+    this.documentElement = new ElementoFalso("HTML", this);
+    this.body = new ElementoFalso("BODY", this);
+    this.appendChild(this.documentElement);
+    this.documentElement.appendChild(this.body);
+  }
+  createElement(tag: string): ElementoFalso {
+    return new ElementoFalso(tag.toUpperCase(), this);
+  }
+  createTextNode(texto: string): TextoFalso {
+    return new TextoFalso(texto, this);
+  }
+}
+
+/** O ResizeObserver falso: so avisa os elementos observados, quando o teste manda. */
+class ObservadorFalso {
+  static ativos = new Set<ObservadorFalso>();
+  readonly elementos = new Set<unknown>();
+  constructor(private readonly avisar: () => void) {
+    ObservadorFalso.ativos.add(this);
+  }
+  observe(elemento: unknown): void {
+    this.elementos.add(elemento);
+  }
+  unobserve(elemento: unknown): void {
+    this.elementos.delete(elemento);
+  }
+  disconnect(): void {
+    this.elementos.clear();
+    ObservadorFalso.ativos.delete(this);
+  }
+  /** A caixa dos elementos observados mudou de tamanho. */
+  static mudouDeTamanho(): void {
+    for (const observador of [...ObservadorFalso.ativos]) {
+      if (observador.elementos.size > 0) {
+        observador.avisar();
+      }
+    }
+  }
+  static observados(): unknown[] {
+    return [...ObservadorFalso.ativos].flatMap((o) => [...o.elementos]);
+  }
+}
+
+function todosOsElementos(no: NoFalso): ElementoFalso[] {
+  return no.childNodes.flatMap((filho) =>
+    filho instanceof ElementoFalso ? [filho, ...todosOsElementos(filho)] : [],
+  );
+}
+
+describe("o ver mais medido, num DOM de verdade (R3 de d1a15f6, 4)", () => {
+  type Raiz = { render(no: React.ReactNode): void; unmount(): void };
+  const globais = globalThis as unknown as Record<string, unknown>;
+  const NOMES = [
+    "window",
+    "document",
+    "ResizeObserver",
+    "IS_REACT_ACT_ENVIRONMENT",
+  ] as const;
+  const antes = new Map<string, unknown>();
+  let documento: DocumentoFalso;
+  let criarRaiz: (container: unknown) => Raiz;
+  let act: (feito: () => Promise<void>) => Promise<void>;
+  let raiz: Raiz | null = null;
+  let container: ElementoFalso;
+  let erros: MockInstance<typeof console.error>;
+
+  beforeAll(async () => {
+    for (const nome of NOMES) {
+      antes.set(nome, globais[nome]);
+    }
+    documento = new DocumentoFalso();
+    const janela: Record<string, unknown> = {
+      document: documento,
+      HTMLIFrameElement: class {},
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      event: undefined,
+    };
+    documento.defaultView = janela;
+    globais.window = janela;
+    globais.document = documento;
+    globais.ResizeObserver = ObservadorFalso;
+    globais.IS_REACT_ACT_ENVIRONMENT = true;
+    // Depois dos globais: o react-dom/client confere o DOM ao carregar.
+    const cliente = await import("react-dom/client");
+    criarRaiz = cliente.createRoot as unknown as (container: unknown) => Raiz;
+    const react = await import("react");
+    act = react.act as unknown as (feito: () => Promise<void>) => Promise<void>;
+  });
+
+  afterAll(() => {
+    for (const nome of NOMES) {
+      if (antes.get(nome) === undefined) {
+        delete globais[nome];
+      } else {
+        globais[nome] = antes.get(nome);
+      }
+    }
+  });
+
+  beforeEach(() => {
+    erros = vi.spyOn(console, "error");
+    layout.largura = 40;
+    container = documento.createElement("div");
+    documento.body.appendChild(container);
+    raiz = criarRaiz(container);
+  });
+
+  afterEach(async () => {
+    const montada = raiz;
+    raiz = null;
+    if (montada !== null) {
+      await act(async () => montada.unmount());
+    }
+    documento.body.removeChild(container);
+    // Desmontada, nada fica observado (o efeito desliga o observador).
+    expect(ObservadorFalso.observados()).toEqual([]);
+    ObservadorFalso.ativos.clear();
+    // O React nao reclamou de nada no DOM minimo (nem do act).
+    expect(erros).not.toHaveBeenCalled();
+    erros.mockRestore();
+  });
+
+  async function montar(transcricao: string) {
+    await act(async () => {
+      raiz?.render(<LeituraDoAssistente leitura={leitura({ transcricao })} />);
+    });
+  }
+
+  const paragrafo = () =>
+    todosOsElementos(container).find((e) => e.tagName === "P") ?? null;
+  const botao = () =>
+    todosOsElementos(container).find((e) => e.tagName === "BUTTON") ?? null;
+
+  async function clicar(alvo: ElementoFalso | null) {
+    expect(alvo).not.toBeNull();
+    await act(async () => {
+      const evento: EventoFalso = {
+        type: "click",
+        bubbles: true,
+        cancelable: true,
+        target: null,
+        currentTarget: null,
+        defaultPrevented: false,
+        parado: false,
+        timeStamp: 0,
+        button: 0,
+        preventDefault() {
+          this.defaultPrevented = true;
+        },
+        stopPropagation() {
+          this.parado = true;
+        },
+      };
+      alvo?.dispatchEvent(evento);
+    });
+  }
+
+  async function redimensionar(largura: number) {
+    await act(async () => {
+      layout.largura = largura;
+      ObservadorFalso.mudouDeTamanho();
+    });
+  }
+
+  // O rotulo ("Transcrição do assistente: ", 27 caracteres) vem junto.
+  const CURTA = "Quero marcar uma consulta."; // 53 com o rotulo: 2 linhas de 40
+  const LONGA = "Oi, ".repeat(75); // 327 com o rotulo: 9 linhas de 40
+
+  it("texto curto, que cabe nas duas linhas: sem ver mais; o paragrafo fechado em duas linhas e observado", async () => {
+    await montar(CURTA);
+    expect(paragrafo()?.textContent).toBe(`${TEXTOS_DA_LEITURA.transcricao} ${CURTA}`);
+    expect(paragrafo()?.classes).toContain("line-clamp-2");
+    expect(botao()).toBeNull();
+    expect(ObservadorFalso.observados()).toEqual([paragrafo()]);
+  });
+
+  it("texto longo: ver mais, com o estado para o leitor de tela", async () => {
+    await montar(LONGA);
+    expect(botao()?.textContent).toBe(TEXTOS_DA_LEITURA.verMais);
+    expect(botao()?.getAttribute("aria-expanded")).toBe("false");
+    expect(botao()?.getAttribute("aria-controls")).toBe(
+      paragrafo()?.getAttribute("id"),
+    );
+  });
+
+  it("a medida vence a estimativa: o texto que parece longo mas cabe na bolha larga fica sem ver mais", async () => {
+    const media = "a".repeat(70); // 97 com o rotulo: passa dos 90 da estimativa
+    expect(transcricaoPareceLonga(media)).toBe(true);
+    layout.largura = 60; // 2 linhas
+    await montar(media);
+    expect(botao()).toBeNull();
+  });
+
+  it("a troca de tamanho muda o estado: a bolha estreita mostra o ver mais, a larga tira", async () => {
+    layout.largura = 60;
+    await montar("a".repeat(70)); // 97 caracteres: 2 linhas de 60
+    expect(botao()).toBeNull();
+    await redimensionar(30); // 4 linhas de 30: passa das duas
+    expect(botao()?.textContent).toBe(TEXTOS_DA_LEITURA.verMais);
+    await redimensionar(60);
+    expect(botao()).toBeNull();
+  });
+
+  it("o texto novo no mesmo paragrafo mede de novo, mesmo sem a caixa mudar de tamanho (o line-clamp segura a altura)", async () => {
+    // Duas linhas cheias: a caixa ja tem a altura do line-clamp-2.
+    const duasLinhas = "a".repeat(80 - 27);
+    await montar(duasLinhas);
+    expect(botao()).toBeNull();
+    const caixa = paragrafo()?.clientHeight;
+    const elemento = paragrafo();
+    await act(async () => {
+      raiz?.render(<LeituraDoAssistente leitura={leitura({ transcricao: LONGA })} />);
+    });
+    // O mesmo paragrafo, com a caixa do mesmo tamanho: o ResizeObserver de
+    // verdade nao avisaria. Quem mede e o efeito, pelo texto novo.
+    expect(paragrafo()).toBe(elemento);
+    expect(paragrafo()?.clientHeight).toBe(caixa);
+    expect(botao()?.textContent).toBe(TEXTOS_DA_LEITURA.verMais);
+  });
+
+  it("aberta: ver menos, sem o line-clamp e sem observar; fechada, mede de novo na largura de agora", async () => {
+    await montar(LONGA);
+    await clicar(botao());
+    expect(botao()?.textContent).toBe(TEXTOS_DA_LEITURA.verMenos);
+    expect(botao()?.getAttribute("aria-expanded")).toBe("true");
+    expect(paragrafo()?.classes).not.toContain("line-clamp-2");
+    // Aberta, nada e medido (o texto inteiro esta a vista).
+    expect(ObservadorFalso.observados()).toEqual([]);
+    // A bolha fica larga com ela aberta: o texto passa a caber em uma linha.
+    await redimensionar(400);
+    await clicar(botao());
+    // Fechada, o efeito mede de novo: cabe, e o botao some.
+    expect(paragrafo()?.classes).toContain("line-clamp-2");
+    expect(botao()).toBeNull();
+    expect(ObservadorFalso.observados()).toEqual([paragrafo()]);
   });
 });

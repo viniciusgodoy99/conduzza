@@ -488,7 +488,14 @@ describe("AG6b: a figurinha e a mídia a ler no portão", () => {
 // 3a rodada da AG6b (revisao de 6eae43d, item 6): o exame na legenda do
 // pedido. A bateria (bateria-ag6b.test.ts) tem as legendas da revisao; aqui
 // ficam as bordas de cada troca.
-describe("AG6b (3a rodada): o exame na legenda do pedido", () => {
+//
+// Revisao R2 de d1a15f6 (M1): as trocas do item 6 (o demonstrativo, a
+// marcacao, o convenio, o pedido e so o exame) foram DESFEITAS e o portao
+// voltou ao da 6eae43d: elas abriam o conteudo clinico em volta ("minha
+// glicose ta alterada, quanto custa esses exames?"). As bordas abaixo agora
+// escalam; a troca na recepcao e PROPOSTA para o dono e para a D34. A guarda
+// da finalidade e do preparo ficou (so deixa a troca de preco mais estrita).
+describe("AG6b (3a rodada, desfeita na revisão R2): o exame na legenda do pedido", () => {
   const portao = (texto: string) =>
     detectarGatilhosDeEntrada({ mensagens: [{ tipo: "texto", texto }] });
 
@@ -503,10 +510,13 @@ describe("AG6b (3a rodada): o exame na legenda do pedido", () => {
     "destes",
     "nesse",
     "nesses",
-  ])("o demonstrativo %s antes do exame, na pergunta de preco, passa", (d) => {
-    expect(portao(`quanto custa ${d} exames?`)).toEqual([]);
-    expect(portao(`qual o valor ${d} exame?`)).toEqual([]);
-  });
+  ])(
+    "o demonstrativo %s antes do exame, na pergunta de preco, escala (R2)",
+    (d) => {
+      expect(portao(`quanto custa ${d} exames?`)).toEqual(["assunto_clinico"]);
+      expect(portao(`qual o valor ${d} exame?`)).toEqual(["assunto_clinico"]);
+    },
+  );
 
   it.each([
     "quero marcar esses exames",
@@ -529,9 +539,39 @@ describe("AG6b (3a rodada): o exame na legenda do pedido", () => {
     "esses exames aqui",
     "quero marcar um exame de sangue",
     "tem horário pra que dia pra fazer esses exames?",
-  ])("a recepcao do exame passa: %s", (texto) => {
-    expect(portao(texto)).toEqual([]);
+  ])("a recepcao do exame escala (R2, proposta): %s", (texto) => {
+    expect(portao(texto)).toEqual(["assunto_clinico"]);
   });
+
+  it.each([
+    "quanto custa o exame?",
+    "qual o preço do exame?",
+    "qual o valor dos exames?",
+    "vocês fazem o exame?",
+    "exame de vista, quanto custa?",
+    "quanto custa o exame de sangue?",
+    "o médico pediu esses exames, quanto fica?",
+    "o resultado do exame vem por e-mail?",
+  ])(
+    "R2: a troca da 6eae43d continua (o artigo e a pergunta de preco): %s",
+    (texto) => {
+      expect(portao(texto)).toEqual([]);
+    },
+  );
+
+  it.each([
+    "pra que serve o exame? quanto custa?",
+    "quanto custa o exame? pra que serve?",
+    "quanto custa o exame? precisa de jejum?",
+    "quero marcar esses exames pra semana que vem",
+    "Quero marcar esses exames pra semana que vem.",
+    "quero marcar o exame no mes que vem",
+  ])(
+    'R2: a guarda da finalidade e o "que vem" do tempo escalam: %s',
+    (texto) => {
+      expect(portao(texto)[0]).toBe("assunto_clinico");
+    },
+  );
 
   it.each([
     // A finalidade, o preparo e o que ele detecta, em qualquer ponto.

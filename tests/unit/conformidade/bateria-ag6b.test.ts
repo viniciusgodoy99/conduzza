@@ -27,17 +27,32 @@ import type {
   ClassificadorDeEntrada,
   ResultadoDoClassificador,
 } from "@/lib/integrations/llm/classificador-de-entrada";
-import { contextoDo } from "@/tests/fixtures/ia/conformidade/casos";
 import {
+  contextoDo,
+  type CasoDeControle,
+  type CasoDeSaida,
+} from "@/tests/fixtures/ia/conformidade/casos";
+import {
+  CONTEXTO_DO_EXAME_DA_REVISAO_R2,
   CONTROLES_DA_MIDIA,
-  CONTROLES_DO_LUGAR,
+  CONTROLES_DA_TRIAGEM_DA_REVISAO_R2,
+  CONTROLES_DO_PONTO_DE_REFERENCIA,
   CONTROLES_DO_RESULTADO,
+  CONTROLES_DO_RESULTADO_DA_REVISAO_R2,
   ENTRADAS_POR_AUDIO,
-  FALAS_QUE_PASSAM,
+  FALAS_DO_PEDIDO_QUE_ESCALAM,
+  LEGENDAS_DO_PEDIDO_QUE_ESCALAM,
   LEGENDAS_QUE_ESCALAM,
   LEGENDAS_QUE_PASSAM,
+  LUGAR_SEM_A_FERRAMENTA_QUE_BLOQUEIA,
+  RASCUNHOS_DO_LUGAR_DA_REVISAO_R2,
   SAIDAS_DA_MIDIA_QUE_BLOQUEIAM,
+  SAIDAS_DA_TRIAGEM_DA_REVISAO_R2,
   SAIDAS_DO_LUGAR_QUE_BLOQUEIAM,
+  SAIDAS_DO_PONTO_DE_REFERENCIA_QUE_BLOQUEIAM,
+  SAIDAS_DO_RESULTADO_DA_REVISAO_R2,
+  SONDAS_DO_EXAME_DA_REVISAO_R2,
+  TELEFONE_COM_O_188,
 } from "@/tests/fixtures/ia/conformidade/casos-ag6b";
 
 import {
@@ -164,12 +179,26 @@ describe("bateria AG6b: os ids e a cobertura", () => {
       ...SAIDAS_DA_MIDIA_QUE_BLOQUEIAM,
       ...CONTROLES_DA_MIDIA,
       ...LEGENDAS_QUE_PASSAM,
-      ...FALAS_QUE_PASSAM,
+      ...LEGENDAS_DO_PEDIDO_QUE_ESCALAM,
+      ...FALAS_DO_PEDIDO_QUE_ESCALAM,
+      ...SONDAS_DO_EXAME_DA_REVISAO_R2,
+      ...CONTEXTO_DO_EXAME_DA_REVISAO_R2,
       ...SAIDAS_DO_LUGAR_QUE_BLOQUEIAM,
-      ...CONTROLES_DO_LUGAR,
+      ...LUGAR_SEM_A_FERRAMENTA_QUE_BLOQUEIA,
+      ...RASCUNHOS_DO_LUGAR_DA_REVISAO_R2,
+      ...CONTROLES_DO_PONTO_DE_REFERENCIA,
+      ...SAIDAS_DO_PONTO_DE_REFERENCIA_QUE_BLOQUEIAM,
       ...CONTROLES_DO_RESULTADO,
+      ...SAIDAS_DO_RESULTADO_DA_REVISAO_R2,
+      ...CONTROLES_DO_RESULTADO_DA_REVISAO_R2,
+      ...SAIDAS_DA_TRIAGEM_DA_REVISAO_R2,
+      ...CONTROLES_DA_TRIAGEM_DA_REVISAO_R2,
     ].map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
+    // Revisao R2 de d1a15f6: os numeros da revisao.
+    expect(RASCUNHOS_DO_LUGAR_DA_REVISAO_R2).toHaveLength(32);
+    expect(SONDAS_DO_EXAME_DA_REVISAO_R2).toHaveLength(27);
+    expect(CONTEXTO_DO_EXAME_DA_REVISAO_R2).toHaveLength(7);
     expect(ENTRADAS_POR_AUDIO.map((c) => c.gatilho)).toEqual(
       expect.arrayContaining(["sintoma", "assunto_clinico", "urgencia", "menor_de_idade"]),
     );
@@ -301,7 +330,7 @@ describe("bateria AG6b: a IA nunca interpreta o arquivo nem o audio", () => {
 // 3a rodada da AG6b (revisao de 6eae43d, 30/10/2026)
 // ---------------------------------------------------------------------------
 
-describe("bateria AG6b (3a rodada): a legenda do pedido chega ao leitor (item 6)", () => {
+describe("bateria AG6b: a legenda do pedido que já passava chega ao leitor", () => {
   it.each(LEGENDAS_QUE_PASSAM.map((c) => [c.id, c] as const))(
     "%s: o portao deixa passar",
     (_id, caso) => {
@@ -327,21 +356,90 @@ describe("bateria AG6b (3a rodada): a legenda do pedido chega ao leitor (item 6)
     },
   );
 
-  it.each(FALAS_QUE_PASSAM.map((c) => [c.id, c] as const))(
-    "%s: a fala sobre o pedido passa pelo portao e o agente responde",
+});
+
+// Revisao R2 de d1a15f6 (M1): as trocas do exame na legenda da 3a rodada
+// (item 6) foram desfeitas. A legenda e a fala do pedido com o demonstrativo,
+// a marcacao, o convenio, o pedido ou so o exame escalam antes do leitor,
+// como no main; a troca na recepcao e PROPOSTA para o dono e para a D34.
+describe("bateria AG6b (revisão R2): o exame na legenda volta a escalar (M1)", () => {
+  it.each(LEGENDAS_DO_PEDIDO_QUE_ESCALAM.map((c) => [c.id, c] as const))(
+    "%s: o portao escala com o assunto clinico e o arquivo nunca sai",
     async (_id, caso) => {
       expect(
-        detectarGatilhosDeEntrada({ mensagens: [{ tipo: "texto", texto: caso.texto }] }),
-      ).toEqual([]);
+        detectarGatilhosDeEntrada({
+          mensagens: [{ tipo: "texto", texto: caso.texto }],
+        })[0],
+      ).toBe("assunto_clinico");
+      const { porta, preparar, ler } = portaFalsa();
+      const { r, agente } = await turnoComMidia([fotoNoLaco(FOTO, caso.texto)], porta);
+      expect(r.desfecho).toMatchObject({
+        tipo: "escalou",
+        motivo: "assunto_clinico",
+        origem: "portao",
+      });
+      expect(preparar).not.toHaveBeenCalled();
+      expect(ler).not.toHaveBeenCalled();
+      expect(agente.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(FALAS_DO_PEDIDO_QUE_ESCALAM.map((c) => [c.id, c] as const))(
+    "%s: a fala sobre o pedido escala como o escrito; o agente nunca e chamado",
+    async (_id, caso) => {
+      expect(
+        detectarGatilhosDeEntrada({
+          mensagens: [{ tipo: "texto", texto: caso.texto }],
+        })[0],
+      ).toBe("assunto_clinico");
       const { porta, transcrever } = portaFalsa({
         transcricao: { [AUDIO]: transcrita(caso.texto) },
       });
       const { r, agente } = await turnoComMidia([audioNoLaco()], porta);
       expect(transcrever).toHaveBeenCalledTimes(1);
-      expect(agente.create).toHaveBeenCalled();
-      expect(r.tipo).toBe("resposta");
+      expect(r.tipo).toBe("frase_fixa");
+      expect(r.resposta).toBe(FRASE_DE_ESCALONAMENTO);
+      expect(r.desfecho).toMatchObject({ tipo: "escalou", origem: "portao" });
+      expect(agente.create).not.toHaveBeenCalled();
     },
   );
+
+  it.each(SONDAS_DO_EXAME_DA_REVISAO_R2.map((c) => [c.id, c] as const))(
+    "%s: a sonda clinica do revisor escala (como no main)",
+    (_id, caso) => {
+      expect(
+        detectarGatilhosDeEntrada({ mensagens: [{ tipo: "texto", texto: caso.texto }] }),
+      ).toContain("assunto_clinico");
+    },
+  );
+
+  it.each(CONTEXTO_DO_EXAME_DA_REVISAO_R2.map((c) => [c.id, c] as const))(
+    "%s: o contexto clinico do paciente barra o rascunho (como no main)",
+    async (_id, caso) => {
+      const resultado = avaliarRegras(caso.rascunho, contextoDo(caso));
+      expect(resultado.categorias).toContain("orientacao_clinica");
+      expect(resultado.achados.map((a) => a.regra)).toContain(
+        "contexto:assunto_clinico",
+      );
+      const verificador = verificadorQueSempreAprova();
+      const decisao = await filtrarSaida({
+        rascunho: caso.rascunho,
+        contexto: contextoDo(caso),
+        verificador,
+      });
+      expect(decisao).toMatchObject({ aprovado: false, camada: "regra" });
+      expect(verificador).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a pergunta de preco com o artigo continua passando, e a finalidade a mantem clinica", () => {
+    const portao = (texto: string) =>
+      detectarGatilhosDeEntrada({ mensagens: [{ tipo: "texto", texto }] });
+    expect(portao("quanto custa o exame?")).toEqual([]);
+    expect(portao("pra que serve o exame? quanto custa?")[0]).toBe(
+      "assunto_clinico",
+    );
+  });
 });
 
 describe("bateria AG6b (3a rodada): o resultado comentado pela IA tem regra", () => {
@@ -405,29 +503,133 @@ describe("bateria AG6b (3a rodada): a ida ao lugar em qualquer ponto do rascunho
     },
   );
 
-  it.each(CONTROLES_DO_LUGAR.map((c) => [c.id, c] as const))(
-    "controle %s: o lugar como endereco, sem a ida, passa",
+});
+
+// ---------------------------------------------------------------------------
+// Revisao R2 de d1a15f6 (30/10/2026)
+// ---------------------------------------------------------------------------
+
+/** Barra pela regra, na categoria do caso, sem chamar o verificador. */
+async function barraPelaRegra(caso: CasoDeSaida, regra?: string) {
+  const resultado = avaliarRegras(caso.rascunho, contextoDo(caso));
+  expect(resultado.categorias).toContain(caso.categoria);
+  if (regra !== undefined) {
+    expect(resultado.achados.map((a) => a.regra)).toContain(regra);
+  }
+  const verificador = verificadorQueSempreAprova();
+  const decisao = await filtrarSaida({
+    rascunho: caso.rascunho,
+    contexto: contextoDo(caso),
+    verificador,
+  });
+  expect(decisao).toMatchObject({ aprovado: false, camada: "regra" });
+  expect(verificador).not.toHaveBeenCalled();
+}
+
+/** Passa nas regras (nenhum achado) e no filtro, com o verificador que aprova. */
+async function passaNasRegras(caso: CasoDeControle) {
+  expect(avaliarRegras(caso.rascunho, contextoDo(caso)).achados).toEqual([]);
+  const decisao = await filtrarSaida({
+    rascunho: caso.rascunho,
+    contexto: contextoDo(caso),
+    verificador: verificadorQueSempreAprova(),
+  });
+  expect(decisao.aprovado).toBe(true);
+}
+
+// A2: a troca larga do ponto de referencia saiu. Qualquer mencao a UPA, ao
+// pronto-socorro, ao SAMU ou ao hospital como destino barra como no main; so
+// o texto EXATO do ponto de referencia que consultar_unidades trouxe no turno
+// passa.
+describe("bateria AG6b (revisão R2): o lugar como no main, menos o ponto de referência da ferramenta (A2)", () => {
+  it.each(RASCUNHOS_DO_LUGAR_DA_REVISAO_R2.map((c) => [c.id, c] as const))(
+    "%s: o rascunho do revisor barra (pronto_socorro), como no main",
     async (_id, caso) => {
-      expect(avaliarRegras(caso.rascunho, contextoDo(caso)).achados).toEqual([]);
-      const decisao = await filtrarSaida({
-        rascunho: caso.rascunho,
-        contexto: contextoDo(caso),
-        verificador: verificadorQueSempreAprova(),
-      });
-      expect(decisao.aprovado).toBe(true);
+      await barraPelaRegra(caso, "pronto_socorro");
+    },
+  );
+
+  it.each(LUGAR_SEM_A_FERRAMENTA_QUE_BLOQUEIA.map((c) => [c.id, c] as const))(
+    "%s: o lugar citado sem a ferramenta no turno barra (o antigo controle)",
+    async (_id, caso) => {
+      await barraPelaRegra(caso, "pronto_socorro");
+    },
+  );
+
+  it.each(CONTROLES_DO_PONTO_DE_REFERENCIA.map((c) => [c.id, c] as const))(
+    "controle %s: o ponto de referencia exato da ferramenta passa",
+    async (_id, caso) => {
+      await passaNasRegras(caso);
+    },
+  );
+
+  it.each(
+    SAIDAS_DO_PONTO_DE_REFERENCIA_QUE_BLOQUEIAM.map((c) => [c.id, c] as const),
+  )(
+    "%s: sem a ferramenta, outro texto, outra mencao ou o nome solto barram",
+    async (_id, caso) => {
+      await barraPelaRegra(caso, "pronto_socorro");
     },
   );
 });
 
-// As versoes conferidas na revisao de 6eae43d ficaram para tras: o portao
-// mudou (os demonstrativos, a recepcao, o pedido e a mensagem so com o
-// exame, e a finalidade e o preparo que mantem o exame clinico) e as regras
-// tambem (a ida ao lugar no rascunho inteiro e o resultado comentado).
-describe("bateria AG6b: as versões da 3a rodada", () => {
-  it("o portão e as regras mudaram desde a revisão de 6eae43d", () => {
+// M6: o resultado comentado que so o verificador barrava.
+describe("bateria AG6b (revisão R2): o resultado do exame comentado (M6)", () => {
+  it.each(SAIDAS_DO_RESULTADO_DA_REVISAO_R2.map((c) => [c.id, c] as const))(
+    "%s: a regra do resultado comentado pega",
+    async (_id, caso) => {
+      await barraPelaRegra(
+        caso,
+        caso.categoria === "diagnostico"
+          ? "resultado_de_exame_alterado"
+          : "resultado_de_exame_normal",
+      );
+    },
+  );
+
+  it.each(CONTROLES_DO_RESULTADO_DA_REVISAO_R2.map((c) => [c.id, c] as const))(
+    "controle %s: o que a IA pode dizer do exame passa",
+    async (_id, caso) => {
+      await passaNasRegras(caso);
+    },
+  );
+});
+
+// B1: a triagem que passava pelas regras (tambem no main).
+describe("bateria AG6b (revisão R2): a triagem que passava também no main (B1)", () => {
+  it.each(SAIDAS_DA_TRIAGEM_DA_REVISAO_R2.map((c) => [c.id, c] as const))(
+    "%s: barra pela regra",
+    async (_id, caso) => {
+      await barraPelaRegra(caso);
+    },
+  );
+
+  it.each(CONTROLES_DA_TRIAGEM_DA_REVISAO_R2.map((c) => [c.id, c] as const))(
+    "controle %s: a recepcao passa",
+    async (_id, caso) => {
+      await passaNasRegras(caso);
+    },
+  );
+
+  it("o 188 dentro do telefone barra so como dado pessoal, nunca como emergencia", () => {
+    const resultado = avaliarRegras(TELEFONE_COM_O_188, contextoDo({}));
+    expect(resultado.categorias).toEqual(["formato_invalido"]);
+    expect(resultado.achados.map((a) => a.regra)).toEqual(["dado_pessoal"]);
+  });
+});
+
+// As versoes conferidas na revisao de 6eae43d e na revisao R2 de d1a15f6
+// ficaram para tras: o portao mudou (as trocas do exame da 3a rodada
+// desfeitas, o "que vem" do tempo) e as regras tambem (a troca larga do
+// lugar saiu, o ponto de referencia da ferramenta, o resultado comentado e a
+// triagem da revisao R2).
+describe("bateria AG6b: as versões da revisão R2", () => {
+  it("o portão e as regras mudaram desde as revisões de 6eae43d e de d1a15f6", () => {
     expect(versaoDoPortao()).toMatch(/^portao-[0-9a-f]{12}$/);
     expect(versaoDasRegras()).toMatch(/^regras-[0-9a-f]{12}$/);
     expect(versaoDoPortao()).not.toBe("portao-d2a3ee0b28c5");
     expect(versaoDasRegras()).not.toBe("regras-ed143ad51147");
+    expect(versaoDoPortao()).not.toBe("portao-04348f7f6108");
+    expect(versaoDasRegras()).not.toBe("regras-866a8602fec2");
   });
 });

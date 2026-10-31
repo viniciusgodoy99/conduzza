@@ -322,7 +322,12 @@ describe("o portao de novo com a transcricao (1c)", () => {
   it("sem fala: midia_nao_suportada, com o passo proprio; o audio continua nao lido", async () => {
     const { porta } = portaFalsa({
       transcricao: {
-        [AUDIO]: { tipo: "sem_fala", leitura: leituraDaTranscricao(null), uso: usoDaTranscricao() },
+        [AUDIO]: {
+          tipo: "sem_fala",
+          leitura: leituraDaTranscricao(null),
+          uso: usoDaTranscricao(),
+          urgencia: null,
+        },
       },
     });
     const { promessa, agente } = turno([audioNoLaco()], { midia: porta });
