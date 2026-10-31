@@ -28,6 +28,7 @@ import {
   IDADES_POR_EXTENSO,
   LEXICO_COMPACTO_DE_ENTRADA,
   NEUTRALIZACOES_DE_ENTRADA,
+  PADROES_DA_REDE_DE_SEGURANCA,
   PADROES_DE_ENTRADA,
 } from "@/lib/domain/conformidade/padroes";
 // [AG6 urgência] início
@@ -193,6 +194,25 @@ function gatilhosDoTexto(bruto: string): Set<GatilhoDeEntrada> {
 }
 
 /**
+ * S1 (31/10/2026): a rede de seguranca (padroes.ts) tambem na juncao das
+ * mensagens de texto do turno, na ordem e separadas por espaco ("quero" e
+ * "morrer"; "nao", "aguento", "mais", "viver"; "fiz labial" e "o labio
+ * ficou branco"). So a rede le a juncao: os outros padroes continuam lendo
+ * cada mensagem sozinha. A juncao so acrescenta (escala como sintoma).
+ */
+function redeDeSegurancaNaJuncao(textos: readonly string[]): boolean {
+  if (textos.length < 2) {
+    return false;
+  }
+  const frases = frasesDasVisoes(
+    visoesDoTexto(textos.join(" "), [], neutralizarEntrada),
+  );
+  return PADROES_DA_REDE_DE_SEGURANCA.some((padrao) =>
+    frases.some((frase) => padrao.regex.test(frase)),
+  );
+}
+
+/**
  * Os gatilhos presentes nas mensagens, em ordem de prioridade (o primeiro e
  * o motivo do escalonamento). Lista vazia = o portao deterministico deixa
  * passar (o classificador por modelo ainda decide).
@@ -206,6 +226,8 @@ export function detectarGatilhosDeEntrada(
   /** O que a urgencia le: o texto e a legenda da midia, na ordem. */
   const textosDaUrgencia: (string | null)[] = [];
   // [AG6 urgência] fim
+  /** S1: os textos do turno, na ordem, para a rede de seguranca na juncao. */
+  const textosDaRede: string[] = [];
 
   for (const mensagem of entrada.mensagens) {
     // [AG6b mídia] início
@@ -240,6 +262,21 @@ export function detectarGatilhosDeEntrada(
     // [AG6 urgência] início
     textosDaUrgencia.push(texto);
     // [AG6 urgência] fim
+    if (texto.trim() !== "") {
+      textosDaRede.push(texto);
+    }
+  }
+  // S1: a rede de seguranca na juncao das mensagens de texto (o risco de
+  // vida e a emergencia aguda partidos em varias mensagens). Acima da
+  // rajada ou do numero de mensagens o portao ja escala (mensagem longa,
+  // abaixo): a juncao so e lida quando pode mudar o resultado, e o texto
+  // longo nao paga a leitura de novo.
+  if (
+    total <= LIMITE_DA_RAJADA &&
+    entrada.mensagens.length <= MAXIMO_DE_MENSAGENS_NO_CONTEXTO &&
+    redeDeSegurancaNaJuncao(textosDaRede)
+  ) {
+    achados.add("sintoma");
   }
   // [AG6 urgência] início
   // O sinal de emergencia da lista deterministica (urgencia.ts, D-51):
@@ -514,6 +551,8 @@ export const FONTES_DO_PORTAO_EM_CODIGO: readonly string[] = [
   A_PESSOA_TEM_CONSULTA.source,
   NEGACAO_ANTES_DA_CONSULTA.source,
   "outra pessoa adulta: a consulta dela (colada: a consulta da minha mae, cancela a da minha mae), a pessoa que quer cancelar ou remarcar e a que tem consulta com o pedido de cancelar nas mensagens do turno, fora da negacao",
+  // S1 (31/10/2026): a rede de seguranca (padroes.ts) le tambem a juncao.
+  `rede de seguranca: os padroes da rede (sintoma) tambem na juncao das mensagens de texto do turno, na ordem, separadas por espaco, ate ${LIMITE_DA_RAJADA} caracteres e ${MAXIMO_DE_MENSAGENS_NO_CONTEXTO} mensagens (acima, o portao ja escala como mensagem longa)`,
   // Revisao de desempenho de 31/10/2026: a guarda de janela das trocas (a
   // intencao clinica perto do exame da pergunta de preco) e lida em codigo
   // (normalizar.ts), fora da fonte da troca; a versao do portao le as

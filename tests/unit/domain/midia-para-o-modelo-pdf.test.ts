@@ -1131,3 +1131,159 @@ describe("RR2: o objeto que o leitor acha (pela xref) e esta leitura nao via", (
 function fluxoComDados(dados: string): string {
   return `9 0 obj\n<< /Length ${dados.length} >>\nstream\n${dados}\nendstream\nendobj\n`;
 }
+
+// ---------------------------------------------------------------------------
+// Checagem rev4: a coordenada escrita nos VALORES do /Info (nao so nas chaves)
+// ---------------------------------------------------------------------------
+
+/** O texto em hexadecimal (um byte por caractere latin1). */
+const emHexadecimal = (t: string) => Buffer.from(t, "latin1").toString("hex");
+/** O texto em UTF-16BE, em hexadecimal (o que vem depois da marca FEFF). */
+const emUtf16 = (t: string) => Buffer.from(t, "utf16le").swap16().toString("hex");
+
+describe("rev4: a coordenada nos valores do /Info", () => {
+  /** O PDF com o /Info (objeto 9) no arquivo, apontado pelo trailer. */
+  function pdfComInfo(info: string, trailer = "<< /Root 1 0 R /Info 9 0 R >>"): Uint8Array {
+    return pdf([...arvore(1), `9 0 obj\n${info}\nendobj\n`], trailer);
+  }
+
+  const casos: [string, string][] = [
+    ["revisao: o /Keywords com o par decimal", "<< /Keywords (-3.731900, -38.526700) >>"],
+    ["revisao: o /Subject com os rotulos de latitude e longitude", "<< /Subject (Lat -3.7319 Lon -38.5267) >>"],
+    ["revisao: o /Title com graus, minutos e segundos", "<< /Title (Foto em 3\xb043'54\"S 38\xb031'36\"W) >>"],
+    ["a virgula decimal com o hemisferio", "<< /Subject (3,7319 S; 38,5267 O) >>"],
+    ["o par em hexadecimal", `<< /Keywords <${emHexadecimal("-3.731900, -38.526700")}> >>`],
+    ["o par em UTF-16 (a marca FEFF)", `<< /Title <FEFF${emUtf16("-3.731900, -38.526700")}> >>`],
+    ["o sinal em octal (\\055) e a virgula com a barra", "<< /Keywords (\\0553.731900\\, \\05538.526700) >>"],
+    ["os rotulos por extenso numa chave propria", "<< /Coordenadas (latitude: -3,7319 longitude: -38,5267) >>"],
+    ["os numeros soltos numa lista de chave propria", "<< /Ponto [-3.731900 -38.526700] >>"],
+  ];
+  for (const [nome, info] of casos) {
+    it(`${nome}: formato (no arquivo e no fluxo de objetos)`, () => {
+      expect(preparar(pdfComInfo(info))).toEqual(FORA_DO_FORMATO);
+      expect(preparar(pdfComInfoNoFluxoDeObjetos(info))).toEqual(FORA_DO_FORMATO);
+    });
+  }
+
+  it("a chave /Info escrita com #xx, e o /Info direto no trailer: formato", () => {
+    const info = "<< /Keywords (-3.731900, -38.526700) >>";
+    expect(preparar(pdfComInfo(info, "<< /Root 1 0 R /In#66o 9 0 R >>"))).toEqual(FORA_DO_FORMATO);
+    expect(preparar(pdf(arvore(1), `<< /Root 1 0 R /Info ${info} >>`))).toEqual(FORA_DO_FORMATO);
+  });
+
+  it("o /Info apontado que esta leitura nao acha (o leitor tolerante acha \"9 0obj\"): formato", () => {
+    const arquivo = pdf(
+      [...arvore(1), "9 0obj\n<< /Keywords (-3.731900, -38.526700) >>\nendobj\n"],
+      "<< /Root 1 0 R /Info 9 0 R >>",
+    );
+    expect(preparar(arquivo)).toEqual(FORA_DO_FORMATO);
+  });
+
+  it("os numeros que nao sao coordenada (titulo, versao, valores, datas, programa, dose): sai igual", () => {
+    for (const info of [
+      "<< /Title (Or\xe7amento 2026, item 3.5) /Subject (Vers\xe3o 1.2) >>",
+      "<< /Title (Pedido 1.234, 2 vias, R$ 1.234,56) /Keywords (exame; hemograma; 12/10/2026) >>",
+      "<< /Producer (iText\xae 7.2.5 \xa92000-2023 Apryse) /Creator (Microsoft\xae Word para Microsoft 365) >>",
+      "<< /CreationDate (D:20261030123456-03'00') /ModDate (D:20261030123510-03'00') >>",
+      `<< /Title <FEFF${emUtf16("Laudo 3.5 mg, dose 1.250 mg/dia")}> /Author (Dra. Fulana) >>`,
+      "<< /Subject (Translation 1.2345 e plateau 3.4567) /Title (Sala 2\xb0 andar) >>",
+    ]) {
+      const arquivo = pdfComInfo(info);
+      const preparado = preparar(arquivo);
+      expect(preparado, info).toMatchObject({ tipo: "pdf", paginas: 1 });
+      if (preparado.tipo === "pdf") {
+        expect(preparado.bytes).toEqual(arquivo);
+      }
+      expect(preparar(pdfComInfoNoFluxoDeObjetos(info)), info).toMatchObject({ tipo: "pdf", paginas: 1 });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Checagem rev4: o pacote XMP num fluxo que nao se diz metadado (sem /Type
+// /Metadata, sem /Subtype /XML, sem /Metadata apontando)
+// ---------------------------------------------------------------------------
+
+describe("rev4: o pacote XMP num fluxo que nao se diz metadado", () => {
+  /** O PDF com o fluxo 20 (o dicionario e os dados dados), que nada aponta como /Metadata. */
+  function pdfComFluxo(dicionario: string, dados: Uint8Array): Uint8Array {
+    return pdf([
+      ...arvore(1),
+      juntar(
+        texto(`20 0 obj\n<< ${dicionario}/Length ${dados.length} >>\nstream\n`),
+        dados,
+        texto("\nendstream\nendobj\n"),
+      ),
+    ]);
+  }
+  const DESCRICAO_COM_COORDENADA =
+    '<dc:description><rdf:Alt><rdf:li xml:lang="x-default">-3.731900, -38.526700</rdf:li></rdf:Alt></dc:description>';
+  const COM_COORDENADA = utf8(pacoteXmp(`${XMP_SEM_LOCAL}\n${DESCRICAO_COM_COORDENADA}`));
+  const COM_GPS = utf8(pacoteXmp(`${XMP_SEM_LOCAL}\n<exif:GPSLatitude>3,43.914S</exif:GPSLatitude>`));
+  const SEM_LUGAR = utf8(pacoteXmp(XMP_SEM_LOCAL));
+
+  it("revisao: sem compressao e sem /Type nem /Subtype, com a coordenada: formato", () => {
+    expect(preparar(pdfComFluxo("", COM_COORDENADA))).toEqual(FORA_DO_FORMATO);
+  });
+
+  it("revisao: comprimido (FlateDecode) e sem /Type, com exif:GPSLatitude: formato", () => {
+    expect(preparar(pdfComFluxo("/Filter /FlateDecode ", comprimir(COM_GPS)))).toEqual(FORA_DO_FORMATO);
+  });
+
+  it("comprimido com a coordenada, com outro tipo (/XObject /Image) e em UTF-16: formato", () => {
+    expect(preparar(pdfComFluxo("/Filter /FlateDecode ", comprimir(COM_COORDENADA)))).toEqual(FORA_DO_FORMATO);
+    expect(
+      preparar(pdfComFluxo("/Type /XObject /Subtype /Image /Width 1 /Height 1 /Filter /FlateDecode ", comprimir(COM_GPS))),
+    ).toEqual(FORA_DO_FORMATO);
+    const utf16 = Uint8Array.from(
+      Buffer.concat([
+        Buffer.from([0xff, 0xfe]),
+        Buffer.from(pacoteXmp(`${XMP_SEM_LOCAL}\n${DESCRICAO_COM_COORDENADA}`), "utf16le"),
+      ]),
+    );
+    expect(preparar(pdfComFluxo("", utf16))).toEqual(FORA_DO_FORMATO);
+    expect(preparar(pdfComFluxo("/Filter /FlateDecode ", comprimir(utf16)))).toEqual(FORA_DO_FORMATO);
+  });
+
+  it("o pacote numa string de um objeto do fluxo de objetos: formato", () => {
+    const xmp = pacoteXmp(`${XMP_SEM_LOCAL}\n${DESCRICAO_COM_COORDENADA}`).replace(/﻿/g, "");
+    const arquivo = pdf([
+      fluxoDeObjetos(9, [
+        [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+        [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+        [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>"],
+        [5, `<< /Nota <${Buffer.from(xmp, "latin1").toString("hex")}> /Copia (${xmp}) >>`],
+      ]),
+    ]);
+    expect(preparar(arquivo)).toEqual(FORA_DO_FORMATO);
+  });
+
+  it("a marca visivel num fluxo com filtro que nao da para ler (LZW, cadeia, FlateDecode que nao descomprime) ou com preditor: formato", () => {
+    for (const filtro of ["/Filter /LZWDecode ", "/Filter [/FlateDecode /ASCIIHexDecode] ", "/Filter /FlateDecode "]) {
+      expect(preparar(pdfComFluxo(filtro, SEM_LUGAR)), filtro).toEqual(FORA_DO_FORMATO);
+    }
+    expect(
+      preparar(pdfComFluxo("/Filter /FlateDecode /DecodeParms << /Predictor 12 /Columns 4 >> ", comprimir(SEM_LUGAR))),
+    ).toEqual(FORA_DO_FORMATO);
+  });
+
+  it("o controle: o conteudo e a imagem comuns (FlateDecode), o XMP sem lugar sem tipo e o \"<?xml\" que nao e XMP: saem iguais", () => {
+    const conteudo = comprimir(texto("q 1 0 0 1 72 720 cm BT /F1 12 Tf (Receita: dipirona 500 mg) Tj ET Q\n".repeat(200)));
+    const imagem = comprimir(new Uint8Array(64 * 64 * 3).fill(0xff));
+    const casos: [string, Uint8Array][] = [
+      ["/Filter /FlateDecode ", conteudo],
+      ["/Type /XObject /Subtype /Image /Width 64 /Height 64 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode ", imagem],
+      ["/Filter /FlateDecode ", comprimir(SEM_LUGAR)],
+      ["", SEM_LUGAR],
+      ["/Filter /FlateDecode ", comprimir(texto('<?xml version="1.0"?><svg width="10" height="2.5"/>'))],
+    ];
+    for (const [dicionario, dados] of casos) {
+      const arquivo = pdfComFluxo(dicionario, dados);
+      const preparado = preparar(arquivo);
+      expect(preparado, dicionario).toMatchObject({ tipo: "pdf", paginas: 1 });
+      if (preparado.tipo === "pdf") {
+        expect(preparado.bytes).toEqual(arquivo);
+      }
+    }
+  });
+});

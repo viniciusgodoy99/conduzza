@@ -235,10 +235,7 @@ import {
 import type { PrecoDoModelo, UsoDoModelo } from "./uso";
 // [AG6b mídia] início
 import type { MotivoDaLeitura } from "@/lib/domain/agente/config";
-import {
-  detectarUrgencia,
-  type TipoDeUrgencia,
-} from "@/lib/domain/conformidade/urgencia";
+import type { TipoDeUrgencia } from "@/lib/domain/conformidade/urgencia";
 import { MAXIMO_DE_CHAMADAS_DO_LEITOR } from "@/lib/integrations/llm/leitor-de-midia";
 import {
   custoMaximoDaTranscricao,
@@ -1871,20 +1868,16 @@ async function turnoDoAgente(
    */
   let urgenciaNoAudio = false;
   /**
-   * A urgencia de um audio do turno (so o tipo), ou null: a que a porta
-   * devolveu (o texto inteiro, inclusive o descartado, e a falha depois da
-   * transcricao) e, na transcricao, a do texto mantido, lida aqui de novo
-   * (a mesma lista do portao): no caminho do audio ruim (baixo 7) e no da
-   * falha de outro audio, o 1c nunca chega a ler esse texto.
+   * A urgencia que a porta devolveu com o audio (so o tipo), ou null: a do
+   * texto inteiro do audio, inclusive o descartado, e a da falha depois da
+   * transcricao. A do texto mantido e a da rajada o 1c le; nos caminhos que
+   * nao chegam ao 1c, urgenciaNaRajada.
    */
   const urgenciaDoAudio = (
     feita: ResultadoDaTranscricao,
   ): TipoDeUrgencia | null => {
     switch (feita.tipo) {
       case "transcrita":
-        return (
-          feita.urgencia ?? detectarUrgencia([feita.texto])?.tipo ?? null
-        );
       case "sem_fala":
         return feita.urgencia;
       case "falhou":
@@ -1892,6 +1885,33 @@ async function turnoDoAgente(
       default:
         return null;
     }
+  };
+  /**
+   * RR2 de 88e9560 (rev4): a urgencia da RAJADA como o 1c a le, sem aplicar
+   * nada ao turno: as pendentes como o portao as ve (entradaDoPortao: os
+   * textos, as legendas, o audio ainda sem texto) com as transcricoes que
+   * voltaram no lugar dos audios, cada mensagem sozinha e a juncao delas na
+   * ordem (detectarGatilhosDeEntrada, a mesma lista). O caminho do audio
+   * ruim (baixo 7) e o da falha de outro audio nunca chegam ao 1c, e o audio
+   * lido sozinho perdia a juncao: "minha mae" escrito e "nao responde mais,
+   * ta caida no chao" falado so sao urgencia juntos.
+   */
+  const urgenciaNaRajada = (
+    transcritas: ReadonlyMap<string, string>,
+  ): boolean => {
+    const entradas = pendentesDoTurno().map((m): MensagemDeEntrada => {
+      const transcrito =
+        m.midia === undefined ? undefined : transcritas.get(m.midia.messageId);
+      return transcrito === undefined
+        ? entradaDoPortao(m)
+        : { tipo: "texto", texto: transcrito };
+    });
+    return detectarGatilhosDeEntrada({
+      mensagens: entradas,
+      dataDeNascimento: entrada.dataDeNascimento ?? null,
+      hojeNaClinica:
+        entrada.hojeNaClinica ?? hojeNoFuso(entrada.agoraMs, entrada.fuso),
+    }).includes("urgencia");
   };
   /**
    * A urgencia do portao (1a e 1c) e a do audio acima: a conferencia de
@@ -1996,6 +2016,12 @@ async function turnoDoAgente(
         uso.push(feita.uso);
       }
     }
+    // Antes da urgencia, de proposito (rev4, documentado no contrato): o
+    // job_antigo (D-A) so conclui, sem passagem; e com a conversa ja fora da
+    // IA a passagem do banco devolve ja_fora_da_ia SEM a marca (a marca so
+    // nasce quando a passagem tira a conversa da IA). Passar pela urgencia
+    // aqui nao marcaria nada e gravaria uma decisao de passagem que nao
+    // houve. Marcar a conversa que ja esta com a equipe pede o banco.
     if (feitas.some(({ feita }) => feita.tipo === "job_antigo")) {
       return jobAntigo();
     }
@@ -2008,11 +2034,21 @@ async function turnoDoAgente(
     if (feitas.some(({ feita }) => urgenciaDoAudio(feita) !== null)) {
       urgenciaNoAudio = true;
     }
+    /** As transcricoes que voltaram (o texto mantido, como foi falado). */
+    const transcritas = new Map(
+      feitas.flatMap(({ audio, feita }) =>
+        feita.tipo === "transcrita"
+          ? [[audio.messageId, feita.texto] as const]
+          : [],
+      ),
+    );
     if (!todosProntos) {
       // RR2 de 88e9560 (baixo 7): a urgencia de um audio bom vence o audio
       // ruim (a falha do preparo ou o fora da regra), como vence a falha
-      // tecnica de outro audio.
-      return urgenciaNoAudio ? passarPorUrgencia() : comUmAudioRuim();
+      // tecnica de outro audio. Rev4: lida na rajada inteira, como no 1c.
+      return urgenciaNoAudio || urgenciaNaRajada(transcritas)
+        ? passarPorUrgencia()
+        : comUmAudioRuim();
     }
     const falha = feitas.find(({ feita }) => feita.tipo === "falhou")?.feita;
     if (falha !== undefined && falha.tipo === "falhou") {
@@ -2020,8 +2056,9 @@ async function turnoDoAgente(
       // conversa passa como urgente (o lado seguro; as duas passam). RR2 de
       // 88e9560 (medio 2): tambem a urgencia do proprio audio que falhou
       // depois de transcrito (a gravacao da leitura recusada, o corte
-      // durante a RPC).
-      if (urgenciaNoAudio) {
+      // durante a RPC). Rev4: e a da rajada com as transcricoes que
+      // voltaram, como no 1c (que este caminho nunca alcanca).
+      if (urgenciaNoAudio || urgenciaNaRajada(transcritas)) {
         return passarPorUrgencia();
       }
       trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.transcricaoFalhou });

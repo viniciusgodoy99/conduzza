@@ -1042,3 +1042,111 @@ describe("RR2 (baixo 7): um audio ruim nao impede a transcricao dos bons (so par
     expect(cenario.banco.linhas("ia_leitura_da_midia")).toEqual([]);
   });
 });
+
+// Rev4 (checagem final): no caminho do audio ruim, o audio bom era lido
+// SOZINHO para a urgencia, sem a juncao com as outras mensagens do turno:
+// "minha mae" escrito e "nao responde mais, ta caida no chao" falado viravam
+// midia, sem Urgente. Agora a rajada inteira, como no 1c (os textos do turno
+// e as transcricoes que voltaram). O mesmo na falha de outro audio.
+describe("rev4: a urgencia da rajada inteira nos caminhos que nao chegam ao 1c", () => {
+  const ESCRITO = "minha mae";
+  const FALADO = "nao responde mais, ta caida no chao";
+
+  it.each([
+    ["o outro audio fora da regra", { preparo: { [AUDIO_2]: "fora" as const } }],
+    ["o Storage que falhou no outro audio", { preparo: { [AUDIO_2]: "falhou" as const } }],
+    [
+      "a transcricao que falhou no outro audio",
+      {
+        transcricao: {
+          [AUDIO_2]: {
+            tipo: "falhou" as const,
+            motivo: "timeout" as const,
+            uso: usoDaTranscricao(),
+          },
+        },
+      },
+    ],
+  ])(
+    "'%s': 'minha mae' escrito e o audio bom 'nao responde mais, ta caida no chao' viram Urgente",
+    async (_nome, roteiro) => {
+      const { porta } = portaFalsa({
+        ...roteiro,
+        transcricao: {
+          [AUDIO]: transcrita(FALADO),
+          ...("transcricao" in roteiro ? roteiro.transcricao : {}),
+        },
+      });
+      const { promessa, agente, classificador } = turnoNoLaco(
+        [{ autor: "paciente", texto: ESCRITO }, audioNoLaco(AUDIO), audioNoLaco(AUDIO_2)],
+        { midia: porta },
+      );
+      const r = await promessa;
+      expect(r.desfecho).toEqual(DESFECHO_DA_URGENCIA);
+      expect(r.trilha.map((p) => p.texto)).toEqual([
+        PASSO_DA_CONFERENCIA_DA_ENTRADA,
+        PASSO_DA_URGENCIA,
+      ]);
+      expect(classificador).not.toHaveBeenCalled();
+      expect(agente.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it("o controle: sem o 'minha mae' escrito, o audio sozinho nao e urgencia, e o turno passa como antes", async () => {
+    const fora = await turnoNoLaco([audioNoLaco(AUDIO), audioNoLaco(AUDIO_2)], {
+      midia: portaFalsa({
+        preparo: { [AUDIO_2]: "fora" },
+        transcricao: { [AUDIO]: transcrita(FALADO) },
+      }).porta,
+    }).promessa;
+    expect(fora.desfecho).toMatchObject({ motivo: "midia_nao_suportada", gatilho: "midia" });
+    const falhou = await turnoNoLaco([audioNoLaco(AUDIO), audioNoLaco(AUDIO_2)], {
+      midia: portaFalsa({
+        transcricao: {
+          [AUDIO]: transcrita(FALADO),
+          [AUDIO_2]: { tipo: "falhou", motivo: "timeout", uso: usoDaTranscricao() },
+        },
+      }).porta,
+    }).promessa;
+    expect(falhou.desfecho).toEqual({ tipo: "falhou", motivo: "timeout" });
+  });
+
+  it("pelo executor: 'minha mae' escrito, o audio bom e um audio longo demais no mesmo turno: Urgente; so o bom vai a OpenAI", async () => {
+    const { cenario, cliente, promessa } = rodar(
+      [[" Não responde mais, tá caída no chão.", 0.1, -0.3]],
+      {
+        mensagens: [
+          {
+            id: "m0",
+            clinic_id: CLINICA,
+            conversation_id: CONVERSA,
+            author: "paciente",
+            direction: "entrada",
+            content_type: "texto",
+            body: "minha mãe",
+            media_url: null,
+            deleted_at: null,
+            is_internal_note: false,
+            pelo_celular: false,
+            created_at: "2026-10-13T14:58:20.000Z",
+          },
+          linhaDeMidia({ id: AUDIO, contentType: "audio" }),
+          linhaDeMidia({
+            id: AUDIO_2,
+            contentType: "audio",
+            criadaEm: "2026-10-13T14:58:35.000Z",
+          }),
+        ],
+        arquivos: { [AUDIO_2]: { tipo: "ok", bytes: mp3Sintetico(130) } },
+      },
+    );
+    expect(await promessa).toEqual({ ok: true });
+    passouComoUrgente(cenario);
+    expect(transcricoesNaOpenAi(cliente)).toBe(1);
+    // O texto do audio bom, sozinho, nao tem a urgencia: a leitura e gravada
+    // como sempre (o job repetido a rele junto com o "minha mae" no 7c).
+    expect(cenario.banco.linhas("ia_leitura_da_midia")).toEqual([
+      expect.objectContaining({ tipo: "transcricao" }),
+    ]);
+  });
+});

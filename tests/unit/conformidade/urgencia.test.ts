@@ -174,8 +174,6 @@ describe("as exceções", () => {
     ["não consigo falar com a recepção", "o telefone"],
     ["liguei e não consigo falar", "a ligação"],
     ["não consigo falar agora", "o tempo"],
-    ["quero morrer de rir", "o exagero"],
-    ["vou me matar de estudar", "o exagero"],
     ["o SAMU fica perto daí?", "o SAMU sem o pedido"],
     ["meu tio chama Samuel", "o nome"],
     ["Apaguei a mensagem sem querer", "apagar"],
@@ -465,7 +463,10 @@ describe("a outra pessoa", () => {
 
   it("a pergunta retórica com o não é o sinal, nunca a negação dele", () => {
     expect(urgente("não seria melhor eu morrer?")?.sinal).toBe("melhor_morrer");
-    expect(urgente("melhor eu morrer de vergonha")).toBeNull();
+    // Revisao RR2 (rev4, regra 1): o motivo nunca tira o risco de vida.
+    expect(urgente("melhor eu morrer de vergonha")?.sinal).toBe(
+      "melhor_morrer",
+    );
   });
 });
 
@@ -716,8 +717,6 @@ describe("o me matar: o eu, o sofrimento e o pronome continuam", () => {
     "esse preço vai me matar",
     "essa dieta tá me matando",
     "esse trabalho vai me matar",
-    "vocês vão me matar com esse preço",
-    "vou me matar na academia pra ficar em forma",
   ])("%s: o exagero com sujeito concreto", (texto) => {
     expect(urgente(texto)).toBeNull();
   });
@@ -784,11 +783,7 @@ describe("as lacunas novas, com a negação, o antecedente e a terceira pessoa",
     "já tive falta di ar",
     // O que nao e o sinal.
     "tenho medo de dormir e não acordar na anestesia",
-    "pode me cortar o cabelo?",
-    "na lipo, vão me cortar onde?",
-    "o médico vai me cortar muito?",
     "já me cortei com papel",
-    "minha filha não acorda cedo, tem horário à tarde?",
     "minha pele não reage bem ao ácido",
     "to morrendo de rir",
     "to morrendo de vontade de fazer botox",
@@ -898,8 +893,6 @@ describe("os sinais novos de risco de vida (A1)", () => {
     "vou me jogar nessa promoção de botox",
     "tomei 2 comprimidos de dipirona ontem, posso fazer o procedimento?",
     "a cartela do anticoncepcional acabou",
-    "tomei todos os remédios que a doutora passou, posso tirar os pontos?",
-    "tomei 3 comprimidos por dia de antibiótico, já posso fazer o laser?",
     "tomei 10 gotas de rivotril pra dormir, posso ir dirigindo?",
     "posso tomar 3 comprimidos de dipirona?",
     "não tomei 20 comprimidos",
@@ -907,7 +900,6 @@ describe("os sinais novos de risco de vida (A1)", () => {
     "vou fazer uma despedida de solteira, tem horário pra maquiagem?",
     "meus filhos são meu motivo pra viver",
     "queria ter nascido com o nariz menor kkk",
-    "por que nasci com esse nariz?",
     "nunca pensei em me enforcar",
   ])("%s: não é urgência", (texto) => {
     expect(urgente(texto)).toBeNull();
@@ -948,7 +940,6 @@ describe("os sinais físicos novos (A1)", () => {
   });
 
   it.each([
-    "meu filho não respira pelo nariz, tem otorrino?",
     "fiquei sem respirar de tanto rir",
     "a clínica não está respondendo",
     "minha filha não está respondendo minhas mensagens",
@@ -965,7 +956,6 @@ describe("os sinais físicos novos (A1)", () => {
     "minha pressão subiu, posso fazer botox?",
     "tirei um peso do peito depois que conversei com a doutora",
     "tomei sol depois do ácido, é normal arder?",
-    "tomei refrigerante, que é veneno",
     "comprei veneno de rato pra casa",
     // O "caindo" de outra pessoa e a flacidez. Revisao R2 de d1a15f6 (A1):
     // "o rosto dela caiu muito com a idade, vocês fazem fios?" voltou a ser
@@ -1001,8 +991,8 @@ describe("a visão (A1)", () => {
   });
 
   it.each([
-    "não estou enxergando bem de longe, vocês têm oftalmologista?",
-    "estou perdendo a visão de perto, preciso de óculos?",
+    "não enxergo bem de longe, vocês têm oftalmologista?",
+    "perdi um pouco a visão de perto com a idade, preciso de óculos?",
     "tenho medo de perder a visão com o preenchimento",
     "é verdade que preenchimento pode deixar cego?",
     "sou cega de um olho, posso fazer botox?",
@@ -1282,17 +1272,14 @@ describe("a overdose (risco de vida)", () => {
     });
   });
 
-  it.each([
-    "o que é overdose de vitamina?",
-    "existe overdose de botox?",
-    "dá pra ter overdose de colágeno?",
-    "vi uma reportagem sobre overdose",
-    "essa foto é uma overdose de fofura",
-    "uma overdose de amor kkk",
-    "não foi overdose",
-  ])("%s: não é urgência (a informação, a figura ou a negação)", (texto) => {
-    expect(urgente(texto)).toBeNull();
-  });
+  // Revisao RR2 (rev4, regra 1): a pergunta e a figura nunca tiram o risco
+  // de vida; so a negacao de quem fala ("nunca pensei em overdose").
+  it.each(["não foi overdose", "nunca pensei em overdose"])(
+    "%s: não é urgência (a negação de quem fala)",
+    (texto) => {
+      expect(urgente(texto)).toBeNull();
+    },
+  );
 });
 
 describe("o ferimento grave (físico)", () => {
@@ -1418,5 +1405,76 @@ describe("a complicação do preenchimento feito (a oclusão vascular)", () => {
       // Revisao R2 de d1a15f6 (M2): a mancha do preenchimento recente.
       "mancha_depois_do_preenchimento",
     ]);
+  });
+});
+
+// Revisao RR2 (rev4): as regras fixas da rodada. 1) O risco de vida nao tem
+// excecao nenhuma, a nao ser a negacao de quem fala e a figura em que o
+// sujeito de "matar" e uma coisa, sem relato atual: o instrumento, o lugar,
+// o motivo, a pergunta e quem faz nunca tiram. 2) Nenhuma exclusao lexica na
+// fonte sem as marcas que a desfazem; a coisa so vale colada no verbo. Estas
+// frases eram "nao e urgencia" e viraram urgencia, de proposito (a tabela de
+// toda excecao esta em urgencia-tabela.test.ts).
+describe("revisão RR2 (rev4): o risco de vida sem exceção e as exclusões que viraram contexto", () => {
+  it.each([
+    ["quero morrer de rir", "quero_morrer"],
+    ["vou me matar de estudar", "me_matar"],
+    ["vocês vão me matar com esse preço", "me_matar"],
+    ["vou me matar na academia pra ficar em forma", "me_matar"],
+    ["pode me cortar o cabelo?", "me_cortar"],
+    ["na lipo, vão me cortar onde?", "me_cortar"],
+    ["o médico vai me cortar muito?", "me_cortar"],
+    [
+      "tomei todos os remédios que a doutora passou, posso tirar os pontos?",
+      "remedio_demais",
+    ],
+    [
+      "tomei 3 comprimidos por dia de antibiótico, já posso fazer o laser?",
+      "remedio_demais",
+    ],
+    ["por que nasci com esse nariz?", "nao_ter_nascido"],
+    ["o que é overdose de vitamina?", "overdose"],
+    ["existe overdose de botox?", "overdose"],
+    ["dá pra ter overdose de colágeno?", "overdose"],
+    ["vi uma reportagem sobre overdose", "overdose"],
+    ["essa foto é uma overdose de fofura", "overdose"],
+    ["uma overdose de amor kkk", "overdose"],
+    ["não quero acordar cedo amanhã", "dormir_e_nao_acordar"],
+    ["nao quero acordar ela", "dormir_e_nao_acordar"],
+    ["tomei todos os remedios que a doutora passou", "remedio_demais"],
+    // A negacao de outra pessoa nao e a de quem fala (regra 1a).
+    ["minha filha nunca pensou em se matar", "se_matar"],
+    ["ela não quer morrer", "quero_morrer"],
+  ] as const)("%s: risco de vida (%s)", (texto, sinal) => {
+    expect(urgente(texto)).toEqual({ tipo: "risco_de_vida", sinal });
+  });
+
+  it.each([
+    ["minha filha não acorda cedo, tem horário à tarde?", "nao_acorda"],
+    ["meu filho não respira pelo nariz, tem otorrino?", "nao_respira"],
+    ["tomei refrigerante, que é veneno", "engoliu_veneno"],
+    [
+      "não estou enxergando bem de longe, vocês têm oftalmologista?",
+      "nao_enxerga",
+    ],
+    ["estou perdendo a visão de perto, preciso de óculos?", "perdendo_a_visao"],
+    ["meu nariz não está respirando direito", "parada_cardiaca"],
+  ] as const)(
+    "%s: física (%s: a exceção de contexto e a marca que a desfaz)",
+    (texto, sinal) => {
+      expect(urgente(texto)).toEqual({ tipo: "fisica", sinal });
+    },
+  );
+
+  it("a negação de quem fala e a figura com a coisa continuam (as únicas exceções do risco de vida)", () => {
+    expect(urgente("não quero morrer")).toBeNull();
+    expect(urgente("nunca pensei em me cortar")).toBeNull();
+    expect(urgente("esse preço vai me matar")).toBeNull();
+    expect(urgente("essa dieta tá me matando")).toBeNull();
+    // A figura cai com o relato atual em outra oracao e com o pedido de ajuda.
+    expect(urgente("esse preço vai me matar, to desesperada")?.sinal).toBe(
+      "me_matar",
+    );
+    expect(urgente("esse preço vai me matar, socorro")?.sinal).toBe("me_matar");
   });
 });

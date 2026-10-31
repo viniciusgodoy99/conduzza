@@ -45,6 +45,7 @@ import {
   SAIDAS_DA_URGENCIA_QUE_BLOQUEIAM,
   TENTATIVAS_DE_TRIAGEM,
   VIRARAM_URGENCIA_NA_RR1,
+  VIRARAM_URGENCIA_NA_RR2,
 } from "@/tests/fixtures/ia/conformidade/casos-ag6";
 
 // Bateria do CFM da AG6a (a urgencia; no prebuild): os sinais de emergencia
@@ -434,7 +435,9 @@ describe("bateria AG6: a revisão RR1 (a política nova das exceções)", () => 
   it("toda frase do revisor que a edd123c marcava está na não regressão; só as de prova positiva deixam de ser urgência, cada uma com a área e o motivo", () => {
     expect(daRR1).toHaveLength(140);
     const aceitas = daRR1.filter((frase) => aceitos.has(frase.id));
-    expect(aceitas).toHaveLength(27);
+    // Revisao RR2 (rev4, regra 1): 6 das 27 voltaram a ser urgencia (o risco
+    // de vida sem excecao: AG6-NR519 a NR524).
+    expect(aceitas).toHaveLength(21);
     for (const frase of aceitas) {
       expect(detectarUrgencia(frase.textos), frase.id).toBeNull();
     }
@@ -511,6 +514,80 @@ describe("bateria AG6: a revisão RR1 (a política nova das exceções)", () => 
     );
     for (const sinal of ["tomar_veneno", "ultimo_dia"]) {
       expect(sinais.get(sinal), sinal).toBe("risco_de_vida");
+    }
+  });
+});
+
+// Revisao RR2 (rev4): as regras fixas da rodada (o risco de vida sem excecao
+// nenhuma, a nao ser a negacao de quem fala e a figura com a coisa como
+// sujeito do matar; nenhuma exclusao lexica na fonte sem as marcas que a
+// desfazem, a nao ser a coisa colada no verbo; a tabela de toda excecao e
+// exclusao, em urgencia-tabela.test.ts; os conjuntos do revisor, em
+// urgencia-rev4.test.ts).
+describe("bateria AG6: a revisão RR2 (rev4: o risco de vida sem exceção e a coisa colada)", () => {
+  const aceitos = new Set(FALSOS_POSITIVOS_ACEITOS.map((f) => f.id));
+
+  it.each(
+    VIRARAM_URGENCIA_NA_RR2.map((caso) => [caso.id, caso.antes, caso] as const),
+  )("%s (antes %s) virou urgência, com o motivo", (_id, _antes, caso) => {
+    expect(detectarUrgencia(caso.textos)).not.toBeNull();
+    expect(
+      detectarGatilhosDeEntrada({
+        mensagens: caso.textos.map((texto) => ({ tipo: "texto", texto })),
+      })[0],
+    ).toBe("urgencia");
+    expect(caso.motivo.trim().length).toBeGreaterThan(10);
+    expect(caso.motivo).not.toMatch(/[–—]/);
+  });
+
+  it("os 8 aceitos do risco de vida que voltaram a ser urgência saíram da lista, cada um do tipo da edd123c", () => {
+    for (const id of [
+      "AG6-NR145",
+      "AG6-NR159",
+      "AG6-NR519",
+      "AG6-NR520",
+      "AG6-NR521",
+      "AG6-NR522",
+      "AG6-NR523",
+      "AG6-NR524",
+    ]) {
+      expect(aceitos.has(id), id).toBe(false);
+      const frase = NAO_REGRESSAO_DA_URGENCIA.find((f) => f.id === id);
+      expect(frase, id).toBeDefined();
+      expect(detectarUrgencia(frase?.textos ?? [])?.tipo, id).toBe(frase?.tipo);
+    }
+  });
+
+  it("as comuns do revisor que a edd123c marcava estão na não regressão e são todas falso positivo aceito (a prova positiva)", () => {
+    const daRR2 = NAO_REGRESSAO_DA_URGENCIA.filter(
+      (frase) => frase.origem === "revisão RR2 (rev4)",
+    );
+    expect(daRR2).toHaveLength(10);
+    for (const frase of daRR2) {
+      expect(aceitos.has(frase.id), frase.id).toBe(true);
+      expect(detectarUrgencia(frase.textos), frase.id).toBeNull();
+    }
+  });
+
+  it("cada sinal novo tem caso na bateria e é físico", () => {
+    const sinais = new Map(
+      CASOS_DE_URGENCIA.map((caso) => [
+        detectarUrgencia([caso.texto])?.sinal,
+        caso.tipo,
+      ]),
+    );
+    for (const sinal of [
+      "trauma_na_cabeca",
+      "respiracao_alterada",
+      "coracao_disparado",
+      "convulsao_descrita",
+      "visao_dupla",
+      "febre_depois_do_procedimento",
+      "inchaco_alergico",
+      "metade_do_rosto_dormente",
+      "quase_desmaio",
+    ]) {
+      expect(sinais.get(sinal), sinal).toBe("fisica");
     }
   });
 });
@@ -978,5 +1055,11 @@ describe("bateria AG6: as versões da revisão", () => {
   // tras.
   it("o portão mudou desde a 88e9560 (revisão RR1)", () => {
     expect(versaoDoPortao()).not.toBe("portao-4e98a801c92c");
+  });
+
+  // Revisao RR2 (rev4): o risco de vida sem excecao e a coisa colada mudaram
+  // a lista de urgencia: a versao do portao da 1cf092d ficou para tras.
+  it("o portão mudou desde a 1cf092d (revisão RR2)", () => {
+    expect(versaoDoPortao()).not.toBe("portao-5f2ac4e7a580");
   });
 });

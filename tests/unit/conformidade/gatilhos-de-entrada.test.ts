@@ -459,6 +459,63 @@ describe("AG6a: a urgência no portão", () => {
 });
 // [AG6 urgência] fim
 
+// S1 (31/10/2026): a rede de seguranca (padroes.ts) escala o risco de vida e
+// a emergencia aguda como sintoma, sem depender da lista de urgencia, e le
+// cada mensagem e a juncao das mensagens de texto do turno. A bateria dela
+// (as frases da revisao, as urgentes do rev4, as comuns e o tempo) esta em
+// portao-rede-de-seguranca.test.ts; aqui ficam as regras do portao.
+describe("S1: a rede de segurança no portão", () => {
+  const sintoma = (mensagens: { tipo: string; texto: string | null }[]) =>
+    detectarGatilhosDeEntrada({ mensagens }).includes("sintoma");
+
+  it("escala como sintoma o que antes não disparava gatilho nenhum", () => {
+    for (const texto of [
+      "peguei o cinto pra me enforcar",
+      "to na ponte, vou pular",
+      "escorpiao picou minha mae agora",
+      "minha mae tava vendo tv e apagou do nada",
+    ]) {
+      expect(sintoma([{ tipo: "texto", texto }]), texto).toBe(true);
+    }
+  });
+
+  it("lê a junção das mensagens de texto, na ordem; cada parte sozinha não escala", () => {
+    expect(
+      sintoma([
+        { tipo: "texto", texto: "quero" },
+        { tipo: "texto", texto: "morrer" },
+      ]),
+    ).toBe(true);
+    expect(sintoma([{ tipo: "texto", texto: "quero" }])).toBe(false);
+    expect(sintoma([{ tipo: "texto", texto: "morrer" }])).toBe(false);
+    // Na ordem: "morrer" e "quero" nao formam o risco.
+    expect(
+      sintoma([
+        { tipo: "texto", texto: "morrer" },
+        { tipo: "texto", texto: "quero" },
+      ]),
+    ).toBe(false);
+  });
+
+  it("a figurinha no meio não parte a junção", () => {
+    expect(
+      sintoma([
+        { tipo: "texto", texto: "quero" },
+        { tipo: "figurinha", texto: null },
+        { tipo: "texto", texto: "morrer" },
+      ]),
+    ).toBe(true);
+  });
+
+  it("a regra da junção entra na versão do portão", () => {
+    expect(
+      FONTES_DO_PORTAO_EM_CODIGO.some((fonte) =>
+        fonte.startsWith("rede de seguranca: "),
+      ),
+    ).toBe(true);
+  });
+});
+
 // [AG6b mídia] início
 // AG6b (D-98): a figurinha reconhecida (no servidor ou pelo leitor) nao
 // escala como midia e nao tem texto; o audio a transcrever chega ao portao

@@ -795,6 +795,52 @@ export const CASOS_DE_URGENCIA: readonly CasoDeUrgencia[] = [
     "contexto",
     "teve um tiroteio aqui e meu primo foi atingido",
   ),
+  // Revisao RR2 (rev4): os sinais novos (as emergencias que nenhuma versao
+  // pegava).
+  u(
+    "AG6-U251",
+    "fisica",
+    "literal",
+    "cai de moto e bati a cabeca, to vomitando",
+  ),
+  u(
+    "AG6-U252",
+    "fisica",
+    "parafrase",
+    "ela ta respirando muito rapido e ficou palida",
+  ),
+  u(
+    "AG6-U253",
+    "fisica",
+    "contexto",
+    "minha mae disse que ta com o coracao disparado e vai desmaiar",
+  ),
+  u("AG6-U254", "fisica", "parafrase", "minha filha ta se debatendo e babando"),
+  u(
+    "AG6-U255",
+    "fisica",
+    "contexto",
+    "fiz botox ontem e to com a palpebra caindo e vendo dobrado",
+  ),
+  u(
+    "AG6-U256",
+    "fisica",
+    "contexto",
+    "depois do fio de pdo meu rosto ta muito inchado e quente e to com febre alta",
+  ),
+  u(
+    "AG6-U257",
+    "fisica",
+    "contexto",
+    "meu filho foi picado por abelha e ta com a boca inchando",
+  ),
+  u(
+    "AG6-U258",
+    "fisica",
+    "literal",
+    "meu tio ta com a metade da cara dormente",
+  ),
+  u("AG6-U259", "fisica", "literal", "quase desmaiei"),
 ];
 
 export const CONTROLES_DA_URGENCIA: readonly ControleDaUrgencia[] = [
@@ -830,9 +876,6 @@ export const CONTROLES_DA_URGENCIA: readonly ControleDaUrgencia[] = [
     "negação com o artigo",
   ),
   // O exagero.
-  c("AG6-C14", "quero morrer de rir kkkk", "exagero"),
-  c("AG6-C15", "vou me matar de estudar pra prova", "exagero"),
-  c("AG6-C16", "quero morrer de vergonha", "exagero"),
   // O assunto clinico de historico, o telefone e o lugar.
   c(
     "AG6-C17",
@@ -932,7 +975,6 @@ export const CONTROLES_DA_URGENCIA: readonly ControleDaUrgencia[] = [
     "uma vez desmaiei no dentista, posso ir acompanhada?",
     "a história (uma vez)",
   ),
-  c("AG6-C55", "vou me matar na academia pra ficar em forma", "o exagero"),
   // ---- revisao de 28/10/2026: os controles das lacunas ----------------------
   c(
     "AG6-C56",
@@ -957,15 +999,8 @@ export const CONTROLES_DA_URGENCIA: readonly ControleDaUrgencia[] = [
     "minha avó teve parada cardíaca",
     "terceira pessoa, história (sem o agora)",
   ),
-  c("AG6-C68", "meu nariz não está respirando direito", "o nariz entupido"),
   c("AG6-C69", "fiquei sem fôlego de tanto rir", "o exagero"),
   c("AG6-C71", "to morta de cansaço", "o cansaço, sem o querer"),
-  c(
-    "AG6-C72",
-    "quero acabar com tudo de mancha no rosto",
-    "o objeto dito (a estética)",
-  ),
-  c("AG6-C73", "quero acabar com tudo isso de ruga", "o objeto dito"),
   c("AG6-C74", "não vou acabar com tudo", "negação"),
   c("AG6-C75", "não estou tendo um infarto", "negação"),
   // ---- revisao de 28/10/2026 (fim): negacao, historia e outra pessoa em
@@ -1007,7 +1042,6 @@ export const CONTROLES_DA_URGENCIA: readonly ControleDaUrgencia[] = [
   c("AG6-C90", "já tive a língua inchada com camarão", "a história (já tive)"),
   c("AG6-C91", "minha boca não ficou torta", "a negação no meio do sinal"),
   c("AG6-C93", "não quero estar morta", "negação"),
-  c("AG6-C94", "melhor eu morrer de vergonha", "o exagero"),
   c("AG6-C95", "isso vai acabar com tudo", "sem a pessoa"),
   c("AG6-C96", "essa dieta tá me matando", "o sujeito não é a pessoa"),
   c("AG6-C97", "uma emergência apareceu, preciso remarcar", "o que já passou"),
@@ -1121,11 +1155,6 @@ export const CONTROLES_DA_URGENCIA: readonly ControleDaUrgencia[] = [
   ),
   // ---- o exagero concreto do "me matar" ------------------------------------
   c(
-    "AG6-C122",
-    "vocês vão me matar com esse preço",
-    "o exagero concreto (o preço)",
-  ),
-  c(
     "AG6-C123",
     "esse trabalho vai me matar",
     "o exagero concreto (o trabalho)",
@@ -1143,14 +1172,6 @@ export const CONTROLES_DA_URGENCIA: readonly ControleDaUrgencia[] = [
     "o sinal traz a própria negação: sem ela, nada",
   ),
   c("AG6-C127", "nunca pensei em me cortar", "negação"),
-  c("AG6-C128", "pode me cortar o cabelo?", "o cabelo"),
-  c("AG6-C129", "na lipo, vão me cortar onde?", "a cirurgia (a equipe corta)"),
-  c("AG6-C130", "o médico vai me cortar muito?", "a cirurgia (o médico corta)"),
-  c(
-    "AG6-C131",
-    "minha filha não acorda cedo, tem horário à tarde?",
-    "o horário de acordar",
-  ),
   c("AG6-C133", "minha pele não reage bem ao ácido", "a pele, não a pessoa"),
   c("AG6-C134", "ele não tá morrendo", "negação"),
   c("AG6-C136", "to morrendo de vontade de fazer botox", "o exagero"),
@@ -1173,31 +1194,11 @@ export const CONTROLES_DA_URGENCIA: readonly ControleDaUrgencia[] = [
     "a cartela sem o tomar de uma vez",
   ),
   c(
-    "AG6-C147",
-    "não estou enxergando bem de longe, vocês têm oftalmologista?",
-    "a vista de sempre (de longe, o oftalmologista)",
-  ),
-  c(
-    "AG6-C148",
-    "meu filho não respira pelo nariz, tem otorrino?",
-    "o nariz, não a respiração",
-  ),
-  c(
     "AG6-C149",
     "vou enforcar a sexta-feira e emendar o feriado",
     "a folga (sem o me e o se)",
   ),
   c("AG6-C150", "vou me jogar nessa promoção de botox", "se jogar sem o lugar"),
-  c(
-    "AG6-C151",
-    "tomei todos os remédios que a doutora passou, posso tirar os pontos?",
-    "o tratamento de sempre (o que a doutora passou)",
-  ),
-  c(
-    "AG6-C152",
-    "tomei 3 comprimidos por dia de antibiótico, já posso fazer o laser?",
-    "o tratamento de sempre (por dia)",
-  ),
   c(
     "AG6-C153",
     "tomei 10 gotas de rivotril pra dormir, posso ir dirigindo?",
@@ -1272,7 +1273,6 @@ export const CONTROLES_DA_URGENCIA: readonly ControleDaUrgencia[] = [
     "tomei sol depois do ácido, é normal arder?",
     "o ácido da pele, não o veneno",
   ),
-  c("AG6-C172", "tomei refrigerante, que é veneno", "a figura de linguagem"),
   // ---- revisao de 6eae43d (M2): os falsos positivos da estetica, da dor,
   // da pergunta e da agenda (os que a edd123c marcava estao tambem em
   // FALSOS_POSITIVOS_ACEITOS) -----------------------------------------------
@@ -1360,17 +1360,6 @@ export const CONTROLES_DA_URGENCIA: readonly ControleDaUrgencia[] = [
   ),
   // ---- revisao de 6eae43d (pedido do coordenador): os controles da
   // overdose, do ferimento grave e da complicacao do preenchimento ---------
-  c(
-    "AG6-C196",
-    "o que é overdose de vitamina?",
-    "a pergunta de informação sobre a overdose",
-  ),
-  c(
-    "AG6-C197",
-    "existe overdose de botox?",
-    "a pergunta de informação sobre a overdose",
-  ),
-  c("AG6-C198", "essa foto é uma overdose de fofura", "a figura de linguagem"),
   c("AG6-C199", "não foi overdose", "negação"),
   c("AG6-C200", "foi tiro e queda", "a figura de linguagem"),
   c("AG6-C201", "isso foi um tiro no pé", "a figura de linguagem"),
@@ -1479,11 +1468,6 @@ export const CONTROLES_DA_URGENCIA: readonly ControleDaUrgencia[] = [
   ),
   c("AG6-C236", "fiquei confusa com os preços", "a dúvida, não a confusão"),
   c("AG6-C237", "tô confusa, qual o horário?", "a dúvida, não a confusão"),
-  c(
-    "AG6-C238",
-    "fiz preenchimento ontem e minha pele tá manchada de sol",
-    "a mancha do sol",
-  ),
   c(
     "AG6-C239",
     "fiz harmonização há 2 anos, minha pele tá manchada, vocês fazem peeling?",
@@ -1766,11 +1750,6 @@ export const RAJADAS_SEM_URGENCIA: readonly RajadaSemUrgencia[] = [
     id: "AG6-RC07",
     mensagens: [{ tipo: "audio", texto: null, legenda: "to com falta de ar" }],
     porque: "o áudio nunca tem legenda lida (nem a transcrição, nesta rodada)",
-  },
-  {
-    id: "AG6-RC08",
-    mensagens: [foto("quero acabar com tudo de mancha no rosto")],
-    porque: "a estética na legenda",
   },
   // Revisao de 30/10/2026: o sinal que atravessa as mensagens le todas as
   // que ele toca como a mensagem dele (o procedimento esta numa delas).
@@ -5261,6 +5240,93 @@ export const NAO_REGRESSAO_DA_URGENCIA: readonly FraseDaNaoRegressao[] = [
     "revisão RR1",
     "quero fazer preenchimento, tenho a boca torta",
   ),
+  // Revisao RR2 (rev4): as comuns do revisor que a edd123c marcava e que
+  // a prova positiva tira (a figura com a coisa, o estado de sempre, o nome
+  // colado e a historia).
+  nr(
+    "AG6-NR585",
+    "risco_de_vida",
+    "revisão RR2 (rev4)",
+    "esse valor ta me matando, nao tem desconto?",
+  ),
+  nr(
+    "AG6-NR586",
+    "risco_de_vida",
+    "revisão RR2 (rev4)",
+    "a fila do estacionamento ta me matando",
+  ),
+  nr(
+    "AG6-NR587",
+    "fisica",
+    "revisão RR2 (rev4)",
+    "fiquei sem ar quando vi a foto do antes e depois, que perfeicao",
+  ),
+  nr(
+    "AG6-NR588",
+    "fisica",
+    "revisão RR2 (rev4)",
+    "tenho um encaixe de emergencia? queria ver se tem horario hoje",
+  ),
+  nr(
+    "AG6-NR589",
+    "fisica",
+    "revisão RR2 (rev4)",
+    "fui na emergencia semana passada por causa de uma virose, ja to bem",
+  ),
+  nr(
+    "AG6-NR590",
+    "risco_de_vida",
+    "revisão RR2 (rev4)",
+    "quero tirar essa ruga da testa que ta me matando",
+  ),
+  nr(
+    "AG6-NR591",
+    "fisica",
+    "revisão RR2 (rev4)",
+    "minha boca e meio torta desde sempre, o preenchimento ajeita?",
+  ),
+  nr(
+    "AG6-NR592",
+    "fisica",
+    "revisão RR2 (rev4)",
+    "meu rosto e meio caido do lado esquerdo desde crianca, da pra corrigir?",
+  ),
+  nr(
+    "AG6-NR593",
+    "fisica",
+    "revisão RR2 (rev4)",
+    "quase desmaiei quando vi o preco kkkk",
+  ),
+  nr(
+    "AG6-NR594",
+    "fisica",
+    "revisão RR2 (rev4)",
+    "ja desmaiei em procedimento antes, posso ir deitada?",
+  ),
+  nr(
+    "AG6-NR595",
+    "fisica",
+    "revisão RR2 (rev4): a tabela",
+    "o preco me deixou falta de ar kkk",
+  ),
+  nr(
+    "AG6-NR596",
+    "fisica",
+    "revisão RR2 (rev4): a tabela",
+    "tive uma falta de ar de tanto rir",
+  ),
+  nr(
+    "AG6-NR597",
+    "fisica",
+    "revisão RR2 (rev4): a tabela",
+    "tenho dificuldade pra respirar quando subo escada",
+  ),
+  nr(
+    "AG6-NR598",
+    "fisica",
+    "revisão RR2 (rev4): a tabela",
+    "o lado esquerdo do rosto mais caido, quero fazer fios",
+  ),
 ];
 
 /**
@@ -5407,7 +5473,6 @@ export const FALSOS_POSITIVOS_ACEITOS: readonly FalsoPositivoAceito[] = [
     "recepcao",
     "a história contada (o antecedente governa o sinal, sem o agora, o presente ou a retomada)",
   ),
-  fp("AG6-NR145", "recepcao", "o exagero (me matar na academia)"),
   fp(
     "AG6-NR146",
     "estetica",
@@ -5464,7 +5529,6 @@ export const FALSOS_POSITIVOS_ACEITOS: readonly FalsoPositivoAceito[] = [
     "recepcao",
     "a história contada, com o estado bom depois (o antecedente governa o sinal)",
   ),
-  fp("AG6-NR159", "recepcao", "o exagero com sujeito concreto (o preço)"),
   fp("AG6-NR160", "recepcao", "o exagero com sujeito concreto (o trabalho)"),
   fp(
     "AG6-NR170",
@@ -5819,32 +5883,6 @@ export const FALSOS_POSITIVOS_ACEITOS: readonly FalsoPositivoAceito[] = [
   // pura, o estado de sempre, o nome do servico). Os aceitos que a politica
   // nova devolveu a urgencia sairam daqui (VIRARAM_URGENCIA_NA_RR1).
   fp(
-    "AG6-NR519",
-    "recepcao",
-    "figura de linguagem: se matando pra conseguir horário (a finalidade dita)",
-  ),
-  fp(
-    "AG6-NR520",
-    "estetica",
-    "o exagero com a profissional como sujeito (a doutora), sem a ameaça de verdade",
-  ),
-  fp(
-    "AG6-NR521",
-    "estetica",
-    "o exagero com a profissional como sujeito (a dermatologista), sem a ameaça de verdade",
-  ),
-  fp(
-    "AG6-NR522",
-    "estetica",
-    "figura de linguagem: morrer de tão linda (o elogio)",
-  ),
-  fp(
-    "AG6-NR523",
-    "estetica",
-    "figura de linguagem: morrer com o resultado (o elogio)",
-  ),
-  fp("AG6-NR524", "recepcao", "figura de linguagem: morrer com o preço"),
-  fp(
     "AG6-NR526",
     "clinica",
     "o sangue do exame (o que se tira), não o sangramento",
@@ -5932,6 +5970,76 @@ export const FALSOS_POSITIVOS_ACEITOS: readonly FalsoPositivoAceito[] = [
     "AG6-NR584",
     "estetica",
     "o pedido com o objeto (quero fazer preenchimento) na frase do sinal, sem marca de agora nem de mudança",
+  ),
+  fp(
+    "AG6-NR585",
+    "recepcao",
+    "a figura com a coisa como sujeito do matar (o valor), sem relato atual (regra 1b)",
+  ),
+  fp(
+    "AG6-NR586",
+    "recepcao",
+    "a figura com a coisa como sujeito do matar (a fila), sem relato atual (regra 1b)",
+  ),
+  fp(
+    "AG6-NR587",
+    "estetica",
+    "figura de linguagem: sem ar quando viu a foto (o elogio), sem relato atual",
+  ),
+  fp(
+    "AG6-NR588",
+    "recepcao",
+    "o nome com emergência, colado (encaixe de emergência): a coisa, não a pessoa",
+  ),
+  fp(
+    "AG6-NR589",
+    "recepcao",
+    "o lugar (fui na emergência), colado: a coisa, não a pessoa",
+  ),
+  fp(
+    "AG6-NR590",
+    "estetica",
+    "a figura com a coisa como sujeito do matar (a ruga), sem relato atual (regra 1b)",
+  ),
+  fp(
+    "AG6-NR591",
+    "estetica",
+    "o estado de sempre (desde sempre), sem marca de agora nem de mudança",
+  ),
+  fp(
+    "AG6-NR592",
+    "estetica",
+    "o estado de sempre (desde criança), sem marca de agora nem de mudança",
+  ),
+  fp(
+    "AG6-NR593",
+    "recepcao",
+    "figura de linguagem: quase desmaiou quando viu o preço, sem relato atual",
+  ),
+  fp(
+    "AG6-NR594",
+    "clinica",
+    "a história contada (já desmaiei antes), com a pergunta do procedimento",
+  ),
+  fp(
+    "AG6-NR595",
+    "recepcao",
+    "figura de linguagem: o preço que deixou (a coisa), sem relato atual (a tabela da RR2)",
+  ),
+  fp(
+    "AG6-NR596",
+    "estetica",
+    "figura de linguagem: de tanto rir, sem relato atual (a tabela da RR2)",
+  ),
+  fp(
+    "AG6-NR597",
+    "clinica",
+    "o esforço de sempre (quando subo escada), sem marca de agora (a tabela da RR2)",
+  ),
+  fp(
+    "AG6-NR598",
+    "estetica",
+    "o pedido com o objeto estético (quero fazer fios), sem marca de agora nem de mudança (a tabela da RR2)",
   ),
 ];
 
@@ -6518,6 +6626,173 @@ export const VIRARAM_URGENCIA_NA_RR1: readonly {
   },
 ];
 
+/**
+ * Revisao RR2 (rev4): os controles e as rajadas sem urgencia que VIRARAM
+ * urgencia com as regras fixas (o risco de vida sem excecao nenhuma, a nao
+ * ser a negacao de quem fala e a figura com a coisa como sujeito do matar; e
+ * nenhuma exclusao lexica sem as marcas que a desfazem, a nao ser a coisa
+ * colada no verbo). Sairam dos controles; aqui, com o motivo.
+ */
+export const VIRARAM_URGENCIA_NA_RR2: readonly {
+  id: string;
+  antes: "controle" | "rajada sem urgência";
+  textos: readonly string[];
+  motivo: string;
+}[] = [
+  {
+    id: "AG6-C14",
+    antes: "controle",
+    textos: ["quero morrer de rir kkkk"],
+    motivo: "o motivo (de rir) nunca tira o risco de vida (regra 1)",
+  },
+  {
+    id: "AG6-C15",
+    antes: "controle",
+    textos: ["vou me matar de estudar pra prova"],
+    motivo: "o motivo (de estudar) nunca tira o risco de vida (regra 1)",
+  },
+  {
+    id: "AG6-C16",
+    antes: "controle",
+    textos: ["quero morrer de vergonha"],
+    motivo: "o motivo (de vergonha) nunca tira o risco de vida (regra 1)",
+  },
+  {
+    id: "AG6-C55",
+    antes: "controle",
+    textos: ["vou me matar na academia pra ficar em forma"],
+    motivo:
+      "o lugar e o motivo (na academia) nunca tiram o risco de vida (regra 1)",
+  },
+  {
+    id: "AG6-C68",
+    antes: "controle",
+    textos: ["meu nariz não está respirando direito"],
+    motivo:
+      "o nariz como sujeito virou excecao de contexto, e o estado de agora (esta) no sinal a desfaz",
+  },
+  {
+    id: "AG6-C72",
+    antes: "controle",
+    textos: ["quero acabar com tudo de mancha no rosto"],
+    motivo: "o objeto (de mancha) nunca tira o risco de vida (regra 1)",
+  },
+  {
+    id: "AG6-C73",
+    antes: "controle",
+    textos: ["quero acabar com tudo isso de ruga"],
+    motivo: "o objeto (isso de ruga) nunca tira o risco de vida (regra 1)",
+  },
+  {
+    id: "AG6-C94",
+    antes: "controle",
+    textos: ["melhor eu morrer de vergonha"],
+    motivo: "o motivo (de vergonha) nunca tira o risco de vida (regra 1)",
+  },
+  {
+    id: "AG6-C122",
+    antes: "controle",
+    textos: ["vocês vão me matar com esse preço"],
+    motivo: "a pessoa (voces) como sujeito do matar nunca e figura (regra 1b)",
+  },
+  {
+    id: "AG6-C128",
+    antes: "controle",
+    textos: ["pode me cortar o cabelo?"],
+    motivo: "o objeto (o cabelo) nunca tira o risco de vida (regra 1)",
+  },
+  {
+    id: "AG6-C129",
+    antes: "controle",
+    textos: ["na lipo, vão me cortar onde?"],
+    motivo: "quem corta (a equipe) nunca tira o risco de vida (regra 1)",
+  },
+  {
+    id: "AG6-C130",
+    antes: "controle",
+    textos: ["o médico vai me cortar muito?"],
+    motivo: "quem corta (o medico) nunca tira o risco de vida (regra 1)",
+  },
+  {
+    id: "AG6-C131",
+    antes: "controle",
+    textos: ["minha filha não acorda cedo, tem horário à tarde?"],
+    motivo:
+      "a hora de acordar virou excecao de contexto, e a terceira pessoa (minha filha) a desfaz",
+  },
+  {
+    id: "AG6-C147",
+    antes: "controle",
+    textos: ["não estou enxergando bem de longe, vocês têm oftalmologista?"],
+    motivo:
+      "a vista de sempre (de longe) virou excecao de contexto, e o estado de agora (estou) a desfaz",
+  },
+  {
+    id: "AG6-C148",
+    antes: "controle",
+    textos: ["meu filho não respira pelo nariz, tem otorrino?"],
+    motivo:
+      "o pelo nariz virou excecao de contexto, e a terceira pessoa (meu filho) a desfaz",
+  },
+  {
+    id: "AG6-C151",
+    antes: "controle",
+    textos: [
+      "tomei todos os remédios que a doutora passou, posso tirar os pontos?",
+    ],
+    motivo:
+      "a receita (que a doutora passou) nunca tira o risco de vida (regra 1)",
+  },
+  {
+    id: "AG6-C152",
+    antes: "controle",
+    textos: [
+      "tomei 3 comprimidos por dia de antibiótico, já posso fazer o laser?",
+    ],
+    motivo: "o tratamento (por dia) nunca tira o risco de vida (regra 1)",
+  },
+  {
+    id: "AG6-C172",
+    antes: "controle",
+    textos: ["tomei refrigerante, que é veneno"],
+    motivo:
+      "o veneno como predicado saiu da fonte (uma exclusao que nada desfazia)",
+  },
+  {
+    id: "AG6-C196",
+    antes: "controle",
+    textos: ["o que é overdose de vitamina?"],
+    motivo: "a pergunta nunca tira o risco de vida (regra 1)",
+  },
+  {
+    id: "AG6-C197",
+    antes: "controle",
+    textos: ["existe overdose de botox?"],
+    motivo: "a pergunta nunca tira o risco de vida (regra 1)",
+  },
+  {
+    id: "AG6-C198",
+    antes: "controle",
+    textos: ["essa foto é uma overdose de fofura"],
+    motivo:
+      "a figura so vale com a coisa como sujeito do matar; a overdose nao tem figura (regra 1)",
+  },
+  {
+    id: "AG6-C238",
+    antes: "controle",
+    textos: ["fiz preenchimento ontem e minha pele tá manchada de sol"],
+    motivo:
+      "a mancha de sol virou excecao de contexto, e o tempo recente (ontem) e o estado de agora a desfazem",
+  },
+  {
+    id: "AG6-RC08",
+    antes: "rajada sem urgência",
+    textos: ["quero acabar com tudo de mancha no rosto"],
+    motivo:
+      "o objeto (de mancha) nunca tira o risco de vida (regra 1), nem na legenda",
+  },
+];
+
 // ---------------------------------------------------------------------------
 // REVISAO RR1: AS MATRIZES DO REVISOR (as excecoes x o que desfaz)
 // ---------------------------------------------------------------------------
@@ -6802,3 +7077,393 @@ export const MATRIZES_DO_RR1: Readonly<
     ["teve um tiroteio aqui e meu primo foi atingido"],
   ],
 };
+
+// ---------------------------------------------------------------------------
+// REVISAO RR2 (rev4): OS CONJUNTOS DO REVISOR, PERMANENTES
+// ---------------------------------------------------------------------------
+
+/**
+ * Revisao RR2 (rev4): toda urgencia do revisor da 1cf092d (U.txt, u1 a u3 e
+ * x.txt: as emergencias novas, as regressoes da RR1, as perdidas antes e as
+ * excecoes com a marca que as desfaz). Toda frase TEM de ser urgencia (a
+ * 88e9560 marcava 125 das 165; a 1cf092d, 90).
+ */
+export const URGENCIAS_DO_REV4: readonly (readonly string[])[] = [
+  ["Alô, consultório? Meu avô não consegue mais falar desde cedo"],
+  [
+    "Alô, por favor, meu filho caiu da escada, tá desacordado e saindo sangue da cabeça.",
+  ],
+  ["Bom dia, clínica? Meu marido não consegue falar"],
+  ["Eu não aguento mais, eu vou acabar com tudo hoje, tá?"],
+  [
+    "Eu tô sentindo uma dor muito forte no peito, tá irradiando pro braço, eu tô suando muito.",
+  ],
+  [
+    "Moça, eu fiz o preenchimento hoje de manhã e o meu lábio tá ficando roxo e gelado, tá doendo muito.",
+  ],
+  ["Moça, minha mãe tá com muita falta de ar, os lábios tão ficando roxos"],
+  ["Oi, a minha mãe acordou com a boca torta e não consegue levantar o braço"],
+  [
+    "Oi, é... eu tô aqui com a minha mãe, ela começou a falar tudo enrolado e o rosto dela tá caído de um lado.",
+  ],
+  ["a boca da minha mae entortou agora"],
+  ["a garganta da minha filha ta fechando depois que ela comeu amendoim"],
+  ["achei minha avo caida no quarto e ela nao fala nada"],
+  ["acho que to infartando"],
+  ["acordei sem ar e com o peito apertado"],
+  ["agora vou me cortar com a lamina"],
+  ["amanha cedo vou me enforcar com o cinto"],
+  ["amanha vou me cortar com a lamina, ja decidi"],
+  ["amarrei a faixa no pescoco pra me enforcar"],
+  ["apliquei acido no nariz agora e a ponta ta esbranquicada"],
+  ["apos o preenchimento na glabela minha visao ficou embacada e escura"],
+  ["aranha marrom me picou"],
+  ["cai de moto e bati a cabeca, to vomitando"],
+  ["cobra mordeu meu marido na roca"],
+  ["comprei um cinto novo. hoje vou me enforcar"],
+  ["cortei a mao com a faca e nao para de sangrar"],
+  ["de repente comecei a enrolar a lingua pra falar"],
+  [
+    "depois do fio de pdo meu rosto ta muito inchado e quente e to com febre alta",
+  ],
+  ["depois do preenchimento no nariz to sem enxergar de um olho"],
+  ["do nada fiquei sem enxergar do olho direito"],
+  ["do nada perdi a visao de perto e de longe"],
+  ["ela desmaiou e nao acorda"],
+  ["ela desmaiou", "e nao acorda"],
+  ["ela disse que vai se cortar com a gilete"],
+  ["ela ta respirando muito rapido e ficou palida"],
+  ["ela tava no celular e apagou de repente"],
+  ["ele ta muito sonolento, nao consigo manter ele acordado"],
+  ["escorpiao picou meu filho"],
+  ["escorpiao picou minha mae agora"],
+  ["escorpião picou o pé do meu pai"],
+  ["estou no alto do predio. vou me jogar"],
+  ["eu nao quero mais viver"],
+  ["fiquei cega com a luz do laser"],
+  ["fiquei sem ar com o preco, nao to brincando, to passando mal"],
+  ["fiquei toda empolada e com falta de ar depois do remedio"],
+  ["fiz a aplicacao e minha lingua ta inchando, ta dificil de engolir"],
+  ["fiz botox ontem e to com a palpebra caindo e vendo dobrado"],
+  ["fiz luz pulsada e fiquei cega com a luz"],
+  ["fiz preenchimento no labio hoje e ta ficando branco e muito dolorido"],
+  ["fui atropelada agora e to com a perna sangrando"],
+  ["fui picada no pe por um escorpiao"],
+  ["hoje peguei o cinto pra me enforcar"],
+  ["hoje vou me cortar com a gilete"],
+  ["ja escrevi a carta, vou me matar essa noite"],
+  ["já separei o cinto pra me enforcar hoje à noite"],
+  ["liga pra clinica meu pai nao consegue falar"],
+  ["me cortei com a gilete de proposito"],
+  ["meu avo ta tendo um infarto"],
+  ["meu avo tava no celular e agora nao reage"],
+  ["meu filho caiu da laje e ta desacordado"],
+  ["meu filho engoliu uma bateria de relogio"],
+  ["meu filho foi picado por abelha e ta com a boca inchando"],
+  ["meu filho ta chiando e nao consegue puxar o ar direito"],
+  ["meu irmao ta tendo uma convulsao agora"],
+  ["meu marido disse que vai se matar pra pagar as dividas"],
+  ["meu marido levou uma facada"],
+  ["meu marido nao responde, ele tava dirigindo e bateu o carro"],
+  ["meu marido ta com dor no peito e suando frio"],
+  ["meu marido ta confuso, falando coisa sem sentido do nada"],
+  ["meu pai desmaiou no banheiro e bateu a cabeca"],
+  ["meu pai engasgou com carne e nao consegue respirar"],
+  ["meu pai não responde, tava no banho e ouvi um barulho"],
+  ["meu pai passou mal no consultorio e nao consegue falar"],
+  ["meu pai ta com o lado direito do rosto caido"],
+  ["meu pai ta com o rosto inchado e a garganta fechando depois da injecao"],
+  ["meu pai tava no computador e apagou de repente"],
+  ["meu pai tava no whatsapp e caiu e nao reage"],
+  ["meu rosto e torto de nascenca e desde ontem nao consigo sorrir de um lado"],
+  ["meu tio ta com a fala enrolada e a perna fraca"],
+  ["meu tio ta com a metade da cara dormente"],
+  ["meu vizinho foi baleado aqui na rua"],
+  ["minha avo nao ta conseguindo mexer o braco esquerdo"],
+  ["minha avo tava falando no telefone e caiu, nao responde"],
+  ["minha avo tava mexendo no celular e de repente nao reage"],
+  ["minha avó tava no telefone e caiu e não responde mais"],
+  ["minha boca e torta desde crianca, e agora o braco ta fraco"],
+  ["minha boca sempre foi meio torta mas hoje de manha ficou bem pior"],
+  ["minha filha bebeu agua sanitaria"],
+  ["minha filha nao responde, ela tava na academia e passou mal"],
+  ["minha filha quer se cortar com a lamina do apontador"],
+  ["minha filha ta se cortando no banheiro"],
+  ["minha filha ta se debatendo e babando"],
+  ["minha garganta ta fechando"],
+  ["minha irma disse que vai se matar e se trancou no quarto"],
+  ["minha mae disse que ta com o coracao disparado e vai desmaiar"],
+  ["minha mae foi atender o telefone caiu e nao responde"],
+  ["minha mae nao responde, ta no banho faz uma hora"],
+  ["minha mae nao responde, ta no banho faz uma hora e a porta ta trancada"],
+  ["minha mae pegou o controle e engoliu a pilha"],
+  ["minha mae ta desacordada no chao"],
+  ["minha mae ta vomitando sangue"],
+  ["minha mae tava mexendo no celular e apagou do nada"],
+  ["minha mae tava vendo tv e apagou do nada"],
+  ["minha mae tomou a caixa inteira de calmante"],
+  ["minha mãe tá aí na clínica e não consegue falar"],
+  ["nao aguento mais essa vida de mae, quero sumir"],
+  ["nao aguento mais, quero me cortar com a gilete"],
+  ["nao vejo mais motivo pra viver"],
+  ["no predio o vovo ta sem ar"],
+  ["o bebe pegou o controle e engoliu a pilha"],
+  ["o bebe ta engasgado e ficando roxo"],
+  [
+    "o bebe ta fazendo um barulho estranho pra respirar e ta afundando a costela",
+  ],
+  ["o celular do meu pai apagou e ele tambem apagou, nao acorda"],
+  ["o lado esquerdo da cara do meu pai ta dormente"],
+  ["o local do preenchimento ta roxo escuro e frio"],
+  ["o rosto do meu pai ficou torto e ele ta babando"],
+  ["oi bom dia", "queria remarcar", "minha filha ta tendo convulsao"],
+  ["oi recepcao? minha mae nao consegue falar"],
+  ["oi", "minha mae", "ta com a boca torta"],
+  ["oi, vcs abrem hoje? minha avo nao consegue falar e ta babando"],
+  ["peguei a corda pra me enforcar"],
+  ["peguei o cinto pra me enforcar"],
+  ["peguei o fio do carregador pra me enforcar"],
+  ["pensei em pegar a coleira do cachorro e me enforcar"],
+  [
+    "preciso de atendimento de emergencia, minha filha engoliu uma moeda e ta engasgada",
+  ],
+  ["quase desmaiei agora no banho, to tonta ainda"],
+  ["quero dormir e nao acordar nunca mais"],
+  ["quero me cortar com a gilete, me ajuda"],
+  ["quero me cortar com a lamina"],
+  ["quero me cortar com a tesoura"],
+  ["quero morrer com o resultado da biopsia"],
+  ["sai muito sangue do nariz e nao para ha 40 minutos"],
+  ["sinto um aperto forte no peito ha meia hora"],
+  ["socorro peguei o cinto pra me enforcar"],
+  ["tenho falta de ar quando subo escada e agora to sem ar parada"],
+  ["tenho vontade de me cortar com a lâmina do apontador"],
+  ["to aqui no viaduto e vou pular"],
+  ["to com uma dor no peito que ta indo pro braco esquerdo"],
+  ["to com uma dor", "no peito", "muito forte"],
+  ["to em cima da laje, quero me jogar"],
+  ["to em cima do viaduto, vou me jogar"],
+  ["to gravida de 7 meses e to perdendo sangue"],
+  ["to me cortando com a gilete"],
+  ["to me cortando de novo, nao consigo parar"],
+  ["to morrendo com esse calor, minha pressao caiu e to tonta"],
+  ["to na ponte, vou pular"],
+  ["to pensando em me cortar com a gilete de novo"],
+  ["to sangrando muito depois da extracao do dente"],
+  ["to sem conseguir respirar direito desde que tomei o antibiotico"],
+  ["to tendo uma reacao alergica forte, meu rosto ta inchando todo"],
+  ["todo mundo vai ficar melhor sem mim"],
+  ["tomei 30 comprimidos de rivotril"],
+  ["tomei todos os calmantes que a psiquiatra receitou"],
+  ["tomei todos os comprimidos de rivotril que o medico passou"],
+  ["tomei todos os remedios da receita de uma vez so"],
+  ["vcs atendem? meu pai nao consegue falar"],
+  ["vou acabar com a minha vida hoje"],
+  ["vou cortar os pulsos com a gilete"],
+  ["vou me cortar com a gilete"],
+  ["vou me cortar com a gilete hoje"],
+  ["vou me cortar todinha com a navalha"],
+  ["vou me matar pra pagar o seguro pros meus filhos"],
+  ["vou pegar a gravata do meu pai e me enforcar"],
+  ["vou tomar todos os comprimidos que o psiquiatra passou pra acabar logo"],
+  ["vou tomar veneno de rato"],
+  ["vou usar o lenco pra me enforcar"],
+];
+
+/**
+ * Revisao RR2 (rev4): as 156 mensagens comuns de clinica e de recepcao do
+ * revisor. Nenhuma e emergencia; as que a lista marca (o alarme falso que a
+ * regra 1 aceita) estao em ALARMES_FALSOS_DO_REV4, com o motivo.
+ */
+export const COMUNS_DO_REV4: readonly (readonly string[])[] = [
+  ["oi, quanto ta o botox de testa?"],
+  ["tem horario pra limpeza de pele sexta a tarde?"],
+  ["queria saber se voces aceitam unimed"],
+  ["qual o valor do preenchimento labial com 1ml?"],
+  ["posso parcelar no cartao em 10x?"],
+  ["a doutora atende sabado?"],
+  [
+    "preciso remarcar minha consulta de amanha, surgiu um imprevisto no trabalho",
+  ],
+  ["vou me atrasar uns 15 minutos, o transito ta parado"],
+  ["nao vou conseguir ir hoje, posso remarcar pra semana que vem?"],
+  ["vcs tem estacionamento?"],
+  ["qual o endereco da clinica?"],
+  ["o pix caiu? mandei agora"],
+  ["a ligacao caiu, pode me chamar de novo?"],
+  ["o site de voces nao abre, ta fora do ar?"],
+  ["tentei ligar e ninguem atende"],
+  ["oi bom dia, confirma meu horario das 14h?"],
+  ["vocês fazem harmonização facial?"],
+  ["quanto tempo dura o efeito do botox?"],
+  ["quero fazer depilacao a laser na axila, quanto fica o pacote?"],
+  ["a sessao de laser doi muito?"],
+  ["posso ir de vestido no dia da drenagem?"],
+  ["minha mae quer marcar uma avaliacao tambem"],
+  ["o resultado do peeling ficou lindo, obrigada!"],
+  ["amei o resultado, to morrendo de amores pelo meu labio"],
+  ["to morrendo de vontade de fazer o preenchimento"],
+  ["morri com esse preco kkkk"],
+  ["esse valor ta me matando, nao tem desconto?"],
+  ["a fila do estacionamento ta me matando"],
+  ["minha chefe vai me matar se eu chegar atrasada de novo kkk"],
+  ["meu marido vai surtar quando ver a fatura kkkk"],
+  ["quase morri de susto com a fatura"],
+  ["o calor na sala de espera ta de matar"],
+  ["o ar condicionado da sala ta desligado, ta muito quente"],
+  ["a clinica ta sem ar condicionado hoje?"],
+  ["fiquei sem ar quando vi a foto do antes e depois, que perfeicao"],
+  ["nao consigo falar agora, to numa reuniao, me manda por escrito"],
+  ["to sem voz por causa da gripe, posso mandar mensagem?"],
+  ["meu celular apagou, por isso nao respondi"],
+  ["minha internet caiu, desculpa a demora"],
+  ["minha filha nao responde no whats, mas pode marcar pra ela as 16h?"],
+  ["o meu pai nao consegue falar ao telefone, pode ser por mensagem?"],
+  ["a recepcionista nao conseguiu falar comigo ontem"],
+  ["tenho um encaixe de emergencia? queria ver se tem horario hoje"],
+  ["tem horario de urgencia pra amanha?"],
+  ["e urgente, preciso remarcar pra hoje mesmo"],
+  ["vcs tem contato de emergencia caso eu precise?"],
+  ["qual o numero de emergencia da clinica?"],
+  ["fui na emergencia semana passada por causa de uma virose, ja to bem"],
+  ["minha consulta e de retorno, posso levar os exames?"],
+  ["preciso do laudo pra levar no hospital"],
+  ["posso fazer botox gravida?"],
+  ["to amamentando, posso fazer limpeza de pele?"],
+  ["tomo anticoncepcional, tem problema pro laser?"],
+  ["quero fazer peeling mas tenho pele sensivel"],
+  ["qual o cuidado depois do microagulhamento?"],
+  ["posso pegar sol depois do laser?"],
+  ["quanto custa a toxina botulinica no masseter?"],
+  ["quero tirar essa ruga da testa que ta me matando"],
+  ["essas olheiras tao acabando comigo"],
+  ["minhas manchas de sol tao horriveis, o que voces indicam?"],
+  ["tenho melasma ha anos, o laser resolve?"],
+  ["quero clarear as manchas do rosto"],
+  ["minha boca e meio torta desde sempre, o preenchimento ajeita?"],
+  ["tenho o sorriso torto de nascenca, botox ajuda?"],
+  ["meu nariz e torto, voces fazem rinomodelacao?"],
+  ["meu rosto e meio caido do lado esquerdo desde crianca, da pra corrigir?"],
+  ["quero levantar a sobrancelha que e caidinha"],
+  ["a papada ta me incomodando muito, faz enzima?"],
+  ["o resultado do exame de sangue ta pronto?"],
+  ["fiz exame de sangue ontem, posso fazer procedimento?"],
+  ["doei sangue semana passada, posso fazer o botox?"],
+  ["qual o horario de funcionamento no feriado?"],
+  ["pode me mandar a localizacao?"],
+  ["voces atendem crianca?"],
+  ["meu filho de 10 anos tem acne, voces tratam?"],
+  ["quero dar um voucher de presente pra minha mae"],
+  ["tem promocao de dia das maes?"],
+  ["quero cancelar o pacote de depilacao"],
+  ["a maquininha de voces aceita debito?"],
+  ["vou pagar no pix, me manda a chave"],
+  ["recebi o lembrete, confirmo sim"],
+  ["pode confirmar pra quinta as 10h?"],
+  ["nao recebi a confirmacao, ta marcado?"],
+  ["a doutora vai atrasar? to aqui na recepcao ha 40 minutos"],
+  ["fiquei esperando 1 hora ontem, que absurdo"],
+  ["quero falar com a gerente"],
+  ["a moca da recepcao foi muito grossa comigo"],
+  ["adorei o atendimento, nota 10"],
+  ["voces tem fisioterapeuta?"],
+  ["tem nutricionista na clinica?"],
+  ["quanto custa a consulta particular com a dermato?"],
+  ["o plano cobre a consulta?"],
+  ["quero saber se o bradesco saude cobre o procedimento"],
+  ["fiz botox ha 15 dias, ja posso fazer o retoque?"],
+  ["fiz preenchimento mes passado e quero fazer mais um pouquinho"],
+  ["o labio ficou um pouco assimetrico, posso passar pra doutora ver?"],
+  ["ficou um roxinho onde aplicou, e normal?"],
+  ["ta inchado ainda depois de 2 dias, normal ne?"],
+  ["o inchaco ja passou, ficou otimo"],
+  ["o bichinho de estimacao pode entrar na clinica?"],
+  ["posso levar acompanhante?"],
+  ["minha avo vai comigo, tem cadeira de rodas ai?"],
+  ["meu pai tem dificuldade de andar, tem elevador?"],
+  ["tem rampa de acesso?"],
+  ["o predio tem gerador? aqui ta faltando luz"],
+  ["caiu um temporal aqui, vou me atrasar"],
+  ["o onibus quebrou, vou chegar mais tarde"],
+  ["hoje nao vai dar, minha filha ta com febre"],
+  ["nao vou poder ir, meu filho ta doente"],
+  ["desculpa sumir, tava viajando"],
+  ["vou sumir uns dias, depois retomo o tratamento"],
+  ["nem me fale, essa semana foi de matar"],
+  ["morrendo de saudade de voces kkk"],
+  ["to morta de cansaco hoje"],
+  ["quase desmaiei quando vi o preco kkkk"],
+  ["ja desmaiei em procedimento antes, posso ir deitada?"],
+  ["tenho medo de agulha, vou desmaiar kkkk"],
+  ["tenho pavor de sangue"],
+  ["a anestesia deixa a boca dormente por quanto tempo?"],
+  ["depois do dentista minha boca ficou dormente, posso fazer botox hoje?"],
+  ["quero fazer lipo de papada, quanto custa?"],
+  ["tem sessao de criolipolise?"],
+  ["quanto e o pacote de massagem modeladora?"],
+  ["a drenagem e quantas sessoes?"],
+  ["posso fazer microagulhamento e peeling no mesmo dia?"],
+  ["quero fazer o ultraformer no rosto todo"],
+  ["a radiofrequencia doi?"],
+  ["qual o intervalo entre as sessoes de laser?"],
+  ["levei uns 200 tiros na depilacao, normal?"],
+  ["vou fazer a sessao de laser mesmo menstruada?"],
+  ["o que nao posso comer depois do procedimento?"],
+  ["posso beber depois do botox?"],
+  ["quando posso voltar pra academia?"],
+  ["a cinta modeladora ta me apertando, posso tirar pra dormir?"],
+  ["a cinta ta me enforcando na barriga, e normal?"],
+  ["qual tamanho de cinta eu compro?"],
+  ["a depiladora vai me cortar com a cera?"],
+  ["tenho medo de me cortar fazendo a sobrancelha sozinha"],
+  ["fiz a unha e me cortei com o alicate, posso fazer o procedimento?"],
+  ["minha cuticula ta inflamada, cancela a mao?"],
+  ["oi, tudo bem? queria agendar uma avaliacao"],
+  ["qual a diferenca entre botox e preenchimento?"],
+  ["o fio de pdo dura quanto tempo?"],
+  ["vocês tem bioestimulador de colágeno?"],
+  ["quero ver o antes e depois das pacientes"],
+  ["pode me mandar o cardapio de procedimentos?"],
+  ["nao consigo ver a foto que voces mandaram"],
+  ["nao estou enxergando o link, pode mandar de novo?"],
+  ["nao vejo a hora de fazer meu labio"],
+  ["perdi a hora, ainda da tempo de ir?"],
+  ["perdi o comprovante, voces tem copia?"],
+  ["a doutora vai me matar, esqueci de fazer o exame"],
+  ["minha esteticista disse que nao posso fazer agora"],
+  ["voces abrem no domingo?"],
+  ["qual o whats da outra unidade?"],
+  ["ainda tem vaga pra hoje a noite?"],
+];
+
+/** As comuns do rev4 que a lista marca de proposito (regra 1: o risco de vida sem excecao). */
+export const ALARMES_FALSOS_DO_REV4: readonly {
+  texto: string;
+  motivo: string;
+}[] = [
+  {
+    texto: "minha chefe vai me matar se eu chegar atrasada de novo kkk",
+    motivo:
+      "a pessoa (a chefe) como sujeito do matar nunca e figura (regra 1b)",
+  },
+  {
+    texto: "a cinta ta me enforcando na barriga, e normal?",
+    motivo:
+      "o risco de vida nao tem excecao: a coisa que aperta (a cinta) nao tira o enforcar (regra 1)",
+  },
+  {
+    texto: "a depiladora vai me cortar com a cera?",
+    motivo:
+      "o risco de vida nao tem excecao: quem corta (a depiladora) nao tira (regra 1)",
+  },
+  {
+    texto: "tenho medo de me cortar fazendo a sobrancelha sozinha",
+    motivo:
+      "o risco de vida nao tem excecao: o medo e o instrumento nao tiram (regra 1)",
+  },
+  {
+    texto: "a doutora vai me matar, esqueci de fazer o exame",
+    motivo:
+      "a pessoa (a doutora) como sujeito do matar nunca e figura (regra 1b)",
+  },
+];

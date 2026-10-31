@@ -126,6 +126,7 @@ const {
   dependenciasPadraoDaIa,
   executarRespostaComIa,
   PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS,
+  PRAZO_MINIMO_DO_TURNO_MS,
   RESERVA_DAS_GRAVACOES_MS,
   RESERVA_DO_ENVIO_MS,
   TURNO_SEM_A_MIDIA_MS,
@@ -1034,20 +1035,48 @@ describe("o corte do laco no leitor pelos tetos injetados (R3 de d1a15f6, 2)", (
 // (prazoEmMs), na mesma referencia do executor, e as idas ao banco ficam
 // dentro da conta do turno.
 describe("o prazo do turno numa referencia so, com o banco lento (RR2 de 88e9560, baixo 6)", () => {
-  /** O atraso de cada ida lenta ao banco entre a conta do prazo e o laco. */
-  const DEMORA_MS = 1_500;
+  /** As idas lentas ao banco entre a conta do prazo e o laco. */
   const LENTAS = ["ler_atendimento_da_ia", "reservar_gasto_da_ia"] as const;
-  const ATRASO_MS = DEMORA_MS * LENTAS.length;
 
-  /** O banco falso lento: estas RPCs so respondem depois de DEMORA_MS. */
-  function bancoLento(cenario: ReturnType<typeof montarCenario>) {
+  /**
+   * O banco falso lento: estas RPCs so respondem depois da demora de cada
+   * uma (`demoraMs`, ou a da reserva em separado: a leitura do estado tem o
+   * proprio corte de PRAZO_DO_ESTADO_MS, 4 s). `lento.ligado` falso: na
+   * hora. Devolve o atraso total.
+   */
+  function bancoLento(
+    cenario: ReturnType<typeof montarCenario>,
+    demoraMs: number,
+    demoraDaReservaMs = demoraMs,
+  ) {
+    const demoras: Record<(typeof LENTAS)[number], number> = {
+      ler_atendimento_da_ia: demoraMs,
+      reservar_gasto_da_ia: demoraDaReservaMs,
+    };
+    const lento = { ligado: true, atrasoMs: demoraMs + demoraDaReservaMs };
     for (const nome of LENTAS) {
       const original = cenario.banco.manipuladores.get(nome);
       cenario.banco.rpc(nome, async (args) => {
-        await new Promise((resolve) => setTimeout(resolve, DEMORA_MS));
+        if (lento.ligado) {
+          await new Promise((resolve) => setTimeout(resolve, demoras[nome]));
+        }
         return original === undefined ? { data: null, error: null } : original(args);
       });
     }
+    return lento;
+  }
+
+  /** A transcricao falsa que guarda o que recebeu. */
+  function transcricaoQueGuarda(recebidos: EntradaDaTranscricaoFalsa[]) {
+    return async (t: EntradaDaTranscricaoFalsa) => {
+      recebidos.push(t);
+      return {
+        tipo: "transcrita" as const,
+        texto: "Oi, queria saber o preco do hemograma",
+        segundos: 16,
+        uso: { modelo: "whisper-1", segundos: 16 },
+      };
+    };
   }
 
   it("com midia: a transcricao recebe o prazo que sobra da conta do executor (o atraso do banco sai do turno, nunca das gravacoes)", async () => {
@@ -1056,17 +1085,13 @@ describe("o prazo do turno numa referencia so, com o banco lento (RR2 de 88e9560
     const cenario = montarCenario(estado, {
       mensagens: [audio()],
       tempo: () => Date.now(),
-      transcrever: async (t) => {
-        recebidos.push(t);
-        return {
-          tipo: "transcrita",
-          texto: "Oi, queria saber o preco do hemograma",
-          segundos: 16,
-          uso: { modelo: "whisper-1", segundos: 16 },
-        };
-      },
+      transcrever: transcricaoQueGuarda(recebidos),
     });
-    bancoLento(cenario);
+    // 1 s de banco lento: o laco comeca com 37 s, acima do minimo de 36 s.
+    const { atrasoMs } = bancoLento(cenario, 500);
+    expect(MAIOR_TURNO_MS - atrasoMs).toBeGreaterThanOrEqual(
+      PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS,
+    );
     const promessa = executarRespostaComIa(cenario.job, EXECUTOR, cenario.deps);
     await vi.advanceTimersByTimeAsync(PRAZO_DA_INVOCACAO_MS);
     expect(await promessa).toEqual({ ok: true });
@@ -1075,16 +1100,106 @@ describe("o prazo do turno numa referencia so, com o banco lento (RR2 de 88e9560
       expect(cenario.banco.chamadasDe(nome)).toHaveLength(1);
     }
     expect(recebidos).toHaveLength(1);
-    // O turno de 38 s conta da conta do executor: o laco comeca 3 s depois,
-    // e a midia tem 3 s a menos (antes, o laco contava os 38 s do comeco
-    // dele e a integracao recebia o prazo cheio, 3 s alem do turno).
+    // O turno de 38 s conta da conta do executor: o laco comeca 1 s depois,
+    // e a midia tem 1 s a menos (antes, o laco contava os 38 s do comeco
+    // dele e a integracao recebia o prazo cheio, 1 s alem do turno).
     expect(recebidos[0]?.prazoMs).toBe(
       prazoParaAIntegracao(
-        midiaDoAudio - ATRASO_MS - FOLGA_DO_CORTE_DA_MIDIA_MS,
+        midiaDoAudio - atrasoMs - FOLGA_DO_CORTE_DA_MIDIA_MS,
         FOLGA_DO_CORTE_DA_TRANSCRICAO_NA_PORTA_MS,
       ),
     );
     expect(cenario.enviarResposta).toHaveBeenCalledTimes(1);
+  });
+
+  // Rev4: as idas ao banco depois da conferencia do minimo podiam deixar o
+  // laco abaixo do minimo, e saia falhar("prazo") (a frase de sempre, com a
+  // midia cortada) no lugar da volta a fila sem custo.
+  it.each([
+    // O laco com 35 s: a midia ainda caberia, mas abaixo do minimo.
+    ["3 s", 1_500, 1_500],
+    // O laco com 21 s: o laco antigo falhava por prazo (a frase de sempre,
+    // falha tecnica) sem nem ler o arquivo.
+    ["17 s", 3_000, 14_000],
+  ])(
+    "com midia e o banco lento demais (%s): abaixo do minimo antes do laco, volta para a fila sem custo, com a reserva solta, e a proxima passagem faz o turno",
+    async (_atraso, demoraMs, demoraDaReservaMs) => {
+      relogioFalso();
+      const recebidos: EntradaDaTranscricaoFalsa[] = [];
+      const cenario = montarCenario(estado, {
+        mensagens: [audio()],
+        tempo: () => Date.now(),
+        transcrever: transcricaoQueGuarda(recebidos),
+      });
+      const lento = bancoLento(cenario, demoraMs, demoraDaReservaMs);
+      expect(MAIOR_TURNO_MS - lento.atrasoMs).toBeLessThan(
+        PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS,
+      );
+      const promessa = executarRespostaComIa(cenario.job, EXECUTOR, cenario.deps);
+      await vi.advanceTimersByTimeAsync(PRAZO_DA_INVOCACAO_MS);
+      expect(await promessa).toEqual({
+        reagendar: expect.any(String),
+        motivo: "orcamento_da_passagem",
+      });
+      // Nada da midia saiu nem foi gravado; nada decidido, nada enviado.
+      expect(cenario.lerArquivo).not.toHaveBeenCalled();
+      expect(recebidos).toEqual([]);
+      expect(cenario.banco.chamadasDe("gravar_leitura_da_midia")).toEqual([]);
+      expect(decisaoDo(cenario.banco)).toBeUndefined();
+      expect(cenario.enviarFrase).not.toHaveBeenCalled();
+      expect(cenario.enviarResposta).not.toHaveBeenCalled();
+      // Sem custo: a reserva desta tentativa foi solta (o acerto sem uso).
+      expect(cenario.banco.chamadasDe("acertar_gasto_da_ia")).toEqual([
+        expect.objectContaining({ p_linhas: [] }),
+      ]);
+      expect(escrito.join("")).toContain("ia_reserva_solta");
+      // A proxima passagem (outra invocacao, com o prazo dela), com o banco
+      // de volta ao normal, faz o turno.
+      lento.ligado = false;
+      cenario.deps.prazoFinalMs = Date.now() + PRAZO_DA_INVOCACAO_MS;
+      const segunda = executarRespostaComIa(cenario.job, EXECUTOR, cenario.deps);
+      await vi.advanceTimersByTimeAsync(PRAZO_DA_INVOCACAO_MS);
+      expect(await segunda).toEqual({ ok: true });
+      expect(recebidos).toHaveLength(1);
+      expect(cenario.enviarResposta).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("sem midia e o banco lento demais: abaixo do minimo de 20 s, volta para a fila do mesmo jeito, sem chamar o modelo", async () => {
+    relogioFalso();
+    const turno = PRAZO_MINIMO_DO_TURNO_MS + 1_000;
+    const cenario = montarCenario(estado, {
+      mensagens: [
+        {
+          id: "m1",
+          clinic_id: CLINICA,
+          conversation_id: CONVERSA,
+          author: "paciente",
+          direction: "entrada",
+          content_type: "texto",
+          body: "Quanto custa o hemograma?",
+          media_url: null,
+          deleted_at: null,
+          is_internal_note: false,
+          pelo_celular: false,
+          created_at: "2026-10-13T14:58:30.000Z",
+        },
+      ],
+      tempo: () => Date.now(),
+      prazoFinalMs: AGORA + turno + RESERVA_DO_ENVIO_MS + RESERVA_DAS_GRAVACOES_MS,
+    });
+    bancoLento(cenario, 1_500);
+    const promessa = executarRespostaComIa(cenario.job, EXECUTOR, cenario.deps);
+    await vi.advanceTimersByTimeAsync(PRAZO_DA_INVOCACAO_MS);
+    expect(await promessa).toEqual({
+      reagendar: expect.any(String),
+      motivo: "orcamento_da_passagem",
+    });
+    expect(cenario.agente.create).not.toHaveBeenCalled();
+    expect(decisaoDo(cenario.banco)).toBeUndefined();
+    expect(cenario.banco.chamadasDe("acertar_gasto_da_ia")).toEqual([
+      expect.objectContaining({ p_linhas: [] }),
+    ]);
   });
 
   it("sem midia: o agente recebe o prazo da chamada pela mesma conta (o turno de 25 s menos o banco lento e a reserva do filtro)", async () => {
@@ -1110,7 +1225,8 @@ describe("o prazo do turno numa referencia so, com o banco lento (RR2 de 88e9560
       tempo: () => Date.now(),
       prazoFinalMs: AGORA + turno + RESERVA_DO_ENVIO_MS + RESERVA_DAS_GRAVACOES_MS,
     });
-    bancoLento(cenario);
+    // 3 s de banco lento: o laco comeca com 22 s, acima do minimo de 20 s.
+    const { atrasoMs } = bancoLento(cenario, 1_500);
     const promessa = executarRespostaComIa(cenario.job, EXECUTOR, cenario.deps);
     await vi.advanceTimersByTimeAsync(PRAZO_DA_INVOCACAO_MS);
     expect(await promessa).toEqual({ ok: true });
@@ -1120,7 +1236,7 @@ describe("o prazo do turno numa referencia so, com o banco lento (RR2 de 88e9560
       | undefined;
     // Antes: 25 s do comeco do laco menos o filtro (15 s); o turno acabava
     // 3 s depois do que o executor contou, dentro da reserva das gravacoes.
-    expect(opcoes?.timeout).toBe(turno - ATRASO_MS - RESERVA_DO_FILTRO_MS);
+    expect(opcoes?.timeout).toBe(turno - atrasoMs - RESERVA_DO_FILTRO_MS);
     expect(cenario.enviarResposta).toHaveBeenCalledTimes(1);
   });
 

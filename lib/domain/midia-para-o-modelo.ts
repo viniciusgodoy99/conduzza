@@ -79,7 +79,8 @@
 //    anexo, que deixam o PDF de fora (nao suportado):
 //    . a localizacao: exif:GPS, GPSLatitude, GPSLongitude, a coordenada no
 //      formato do XMP ("3,43.914S"), uma coordenada (com ponto ou virgula
-//      decimal) em qualquer propriedade (o XMP inteiro, CDATA inclusive),
+//      decimal, com hemisferio, em graus, minutos e segundos ou com o
+//      rotulo Lat/Lon) em qualquer propriedade (o XMP inteiro, CDATA inclusive),
 //      ou o lugar escrito por extenso com valor (City, State, Country,
 //      CountryCode, CountryName, ProvinceState, Sublocation, Location,
 //      LocationName, LocationId, WorldRegion, o endereco do contato do
@@ -93,20 +94,37 @@
 //      /State, /Country, /Location, /Latitude, /Longitude e /GPS... do
 //      dicionario /Info ou da assinatura (/Sig) com valor, em qualquer
 //      lugar do arquivo sem compressao e dentro dos fluxos de objetos (com
-//      #xx tambem). Metadado que nao da para ler (outro filtro): nao
-//      suportado;
+//      #xx tambem), e a coordenada em qualquer VALOR do /Info (as strings
+//      decodificadas: escapes, hexadecimal, UTF-16; o /Info apontado que
+//      nao se acha tambem fica de fora). O pacote XMP em QUALQUER outro
+//      fluxo (sem /Type nem /Subtype, sem /Metadata apontando), achado pela
+//      marca (<?xpacket, <x:xmpmeta ou <rdf:RDF, tambem em UTF-16) no
+//      fluxo sem compressao, no comeco descomprimido do FlateDecode (o
+//      fluxo achado e descomprimido inteiro com os tetos) e no fluxo de
+//      objetos, passa pela mesma conferencia. Metadado que nao da para ler
+//      (outro filtro), ou a marca visivel num fluxo com filtro que nao da
+//      para ler: nao suportado;
 //    . o anexo: /EmbeddedFile, /EmbeddedFiles ou /FileAttachment (tambem
 //      escritos com #xx), no arquivo e nos fluxos de objetos, ou a chave /EF
 //      de um /Filespec.
-//    RISCO RESIDUAL (aceito): a imagem embutida no proprio conteudo da
-//    pagina (BI ... ID ... EI, com /DCT) nao e limpa nem recusada. O
-//    conteudo vem comprimido e nao e descomprimido aqui (custo); se essa
-//    imagem tiver Exif, ele vai junto.
+//    RISCO RESIDUAL (aceito):
+//    . a imagem embutida no proprio conteudo da pagina (BI ... ID ... EI,
+//      com /DCT) nao e limpa nem recusada. O conteudo vem comprimido e nao
+//      e descomprimido aqui (custo); se essa imagem tiver Exif, ele vai
+//      junto;
+//    . o endereco por extenso numa chave inventada do /Info (como
+//      /Localizacao (Rua das Flores 100, Fortaleza)): nao da para conhecer
+//      toda chave inventada; so as chaves de lugar conhecidas e a
+//      coordenada (em qualquer valor) contam;
+//    . o pacote XMP num fluxo comprimido que nao se diz metadado, depois de
+//      um enchimento: a marca so e procurada no comeco descomprimido (os
+//      primeiros 512 bytes comprimidos, ate 64 KB); o pacote de verdade
+//      comeca nela.
 //
 // Nada daqui vai para log alem do motivo (lista fechada).
 
 import { createHash } from "node:crypto";
-import { inflateSync } from "node:zlib";
+import { constants as constantesDoZlib, inflateSync } from "node:zlib";
 
 /** Um megabyte (MiB). */
 const MB = 1024 * 1024;
@@ -160,7 +178,7 @@ export const LIMITES_DA_MIDIA = {
    * APP1. Com o orcamento cheio a 1,56 vezes, o pior arquivo leva uns
    * 130 ms num Apple M3 livre (1,26 ns por unidade de referencia; no modo de
    * pouca energia, uns 3,7 ns, o triplo). O arquivo real mais caro dos
-   * 5.327 conferidos gastou 3,2 milhoes (5%) e 10 ms.
+   * 5.327 conferidos gastou 3,9 milhoes (6%) e uns 10 ms.
    */
   trabalhoPorArquivo: 64_000_000,
   /**
@@ -2146,6 +2164,12 @@ function inteiroDaChave(d: DicionarioDoPdf, chave: string): number | null {
 type ObjetoDoPdf = {
   numero: number;
   dicionario: DicionarioDoPdf | null;
+  /**
+   * Onde o dicionario esta: no texto do arquivo (texto -1) ou no do fluxo de
+   * objetos k (PdfLido.textosDeDentro[k]), de "<<" ate depois de ">>". Para
+   * ler os valores do /Info.
+   */
+  dicionarioEm: { texto: number; inicio: number; fim: number } | null;
   /** O valor bruto quando o objeto nao e dicionario (a lista /Kids ou o /Count indiretos). */
   valor: string | null;
   /** Os bytes do fluxo: do primeiro dado ate a marca "endstream". */
@@ -2232,6 +2256,7 @@ function lerFluxoDeObjetos(
   trabalho: Trabalho,
   saida: ObjetoDoPdf[],
   jaLidos: number,
+  indiceDoTexto: number,
 ): void {
   const n = inteiroDaChave(d, "N") ?? -1;
   const primeiro = inteiroDaChave(d, "First") ?? -1;
@@ -2263,7 +2288,13 @@ function lerFluxoDeObjetos(
       if (lido === null) {
         throw new MidiaDeFora("corrompido");
       }
-      saida.push({ numero: Number(numero[0]), dicionario: lido.dicionario, valor: null, fluxo: null });
+      saida.push({
+        numero: Number(numero[0]),
+        dicionario: lido.dicionario,
+        dicionarioEm: { texto: indiceDoTexto, inicio: v, fim: lido.fim },
+        valor: null,
+        fluxo: null,
+      });
       fim = lido.fim;
     } else {
       const fimDoValorLido = fimDoValor(texto, v, trabalho);
@@ -2271,7 +2302,7 @@ function lerFluxoDeObjetos(
         throw new MidiaDeFora("corrompido");
       }
       fim = fimComReferencia(texto, v, fimDoValorLido, trabalho);
-      saida.push({ numero: Number(numero[0]), dicionario: null, valor: texto.slice(v, fim), fluxo: null });
+      saida.push({ numero: Number(numero[0]), dicionario: null, dicionarioEm: null, valor: texto.slice(v, fim), fluxo: null });
     }
     fimDoUltimo = Math.max(fimDoUltimo, fim);
   }
@@ -2564,6 +2595,7 @@ function lerPdf(bytes: Uint8Array, trabalho: Trabalho): PdfLido {
       objetos.push({
         numero,
         dicionario: null,
+        dicionarioEm: null,
         valor:
           fimDoValorLido < 0
             ? null
@@ -2597,7 +2629,13 @@ function lerPdf(bytes: Uint8Array, trabalho: Trabalho): PdfLido {
       fluxo = { inicio: dados, fim };
       fimDosFluxos = Math.max(fimDosFluxos, fim);
     }
-    objetos.push({ numero, dicionario: lido.dicionario, valor: null, fluxo });
+    objetos.push({
+      numero,
+      dicionario: lido.dicionario,
+      dicionarioEm: { texto: -1, inicio: v, fim: lido.fim },
+      valor: null,
+      fluxo,
+    });
   }
   // Toda marca "endstream" fecha um fluxo lido: cada fluxo acaba na
   // primeira marca depois do comeco e nenhum comeca dentro de outro, entao
@@ -2651,7 +2689,7 @@ function lerPdf(bytes: Uint8Array, trabalho: Trabalho): PdfLido {
     }
     const texto = latin1(dados, trabalho);
     textosDeDentro.push(texto);
-    lerFluxoDeObjetos(texto, d, trabalho, deDentro, objetos.length);
+    lerFluxoDeObjetos(texto, d, trabalho, deDentro, objetos.length, textosDeDentro.length - 1);
   }
   const todos = objetos.concat(deDentro);
   // O /Encrypt escrito com escape ("/Encr#79pt") tambem e criptografia.
@@ -2846,13 +2884,17 @@ const COORDENADA_DO_XMP =
  * A coordenada escrita num valor, com o ponto ou com a virgula decimal (o
  * formato brasileiro): o par em graus decimais ("-3.731900, -38.526700",
  * "-3,731900; -38,526700"), os graus decimais com o hemisferio ("3.7319 S",
- * "3,7319 S") ou graus, minutos e segundos (3°43'54"S, 3°43'54,8"S). O "°"
+ * "3,7319 S"), graus, minutos e segundos (3°43'54"S, 3°43'54,8"S) ou o
+ * numero com o rotulo de latitude ou longitude ("Lat -3.7319 Lon -38.5267",
+ * "lat: -3,7319", "Longitude=-38.5267"; o rotulo nao pode estar dentro de
+ * outra palavra, como em "translation"). O "°"
  * do UTF-8 lido em latin1 vem depois de um "Â". Sem quantificadores que se
  * sobrepoem: o separador do par e "brancos, uma virgula ou um ponto e
  * virgula, brancos" OU "brancos sem o espaco, um espaco, brancos" (a mesma
  * lingua de \s*[,; ]\s*), os brancos dos dois lados do grau so existem com
- * o grau no meio, e o que separa graus, minutos e segundos nao atravessa
- * uma tag. A coordenada nao comeca no meio de um numero (nem depois de um
+ * o grau no meio, os brancos dos dois lados do ":" ou do "=" do rotulo so
+ * existem com ele no meio, e o que separa graus, minutos e segundos nao
+ * atravessa uma tag. A coordenada nao comeca no meio de um numero (nem depois de um
  * ponto ou de uma virgula): sem isso, "1,1111,1111..." era tentado em cada
  * digito (medido: 3 vezes a unidade cobrada). Assim nenhuma tentativa volta
  * atras mais do que o comprimento do trecho.
@@ -2861,13 +2903,14 @@ const COORDENADAS_NO_VALOR: readonly RegExp[] = [
   /(?<![\d.,])[-+]?\d{1,3}[.,]\d{4,}(?:\s*[,;]|[^\S ]* )\s*[-+]?\d{1,3}[.,]\d{4,}/,
   /(?<![\d.,])\d{1,3}[.,]\d{3,}\s*(?:(?:Â°?|°)\s*)?[NSEWLO](?![A-Za-z])/,
   /(?<!\d)\d{1,3}\s*Â?°\s*\d{1,2}[^\d<>]{1,8}\d{1,2}(?:[.,]\d+)?[^\d<>]{0,8}[NSEWLO](?![A-Za-z])/,
+  /(?<![A-Za-z])(?:lat(?:itude)?|lon(?:g(?:itude)?)?|lng)\.?\s*(?:[:=]\s*)?[-+]?\d{1,3}[.,]\d{3,}/i,
 ];
 
 /**
- * O texto tem coordenada? Passado no XMP INTEIRO: a coordenada conta em
- * qualquer propriedade (xmp:Label, dc:description no rdf:Alt, o CDATA),
- * nao so nas do photoshop: e do xmp:. (Cada expressao anda o texto umas
- * poucas vezes.)
+ * O texto tem coordenada? Passado no XMP INTEIRO (a coordenada conta em
+ * qualquer propriedade: xmp:Label, dc:description no rdf:Alt, o CDATA; nao
+ * so nas do photoshop: e do xmp:) e nos valores do /Info
+ * (coordenadaNoInfo). (Cada expressao anda o texto umas poucas vezes.)
  */
 function coordenadaNoValor(valor: string, trabalho: Trabalho): boolean {
   gastar(trabalho, CUSTO.volta + valor.length * COORDENADAS_NO_VALOR.length * 4 * CUSTO.expressao);
@@ -3201,6 +3244,225 @@ function lugarNoInfo(texto: string, trabalho: Trabalho): boolean {
   return false;
 }
 
+/** A chave /Info (tambem com #xx): o dicionario de informacoes, que o trailer ou o fluxo de referencias aponta. */
+const CHAVE_INFO = new RegExp(`\\/${nomeComEscapes("Info")}${SEM_PALAVRA_DEPOIS}`, "g");
+
+/** Os escapes de uma letra da string literal (\n, \r, \t, \b, \f), pelo codigo da letra. */
+const ESCAPES_DA_STRING: ReadonlyMap<number, string> = new Map([
+  [0x6e, "\n"],
+  [0x72, "\r"],
+  [0x74, "\t"],
+  [0x62, "\b"],
+  [0x66, "\f"],
+]);
+
+/** O texto dos codigos (em pedacos: o fromCharCode com argumentos demais estoura a pilha). */
+function textoDosCodigos(codigos: readonly number[]): string {
+  const partes: string[] = [];
+  for (let i = 0; i < codigos.length; i += 8192) {
+    partes.push(String.fromCharCode(...codigos.slice(i, i + 8192)));
+  }
+  return partes.join("");
+}
+
+/**
+ * O texto de uma string literal do PDF (o de dentro dos parenteses), com
+ * os escapes resolvidos, um caractere por byte: \n, \r, \t, \b, \f, o octal
+ * \ddd e a barra no fim da linha (a string continua na seguinte); antes de
+ * qualquer outro caractere a barra so some (\( \) \\ e os invalidos, como a
+ * especificacao manda). Cobra os caracteres e cada escape.
+ */
+function textoDaStringLiteral(dentro: string, trabalho: Trabalho): string {
+  gastar(trabalho, CUSTO.passo + dentro.length * CUSTO.nativo);
+  if (!dentro.includes("\\")) {
+    return dentro;
+  }
+  const partes: string[] = [];
+  let de = 0;
+  for (let k = dentro.indexOf("\\"); k >= 0; k = dentro.indexOf("\\", de)) {
+    gastar(trabalho, CUSTO.chamada + (k - de) * CUSTO.nativo);
+    partes.push(dentro.slice(de, k));
+    const c = dentro.charCodeAt(k + 1);
+    de = k + 2;
+    if (c >= 0x30 && c <= 0x37) {
+      let valor = c - 0x30;
+      while (de < k + 4 && dentro.charCodeAt(de) >= 0x30 && dentro.charCodeAt(de) <= 0x37) {
+        valor = valor * 8 + (dentro.charCodeAt(de) - 0x30);
+        de += 1;
+      }
+      partes.push(String.fromCharCode(valor & 0xff));
+    } else if (c === 0x0d) {
+      // A barra no fim da linha: o CR LF conta uma vez.
+      if (dentro.charCodeAt(de) === 0x0a) {
+        de += 1;
+      }
+    } else if (c !== 0x0a && !Number.isNaN(c)) {
+      partes.push(ESCAPES_DA_STRING.get(c) ?? dentro.charAt(k + 1));
+    }
+  }
+  partes.push(dentro.slice(de));
+  return partes.join("");
+}
+
+/**
+ * Os bytes de uma string hexadecimal do PDF (o de dentro dos < >), um
+ * caractere por byte: o branco e o que nao e hexadecimal nao contam, e o
+ * digito que sobra no fim vale como seguido de 0. Cobra os caracteres.
+ */
+function textoDaStringHexadecimal(hexa: string, trabalho: Trabalho): string {
+  gastar(trabalho, CUSTO.passo + hexa.length * CUSTO.caractere);
+  const codigos: number[] = [];
+  let alto = -1;
+  for (let i = 0; i < hexa.length; i += 1) {
+    const valor = valorHexadecimal(hexa.charCodeAt(i));
+    if (valor < 0) {
+      continue;
+    }
+    if (alto < 0) {
+      alto = valor;
+      continue;
+    }
+    codigos.push(alto * 16 + valor);
+    alto = -1;
+  }
+  if (alto >= 0) {
+    codigos.push(alto * 16);
+  }
+  return textoDosCodigos(codigos);
+}
+
+/**
+ * O texto da string sem a marca do UTF-16 (e sem os zeros: sobram o ASCII
+ * e o latin1, como o "°", que as expressoes leem) ou sem a do UTF-8 (o "°"
+ * fica "Â°", que as expressoes tambem leem). Sem marca: o PDFDocEncoding,
+ * que nos digitos, nos sinais e no "°" e o proprio latin1.
+ */
+function semMarcaDoUnicode(texto: string, trabalho: Trabalho): string {
+  if (texto.startsWith("\xfe\xff") || texto.startsWith("\xff\xfe")) {
+    gastar(trabalho, texto.length * CUSTO.nativo);
+    return texto.slice(2).replace(/\0/g, "");
+  }
+  return texto.startsWith("\xef\xbb\xbf") ? texto.slice(3) : texto;
+}
+
+/**
+ * As strings do dicionario [inicio, fim) do texto, decodificadas (os
+ * escapes, o hexadecimal, a marca do UTF-16), uma por linha. A literal anda
+ * com fimDaString (os parenteses aninhados e a barra), a hexadecimal ate o
+ * ">"; o comentario e pulado (o "(" dele nao abre string), como na leitura
+ * do dicionario. Cobra o que anda.
+ */
+function stringsDoDicionario(texto: string, inicio: number, fim: number, trabalho: Trabalho): string {
+  gastar(trabalho, CUSTO.volta + (fim - inicio) * 2 * CUSTO.caractere);
+  const strings: string[] = [];
+  let i = inicio;
+  while (i < fim) {
+    const c = texto.charCodeAt(i);
+    if (c === 0x28) {
+      const fimDaLiteral = fimDaString(texto, i);
+      const ate = fimDaLiteral < 0 || fimDaLiteral > fim ? fim : fimDaLiteral;
+      const dentro = texto.slice(i + 1, ate === fimDaLiteral ? ate - 1 : ate);
+      strings.push(semMarcaDoUnicode(textoDaStringLiteral(dentro, trabalho), trabalho));
+      i = ate;
+      continue;
+    }
+    if (c === 0x3c && texto.charCodeAt(i + 1) === 0x3c) {
+      i += 2;
+      continue;
+    }
+    if (c === 0x3c) {
+      const fimDaHexadecimal = texto.indexOf(">", i + 1);
+      const ate = fimDaHexadecimal < 0 || fimDaHexadecimal > fim ? fim : fimDaHexadecimal;
+      strings.push(semMarcaDoUnicode(textoDaStringHexadecimal(texto.slice(i + 1, ate), trabalho), trabalho));
+      i = ate + 1;
+      continue;
+    }
+    if (c === 0x25) {
+      while (i < fim && texto.charCodeAt(i) !== 0x0a && texto.charCodeAt(i) !== 0x0d) {
+        i += 1;
+      }
+      continue;
+    }
+    i += 1;
+  }
+  return strings.join("\n");
+}
+
+/** A coordenada no dicionario [inicio, fim): no texto dele (os numeros soltos, a string sem escape) e nas strings decodificadas. */
+function coordenadaNoDicionario(texto: string, inicio: number, fim: number, trabalho: Trabalho): boolean {
+  return (
+    coordenadaNoValor(texto.slice(inicio, fim), trabalho) ||
+    coordenadaNoValor(stringsDoDicionario(texto, inicio, fim, trabalho), trabalho)
+  );
+}
+
+/**
+ * A coordenada nos VALORES do /Info (o /Keywords "-3.731900, -38.526700",
+ * o /Subject "Lat -3.7319 Lon -38.5267", o /Title com graus), com a mesma
+ * funcao do XMP (coordenadaNoValor), em qualquer chave: no texto do
+ * dicionario e em cada string decodificada (escapes, hexadecimal, UTF-16).
+ * O /Info e o que uma chave /Info (tambem com #xx) aponta, no arquivo ou
+ * num fluxo de objetos: a referencia (o dicionario do objeto, que pode
+ * morar num fluxo de objetos; cada trecho lido uma vez, mesmo com varios
+ * objetos apontando o mesmo) ou o dicionario direto. O /Info apontado que
+ * esta leitura nao achou (o leitor acha pela xref): na duvida, e lugar.
+ */
+function coordenadaNoInfo(texto: string, lido: PdfLido, trabalho: Trabalho): boolean {
+  const numeros = new Set<number>();
+  for (const solto of [texto, ...lido.textosDeDentro]) {
+    const chaves = new RegExp(CHAVE_INFO);
+    let varrido = 0;
+    for (let achado = chaves.exec(solto); achado !== null; achado = chaves.exec(solto)) {
+      gastar(trabalho, CUSTO.volta + (chaves.lastIndex - varrido) * CUSTO.expressao);
+      varrido = chaves.lastIndex;
+      const v = pularBrancos(solto, chaves.lastIndex, trabalho);
+      if (solto.startsWith("<<", v)) {
+        const fimDoDireto = fimDoComposto(solto, v);
+        const fim = fimDoDireto < 0 ? solto.length : fimDoDireto;
+        gastar(trabalho, (fim - v) * CUSTO.caractere);
+        if (coordenadaNoDicionario(solto, v, fim, trabalho)) {
+          return true;
+        }
+        continue;
+      }
+      const fimDoValorLido = fimDoValor(solto, v, trabalho);
+      if (fimDoValorLido < 0) {
+        continue;
+      }
+      const valor = solto.slice(v, fimComReferencia(solto, v, fimDoValorLido, trabalho));
+      const referencia = SO_REFERENCIA.exec(valor);
+      if (referencia !== null) {
+        numeros.add(Number(referencia[1]));
+      }
+    }
+    gastar(trabalho, (solto.length - varrido) * CUSTO.expressao);
+  }
+  if (numeros.size === 0) {
+    return false;
+  }
+  const achados = new Set<number>();
+  const trechosLidos = new Set<number>();
+  for (const objeto of lido.todos) {
+    gastar(trabalho, CUSTO.passo);
+    const onde = objeto.dicionarioEm;
+    if (onde === null || !numeros.has(objeto.numero)) {
+      continue;
+    }
+    achados.add(objeto.numero);
+    // O texto (de -1 a 199) e o comeco (menos de 2^24: o texto tem ate 8 MB) numa chave so.
+    const trecho = (onde.texto + 1) * 2 ** 24 + onde.inicio;
+    if (trechosLidos.has(trecho)) {
+      continue;
+    }
+    trechosLidos.add(trecho);
+    const solto = onde.texto < 0 ? texto : (lido.textosDeDentro[onde.texto] ?? "");
+    if (coordenadaNoDicionario(solto, onde.inicio, onde.fim, trabalho)) {
+      return true;
+    }
+  }
+  return achados.size < numeros.size;
+}
+
 /**
  * O XMP tem a localizacao? (Em UTF-16, os zeros saem e sobra o ASCII.) A
  * coordenada e procurada no XMP inteiro: em qualquer propriedade, com
@@ -3217,14 +3479,159 @@ function localizacaoNoXmp(xmp: string, trabalho: Trabalho): boolean {
   );
 }
 
+/** As marcas do pacote XMP (o comeco dele), tambem em UTF-16 (com o zero entre as letras). */
+const MARCAS_DO_XMP = ["<?xpacket", "<x:xmpmeta", "<rdf:RDF"] as const;
+const MARCA_DO_XMP = new RegExp(
+  MARCAS_DO_XMP.flatMap((marca) => {
+    const letras = Array.from(marca, (letra) => (letra === "?" ? "\\?" : letra));
+    return [letras.join(""), letras.join("\\0")];
+  }).join("|"),
+);
+
+/**
+ * Quanto do comeco de um fluxo FlateDecode se descomprime para procurar a
+ * marca do pacote XMP (o pacote comeca nela): o zlib da no maximo 1.032
+ * bytes por byte comprimido, entao a amostra nunca passa de uns 528 KB.
+ */
+const AMOSTRA_COMPRIMIDA = 512;
+/** Ate onde a marca e procurada no comeco descomprimido. */
+const AMOSTRA_DESCOMPRIMIDA = 64 * 1024;
+
+/**
+ * O comeco descomprimido do fluxo FlateDecode (o que os primeiros
+ * AMOSTRA_COMPRIMIDA bytes dao, ate AMOSTRA_DESCOMPRIMIDA), sem
+ * descomprimir o resto; null: nao descomprime. Cobra o que descomprime.
+ */
+function comecoDoFluxo(dados: Uint8Array, trabalho: Trabalho): string | null {
+  const amostra = dados.subarray(0, AMOSTRA_COMPRIMIDA);
+  gastar(trabalho, CUSTO.objeto + amostra.length * CUSTO.nativo);
+  let comeco: Uint8Array;
+  try {
+    comeco = inflateSync(amostra, {
+      finishFlush: constantesDoZlib.Z_SYNC_FLUSH,
+      maxOutputLength: AMOSTRA_COMPRIMIDA * 1032 + 1024,
+    });
+  } catch {
+    return null;
+  }
+  gastar(trabalho, comeco.length * CUSTO.zlib);
+  return latin1(comeco.subarray(0, AMOSTRA_DESCOMPRIMIDA), trabalho);
+}
+
+/** Os fins do pacote XMP: o que vem depois do ultimo deles ja nao e XMP. */
+const FINS_DO_XMP = ["<?xpacket end", "</x:xmpmeta>", "</rdf:RDF>"] as const;
+
+/**
+ * O pacote XMP de um trecho que comeca na marca: ate o ULTIMO fim de pacote
+ * (FINS_DO_XMP; com o "?>" do "<?xpacket end") ou ate o fim do trecho. O
+ * que vem depois do pacote (o resto de um fluxo que nao e so XMP) nao passa
+ * pela procura da coordenada, e um fim falso no meio nao corta o pacote.
+ * Cobra a procura (so no trecho).
+ */
+function pacoteXmp(trecho: string, trabalho: Trabalho): string {
+  gastar(trabalho, CUSTO.chamada + trecho.length * FINS_DO_XMP.length * 2 * CUSTO.nativo);
+  let fim = -1;
+  for (const final of FINS_DO_XMP) {
+    const achado = trecho.lastIndexOf(final);
+    if (achado >= 0) {
+      const fecha = final.startsWith("<?") ? trecho.indexOf("?>", achado) : achado + final.length - 2;
+      fim = Math.max(fim, fecha < 0 ? trecho.length : fecha + 2);
+    }
+  }
+  return fim < 0 ? trecho : trecho.slice(0, fim);
+}
+
+/**
+ * O pacote XMP num fluxo que nao se diz metadado (sem /Type /Metadata, sem
+ * /Subtype /XML e sem /Metadata apontando para ele), achado pela marca
+ * (MARCA_DO_XMP) e conferido como o XMP (localizacaoNoXmp): no fluxo sem
+ * compressao (a marca no texto cru), no FlateDecode (a marca no comeco
+ * descomprimido; achou, o fluxo inteiro e descomprimido com os tetos do
+ * XMP e do total, como o de metadados) e no fluxo de objetos (o texto ja
+ * descomprimido). O fluxo com outro filtro (ou cadeia, ou o FlateDecode que
+ * nao descomprime) que deixa a marca visivel no texto cru nao da para ler:
+ * "formato"; com preditor, tambem.
+ */
+function pacoteXmpNosOutrosFluxos(
+  texto: string,
+  saida: Uint8Array,
+  lido: PdfLido,
+  outros: readonly { dicionario: DicionarioDoPdf; fluxo: { inicio: number; fim: number } }[],
+  restanteAntes: number,
+  trabalho: Trabalho,
+): boolean {
+  let restante = restanteAntes;
+  const marcas: number[] = [];
+  const procura = new RegExp(MARCA_DO_XMP.source, "g");
+  gastar(trabalho, CUSTO.volta + texto.length * CUSTO.expressao);
+  for (let achada = procura.exec(texto); achada !== null; achada = procura.exec(texto)) {
+    gastar(trabalho, CUSTO.passo);
+    marcas.push(achada.index);
+  }
+  for (const { dicionario: d, fluxo } of outros) {
+    gastar(trabalho, CUSTO.passo);
+    if (tiposDoDicionario(d, trabalho).includes("ObjStm") || (d.has("N") && d.has("First"))) {
+      continue; // o texto dele, ja descomprimido, e conferido abaixo
+    }
+    const marca = primeiroDesde(marcas, fluxo.inicio);
+    const visivel = marca >= 0 && marca < fluxo.fim;
+    const filtros = filtrosDoFluxo(d, trabalho);
+    if (filtros.length === 0) {
+      if (visivel && localizacaoNoXmp(pacoteXmp(texto.slice(marca, fluxo.fim), trabalho), trabalho)) {
+        return true;
+      }
+      continue;
+    }
+    if (filtros.length > 1 || filtros[0] !== "FlateDecode") {
+      if (visivel) {
+        throw new MidiaDeFora("formato");
+      }
+      continue;
+    }
+    const dados = saida.subarray(fluxo.inicio, fluxo.fim);
+    const comeco = comecoDoFluxo(dados, trabalho);
+    if (comeco === null) {
+      if (visivel) {
+        throw new MidiaDeFora("formato");
+      }
+      continue;
+    }
+    gastar(trabalho, comeco.length * CUSTO.expressao);
+    const onde = comeco.search(MARCA_DO_XMP);
+    if (onde < 0) {
+      continue;
+    }
+    if (comPreditor(d, trabalho)) {
+      throw new MidiaDeFora("formato");
+    }
+    if (restante <= 0) {
+      throw new MidiaDeFora("bomba");
+    }
+    const todo = descomprimir(dados, Math.min(restante, LIMITES_DA_MIDIA.pdfXmp), trabalho);
+    restante -= todo.length;
+    if (localizacaoNoXmp(pacoteXmp(latin1(todo, trabalho).slice(onde), trabalho), trabalho)) {
+      return true;
+    }
+  }
+  for (const dentro of lido.textosDeDentro) {
+    gastar(trabalho, CUSTO.volta + dentro.length * CUSTO.expressao);
+    const onde = dentro.search(MARCA_DO_XMP);
+    if (onde >= 0 && localizacaoNoXmp(pacoteXmp(dentro.slice(onde), trabalho), trabalho)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * A localizacao no PDF (ja sem a das fotos, que a limpeza zerou): as
  * propriedades de GPS, o lugar por extenso e as chaves de lugar do /Info
  * (LUGAR_NO_INFO) em qualquer lugar do arquivo sem compressao e dentro dos fluxos de
- * objetos, e o XMP de cada fluxo de metadados (/Type /Metadata, /Subtype
- * /XML ou o que um /Metadata aponta: do catalogo, da pagina, da foto),
- * descomprimido com os tetos (o do XMP e o do total). O fluxo de metadados
- * que nao da para ler: "formato".
+ * objetos, a coordenada nos valores do /Info (coordenadaNoInfo), e o XMP
+ * de cada fluxo de metadados (/Type /Metadata, /Subtype /XML ou o que um
+ * /Metadata aponta: do catalogo, da pagina, da foto), descomprimido com os
+ * tetos (o do XMP e o do total). O fluxo de metadados que nao da para ler:
+ * "formato".
  */
 function comLocalizacao(
   texto: string,
@@ -3241,6 +3648,9 @@ function comLocalizacao(
       return true;
     }
   }
+  if (coordenadaNoInfo(texto, lido, trabalho)) {
+    return true;
+  }
   const apontados = new Set<number>();
   for (const objeto of lido.todos) {
     gastar(trabalho, CUSTO.passo);
@@ -3253,6 +3663,7 @@ function comLocalizacao(
     }
   }
   let restante = lido.descomprimidoRestante;
+  const outros: { dicionario: DicionarioDoPdf; fluxo: { inicio: number; fim: number } }[] = [];
   for (const objeto of lido.objetos) {
     gastar(trabalho, CUSTO.passo);
     const d = objeto.dicionario;
@@ -3264,6 +3675,7 @@ function comLocalizacao(
       !nomesDaChave(d, "Subtype", trabalho).includes("XML") &&
       !apontados.has(objeto.numero)
     ) {
+      outros.push({ dicionario: d, fluxo: objeto.fluxo });
       continue;
     }
     const filtros = filtrosDoFluxo(d, trabalho);
@@ -3292,7 +3704,7 @@ function comLocalizacao(
       return true;
     }
   }
-  return false;
+  return pacoteXmpNosOutrosFluxos(texto, saida, lido, outros, restante, trabalho);
 }
 
 function prepararPdf(bytes: Uint8Array, trabalho: Trabalho): MidiaPreparada {
@@ -3369,9 +3781,16 @@ export const FONTES_DO_PREPARO = {
       lugarComValor: [...NOMES_DE_LUGAR],
       lugarComQualquerPrefixo: true,
       info: LUGAR_NO_INFO.source,
+      coordenadaNosValoresDoInfo: CHAVE_INFO.source,
       soltaNoArquivoENosFluxosDeObjetos: true,
+      pacoteXmpEmQualquerFluxo: {
+        marca: MARCA_DO_XMP.source,
+        amostraComprimida: AMOSTRA_COMPRIMIDA,
+        amostraDescomprimida: AMOSTRA_DESCOMPRIMIDA,
+      },
     },
     anexo: { nomes: ANEXO.source, chave: "/EF" },
-    residual: "imagem embutida no conteudo (BI ... EI) nao e limpa",
+    residual:
+      "imagem embutida no conteudo (BI ... EI) nao e limpa; endereco em chave inventada do /Info; pacote XMP depois de enchimento num fluxo comprimido sem tipo",
   },
 } as const;

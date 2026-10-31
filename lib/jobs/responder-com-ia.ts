@@ -218,7 +218,9 @@ import type { Job, ResultadoDeJob } from "./worker";
 // 10. O turno (portao, classificador, agente, filtro), com a trava do
 //     WhatsApp entre as rodadas e o prazo da invocacao menos o envio (e as
 //     gravacoes; RR2 de 88e9560: o instante contado antes do passo 8b, que
-//     o laco recebe em prazoEmMs, com as idas ao banco dentro dele). As
+//     o laco recebe em prazoEmMs, com as idas ao banco dentro dele; o minimo
+//     conferido de novo logo antes do laco: abaixo dele, a fila, com a
+//     reserva solta). As
 //     ferramentas de agenda (E4) gravam pelas RPCs com o id DESTE job
 //     (portaDaAgendaDoWhatsapp): repetir o job devolve a mesma reserva e a
 //     mesma consulta, nunca uma segunda.
@@ -302,11 +304,14 @@ export const PRAZO_MINIMO_DO_TURNO_MS = 20_000;
  * comeco dela; senao o job volta para a fila (orcamento_da_passagem). RR2
  * de 88e9560 (baixo 6): o que vem DEPOIS da conta e antes do laco (os
  * precos e o catalogo sem midia, o estado, o nascimento, a reserva e o
- * turno) sai do prazo do turno (o laco recebe o instante, prazoEmMs), e no
- * minimo exato sai do prazo da integracao, como o Storage; nunca da reserva
- * das gravacoes nem da do envio. Se esses 2 s bastam, e se o minimo fica em
- * 36 s, so a prova paga diz. O minimo nunca pode passar do maior turno (o
- * turno com midia nunca comecaria).
+ * turno) sai do prazo do turno (o laco recebe o instante, prazoEmMs), nunca
+ * da reserva das gravacoes nem da do envio; e (rev4) o minimo e conferido
+ * de novo logo antes do laco: abaixo dele, o job volta para a fila sem
+ * custo (a reserva solta). Essas idas cabem, entao, na sobra do turno acima
+ * do minimo (no maior turno, os mesmos 2 s, menos o que veio antes da
+ * conta). Se esses 2 s bastam, e se o minimo fica em 36 s, so a prova paga
+ * diz. O minimo nunca pode passar do maior turno (o turno com midia nunca
+ * comecaria).
  * O que NAO cabe, e depende da prova paga (medir o Storage e o modelo e
  * baixar os prazos) ou de subir o maxDuration da rota da IA (decisao de
  * infraestrutura, desenho 12): o Storage no pior caso proposto (8 s) junto
@@ -984,12 +989,10 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
   );
   const prazoDoTurnoEm = contaDoTurnoDesde + prazoDoTurno;
   // [AG6b mídia] Com midia para o modelo, o prazo minimo e o da midia.
-  if (
-    prazoDoTurno <
-    (comMidiaParaOModelo
-      ? PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS
-      : PRAZO_MINIMO_DO_TURNO_MS)
-  ) {
+  const prazoMinimoDoTurno = comMidiaParaOModelo
+    ? PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS
+    : PRAZO_MINIMO_DO_TURNO_MS;
+  if (prazoDoTurno < prazoMinimoDoTurno) {
     return { reagendar: agoraIso(c), motivo: "orcamento_da_passagem" };
   }
 
@@ -1098,6 +1101,33 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
     reservaId = reserva.id;
   }
   await salvarTurnoComReserva(c, { ...base, reservaId }, precos);
+
+  // RR2 de 88e9560 (rev4): o minimo de novo, logo antes do laco. As idas ao
+  // banco depois da conta (os precos e o catalogo sem midia, o estado, o
+  // nascimento, a reserva e o turno) podem ter deixado o turno abaixo do
+  // minimo, e o laco falharia por prazo (a frase de sempre, com a midia
+  // cortada). Volta para a fila como no primeiro caso e sem custo: a reserva
+  // desta tentativa e solta (o acerto sem uso, como na gravacao do turno que
+  // falha) e fica nas reservas perdidas do turno (so auditoria); a
+  // retentativa reserva de novo. Nada foi lido nem gravado da midia.
+  if (prazoDoTurnoEm - c.deps.agora() < prazoMinimoDoTurno) {
+    if (reservaId !== null) {
+      const solta = await acertarGasto(admin, {
+        reservaId,
+        clinicId,
+        origem: "whatsapp",
+        usos: [],
+        precos,
+        conversationId: c.conversationId,
+        jobId: c.job.id,
+      });
+      log.warn(solta ? "ia_reserva_solta" : "ia_reserva_orfa", {
+        ...idsDoLog(c),
+        status: "prazo_antes_do_laco",
+      });
+    }
+    return { reagendar: agoraIso(c), motivo: "orcamento_da_passagem" };
+  }
 
   // [AG6b mídia] início
   // A porta da midia so com audio a transcrever ou arquivo a ler (as
