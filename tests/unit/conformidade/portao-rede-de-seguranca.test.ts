@@ -4,12 +4,15 @@ import { versaoDoPortao } from "@/lib/domain/conformidade/filtro";
 import {
   detectarGatilhosDeEntrada,
   FONTES_DO_PORTAO_EM_CODIGO,
+  LIMITE_DA_LEITURA,
   LIMITE_DA_RAJADA,
+  LIMITE_DE_MENSAGEM,
   MAXIMO_DE_MENSAGENS_NO_CONTEXTO,
 } from "@/lib/domain/conformidade/gatilhos-de-entrada";
 import {
   frasesDasVisoes,
   neutralizador,
+  visaoCorrida,
   visoesDoTexto,
 } from "@/lib/domain/conformidade/normalizar";
 import {
@@ -30,6 +33,12 @@ import {
 // revisao de 31/10/2026 (rev4): as urgentes (U, u1, u2, u3 e x) e as
 // mensagens comuns de estetica e recepcao (as 156 do rev4 e as do RR1) que o
 // portao nao escalava antes da rede. Das comuns, NENHUMA passou a escalar.
+//
+// 2a rodada (rev5, 31/10/2026): a pontuacao, o emoji e as muletas da fala
+// entre as palavras (a visao corrida), o vocabulario novo, a negacao que o
+// adiamento desfaz, a figura que o "engolir" desfaz, o alarme falso que a
+// rev5 apontou e o limite da leitura depois da NFKD. As listas da rev5 (as
+// 382 urgentes, as 107 comuns sem giria e as 224 com giria) estao abaixo.
 
 /** O portao sem a lista de urgencia: o que escala mesmo se ela errar. */
 function semUrgencia(textos: readonly string[]): string[] {
@@ -40,9 +49,13 @@ function semUrgencia(textos: readonly string[]): string[] {
 
 const neutralizar = neutralizador(NEUTRALIZACOES_DE_ENTRADA);
 
-/** So os dois padroes da rede, numa mensagem (com as visoes do portao). */
+/**
+ * So os dois padroes da rede, numa mensagem, nas visoes que o portao da a
+ * rede: as de sempre e a corrida.
+ */
 function aRedePega(texto: string): boolean {
-  const frases = frasesDasVisoes(visoesDoTexto(texto, [], neutralizar));
+  const visoes = visoesDoTexto(texto, [], neutralizar);
+  const frases = [...frasesDasVisoes(visoes), visaoCorrida(visoes.base)];
   return PADROES_DA_REDE_DE_SEGURANCA.some((padrao) =>
     frases.some((frase) => padrao.regex.test(frase)),
   );
@@ -469,6 +482,804 @@ const COMUNS_QUE_NAO_ESCALAVAM: readonly string[] = [
   "fiz bariatrica, quero tratar a flacidez",
 ];
 
+/**
+ * Rev5: as urgentes (alto1 a alto7 e as excecoes, com as rajadas em
+ * partes). No portao da 171239a, 173 destas nao escalavam nem com a lista de
+ * urgencia.
+ */
+const URGENTES_DA_REV5: readonly (readonly string[])[] = [
+  ["eu quero é morrer"],
+  ["o que eu quero mesmo é morrer"],
+  ["seria melhor eu morrer logo"],
+  ["é melhor eu morrer do que continuar assim"],
+  ["tenho desejo de morrer todo dia"],
+  ["comecei a querer morrer de novo"],
+  ["hoje eu quis morrer"],
+  ["nunca quis tanto morrer como hoje"],
+  ["só não me mato por causa da minha filha"],
+  ["eu só não me jogo da janela pq tenho medo de altura"],
+  ["vou acabar comigo hoje"],
+  ["vou acabar comigo mesma"],
+  ["vou dar fim na minha vida"],
+  ["vou por um fim nisso tudo hoje"],
+  ["vou dar cabo da minha vida"],
+  ["quero encerrar minha vida"],
+  ["não suporto mais viver"],
+  ["não suporto mais essa vida"],
+  ["cansei dessa vida, quero ir embora desse mundo"],
+  ["to cansada da vida"],
+  ["minha vida não tem mais sentido nenhum"],
+  ["a vida perdeu o sentido pra mim"],
+  ["queria desaparecer pra nunca mais voltar"],
+  ["queria desaparecer"],
+  ["peço todo dia pra Deus me levar"],
+  ["Deus podia me levar logo"],
+  ["tenho pensamentos de morte o tempo todo"],
+  ["só penso na morte"],
+  ["to pensando em sucidio"],
+  ["ideacao sucida de novo"],
+  ["pensei em me sucidar"],
+  ["vou me suissidar"],
+  ["ja me despedi de todo mundo"],
+  ["isso é uma despedida, obrigada por tudo"],
+  ["adeus a todos, não aguento mais"],
+  ["vou me mutilar de novo"],
+  ["voltei a me mutilar"],
+  ["voltei com a automutilação"],
+  ["quero me ferir"],
+  ["vou me pendurar no ventilador"],
+  ["vou me atirar da ponte"],
+  ["vou me atirar na frente do carro"],
+  ["vou pular do décimo andar"],
+  ["moro no 12 andar e vou pular"],
+  ["vou pular na linha do trem"],
+  ["vou me deitar no trilho do trem"],
+  ["engoli a cartela toda de uma vez"],
+  ["engoli varios comprimidos de uma vez pra dormir pra sempre"],
+  ["engoli uma porrada de comprimido"],
+  ["bebi a garrafa inteira de alcool com os comprimidos"],
+  ["peguei a arma do meu pai"],
+  ["to com a arma do meu marido na mao"],
+  ["vou estourar meus miolos"],
+  ["vou dar um tiro na minha boca"],
+  ["quero dormir pra sempre"],
+  ["vou dormir e não quero acordar"],
+  ["ja comprei a corda"],
+  ["ja to com a corda pronta"],
+  ["vou cortar meu pescoço"],
+  ["vou cortar a garganta"],
+  ["passei a lamina no braço de novo"],
+  ["fiz uns riscos no braço com a lamina"],
+  ["vou me queimar com alcool"],
+  ["vou tacar fogo em mim"],
+  ["vou ligar o gás e dormir"],
+  ["vou me trancar no carro com o motor ligado"],
+  ["minha filha tá dizendo que vai se jogar da janela"],
+  ["meu filho subiu no telhado e ta ameaçando pular"],
+  ["minha irmã quer acabar com a vida dela"],
+  ["meu marido pegou a arma e se trancou no quarto"],
+  ["minha mãe tomou um monte de calmante escondida"],
+  ["meu irmao engoliu a cartela toda de rivotril"],
+  ["minha amiga mandou mensagem se despedindo de todo mundo"],
+  ["minha esposa ta falando que nao quer mais viver"],
+  ["meu namorado disse que vai se matar se eu terminar"],
+  ["minha filha se cortou toda com a lamina do apontador"],
+  ["meu pai ta com a corda no pescoço"],
+  ["meu sobrinho ta em cima da ponte"],
+  ["o vizinho ta na janela do predio ameaçando se jogar"],
+  ["minha prima disse que quer morrer"],
+  ["minha tia ta falando em suicidio"],
+  ["minha colega de trabalho disse que vai tirar a propria vida"],
+  ["meu pai fala que quer ir embora desse mundo"],
+  ["minha avo desfaleceu aqui na sala"],
+  ["meu pai teve um treco agora e caiu da cadeira"],
+  ["deu um piripaque no meu avo, ele ta gelado"],
+  ["deu um troço na minha mae, ela ta toda mole"],
+  ["meu pai nao se mexe, ta gelado"],
+  ["o coracao dele nao ta batendo"],
+  ["nao to sentindo o pulso dela"],
+  ["ele virou os olhos e ficou duro"],
+  ["ta tremendo todo e babando"],
+  ["meu filho levou um choque forte na tomada"],
+  ["meu sobrinho afogou na piscina agora"],
+  ["meu marido sofreu um acidente agora na estrada"],
+  ["meu pai capotou o carro"],
+  ["minha mae levou um tombo feio e nao levanta"],
+  ["levou uma pancada forte na cabeca"],
+  ["meu pai infartou agora"],
+  ["meu avo enfartou"],
+  ["a glicose dele ta 40 e ele ta suando frio"],
+  ["ela ta delirando, nao reconhece ninguem"],
+  ["minha avo nao ta falando coisa com coisa"],
+  ["ela nao abre os olhos"],
+  ["meu pai nao ta mais reagindo"],
+  ["minha mae nao esta mais respondendo"],
+  ["minha avo apagou na cozinha"],
+  ["meu pai apagou no trabalho"],
+  ["ela apagou no onibus"],
+  ["meu tio ta apagado no sofa e nao acorda"],
+  ["minha mae nao consegue falar agora, do nada ficou assim"],
+  ["meu marido de repente nao consegue falar comigo, so balbucia"],
+  ["do nada nao to enxergando"],
+  ["acabei de fazer preenchimento no nariz e nao to enxergando"],
+  ["do nada fiquei sem visao do olho"],
+  ["meu filho ta com a boca roxa"],
+  ["meu bebe ta com os labios azulados"],
+  ["ta saindo muito sangue"],
+  ["cortei o dedo fora com a serra"],
+  ["meu pai ta com o braco esquerdo formigando e o peito apertado"],
+  ["ele ta suando frio e com a mao no peito"],
+  ["minha esposa entrou em trabalho de parto"],
+  ["minha bolsa rompeu"],
+  ["minha filha engoliu um brinquedo pequeno"],
+  ["meu filho enfiou um feijao no nariz"],
+  ["o bebe caiu do trocador e bateu a cabeca"],
+  ["o bebe nao para de chorar e ta com a moleira inchada"],
+  ["minha mae ta tendo uma crise de asma forte"],
+  ["ela ta sem folego e ficando roxa"],
+  ["fiquei preso no elevador e to sem ar"],
+  ["inalei a fumaca do incendio"],
+  ["o predio ta pegando fogo"],
+  ["minha casa ta pegando fogo"],
+  ["tem um homem armado aqui na porta"],
+  ["meu ex ta aqui na porta ameaçando me matar"],
+  ["meu marido ta me batendo"],
+  ["ele me espancou e to trancada no banheiro"],
+  ["fui estuprada"],
+  ["to sendo seguida"],
+  ["meu filho sumiu"],
+  ["oi", "eu so quero...", "morrer"],
+  ["eu nao aguento mais.", "vou acabar comigo."],
+  ["moça", "minha avó", "desfaleceu"],
+  ["oi bom dia", "meu pai", "nao ta mais reagindo"],
+  ["to na ponte.", "vou pular."],
+  ["to na ponte...", "ja era"],
+  ["eu vou", "me matar"],
+  ["eu vou,", "me matar"],
+  ["ja peguei a corda", "hoje acaba"],
+  ["tomei", "um monte", "de calmante"],
+  ["engoli", "a cartela", "inteira"],
+  ["minha mae", "ta no chao", "nao responde"],
+  ["socorro", "minha mae"],
+  ["ela caiu", "nao acorda"],
+  ["ele", "ta", "roxo"],
+  ["quero", "dormir", "pra sempre"],
+  ["nao quero", "mais viver"],
+  ["nao quero.", "mais viver."],
+  ["eu quero", "é morrer"],
+  ["vou me", "jogar"],
+  ["vou me", "matar"],
+  ["a", "vida", "nao", "tem", "sentido"],
+  ["eu", "nao", "quero", "mais", "existir"],
+  [
+    "Oi, boa tarde. Desculpa incomodar, eu sei que vocês são clínica de estética, mas eu não tenho com quem falar. Faz meses que eu não durmo direito, meu marido foi embora, perdi o emprego e ontem eu fiquei a noite inteira olhando pro vidro de comprimidos. Hoje eu acho que vou acabar comigo, só queria que alguém soubesse.",
+  ],
+  [
+    "Bom dia meninas, então, ontem eu fiz o preenchimento labial com a doutora e tava tudo ótimo, mas hoje acordei e o lado esquerdo do lábio tá com uma cor meio cinza e gelado, e tem uns pontinhos brancos. Tá normal isso?",
+  ],
+  [
+    "Oi, a minha mãe tem consulta com vocês amanhã às 10h, mas agora ela tava fazendo almoço e do nada ficou estranha, olhando pro nada, falando umas palavras sem sentido, e o braço não obedece. Será que eu levo ela amanhã mesmo?",
+  ],
+  [
+    "Oi, aqui é a Jéssica. Meu pai tava aqui no sofá vendo jogo, aí deu uma tosse esquisita, ficou pálido, encostou a cabeça e agora não abre os olhos e tá com a respiração esquisita. A consulta dele é sexta, ainda tá de pé?",
+  ],
+  [
+    "Moça, eu fiz bioestimulador semana passada, e agora a minha amiga me falou que eu tô muito estranha, que tô com o olhar parado. Eu tô me sentindo esquisita, fraca, a vista meio apagando.",
+  ],
+  [
+    "Gente, desculpa sumir, a semana foi pesada. Ontem eu fui pra ponte da cidade e fiquei lá umas duas horas pensando em pular, mas voltei. Hoje tá pior. Queria remarcar a sessão de quinta.",
+  ],
+  [
+    "Olá, meu filho de 20 anos se trancou no quarto, não abre a porta, disse que ia tomar todos os comprimidos da avó dele, e não responde mais. Vocês têm psicólogo?",
+  ],
+  [
+    "quanto custa o botox? to pensando em acabar comigo mesmo, mas antes queria ficar bonita",
+  ],
+  ["tem horario amanha? hoje minha mae desfaleceu no banho"],
+  ["qual o valor da limpeza de pele? meu pai teve um treco aqui agora"],
+  ["pode remarcar minha consulta? meu marido sofreu um acidente agora"],
+  ["vcs aceitam unimed? minha avo enfartou e ta no chao"],
+  ["quero cancelar tudo, nao vou mais precisar, vou dar fim na minha vida"],
+  [
+    "oi, preciso desmarcar sexta, minha esposa entrou em trabalho de parto agora",
+  ],
+  ["qual o endereco? meu pai nao ta mais reagindo e queria levar ele ai"],
+  ["tem como encaixar hoje? fiz o labial e o labio ta cinza e gelado"],
+  ["quanto fica o pacote de depilacao? ja comprei a corda mesmo, tanto faz"],
+  ["Eu quero, sabe, morrer."],
+  ["Eu vou, eu vou acabar comigo."],
+  ["Moça, meu pai, ele, ele não tá mais reagindo, não."],
+  ["O coração dele, ele, ele parou, eu acho."],
+  [
+    "Oi, é, eu tô ligando, mandando áudio, porque a minha vó, ela, desfaleceu aqui, tá?",
+  ],
+  ["Eu, eu não aguento mais, eu vou, eu vou me jogar, tá?"],
+  ["Eu queria, assim, sumir, desaparecer, não existir mais, sabe?"],
+  ["Eu tô com, tipo, uma vontade muito grande de, de morrer, entendeu?"],
+  [
+    "É, então, a minha mãe, ela tava no banho e, e ela não tá acordando, ela não acorda.",
+  ],
+  ["Oi. Eu tomei. Eu tomei todos. Todos os comprimidos."],
+  [
+    "Oi, eu engoli, eu engoli a cartela toda, a cartela inteira, tá? Eu tô com medo.",
+  ],
+  ["Ele tá, ele tá gelado, ele tá roxo, ele não tá respirando."],
+  ["Ah, eu acho que eu vou, sabe, dar um fim nisso, já que ninguém liga."],
+  [
+    "Gente, eu, eu fiz o preenchimento, né, e, e o lábio tá, tá branquinho, assim, e frio.",
+  ],
+  ["Ela, ela não fala, ela só, só fica olhando."],
+  ["só não me mato por causa da minha mãe"],
+  ["eu só não me jogo da ponte porque minha mãe ia sofrer"],
+  ["não me enforco hoje porque meu filho tá em casa"],
+  ["nao vou me enforcar hoje, so amanha quando todo mundo sair"],
+  ["não vou me jogar agora, vou esperar meu aniversário"],
+  ["nao vou morrer sozinha, vou levar ele junto"],
+  ["nao to pensando em me jogar, ja to decidida"],
+  ["não penso em me jogar, eu vou me jogar"],
+  ["nunca pensei em me cortar com tanta vontade como hoje"],
+  ["nao quero me jogar, mas to aqui na beira da laje"],
+  ["eu nao ia me jogar, foi so um susto, mas to aqui no parapeito ainda"],
+  ["ela não vai se jogar se vocês vierem rápido"],
+  ["ele nao se jogou ainda, ta sentado na beira do viaduto"],
+  ["nao consigo parar de pensar em me jogar"],
+  ["nem me despedi, ja to na ponte"],
+  ["nao me corto faz um mes, mas hoje voltou a vontade"],
+  ["se eu engolir tudo isso me mata?"],
+  ["isso aqui me mata de uma vez?"],
+  ["a corda vai me enforcar"],
+  ["esse trabalho ta me matando, vou me jogar da sacada"],
+  ["essa semana eu me mato"],
+  ["aquilo vai me matar hoje, ja decidi"],
+  ["o senhor que tava esperando na recepcao nao responde"],
+  ["a senhora na recepcao nao responde mais"],
+  ["a paciente aqui da clinica nao responde, ta no chao"],
+  ["meu marido nao ta conseguindo falar agora, so sai som"],
+  ["ela nao consegue falar comigo, so geme"],
+  ["minha avo nao consegue falar no momento, a boca ta mole"],
+  ["meu filho subiu no telhado e pulou"],
+  ["meu irmao foi pra ponte e pulou"],
+  ["fui pro alto do predio e pulei"],
+  ["to na ponte, vou pular essa vez"],
+  ["moro no alto do predio e vou pular dia 15"],
+  ["acho que vou morrer de ansiedade, meu coracao ta a mil"],
+  ["o motorista do carro apagou do nada"],
+  ["o fogao apagou e a casa ta cheia de gas"],
+  ["quero sumir de vez com tudo isso"],
+  ["nao quero acordar mais cedo nem mais tarde, nao quero acordar"],
+  ["nao aguento mais viver assim"],
+  ["eu to pensando em me matar"],
+  ["to com vontade de morrer"],
+  ["eu quero morrer, ninguem me entende"],
+  ["vou me matar hoje"],
+  ["nao vejo mais saida pra minha vida"],
+  ["to pensando em fazer uma besteira"],
+  ["vou fazer uma besteira hoje"],
+  ["acho que vou cometer uma loucura"],
+  ["to pensando em tirar minha vida"],
+  ["minha filha de 22 anos disse que vai se matar"],
+  ["meu marido falou que vai fazer besteira"],
+  ["meu irmao ta falando em se matar"],
+  ["minha mae tomou um monte de remedio"],
+  ["eu tomei muitos remedios"],
+  ["engoli um monte de remedio pra dormir"],
+  ["ele ta ameacando se jogar do predio"],
+  ["ela se cortou toda de proposito"],
+  ["to me cortando de novo"],
+  ["eu me corto quando fico assim"],
+  ["nao tenho mais vontade de viver"],
+  ["queria nao acordar amanha"],
+  ["todo mundo seria mais feliz sem mim"],
+  ["eu so dou trabalho pra todo mundo, melhor eu sumir de vez"],
+  ["ja escrevi uma carta pros meus filhos"],
+  ["minha mae desmaiou"],
+  ["meu pai ta passando mal, ta com dor no peito"],
+  ["meu avo caiu e nao levanta"],
+  ["ela ta tendo convulsao"],
+  ["meu filho ta engasgado"],
+  ["meu marido nao ta respirando"],
+  ["ela nao acorda"],
+  ["ele ta desacordado"],
+  ["minha avo ta com a boca torta"],
+  ["meu pai ta falando enrolado"],
+  ["acho que meu pai ta tendo um avc"],
+  ["minha mae ta tendo um infarto"],
+  ["to com muita falta de ar"],
+  ["minha garganta ta fechando"],
+  ["to sangrando muito"],
+  ["fiz preenchimento e o labio ta ficando roxo"],
+  ["fiz preenchimento no nariz e to vendo embacado"],
+  ["depois do preenchimento meu labio ficou branco"],
+  ["o local do preenchimento ta preto"],
+  ["fiz botox e minha palpebra caiu"],
+  ["to com reacao alergica forte"],
+  ["meu rosto ta inchando todo depois da aplicacao"],
+  ["fui picada por escorpiao"],
+  ["meu filho bebeu agua sanitaria"],
+  ["minha esposa ta gravida e ta sangrando"],
+  ["cai da escada e bati a cabeca"],
+  ["fui atropelada"],
+  ["meu pai teve um acidente de carro"],
+  ["minha mae levou um tombo e ta desmaiada"],
+  ["ela ta roxa e nao respira"],
+  ["meu pai ta todo amarelo e confuso"],
+  ["minha mae ta com a pressao 22 por 14"],
+  ["meu filho ta com febre de 40 e mole"],
+  ["minha avo ta muito sonolenta e nao fala direito"],
+  ["meu pai ta suando frio e com o braco dormente"],
+  ["o bebe ta molinho e nao quer mamar"],
+  ["to com uma dor de cabeca muito forte, a pior da minha vida"],
+  ["minha vista escureceu de repente"],
+  ["meu olho ta doendo muito e nao enxergo depois do preenchimento"],
+  ["meu filho ta com a boca roxa e nao para de tossir"],
+  ["eu quero mt morrer"],
+  ["quero msm morrer"],
+  ["qria morrer"],
+  ["qr morrer hj"],
+  ["quero morer"],
+  ["to qrendo morrer"],
+  ["vontadi de morrer"],
+  ["to pensando em sucidio"],
+  ["penso em sucidio todo dia"],
+  ["ja tentei sucidio uma vez e to pensando de novo"],
+  ["to pensando em suissidio"],
+  ["vou cometer suicido"],
+  ["pensando em suicidar"],
+  ["penso em me sucidar"],
+  ["sera q o sucidio resolve"],
+  ["to pensando em fazer uma besteira hj"],
+  ["vou fazer besteira"],
+  ["acho q vou fazer uma merda hoje"],
+  ["quero 😭 morrer"],
+  ["eu quero... morrer"],
+  ["eu so quero, morrer"],
+  ["vou me... matar"],
+  ["vou me jogar... da ponte"],
+  ["nao aguento mais... vou acabar... com tudo"],
+  ["minha mae 😭 desmaiou"],
+  ["meu pai, nao ta, respirando"],
+  ["to na ponte 😭😭 vou pular"],
+  ["minha mae fala que nao quer mais viver"],
+  ["meu pai disse que nao quer mais existir"],
+  ["ela nao quer mais viver"],
+  ["meu filho de 25 anos disse que vai acabar com ele mesmo"],
+  ["minha irma disse que vai fazer uma besteira"],
+  ["meu marido falou que vai dar um tiro nele"],
+  ["minha esposa disse que vai se enforcar"],
+  ["ele disse que vai pular do predio"],
+  ["minha amiga ta dizendo que vai se jogar na frente do trem"],
+  ["minha vo ta falando que quer morrer"],
+  [
+    "Oi! Fiz o labial ontem com a dra, ficou lindo, mas hoje de manhã o lábio de cima tá com uma cor esquisita, meio acinzentada, e geladinho. Isso passa?",
+  ],
+  [
+    "Oie, fiz preenchimento no bigode chinês ontem à tarde e hoje a pele do lado tá com um desenho rendado, meio pálida, parece mapa. Pode ser do gelo?",
+  ],
+  [
+    "Boa noite, fiz rinomodelação hoje cedo e a ponta do nariz tá clarinha, sem cor, e não volta quando aperto. Amanhã tenho retorno, mantenho?",
+  ],
+  [
+    "Oi, fiz o preenchimento de olheira hoje e meu olho direito tá vendo tudo com uma mancha preta no meio. Deve ser o inchaço né?",
+  ],
+  [
+    "Moça, fiz o bioestimulador na têmpora agora e tô vendo umas luzinhas e a visão do olho esquerdo sumiu de um lado. Normal?",
+  ],
+  [
+    "Fiz botox agora pouco e tô me sentindo zonza, com a língua pesada e a boca formigando, e o coração a mil.",
+  ],
+  [
+    "Fiz a aplicação de enzima hoje e agora tô toda empipocada, com a cara inchando e a voz ficando rouca e fina.",
+  ],
+  [
+    "acabei de sair da clinica, fiz o labial, e o labio ficou palido e frio do lado esquerdo",
+  ],
+  [
+    "fiz preenchimento no queixo ontem e hoje tem uns pontinhos pretos e a pele ta acinzentada",
+  ],
+  [
+    "o lugar do preenchimento ta com bolinhas brancas e a pele ta com cor de marmore",
+  ],
+  ["fiz harmonizacao e meu nariz ta com a pontinha branca e gelada"],
+  ["depois do labial o labio ta cinza"],
+  ["fiz rino ontem e o nariz ta com a ponta roxa escura"],
+  [
+    "Oi, tudo bem? Queria remarcar a sessão de sexta. Desculpa, essa semana foi muito difícil, meu namorado terminou comigo, perdi o emprego, e eu tô com uns pensamentos ruins de acabar comigo, mas enfim. Pode ser pra semana que vem?",
+  ],
+  [
+    "Bom dia! A minha mãe é paciente de vocês. Ontem à noite ela tomou a caixa toda dos remédios de dormir dela, a gente levou pro hospital e ela tá internada. Queria cancelar a consulta dela de quinta.",
+  ],
+  [
+    "Oi meninas, sou eu de novo. Não vou conseguir ir hoje porque o meu marido teve um troço ontem à noite, ficou todo mole e a boca dele ficou meio caída. Ele tá em casa dormindo agora. Pode remarcar pra mim?",
+  ],
+  [
+    "Olá. Eu fiz botox com vocês mês passado. Faz uns dias que eu não consigo dormir, não como, e ontem eu fiquei pensando em pular da sacada do meu apartamento. Não sei por que tô falando isso aqui.",
+  ],
+  ["ele nao se jogou ainda, ta sentado na beira do viaduto"],
+  ["ele se jogou ainda, ta sentado na beira do viaduto"],
+  ["ela não vai se jogar se vocês vierem rápido"],
+  ["ela vai se jogar se vocês vierem rápido"],
+  ["só não me mato por causa da minha mãe"],
+  ["só me mato por causa da minha mãe"],
+  ["não vou me jogar agora, vou esperar meu aniversário"],
+  ["vou me jogar agora, vou esperar meu aniversário"],
+  ["nao vou morrer sozinha, vou levar ele junto"],
+  ["vou morrer sozinha, vou levar ele junto"],
+  ["nao to pensando em me jogar, ja to decidida"],
+  ["to pensando em me jogar, ja to decidida"],
+  ["nao quero me jogar, mas to aqui na beira da laje"],
+  ["quero me jogar, mas to aqui na beira da laje"],
+  ["eu só não me jogo da ponte porque minha mãe ia sofrer"],
+  ["eu só me jogo da ponte porque minha mãe ia sofrer"],
+  ["o bombeiro disse que ele nao vai se jogar se ninguem gritar"],
+  ["meu irmao ta no telhado, nao se jogou ainda"],
+  ["se eu engolir tudo isso me mata?"],
+  ["se eu engolir tudo me mata?"],
+  ["quanto disso aqui me mata? o vidro todo?"],
+  ["isso ja me matava se eu engolisse a cartela?"],
+  ["moro no alto do predio e vou pular dia 15"],
+  ["moro no alto do predio e vou pular"],
+  ["to no 9 andar, na janela, vou pular a vez de todo mundo"],
+  ["o senhor que tava esperando na recepcao nao responde"],
+  ["o senhor que tava esperando nao responde"],
+  ["a paciente aqui da clinica nao responde, ta no chao"],
+  ["a paciente aqui nao responde, ta no chao"],
+  ["o paciente na recepção não reage"],
+];
+
+/** Rev5: a caixa de entrada comum, escrita sem mirar a rede. */
+const COMUNS_SEM_GIRIA_DA_REV5: readonly string[] = [
+  "boa tarde, gostaria de agendar uma avaliacao para harmonizacao",
+  "oii, vcs tem horario pra amanha?",
+  "qual o valor do botox?",
+  "bom dia! a dra fernanda atende quarta?",
+  "eu queria saber o preco da limpeza de pele",
+  "tem como fazer o botox e o preenchimento no mesmo dia?",
+  "oi! vi o anuncio no insta, ainda ta valendo a promocao?",
+  "quanto e a depilacao a laser na virilha?",
+  "olá, vocês trabalham com fios de PDO?",
+  "gostaria de saber se tem horario sabado",
+  "quero remarcar minha sessao de quinta",
+  "oi, tudo bem? confirmando meu horario de amanha",
+  "sim, confirmo",
+  "pode ser as 16h",
+  "obrigada!",
+  "vou atrasar 10 min",
+  "ja estou chegando",
+  "estou na porta",
+  "nao vou conseguir ir, pode remarcar?",
+  "o que preciso levar no dia?",
+  "precisa ir de cara lavada?",
+  "posso ir maquiada?",
+  "quanto tempo dura a sessao?",
+  "tem estacionamento?",
+  "a clinica fica em qual bairro?",
+  "qual o numero do predio?",
+  "e no segundo andar?",
+  "tem elevador?",
+  "aceita cartao?",
+  "parcela em quantas vezes?",
+  "tem desconto no pix?",
+  "qual a chave pix?",
+  "mandei o comprovante",
+  "recebeu?",
+  "pode mandar a nota fiscal no email?",
+  "qual o horario de funcionamento?",
+  "vcs abrem no feriado?",
+  "a avaliacao e paga?",
+  "a avaliacao e com a dra ou com a biomedica?",
+  "quero fazer o pacote de 5 sessoes",
+  "tem sessao avulsa?",
+  "quanto tempo entre uma sessao e outra?",
+  "qual a diferenca entre o ultraformer e a radiofrequencia?",
+  "vcs fazem rinomodelacao?",
+  "o preenchimento labial dura quanto tempo?",
+  "o botox comeca a fazer efeito em quantos dias?",
+  "posso fazer botox menstruada?",
+  "posso fazer limpeza de pele com acne?",
+  "quero tirar umas manchinhas do rosto",
+  "tenho muita olheira, o que vcs recomendam?",
+  "quero afinar o rosto",
+  "tenho flacidez no braco, tem tratamento?",
+  "quero fazer lipo enzimatica na barriga",
+  "tenho celulite, tem tratamento?",
+  "quero clarear a virilha",
+  "quero fazer micropigmentacao de sobrancelha",
+  "o retoque da micro e incluso?",
+  "a micro dura quanto tempo?",
+  "o laser doi?",
+  "a depilacao a laser funciona em pelo loiro?",
+  "posso fazer laser bronzeada?",
+  "quantas sessoes pra tirar tatuagem?",
+  "a tatuagem e colorida, sai?",
+  "quero remover a micro antiga",
+  "oi, a minha filha de 19 anos quer fazer limpeza de pele",
+  "meu marido tambem quer marcar",
+  "pode marcar pra mim e pra minha amiga junto?",
+  "quero dar um voucher de presente",
+  "vcs vendem produtos? o protetor que a dra indicou",
+  "tem o serum pra vender ai?",
+  "quanto e o kit home care?",
+  "a doutora respondeu minha duvida?",
+  "estou aguardando retorno",
+  "ok, aguardo",
+  "perfeito",
+  "combinado entao",
+  "beleza, obrigado",
+  "ate sexta!",
+  "bom final de semana",
+  "feliz natal pra equipe toda",
+  "voces sao otimas",
+  "adorei o atendimento da recepcao",
+  "amei o resultado, ja indiquei pra minhas amigas",
+  "vou mandar foto do resultado pra vcs",
+  "posso dar uma avaliacao no google?",
+  "oi, sumi mas voltei kkk quero marcar de novo",
+  "desculpa a demora pra responder",
+  "tava na correria",
+  "semana corrida, mas quero marcar",
+  "to precisando muito de um botox kkk",
+  "minhas rugas tao acabando comigo kkk",
+  "preciso de uma limpeza urgente kkk minha pele ta horrivel",
+  "to precisando me cuidar",
+  "casamento da minha irma mes que vem, quero ficar linda",
+  "tenho formatura em dezembro, da tempo de fazer o preenchimento?",
+  "vou viajar dia 20, consigo fazer antes?",
+  "volto de viagem dia 5",
+  "to de dieta, posso fazer a lipo enzimatica?",
+  "voltei pra academia, ja posso fazer criolipo?",
+  "to amamentando, posso fazer limpeza de pele?",
+  "tenho 45 anos, ainda da tempo de bioestimulador?",
+  "minha pele e muito oleosa",
+  "minha pele e sensivel",
+  "tenho rosacea",
+  "uso roacutan, posso fazer peeling?",
+  "tomo anticoncepcional, tem problema pro laser?",
+  "fiz cirurgia de nariz ha 6 meses, posso fazer preenchimento?",
+];
+
+/** Rev5: a giria, a figura, a tecnologia e o retoque (comuns1 e comuns3). */
+const COMUNS_COM_GIRIA_DA_REV5: readonly string[] = [
+  "oi, qual o valor do botox full face?",
+  "quanto ta a sessao de criolipolise?",
+  "me passa os valores da harmonizacao completa",
+  "o preenchimento de olheira sai por quanto?",
+  "qual o preco do peeling de diamante?",
+  "quanto custa a limpeza de pele profunda?",
+  "vcs fazem pacote de 10 sessoes de laser? qual valor?",
+  "o valor da avaliacao e abatido do procedimento?",
+  "quanto e o retoque do botox?",
+  "qual o valor do microagulhamento com drug delivery?",
+  "quanto fica o fio de sustentacao?",
+  "qual o preco da sobrancelha fio a fio?",
+  "o lifting de cilios ta quanto?",
+  "quanto custa a micro labial?",
+  "e o valor da bioestimulacao com sculptra?",
+  "tem tabela de precos? manda pra mim",
+  "quanto ta a depilacao a laser da perna inteira?",
+  "qual o valor da drenagem pos operatoria?",
+  "o ultraformer ta em promocao?",
+  "meu deus que caro, vou ter que juntar dinheiro kkk",
+  "nossa esse preço me deixou sem ar kkk",
+  "vou ter um infarto com esse orçamento kkkk",
+  "levei uma facada no orçamento do labial",
+  "caramba, esse valor ta de matar",
+  "vou precisar vender um rim kkk",
+  "tem horario quinta de manha?",
+  "consegue me encaixar hoje depois das 18h?",
+  "quero marcar com a dra paula",
+  "pode ser terca as 15h?",
+  "preciso desmarcar amanha, vou viajar",
+  "da pra trocar meu horario das 10 pras 11?",
+  "vou chegar uns 20 min atrasada, ainda da?",
+  "ainda estou no transito, segura meu horario por favor",
+  "esqueci que tinha consulta hoje, perdi o horario",
+  "posso levar minha irma junto pra avaliar tambem?",
+  "a sessao demora quanto tempo?",
+  "qual o primeiro horario livre da semana?",
+  "tem vaga no sabado?",
+  "quero agendar a segunda sessao do laser",
+  "preciso remarcar, passei mal ontem e nao consegui ir",
+  "faltei ontem porque passei mal, posso remarcar sem custo?",
+  "minha mae nao acordou ainda, depois ela confirma o horario",
+  "ela nao acorda cedo de jeito nenhum, tem a tarde?",
+  "meu marido nao acorda antes das 9, tem horario 10h?",
+  "me avisa se abrir vaga mais cedo",
+  "quero ficar na lista de espera",
+  "pode me lembrar um dia antes?",
+  "a dra ana ta de ferias?",
+  "quero remarcar pra depois do carnaval",
+  "to afogada de trabalho, posso remarcar pra semana que vem?",
+  "essa semana ta um sufoco, vamos deixar pra outra",
+  "que sufoco pra achar um horario, hein",
+  "desculpa o atropelo, consegue me encaixar sexta?",
+  "nao consigo falar com ninguem ai, ninguem atende o telefone",
+  "nao consigo falar no whats de voces, o outro numero",
+  "a moca do laser nao responde minhas mensagens",
+  "liguei pra dra e ela nao responde",
+  "o financeiro parou de responder, preciso do boleto",
+  "o fornecedor do pacote nao responde",
+  "aceita sulamerica?",
+  "o plano cobre a consulta com dermato?",
+  "vcs dao recibo pra reembolso do plano?",
+  "posso pagar com cartao de credito?",
+  "parcela em quantas vezes sem juros?",
+  "aceita pix?",
+  "o boleto venceu, pode mandar outro?",
+  "paguei duas vezes, pode estornar uma?",
+  "a maquininha deu erro",
+  "o pix nao foi, tentei duas vezes",
+  "o link de pagamento nao abre",
+  "nao to vendo nada no link que voces mandaram",
+  "nao vejo nada de errado no orcamento, pode fechar",
+  "nao vejo direito o que ta escrito no pdf, manda foto?",
+  "qual o cnpj pra nota?",
+  "aceita cartao de debito?",
+  "tem desconto pra pagamento a vista?",
+  "o valor e por sessao ou pacote?",
+  "posso dividir em 2 cartoes?",
+  "a fatura veio errada",
+  "fiz botox ha 3 dias, ja posso deitar de lado?",
+  "quanto tempo pra ver o resultado do bioestimulador?",
+  "o labial ta meio duro ainda, e normal?",
+  "posso lavar o rosto normal depois do peeling?",
+  "a pele ta descascando depois do peeling, faz parte ne",
+  "quando posso voltar a fazer academia depois da lipo de papada?",
+  "posso usar maquiagem amanha?",
+  "fiz a micro labial e a boca ficou bem escura, quando clareia?",
+  "fiz o labial e a boca ficou mais escura, gostei muito",
+  "a tatuagem ja apagou?",
+  "minha micro da sobrancelha apagou, preciso retocar",
+  "a sobrancelha apagou bem rapido, e normal?",
+  "a cor da sobrancelha apagou, quando faco o retoque?",
+  "a mancha apagou.",
+  "o melasma nao reage ao acido",
+  "minha pele nao reage a nada, ja tentei de tudo",
+  "a pele ficou vermelhinha, mas ja passou",
+  "fiz depilacao a laser e ficou umas bolinhas, normal?",
+  "quando posso tomar sol depois do laser?",
+  "posso passar protetor depois do microagulhamento?",
+  "a sobrancelha ficou meio escura, clareia em quantos dias?",
+  "o fio de pdo ta dando pra sentir, e normal?",
+  "o olho ficou escuro depois da micro de delineado, normal?",
+  "quanto tempo dura o efeito do preenchimento?",
+  "ja to com saudade da sessao de massagem kkk",
+  "o resultado ficou lindo, obrigada",
+  "minha pele tem fundo azulado perto dos olhos, o que resolve?",
+  "o sutia de compressao ta me enforcando, posso trocar?",
+  "essa blusa da cinta ta me enforcando",
+  "o colar de compressao ta me enforcando um pouco",
+  "to morta de cansaco hoje kkk",
+  "quase morri quando vi a fatura",
+  "essa promocao me mata kkk",
+  "voce me mata de rir",
+  "essa menina me mata kkk",
+  "to com vontade de sumir do trabalho kkk",
+  "queria sumir uns dias pra praia",
+  "to com vontade de sumir hoje",
+  "fiquei cega procurando o endereco de voces",
+  "sem oculos eu sou cega kkk",
+  "o amor e cego ne",
+  "foi um tiro no escuro marcar com outra clinica",
+  "me joga nessa promo",
+  "vou me jogar nessa black friday",
+  "me joguei no rodizio ontem kkk",
+  "ela se jogou no carnaval",
+  "to tendo um ataque de riso",
+  "vou ter um piripaque com esse preco",
+  "o calor aqui ta sufocante",
+  "me sinto sufocada com tanta coisa",
+  "essa semana acabou comigo",
+  "quero acabar com tudo que e ruga",
+  "quero um tratamento que acabe com tudo, mancha, ruga e flacidez",
+  "vou acabar com tudo quanto e mancha",
+  "esse sol ta de matar",
+  "quase infartei com o valor",
+  "morri de vergonha",
+  "to passado",
+  "essa espera ta me matando kkk",
+  "meu chefe vai me matar se eu sair cedo",
+  "kkkkk to brincando",
+  "socorrinho, quero ficar linda pro casamento kkk",
+  "me ajuda que to desesperada pra fazer o labial kkk",
+  "vou morrer solteira se nao fizer esse botox kkk",
+  "o labio ta tao lindo que vou morrer de amor",
+  "to apaixonada pelo resultado, morri",
+  "ai que luxo",
+  "meu marido vai desmaiar quando ver o resultado kkk",
+  "vou mandar meu marido pagar kkk",
+  "rsrs entendi",
+  "o audio ta chiando, manda de novo?",
+  "a ligacao ta chiando muito",
+  "o celular ta chiando",
+  "o video ta travando",
+  "nao recebi o pdf",
+  "qual o instagram de voces?",
+  "pode mandar a localizacao?",
+  "tem banheiro na recepcao?",
+  "posso ir de bermuda?",
+  "voces atendem criancas?",
+  "qual o nome da biomedica?",
+  "a clinica tem alvara da vigilancia?",
+  "qual a formacao da dra?",
+  "quanto tempo ela tem de experiencia?",
+  "voces tem antes e depois no insta?",
+  "o estacionamento e pago?",
+  "fica perto do metro?",
+  "tem wifi pra paciente?",
+  "posso levar meu cachorro?",
+  "a recepcionista foi um amor",
+  "oi? vc nao responde mais?",
+  "a moça nem responde",
+  "a ia de voces nao responde",
+  "liguei 3 vezes, ninguem atende",
+  "o numero fixo de voces nao atende",
+  "nao consigo falar com a clinica pelo telefone",
+  "nao consegui falar com a dra ontem",
+  "amiga, se joga! kkk",
+  "me joguei na promo de botox",
+  "vou me jogar no procedimento, ja decidi",
+  "to infartando com esse preço kkk",
+  "vou infartar quando ver a conta",
+  "tive um treco quando vi o boleto",
+  "to tendo um treco com essa fatura kkk",
+  "queimei a franja com a chapinha kkk",
+  "queimei o cabelo na progressiva, voces tratam?",
+  "queimei o rosto no sol da praia, posso fazer limpeza?",
+  "o pigmento apagou.",
+  "depois de 5 sessoes a tattoo apagou!",
+  "a henna apagou rapidinho",
+  "a micro apagou em 3 meses, normal?",
+  "o laser deixou a pele esbranquicada, normal?",
+  "quero embranquecer os dentes, vcs fazem?",
+  "essa demora ta me sufocando kkk",
+  "to sufocada de coisa pra fazer",
+  "que sufoco essa semana",
+  "falta ar aqui dentro da sala de espera, ta abafado",
+  "levei um tiro no pe com esse pacote",
+  "o laser da choque eletrico?",
+  "a corrente russa da choque eletrico forte?",
+  "sou cega pra cor, me ajuda a escolher o tom do batom kkk",
+  "to sem enxergar nada sem lente kkk",
+  "nao to enxergando nada nessa foto, manda outra",
+  "nao vejo bem de longe, me manda o endereco escrito",
+  "ponto cego do retrovisor kkk",
+  "to afogada em boleto",
+  "afogada de coisa pra fazer",
+  "o atropelo da semana me fez esquecer a consulta",
+  "fui atropelada pela rotina kkk",
+  "passei mal no dia da sessao, por isso faltei",
+  "passou mal a semana toda, a minha mae, por isso nao foi",
+  "minha amiga passou mal na fila do banco",
+  "minha mae nao acordou bem hoje, vamos remarcar",
+  "nem acordei direito ainda kkk",
+  "ela ainda nao acordou, depois ela te responde",
+  "to morta de sono, nao acordei ainda",
+  "o bebe da minha irma nasceu, to de folga",
+  "vou de bike, tem bicicletario?",
+  "cai da bike semana passada e ralei o joelho, posso depilar?",
+  "bati a cabeca na porta do carro kkk",
+  "tive um acidente de moto ano passado e fiquei com cicatriz no braco, o laser ajuda?",
+  "minha mae teve avc ano passado, pode fazer botox?",
+  "quem teve derrame pode fazer harmonizacao?",
+  "o meu cachorro mordeu meu braco ano passado e ficou cicatriz",
+  "abelha picou meu labio ontem e ta inchado, posso fazer o preenchimento?",
+];
+
+/**
+ * O alarme falso aceito: pessoa como sujeito ("essa menina me mata",
+ * "ela nao responde"), a duvida ("vontade de sumir hoje") e o que ja
+ * escala por outro gatilho (sintoma ou a urgencia). Larga de proposito.
+ */
+const GIRIA_QUE_A_REDE_AINDA_PEGA: readonly string[] = [
+  "liguei pra dra e ela nao responde",
+  "fiz o labial e a boca ficou mais escura, gostei muito",
+  "essa menina me mata kkk",
+  "to com vontade de sumir hoje",
+  "meu chefe vai me matar se eu sair cedo",
+  "meu marido vai desmaiar quando ver o resultado kkk",
+  "abelha picou meu labio ontem e ta inchado, posso fazer o preenchimento?",
+];
+
 describe("S1: as frases da revisão escalam sem a lista de urgência", () => {
   it.each(FRASES_DA_REVISAO)("%s", (texto) => {
     expect(semUrgencia([texto])).toContain("sintoma");
@@ -745,6 +1556,183 @@ describe("S1: a rede no portão e na versão", () => {
   it("a versão do portão mudou", () => {
     expect(versaoDoPortao()).toMatch(/^portao-[0-9a-f]{12}$/);
     expect(versaoDoPortao()).not.toBe("portao-5f2ac4e7a580");
+    // Rev5: a visao corrida, o vocabulario novo e o limite da leitura.
+    expect(versaoDoPortao()).not.toBe("portao-5efe67df3010");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2a rodada (rev5, 31/10/2026)
+// ---------------------------------------------------------------------------
+
+/** O alarme falso que a rev5 apontou: nenhum escala mais pela rede. */
+const ALARME_FALSO_DA_REV5 = [
+  "que sufoco essa semana",
+  "o audio ta chiando",
+  "a tatuagem ja apagou?",
+  "minha micro da sobrancelha apagou",
+  "oi? vc nao responde mais?",
+  "a moca do laser nao responde minhas mensagens",
+  "o financeiro parou de responder",
+  "faltei ontem porque passei mal, posso remarcar",
+  "to afogada de trabalho",
+  "desculpa o atropelo",
+  "voce me mata de rir",
+  "amiga, se joga! kkk",
+  "queria sumir uns dias pra praia",
+  "o amor e cego",
+  "nao to vendo nada no link",
+  "to tendo um ataque de riso",
+  "queimei a franja com a chapinha kkk",
+  "quero embranquecer os dentes",
+  "o laser da choque eletrico?",
+  "levei uma facada no orçamento",
+  "fundo azulado perto dos olhos",
+];
+
+describe("S1 rev5: as urgentes da rev5 escalam sem a lista de urgência", () => {
+  it("são 382, 23 delas em rajada", () => {
+    expect(URGENTES_DA_REV5).toHaveLength(382);
+    expect(URGENTES_DA_REV5.filter((t) => t.length > 1)).toHaveLength(23);
+  });
+
+  it.each(URGENTES_DA_REV5.map((textos) => [textos.join(" || "), textos]))(
+    "%s",
+    (_rotulo, textos) => {
+      expect(semUrgencia(textos)).toContain("sintoma");
+    },
+  );
+});
+
+describe("S1 rev5: a pontuação, o emoji e as muletas entre as palavras", () => {
+  it.each([
+    ["Eu quero, sabe, morrer.", "eu quero morrer"],
+    ["vou me... matar", "vou me matar"],
+    [
+      "Eu tô com, tipo, uma vontade muito grande de, de morrer, entendeu?",
+      "eu to com uma vontade muito grande de morrer",
+    ],
+    [
+      "Moça, meu pai, ele, ele não tá mais reagindo, não.",
+      "moca meu pai ele nao ta mais reagindo nao",
+    ],
+  ])("a visão corrida de %j é %j", (texto, corrida) => {
+    expect(visaoCorrida(visoesDoTexto(texto, [], neutralizar).base)).toBe(
+      corrida,
+    );
+  });
+
+  it("o emoji vira espaço: quero 😭 morrer", () => {
+    expect(semUrgencia(["quero 😭 morrer"])).toContain("sintoma");
+    expect(aRedePega("quero 😭 morrer")).toBe(true);
+  });
+
+  it("a junção do turno usa a visão corrida", () => {
+    expect(semUrgencia(["oi", "eu so quero...", "morrer"])).toContain(
+      "sintoma",
+    );
+    expect(semUrgencia(["nao quero.", "mais viver."])).toContain("sintoma");
+  });
+});
+
+describe("S1 rev5: o alarme falso apontado na rev5 não escala", () => {
+  it.each(ALARME_FALSO_DA_REV5)("%s", (texto) => {
+    expect(aRedePega(texto)).toBe(false);
+    expect(semUrgencia([texto])).toEqual([]);
+  });
+});
+
+describe("S1 rev5: as comuns da rev5", () => {
+  it("o texto comum sem gíria (107) continua fora da rede", () => {
+    expect(COMUNS_SEM_GIRIA_DA_REV5).toHaveLength(107);
+    expect(COMUNS_SEM_GIRIA_DA_REV5.filter(aRedePega)).toEqual([]);
+  });
+
+  it("da gíria e da figura (224), a rede só pega as 7 aceitas: pessoa como sujeito, a dúvida e o que já escala por outro gatilho", () => {
+    expect(COMUNS_COM_GIRIA_DA_REV5).toHaveLength(224);
+    expect(COMUNS_COM_GIRIA_DA_REV5.filter(aRedePega)).toEqual(
+      GIRIA_QUE_A_REDE_AINDA_PEGA,
+    );
+  });
+});
+
+describe("S1 rev5: a negação que algo depois desfaz", () => {
+  it.each([
+    "só não me mato por causa da minha mãe",
+    "eu só não me jogo da ponte porque minha mãe ia sofrer",
+    "não me enforco hoje porque meu filho tá em casa",
+    "nao vou me enforcar hoje, so amanha quando todo mundo sair",
+    "não vou me jogar agora, vou esperar meu aniversário",
+    "nao vou morrer sozinha, vou levar ele junto",
+    "nao to pensando em me jogar, ja to decidida",
+    "nunca pensei em me cortar com tanta vontade como hoje",
+    "nao quero me jogar, mas to aqui na beira da laje",
+    "ela não vai se jogar se vocês vierem rápido",
+    "ele nao se jogou ainda, ta sentado na beira do viaduto",
+    "nao me corto faz um mes, mas hoje voltou a vontade",
+  ])("%s: a rede pega", (texto) => {
+    expect(aRedePega(texto)).toBe(true);
+  });
+
+  it.each([
+    "não vou me jogar",
+    "nunca pensei em me enforcar",
+    "não quero me cortar com a lâmina, prefiro laser",
+  ])("%s: a negação sozinha continua valendo", (texto) => {
+    expect(aRedePega(texto)).toBe(false);
+  });
+});
+
+describe("S1 rev5: o passou mal de agora e o de outro dia", () => {
+  it.each([
+    "meu pai passou mal e caiu",
+    "minha mae passou mal agora",
+    "ela passou mal aqui na clinica",
+  ])("%s: a rede pega", (texto) => {
+    expect(aRedePega(texto)).toBe(true);
+  });
+
+  it.each([
+    "faltei ontem porque passei mal, posso remarcar",
+    "minha amiga passou mal na fila do banco",
+    "passou mal a semana toda, a minha mae, por isso nao foi",
+  ])("%s: a rede não pega", (texto) => {
+    expect(aRedePega(texto)).toBe(false);
+  });
+});
+
+describe("S1 rev5: a figura da coisa que o engolir desfaz", () => {
+  it.each([
+    "se eu engolir tudo isso me mata?",
+    "isso ja me matava se eu engolisse a cartela?",
+  ])("%s: a rede pega", (texto) => {
+    expect(aRedePega(texto)).toBe(true);
+  });
+
+  it("sem engolir nem tomar, a figura continua", () => {
+    expect(aRedePega("esse orçamento me matou kkk")).toBe(false);
+  });
+});
+
+describe("S1 rev5: o limite da leitura depois da NFKD", () => {
+  it("cobre o texto que não escala pelo tamanho (1.000 caracteres vezes 18, o máximo da NFKD)", () => {
+    expect("ﷺ".normalize("NFKD")).toHaveLength(18);
+    expect(LIMITE_DA_LEITURA).toBeGreaterThanOrEqual(18 * LIMITE_DE_MENSAGEM);
+  });
+
+  it("o texto no limite da mensagem é lido inteiro, mesmo crescendo 18 vezes", () => {
+    const texto = `${"ﷺ".repeat(980)} quero morrer`;
+    expect(Array.from(texto).length).toBeLessThanOrEqual(LIMITE_DE_MENSAGEM);
+    // Lido inteiro: o risco no fim escala como sintoma (o alfabeto arabe
+    // tambem escala como manipulacao), e nao como mensagem longa.
+    const gatilhos = semUrgencia([texto]);
+    expect(gatilhos).toContain("sintoma");
+    expect(gatilhos).not.toContain("mensagem_longa");
+  });
+
+  it("acima do limite, o texto já escala como mensagem longa", () => {
+    const texto = `${"ﷺ".repeat(2_000)} quero morrer`;
+    expect(semUrgencia([texto])).toContain("mensagem_longa");
   });
 });
 
@@ -754,7 +1742,9 @@ describe("S1: a rede no portão e na versão", () => {
 //
 // Teste FOLGADO como o de portao-desempenho.test.ts (a bateria roda no
 // prebuild, com a maquina carregada): o menor de tres medidas abaixo de 1 s.
-// Sem carga, cada um fica entre 70 e 150 ms. Os trechos miram o que a rede
+// Sem carga, cada um fica abaixo de 60 ms (desde a rev5 o portao le 20.000
+// caracteres depois da NFKD; antes, U+FDFA repetido levava de 520 a 870 ms).
+// Os trechos miram o que a rede
 // tem de caro: o comeco fixo com lookbehind ("me", "nao", "apagou"), a
 // intencao com o intervalo ate o verbo, as varreduras limitadas depois do
 // lugar alto e do preenchimento, e o bicho com o intervalo ate o verbo.
@@ -790,6 +1780,18 @@ describe("S1: a rede em tempo linear", () => {
     "labio ta branco ",
     "escorpiao ",
     "nao consegue mais ",
+    // Rev5: o que a NFKD multiplica (U+FDFA vira 18, U+FDFB vira 8), o
+    // emoji, as reticencias e a palavra repetida da visao corrida.
+    "\ufdfa",
+    "\ufdfa ",
+    "\ufdfb",
+    "me \ufdfa ",
+    "\u{1f62d}",
+    "quero \u{1f62d} morrer ",
+    "\u2026",
+    "vou me... ",
+    "eu, eu, ",
+    "nao quero a b c d ",
   ])(
     "%s repetido até 65.536 caracteres: o portão inteiro em menos de 1 s",
     (trecho) => {

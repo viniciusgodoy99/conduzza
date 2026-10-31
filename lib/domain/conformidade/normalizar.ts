@@ -711,6 +711,45 @@ export function visoesDoTexto(
   };
 }
 
+/**
+ * As muletas da fala, que saem da visao corrida (o audio transcrito e o
+ * WhatsApp: "Eu quero, sabe, morrer.", "uma vontade, tipo, de morrer").
+ */
+export const MULETAS_DA_FALA: readonly string[] = [
+  "tipo",
+  "sabe",
+  "assim",
+  "ne",
+  "neh",
+  "entendeu",
+  "ai",
+];
+
+const MULETAS = new Set(MULETAS_DA_FALA);
+
+/**
+ * Visao corrida (frente S1, revisao rev5 de 31/10/2026): o que nao e letra
+ * nem digito (pontuacao, reticencias, emoji, simbolo) vira um espaco so, as
+ * muletas da fala saem e a palavra repetida em seguida fica uma vez ("de, de
+ * morrer" vira "de morrer"; "ele, ele parou" vira "ele parou"). Recebe a
+ * visao base. So a rede de seguranca do portao le esta visao: as visoes de
+ * sempre (frasesDasVisoes) nao mudam.
+ */
+export function visaoCorrida(base: string): string {
+  const palavras: string[] = [];
+  for (const palavra of base.split(/[^a-z0-9]+/)) {
+    if (
+      palavra === "" ||
+      MULETAS.has(palavra) ||
+      palavra === palavras[palavras.length - 1]
+    ) {
+      continue;
+    }
+    palavras.push(palavra);
+  }
+  return palavras.join(" ");
+}
+
 /** As visoes em que os padroes de frase rodam. */
 export function frasesDasVisoes(visoes: VisoesDoTexto): string[] {
   return [

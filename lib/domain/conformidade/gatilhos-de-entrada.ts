@@ -18,10 +18,12 @@ import {
 } from "@/lib/domain/conformidade/categorias";
 import {
   frasesDasVisoes,
+  MULETAS_DA_FALA,
   neutralizador,
   normalizarBase,
   sinaisDeOfuscacao,
   temLetraForaDoAlfabeto,
+  visaoCorrida,
   visoesDoTexto,
 } from "@/lib/domain/conformidade/normalizar";
 import {
@@ -48,6 +50,37 @@ export const LIMITE_DA_RAJADA = 2000;
  * caso, como segunda trava.
  */
 export const MAXIMO_DE_MENSAGENS_NO_CONTEXTO = 5;
+/**
+ * Quanto o portao le de cada texto, contado DEPOIS da normalizacao (frente
+ * S1, revisao rev5 de 31/10/2026). A NFKD multiplica alguns caracteres
+ * (U+FDFA vira 18), e 65.536 deles viravam 1.179.648 caracteres em cada
+ * visao e em cada padrao (de 520 a 870 ms). 20.000 cobre com folga o texto
+ * que nao escala pelo tamanho (1.000 caracteres vezes 18, o maximo da
+ * NFKD): o portao le esse texto inteiro, como antes. Acima do limite, o
+ * texto ja escala como mensagem longa, e o resto dele nao muda a passagem.
+ */
+export const LIMITE_DA_LEITURA = 20_000;
+
+/**
+ * O comeco do texto que, depois da NFKD, cabe no limite da leitura. O
+ * caractere ASCII conta um; o resto conta o tamanho da propria NFKD.
+ */
+function trechoLido(texto: string): string {
+  let usados = 0;
+  let fim = 0;
+  for (const caractere of texto) {
+    const custo =
+      (caractere.codePointAt(0) ?? 0) < 0x80
+        ? 1
+        : caractere.normalize("NFKD").length;
+    if (usados + custo > LIMITE_DA_LEITURA) {
+      break;
+    }
+    usados += custo;
+    fim += caractere.length;
+  }
+  return fim === texto.length ? texto : texto.slice(0, fim);
+}
 
 export type MensagemDeEntrada = {
   /** message.content_type: so "texto" segue; qualquer outro e midia. */
@@ -156,7 +189,10 @@ const neutralizarEntrada = neutralizador(NEUTRALIZACOES_DE_ENTRADA);
 function gatilhosDoTexto(bruto: string): Set<GatilhoDeEntrada> {
   const achados = new Set<GatilhoDeEntrada>();
   const visoes = visoesDoTexto(bruto, [], neutralizarEntrada);
-  const frases = frasesDasVisoes(visoes);
+  // Cada visao diferente uma vez so (rev5): no texto comum as cinco visoes
+  // costumam ser o mesmo texto, e cada padrao rodava cinco vezes nele. O
+  // resultado e o mesmo.
+  const frases = [...new Set(frasesDasVisoes(visoes))];
 
   for (const padrao of PADROES_DE_ENTRADA) {
     if (frases.some((frase) => padrao.regex.test(frase))) {
@@ -190,6 +226,17 @@ function gatilhosDoTexto(bruto: string): Set<GatilhoDeEntrada> {
   if (temLetraForaDoAlfabeto(visoes.base)) {
     achados.add("manipulacao");
   }
+  // S1 (rev5): a rede de seguranca tambem na visao corrida (pontuacao,
+  // emoji e muletas da fala fora): "Eu quero, sabe, morrer.", "vou me...
+  // matar", "quero 😭 morrer".
+  const corrida = visaoCorrida(visoes.base);
+  if (!frases.includes(corrida)) {
+    for (const padrao of PADROES_DA_REDE_DE_SEGURANCA) {
+      if (padrao.regex.test(corrida)) {
+        achados.add(padrao.gatilho);
+      }
+    }
+  }
   return achados;
 }
 
@@ -204,9 +251,12 @@ function redeDeSegurancaNaJuncao(textos: readonly string[]): boolean {
   if (textos.length < 2) {
     return false;
   }
-  const frases = frasesDasVisoes(
-    visoesDoTexto(textos.join(" "), [], neutralizarEntrada),
-  );
+  const visoes = visoesDoTexto(textos.join(" "), [], neutralizarEntrada);
+  // Rev5: e na visao corrida ("eu so quero..." e "morrer"; "nao quero." e
+  // "mais viver.").
+  const frases = [
+    ...new Set([...frasesDasVisoes(visoes), visaoCorrida(visoes.base)]),
+  ];
   return PADROES_DA_REDE_DE_SEGURANCA.some((padrao) =>
     frases.some((frase) => padrao.regex.test(frase)),
   );
@@ -245,7 +295,9 @@ export function detectarGatilhosDeEntrada(
       // A legenda da imagem, do documento ou do video. O audio nao tem
       // legenda, e a transcricao nao e lida nesta rodada.
       textosDaUrgencia.push(
-        mensagem.tipo === "audio" ? null : (mensagem.legenda ?? null),
+        mensagem.tipo === "audio" || mensagem.legenda == null
+          ? null
+          : trechoLido(mensagem.legenda),
       );
       // [AG6 urgência] fim
       continue;
@@ -256,14 +308,17 @@ export function detectarGatilhosDeEntrada(
     if (tamanho > LIMITE_DE_MENSAGEM) {
       achados.add("mensagem_longa");
     }
-    for (const gatilho of gatilhosDoTexto(texto)) {
+    // S1 (rev5): o portao le o comeco que, normalizado, cabe no limite da
+    // leitura (o texto que nao escala pelo tamanho cabe inteiro).
+    const lido = trechoLido(texto);
+    for (const gatilho of gatilhosDoTexto(lido)) {
       achados.add(gatilho);
     }
     // [AG6 urgência] início
-    textosDaUrgencia.push(texto);
+    textosDaUrgencia.push(lido);
     // [AG6 urgência] fim
-    if (texto.trim() !== "") {
-      textosDaRede.push(texto);
+    if (lido.trim() !== "") {
+      textosDaRede.push(lido);
     }
   }
   // S1: a rede de seguranca na juncao das mensagens de texto (o risco de
@@ -553,6 +608,9 @@ export const FONTES_DO_PORTAO_EM_CODIGO: readonly string[] = [
   "outra pessoa adulta: a consulta dela (colada: a consulta da minha mae, cancela a da minha mae), a pessoa que quer cancelar ou remarcar e a que tem consulta com o pedido de cancelar nas mensagens do turno, fora da negacao",
   // S1 (31/10/2026): a rede de seguranca (padroes.ts) le tambem a juncao.
   `rede de seguranca: os padroes da rede (sintoma) tambem na juncao das mensagens de texto do turno, na ordem, separadas por espaco, ate ${LIMITE_DA_RAJADA} caracteres e ${MAXIMO_DE_MENSAGENS_NO_CONTEXTO} mensagens (acima, o portao ja escala como mensagem longa)`,
+  // S1 (rev5): a visao corrida e o limite da leitura.
+  `rede de seguranca na visao corrida (o que nao e letra nem digito vira espaco, a palavra repetida fica uma vez, sem as muletas ${MULETAS_DA_FALA.join(", ")}), na mensagem e na juncao`,
+  `limite da leitura: ${LIMITE_DA_LEITURA} caracteres depois da NFKD (o ASCII conta um), na mensagem, na legenda e no que vai a urgencia`,
   // Revisao de desempenho de 31/10/2026: a guarda de janela das trocas (a
   // intencao clinica perto do exame da pergunta de preco) e lida em codigo
   // (normalizar.ts), fora da fonte da troca; a versao do portao le as

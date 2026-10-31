@@ -1858,7 +1858,7 @@ const PROCEDIMENTOS = alternativas([
 ]);
 
 // ---------------------------------------------------------------------------
-// Entrada: a rede de seguranca (frente S1, 31/10/2026)
+// Entrada: a rede de seguranca (frente S1, 31/10/2026; 2a rodada na rev5)
 // ---------------------------------------------------------------------------
 //
 // Separa seguranca de prioridade. A lista de urgencia (urgencia.ts) so poe a
@@ -1872,39 +1872,68 @@ const PROCEDIMENTOS = alternativas([
 //
 // LARGA de proposito: o alarme falso aqui so faz a equipe responder no lugar
 // da IA. As unicas excecoes:
-//  - a negacao de quem fala, colada no verbo ("nao vou me jogar", "nao
-//    quero me cortar com a lamina");
+//  - a negacao de quem fala, colada no ato ("nao vou me jogar", "nao quero
+//    me cortar com a lamina"). Ela NAO vale quando algo depois a desfaz
+//    (rev5): o adiamento ("agora", "hoje", "so amanha"), o "ainda", a
+//    condicao ("se voces vierem"), o motivo ("por causa", "porque"), o
+//    "sozinha", a ressalva ("mas") e o "tanto como hoje"; nem com "so nao"
+//    ("so nao me mato por causa da minha mae");
 //  - a figura em que o sujeito e uma coisa, colada no verbo ("esse preco vai
-//    me matar", "a cinta ta me enforcando").
+//    me matar", "a cinta ta me enforcando"). Com engolir ou tomar na frase,
+//    a coisa nao e figura ("se eu engolir tudo isso me mata?").
 // Instrumento, lugar e motivo NUNCA tiram ("com a gilete", "com o cinto",
-// "na ponte", "pra pagar as dividas"). A rede nao tem lookbehind que
-// atravesse a frase: a negacao e a coisa so contam coladas no verbo.
+// "na ponte", "pra pagar as dividas").
 //
-// Fora as excecoes, so o SENTIDO do verbo, logo depois dele ou colado nele,
-// quando a palavra nao fala do risco: "nao consigo falar agora" e "ao
-// telefone" (ocupado, nao a perda da fala), "pular o almoco" (deixar de
-// fazer), "vou morrer de saudade" (a figura do "vou morrer", que so conta
-// com intencao), "sumir com as olheiras", "acordar mais cedo", o aparelho
-// que "apagou" e o site que "nao responde" (a lista pede pessoa).
+// Fora as excecoes, so o SENTIDO da palavra, quando ela nao fala do risco:
+// "nao consigo falar agora" e "ao telefone" (ocupado; com "do nada", "so
+// sai som" ou "a boca ta mole" volta a ser a perda da fala), "pular o
+// almoco" (deixar de fazer), "vou morrer de saudade" e "me mata de rir" (a
+// figura com "de"), "sumir com as olheiras" e "sumir uns dias", "me jogar
+// na promo", o aparelho, a tatuagem e a micro que "apagaram", o site, a
+// clinica e "voce" que "nao respondem" (a lista pede pessoa; pessoa NA
+// recepcao e pessoa), "nao vejo nada no link", "o amor e cego", o "que
+// sufoco", o audio que "ta chiando", o "afogada de trabalho" e o "atropelo",
+// e o fato antigo ("ano passado", "quem teve avc").
+//
+// A rede le as visoes de sempre e mais a visao corrida (normalizar.ts:
+// pontuacao, emoji e muletas da fala viram um espaco so), na mensagem e na
+// juncao do turno: "Eu quero, sabe, morrer." e "vou me... matar" (rev5).
 //
 // Linear: toda alternativa comeca por palavra fixa, os intervalos entre
-// palavras sao limitados ({0,N}) e as lookbehinds so rodam onde a palavra
-// fixa ja casou (portao-rede-de-seguranca.test.ts e portao-desempenho.test.ts
-// medem o portao inteiro em 65.536 caracteres).
+// palavras e as varreduras sao limitados ({0,N}) e as lookarounds so rodam
+// onde a palavra fixa ja casou (portao-rede-de-seguranca.test.ts e
+// portao-desempenho.test.ts medem o portao inteiro em 65.536 caracteres).
 
-/** A negacao de quem fala, colada na intencao ou no verbo. */
+/** A negacao de quem fala. */
 const NEGACAO_DE_QUEM_FALA = "(?:nao|n|nunca|jamais|nem)";
+/** A negacao que nega: "so nao" nao nega ("so nao me mato porque..."). */
+const NEGACAO_QUE_NEGA = `(?<!\\bso )${NEGACAO_DE_QUEM_FALA}`;
 /** O "eu", o "to" e o "ja" que podem ficar entre a negacao e a intencao. */
 const ENTRE_A_NEGACAO_E_A_INTENCAO =
   "(?:(?:eu|to|tou|estou|ando|ta|esta|ja) )?";
-/** A negacao colada: "nao vou", "nao to pensando em", "nunca pensei em". */
-const SEM_NEGACAO_COLADA = `(?<!\\b${NEGACAO_DE_QUEM_FALA} ${ENTRE_A_NEGACAO_E_A_INTENCAO})`;
+/** A intencao que a negacao colada nega ("nao vou", "nunca pensei em"). */
+const INTENCAO_NEGAVEL =
+  "(?:vou|vo|quero|qro|kero|queria|vai|ia|iria|quer|pretendo|penso em|pensei em|pensando em|vontade de|tentei|tentar)";
 /**
- * A negacao colada no verbo com o pronome: "nao me jogo", "nao vou me
- * jogar", "nunca pensei em me enforcar". Com "mais" no meio, nao e a
- * negacao do ato ("nao quero mais me cortar" escala).
+ * A negacao colada no pronome do ato: "nao me jogo", "nao vou me jogar",
+ * "nunca pensei em me enforcar". Com "mais" no meio nao e a negacao do ato
+ * ("nao quero mais me cortar" escala).
  */
-const NEGACAO_ANTES_DO_PRONOME = `${NEGACAO_DE_QUEM_FALA} ${ENTRE_A_NEGACAO_E_A_INTENCAO}(?:(?:vou|vo|quero|qro|kero|queria|vai|ia|iria|quer|pretendo|penso em|pensei em|pensando em|vontade de|tentei|tentar) )?`;
+const NEGACAO_ANTES_DO_PRONOME = `${NEGACAO_QUE_NEGA} ${ENTRE_A_NEGACAO_E_A_INTENCAO}(?:${INTENCAO_NEGAVEL} )?`;
+/**
+ * O que, depois do ato negado, desfaz a negacao (rev5): o adiamento, o
+ * "ainda", a condicao, o motivo, o "sozinha", a ressalva, o "tanto" e o "ja
+ * to decidida". Na duvida, escala.
+ */
+const DESFAZ_A_NEGACAO =
+  "(?=[^\\n]{0,100}?\\b(?:ainda|se|por causa|porque|pq|por que|agora|hoje|hj|amanha|depois|sozinh[oa]|mas|porem|so que|tant[oa]|tao|decidid[oa]|decidi|de novo|dnv|voltou|voltei|junto|ja (?:to|estou|tou)|enquanto|quando|ate)\\b)";
+/**
+ * Fora da negacao de quem fala, a menos que algo depois a desfaca. `negado`
+ * e o trecho da negacao ao fim do ato, como a lookbehind o le.
+ */
+function semANegacao(negado: string): string {
+  return `(?:(?<!\\b${negado})|${DESFAZ_A_NEGACAO})`;
+}
 /** Ate duas palavras entre a intencao e o verbo, nenhuma delas a negacao. */
 const PALAVRAS_SEM_NEGACAO = `(?: (?!${NEGACAO_DE_QUEM_FALA}\\b)\\w+){0,2}?`;
 
@@ -1916,9 +1945,11 @@ const INTENCAO_EM_PRIMEIRA_PESSOA = alternativas([
   "qro",
   "kero",
   "qero",
+  "qria",
   "queria",
   "keria",
   "querendo",
+  "qrendo",
   "vontade",
   "pensando em",
   "penso em",
@@ -2044,6 +2075,8 @@ const COISA_DA_FIGURA = alternativas([
   "colarinho",
   "elastico",
   "mascara",
+  "colar",
+  "blusa",
   "promocao",
   "promo",
   "risada",
@@ -2052,18 +2085,30 @@ const COISA_DA_FIGURA = alternativas([
 /** O que pode ficar entre a coisa e o "me": "ta", "vai", "ja", "quase". */
 const ENTRE_A_COISA_E_O_VERBO =
   "(?: (?:ta|tao|esta|estao|tava|estava|vai|vao|ia|iam|ja|so|sempre|quase|acaba|ainda|vive))";
+/** Engolir, tomar, beber: com eles na frase, a coisa nao e figura (rev5). */
+const INGERIR = "(?:engol|tom|beb|ingeri|ingerir|cheir|inal)\\w*";
 /**
- * "me" e o verbo, fora da figura da coisa colada ("o preco ta me matando")
- * e fora da negacao colada ("nao me mata de rir"). As lookbehinds ficam no
- * fim: so rodam onde "me" e o verbo ja casaram.
+ * Fora da figura da coisa colada no verbo ("o preco ta me matando"), a
+ * menos que a frase fale de engolir ou tomar ("se eu engolir tudo isso me
+ * mata?", "isso ja me matava se eu engolisse a cartela?"). `ato` e o trecho
+ * do pronome ao fim do verbo, como a lookbehind o le. A coisa que e
+ * complemento ("o motorista DO CARRO") nao e o sujeito.
  */
-function meSemFigura(verbo: string): string {
-  return `\\bme ${verbo}\\b(?<!\\b${COISA_DA_FIGURA}(?: d[aoe]s? \\w+)?${ENTRE_A_COISA_E_O_VERBO}{0,2} me \\w+)(?<!\\b${NEGACAO_ANTES_DO_PRONOME}me \\w+)`;
+function semAFigura(ato: string): string {
+  return `(?:(?<!\\b(?<!\\bd[aoe]s? )${COISA_DA_FIGURA}(?: d[aoe]s? \\w+)?${ENTRE_A_COISA_E_O_VERBO}{0,2} ${ato})|(?<=\\b${INGERIR}\\b[^.!?\\n]{0,40} ${ato})|(?=[^.!?\\n]{0,60}?\\b${INGERIR}))`;
 }
-/** "se" (ou "me", com `pronome`) e o verbo, fora da negacao colada. */
-function semNegacao(verbo: string, pronome = "se"): string {
-  return `\\b${pronome} ${verbo}\\b(?<!\\b${NEGACAO_ANTES_DO_PRONOME}${pronome} \\w+)`;
+/** "me" e o verbo, fora da figura e da negacao de quem fala. */
+function meSemFigura(verbo: string, depois = ""): string {
+  return `\\bme ${verbo}\\b${depois}${semAFigura("me \\w+")}${semANegacao(`${NEGACAO_ANTES_DO_PRONOME}me \\w+`)}`;
 }
+/** "se" (ou "me", com `pronome`) e o verbo, fora da negacao de quem fala. */
+function semNegacao(verbo: string, pronome = "se", depois = ""): string {
+  return `\\b${pronome} ${verbo}\\b${depois}${semANegacao(`${NEGACAO_ANTES_DO_PRONOME}${pronome} \\w+`)}`;
+}
+
+/** O "matar" de figura com "de": "me mata de rir", "me matar de estudar". */
+const MATAR_DE_FIGURA =
+  "(?! de (?:rir|riso|tanto rir|vergonha|susto|saudade|saudades|inveja|raiva|tedio|curiosidade|ansiedade|fome|sede|calor|frio|cansaco|sono|amor|amores|paixao|estudar|trabalhar|malhar|treinar|correr|trabalho|estudo|academia|dieta)\\b)";
 
 /** O lugar alto de onde se pula. */
 const LUGAR_ALTO = alternativas([
@@ -2084,13 +2129,24 @@ const LUGAR_ALTO = alternativas([
   "marquise",
   "torre",
 ]);
-/** "Pular" no sentido de deixar de fazer ("pular o almoco", "pular a sessao"). */
+/** O lugar alto e o andar ("moro no 12 andar", "decimo andar"; rev5). */
+const LUGAR_ALTO_OU_ANDAR = `(?:${LUGAR_ALTO}|\\d+ ?(?:o )?andar|(?:primeiro|segundo|terceiro|quarto|quinto|sexto|setimo|oitavo|nono|decimo|vigesimo|ultimo) andar)`;
+/**
+ * "Pular" no sentido de deixar de fazer ("pular o almoco", "pular a
+ * sessao"). "Dia" e "vez" sairam na rev5 ("vou pular dia 15", "vou pular
+ * essa vez" escalam).
+ */
 const PULAR_DE_DEIXAR_DE_FAZER =
-  "(?! (?:(?:o|a|os|as|uma|um|essa|esse|esta|este|minha|meu) )?(?:almoco|janta|jantar|cafe|refeicao|refeicoes|sessao|sessoes|consulta|aula|treino|etapa|parte|retorno|horario|vez|dieta|dia|mes)\\b)";
+  "(?! (?:(?:o|a|os|as|uma|um|essa|esse|esta|este|minha|meu) )?(?:almoco|janta|jantar|cafe|refeicao|refeicoes|sessao|sessoes|consulta|aula|treino|etapa|parte|retorno|horario|dieta|mes|fila|corda|carnaval)\\b)";
 
-/** O "morrer" de figura: "vou morrer de saudade", "ia morrer de rir". */
+/** O "morrer" de figura: "vou morrer de saudade", "vou morrer solteira". */
 const MORRER_DE_FIGURA =
-  "(?!(?: \\w+)? de (?:saudade|saudades|vergonha|rir|riso|tanto rir|amor|amores|inveja|vontade|curiosidade|tedio|cansaco|sono|fome|sede|calor|frio|medo|susto|raiva|odio|preguica|felicidade|alegria|emocao|ansiedade|orgulho|ciume|ciumes|paixao|tesao|desejo|feliz|linda|lindo|tao lind[oa])\\b)";
+  "(?!(?: \\w+)? de (?:saudade|saudades|vergonha|rir|riso|tanto rir|amor|amores|inveja|vontade|curiosidade|tedio|cansaco|sono|fome|sede|calor|frio|medo|susto|raiva|odio|preguica|felicidade|alegria|emocao|ansiedade|orgulho|ciume|ciumes|paixao|tesao|desejo|feliz|linda|lindo|tao lind[oa]|velhice)\\b)(?! (?:solteir[oa]|virgem|pobre|velh[oa]|velhinh[oa])\\b)";
+/** Quem quer morrer: "quero", "qria", "quis", "desejo", "penso em". */
+const QUER_MORRER =
+  "(?:quero|qro|kero|qero|qria|qr|queria|keria|kria|querendo|qrendo|quer|querer|quis|desejo|desejando|pensando em|penso em|pensei em|pensar em|prefiro|preferia|deixa eu|me deixa|me deixem|tentar|tentei)";
+/** "Morrer" nas grafias do WhatsApp ("morrer", "morre", "morer"). */
+const MORRER = "mor(?:rer|re|er)\\b";
 
 /** O que a pessoa toma, bebe ou engole e mata. */
 const VENENO = alternativas([
@@ -2116,79 +2172,145 @@ const VENENO = alternativas([
   "produto de limpeza",
 ]);
 
+/** O que nao conta como besteira grave: o objeto dito ("no cabelo"). */
+const OBJETO_DA_BESTEIRA =
+  "(?! (?:n[oa]s?|com|d[aoe]s?) (?:meu |minha |meus |minhas |o |a |os |as )?(?:cabelo|cabelos|unha|unhas|sobrancelha|sobrancelhas|pele|rosto|cara|franja|corte|tintura|luzes|progressiva|depilacao|maquiagem|compra|compras|cartao|pedido|pix|agenda|agendamento|horario|consulta|marcacao|trabalho|prova|dieta|mensagem|mensagens|foto|fotos|post|conta|contas|banco|transferencia|pagamento|boleto|app|site|sistema|whats|carro|cozinha|comida|bolo|roupa|tatuagem|micro|procedimento|receita|planilha|email|data|dia)\\b)";
+
+/** O "sumir" de um tempo ("sumir uns dias", "sumir do trabalho"; rev5). */
+const SUMIR_POR_UM_TEMPO =
+  "(?! (?:por )?(?:uns|alguns|uns dois|um|uma|esse|essa|nesse|nessa|no|na) (?:dias?|semanas?|tempo|pouco|mes|meses|fim de semana|feriado|ferias)\\b| (?:do|da) (?:trabalho|escritorio|cidade|redes|internet|whats|insta|grupo)\\b| pra (?:praia|viajar|descansar|curtir)\\b| de ferias\\b)";
+/** O "sumir com" a coisa ("sumir de vez com essas olheiras"). */
+const SUMIR_COM_A_COISA =
+  "(?!(?: \\w+){0,2}? com (?:ess[ae]s? |est[ae]s? |as |os |a |o |minhas? |meus? )?(?:olheiras?|manchas?|rugas?|espinhas?|acnes?|estrias?|celulites?|papadas?|flacidez|pelos?|cicatriz(?:es)?|melasmas?|gorduras?|barrigas?|culotes?|marcas?|sardas?|verrugas?|pintas?|vasinhos?|varizes)\\b)";
+
 const RISCO_DE_VIDA = [
-  // O suicidio (tambem no sintoma_citado: aqui a rede fica inteira).
-  "\\bsuicid",
+  // O suicidio nas grafias do WhatsApp (rev5: "sucidio", "suissidar").
+  "\\bsui?(?:c|ss?)id",
   // Matar: "me matar", "vou me mata", "se matou", "matar-me", "te matar".
-  meSemFigura("mat(?:ar|a|o|e|ou|ei|aria|asse|ando)"),
-  semNegacao("mat(?:ar|a|e|ou|aria|asse|ando|em)"),
+  // "Me mata de rir" e figura (rev5).
+  meSemFigura("mat(?:ar|a|o|e|ou|ei|aria|asse|ando|ava)", MATAR_DE_FIGURA),
+  semNegacao("mat(?:ar|a|e|ou|aria|asse|ando|em|ava)", "se", MATAR_DE_FIGURA),
   "\\bte mat(?:ar|o|a)\\b",
   "\\bmatar-?(?:me|se)\\b",
   "\\bmatar? (?:ele|ela|eles|elas|alguem|todo mundo|voce|vc|voces|vcs|geral)\\b",
-  // Morrer com intencao: "quero morrer", "kero morre", "penso em morrer",
-  // "vou morrer" (fora da figura "vou morrer de saudade").
-  `\\b${SEM_NEGACAO_COLADA}(?:quero|qro|kero|qero|queria|keria|kria|querendo|quer|vontade de|pensando em|penso em|pensei em|pensar em|prefiro|preferia|melhor|deixa eu|me deixa|me deixem|desejo|desejando|tentar|tentei)(?: (?:so|mesmo|muito|tanto|logo|hoje|hj|agora))? morr(?:er|e)\\b`,
-  `\\b${SEM_NEGACAO_COLADA}(?:vou|vo|ia|vai|pra|para)(?: (?:so|mesmo|logo|hoje|hj|agora))? morr(?:er|e)\\b${MORRER_DE_FIGURA}`,
+  // Morrer com intencao: "quero morrer", "eu quero e morrer", "quero msm
+  // morrer", "qria morrer", "quis morrer", "desejo de morrer", "vontade
+  // muito grande de morrer" e "vou morrer" (fora da figura).
+  `\\b${QUER_MORRER}(?: (?:so|mesmo|msm|mt|muito|tanto|logo|hoje|hj|agora|e|eh|de|era)){0,3} ${MORRER}${semANegacao(`${NEGACAO_QUE_NEGA} ${ENTRE_A_NEGACAO_E_A_INTENCAO}${QUER_MORRER}(?: \\w+){0,3} mor\\w*`)}`,
+  `\\b(?:vontade|vontadi|desejo|pensamentos?)(?: \\w+){0,3}? de ${MORRER}${MORRER_DE_FIGURA}${semANegacao(`${NEGACAO_QUE_NEGA} (?:\\w+ ){0,2}(?:vontade|vontadi|desejo|pensamentos?)(?: \\w+){0,3} de mor\\w*`)}`,
+  `\\b(?:vou|vo|ia|vai|pra|para)(?: (?:so|mesmo|logo|hoje|hj|agora)){0,2} ${MORRER}${MORRER_DE_FIGURA}${semANegacao(`${NEGACAO_QUE_NEGA} ${ENTRE_A_NEGACAO_E_A_INTENCAO}(?:vou|vo|ia|vai|pra|para)(?: \\w+){0,2} mor\\w*`)}`,
   `\\bacho (?:que|q) (?:eu )?(?:to|tou|estou|ta|esta|vou) morr(?:endo|er|e)\\b${MORRER_DE_FIGURA}`,
+  `\\bmelhor (?:eu )?(?:so )?${MORRER}${MORRER_DE_FIGURA}`,
   "\\bmorrer (?:seria|e|eh|vai ser|ia ser) (?:o |um |uma |a )?(?:alivio|melhor|solucao|saida|unica saida)\\b",
   "\\b(?:queria|quero|preferia|prefiro) (?:estar|ta|tar|ficar) mort[oa]\\b",
-  // Nao querer mais viver ou existir.
-  "\\b(?:nao|n|nn|naum|nem|ja nao)\\b (?:quero|qro|kero|queria|aguento|aguentar|consigo|vejo|ve|vale|sei se quero|faz|tem|tenho|existe)\\b(?: \\w+){0,4}? (?:viver|existir)\\b",
+  "\\bpens(?:amentos?|ando|o|ei)\\b(?: \\w+){0,2}? (?:de|na|em) morte\\b",
+  "\\b(?:deus|jesus)\\b(?: \\w+){0,2}? me (?:levar|leva|levasse|buscar|busca|buscasse)\\b",
+  "\\b(?:ir embora|sair|partir) (?:desse|deste|do) mundo\\b|\\bdeixar (?:esse|este) mundo\\b",
+  // Nao querer mais viver ou existir ("nao quer mais viver", "nao suporto
+  // mais viver"), a vida sem sentido, sem saida.
+  "\\b(?:nao|n|nn|naum|nem|ja nao)\\b (?:quero|qro|kero|queria|quer|aguento|aguenta|aguentar|suporto|suporta|consigo|consegue|vejo|ve|vale|sei se quero|faz|tem|tenho|existe)\\b(?: \\w+){0,4}? (?:viver|existir)\\b",
   "\\b(?:cansei|cansad[oa]|desisti|desistir|desistindo|sem vontade|sem motivo|sem motivos|sem razao|sem forca|sem forcas|sem sentido|perdi a vontade|perdeu a vontade) (?:de |pra |para )?(?:viver|existir|continuar viv[oa])\\b",
+  "\\bcans(?:ei|ad[oa]|ando) (?:da|dessa|desta|de) vida\\b",
+  "\\bvida\\b(?: \\w+){0,2}? (?:nao tem (?:mais )?(?:sentido|razao)|perdeu (?:o|a) (?:sentido|razao)|sem sentido|nao vale (?:mais )?a pena)",
+  "\\bnao vejo (?:mais )?(?:saida|sentido|motivo|razao)\\b",
   "\\b(?:queria|quero|preferia|prefiro|gostaria de|vontade de) (?:nao|n|nunca) (?:existir|ter nascido|estar aqui|estar viv[oa]|acordar mais|mais acordar)\\b",
+  "\\b(?:queria|quero|preferia|prefiro|gostaria de|vontade de|tomara que eu) (?:nao|n|nunca mais) acordar\\b(?! (?:cedo|tarde|antes|de madrugada|tao cedo|as \\d))",
   "\\b(?:nao|n) (?:quero|qro|kero|queria) (?:mais acordar|acordar mais(?! cedo| tarde)|acordar nunca mais)\\b",
-  "\\b(?:dormir|deitar|morrer) e (?:nao|n|nunca mais) acordar\\b",
+  "\\b(?:nao|n) (?:quero|qro|kero|queria) acordar\\b(?=\\s*(?:$|[.!?,;]|nunca\\b|amanha\\b|de novo\\b))",
+  "\\b(?:dormir|deitar|morrer) e (?:nao|n|nunca mais) (?:quero |queria )?acordar\\b",
+  "\\bdormir (?:pra|para) sempre\\b",
   "\\bnunca mais acordar\\b",
-  "\\bmelhor sem mim\\b",
+  "\\b(?:melhor|melhores|feliz|felizes|em paz) sem mim\\b",
   "\\bse eu (?:nao|n) (?:existisse|tivesse nascido|estivesse viv[oa])\\b",
   "\\bse eu (?:sumisse|morresse|desaparecesse)\\b",
-  "\\bnao aguento mais (?:essa |esta |a |minha |a minha )?vida\\b",
-  // Acabar com tudo, tirar a vida, sumir, a carta de despedida.
-  "\\bacab(?:ar|a|o|ei|ando) com (?:tudo|td|a minha vida|minha vida|a vida|a propria vida|a minha propria vida|minha propria vida)\\b",
+  "\\bnao (?:aguento|suporto|aguenta|suporta) mais (?:essa |esta |a |minha |a minha )?vida\\b",
+  // Acabar com tudo, acabar comigo, dar fim na vida, tirar a vida, sumir,
+  // a despedida, a besteira.
+  "\\bacab(?:ar|a|o|ei|ando) com (?:tudo|td)\\b(?! (?:que|quanto|q) (?:e|eh|for|tiver|tem)\\b| de (?:ruga|rugas|mancha|manchas|flacidez|celulite|estria|estrias|gordura|espinha|espinhas|acne|olheira|olheiras|pelo|pelos)\\b)|\\bacab(?:ar|a|o|ei|ando) com (?:a minha vida|minha vida|a vida|a propria vida|a minha propria vida|minha propria vida|ele mesmo|ela mesma|a vida dele|a vida dela|a propria vida dele|a propria vida dela)\\b",
+  `\\bacabar comigo\\b${semAFigura("acabar comigo")}${semANegacao(`${NEGACAO_QUE_NEGA} ${ENTRE_A_NEGACAO_E_A_INTENCAO}(?:${INTENCAO_NEGAVEL} )?acabar comigo`)}`,
+  "\\b(?:vou|vo|quero|qro|kero|pensando em|penso em|pensei em|vontade de|pra|de)\\b(?: \\w+){0,2}? acaba comigo\\b",
+  "\\b(?:dar|dou|dei|deu|por|botar|bota|colocar|coloco) (?:um )?fim (?:na|a|em|nessa) (?:minha |sua |propria |a minha )?vida\\b|\\b(?:dar|dou|dei|por|botar|colocar) (?:um )?fim (?:nisso|em tudo|a tudo|nisso tudo|de vez)\\b|\\bdar cabo d[ae] (?:minha |sua |propria )?vida\\b|\\bencerrar (?:a |minha |a minha )?vida\\b",
   "\\btir(?:ar|a|o|ei|ou|ando|e) (?:a )?(?:minha |sua |propria |a propria )?(?:propria )?vida\\b",
-  `\\b${SEM_NEGACAO_COLADA}(?:quero|qro|kero|queria|vontade de|pensando em|penso em|pensei em) sumir\\b(?!(?: \\w+){0,2}? com\\b)`,
-  "\\b(?:sumir|desaparecer) (?:pra|para) sempre\\b",
+  `\\b(?:quero|qro|kero|queria|qria|vontade de|pensando em|penso em|pensei em|melhor eu|melhor) (?:sumir|desaparecer)\\b${SUMIR_POR_UM_TEMPO}${SUMIR_COM_A_COISA}${semANegacao(`${NEGACAO_QUE_NEGA} ${ENTRE_A_NEGACAO_E_A_INTENCAO}(?:quero|qro|kero|queria|qria|vontade de|pensando em|penso em|pensei em) (?:sumir|desaparecer)`)}`,
+  `\\b(?:sumir|desaparecer) (?:pra|para) (?:sempre|nunca mais)\\b|\\bsumir de vez\\b${SUMIR_COM_A_COISA}`,
   "\\b(?:carta|bilhete|mensagem) de (?:despedida|adeus)\\b",
+  "\\bescrevi (?:uma |a )?carta (?:pr[ao]s?|para) (?:os |as |meus |minhas |minha |meu |a |o )?(?:filhos?|filhas?|familia|mae|pai|marido|esposa|todos)\\b",
+  "\\b(?:me|se) desped(?:i|iu|indo|ir)\\b(?: \\w+){0,2}? (?:de todo mundo|de todos|de voces|da (?:minha )?familia|de geral)\\b",
+  `\\bme despedi\\b[^\\n]{0,60}?\\b${LUGAR_ALTO}\\b`,
+  "\\b(?:isso|essa|esta) e (?:uma|a minha) despedida\\b|\\bminha despedida\\b|\\badeus (?:a|pra|para) todos\\b|\\badeus mundo\\b",
+  `\\b(?:fazer|faco|faca|fiz|fez|fazendo|cometer|cometi|cometeu|comete)(?: (?:uma|alguma|uma grande|mais uma|outra))? (?:besteira|besteiras|loucura|loucuras|merda|burrada)\\b${OBJETO_DA_BESTEIRA}${semANegacao(`${NEGACAO_QUE_NEGA} ${ENTRE_A_NEGACAO_E_A_INTENCAO}(?:vou |vai |quero |pretendo )?(?:fazer|faco|faca|fiz|fez|cometer|cometi|cometeu)(?: \\w+){0,2} \\w+`)}`,
   // Cortar-se com intencao: "vou me cortar", "vontade de me cortar", "ela
-  // vai se cortar", "to me cortando", "cortar os pulsos".
-  `\\b${SEM_NEGACAO_COLADA}${INTENCAO_EM_PRIMEIRA_PESSOA}\\b${PALAVRAS_SEM_NEGACAO} me cort(?:ar|a|o|e)\\b`,
-  `\\b${SEM_NEGACAO_COLADA}${INTENCAO_DE_OUTRA_PESSOA}\\b${PALAVRAS_SEM_NEGACAO} se cort(?:ar|a|e)\\b`,
-  meSemFigura("cortando"),
-  semNegacao("cortando"),
+  // vai se cortar", "to me cortando", "eu me corto quando fico assim",
+  // "cortar os pulsos", "cortar a garganta".
+  `\\b${INTENCAO_EM_PRIMEIRA_PESSOA}\\b${PALAVRAS_SEM_NEGACAO} me cort(?:ar|a|o|e)\\b${semANegacao(`${NEGACAO_QUE_NEGA} ${ENTRE_A_NEGACAO_E_A_INTENCAO}${INTENCAO_EM_PRIMEIRA_PESSOA}(?: \\w+){0,2} me cort\\w*`)}`,
+  `\\b${INTENCAO_DE_OUTRA_PESSOA}\\b${PALAVRAS_SEM_NEGACAO} se cort(?:ar|a|e)\\b${semANegacao(`${NEGACAO_QUE_NEGA} ${ENTRE_A_NEGACAO_E_A_INTENCAO}${INTENCAO_DE_OUTRA_PESSOA}(?: \\w+){0,2} se cort\\w*`)}`,
+  meSemFigura("(?:cortando|corto)"),
+  semNegacao("(?:cortando|corta)"),
   "\\bmais (?:me|se) cort(?:ar|a|o|e|ando)\\b",
-  "\\bcort(?:ar|a|o|ei|ou|ando|e) (?:os |o |meus |meu |seus |seu |as |a |minhas |minha )?pulsos?\\b",
+  "\\bcort(?:ar|a|o|ei|ou|ando|e) (?:os |o |meus |meu |seus |seu |as |a |minhas |minha )?(?:pulsos?|pescoco|garganta)\\b",
   "\\b(?:me|se) cort(?:ei|ou|o|a|ando)\\b(?: \\w+){0,6}? de proposito\\b",
+  "\\b(?:me|se) cort(?:ei|ou) tod[oa]\\b",
   "\\bcortes?\\b(?: \\w+){0,6}? de proposito\\b",
-  // Enforcar-se, jogar-se, afogar-se, a corda no pescoco.
+  "\\blamina do apontador\\b",
+  "\\b(?:riscos?|cortes?|cortinhos?) (?:no|nos|na|nas) (?:meu |minha |meus |minhas )?(?:braco|bracos|pulso|pulsos|coxa|coxas|barriga)\\b",
+  "\\b(?:lamina|gilete|navalha|estilete)\\b(?: \\w+){0,3}? (?:no|nos) (?:meu |meus )?(?:braco|bracos|pulso|pulsos)\\b(?: \\w+){0,3}? (?:de novo|outra vez|dnv)\\b",
+  "\\b(?:me|se) mutil|\\bauto ?mutil",
+  `\\b${INTENCAO_EM_PRIMEIRA_PESSOA}\\b${PALAVRAS_SEM_NEGACAO} me (?:ferir|machucar)\\b${semANegacao(`${NEGACAO_QUE_NEGA} ${ENTRE_A_NEGACAO_E_A_INTENCAO}${INTENCAO_EM_PRIMEIRA_PESSOA}(?: \\w+){0,2} me \\w+`)}`,
+  // Enforcar-se, jogar-se, atirar-se, pendurar-se, afogar-se, a corda.
+  // "Me jogar na promo" e figura (rev5); o "se joga!" de animar saiu.
   meSemFigura("enforc(?:ar|a|o|ou|ando|asse|aria)"),
   semNegacao("enforc(?:ar|a|ou|ando|asse|aria)"),
   "\\benforcar-?(?:me|se)\\b",
-  semNegacao("jog(?:ar|a|o|ue|uei|ou|ando)", "(?:me|se)"),
+  semNegacao(
+    "(?:jog(?:ar|o|ue|uei|ou|ando|asse|aria)|atir(?:ar|o|ei|ou|ando))",
+    "(?:me|se)",
+    "(?! (?:n[ao]s?|nessa|nesse|neste|nesta|numa|num|de cabeca(?: n[ao]s?| nessa| nesse)?) (?:\\w+ )?(?:promo|promocao|promocoes|black friday|carnaval|festa|festas|balada|rodizio|procedimento|tratamento|botox|preenchimento|harmonizacao|pacote|pacotes|oferta|ofertas|liquidacao|compras|dieta|academia|treino|trabalho|projeto|curso|novidade|sessao|limpeza|depilacao|massagem|aventura|viagem|danca|pista|desafio)\\b)",
+  ),
   "\\bjogar-?(?:me|se)\\b",
+  "\\b(?:me|se) pendur(?:ar|o|ei|ou|ando)\\b(?! (?:n[ao] (?:metro|onibus|trem|barra|telefone|celular)))",
   "\\b(?:me|se) afog(?:ar|a|o|ou|ando|uei)\\b",
   "\\bcorda\\b(?: \\w+){0,3}? pescoco\\b",
-  // Pular de lugar alto: "to na ponte, vou pular", "pular da janela", "pular
-  // na frente do onibus". O "pular a sessao" (deixar de fazer) fica fora.
-  `\\b${LUGAR_ALTO}\\b[^\\n]{0,60}?\\bpul(?:ar|a|o)\\b${PULAR_DE_DEIXAR_DE_FAZER}`,
-  `\\bpul(?:ar|a|o|ei|ou)\\b (?:d[aoe]s?|pela|pelo|na|no|em cima d[aoe]|de cima d[aoe]|do alto d[aoe]) (?:\\w+ ){0,2}?${LUGAR_ALTO}\\b`,
-  "\\bpul(?:ar|a|o|ei|ou) (?:na frente|embaixo) d[aoe]\\b",
-  // Veneno, remedio demais, a arma.
+  "\\b(?:peguei|comprei|separei|arrumei|preparei|amarrei|pendurei|to com|estou com|tenho|ja tenho) (?:a |uma )?corda\\b(?! (?:de |pra |para )?(?:pular|varal|academia|treino|crossfit|escalada)\\b)",
+  "\\bcorda (?:pronta|amarrada)\\b",
+  // Pular de lugar alto: "to na ponte, vou pular", "moro no 12 andar e vou
+  // pular", "pulou da janela", "pular na frente do onibus", a linha do
+  // trem; estar na beira ou em cima do lugar alto; "to na ponte... ja era".
+  `\\b${LUGAR_ALTO_OU_ANDAR}\\b[^\\n]{0,80}?\\bpul(?:ar|a|o|ou|ei|aram)\\b${PULAR_DE_DEIXAR_DE_FAZER}`,
+  `\\bpul(?:ar|a|o|ei|ou|aram)\\b (?:d[aoe]s?|pela|pelo|na|no|em cima d[aoe]|de cima d[aoe]|do alto d[aoe]) (?:\\w+ ){0,2}?${LUGAR_ALTO_OU_ANDAR}\\b`,
+  "\\bpul(?:ar|a|o|ei|ou|aram) (?:na frente|embaixo) d[aoe]\\b",
+  "\\b(?:pul(?:ar|a|o|ei|ou)|me deitar|deitar|deitei|me jogar|me atirar)\\b(?: \\w+){0,2}? (?:no |na |nos |nas )?(?:trilho|trilhos|linha) do (?:trem|metro)\\b",
+  `\\b(?:to|tou|estou|ta|esta|tava|estava|sentad[oa]|em pe|subiu|subi|pendurad[oa])\\b(?: \\w+){0,2}? (?:em cima|no alto|na beira|no topo|na borda|no parapeito|na mureta|na grade|no beiral|na ponta) d[aoe]s? (?:\\w+ ){0,2}?${LUGAR_ALTO}\\b`,
+  "\\bparapeito\\b",
+  `\\b${LUGAR_ALTO}\\b[^\\n]{0,60}?\\b(?:ja era|e o fim|acabou pra mim|adeus|hoje acaba)\\b`,
+  // Veneno, remedio demais, o gas, a arma, o fogo.
   "\\boverdose\\b",
   "\\bchumbinho\\b",
   "\\braticida\\b",
   "\\bveneno (?:de|pra|para) rato\\b",
   `\\b(?:tom|beb|engol|ingeri)\\w*(?: \\w+){0,3}? ${VENENO}\\b`,
-  "\\b(?:caixa|caixas|cartela|cartelas|vidro|frasco|pote|xarope)(?: \\w+){0,2}? inteir[oa]s?\\b",
-  "\\b(?:tom|engol|ingeri|beb)\\w* (?:um |uma |o |a |duas |dois |\\d+ )?(?:vidro|vidros|frasco|frascos|cartela|cartelas|caixa|caixas) d[eoa]\\b",
+  "\\b(?:caixa|caixas|cartela|cartelas|vidro|frasco|pote|xarope|garrafa)(?: \\w+){0,2}? (?:inteir[oa]s?|tod[oa]s?)\\b",
+  "\\b(?:tom|engol|ingeri|beb)\\w* (?:um |uma |o |a |duas |dois |\\d+ )?(?:vidro|vidros|frasco|frascos|cartela|cartelas|caixa|caixas|garrafa) d[eoa]\\b",
+  "\\b(?:tom|engol|ingeri|beb)\\w*(?: \\w+){0,5}? de uma vez\\b",
   "\\b(?:todos|todas) (?:os |as )?(?:meus |minhas |seus |suas |esses |essas )?(?:remedios|comprimidos|calmantes|pilulas|capsulas|cartelas|antidepressivos)\\b",
   "\\b\\d{2,} (?:comprimidos|remedios|pilulas|capsulas|calmantes|cartelas)\\b",
-  "\\b(?:um monte|monte|punhado|bando) de (?:remedio|comprimido|calmante|pilula|capsula)s?\\b",
-  "\\btiros? (?:em mim|na (?:minha )?cabeca)\\b",
+  "\\b(?:um monte|monte|punhado|bando|porrada|caralhada|penca|varios|varias|muitos|muitas) (?:de )?(?:remedio|comprimido|calmante|pilula|capsula)s?\\b",
+  "\\b(?:ligar|liguei|abrir|abri|deixar|deixei|abro|ligo) o gas\\b(?: \\w+){0,4}? (?:dormir|deitar|morrer)\\b",
+  "\\b(?:me trancar|me tranco|trancad[oa]|fechad[oa])\\b(?: \\w+){0,3}? carro\\b(?: \\w+){0,4}? motor ligado\\b",
+  "\\btiros? (?:em mim|na (?:minha )?(?:cabeca|boca))\\b",
+  "\\b(?:dar|dou|dei|deu|da) (?:um )?tiro (?:em mim|nele|nela|na (?:minha |sua |propria )?(?:cabeca|boca)|no (?:meu |seu |proprio )?(?:peito|ouvido|coracao))\\b",
   "\\batirar em mim\\b",
   "\\bme dar um tiro\\b",
+  "\\bestourar (?:os |meus |os meus )?miolos\\b",
+  "\\b(?:peguei|pegou|pegar|pega|to com|estou com|ta com|esta com|tava com|comprei|comprou|achei|arrumei|arrumou) (?:a |uma |o |um )?(?:arma|revolver|pistola|espingarda|garrucha)\\b",
+  "\\b(?:tacar|taca|tacou|atear|ateou|ateia|meter|botar|bota|por|colocar) fogo (?:em mim|no meu corpo|em si|nele mesmo|nela mesma|no proprio corpo|nele|nela)\\b|\\bfogo em mim\\b|\\bme queimar (?:com|viv[oa]|inteir[oa])\\b",
 ];
 
-/** O que nao e pessoa e "nao responde" ou "nao reage" ("o site nao responde"). */
+/**
+ * O que nao e pessoa e "nao responde" ou "nao reage" ("o site nao
+ * responde", "vc nao responde mais?", "o financeiro parou de responder",
+ * "o melasma nao reage ao acido"; rev5). A coisa que e complemento ("a
+ * paciente aqui DA CLINICA", "o senhor NA RECEPCAO") nao e o sujeito.
+ */
 const COISA_QUE_NAO_RESPONDE = alternativas([
   "site",
   "app",
@@ -2210,6 +2332,7 @@ const COISA_QUE_NAO_RESPONDE = alternativas([
   "chat",
   "bot",
   "robo",
+  "ia",
   "internet",
   "wifi",
   "maquininha",
@@ -2225,8 +2348,64 @@ const COISA_QUE_NAO_RESPONDE = alternativas([
   "mouse",
   "teclado",
   "controle",
+  "vc",
+  "voce",
+  "voces",
+  "vcs",
+  "cs",
+  "tu",
+  "financeiro",
+  "comercial",
+  "suporte",
+  "setor",
+  "fornecedor",
+  "empresa",
+  "loja",
+  "banco",
+  "operadora",
+  "plano",
+  "convenio",
+  "atendimento",
+  "secretaria",
+  "atendente",
+  "recepcionista",
+  "dra",
+  "doutora",
+  "doutor",
+  "dr",
+  "medica",
+  "medico",
+  "biomedica",
+  "esteticista",
+  "moca",
+  "moco",
+  "pele",
+  "melasma",
+  "mancha",
+  "manchas",
+  "cabelo",
+  "unha",
+  "acne",
+  "espinha",
+  "espinhas",
+  "cicatriz",
+  "estria",
+  "estrias",
+  "celulite",
+  "tratamento",
+  "remedio",
+  "produto",
+  "creme",
+  "acido",
+  "laser",
+  "aparelho",
 ]);
-/** O aparelho ou a luz que "apaga" ("o celular apagou", "a luz apagou"). */
+/** A coisa colada no "nao" (o sujeito): "o site nao", "a ia de voces nao". */
+const SUJEITO_COISA_ANTES_DO_NAO = `(?<!\\b(?<!\\b(?:d[aoe]s?|n[ao]s?|em) )${COISA_QUE_NAO_RESPONDE}(?: d[aoe]s?(?: \\w+){1,2})? (?:nao|n))`;
+/** "Nao responde" a mensagem, no whats: e nao responder, nao o desmaio. */
+const RESPONDER_A_MENSAGEM =
+  "(?! (?:(?:as|os|a|o|minhas?|meus?|suas?|seus?|nenhuma|nenhum|mais|direito|no|na|pelo|pela|por|ao|aos) )*(?:mensagens?|msg|msgs|whats|whatsapp|zap|wpp|ligac\\w*|email\\w*|audios?|direct|dm|chamadas?|recados?|sms|telefone|celular|insta|instagram|chat|inbox)\\b)";
+/** O aparelho, a luz e o pigmento que "apagam" (rev5: a tatuagem, a micro). */
 const COISA_QUE_APAGA = alternativas([
   "celular",
   "cel",
@@ -2276,6 +2455,32 @@ const COISA_QUE_APAGA = alternativas([
   "carro",
   "moto",
   "motor",
+  "tatuagem",
+  "tattoo",
+  "tatoo",
+  "micro",
+  "micropigmentacao",
+  "pigmento",
+  "pigmentacao",
+  "tinta",
+  "henna",
+  "cor",
+  "mancha",
+  "manchas",
+  "cicatriz",
+  "sobrancelha",
+  "sobrancelhas",
+  "delineado",
+  "risco",
+  "marca",
+  "marcas",
+  "desenho",
+  "batom",
+  "esmalte",
+  "maquiagem",
+  "make",
+  "tintura",
+  "luzes",
 ]);
 
 /** O bicho que pica ou morde. */
@@ -2317,8 +2522,11 @@ const BICHO = alternativas([
 ]);
 const PICOU_OU_MORDEU =
   "(?:pic(?:ou|aram|ada|adas|ado|ados|ando)|mord(?:eu|eram|ida|idas|ido|idos|endo)|ferroad\\w*|ferrou|atacou)";
+/** O fato antigo: "ano passado", "ha 5 anos", "cicatriz" (rev5). */
+const FATO_ANTIGO =
+  "(?![^.!?\\n]{0,40}?\\b(?:ano passado|anos atras|ha \\d+ (?:anos?|meses|mes|semanas?)|faz \\d+ (?:anos?|meses|mes|semanas?)|mes passado|meses atras|semana passada|quando (?:eu )?era|na infancia|de crianca|cicatriz)\\b)";
 
-/** O que se engole por acidente ("engoliu a pilha", "bebeu agua sanitaria"). */
+/** O que se engole por acidente ("engoliu a pilha", "um brinquedo"). */
 const ENGOLIDO = alternativas([
   "pilha",
   "pilhas",
@@ -2337,6 +2545,10 @@ const ENGOLIDO = alternativas([
   "agulha",
   "brinco",
   "anel",
+  "brinquedo",
+  "peca",
+  "pecinha",
+  "botao",
   "remedio",
   "remedios",
   "comprimido",
@@ -2347,128 +2559,193 @@ const ENGOLIDO = alternativas([
 /** As partes do corpo que param de mexer ou de sentir. */
 const LADO_OU_MEMBRO =
   "(?:lado|lados|braco|bracos|perna|pernas|mao|maos|pe|pes|metade|corpo|rosto|cara|boca|dedos)";
+/** A pessoa, como sujeito do estado ("ele ta gelado", "o bebe ta molinho"). */
+const PESSOA_DO_ESTADO =
+  "(?:ele|ela|corpo|bebe|crianca|pai|mae|avo|vo|vovo|marido|esposa|esposo|mulher|filho|filha|irmao|irma|tio|tia|neto|neta|namorado|namorada|senhor|senhora|paciente)";
 
 /**
  * "Falar" no sentido de conversar com a clinica ou de estar ocupado ("nao
- * consigo falar agora", "ao telefone", "comigo", "com voces", "ingles"). Nao
- * e a perda da fala. "Nao consegue falar com a gente" continua escalando.
+ * consigo falar agora", "ao telefone", "comigo", "com voces", "no whats").
+ * Nao e a perda da fala. "Nao consegue falar com a gente" continua
+ * escalando.
  */
 const FALAR_DE_CONVERSAR =
-  "(?! (?:agora|agr|agra|no momento|neste momento|nesse momento|ao telefone|por telefone|no telefone|pelo telefone|pelo whats|por ligacao|por audio|comigo|cmg|contigo|com (?:voce|vc|vcs|voces|a clinica|a recepcao|a secretaria|a atendente|a moca|a dra|o dr|a doutora|o doutor|a medica|o medico)\\b|ingles|espanhol))";
+  "(?! (?:agora|agr|agra|no momento|neste momento|nesse momento|ao telefone|por telefone|no telefone|pelo telefone|pelo whats|no whats|no zap|pelo zap|na ligacao|por ligacao|por audio|por mensagem|no numero|comigo|cmg|contigo|com (?:voce|vc|vcs|voces|a clinica|a recepcao|a secretaria|a atendente|a moca|a dra|o dr|a doutora|o doutor|a medica|o medico)\\b|com ninguem (?:\\w+ )?(?:ai|dai|aqui|da clinica|na clinica|no telefone|pelo telefone|atende|responde)\\b|ingles|espanhol))";
+/**
+ * O que volta a fazer do "nao consegue falar agora" a perda da fala (rev5):
+ * "do nada", "so sai som", "balbucia", "geme", "a boca ta mole".
+ */
+const SINAL_DA_FALA =
+  "(?:do nada|de repente|derepente|so sai som|sai som|balbuci\\w*|geme|gemendo|gemido|mole|enrolad\\w*|torta|babando|caiu|desmai\\w*|estranh\\w*|nao obedece|formig\\w*|ficou assim|nao mexe)";
 
-/** O preenchimento que pode fechar o vaso (nao a toxina, nao o laser). */
+/**
+ * O "nao ve" que nao e a visao: o que se procura na tela ("no link", "nessa
+ * foto"), o "nada de errado", o "de longe" e o "sem lente" (rev5).
+ */
+const NAO_E_A_VISAO =
+  "(?![^\\n]{0,40}?\\b(?:link|foto|fotos|imagem|imagens|app|aplicativo|site|tela|pdf|arquivo|video|email|mensagem|whats|sistema|pagina|documento|orcamento|comprovante|boleto|horario|agenda|valor|preco|endereco|resposta|errado|diferente|de longe|de perto|sem (?:as |os |minhas |meus |a |o )?(?:lentes?|oculos))\\b)";
+
+/** O preenchimento que pode fechar o vaso (nao a toxina, nao a micro). */
 const PREENCHIMENTO =
-  "(?:preench|labial|rino|harmoniz|bioestimul|hialuronic|sculptra|radiesse)";
-/** Onde o preenchimento fecha o vaso e a pele muda de cor. */
-const REGIAO_DO_PREENCHIMENTO =
-  "(?:labio|labios|boca|nariz|ponta|pele|local|regiao|area|olho|olhos|testa|glabela)";
-/** A pele que embranquece, escurece ou esfria ("o labio ta branco e frio"). */
-const MUDOU_DE_COR =
-  "(?:ta|tao|esta|estao|ficou|ficaram|ficando|fica|comecou a ficar)(?: (?:todo|toda|meio|muito|bem|mais))? (?:branc|esbranquic|escur|pret|gelad|fri[oa]\\b|acinzent|marmor|embac|turv)";
+  "(?:preench|(?<!micro )labial|rino|harmoniz|bioestimul|hialuronic|sculptra|radiesse)";
+/**
+ * O sinal da oclusao depois do preenchimento (rev5): o lugar que FICOU (ou
+ * ta, ou comecou a ficar) com a cor estranha, acinzentada, rendada, de mapa
+ * ou de marmore, palido, clarinho, sem cor, gelado; os pontinhos brancos;
+ * "nao volta quando aperta". O jeito de sempre ("meu labio e muito palido,
+ * o preenchimento resolve?") nao e o sinal.
+ */
+const SINAL_DE_OCLUSAO =
+  "(?:(?:ta|esta|tao|estao|tava|estava|ficou|ficaram|ficando|fica|ficar|comecou a ficar|acordou|amanheceu)(?: \\w+){0,4}? (?:cor (?:\\w+ ){0,2}?(?:estranh|esquisit|diferente|feia|cinza|acinzent|branc|escur|roxa|azul|de marmore)|acinzent|cinza|cinzent|rendad|rendilhad|marmor|palid|clarinh|sem cor|gelad|geladinh|fri[oa]\\b|esbranquic|branquinh|branc|pret|escur|rox|manchad)|(?:tem|apareceu|apareceram|surgiu|surgiram|com) (?:uns |umas )?(?:pontinhos?|bolinhas?|manchinhas?|pontos?) (?:brancos?|brancas?|pretos?|pretas?|roxos?|roxas?)|nao volta (?:quando|qdo|se) (?:aperto|aperta|apertar|pressiono)|parece (?:um )?mapa|cor de marmore)";
 
 const EMERGENCIA_AGUDA = [
   // Os itens da lista que o sintoma_citado ja pega, repetidos para a rede
-  // nao depender dele: nao respira, desmaio, convulsao, boca torta,
-  // sangrando muito, dor no peito.
+  // nao depender dele: nao respira, falta de ar, desmaio, convulsao, boca
+  // torta, sangrando muito, dor no peito.
   "\\b(?:nao|n) (?:ta |esta |consegue |consigo |to conseguindo |ta conseguindo |esta conseguindo )?respir",
-  "\\bfalt(?:a|ando|ou) (?:o )?ar\\b(?! condicionado)",
-  "\\bdesmai|\\bconvul[cs]",
-  "\\bboca\\b(?: \\w+){0,3}? (?:tort|entort)|\\bentortou\\b",
+  "\\bfalt(?:a|ando|ou) (?:o )?ar\\b(?! (?:condicionado|aqui|na sala|nessa sala|no ambiente|dentro|no consultorio|na recepcao)\\b)|\\bfalta de ar\\b",
+  "\\bdesmai|\\bconvul[cs]|\\bdesfalec",
+  "\\bboca\\b(?: \\w+){0,3}? (?:tort|entort|mole)|\\bentortou\\b",
   "\\bsangr\\w* (?:muito|demais|sem parar|bastante)\\b|\\bnao para(?:va)? de sangrar\\b|\\b(?:perdendo|vomitando|cuspindo|tossindo) (?:muito )?sangue\\b|\\bmuito sangue\\b",
   "\\bdor(?:es)?\\b(?: \\w+){0,3}? no peito\\b",
-  // Nao acorda, nao reage, nao responde (pessoa), desacordado, apagou.
+  // Nao acorda, nao reage, nao responde (pessoa), desacordado, apagou, o
+  // corpo gelado, mole ou duro.
   "\\bdesacordad|\\binconscient|\\bdesfalecid",
   "\\bperd(?:eu|i|eram) (?:os sentidos|a consciencia)\\b",
-  "\\b(?:nao|n|nem) (?:ta |esta |quer |consegue )?(?:acorda|acordou|acordava|acordando|desperta|despertou)\\b",
-  "\\bnao consegue (?:mais )?(?:acordar|despertar)\\b",
+  "\\b(?:nao|n) (?:ta |esta |quer |consegue )?(?:mais )?(?:acorda|acordava|acordando|desperta)\\b(?! (?:cedo|antes|tarde|de manha|nem com|com despertador|sem despertador|ate as|facil|no horario|na hora)\\b)",
+  "\\bnao acordou mais\\b",
+  "\\b(?:caiu|desmaiou|apagou|engasgou|convulsionou|deitou)\\b(?: \\w+){0,4}? (?:e )?(?:nao|n) acordou\\b",
+  "\\bnao consegue (?:mais )?(?:acordar|despertar)\\b(?! (?:cedo|antes|tarde|de manha)\\b)",
   "\\bnao (?:consigo|consegue|conseguimos|conseguem|conseguia|conseguiu|to conseguindo|ta conseguindo) (?:mais )?(?:acordar|despertar) (?:ele|ela|eles|elas|o|a|meu|minha|seu|sua|nosso|nossa)\\b",
   "\\bmanter (?:\\w+ ){0,2}?acordad",
   "\\bsonolent",
-  `\\b(?:nao|n|nem)(?<!\\b${COISA_QUE_NAO_RESPONDE}(?: d[aoe]s?(?: \\w+){1,2})? (?:nao|n|nem)) (?:ta |esta |quer |consegue )?(?:responde|respondia|respondendo|reage|reagia|reagiu|reagindo)\\b`,
+  `\\b(?:nao|n)${SUJEITO_COISA_ANTES_DO_NAO} (?:ta |esta |quer |consegue )?(?:mais )?(?:responde|respondia|respondendo|reage|reagia|reagiu|reagindo)\\b${RESPONDER_A_MENSAGEM}`,
   "\\bnao respondeu mais\\b",
   "\\b(?:ta|esta|estao|tao) sem (?:responder|reagir|acordar|respirar|se mexer)\\b",
-  "\\bparou de (?:responder|reagir|respirar|se mexer|falar(?! com))\\b",
-  `\\bapagou\\b(?<!\\b${COISA_QUE_APAGA}(?: d[aoe]s?(?: \\w+){1,2})? apagou)(?=\\s*(?:$|[,.!?;:]|e\\b|do nada|de repente|derepente|no (?:chao|banho|banheiro|sofa|carro|meio)\\b|na (?:cama|cadeira|rua|sala|frente|mesa)\\b|agora|ali|aqui|de novo|completamente|total|geral))`,
+  `\\bparou\\b(?<!\\b(?<!\\b(?:d[aoe]s?|n[ao]s?|em) )${COISA_QUE_NAO_RESPONDE}(?: d[aoe]s?(?: \\w+){1,2})? parou) de (?:responder|reagir|respirar|se mexer|falar(?! com))\\b`,
+  `\\bapagou\\b(?<!\\b(?<!\\b(?:d[aoe]s?|n[ao]s?|em) )${COISA_QUE_APAGA}(?: d[aoe]s?(?: \\w+){1,2})?(?: (?:ja|quase|tod[oa]|meio|bem|logo|nao|sempre|mesmo|tambem))? apagou)(?=\\s*(?:$|[,.!?;:]|e\\b|do nada|de repente|derepente|(?:no|na|nos|nas|em) \\w|agora|ali|aqui|de novo|completamente|total|geral|la\\b))`,
   "\\bapaguei (?:do nada|de repente|no banho|no chao|e cai|e acordei)\\b",
-  "\\bpass(?:ou|ei|aram) mal\\b",
+  "\\bnao se mexe\\b(?: \\w+){0,3}? (?:gelad|fri[oa]\\b|rox|nao respira)|\\bnao se mexe mais\\b",
+  // O "passou mal" de agora (rev5): com "agora", "aqui", "do nada", "e
+  // caiu", ou no fim da mensagem. O de outro dia ("faltei ontem porque
+  // passei mal", "passou mal a semana toda") fica para o sintoma de sempre.
+  "\\bpass(?:ou|aram) mal\\b(?: \\w+){0,3}? (?:agora|aqui|do nada|de repente|derepente|e caiu|e desmaiou|e apagou|e nao|e ta|e esta|e ficou|no consultorio|na clinica|na recepcao)\\b|\\bpass(?:ou|aram) mal\\s*[.!]*\\s*$",
+  `\\b${PESSOA_DO_ESTADO}\\b(?: \\w+){0,2}? (?:ta|esta|ficou|tava|estava) (?:tod[oa] )?(?:gelad[oa]|mole|molinh[oa]|dur[oa]|palid[oa])\\b`,
+  `\\b${PESSOA_DO_ESTADO}\\b(?: \\w+){0,2}? (?:ta|esta|ficou|tava|estava) tod[oa] amarel[oa]\\b`,
+  "\\bvir(?:ou|ando|aram) os olhos\\b|\\bnao (?:ta |esta |quer |consegue )?(?:abre|abria|abriu|abrindo) (?:mais )?os olhos\\b",
   // Convulsao (o "convuls" ja e sintoma): os sinais dela.
   "\\bse debat|\\brevirando os olhos|\\bolhos? revirad|\\bespuma(?:ndo)? (?:pela|na) boca|\\bepilept",
+  "\\b(?:tremendo|se debatendo|caid[oa]|desmaiad[oa]|dur[oa])\\b(?: \\w+){0,3}? babando\\b",
+  // O mal subito: "teve um treco", "deu um piripaque no meu avo", "ta
+  // tendo um infarto", "enfartou", o coracao parado, sem pulso.
+  `\\bteve(?<!\\bquem (?:ja )?teve) (?:um |uma )?(?:treco|troco|piripaque|ataque|mal subito|apagao|avc|derrame|infarto|enfarto|parada)\\b(?! de (?:riso|risos|fofura|preguica|fome|sono|ciume|ciumes|nervos)\\b)${FATO_ANTIGO}`,
+  "\\b(?:deu|deram|dando) (?:um |uma )?(?:treco|troco|piripaque|ataque|mal subito|apagao|avc|derrame|infarto|enfarto|parada) (?:n[oa]s? |nele\\b|nela\\b|em (?:meu|minha) )",
+  `\\b${PESSOA_DO_ESTADO}\\b(?: \\w+){0,2}? (?:ta|esta|tava|estava) tendo (?:um |uma )?(?:treco|troco|piripaque|ataque)\\b(?! de (?:riso|risos|fofura|preguica|fome|sono|ciume|ciumes|nervos)\\b)`,
+  "\\btendo (?:um |uma )?(?:infarto|enfarto|avc|derrame|parada|ataque cardiaco|ataque do coracao|convulsao)\\b",
+  "\\b(?:infartando|infartano|enfartando|enfartano|infatando|infatano)\\b(?! com (?:esse|essa|este|esta|o|a|tanto|tanta) (?:preco|valor|conta|fatura|boleto|orcamento|pacote|parcela)\\b)",
+  `\\b(?:in|en)fart(?:ou|aram)\\b${FATO_ANTIGO}`,
+  "\\b(?:acho|parece|sera|deve ser)\\b (?:que |q )?(?:\\w+ ){0,4}?(?:infarto|enfarto|avc|derrame|ataque cardiaco|parada cardiaca|convulsao|overdose)\\b",
+  `\\b(?:avc|derrame)\\b(?<!\\bquem (?:ja )?(?:teve|tem|sofreu) (?:um |uma )?(?:avc|derrame))${FATO_ANTIGO}|\\bacidente vascular|\\bparada cardi|\\bataque cardiac|\\bataque do coracao`,
+  "\\bcoracao\\b(?: \\w+){0,3}? (?:parou|nao (?:ta |esta )?bat\\w*|a mil)\\b",
+  "\\bsem pulso\\b|\\bnao (?:to |estou |tou )?sent\\w* (?:o )?pulso\\b|\\bpulso\\b(?: \\w+){0,2}? (?:sumiu|parou)\\b",
+  "\\b(?:aperto|peso|pressao|pontada|queimacao|queimando|ardendo|ardencia) (?:\\w+ ){0,2}?no peito\\b|\\bmao no peito\\b",
+  "\\belefante\\b(?: \\w+){0,3}? peito\\b",
+  "\\bsuando frio\\b",
+  "\\bpressao\\b(?: \\w+){0,2}? (?:2\\d|1[89]) (?:por|x) \\d{1,2}\\b",
   // Picada e mordida de bicho: "escorpiao picou minha mae", "aranha marrom
   // me picou", "cobra mordeu meu marido", "fui picado por cobra".
-  `\\b${BICHO}\\b(?: \\w+){0,4}? ${PICOU_OU_MORDEU}\\b`,
-  `\\b${PICOU_OU_MORDEU}\\b(?: \\w+){0,5}? ${BICHO}\\b`,
+  `\\b${BICHO}\\b(?: \\w+){0,4}? ${PICOU_OU_MORDEU}\\b${FATO_ANTIGO}`,
+  `\\b${PICOU_OU_MORDEU}\\b(?: \\w+){0,5}? ${BICHO}\\b${FATO_ANTIGO}`,
   "\\b(?:me|te|nos) (?:picou|mordeu)\\b",
   "\\b(?:fui|foi|fomos|foram) (?:picad|mordid)",
-  // Engoliu ou bebeu o que nao devia, engasgo, intoxicacao.
+  // Engoliu ou bebeu o que nao devia, engasgo, intoxicacao, o gas.
   `\\b(?:engol|ingeri|bebeu|bebi)\\w*(?: \\w+){0,4}? ${ENGOLIDO}\\b`,
   "\\b(?:inal|aspir|cheir)\\w*(?: \\w+){0,3}? (?:gas|fumaca|cola|thinner|solvente|cloro|veneno|produto)\\b",
+  "\\b(?:cheia|cheio|cheiro|vazamento|vazando) de gas\\b|\\bvazando gas\\b",
+  "\\benfi(?:ou|ei|aram) (?:um |uma )?\\w+ (?:no|na) (?:nariz|ouvido|garganta)\\b",
   "\\bengasg",
   "\\bintoxica|\\benvenen",
-  // Nao enxerga, ficou cega de repente.
-  "\\bceg(?:o|a|os|as|ou|uei|ueira)\\b",
-  "\\bsem enxergar\\b",
+  // Nao enxerga, ficou cega de repente ("o amor e cego" nao e a visao).
+  "\\b(?:fiquei|ficou|ficar|fica|ficando|to|ta|estou|esta|deixou|deixar|deixa|vai ficar|vou ficar) ceg[oa]s?\\b(?! (?:procurando|de tanto (?:procurar|ler|olhar))\\b)|\\bceg(?:ou|uei|ueira)\\b",
+  "\\bsem enxergar\\b(?![^\\n]{0,30}?\\bsem (?:as |os |minhas |meus |a |o )?(?:lentes?|oculos)\\b)|\\bsem (?:a )?visao\\b",
   "\\bpar(?:ou|ei|aram) de enxergar\\b",
   "\\bperd(?:i|eu|endo|eram) (?:a |minha |sua |toda a )?(?:visao|vista)\\b",
-  "\\bnao (?:to |tou |estou |ta |esta |consigo |consegue |conseguia |conseguiu )?(?:enxerg\\w*|ver|vejo|ve|via|vendo)\\b (?:mais )?(?:nada|nadinha|direito|bem|de (?:um|uma|nenhum|nenhuma)\\b|do (?:olho|lado)\\b|com (?:o|um|os|esse|este|meu|minha) olhos?\\b|pelo olho\\b)",
-  "\\bnao (?:enxergo|enxerga)\\b\\s*(?:$|[,.!?;]|mais\\b)",
-  "\\b(?:vista|visao)\\b(?: \\w+){0,2}? (?:escur|apag|pret|sumi)",
-  // Nao consegue falar (fora do "falar agora" e do "falar com"), a fala
-  // enrolada, a lingua enrolada, nao fala coisa com coisa.
-  `\\b(?:nao|n|nn) (?:\\w+ ){0,2}?(?:consigo|consegue|conseguia|conseguimos|conseguem|ta conseguindo|esta conseguindo|to conseguindo|estou conseguindo) (?:mais )?falar\\b${FALAR_DE_CONVERSAR}`,
-  "\\bnao fala (?:mais(?! com)|coisa com coisa|direito)\\b",
+  `\\bnao (?:to |tou |estou |ta |esta |consigo |consegue |conseguia |conseguiu )?(?:enxerg\\w*|ver|vejo|ve|via|vendo)\\b (?:mais )?(?:nada|nadinha|direito|bem|de (?:um|uma|nenhum|nenhuma)\\b|do (?:olho|lado)\\b|com (?:o|um|os|esse|este|meu|minha) olhos?\\b|pelo olho\\b)${NAO_E_A_VISAO}`,
+  `\\bnao (?:to |tou |estou |ta |esta )?(?:enxergo|enxerga|enxergando)\\b${NAO_E_A_VISAO}`,
+  "\\b(?:vista|visao)\\b(?: \\w+){0,3}? (?:escur|apag|pret|sumi)",
+  // Nao consegue falar (fora do "falar agora" e do "falar com", a menos
+  // que venha com "do nada", "so sai som" ou "a boca ta mole"), a fala
+  // enrolada, a lingua enrolada, nao fala coisa com coisa, o olhar parado.
+  `\\b(?:nao|n|nn) (?:\\w+ ){0,2}?(?:consigo|consegue|conseguia|conseguimos|conseguem|ta conseguindo|esta conseguindo|to conseguindo|estou conseguindo) (?:mais )?falar\\b(?:${FALAR_DE_CONVERSAR}|(?=[^\\n]{0,80}?\\b${SINAL_DA_FALA})|(?<=\\b(?:de repente|derepente|do nada)\\b[^\\n]{0,60} falar))`,
+  "\\bnao (?:ta |esta )?fal(?:a|ando) (?:mais(?! com)|coisa com coisa|direito)\\b",
   "\\bperdeu a fala\\b|\\bsem conseguir falar\\b",
   "\\bfal(?:a|ar|ando|ava|ou)\\b(?: \\w+){0,2}? (?:enrolad|arrastad|embolad|trocad|sem sentido)",
   "\\benrol(?:ar|ando|ou|a|ava) a lingua\\b",
   "\\blingua\\b(?: \\w+){0,2}? (?:enrolad|enrolando|pesad|dormente|grossa|travad|travando|inchando|inchad)",
   "\\bnao reconhece (?:ninguem|a gente|mais ninguem|os filhos|a familia)\\b",
+  "\\bolhando (?:pro|para o) nada\\b|\\bolhar (?:parado|fixo|perdido)\\b|\\bnao fala\\b(?: \\w+){0,4}? fica olhando\\b",
   // Nao consegue mexer um lado (ou o braco, a perna), o lado mole.
   `\\b(?:nao|n|nn) (?:\\w+ ){0,2}?(?:consigo|consegue|conseguia|conseguimos|conseguem|ta conseguindo|esta conseguindo|to conseguindo|estou conseguindo) (?:mais )?(?:mexer|mover|levantar|sentir) (?:o |a |os |as |um |uma |meu |minha |seu |sua |nenhum |nenhuma )?${LADO_OU_MEMBRO}\\b`,
   `\\bnao (?:mexe|move|sente|sinto|mexo|movo) (?:mais )?(?:o |a |os |as |um |uma |meu |minha |seu |sua |minhas |meus )?${LADO_OU_MEMBRO}\\b`,
   "\\b(?:lado|braco|perna|mao|metade do corpo|metade da cara|metade do rosto)\\b(?: \\w+){0,3}? (?:mole|molinho|sem forca|sem movimento|paralisad|dormente|morto|travad)",
-  // Coracao e AVC: "acho que to infartando", "ta tendo um infarto", "acho q
-  // e avc", o aperto e o peso no peito.
-  "\\b(?:infartando|infartano|enfartando|enfartano|infatando|infatano)\\b",
-  "\\btendo (?:um |uma )?(?:infarto|enfarto|ataque|avc|derrame|piripaque|treco|parada)\\b",
-  "\\b(?:acho|parece|sera|deve ser)\\b (?:que |q )?(?:\\w+ ){0,4}?(?:infarto|enfarto|avc|derrame|ataque cardiaco|parada cardiaca|convulsao|overdose)\\b",
-  "\\bavc\\b|\\bderrame\\b|\\bacidente vascular|\\bparada cardi|\\bataque cardiac|\\bataque do coracao|\\bcoracao parou",
-  "\\b(?:aperto|peso|pressao|pontada|queimacao|queimando|ardendo|ardencia) (?:\\w+ ){0,2}?no peito\\b",
-  "\\belefante\\b(?: \\w+){0,3}? peito\\b",
-  // Respiracao e alergia grave (o "respir" e a "falta de ar" ja sao
-  // sintoma).
-  "\\bsufoc|\\basfixi|\\bchiando\\b|\\bchiado no peito|\\bpuxar o ar\\b",
+  "\\b(?:braco|perna|mao|lado|corpo)\\b(?: \\w+){0,2}? nao obedece\\b",
+  // Respiracao e alergia grave. "Que sufoco" e o audio que "ta chiando" nao
+  // sao a respiracao (rev5).
+  "\\b(?:to|tou|estou|ta|esta|tava|estava|ficou|fiquei) sufocand[oa]\\b(?! (?:de|com|em)\\b)|\\bsufocad[oa] (?:e|nao|sem)\\b|\\basfixi",
+  `\\b(?:peito|respiracao|pulmao|${PESSOA_DO_ESTADO})\\b(?: \\w+){0,2}? chiando\\b|\\bchiado no peito|\\bpuxar o ar\\b`,
   "\\bgarganta\\b(?: \\w+){0,4}? (?:fechando|fechou|fechada|trancando|trancou|inchando|inchad)",
-  "\\banafilat|\\bedema de glote|\\bchoque (?:alergico|anafilatico|eletrico)\\b",
+  "\\banafilat|\\bedema de glote|\\bchoque (?:alergico|anafilatico)\\b|\\bcrise de asma\\b",
   "\\bhemorragi",
-  // Cianose e gravidez: a boca azul, o bebe que parou de mexer, a bolsa.
-  "\\b(?:boca|labio|labios|lingua|dedos|unhas|pele|rosto|bebe)\\b(?: \\w+){0,2}? (?:azul|azulad)",
+  // Cianose e gravidez: a boca azul, o bebe que parou de mexer, a bolsa, o
+  // trabalho de parto.
+  "\\b(?:boca|labio|labios|lingua|dedos|unhas|rosto|bebe)\\b(?: \\w+){0,3}? (?<!fundo )(?:azul\\w*|rox[oa]s?)\\b",
   "\\b(?:bebe|nenem)\\b(?: \\w+){0,2}? (?:nao mexe|nao se mexe|nao ta mexendo|parou de (?:se )?mexer)\\b",
-  "\\bbolsa (?:\\w+ )?(?:estourou|rompeu)\\b|\\b(?:estourou|rompeu) a bolsa\\b|\\bperdendo liquido\\b",
-  // Trauma: facada, tiro, atropelamento, queda, queimadura, choque.
-  "\\b(?:levou|levei|levaram|tomou|tomei|tomaram|deram|deu|dei|dando|levando)(?: (?:um|uma|umas|duas|tres|varias|\\d+))? facadas?\\b",
+  "\\bbolsa (?:\\w+ )?(?:estourou|rompeu)\\b|\\b(?:estourou|rompeu) a bolsa\\b|\\bperdendo liquido\\b|\\btrabalho de parto\\b|\\bentrou em parto\\b",
+  "\\bmoleira\\b(?: \\w+){0,2}? (?:inchad|alta|funda|afundad)",
+  // Trauma: facada, tiro, atropelamento, queda, queimadura, choque,
+  // acidente agora ("levei uma facada no orcamento" e figura; o acidente
+  // de ano passado e fato antigo).
+  "\\b(?:levou|levei|levaram|tomou|tomei|tomaram|deram|deu|dei|dando|levando)(?: (?:um|uma|umas|duas|tres|varias|\\d+))? facadas?\\b(?! n[oa]s? (?:orcamento|preco|valor|conta|fatura|boleto|pacote|compra|cartao|mercado|loja|clinica)\\b)",
   "\\besfaque|\\bapunhal|\\bbalead[oa]s?\\b|\\btiroteio",
-  "\\b(?:levou|levei|tomou|tomei|deram|deu|levaram) (?:um )?tiro\\b(?! de laser)",
+  "\\b(?:levou|levei|tomou|tomei|deram|deu|levaram) (?:um )?tiro\\b(?! de laser| no pe\\b)",
   "\\btiro n[oa] (?:cabeca|peito|barriga|perna|braco|costas|pescoco|rosto|olho|coxa)\\b",
   "\\batingid[oa]s? (?:por|pel[oa]) (?:um |uma )?(?:tiro|bala|faca)\\b",
-  "\\batropel",
-  "\\bacidente de (?:carro|moto|transito|onibus|bicicleta|bike|caminhao)\\b",
-  "\\bbat(?:i|eu|emos|eram) (?:com )?a cabeca\\b",
-  "\\bca(?:iu|i|iram) d[aoe] (?:laje|escada|telhado|janela|moto|bicicleta|bike|cavalo|arvore|cama|berco|altura|predio|sacada|varanda|muro|andaime|beliche)\\b",
-  "\\bqueimei\\b|\\bqueimadura",
-  "\\beletrocut",
+  `\\batropel(?:ad[oa]s?|ou|aram|amento)\\b(?! pel[oa]s? (?:${COISA_DA_FIGURA}|vida|correria|agenda)\\b)`,
+  `\\bacidente de (?:carro|moto|transito|onibus|bicicleta|bike|caminhao)\\b${FATO_ANTIGO}`,
+  `\\bsofr(?:eu|i|eram) (?:um )?acidente\\b${FATO_ANTIGO}`,
+  "\\bcapot\\w* (?:o |a |com o |com a )?(?:carro|moto|caminhao|onibus|veiculo|caminhonete)\\b",
+  "\\bbat(?:eu|emos|eram) (?:com )?a cabeca\\b",
+  "\\bpancada\\b(?: \\w+){0,2}? na cabeca\\b",
+  `\\bca(?:iu|i|iram) d[aoe] (?:laje|escada|telhado|janela|moto|bicicleta|bike|cavalo|arvore|cama|berco|trocador|altura|predio|sacada|varanda|muro|andaime|beliche)\\b${FATO_ANTIGO}`,
+  "\\b(?:caiu|tombo|queda)\\b(?: \\w+){0,4}? (?:nao|n) (?:se )?(?:levanta|levantou|consegue levantar)\\b|\\btombo (?:feio|forte|grave)\\b",
+  "\\bqueime?i\\b(?: \\w+){0,4}? (?:com|no|na) (?:oleo|agua fervendo|agua quente|alcool|fogo|gasolina|panela|ferro|vapor|chama|soda)\\b|\\bqueimadura (?:grave|feia|de (?:segundo|terceiro) grau|extensa)\\b|\\bqueime?i metade do corpo\\b",
+  "\\beletrocut|\\b(?:levou|tomou|levei|tomei|levaram) (?:um )?choque (?:forte|na tomada|no fio|eletrico)\\b",
   "\\bsoterrad|\\btraumatismo|\\bfratura exposta",
-  "\\bafogad[oa]s?\\b|\\bafogamento\\b",
-  // Preenchimento que fecha o vaso: a pele que embranquece, a necrose.
-  "\\besbranquic|\\bembranquec|\\bnecros",
-  `\\b${PREENCHIMENTO}\\w*\\b[^\\n]{0,80}?\\b${REGIAO_DO_PREENCHIMENTO}\\b(?: \\w+){0,3}? ${MUDOU_DE_COR}`,
-  `\\b${REGIAO_DO_PREENCHIMENTO}\\b(?: \\w+){0,3}? ${MUDOU_DE_COR}[^\\n]{0,80}?\\b${PREENCHIMENTO}`,
-  "\\bolhos?\\b(?: \\w+){0,2}? (?:ta|esta|ficou|ficando|tao|estao|fica) (?:\\w+ )?(?:embacad|turv|escur)",
+  "\\bcort\\w* (?:o |a |um |uma |meu |minha )?(?:dedo|dedos|mao|pe|orelha|braco|perna) fora\\b|\\bdecep|\\bamput",
+  "\\bafog(?:ou|aram|ando|amento)\\b|\\b(?:foi|ficou|quase|achei|encontrei|tiraram|tiramos|ta|esta) afogad[oa]s?\\b(?! (?:de|em|com) (?:trabalho|boleto|boletos|coisa|coisas|conta|contas|divida|dividas|servico|tarefa|tarefas|email|emails|mensagem|mensagens|problema|problemas|papel|papelada|compromisso|compromissos)\\b)",
+  // A violencia, o fogo e a pessoa que sumiu.
+  "\\b(?:homem|cara|sujeito|alguem|ladrao|bandido|assaltante|vizinho|ex)\\b(?: \\w+)? armad[oa]\\b|\\b(?:arma|faca|revolver) na mao\\b",
+  "\\b(?:ta|esta|tava|estava|vive|ficou) me (?:batendo|espancando|agredindo|esfaqueando|ameacando)\\b|\\b(?:ele|ela|marido|namorado|ex|pai|companheiro|esposo)\\b(?: \\w+)? me (?:bateu|espancou|agrediu|esfaqueou)\\b",
+  "\\bestupr|\\babusad[oa] sexualmente\\b|\\bviolentad[oa]\\b",
+  "\\bsendo (?:seguid[oa]|ameacad[oa])\\b",
+  "\\b(?:casa|predio|apartamento|ap|apto|cozinha|quarto|carro|loja|escola|vizinho|vizinha)\\b(?: \\w+){0,2}? pegando fogo\\b|\\bincendio\\b",
+  "\\b(?:filho|filha|crianca|bebe|menino|menina|neto|neta)\\b(?: \\w+)? (?:sumiu|desapareceu)\\b",
+  // O preenchimento que fecha o vaso: a cor estranha, a pele que
+  // embranquece, a necrose, a visao que some (rev5: a cor acinzentada,
+  // rendada, de mapa, palida, clarinha, gelada, que nao volta).
+  "\\bnecros|\\b(?:ponta|labio|labios|nariz|pele|local|boca|regiao|area)\\b(?: \\w+){0,3}? (?:ta|esta|ficou|ficando|tao|estao) (?:\\w+ )?esbranquic",
+  `\\b${PREENCHIMENTO}\\w*\\b[^\\n]{0,120}?\\b${SINAL_DE_OCLUSAO}`,
+  `\\b${SINAL_DE_OCLUSAO}[^\\n]{0,120}?\\b${PREENCHIMENTO}`,
+  `\\b${PREENCHIMENTO}\\w*\\b[^\\n]{0,100}?\\b(?:nao (?:to |tou |estou |ta |esta |consigo )?(?:enxerg|vejo\\b|ver\\b)|vendo (?:tudo )?(?:embacad|turv|escur|borrad|dobrad|duplo|com uma mancha|uma mancha|luz|luzes|luzinhas|pontos|manchas)|visao\\b(?: \\w+){0,3}? (?:sumiu|sumindo|escur|apag|turv|embac|borr))`,
+  "\\bolhos?\\b(?: \\w+){0,2}? (?:ta|esta|ficou|ficando|tao|estao|fica) (?:\\w+ )?(?:embacad|turv)",
 ];
 
 /**
  * A rede de seguranca: escala como sintoma (a conversa passa para a equipe
- * com a frase de sempre). O portao le cada mensagem e tambem a juncao das
- * mensagens de texto na ordem (gatilhos-de-entrada.ts), para o "quero" e o
- * "morrer" em mensagens separadas.
+ * com a frase de sempre). O portao le cada mensagem nas visoes de sempre e
+ * na visao corrida, e tambem a juncao das mensagens de texto na ordem
+ * (gatilhos-de-entrada.ts), para o "quero" e o "morrer" em mensagens
+ * separadas.
  */
 export const PADROES_DA_REDE_DE_SEGURANCA: readonly PadraoDeEntrada[] = [
   e("sintoma", "risco_de_vida", RISCO_DE_VIDA.join("|")),
