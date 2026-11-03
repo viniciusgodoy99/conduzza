@@ -361,8 +361,11 @@ describe("recepção", () => {
     );
     // [AG6b mídia] início
     // AG6b: Entender áudio e Ler imagem e documento (6 + 2).
-    expect(livre).toHaveLength(8);
     // [AG6b mídia] fim
+    // [AG7 preparo] início
+    // AG7: Enviar orientação de preparo (8 + 1).
+    expect(livre).toHaveLength(9);
+    // [AG7 preparo] fim
     for (const tag of livre) {
       expect(tag).toContain('disabled=""');
     }
@@ -417,8 +420,11 @@ describe("travas da Conformidade e dos gatilhos (C24)", () => {
     // Cancelar consulta e Remarcar consulta (AG4); Lista de espera (AG5).
     // [AG6b mídia] início
     // AG6b: Entender áudio e Ler imagem e documento (6 + 2).
-    expect(livre).toHaveLength(8);
     // [AG6b mídia] fim
+    // [AG7 preparo] início
+    // AG7: Enviar orientação de preparo (8 + 1).
+    expect(livre).toHaveLength(9);
+    // [AG7 preparo] fim
     const preco = livre.find((tag) =>
       tag.includes(
         'aria-labelledby="agente-habilidade-informar_preco_e_convenio"',

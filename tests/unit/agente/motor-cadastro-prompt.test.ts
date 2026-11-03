@@ -92,7 +92,10 @@ describe("texto fixo da AG2", () => {
       "Nunca diga que a clínica não tem endereço.",
       '"ha_requisitos_por_convenio"',
       'Se ela disser "sem_requisitos_cadastrados", nunca diga que não precisa de nada',
-      'Jejum, preparo do corpo, cuidados antes ou depois e remédio nunca são requisito: passe para a equipe com o motivo "assunto_clinico".',
+      // [AG7 preparo] início
+      // AG7: a frase ganhou a condicao da ferramenta enviar_preparo.
+      'Jejum, preparo do corpo, cuidados antes ou depois e remédio nunca são requisito: passe para a equipe com o motivo "assunto_clinico" (com a ferramenta enviar_preparo ligada no bloco <atendimento>, o pedido da orientação de preparo é ela).',
+      // [AG7 preparo] fim
       "Nunca escolha especialidade ou profissional a partir de sintoma",
       '"especialidade_nao_encontrada"',
       'Se ela disser "nenhum_profissional", nunca diga que a clínica não tem ou não atende',

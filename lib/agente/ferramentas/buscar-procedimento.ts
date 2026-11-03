@@ -175,6 +175,26 @@ export type ConvenioSoComAEquipe = {
   convenioId: string;
 };
 
+// [AG7 preparo] início
+/**
+ * AG7 (03/11/2026): a versao EM VIGOR da orientacao de preparo de um
+ * procedimento (preparos_em_vigor_da_clinica, migration 20261103100000):
+ * aprovada pelo responsavel tecnico vigente, com o mesmo texto (hash) e o
+ * mesmo nome do procedimento. So ids, o hash e o que a trilha diz; NUNCA o
+ * texto (ele vai do banco direto para a mensagem do sistema).
+ */
+export type PreparoEmVigor = {
+  versaoId: string;
+  versao: number;
+  /** O sha256 do texto aprovado (64 hexadecimais). */
+  textoSha256: string;
+  /** O nome do RT que aprovou (so para a trilha). */
+  rtNome: string;
+  /** Quando foi aprovado (timestamptz em ISO). */
+  aprovadoEm: string;
+};
+// [AG7 preparo] fim
+
 export type CatalogoDoAgente = {
   /** Ordenado por nome (e id): a ordem estavel e a do cache do prompt. */
   procedimentos: ProcedimentoDoIndice[];
@@ -242,6 +262,24 @@ export type CatalogoDoAgente = {
    * ficaram de fora por nao passar nas regras do filtro. So a contagem.
    */
   textosDoCadastroDescartados?: number;
+  // [AG7 preparo] início
+  /**
+   * AG7: as orientacoes de preparo em vigor, por procedure.id, SO dos
+   * procedimentos ativos do catalogo (os inativos ficam para a regua das
+   * consultas que ja existem). Sem o texto. Ausente (catalogo montado a mao)
+   * e o mesmo que nenhuma: o pedido de preparo passa para a equipe.
+   */
+  preparosEmVigor?: ReadonlyMap<string, PreparoEmVigor>;
+  /**
+   * AG7: o texto de TODA versao de preparo da clinica, de qualquer situacao,
+   * e o prep_instructions que a regua mandou antes da AG7
+   * (textos_de_preparo_da_clinica). SO DO SERVIDOR: nunca vai ao modelo. O
+   * filtro barra a resposta que copia um trecho deles
+   * (trecho_do_preparo_da_clinica) e o historico que vai ao modelo os troca
+   * por um marcador (lib/agente/laco.ts, mensagemParaOModelo). Ausente: nenhum.
+   */
+  textosDePreparo?: readonly string[];
+  // [AG7 preparo] fim
 };
 
 export const CATALOGO_VAZIO: CatalogoDoAgente = {

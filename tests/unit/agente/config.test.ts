@@ -226,6 +226,8 @@ describe("habilidades", () => {
     expect(HABILIDADES_DO_AGENTE.map((h) => h.chave)).toEqual([
       "responder_duvidas",
       "informar_preco_e_convenio",
+      // [AG7 preparo] A orientacao de preparo aprovada pelo RT.
+      "enviar_preparo",
       "agendar",
       "cancelar",
       "remarcar",
@@ -363,6 +365,8 @@ describe("habilidades", () => {
     ).toEqual({
       responder_duvidas: true,
       informar_preco_e_convenio: false,
+      // [AG7 preparo] A orientacao de preparo, desligada por padrao.
+      enviar_preparo: false,
       agendar: true,
       // AG4: remarcar virou chave conhecida; AG5: lista_de_espera tambem.
       cancelar: false,
@@ -377,6 +381,8 @@ describe("habilidades", () => {
     expect(habilidadesEfetivas({})).toEqual({
       responder_duvidas: true,
       informar_preco_e_convenio: true,
+      // [AG7 preparo] A orientacao de preparo, desligada por padrao.
+      enviar_preparo: false,
       agendar: false,
       cancelar: false,
       remarcar: false,
@@ -482,6 +488,8 @@ describe("habilidades", () => {
     ).toEqual({
       responder_duvidas: true,
       informar_preco_e_convenio: false,
+      // [AG7 preparo] A orientacao de preparo, desligada por padrao.
+      enviar_preparo: false,
       agendar: false,
       cancelar: false,
       remarcar: false,
@@ -1598,6 +1606,8 @@ describe("leitura do banco", () => {
       habilidades: {
         responder_duvidas: true,
         informar_preco_e_convenio: false,
+        // [AG7 preparo] A orientacao de preparo, desligada por padrao.
+        enviar_preparo: false,
         agendar: false,
         cancelar: false,
         remarcar: false,
@@ -1681,6 +1691,8 @@ describe("leitura do banco", () => {
       habilidades: {
         responder_duvidas: true,
         informar_preco_e_convenio: true,
+        // [AG7 preparo] A orientacao de preparo, desligada por padrao.
+        enviar_preparo: false,
         agendar: false,
         cancelar: false,
         remarcar: false,

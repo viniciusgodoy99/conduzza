@@ -145,6 +145,8 @@ describe("Habilidades: Cancelar consulta e Remarcar consulta", () => {
     expect(HABILIDADES_DO_AGENTE.map((h) => h.chave)).toEqual([
       "responder_duvidas",
       "informar_preco_e_convenio",
+      // [AG7 preparo] AG7: logo depois de Informar preço e convênio.
+      "enviar_preparo",
       "agendar",
       "cancelar",
       "remarcar",

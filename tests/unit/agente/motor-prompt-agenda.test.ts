@@ -179,7 +179,8 @@ describe("bloco <atendimento> e <profissionais>", () => {
     // primeira versao: nome completo e nascimento).
     // AG4: e as linhas de cancelar e remarcar (desligadas sem os prazos).
     // AG5: e a da lista de espera (desligada por padrao).
-    expect(linhas.slice(-8)).toEqual([
+    // [AG7 preparo] AG7: e a da orientacao de preparo (desligada por padrao).
+    expect(linhas.slice(-9)).toEqual([
       "Marcar consulta: ligado.",
       "Antecedência mínima para marcar: 2 horas.",
       "Marcar até quantos dias à frente: 14 dias.",
@@ -188,6 +189,8 @@ describe("bloco <atendimento> e <profissionais>", () => {
       FRASES_DO_ATENDIMENTO.cancelarDesligado,
       FRASES_DO_ATENDIMENTO.remarcarDesligado,
       FRASES_DO_ATENDIMENTO.listaDeEsperaDesligada,
+      // [AG7 preparo]
+      FRASES_DO_ATENDIMENTO.preparoDesligado,
     ]);
     const semDados = blocoEm(
       instrucoes(
@@ -384,6 +387,8 @@ describe("ferramentas e versão", () => {
       "consultar_requisitos",
       "buscar_profissionais",
       "buscar_procedimento",
+      // [AG7 preparo] A orientacao de preparo aprovada pelo RT.
+      "enviar_preparo",
       "consultar_cadastro_do_contato",
       "buscar_horario",
       "reservar_horario",

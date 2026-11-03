@@ -152,6 +152,11 @@ export const INSTRUCAO_DO_EMOJI = {
  * (27/10/2026, D-11): pedir_lista_de_espera e entrar_na_lista_de_espera, em
  * duas fases como cancelar (o procedimento, o profissional e o pagamento do
  * estado do atendimento; o "sim" numa mensagem nova).
+ *
+ * [AG7 preparo] AG7 (03/11/2026, D-79 e D-80): enviar_preparo, na habilidade
+ * "Enviar orientação de preparo". O modelo so escolhe o procedimento; o texto
+ * aprovado pelo responsavel tecnico sai do banco direto para a mensagem do
+ * sistema (lib/agente/ferramentas/enviar-preparo.ts), sem passar pelo modelo.
  */
 export const FERRAMENTAS_DO_AGENTE = [
   "fora_do_assunto",
@@ -160,6 +165,8 @@ export const FERRAMENTAS_DO_AGENTE = [
   "consultar_requisitos",
   "buscar_profissionais",
   "buscar_procedimento",
+  // [AG7 preparo] O envio da orientacao de preparo aprovada pelo RT.
+  "enviar_preparo",
   "consultar_cadastro_do_contato",
   "buscar_horario",
   "reservar_horario",
@@ -359,6 +366,26 @@ export const HABILIDADES_DO_AGENTE = [
     precisaDoPrazo: null,
     dicaDaDependencia: null,
   },
+  // [AG7 preparo] início
+  // AG7 (03/11/2026; D-79, construida com a recomendacao; D-80 autorizada
+  // pelo dono): desligada por padrao, sem dependencia. Com ela, o pedido da
+  // orientacao de preparo vira o envio do texto aprovado pelo responsavel
+  // tecnico, palavra por palavra, pelo sistema; sem ela (ou sem texto
+  // aprovado), o pedido passa para a equipe como hoje.
+  {
+    chave: "enviar_preparo",
+    titulo: "Enviar orientação de preparo",
+    descricao:
+      "Quando o paciente pede, manda a orientação de preparo do procedimento exatamente como o responsável técnico aprovou no Cadastro. Dúvida sobre o preparo passa para a equipe.",
+    travada: false,
+    ferramentas: ["enviar_preparo"],
+    padrao: false,
+    precisaDaAgenda: false,
+    precisaDaHabilidade: null,
+    precisaDoPrazo: null,
+    dicaDaDependencia: null,
+  },
+  // [AG7 preparo] fim
   {
     chave: "agendar",
     titulo: "Agendar consulta",
