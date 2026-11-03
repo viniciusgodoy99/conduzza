@@ -23,7 +23,9 @@ import { createClient } from "@/lib/supabase/server";
 // mas nunca se define RT (D-71; revisao das telas, TELA-9): aprovar e ato
 // clinico da clinica. A RPC recusa tambem, inclusive quando outra pessoa
 // escolhe uma conta da equipe Conduzza (a sessao nao le essa marca de
-// outra conta).
+// outra conta): P0001 responsavel_e_da_equipe_conduzza, que vira a frase
+// que pede outra pessoa (e nao a do 42501, que diria a quem pode definir o
+// RT que ele nao pode).
 //
 // O Zod confere os formatos que o banco confere (nome de 1 a 120 pontos de
 // codigo, aparado e sem controle; conselho e UF das listas dos CHECKs;
@@ -57,6 +59,11 @@ const NAO_ENCERROU = "Não foi possível encerrar agora. Tente de novo.";
 // A equipe Conduzza nao se define RT (TELA-9).
 const TEXTO_DA_EQUIPE_CONDUZZA =
   "A equipe Conduzza não pode ser o responsável técnico da clínica.";
+// O administrador escolheu uma conta da equipe Conduzza (uma das contas
+// antigas, com vinculo, que a sessao dele nao sabe que e da equipe): a RPC
+// recusa com P0001 responsavel_e_da_equipe_conduzza.
+const TEXTO_DA_PESSOA_DA_EQUIPE_CONDUZZA =
+  "Esta conta é da equipe Conduzza e não pode ser o responsável técnico da clínica. Escolha outra pessoa.";
 
 // Por campo (o Zod daqui e o 22023 da RPC dizem a mesma coisa).
 const TEXTO_DA_PESSOA = "Escolha a pessoa da equipe.";
@@ -71,7 +78,9 @@ const TEXTO_DA_CONFIRMACAO = "Marque a confirmação para definir.";
 // Mapas (e nao objetos): o codigo vem do banco, e "toString" num objeto
 // acharia o prototipo.
 
-// Os codigos de negocio (P0001) das duas RPCs (contrato 4.6).
+// Os codigos de negocio (P0001) das duas RPCs (contrato 4.6) que dizem que o
+// RT mudou por outra pessoa enquanto a tela estava aberta (a pagina
+// recarrega).
 const RECUSAS_DE_NEGOCIO = new Map<string, string>([
   [
     "responsavel_nao_e_membro_ativo",
@@ -144,6 +153,9 @@ function traduzir(error: NonNullable<ErroDoBanco>, naoDeu: string): string {
     return FRASE_DO_RT;
   }
   if (error.code === "P0001") {
+    if (error.message === "responsavel_e_da_equipe_conduzza") {
+      return TEXTO_DA_PESSOA_DA_EQUIPE_CONDUZZA;
+    }
     return RECUSAS_DE_NEGOCIO.get(error.message ?? "") ?? naoDeu;
   }
   if (error.code === "22023") {

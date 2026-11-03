@@ -27,6 +27,10 @@ import { BancoFalso } from "../whatsapp/banco-falso";
 //   - a equipe Conduzza nunca se define RT (revisao das telas, TELA-9): a
 //     conta dela desabilitada no formulario, com a frase, e a action recusa;
 //   - a falha do Encerrar diz "encerrar", nao "salvar" (TELA-12);
+//   - o fechamento entre as frentes: o administrador que escolhe uma conta
+//     da equipe Conduzza recebe da RPC o P0001
+//     responsavel_e_da_equipe_conduzza (e nao o 42501, que diria a ele que
+//     nao define o RT), e a action pede outra pessoa;
 //   - nenhum travessao (nem meia-risca) nos textos.
 // Renderizacao estatica: o Dialog do Radix vira marcacao que so aparece
 // aberta, e a dica de permissao vira um atributo conferivel. Banco, sessao e
@@ -1021,6 +1025,46 @@ describe("as actions: a tradução dos códigos", () => {
     },
   );
 
+  it("definir: a pessoa escolhida é da equipe Conduzza (P0001 responsavel_e_da_equipe_conduzza): a frase pede outra pessoa, sem recarregar", async () => {
+    rpc.resposta = {
+      data: null,
+      error: { code: "P0001", message: "responsavel_e_da_equipe_conduzza" },
+    };
+    const resultado = await definirResponsavelTecnicoAction(ENTRADA);
+    expect(resultado).toEqual({
+      ok: false,
+      error:
+        "Esta conta é da equipe Conduzza e não pode ser o responsável técnico da clínica. Escolha outra pessoa.",
+    });
+    // Nunca a frase do 42501: quem escolheu PODE definir o RT.
+    expect(resultado.ok ? "" : resultado.error).not.toBe(FRASE_DO_RT);
+    expect(estado.revalidados).toEqual([]);
+  });
+
+  it("a migration recusa a pessoa da equipe Conduzza com o P0001 que a action traduz", () => {
+    const migration = readFileSync(
+      path.join(
+        process.cwd(),
+        "supabase/migrations/20261103100000_preparo_aprovado_pelo_rt.sql",
+      ),
+      "utf8",
+    );
+    const definir = migration.slice(
+      migration.indexOf("create function public.definir_responsavel_tecnico("),
+      migration.indexOf(
+        "revoke all on function public.definir_responsavel_tecnico(",
+      ),
+    );
+    expect(definir).toMatch(
+      /if exists \(select 1 from public\.product_admin pa where pa\.user_id = p_user_id\) then\n\s+raise exception using errcode = 'P0001', message = 'responsavel_e_da_equipe_conduzza';/,
+    );
+    // A permissao (42501) continua antes: quem nao define nao descobre quem
+    // e da equipe Conduzza.
+    expect(definir.indexOf("errcode = '42501'")).toBeLessThan(
+      definir.indexOf("responsavel_e_da_equipe_conduzza"),
+    );
+  });
+
   it("encerrar: P0001 sem_responsavel_tecnico vira a frase, e a tela recarrega", async () => {
     rpc.resposta = {
       data: null,
@@ -1373,6 +1417,7 @@ describe("nenhum travessão nem meia-risca", () => {
     estado.sessao = sessao();
     for (const error of [
       { code: "P0001", message: "responsavel_nao_e_membro_ativo" },
+      { code: "P0001", message: "responsavel_e_da_equipe_conduzza" },
       { code: "P0001", message: "outra_definicao" },
       { code: "P0001", message: "sem_responsavel_tecnico" },
       { code: "22023", message: "nome_invalido" },
