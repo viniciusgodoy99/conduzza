@@ -28,6 +28,10 @@
 //  - controles de saida: falso positivo do pipeline.
 //  - entrada: portao deterministico + classificador real; o caso tem de
 //    escalar. Controles de entrada: falso positivo.
+//  - [AG7 preparo] o caso de entrada com comPreparo chama o classificador
+//    com a variante da habilidade "Enviar orientacao de preparo"; o de saida
+//    com textosDePreparo no contexto roda a regra do trecho na filtragem (os
+//    textos nunca vao ao verificador).
 
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -49,7 +53,12 @@ import {
   criarClassificadorDeEntrada,
   decidirPeloClassificador,
   MAX_TOKENS_DO_CLASSIFICADOR,
-  POLITICA_DO_CLASSIFICADOR,
+  // [AG7 preparo] início
+  POLITICA_DO_CLASSIFICADOR_COM_PREPARO,
+  politicaDoClassificador,
+  VERSAO_DA_POLITICA_DO_CLASSIFICADOR,
+  versaoDaPoliticaDoClassificador,
+  // [AG7 preparo] fim
 } from "../../lib/integrations/llm/classificador-de-entrada";
 import {
   criarVerificador,
@@ -291,7 +300,9 @@ async function main(): Promise<number> {
       cliente,
       gasto,
       MAX_TOKENS_DO_CLASSIFICADOR,
-      POLITICA_DO_CLASSIFICADOR,
+      // [AG7 preparo] A variante mais longa (com o preparo): a reserva do
+      // orcamento fica no pior caso das duas.
+      POLITICA_DO_CLASSIFICADOR_COM_PREPARO,
     ),
     modelo: p.modelo,
   });
@@ -320,15 +331,16 @@ async function main(): Promise<number> {
   }));
 
   const entradas: LinhaDeEntrada[] = [
+    // [AG7 preparo] O esperado diz quando o caso roda com a variante.
     ...CASOS_DE_ENTRADA.map((caso) => ({
       caso,
       tipo: "escalar" as const,
-      esperado: caso.gatilho,
+      esperado: caso.gatilho + (caso.comPreparo ? " (com o preparo)" : ""),
     })),
     ...CONTROLES_DE_ENTRADA.map((caso) => ({
       caso,
       tipo: "controle" as const,
-      esperado: "seguir",
+      esperado: "seguir" + (caso.comPreparo ? " (com o preparo)" : ""),
     })),
   ].map(({ caso, tipo, esperado }) => ({
     id: caso.id,
@@ -357,6 +369,9 @@ async function main(): Promise<number> {
         if (!linha) {
           continue;
         }
+        // [AG7 preparo] O contexto do caso traz os textos de preparo da
+        // clinica quando o caso tem (contextoDo): a filtragem abaixo roda a
+        // regra do trecho com eles. O verificador nunca os recebe.
         const contexto = contextoDo(caso);
         // Revisao 2 da AG2: o verificador recebe o resumo dos fatos do caso
         // (o mesmo que o filtro monta); resumo que nao monta e falha.
@@ -403,13 +418,18 @@ async function main(): Promise<number> {
         const textos = caso.mensagens
           .filter((m) => m.tipo === "texto")
           .map((m) => m.texto ?? "");
+        // [AG7 preparo] início
+        // A variante da habilidade "Enviar orientacao de preparo" quando o
+        // caso pede (comPreparo).
+        const comPreparo = caso.comPreparo === true;
         gasto.reservar(
-          POLITICA_DO_CLASSIFICADOR.length +
+          politicaDoClassificador({ comPreparo }).length +
             textos.join(" ").length +
             ENVELOPE_EM_CARACTERES,
           MAX_TOKENS_DO_CLASSIFICADOR,
         );
-        const resultado = await classificar({ mensagens: textos });
+        const resultado = await classificar({ mensagens: textos, comPreparo });
+        // [AG7 preparo] fim
         const decisao = decidirPeloClassificador(resultado);
         linha.classificador.push(
           decisao.escalar
@@ -457,6 +477,8 @@ async function main(): Promise<number> {
     "",
     `- Modelo: ${p.modelo}`,
     `- Politica do verificador: ${VERSAO_DA_POLITICA}`,
+    // [AG7 preparo] As duas variantes do classificador.
+    `- Politica do classificador: ${VERSAO_DA_POLITICA_DO_CLASSIFICADOR} (com o preparo: ${versaoDaPoliticaDoClassificador({ comPreparo: true })})`,
     `- Regras: ${versaoDasRegras()}`,
     `- Repeticoes: ${p.repeticoes}`,
     `- Chamadas: ${gasto.chamadas}; gasto estimado: US$ ${gasto.gastoUsd.toFixed(4)} (orcamento US$ ${p.orcamentoUsd})`,
