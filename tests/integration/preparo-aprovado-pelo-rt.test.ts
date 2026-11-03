@@ -1,7 +1,24 @@
 import { createHash } from "node:crypto";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
+// [AG7 preparo] início (frente M)
+import { carregarCatalogoDoAgente } from "@/lib/agente/contexto";
+import type { ClienteDoAgente } from "@/lib/agente/laco";
+import {
+  situacaoDoPreparoNaTela,
+  type SituacaoDoPreparo,
+  type VersaoNaTela,
+} from "@/lib/domain/preparo";
+import type { Verificador } from "@/lib/domain/conformidade/veredicto";
+import type { ClassificadorDeEntrada } from "@/lib/integrations/llm/classificador-de-entrada";
+import {
+  fakeSentMessages,
+  resetFakeProvider,
+} from "@/lib/integrations/whatsapp/fake";
+import { executarPassagemDaIa } from "@/lib/jobs/motor-ia";
+// [AG7 preparo] fim
 
 import { criarNumeroDeTeste } from "../rls/numeros";
 import { adminClient, anonClient } from "../rls/stack";
@@ -31,10 +48,9 @@ import { adminClient, anonClient } from "../rls/stack";
 //   procedimento) igual a preparo_em_vigor, em cada caso;
 // - a copia do texto antigo, so leitura: toda versao texto_antigo e o
 //   prep_instructions normalizado do procedimento dela.
-// LIMITES (a frente B nao importa o codigo das outras): o turno de ponta a
-// ponta pelo executor, com o LLM falso, e a paridade com
-// situacaoDoPreparoNaTela de lib/domain/preparo.ts entram depois do merge
-// das frentes C e M (a regra local daqui e a do contrato, secao 1.4); a
+// [AG7 preparo] (frente M) A paridade da tela e situacaoDoPreparoNaTela
+// (lib/domain/preparo.ts) contra preparo_em_vigor, e o turno de ponta a
+// ponta pelo motor da IA, com o LLM falso, esta no fim deste arquivo. A
 // maquina de estados pelo dono e o gatilho de imutabilidade estao no ensaio
 // (o dono nao passa pela API; a service role recebe 42501, provado no teste
 // de RLS).
@@ -224,11 +240,14 @@ async function emVigorNoBanco(): Promise<Set<string>> {
   return new Set(lista.map((p) => p.versao_id));
 }
 
+// [AG7 preparo] início (frente M)
 /**
- * A regra da tela (o contrato, secao 1.4, "Em vigor"), so com o que a
- * SESSAO le: a versao aprovada, a linha aberta do RT, o vinculo ativo dele
- * (clinic_member, "membro ve o time"), o nome do procedimento e o hash do
- * texto. Tem de dar o mesmo que preparo_em_vigor, caso a caso.
+ * A regra da tela (situacaoDoPreparoNaTela, lib/domain/preparo.ts), so com o
+ * que a SESSAO le: as versoes do procedimento, a linha aberta do RT, o
+ * vinculo ativo dele (clinic_member, "membro ve o time") e o nome do
+ * procedimento. "aprovada" se e so se a versao aprovada esta em vigor: tem
+ * de dar o mesmo que preparo_em_vigor, caso a caso (o hash recalculado e do
+ * banco; nenhum caso aqui mexe na linha por fora).
  */
 async function emVigorPelaSessao(
   apelido: string,
@@ -237,22 +256,26 @@ async function emVigorPelaSessao(
   const sessao = como(apelido);
   const { data: versoes } = await sessao
     .from("preparo_do_procedimento")
-    .select("id, situacao, texto, texto_sha256, nome_do_procedimento, rt_id")
+    .select("id, versao, situacao, texto_sha256, nome_do_procedimento, rt_id")
     .eq("procedure_id", procedimento)
-    .eq("situacao", "aprovado")
     .throwOnError();
-  const aprovada = (
+  const lidas = (
     versoes as {
       id: string;
-      texto: string;
+      versao: number;
+      situacao: SituacaoDoPreparo;
       texto_sha256: string;
       nome_do_procedimento: string;
       rt_id: string | null;
     }[]
-  )[0];
-  if (!aprovada) {
-    return null;
-  }
+  ).map((v): VersaoNaTela => ({
+    id: v.id,
+    versao: v.versao,
+    situacao: v.situacao,
+    textoSha256: v.texto_sha256,
+    nomeDoProcedimento: v.nome_do_procedimento,
+    rtId: v.rt_id,
+  }));
   const { data: rtAberto } = await sessao
     .from("responsavel_tecnico")
     .select("id, user_id")
@@ -261,18 +284,16 @@ async function emVigorPelaSessao(
     .maybeSingle()
     .throwOnError();
   const rt = rtAberto as { id: string; user_id: string } | null;
-  if (!rt || rt.id !== aprovada.rt_id) {
-    return null;
-  }
-  const { data: vinculo } = await sessao
-    .from("clinic_member")
-    .select("status")
-    .eq("clinic_id", clinica)
-    .eq("user_id", rt.user_id)
-    .maybeSingle()
-    .throwOnError();
-  if ((vinculo as { status: string } | null)?.status !== "ativo") {
-    return null;
+  let rtComAcesso = false;
+  if (rt) {
+    const { data: vinculo } = await sessao
+      .from("clinic_member")
+      .select("status")
+      .eq("clinic_id", clinica)
+      .eq("user_id", rt.user_id)
+      .maybeSingle()
+      .throwOnError();
+    rtComAcesso = (vinculo as { status: string } | null)?.status === "ativo";
   }
   const { data: proc } = await sessao
     .from("procedure")
@@ -280,11 +301,17 @@ async function emVigorPelaSessao(
     .eq("id", procedimento)
     .single()
     .throwOnError();
-  if ((proc as { name: string }).name !== aprovada.nome_do_procedimento) {
-    return null;
-  }
-  return sha256(aprovada.texto) === aprovada.texto_sha256 ? aprovada.id : null;
+  const situacao = situacaoDoPreparoNaTela({
+    versoes: lidas,
+    rtAberto: rt ? { id: rt.id, userId: rt.user_id } : null,
+    rtComAcesso,
+    nomeAtual: (proc as { name: string }).name,
+  });
+  return situacao === "aprovada"
+    ? (lidas.find((v) => v.situacao === "aprovado")?.id ?? null)
+    : null;
 }
+// [AG7 preparo] fim
 
 /** A regra da tela e o banco iguais, para cada procedimento. */
 async function paridade(rotulo: string): Promise<void> {
@@ -903,13 +930,11 @@ describe("os CHECKs novos pelo servidor", () => {
     const conversa = await conversaNaIa();
     const base = { clinic_id: clinica, conversation_id: conversa };
     const versao = crypto.randomUUID();
-    const semVersao = await admin
-      .from("ai_decision_log")
-      .insert({
-        ...base,
-        desfecho: "enviou_preparo",
-        texto_sha256: sha256("x"),
-      });
+    const semVersao = await admin.from("ai_decision_log").insert({
+      ...base,
+      desfecho: "enviou_preparo",
+      texto_sha256: sha256("x"),
+    });
     expect(semVersao.error?.code).toBe("23514");
     const semDesfecho = await admin
       .from("ai_decision_log")
@@ -977,3 +1002,223 @@ describe("a copia do texto antigo (so leitura)", () => {
     }
   });
 });
+
+// [AG7 preparo] início (frente M)
+// O turno de ponta a ponta pelo motor da IA (executarPassagemDaIa), com o
+// LLM FALSO de roteiro (nenhuma chamada a OpenAI: o pacote 'openai' e um
+// stub e o fetch recusa o host), o laco, o catalogo, o executor e o envio de
+// verdade sobre o numero falso: a mensagem entra por ingest_inbound_message,
+// vira job por enfileirar_resposta_da_ia, o modelo chama enviar_preparo e o
+// sistema manda a mensagem que o banco montou da versao em vigor, palavra por
+// palavra, pelo gatilho de message de verdade (a linha 'sistema' do job com a
+// decisao enviou_preparo do mesmo job, o mesmo hash e a versao).
+describe("o turno de ponta a ponta pelo motor da IA, com o LLM falso (frente M)", () => {
+  /** O apelido do RT vigente agora (os casos de cima podem ter trocado). */
+  async function apelidoDoRt(): Promise<string> {
+    const { data } = await admin
+      .from("responsavel_tecnico")
+      .select("user_id")
+      .eq("clinic_id", clinica)
+      .is("ate", null)
+      .maybeSingle()
+      .throwOnError();
+    const userId = (data as { user_id: string } | null)?.user_id;
+    const apelido = [...ids.entries()].find(([, id]) => id === userId)?.[0];
+    if (apelido !== undefined) {
+      return apelido;
+    }
+    const { error } = await como("admin").rpc("definir_responsavel_tecnico", {
+      p_clinic_id: clinica,
+      p_user_id: idDe("rt"),
+      p_nome: "Dra. Ana Souza",
+      p_conselho: "CRM",
+      p_numero: "12345",
+      p_uf: "CE",
+    });
+    expect(error, "definir o RT de novo").toBeNull();
+    return "rt";
+  }
+
+  const classificadorNeutro: ClassificadorDeEntrada = async () => ({
+    tipo: "classificacao",
+    classificacao: { gatilhos: ["nenhum"], confianca: "alta" },
+    modelo: "gpt-6-luna",
+    uso: null,
+  });
+  // O turno do preparo nao passa pelo verificador: se passar, falha.
+  const verificadorQueNaoRoda: Verificador = async () => {
+    throw new Error("o verificador nao roda no turno do preparo");
+  };
+
+  it("pedido do preparo: a linha 'sistema' do job com o corpo exato, a decisao ligada e o turno enviado", async () => {
+    resetFakeProvider();
+    const nome = `Retossigmoidoscopia ${sufixo}`;
+    const procedimento = await inserir("procedure", {
+      clinic_id: clinica,
+      name: nome,
+      active: true,
+    });
+    const { data: salvo, error: erroSalvar } = await salvar(
+      "admin",
+      procedimento,
+      TEXTO_DO_ULTRASSOM,
+    );
+    expect(erroSalvar).toBeNull();
+    expect((await aprovar(await apelidoDoRt(), salvo)).error).toBeNull();
+    const envio = (await lerParaEnvio(salvo.versao_id))!;
+    expect(envio).not.toBeNull();
+
+    // O codigo do procedimento no catalogo de verdade (o que vai ao modelo).
+    const catalogo = await carregarCatalogoDoAgente(admin, clinica);
+    const codigo = [
+      ...catalogo.procedimentos,
+      ...(catalogo.procedimentosSoComAEquipe ?? []),
+    ].find((p) => p.id === procedimento)?.codigo;
+    expect(codigo).toBeDefined();
+    expect(catalogo.preparosEmVigor?.get(procedimento)?.versaoId).toBe(
+      salvo.versao_id,
+    );
+    // Os textos de preparo da clinica ficam no servidor.
+    expect(catalogo.textosDePreparo).toContain(TEXTO_DO_ULTRASSOM);
+
+    // A mensagem entra e vira job.
+    telefones += 1;
+    const telefone = `+55849${digitos}${String(telefones).padStart(3, "0")}`;
+    const ingestao = await rpcOk<{
+      conversation_id: string;
+      message_id: string;
+      ia_atendendo?: boolean;
+    }>("ingest_inbound_message", {
+      p_clinic_id: clinica,
+      p_phone_e164: telefone,
+      p_name: "Contato sintético",
+      p_wa_message_id: `preparo-int-pap:${sufixo}:${telefones}`,
+      p_content_type: "texto",
+      p_body: "Pode me mandar a orientação de preparo, por favor?",
+      p_whatsapp_account_id: numero,
+    });
+    expect(ingestao.ia_atendendo).toBe(true);
+    const enfileirado = await rpcOk<{ codigo: string; job_id: string }>(
+      "enfileirar_resposta_da_ia",
+      {
+        p_clinic_id: clinica,
+        p_conversation_id: ingestao.conversation_id,
+        p_message_id: ingestao.message_id,
+        p_incluir_teste: true,
+      },
+    );
+    expect(enfileirado.codigo).toBe("enfileirado");
+    await admin
+      .from("job_queue")
+      .update({ run_at: new Date(Date.now() - 60_000).toISOString() })
+      .eq("id", enfileirado.job_id)
+      .throwOnError();
+
+    // O motor da IA com o LLM falso: o modelo so escolhe o procedimento.
+    const create = vi.fn(async () => ({
+      model: "gpt-6-luna",
+      status: "completed",
+      incomplete_details: null,
+      usage: {
+        input_tokens: 1_200,
+        output_tokens: 40,
+        input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+        output_tokens_details: { reasoning_tokens: 10 },
+      },
+      output: [
+        {
+          type: "function_call",
+          id: "fc_1",
+          call_id: "call_1",
+          name: "enviar_preparo",
+          arguments: JSON.stringify({ procedimento: codigo }),
+          status: "completed",
+        },
+      ],
+    }));
+    const resumo = await executarPassagemDaIa({
+      executorId: `motor-ia:${crypto.randomUUID()}`,
+      prazoFinalMs: Date.now() + 55_000,
+      incluirClinicasDeTeste: true,
+      baterPonto: false,
+      dependencias: {
+        admin,
+        config: { ligado: true, clinicas: [clinica] },
+        agora: Date.now,
+        clienteDoAgente: () =>
+          ({ responses: { create } }) as unknown as ClienteDoAgente,
+        modeloDoAgente: () => "gpt-6-luna",
+        segredoDoIdentificador: () => "s".repeat(40),
+        criarVerificador: () => verificadorQueNaoRoda,
+        criarClassificador: () => classificadorNeutro,
+      },
+    });
+    expect(resumo).toMatchObject({
+      reivindicados: 1,
+      concluidos: 1,
+      falhos: 0,
+    });
+    expect(create).toHaveBeenCalledTimes(1);
+    // O texto nunca foi ao modelo.
+    expect(JSON.stringify(create.mock.calls)).not.toContain(
+      TEXTO_DO_ULTRASSOM.split("\n")[0],
+    );
+
+    // A linha 'sistema' do job, com o corpo exato, saiu pelo numero falso.
+    const { data: linhas } = await admin
+      .from("message")
+      .select("id, author, body, job_id, delivery_status, cost_cents, billable")
+      .eq("conversation_id", ingestao.conversation_id)
+      .eq("job_id", enfileirado.job_id)
+      .throwOnError();
+    const linha = (linhas as Record<string, unknown>[])[0];
+    expect(linha).toMatchObject({
+      author: "sistema",
+      body: envio.mensagem,
+      delivery_status: "enviada",
+      cost_cents: 0,
+      billable: false,
+    });
+    expect(fakeSentMessages().map((m) => m.body)).toContain(envio.mensagem);
+
+    // A decisao ligada a mensagem, e o turno enviado sem texto.
+    const { data: decisao } = await admin
+      .from("ai_decision_log")
+      .select(
+        "desfecho, preparo_versao_id, texto_sha256, aprovado, escalation_reason, tool_used, message_id",
+      )
+      .eq("job_id", enfileirado.job_id)
+      .single()
+      .throwOnError();
+    expect(decisao).toEqual({
+      desfecho: "enviou_preparo",
+      preparo_versao_id: salvo.versao_id,
+      texto_sha256: sha256(envio.mensagem),
+      aprovado: false,
+      escalation_reason: null,
+      tool_used: "enviar_preparo",
+      message_id: linha?.id,
+    });
+    const { data: turno } = await admin
+      .from("ai_turno")
+      .select("estado, saida, texto, texto_sha256")
+      .eq("job_id", enfileirado.job_id)
+      .single()
+      .throwOnError();
+    expect(turno).toEqual({
+      estado: "enviado",
+      saida: "preparo",
+      texto: null,
+      texto_sha256: sha256(envio.mensagem),
+    });
+    // A conversa segue na IA.
+    const { data: conversa } = await admin
+      .from("conversation")
+      .select("status")
+      .eq("id", ingestao.conversation_id)
+      .single()
+      .throwOnError();
+    expect((conversa as { status: string }).status).toBe("ia_atendendo");
+  }, 120_000);
+});
+// [AG7 preparo] fim
