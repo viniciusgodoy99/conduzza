@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+import { fraseDoNomeComInvisivel } from "@/components/cadastros/preparo-na-tela";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { ehAdminPleno } from "@/lib/domain/permissions";
 import { CONSELHOS, ehUf } from "@/lib/domain/preparo";
@@ -30,9 +31,12 @@ import { createClient } from "@/lib/supabase/server";
 // O Zod confere os formatos que o banco confere (nome de 1 a 120 pontos de
 // codigo, aparado e sem controle; conselho e UF das listas dos CHECKs;
 // numero de 1 a 20 de letras, digitos, ponto, barra e hifen), e o nome e o
-// numero vao aparados. Os erros do banco viram frase de recepcao; nada aqui
-// vai para log (a action nao le nem grava dado de paciente, e o nome do RT
-// so vai para a RPC).
+// numero vao aparados. Revisao curta da AG7 (CURTA-6): o nome com caractere
+// invisivel ou marca de direcao (o espelho de preparo_nome_valido, comum no
+// nome colado do portal do conselho) e recusado antes da RPC com a frase que
+// diz o que tirar, e o nome_invalido do banco tambem. Os erros do banco
+// viram frase de recepcao; nada aqui vai para log (a action nao le nem grava
+// dado de paciente, e o nome do RT so vai para a RPC).
 //
 // "use server": so funcoes assincronas saem daqui. Os textos sao repetidos
 // em components/configuracoes/responsavel-tecnico-card.tsx (o cartao nao
@@ -145,7 +149,13 @@ type ErroDoBanco = { code?: string; message?: string } | null;
  * O SQLSTATE e o codigo da RPC em frase de recepcao. Sem traducao, a frase
  * de sempre da acao (salvar ou encerrar; TELA-12).
  */
-function traduzir(error: NonNullable<ErroDoBanco>, naoDeu: string): string {
+function traduzir(
+  error: NonNullable<ErroDoBanco>,
+  naoDeu: string,
+  // Revisao curta da AG7 (CURTA-6): o nome que foi a RPC, para o
+  // nome_invalido dizer o que tirar.
+  nome?: string,
+): string {
   // 42501: a frase da RPC, que as duas so mandam com FRASE_DO_RT. Um 42501
   // com outra mensagem (o grant que faltou, em ingles) vira a mesma frase:
   // o texto tecnico do Postgres nunca chega a tela.
@@ -159,6 +169,12 @@ function traduzir(error: NonNullable<ErroDoBanco>, naoDeu: string): string {
     return RECUSAS_DE_NEGOCIO.get(error.message ?? "") ?? naoDeu;
   }
   if (error.code === "22023") {
+    if (error.message === "nome_invalido" && nome !== undefined) {
+      const frase = fraseDoNomeComInvisivel(nome, "rt");
+      if (frase !== null) {
+        return frase;
+      }
+    }
     return ENTRADAS_INVALIDAS.get(error.message ?? "") ?? naoDeu;
   }
   return naoDeu;
@@ -236,6 +252,13 @@ export async function definirResponsavelTecnicoAction(
   if (userId === quem.contaDaEquipeConduzza) {
     return { ok: false, error: TEXTO_DA_EQUIPE_CONDUZZA };
   }
+  // Revisao curta da AG7 (CURTA-6): o invisivel ou a marca de direcao no
+  // nome (o banco recusa: preparo_nome_valido), com a frase que diz o que
+  // tirar, antes da RPC.
+  const nomeComInvisivel = fraseDoNomeComInvisivel(nome, "rt");
+  if (nomeComInvisivel !== null) {
+    return { ok: false, error: nomeComInvisivel };
+  }
 
   const supabase = await createClient();
   const { error } = await supabase.rpc("definir_responsavel_tecnico", {
@@ -250,7 +273,7 @@ export async function definirResponsavelTecnicoAction(
     if (mudouEnquantoAberta(error)) {
       revalidatePath("/configuracoes");
     }
-    return { ok: false, error: traduzir(error, NAO_SALVOU) };
+    return { ok: false, error: traduzir(error, NAO_SALVOU, nome) };
   }
   revalidarTelas();
   return { ok: true };

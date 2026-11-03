@@ -14,7 +14,12 @@ import {
   prazoDaEsperaNaRegua,
   type MotivoDaEsperaDoCanal,
 } from "@/lib/domain/espera-do-canal";
-import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
+import {
+  // [AG7 preparo] O {{preparo}} sem texto aprovado (revisao curta, CURTA-4).
+  modeloPedePreparo,
+  modeloSemOPreparo,
+  renderizarModelo,
+} from "@/lib/domain/modelo-mensagem";
 // [AG7 preparo]
 import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
 import { problemasDoTextoDoPreparo } from "@/lib/domain/conformidade/preparo-aprovado";
@@ -630,7 +635,7 @@ function valoresDoModelo(
   consulta: LinhaDaConsulta,
   timezone: string,
   // [AG7 preparo] O texto em vigor, aprovado pelo RT e conferido por hash
-  // (preparoDoToque), ou null: a linha do {{preparo}} some.
+  // (preparoDoToque), ou null: o campo {{preparo}} some (modeloSemOPreparo).
   preparo: string | null,
 ): Record<string, string | null> {
   // Data e hora SEMPRE no fuso da clinica (regra 3.6): o banco guarda UTC e o
@@ -650,6 +655,12 @@ function valoresDoModelo(
 }
 
 // [AG7 preparo] início
+/**
+ * Revisao curta da AG7 (CURTA-4): o motivo gravado no toque (motivo_da_falha,
+ * com falha_envio) do passo que fica vazio sem texto de preparo em vigor.
+ */
+export const MOTIVO_SEM_PREPARO_APROVADO = "sem_preparo_aprovado";
+
 const UUID_DO_PREPARO =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SHA256_DO_PREPARO = /^[0-9a-f]{64}$/;
@@ -661,49 +672,12 @@ const SHA256_DO_PREPARO = /^[0-9a-f]{64}$/;
 const FUNCAO_AUSENTE: ReadonlySet<string> = new Set(["42883", "PGRST202"]);
 
 /**
- * Revisao da AG7 (MOTOR-4): o modelo sem as linhas que pedem {{preparo}},
- * para o toque SEM texto em vigor. A linha inteira sai, nao so o campo
- * ("Siga o preparo abaixo: {{preparo}}" nunca vira "Siga o preparo
- * abaixo:"), e a linha logo antes que so apresenta o preparo (termina em
- * dois pontos) sai junto ("Siga o preparo abaixo:" e, na linha seguinte,
- * "{{preparo}}"). Com o texto em vigor, o modelo fica como esta.
- */
-export function modeloSemALinhaDoPreparo(modelo: string): string {
-  const linhas = modelo.split("\n");
-  const sai = linhas.map((linha) => modeloPedePreparo(linha));
-  for (let i = 1; i < linhas.length; i += 1) {
-    const anterior = linhas[i - 1] ?? "";
-    if (sai[i] && !sai[i - 1] && /:\s*$/.test(anterior)) {
-      sai[i - 1] = true;
-    }
-  }
-  return linhas.filter((_linha, i) => !sai[i]).join("\n");
-}
-
-/**
- * AG7 (D-74): o modelo do passo usa {{preparo}}? A mesma leitura do
- * renderizador (lib/domain/modelo-mensagem.ts): {{chave}} com a chave
- * aparada.
- */
-export function modeloPedePreparo(modelo: string | null): boolean {
-  if (!modelo) {
-    return false;
-  }
-  for (const achado of modelo.matchAll(/\{\{([^{}]*)\}\}/g)) {
-    if ((achado[1] ?? "").trim() === "preparo") {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
  * AG7 (D-74, contrato 3.1, REGUA): o {{preparo}} do toque e SO o texto em
  * vigor do procedimento da consulta (preparo_em_vigor_do_procedimento:
  * aprovado pelo responsavel tecnico vigente, com o mesmo texto e o mesmo
  * nome do procedimento), conferido por hash logo antes de renderizar.
  * null: sem procedimento, sem texto em vigor, ou leitura fora do formato ou
- * com o hash diferente (a linha some, e o log `regua_preparo_divergente`
+ * com o hash diferente (o campo some, e o log `regua_preparo_divergente`
  * so com ids). Erro da leitura lanca (o job tenta de novo, como a leitura
  * da consulta). O prep_instructions nunca e lido.
  */
@@ -722,7 +696,7 @@ async function preparoDoToque(
     const codigo = codigoDoErro(error);
     // Revisao da AG7 (BANCO-4): a funcao que nao existe (o rollback da
     // migration com este codigo ainda no ar: 42883 do Postgres, PGRST202 do
-    // PostgREST) e "sem texto em vigor": a linha do {{preparo}} some e o
+    // PostgREST) e "sem texto em vigor": o campo {{preparo}} some e o
     // resto da confirmacao sai, em vez de o job tentar ate acabar. Nada do
     // texto antigo (prep_instructions) e lido. O log so com ids e o codigo.
     if (FUNCAO_AUSENTE.has(codigo)) {
@@ -764,7 +738,7 @@ async function preparoDoToque(
   // paciente, nem aprovado pelo RT (promessa, oferta casada, antes e depois,
   // preco, link: as recusas de problemasDoTextoDoPreparo). O banco so
   // confere o formato; o texto que chegou aguardando o RT por outro caminho
-  // e foi aprovado nunca sai. A linha some (falha fechada) e o log leva so
+  // e foi aprovado nunca sai. O campo some (falha fechada) e o log leva so
   // as categorias.
   const { recusas } = problemasDoTextoDoPreparo(lido.texto as string);
   if (recusas.length > 0) {
@@ -1156,7 +1130,7 @@ export async function executarPassoDeRegua(
   // consulta, aprovado pelo RT e conferido por hash AQUI, logo antes de
   // renderizar (contrato, secao 0, item 25: a consulta lida no passo 2;
   // a defesa da remarcacao, abaixo, rele a consulta depois do corpo).
-  // Sem texto em vigor, a linha some. So le quando o modelo pede.
+  // Sem texto em vigor, o campo some. So le quando o modelo pede.
   const preparoDoPasso =
     consulta && modelo && modeloPedePreparo(modelo)
       ? await preparoDoToque(admin, {
@@ -1168,10 +1142,11 @@ export async function executarPassoDeRegua(
   const renderizar = (preparo: string | null) =>
     modelo && modelo.trim()
       ? renderizarModelo(
-          // [AG7 preparo] MOTOR-4: sem texto em vigor, a linha inteira que
-          // pedia {{preparo}} sai (e a que so o apresentava).
+          // [AG7 preparo] MOTOR-4 e revisao curta (CURTA-4): sem texto em
+          // vigor, o campo {{preparo}} sai, e com ele so o que apenas o
+          // apresentava (a mesma funcao da previa do editor).
           preparo === null && modeloPedePreparo(modelo)
-            ? modeloSemALinhaDoPreparo(modelo)
+            ? modeloSemOPreparo(modelo)
             : modelo,
           consulta
             ? valoresDoModelo(run, consulta, timezone, preparo)
@@ -1189,6 +1164,15 @@ export async function executarPassoDeRegua(
       status: "fora_do_corpo",
     });
     body = renderizar(null);
+  }
+  if (!body && !passo.media_path && modelo && modeloPedePreparo(modelo)) {
+    // Revisao curta da AG7 (CURTA-4): o passo que so tinha o {{preparo}}
+    // (e o que o apresentava) fica vazio sem texto em vigor. Ele nao sai, e
+    // o motivo fica gravado no toque (o rotulo "Sem orientacao de preparo
+    // aprovada" em Confirmacoes), em vez de o job morrer como
+    // passo_sem_conteudo.
+    await pularRun(admin, run, "falha_envio", MOTIVO_SEM_PREPARO_APROVADO);
+    return { ok: true };
   }
   // [AG7 preparo] fim
   if (!body && !passo.media_path) {

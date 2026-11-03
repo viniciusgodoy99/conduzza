@@ -1259,13 +1259,15 @@ describe("revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum",
     categoria: "orientacao_clinica",
     regra: REGRA_DA_RESPOSTA_AO_PREPARO,
   };
+  // Revisao curta (CURTA-1): a regra so roda com a habilidade do preparo.
   const com = (mensagensDoPaciente: string[]) => ({
     ...CONTEXTO_PADRAO,
     nomesDoCatalogo: [...CONTEXTO_PADRAO.nomesDoCatalogo, "Glicemia de jejum"],
     mensagensDoPaciente,
+    comPreparo: true,
   });
 
-  it("a pergunta: o assunto (preparo, jejum, dieta, laxante, comer antes) com pergunta ou pedido", () => {
+  it("a pergunta: o assunto (preparo, jejum, dieta, laxante, comer antes) com pergunta ou pedido, na mesma frase", () => {
     for (const pergunta of [
       "precisa de jejum pra colonoscopia?",
       "tem preparo?",
@@ -1274,6 +1276,13 @@ describe("revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum",
       "jejum de quantas horas",
       "posso comer antes do exame?",
       "tem que tomar laxante?",
+      // Revisao curta (CURTA-1): a frase que pergunta tem o assunto.
+      "Obrigada! Precisa de jejum pra colonoscopia?",
+      "Li o preparo, tem estacionamento aí?",
+      "Recebi o preparo.\nE o jejum, é de quantas horas?",
+      // A dieta com o exame, a vespera ou o procedimento.
+      "como é a dieta na véspera do exame?",
+      "precisa fazer dieta antes do procedimento?",
     ]) {
       expect(perguntaDePreparo([pergunta], []), pergunta).toBe(true);
     }
@@ -1283,16 +1292,31 @@ describe("revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum",
       "quanto custa a glicemia de jejum?",
       "o exame de glicose em jejum é amanhã?",
       "vocês atendem aos sábados?",
+      // Revisao curta (CURTA-1): a pergunta em outra frase, sem o assunto.
+      "Obrigada pelo preparo! Que horas devo chegar?",
+      "Já fiz o preparo. Qual o endereço da clínica?",
+      "Recebi o preparo. Posso levar acompanhante?",
+      "Recebi o preparo.\nQual o endereço?",
+      // A dieta sem o exame (a clinica de nutricao).
+      "Vocês fazem dieta? Quanto custa a consulta com a nutricionista?",
+      "a nutricionista monta dieta para emagrecer?",
     ]) {
       expect(perguntaDePreparo([naoE], []), naoE).toBe(false);
     }
-    // O nome do catalogo com jejum (mascarado) nao e pergunta de jejum.
+    // O nome do catalogo com jejum (mascarado) nao e pergunta de jejum; o
+    // procedimento do catalogo da a dieta o contexto do exame.
     expect(
       perguntaDePreparo(
         ["quanto custa a Glicemia de jejum?"],
         ["Glicemia de jejum"],
       ),
     ).toBe(false);
+    expect(
+      perguntaDePreparo(
+        ["precisa fazer dieta antes da colonoscopia?"],
+        ["Colonoscopia"],
+      ),
+    ).toBe(true);
   });
 
   it.each([
@@ -1304,8 +1328,14 @@ describe("revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum",
     "Claro! Só uma dieta levinha na véspera.",
     "Sim, quer receber a orientação de preparo?",
     "Precisa sim. Posso te enviar a orientação de preparo?",
-    "Temos horário amanhã às 10h. Pode ser?",
     "De 8 horas. Quer receber a orientação de preparo?",
+    // Revisao curta (CURTA-1): o que libera, e a frase que fala do assunto
+    // fora da oferta e da pergunta do procedimento.
+    "Pode comer normalmente.",
+    "Sem restrição.",
+    "Está liberado!",
+    "Para a colonoscopia é só jejum.",
+    "Vou te passar as orientações.",
   ])("barra %j depois de 'precisa de jejum pra colonoscopia?'", (rascunho) => {
     expect(
       avaliarRegras(rascunho, com(["precisa de jejum pra colonoscopia?"]))
@@ -1315,12 +1345,16 @@ describe("revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum",
 
   it.each([
     "Quer receber a orientação de preparo da colonoscopia?",
+    "Você quer a orientação de preparo da colonoscopia?",
     "Para qual procedimento você quer a orientação de preparo?",
     "Claro! Qual exame você vai fazer?",
     "Se quiser, posso te enviar a orientação de preparo aprovada pela clínica.",
     "Temos horário amanhã às 10h com a Dra. Ana. Pode ser? Quer receber a orientação de preparo da colonoscopia?",
+    // Revisao curta (CURTA-1): a resposta que so fala de outra coisa (era
+    // AG7-S66).
+    "Temos horário amanhã às 10h. Pode ser?",
   ])(
-    "passa %j depois da pergunta (a oferta, a pergunta do procedimento)",
+    "passa %j depois da pergunta (a oferta, a pergunta do procedimento, outra coisa)",
     (rascunho) => {
       expect(
         avaliarRegras(rascunho, com(["precisa de jejum pra colonoscopia?"]))
@@ -1344,7 +1378,7 @@ describe("revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum",
     ).toEqual([]);
   });
 
-  it("com os fatos: a F2 colada pelo sistema conta como a forma permitida, e os textos colados saem antes", () => {
+  it("com os fatos: a F2 colada pelo sistema sai antes, e a escrita pelo modelo conta como resposta", () => {
     const F2 = FRASE_DO_PREPARO_DEPOIS_DE_MARCAR;
     const comAF2 = {
       ...com(["quero marcar colonoscopia amanhã, precisa de jejum?"]),
@@ -1354,7 +1388,8 @@ describe("revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum",
       avaliarRegras(`Pronto, ficou pedida para amanhã.\n\n${F2}`, comAF2)
         .achados,
     ).not.toContainEqual(RESPOSTA);
-    // A F2 escrita pelo modelo (sem estar nos colados) nao conta.
+    // A F2 escrita pelo modelo (sem estar nos colados) diz que o
+    // procedimento tem preparo: responde.
     const semColar = {
       ...com(["quero marcar colonoscopia amanhã, precisa de jejum?"]),
       fatos: fatosVazios(2026),
@@ -1376,9 +1411,215 @@ describe("revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum",
       ),
     ).toBe(true);
     // A versao da AG7 antes da revisao (as regras novas: CFM-4, CFM-5,
-    // CFM-6 e CFM-8).
+    // CFM-6 e CFM-8) e a de antes da revisao curta (CURTA-1 e CURTA-3).
     expect(versaoDasRegras()).toMatch(/^regras-[0-9a-f]{12}$/);
     expect(versaoDasRegras()).not.toBe("regras-a8b2cba1b603");
+    expect(versaoDasRegras()).not.toBe("regras-61b833cd51ab");
+  });
+});
+
+// Revisao curta da AG7 (CURTA-3): os padroes novos da CFM-4 barravam a frase
+// de catalogo da clinica de estetica. O contexto e o da sonda do relatorio
+// (o catalogo de estetica mascarado e a pergunta da pessoa); as frases
+// passavam sem achado nenhum na 9284bdc e voltam a passar, e o preparo dito
+// como instrucao continua barrado.
+describe("revisao curta da AG7 (CURTA-3): os padroes da CFM-4 so barram a instrucao", () => {
+  const CATALOGO_DA_SONDA = [
+    "Limpeza de pele",
+    "Peeling de diamante",
+    "Peeling químico",
+    "Criolipólise",
+    "Lipoaspiração",
+    "Toxina botulínica",
+    "Microagulhamento",
+  ];
+  const daSonda = (nomesDoCatalogo: readonly string[]) => ({
+    precosDoTurno: [],
+    nomesDoCatalogo,
+    mensagensDoPaciente: ["vocês fazem depilação a laser?"],
+  });
+
+  it.each([
+    "Aqui na clínica não faz depilação a laser, só limpeza de pele.",
+    "A Dra. Ana não faz esfoliação, só o peeling químico.",
+    "O peeling de diamante não usa ácidos.",
+    "O microagulhamento não usa ácido, só as agulhas.",
+    "A limpeza de pele é uma coisa leve, dura uma hora.",
+    "A criolipólise tira a gordura localizada sem cortes.",
+    "A lipo tira a gordura localizada.",
+  ])("%j passa sem achado nenhum, com e sem o catalogo", (rascunho) => {
+    expect(avaliarRegras(rascunho, daSonda(CATALOGO_DA_SONDA)).achados).toEqual(
+      [],
+    );
+    expect(avaliarRegras(rascunho, daSonda([])).achados).toEqual([]);
+  });
+
+  it.each([
+    [
+      "Não faça depilação nem use ácidos 7 dias antes.",
+      "cuidado_antes_do_procedimento",
+    ],
+    ["Não faz depilação 7 dias antes.", "cuidado_antes_do_procedimento"],
+    [
+      "Fique sem usar ácido 7 dias antes do peeling.",
+      "cuidado_antes_do_procedimento",
+    ],
+    [
+      "Não usar ácidos na semana do procedimento.",
+      "cuidado_antes_do_procedimento",
+    ],
+    ["Evite fazer depilação na véspera.", "cuidado_antes_do_procedimento"],
+    [
+      "Você não pode fazer depilação 7 dias antes.",
+      "cuidado_antes_do_procedimento",
+    ],
+    ["Come algo leve na véspera.", "preparo_alimentar"],
+    ["Prefira algo leve na véspera.", "preparo_alimentar"],
+    ["Coma uma coisa bem leve antes do exame.", "preparo_alimentar"],
+    ["Corte a gordura e a fritura 3 dias antes.", "preparo_alimentar"],
+    ["Na véspera, corta a gordura.", "preparo_alimentar"],
+    ["Tira o feijão e a salada do cardápio 3 dias antes.", "preparo_alimentar"],
+  ])("%j continua barrada (%s)", (rascunho, regra) => {
+    expect(
+      avaliarRegras(rascunho, daSonda(CATALOGO_DA_SONDA)).achados,
+    ).toContainEqual({ categoria: "orientacao_clinica", regra });
+  });
+});
+
+// Revisao curta da AG7 (CURTA-1): a regra barrava a resposta de recepcao
+// quando a mensagem citava o preparo, a dieta da clinica de nutricao e a
+// pergunta do procedimento que a CFM-7 pede. Os pares da sonda do relatorio
+// passavam sem achado nenhum na 9284bdc e voltam a passar; os da CFM-5
+// continuam barrados. O contexto e o da sonda (sem catalogo e sem preco),
+// com a habilidade.
+describe("revisao curta da AG7 (CURTA-1): a resposta ao preparo so barra o que afirma ou nega", () => {
+  const RESPOSTA = {
+    categoria: "orientacao_clinica",
+    regra: REGRA_DA_RESPOSTA_AO_PREPARO,
+  };
+  const daSonda = (pendente: string, comPreparo?: boolean) => ({
+    precosDoTurno: [],
+    nomesDoCatalogo: [],
+    mensagensDoPaciente: [pendente],
+    ...(comPreparo === undefined ? {} : { comPreparo }),
+  });
+
+  it.each([
+    [
+      "Obrigada pelo preparo! Que horas devo chegar?",
+      "Chegue às 7h30, 30 minutos antes do horário marcado.",
+    ],
+    [
+      "Já fiz o preparo. Qual o endereço da clínica?",
+      "A clínica fica na Rua das Flores, 123, no Centro.",
+    ],
+    [
+      "Recebi o preparo. Posso levar acompanhante?",
+      "Pode, sim. Um acompanhante pode entrar com você.",
+    ],
+    [
+      "Li o preparo, tem estacionamento aí?",
+      "Temos estacionamento conveniado ao lado da clínica.",
+    ],
+    [
+      "Sobre o preparo, aceita Unimed?",
+      "Aceitamos Unimed para a colonoscopia.",
+    ],
+    [
+      "Vocês fazem dieta? Quanto custa a consulta com a nutricionista?",
+      "A consulta com a nutricionista é na terça. Quer agendar?",
+    ],
+    ["qual o preparo?", "É para a colonoscopia ou para a endoscopia?"],
+    ["qual o preparo?", "Claro! Qual é o seu exame?"],
+    ["qual o preparo?", "Você pode me dizer o nome do procedimento?"],
+    ["qual o preparo?", "Você quer a orientação de preparo da colonoscopia?"],
+    ["qual o preparo?", "Qual é o procedimento?"],
+    [
+      "Me manda o preparo, por favor?",
+      "Me diz qual procedimento você vai fazer, por favor.",
+    ],
+  ])("%j / %j: passa sem achado nenhum", (pendente, rascunho) => {
+    expect(avaliarRegras(rascunho, daSonda(pendente, true)).achados).toEqual(
+      [],
+    );
+  });
+
+  it.each([
+    ["precisa de jejum pra colonoscopia?", "Precisa sim."],
+    ["precisa de jejum pra colonoscopia?", "Sim, 8 horas."],
+    ["precisa de jejum pra colonoscopia?", "Precisa, 8h."],
+    ["precisa de jejum pro ultrassom?", "Não precisa."],
+    ["precisa de jejum pro ultrassom?", "Pro ultrassom de abdome, não."],
+    ["tem preparo pra endoscopia?", "Não tem preparo."],
+    ["tem preparo pra endoscopia?", "Tem sim, é simples."],
+    [
+      "qual o preparo da colonoscopia?",
+      "É tranquilo, só uma dieta levinha na véspera.",
+    ],
+    [
+      "Obrigada pelo horário! Precisa de jejum pra colonoscopia?",
+      "Precisa sim.",
+    ],
+    ["precisa de jejum pra colonoscopia?", "Pode comer normalmente."],
+  ])(
+    "%j / %j: barra com a habilidade, e sem ela a regra nao roda",
+    (pendente, rascunho) => {
+      expect(
+        avaliarRegras(rascunho, daSonda(pendente, true)).achados,
+      ).toContainEqual(RESPOSTA);
+      for (const semAHabilidade of [
+        daSonda(pendente, false),
+        daSonda(pendente),
+      ]) {
+        expect(
+          avaliarRegras(rascunho, semAHabilidade).achados,
+        ).not.toContainEqual(RESPOSTA);
+      }
+    },
+  );
+
+  it("a pergunta numa mensagem de 65.536 caracteres cabe no turno (a dieta e o contexto conferidos a parte)", () => {
+    for (const trecho of [
+      "dieta ",
+      "vespera dieta ",
+      "dieta exame ",
+      "preparo? ",
+      "posso comer ",
+      "quer receber ",
+    ]) {
+      const longo = trecho
+        .repeat(Math.ceil(65_536 / trecho.length))
+        .slice(0, 65_536);
+      const inicio = performance.now();
+      perguntaDePreparo([longo], ["Colonoscopia"]);
+      expect(performance.now() - inicio, trecho).toBeLessThan(1_000);
+    }
+  }, 60_000);
+
+  it("a habilidade fora do formato falha fechado, sem chamar o verificador", async () => {
+    let chamou = false;
+    const decisao = await filtrarSaida({
+      rascunho: "Tenho horário amanhã às 10h. Pode ser?",
+      contexto: {
+        ...CONTEXTO_PADRAO,
+        comPreparo: "sim" as unknown as boolean,
+      },
+      verificador: async () => {
+        chamou = true;
+        return {
+          tipo: "veredicto",
+          veredicto: { aprovado: true, violacoes: [], confianca: "alta" },
+          modelo: "gpt-6-luna",
+          uso: null,
+        };
+      },
+    });
+    expect(decisao).toMatchObject({
+      aprovado: false,
+      categoria: "falha_verificador",
+      camada: "falha",
+    });
+    expect(chamou).toBe(false);
   });
 });
 // [AG7 preparo] fim

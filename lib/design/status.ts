@@ -35,6 +35,8 @@ import {
   Send,
   SendHorizonal,
   ShieldAlert,
+  // [AG7 preparo] O bloqueio de conformidade (revisao curta, CURTA-5).
+  ShieldBan,
   ShieldCheck,
   ShieldOff,
   ShieldX,
@@ -58,7 +60,7 @@ import type { SituacaoDaAtividade } from "@/lib/domain/atividades";
 import type { EstadoDoItemDaAgendada } from "@/lib/domain/mensagem-agendada";
 import { ACCESS_LABELS, type Access } from "@/lib/domain/permissions";
 // [AG7 preparo] início
-import type { SituacaoDoPreparoNaTela } from "@/lib/domain/preparo";
+import type { SituacaoDoChipDoPreparo } from "@/lib/domain/preparo";
 // [AG7 preparo] fim
 
 // Fonte unica dos status do produto.
@@ -549,9 +551,11 @@ export const ATIVIDADE_STATUS: Record<SituacaoDaAtividade, StatusDefinition> = {
 // ainda", como o "Sem token"). A devolucao do RT nao e chip: e a linha com o
 // comentario dele. A diferenca de texto do dialogo de aprovacao ("Entrou" e
 // "Saiu") e conteudo, nao status: rotulo em texto e fundo neutro, sem icone
-// colorido.
+// colorido. Revisao curta (CURTA-5): ShieldBan alert, o bloqueio de
+// conformidade (o mesmo do Atendimento e do simulador), na versao aprovada
+// cujo texto as regras de hoje nao deixam sair ("Aprovada, sem envio").
 export const PREPARO_DO_PROCEDIMENTO_STATUS: Record<
-  SituacaoDoPreparoNaTela,
+  SituacaoDoChipDoPreparo,
   StatusDefinition
 > = {
   aprovada: { label: "Aprovada pelo RT", tone: "success", icon: CircleCheck },
@@ -566,6 +570,11 @@ export const PREPARO_DO_PROCEDIMENTO_STATUS: Record<
     label: "Sem orientação",
     tone: "neutral",
     icon: CircleDashed,
+  },
+  aprovada_sem_envio: {
+    label: "Aprovada, sem envio",
+    tone: "alert",
+    icon: ShieldBan,
   },
 };
 // [AG7 preparo] fim

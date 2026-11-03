@@ -931,6 +931,32 @@ describe("as actions: o Zod e a clínica da sessão", () => {
     expect(rpc.chamadas).toEqual([]);
   });
 
+  // Revisao curta da AG7 (CURTA-6): o nome colado do portal do conselho com
+  // uma marca de direcao ou um invisivel (o banco recusa: preparo_nome_valido)
+  // volta com a frase que diz o que tirar, antes da RPC.
+  it.each([
+    [
+      { nome: "Dra. Ana Souza\u200f" },
+      "Tire o caractere invisível do nome, logo depois de “Dra. Ana Souza”: apague e escreva de novo esse pedaço do nome.",
+    ],
+    [
+      { nome: "\u200eDra. Ana Souza" },
+      "Tire o caractere invisível do começo do nome: apague e escreva de novo o começo do nome.",
+    ],
+    [
+      { nome: "Dra. Ana\u2066 Souza" },
+      "Tire o caractere invisível do nome, logo depois de “Dra. Ana”: apague e escreva de novo esse pedaço do nome.",
+    ],
+  ])(
+    "revisao curta da AG7 (CURTA-6): %o recusado com o que tirar, sem RPC",
+    async (parcial, frase) => {
+      estado.sessao = sessao();
+      const resultado = await definirResponsavelTecnicoAction(entrada(parcial));
+      expect(resultado).toEqual({ ok: false, error: frase });
+      expect(rpc.chamadas).toEqual([]);
+    },
+  );
+
   it("os formatos que o banco aceita passam (CRFa, 120 pontos de código, 20 no número)", async () => {
     const dente = String.fromCodePoint(0x1f9b7);
     const resultado = await definirResponsavelTecnicoAction(

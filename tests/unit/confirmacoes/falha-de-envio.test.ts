@@ -40,6 +40,9 @@ const CODIGOS_COM_ROTULO: Record<string, string> = {
   // Conta suspensa (onda 1): a trava de send.ts e a reativacao.
   clinica_suspensa: "Conta suspensa",
   vencido_na_suspensao: "Conta suspensa",
+  // Revisao curta da AG7 (CURTA-4): o passo so com o {{preparo}}, vazio sem
+  // texto aprovado em vigor (regua.ts).
+  sem_preparo_aprovado: "Sem orientação de preparo aprovada",
 };
 
 describe("contaComoNaoEnviada", () => {

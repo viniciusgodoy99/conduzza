@@ -17,7 +17,12 @@ import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { PLACEHOLDERS, renderizarModelo } from "@/lib/domain/modelo-mensagem";
+import {
+  modeloPedePreparo,
+  modeloSemOPreparo,
+  PLACEHOLDERS,
+  renderizarModelo,
+} from "@/lib/domain/modelo-mensagem";
 import { CORPO_DO_MENU_APOS_MIDIA } from "@/lib/domain/textos-padrao";
 import type { PassoDaReguaDaTela } from "@/lib/queries/confirmacoes";
 import { createClient } from "@/lib/supabase/client";
@@ -52,12 +57,34 @@ export function valoresDeAmostra(nomeDaClinica: string) {
 // [AG7 preparo] início
 // AG7 (desenho, secao 5.5): a ajuda do campo {{preparo}}, logo depois dos
 // chips. A amostra continua com o preparo vazio (valoresDeAmostra, e o
-// "Testar envio" tambem): o teste nunca leva texto clinico.
+// "Testar envio" tambem): o teste nunca leva texto clinico. Revisao curta
+// (CURTA-4): a previa e o teste mostram o toque SEM texto aprovado como a
+// regua o manda (modeloSemOPreparo, a mesma funcao): sai o campo e o que so
+// o apresentava, e a mensagem que fica vazia nao sai.
 const CAMPO_DO_PREPARO = "preparo";
 
 /** O que vem depois do `{{preparo}}` na linha da ajuda. */
 export const AJUDA_DO_CAMPO_DO_PREPARO =
-  ": a orientação de preparo aprovada pelo responsável técnico do procedimento. Sem texto aprovado, a linha some.";
+  ": a orientação de preparo aprovada pelo responsável técnico do procedimento. Sem texto aprovado, saem o campo e a frase que só o apresenta (como “Siga o preparo:”), e o resto da mensagem sai como está. A mensagem que ficar vazia não sai.";
+
+/** Debaixo da previa, quando o texto tem o {{preparo}}. */
+export const NOTA_DO_PREPARO_NA_PREVIA =
+  "Na amostra, a orientação de preparo não aparece. No envio, ela entra no lugar do campo quando o procedimento tem texto aprovado pelo responsável técnico.";
+
+/** A previa vazia por causa do {{preparo}} (sem anexo). */
+export const AVISO_DO_PREPARO_SOZINHO =
+  "Sem orientação de preparo aprovada, esta mensagem fica vazia e não sai. Escreva também o resto da mensagem.";
+
+/**
+ * A previa do passo com os dados de amostra: o toque sem texto de preparo
+ * aprovado, como a regua manda (o campo e o que so o apresentava saem).
+ */
+export function previaDoPasso(texto: string, nomeDaClinica: string): string {
+  return renderizarModelo(
+    modeloPedePreparo(texto) ? modeloSemOPreparo(texto) : texto,
+    valoresDeAmostra(nomeDaClinica),
+  );
+}
 // [AG7 preparo] fim
 
 export function EditorDePasso({
@@ -148,10 +175,14 @@ export function EditorDePasso({
     setTexto(passo.fixed_body ?? "");
   }, [passo.id, passo.fixed_body]);
 
+  // [AG7 preparo] A previa como a regua manda sem texto aprovado (CURTA-4).
   const preview = useMemo(
-    () => renderizarModelo(texto, valoresDeAmostra(nomeDaClinica)),
+    () => previaDoPasso(texto, nomeDaClinica),
     [texto, nomeDaClinica],
   );
+  const comPreparo = modeloPedePreparo(texto);
+  const vaziaPeloPreparo =
+    comPreparo && !temAnexo && preview.trim().length === 0;
   const audioComTexto =
     temAnexo && passo.media_type === "audio" && preview.trim().length > 0;
 
@@ -250,7 +281,7 @@ export function EditorDePasso({
           {/* [AG7 preparo] início: a ajuda do {{preparo}} (desenho da AG7,
               secao 5.5), so quando a regua oferece o campo. A regua manda o
               texto que o responsavel tecnico aprovou no Cadastro; sem texto
-              aprovado em vigor, a linha some do envio. */}
+              aprovado em vigor, saem o campo e o que so o apresentava. */}
           {placeholders.includes(CAMPO_DO_PREPARO) ? (
             <p data-ajuda-do-preparo className="text-xs text-text-secondary">
               <code className="cz-num text-foreground">{`{{${CAMPO_DO_PREPARO}}}`}</code>
@@ -401,9 +432,19 @@ export function EditorDePasso({
             }
           />
         )}
+        {/* [AG7 preparo] início: a previa sem texto de preparo aprovado
+            (revisao curta, CURTA-4). */}
+        {vaziaPeloPreparo ? (
+          <Aviso tom="warning">
+            <p data-aviso-do-preparo>{AVISO_DO_PREPARO_SOZINHO}</p>
+          </Aviso>
+        ) : null}
+        {/* [AG7 preparo] fim */}
         <p className="text-[11.5px] text-text-secondary">
           Amostra com dados fictícios. No envio real, os campos são preenchidos
           com os dados da consulta e do paciente.
+          {/* [AG7 preparo] */}
+          {comPreparo ? ` ${NOTA_DO_PREPARO_NA_PREVIA}` : null}
         </p>
       </div>
     </div>

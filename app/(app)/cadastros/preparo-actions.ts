@@ -7,7 +7,7 @@ import {
   erroDeSempre,
   FRASE_DA_EQUIPE_CONDUZZA,
   FRASES_SEM_PERMISSAO,
-  frasesDasRecusas,
+  fraseDoNomeComInvisivel,
   frasesDoConteudoRecusado,
   prepararTextoDoPreparo,
   problemaNoTextoDoPreparo,
@@ -21,6 +21,11 @@ import { problemasDoTextoDoPreparo } from "@/lib/domain/conformidade/preparo-apr
 import { canEdit, type Role } from "@/lib/domain/permissions";
 import { conteudoRecusadoPeloBanco } from "@/lib/domain/preparo";
 import { createClient } from "@/lib/supabase/server";
+
+import {
+  recusaDoTextoDoPreparo,
+  recusasDasVersoesAprovadas,
+} from "./recusas-do-preparo";
 
 // Server Actions da orientacao de preparo do procedimento (AG7; Cadastros,
 // modal do Procedimento). Ficam FORA de ./actions.ts de proposito: o
@@ -60,6 +65,13 @@ export type ResultadoDoPreparo = { ok: true } | RecusaDoPreparo;
 export type ResultadoDosAvisos =
   | { ok: true; avisos: string[]; recusa: string | null }
   | { ok: false; error: string };
+
+/**
+ * Revisao curta da AG7 (CURTA-5): as versoes aprovadas e suspensas cujo
+ * texto as regras de hoje recusam (o id da versao para a frase da recusa).
+ */
+export type ResultadoDasRecusas =
+  { ok: true; recusas: Record<string, string> } | { ok: false; error: string };
 
 const SESSAO_EXPIRADA = "Sessão expirada. Entre de novo.";
 const ENTRADA_INVALIDA = "Confira o texto da orientação de preparo.";
@@ -235,28 +247,6 @@ const respostaDoSalvarSchema = z.object({
 });
 
 /**
- * As recusas de hoje no texto (problemasDoTextoDoPreparo: promessa, oferta
- * casada, antes e depois, preco e link) em frase que diz o que tirar e ONDE
- * (TELA-8): cada categoria recusada aponta a primeira frase do texto que a
- * dispara sozinha (trechosDasRecusas, calculado no servidor). A categoria
- * que so o texto inteiro acusa fica com a frase sem trecho. Null: o texto
- * passa (remedio, dose e jejum so avisam, D-80).
- */
-function recusaDoTexto(texto: string): string | null {
-  const { recusas, trechosDasRecusas } = problemasDoTextoDoPreparo(texto);
-  if (recusas.length === 0) {
-    return null;
-  }
-  const trechos: Record<string, string> = {};
-  for (const { categoria, trecho } of trechosDasRecusas) {
-    if (trecho !== null && !Object.hasOwn(trechos, categoria)) {
-      trechos[categoria] = trecho;
-    }
-  }
-  return frasesDasRecusas(recusas, trechos);
-}
-
-/**
  * O texto que o BANCO recusou (texto_recusado: 22023 no salvar, P0001 no
  * aprovar; preparo_texto_recusado: o link, o valor em reais, o arroba ou o
  * invisivel que o filtro recusa), dito em frase que diz o que tirar, a
@@ -285,7 +275,20 @@ function recusaDoBanco(
   acao: AcaoDoPreparo,
   erro: ErroDaRpc,
   texto: string,
+  // Revisao curta da AG7 (CURTA-6): o nome do procedimento lido antes da
+  // RPC, para o nome_do_procedimento_invalido dizer o que tirar.
+  nomeDoProcedimento?: string,
 ): RecusaDoPreparo {
+  if (
+    erro.code === "22023" &&
+    erro.message === "nome_do_procedimento_invalido" &&
+    nomeDoProcedimento !== undefined
+  ) {
+    const frase = fraseDoNomeComInvisivel(nomeDoProcedimento, "procedimento");
+    if (frase !== null) {
+      return { ok: false, error: frase };
+    }
+  }
   if (
     erro.message === "texto_recusado" &&
     (erro.code === "22023" || erro.code === "P0001")
@@ -315,7 +318,7 @@ function textoParaSalvar(
     return { ok: false, error: problema };
   }
   const texto = prepararTextoDoPreparo(bruto);
-  const recusa = recusaDoTexto(texto);
+  const recusa = recusaDoTextoDoPreparo(texto);
   if (recusa) {
     return { ok: false, error: recusa, code: "texto_recusado" };
   }
@@ -327,6 +330,7 @@ async function salvarNoBanco(
   procedureId: string,
   texto: string,
   versaoLidaNaTela: number,
+  nomeDoProcedimento: string,
 ): Promise<ResultadoDoSalvarPreparo> {
   const { data, error } = await sessao.supabase.rpc(
     "salvar_preparo_do_procedimento",
@@ -337,7 +341,7 @@ async function salvarNoBanco(
     },
   );
   if (error) {
-    return recusaDoBanco("salvar", error, texto);
+    return recusaDoBanco("salvar", error, texto, nomeDoProcedimento);
   }
   const resposta = respostaDoSalvarSchema.safeParse(data);
   return {
@@ -386,11 +390,8 @@ export async function salvarPreparoAction(
   if (!texto.ok) {
     return texto;
   }
-  const procedimento = await procedimentoDaClinica(
-    sessao,
-    lido.data.procedureId,
-  );
-  if (procedimento !== "sim") {
+  const procedimento = await nomeDoProcedimento(sessao, lido.data.procedureId);
+  if (procedimento === "erro" || procedimento === "nao") {
     return {
       ok: false,
       error:
@@ -399,11 +400,23 @@ export async function salvarPreparoAction(
           : PROCEDIMENTO_NAO_ENCONTRADO,
     };
   }
+  // Revisao curta da AG7 (CURTA-6): o nome com caractere invisivel ou marca
+  // de direcao (colado de outro lugar) vai no cabecalho da mensagem, e o
+  // banco o recusa (nome_do_procedimento_invalido). A frase diz o que tirar,
+  // antes da RPC.
+  const nomeComInvisivel = fraseDoNomeComInvisivel(
+    procedimento.nome,
+    "procedimento",
+  );
+  if (nomeComInvisivel !== null) {
+    return { ok: false, error: nomeComInvisivel };
+  }
   const resultado = await salvarNoBanco(
     sessao,
     lido.data.procedureId,
     texto.texto,
     lido.data.versaoLida,
+    procedimento.nome,
   );
   if (resultado.ok) {
     revalidar();
@@ -453,7 +466,7 @@ export async function aprovarPreparoAction(
       message: "texto_mudou",
     });
   }
-  const recusa = recusaDoTexto(versao.texto);
+  const recusa = recusaDoTextoDoPreparo(versao.texto);
   if (recusa) {
     return {
       ok: false,
@@ -571,6 +584,7 @@ export async function aprovarDeNovoAction(
     lido.data.procedureId,
     texto.texto,
     lido.data.versaoLida,
+    procedimento.nome,
   );
   if (!salvo.ok) {
     // O banco recusou o conteudo no salvar: nada gravado, e a frase e a do
@@ -786,6 +800,42 @@ export async function avisosDoPreparoAction(
   return {
     ok: true,
     avisos: [...problemasDoTextoDoPreparo(versao.texto).avisos],
-    recusa: recusaDoTexto(versao.texto),
+    recusa: recusaDoTextoDoPreparo(versao.texto),
   };
+}
+
+// ---------------------------------------------------------------------------
+// O texto aprovado que as regras de hoje recusam (revisao curta, CURTA-5)
+// ---------------------------------------------------------------------------
+
+/**
+ * As versoes aprovadas e suspensas da clinica ativa cujo texto as regras de
+ * hoje recusam, com a frase da recusa: a secao mostra "Aprovada, sem envio"
+ * com o motivo e trava o "Aprovar de novo". O envio ja nao deixa esse texto
+ * sair (conferirParaEnvio e a regua); sem isto, a tela continuava dizendo
+ * "Aprovada". Le pela sessao (a policy de membro ativo, a mesma da tela),
+ * so as versoes aprovadas e suspensas; nada e gravado nem logado.
+ */
+export async function recusasDosPreparosAction(): Promise<ResultadoDasRecusas> {
+  const sessao = await lerSessao();
+  if (!sessao) {
+    return { ok: false, error: SESSAO_EXPIRADA };
+  }
+  const { data, error } = await sessao.supabase
+    .from("preparo_do_procedimento")
+    .select("id, situacao, texto")
+    .eq("clinic_id", sessao.clinicId)
+    .in("situacao", ["aprovado", "suspenso"]);
+  if (error) {
+    return { ok: false, error: T.erroAoCarregar };
+  }
+  const versoes = ((data ?? []) as Record<string, unknown>[]).flatMap(
+    (linha) =>
+      typeof linha.id === "string" &&
+      typeof linha.situacao === "string" &&
+      typeof linha.texto === "string"
+        ? [{ id: linha.id, situacao: linha.situacao, texto: linha.texto }]
+        : [],
+  );
+  return { ok: true, recusas: recusasDasVersoesAprovadas(versoes) };
 }

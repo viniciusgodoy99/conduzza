@@ -3,6 +3,7 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 import {
+  invisivelNoNome,
   LIMITE_DO_TEXTO_DO_PREPARO,
   normalizarTextoDoPreparo,
   textoDoPreparoValido,
@@ -73,6 +74,14 @@ export const TEXTOS_DO_PREPARO = {
   /** O texto antigo copiado pela migration (D-83), que ninguem escreveu agora. */
   aguardandoTextoAntigo: "Texto do cadastro aguardando o RT",
   aprovadaParada: "Aprovada, sem envio",
+  // Revisao curta (CURTA-5): o texto aprovado que as regras de hoje nao
+  // deixam sair. O que fazer: escrever de novo e pedir nova aprovacao.
+  recusadaPelasRegras:
+    "As regras de hoje não deixam este texto sair, e ele não está sendo enviado.",
+  escrevaDeNovo:
+    "Escreva um texto novo, sem isso, para o responsável técnico aprovar.",
+  dicaDoTextoRecusado:
+    "As regras de hoje não deixam este texto sair. Escreva um texto novo para o responsável técnico aprovar.",
   suspensa: "Envio suspenso",
   enquantoComVigor:
     "Enquanto o RT não aprova, o texto em vigor continua sendo enviado.",
@@ -399,6 +408,42 @@ function emojiDaPosicao(texto: string, posicao: number): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Revisao curta da AG7 (CURTA-6): o nome do procedimento ou do RT com um
+ * caractere invisivel ou uma marca de direcao (o que preparo_nome_valido
+ * recusa; comum no nome colado de um site), em frase que diz o que tirar e
+ * onde: o emoji que leva o invisivel pelo proprio emoji; o resto pelas
+ * palavras logo antes (o invisivel nao aparece na tela). null: o nome nao
+ * tem nenhum.
+ */
+export function fraseDoNomeComInvisivel(
+  nome: string,
+  de: "procedimento" | "rt",
+): string | null {
+  const achado = invisivelNoNome(nome);
+  if (achado === null) {
+    return null;
+  }
+  const doNome = de === "procedimento" ? "do nome do procedimento" : "do nome";
+  const depois =
+    de === "procedimento"
+      ? ", salve o procedimento e envie o texto de novo."
+      : ".";
+  const emoji = emojiDaPosicao(nome, achado.posicao);
+  if (emoji) {
+    return `Tire o emoji ${emoji} ${doNome}: ele leva um caractere invisível, que não pode ir na mensagem ao paciente. Apague o emoji${depois}`;
+  }
+  const palavras = nome
+    .slice(0, achado.posicao)
+    .split(/\s+/u)
+    .filter((palavra) => palavra !== "")
+    .slice(-4)
+    .join(" ");
+  return palavras === ""
+    ? `Tire o caractere invisível do começo ${doNome}: apague e escreva de novo o começo do nome${depois}`
+    : `Tire o caractere invisível ${doNome}, logo depois de ${citarTrecho(palavras)}: apague e escreva de novo esse pedaço do nome${depois}`;
 }
 
 /**

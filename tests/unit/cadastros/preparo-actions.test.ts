@@ -77,17 +77,21 @@ const estado = {
 };
 
 function consulta(tabela: string) {
-  const filtros: [string, unknown][] = [];
+  const filtros: ((linha: Linha) => boolean)[] = [];
   const resolver = () => ({
     data: (estado.tabelas[tabela] ?? []).filter((linha) =>
-      filtros.every(([coluna, valor]) => linha[coluna] === valor),
+      filtros.every((filtro) => filtro(linha)),
     ),
     error: null,
   });
   const api = {
     select: () => api,
     eq: (coluna: string, valor: unknown) => {
-      filtros.push([coluna, valor]);
+      filtros.push((linha) => linha[coluna] === valor);
+      return api;
+    },
+    in: (coluna: string, valores: readonly unknown[]) => {
+      filtros.push((linha) => valores.includes(linha[coluna]));
       return api;
     },
     order: () => api,
@@ -142,9 +146,12 @@ const {
   avisosDoPreparoAction,
   descartarPreparoAction,
   devolverPreparoAction,
+  recusasDosPreparosAction,
   salvarPreparoAction,
   suspenderPreparoAction,
 } = await import("@/app/(app)/cadastros/preparo-actions");
+const { recusasDasVersoesAprovadas } =
+  await import("@/app/(app)/cadastros/recusas-do-preparo");
 
 function papel(
   role: string,
@@ -971,5 +978,141 @@ describe("os avisos do texto para o diálogo do RT", () => {
       /^No trecho “Veja o antes e depois no nosso Instagram\.”, tire a menção a antes e depois/,
     );
     expect(escritas()).toEqual([]);
+  });
+});
+
+// Revisao curta da AG7 (CURTA-5): o texto aprovado que as regras de hoje
+// recusam parava de sair em silencio, e a tela continuava "Aprovada". A
+// action devolve, das versoes aprovadas e suspensas da clinica ativa, a frase
+// da recusa; a secao mostra "Aprovada, sem envio" com ela.
+describe("revisao curta da AG7 (CURTA-5): o texto aprovado que as regras de hoje recusam", () => {
+  const PROMESSA =
+    "Venha sem maquiagem. Resultado garantido, você vai sair renovada!";
+
+  it("a action devolve so as aprovadas e suspensas da clinica ativa que as regras recusam, com a frase", async () => {
+    const V3 = "5f5f5f5f-0000-4000-8000-000000000005";
+    const V4 = "5f5f5f5f-0000-4000-8000-000000000006";
+    const tabela = estado.tabelas.preparo_do_procedimento ?? [];
+    tabela.push(
+      {
+        id: V3,
+        clinic_id: CLINICA,
+        procedure_id: PROC,
+        versao: 3,
+        situacao: "suspenso",
+        texto: PROMESSA,
+        texto_sha256: SHA_NOVA,
+      },
+      {
+        id: V4,
+        clinic_id: CLINICA,
+        procedure_id: PROC,
+        versao: 4,
+        situacao: "aguardando_rt",
+        texto: PROMESSA,
+        texto_sha256: SHA_NOVA,
+      },
+      {
+        id: V_ANTIGO,
+        clinic_id: OUTRA_CLINICA,
+        procedure_id: PROC_DE_FORA,
+        versao: 2,
+        situacao: "aprovado",
+        texto: PROMESSA,
+        texto_sha256: SHA_ANTIGO,
+      },
+    );
+    const resultado = await recusasDosPreparosAction();
+    expect(resultado.ok).toBe(true);
+    if (!resultado.ok) {
+      return;
+    }
+    // V1 (jejum) passa, V4 espera o RT, V_ANTIGO e de outra clinica.
+    expect(Object.keys(resultado.recusas)).toEqual([V3]);
+    expect(resultado.recusas[V3]).toContain("tire a promessa de resultado");
+    expect(resultado.recusas[V3]).toContain("Resultado garantido");
+    // Nada e gravado.
+    expect(escritas()).toEqual([]);
+  });
+
+  it("sem clinica ativa: a sessao expirou", async () => {
+    sessao.active = null;
+    expect(await recusasDosPreparosAction()).toEqual({
+      ok: false,
+      error: "Sessão expirada. Entre de novo.",
+    });
+  });
+
+  it("recusasDasVersoesAprovadas: o texto sem leitura e a versao que nao foi aprovada ficam de fora", () => {
+    expect(
+      recusasDasVersoesAprovadas([
+        { id: "a", situacao: "aprovado", texto: PROMESSA },
+        { id: "b", situacao: "aprovado", texto: "Jejum de 8 horas." },
+        { id: "c", situacao: "aprovado", texto: null },
+        { id: "d", situacao: "devolvido", texto: PROMESSA },
+        { id: "e", situacao: "suspenso", texto: "Veja em https://exemplo.com" },
+      ]),
+    ).toEqual({
+      a: expect.stringContaining("promessa de resultado"),
+      e: expect.stringContaining("link"),
+    });
+  });
+});
+
+// Revisao curta da AG7 (CURTA-6): o nome do procedimento com invisivel ou
+// marca de direcao (colado de outro lugar) passa no Cadastros, e o banco o
+// recusa no salvar do preparo (22023 nome_do_procedimento_invalido) com a
+// frase que nao dizia o que tirar.
+describe("revisao curta da AG7 (CURTA-6): o nome do procedimento com caractere invisível", () => {
+  const FRASE =
+    "Tire o caractere invisível do nome do procedimento, logo depois de “Colonoscopia”: apague e escreva de novo esse pedaço do nome, salve o procedimento e envie o texto de novo.";
+
+  function nomeComInvisivel() {
+    const procedimento = estado.tabelas.procedure?.find((p) => p.id === PROC);
+    if (procedimento) {
+      procedimento.name = "Colonoscopia\u200e";
+    }
+  }
+
+  it("o salvar diz o que tirar, antes da RPC", async () => {
+    nomeComInvisivel();
+    expect(await salvarPreparoAction(SALVAR)).toEqual({
+      ok: false,
+      error: FRASE,
+    });
+    expect(escritas()).toEqual([]);
+  });
+
+  it("o nome_do_procedimento_invalido do banco no aprovar de novo vira a mesma frase", async () => {
+    nomeComInvisivel();
+    papel("profissional", { rt: true });
+    const v2 = estado.tabelas.preparo_do_procedimento?.find((v) => v.id === V2);
+    if (v2) {
+      v2.situacao = "descartado";
+    }
+    estado.respostas.salvar_preparo_do_procedimento = {
+      data: null,
+      error: { code: "22023", message: "nome_do_procedimento_invalido" },
+    };
+    expect(
+      await aprovarDeNovoAction({
+        procedureId: PROC,
+        versaoLida: 2,
+        textoSha256: SHA_V1,
+        nomeLido: "Colonoscopia\u200e",
+      }),
+    ).toEqual({ ok: false, error: FRASE });
+  });
+
+  it("o nome sem invisivel que o banco recusa continua com a frase de sempre", async () => {
+    estado.respostas.salvar_preparo_do_procedimento = {
+      data: null,
+      error: { code: "22023", message: "nome_do_procedimento_invalido" },
+    };
+    expect(await salvarPreparoAction(SALVAR)).toEqual({
+      ok: false,
+      error:
+        "Confira o nome do procedimento antes de escrever a orientação de preparo.",
+    });
   });
 });
