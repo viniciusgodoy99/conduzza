@@ -20,6 +20,7 @@ import {
   CABECALHO_DO_PREPARO,
   mensagemDoPreparo,
   RODAPE_DO_PREPARO,
+  type ResponsavelTecnicoDaMensagem,
   trechoDePreparoNaResposta as trechoDoModuloPuro,
 } from "@/lib/domain/preparo";
 import {
@@ -161,7 +162,10 @@ describe("PreparoAprovado: a marca so sai de aprovarParaEnvio", () => {
 // ---------------------------------------------------------------------------
 
 describe("conferirParaEnvio: o texto aprovado com recusa nunca vira PreparoAprovado", () => {
-  function comTexto(texto: string, rt = RT_DE_TESTE) {
+  function comTexto(
+    texto: string,
+    rt: ResponsavelTecnicoDaMensagem = RT_DE_TESTE,
+  ) {
     return lido(mensagemDoPreparo({ procedimento: "Colonoscopia", rt, texto }));
   }
 
