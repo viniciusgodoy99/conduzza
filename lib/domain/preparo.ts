@@ -394,11 +394,14 @@ const ARROBA_DO_BANCO = new RegExp(
 // No texto como veio: os invisiveis que o filtro recusa e o CHECK nao, e o
 // seletor de variacao colado numa letra ou digito (o "1" do emoji de tecla).
 const INVISIVEL_DO_BANCO =
-  /[͏؜ᅟᅠ᠎⁦-⁩⠀ㅤﾠ\u{e0000}-\u{e007f}]|(?<=[0-9A-Za-z])[︀-️]/u;
+  /[\u034f\u061c\u115f\u1160\u180e\u2066-\u2069\u2800\u3164\uffa0\u{e0000}-\u{e007f}]|(?<=[0-9A-Za-z])[\ufe00-\ufe0f]/u;
 
 /** A visao base do banco: NFKD, minusculas e sem os acentos U+0300 a U+036F. */
 function baseDoBanco(texto: string): string {
-  return texto.normalize("NFKD").toLowerCase().replace(/[̀-ͯ]/g, "");
+  return texto
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 /** As frases do texto, como escritas e aparadas (o corte das recusas da tela). */

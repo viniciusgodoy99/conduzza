@@ -393,7 +393,7 @@ function emojiDaPosicao(texto: string, posicao: number): string | null {
   for (const { segment, index } of segmentador.segment(texto)) {
     if (posicao >= index && posicao < index + segment.length) {
       return Array.from(segment).length > 1 &&
-        /\p{Extended_Pictographic}|⃣/u.test(segment)
+        /\p{Extended_Pictographic}|\u20e3/u.test(segment)
         ? segment
         : null;
     }
