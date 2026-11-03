@@ -1,21 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { FRASES_SEM_PERMISSAO } from "@/components/cadastros/preparo-na-tela";
+import {
+  FRASE_DA_EQUIPE_CONDUZZA,
+  FRASES_SEM_PERMISSAO,
+  TEXTOS_DO_PREPARO as T,
+} from "@/components/cadastros/preparo-na-tela";
 
 // As Server Actions da orientacao de preparo (AG7, frente T; contrato 4.6),
 // contra um cliente do Supabase dublado. O que interessa aqui:
 //   - a guarda de papel NA ACTION, antes da RPC (esconder botao nao protege
 //     nada): escrever, descartar e suspender para administrador, gestor,
 //     super admin e o RT vigente de qualquer papel; aprovar, aprovar de novo
-//     e devolver SO para o RT vigente (nem o super admin, D-71);
+//     e devolver SO para o RT vigente, nunca para o super admin, nem quando
+//     ele e o RT designado (D-71; revisao das telas, TELA-9);
 //   - Zod na entrada, a clinica sempre a ativa, o procedimento ou a versao
 //     de outra clinica recusados antes da RPC;
-//   - o texto normalizado e recusado por problemasDoTextoDoPreparo antes da
-//     RPC (promessa, oferta, antes e depois, preco e link), com remedio,
-//     dose e jejum passando (D-80);
-//   - a traducao dos codigos do banco;
-//   - o "aprovar de novo" sem gravar nada quando o texto do banco nao e o
-//     que o RT leu.
+//   - o texto preparado (a tabulacao vira espaco) e recusado por
+//     problemasDoTextoDoPreparo antes da RPC (promessa, oferta, antes e
+//     depois, preco e link), com a frase que aponta o trecho (TELA-8), e
+//     remedio, dose e jejum passando (D-80);
+//   - a traducao dos codigos do banco (o 42501 tecnico nunca chega cru);
+//   - o aprovar conferindo o texto de novo pelas regras de hoje (CFM-2);
+//   - o "aprovar de novo" sem gravar nada quando ha texto novo esperando o
+//     RT (TELA-1), quando o texto do banco nao e o que o RT leu, quando o
+//     nome do procedimento nao e o da previa (TELA-11) ou quando as regras
+//     recusam o texto; e sem aprovar a versao nova que nao e o texto lido.
 // O comportamento do banco (as RPCs, as travas, a trilha) esta em
 // tests/rls/preparo-aprovado-pelo-rt.test.ts e tests/integration.
 
@@ -30,6 +39,8 @@ const NOVA = "5f5f5f5f-0000-4000-8000-000000000003";
 const SHA_V1 = "a".repeat(64);
 const SHA_V2 = "b".repeat(64);
 const SHA_NOVA = "c".repeat(64);
+const V_ANTIGO = "5f5f5f5f-0000-4000-8000-000000000004";
+const SHA_ANTIGO = "d".repeat(64);
 
 type Linha = Record<string, unknown>;
 type Erro = { code: string; message: string };
@@ -148,8 +159,8 @@ beforeEach(() => {
   };
   estado.tabelas = {
     procedure: [
-      { id: PROC, clinic_id: CLINICA },
-      { id: PROC_DE_FORA, clinic_id: OUTRA_CLINICA },
+      { id: PROC, clinic_id: CLINICA, name: "Colonoscopia" },
+      { id: PROC_DE_FORA, clinic_id: OUTRA_CLINICA, name: "Endoscopia" },
     ],
     preparo_do_procedimento: [
       {
@@ -274,6 +285,17 @@ describe("escrever (salvarPreparoAction)", () => {
     });
   });
 
+  it("a tabulação da lista colada do Word vira espaço antes do banco (TELA-8)", async () => {
+    const resultado = await salvarPreparoAction({
+      ...SALVAR,
+      texto: "1.\tJejum de 8 horas.\n2.\tTraga o pedido médico.",
+    });
+    expect(resultado.ok).toBe(true);
+    expect(estado.rpcs.at(-1)?.args).toMatchObject({
+      p_texto: "1. Jejum de 8 horas.\n2. Traga o pedido médico.",
+    });
+  });
+
   it("remédio, dose e jejum passam (D-80): só avisam no diálogo do RT", async () => {
     const resultado = await salvarPreparoAction({
       ...SALVAR,
@@ -284,15 +306,31 @@ describe("escrever (salvarPreparoAction)", () => {
   });
 
   it.each([
-    ["Jejum de 8 horas. Resultado garantido.", "Tire a promessa de resultado"],
-    ["Na compra do exame, a consulta é grátis.", "Tire a oferta de brinde"],
+    ["Jejum de 8 horas. Resultado garantido.", "a promessa de resultado"],
+    ["Na compra do exame, a consulta é grátis.", "a oferta de brinde"],
     ["Veja o antes e depois dos pacientes.", "antes e depois"],
-    ["O exame custa R$ 250,00.", "Tire o valor"],
-    ["Veja o vídeo em www.clinica.com.br.", "Tire o link"],
+    ["O exame custa R$ 250,00.", "o valor e as condições de pagamento"],
+    ["Veja o vídeo em www.clinica.com.br.", "o link"],
   ])("recusa antes da RPC: %s", async (texto, frase) => {
     const resultado = await salvarPreparoAction({ ...SALVAR, texto });
     expect(resultado.ok).toBe(false);
     expect(resultado.ok ? "" : resultado.error).toContain(frase);
+    expect(resultado.ok ? undefined : resultado.code).toBe("texto_recusado");
+    expect(escritas()).toEqual([]);
+  });
+
+  it("a recusa aponta o trecho em que a regra achou o problema (TELA-8)", async () => {
+    const resultado = await salvarPreparoAction({
+      ...SALVAR,
+      texto:
+        "Jejum de 8 horas antes do exame.\nTraga o pedido médico.\nResultado garantido em 24 horas.",
+    });
+    expect(resultado).toEqual({
+      ok: false,
+      error:
+        "No trecho “Resultado garantido em 24 horas.”, tire a promessa de resultado (palavras como garantir, 100%, sem dor ou definitivo): a orientação de preparo não pode prometer resultado (Resolução CFM 2.336/2023).",
+      code: "texto_recusado",
+    });
     expect(escritas()).toEqual([]);
   });
 
@@ -346,17 +384,29 @@ describe("escrever (salvarPreparoAction)", () => {
       code: "sem_permissao",
     });
   });
+
+  it("o 42501 técnico do Postgres nunca chega à tela (TELA-10)", async () => {
+    estado.respostas.salvar_preparo_do_procedimento = {
+      data: null,
+      error: {
+        code: "42501",
+        message:
+          "permission denied for function salvar_preparo_do_procedimento",
+      },
+    };
+    expect(await salvarPreparoAction(SALVAR)).toEqual({
+      ok: false,
+      error: FRASES_SEM_PERMISSAO.escrever,
+      code: "sem_permissao",
+    });
+  });
 });
 
 describe("aprovar e devolver (só o RT vigente)", () => {
-  it.each([
-    ["admin", false],
-    ["gestor", false],
-    ["leitura", true],
-  ] as const)(
-    "%s que não é o RT (super admin %s) não aprova",
-    async (role, superAdmin) => {
-      papel(role, { superAdmin });
+  it.each(["admin", "gestor", "leitura"])(
+    "%s que não é o RT não aprova nem devolve",
+    async (role) => {
+      papel(role);
       expect(
         await aprovarPreparoAction({ versaoId: V2, textoSha256: SHA_V2 }),
       ).toEqual({
@@ -372,6 +422,37 @@ describe("aprovar e devolver (só o RT vigente)", () => {
         code: "sem_permissao",
       });
       expect(escritas()).toEqual([]);
+    },
+  );
+
+  it.each([
+    ["que não é o RT", false],
+    ["designado RT", true],
+  ] as const)(
+    "a equipe Conduzza %s não aprova, não devolve nem aprova de novo (TELA-9)",
+    async (_quem, rt) => {
+      papel("admin", { superAdmin: true, rt });
+      const recusa = {
+        ok: false,
+        error: FRASE_DA_EQUIPE_CONDUZZA,
+        code: "sem_permissao",
+      };
+      expect(
+        await aprovarPreparoAction({ versaoId: V2, textoSha256: SHA_V2 }),
+      ).toEqual(recusa);
+      expect(
+        await devolverPreparoAction({ versaoId: V2, comentario: "Troque." }),
+      ).toEqual(recusa);
+      expect(
+        await aprovarDeNovoAction({
+          procedureId: PROC,
+          versaoLida: 2,
+          textoSha256: SHA_V1,
+          nomeLido: "Colonoscopia",
+        }),
+      ).toEqual(recusa);
+      // Recusa antes de tudo: nem a conferencia do RT chega ao banco.
+      expect(estado.rpcs).toEqual([]);
     },
   );
 
@@ -393,7 +474,46 @@ describe("aprovar e devolver (só o RT vigente)", () => {
     ).toEqual({
       ok: false,
       error: "Este texto não foi encontrado. Feche e abra de novo.",
+      code: "versao_inexistente",
     });
+    expect(escritas()).toEqual([]);
+  });
+
+  it("o hash que o RT leu não é o da versão: nada chega à RPC", async () => {
+    papel("profissional", { rt: true });
+    expect(
+      await aprovarPreparoAction({ versaoId: V2, textoSha256: SHA_V1 }),
+    ).toEqual({
+      ok: false,
+      error: "O texto mudou enquanto você lia. Feche e abra de novo.",
+      code: "texto_mudou",
+    });
+    expect(escritas()).toEqual([]);
+  });
+
+  it("o texto que as regras de hoje recusam não é aprovado, e a frase diz o que tirar (CFM-2)", async () => {
+    // O texto antigo copiado pela migration (D-83) ou salvo direto pela RPC
+    // nunca passou pelo Salvar da tela.
+    estado.tabelas.preparo_do_procedimento?.push({
+      id: V_ANTIGO,
+      clinic_id: CLINICA,
+      procedure_id: PROC,
+      versao: 3,
+      situacao: "aguardando_rt",
+      texto:
+        "Venha sem maquiagem. Resultado garantido, você vai sair renovada!",
+      texto_sha256: SHA_ANTIGO,
+    });
+    papel("leitura", { rt: true });
+    const resultado = await aprovarPreparoAction({
+      versaoId: V_ANTIGO,
+      textoSha256: SHA_ANTIGO,
+    });
+    expect(resultado.ok).toBe(false);
+    expect(resultado.ok ? undefined : resultado.code).toBe("texto_recusado");
+    expect(resultado.ok ? "" : resultado.error).toMatch(
+      /^Este texto não pode ser aprovado\. No trecho “Resultado garantido, você vai sair renovada!”, tire a promessa de resultado/,
+    );
     expect(escritas()).toEqual([]);
   });
 
@@ -445,7 +565,25 @@ describe("aprovar e devolver (só o RT vigente)", () => {
 });
 
 describe("aprovar de novo", () => {
-  const DE_NOVO = { procedureId: PROC, versaoLida: 2, textoSha256: SHA_V1 };
+  const DE_NOVO = {
+    procedureId: PROC,
+    versaoLida: 2,
+    textoSha256: SHA_V1,
+    nomeLido: "Colonoscopia",
+  };
+
+  /** Sem texto aguardando: a v2 foi descartada, e a v1 parou de valer. */
+  function semAguardando() {
+    const v2 = estado.tabelas.preparo_do_procedimento?.find((v) => v.id === V2);
+    if (v2) {
+      v2.situacao = "descartado";
+    }
+    // O mesmo texto da v1 salvo de novo tem o mesmo hash.
+    estado.respostas.salvar_preparo_do_procedimento = {
+      data: { versao_id: NOVA, versao: 3, texto_sha256: SHA_V1 },
+      error: null,
+    };
+  }
 
   it("só o RT vigente", async () => {
     papel("admin");
@@ -457,9 +595,25 @@ describe("aprovar de novo", () => {
     expect(escritas()).toEqual([]);
   });
 
+  it("com texto novo esperando o RT, recusa e não salva nada: salvar o texto antigo descartaria o novo (TELA-1)", async () => {
+    papel("leitura", { rt: true });
+    expect(await aprovarDeNovoAction(DE_NOVO)).toEqual({
+      ok: false,
+      error:
+        "Há um texto novo esperando a sua aprovação. Feche e abra de novo para revisar o texto novo.",
+      code: "texto_novo_aguardando",
+    });
+    expect(escritas()).toEqual([]);
+  });
+
   it("salva o mesmo texto da última aprovada e aprova a versão nova, numa ação", async () => {
+    semAguardando();
     papel("leitura", { rt: true });
     expect(await aprovarDeNovoAction(DE_NOVO)).toEqual({ ok: true });
+    expect(escritas()).toEqual([
+      "salvar_preparo_do_procedimento",
+      "aprovar_preparo_do_procedimento",
+    ]);
     expect(
       estado.rpcs.filter((r) => r.nome !== "user_e_responsavel_tecnico"),
     ).toEqual([
@@ -473,12 +627,13 @@ describe("aprovar de novo", () => {
       },
       {
         nome: "aprovar_preparo_do_procedimento",
-        args: { p_versao_id: NOVA, p_texto_sha256: SHA_NOVA },
+        args: { p_versao_id: NOVA, p_texto_sha256: SHA_V1 },
       },
     ]);
   });
 
   it("o texto do banco não é o que o RT leu: nada é gravado", async () => {
+    semAguardando();
     papel("leitura", { rt: true });
     expect(
       await aprovarDeNovoAction({ ...DE_NOVO, textoSha256: SHA_V2 }),
@@ -490,7 +645,63 @@ describe("aprovar de novo", () => {
     expect(escritas()).toEqual([]);
   });
 
+  it("o nome do procedimento não é o que a prévia mostrou: nada é gravado (TELA-11)", async () => {
+    semAguardando();
+    papel("leitura", { rt: true });
+    expect(
+      await aprovarDeNovoAction({ ...DE_NOVO, nomeLido: "Colono" }),
+    ).toEqual({
+      ok: false,
+      error:
+        "O nome do procedimento mudou enquanto você lia. Feche e abra de novo.",
+      code: "nome_mudou",
+    });
+    expect(escritas()).toEqual([]);
+  });
+
+  it("procedimento de outra clínica: nada é gravado", async () => {
+    semAguardando();
+    papel("leitura", { rt: true });
+    expect(
+      await aprovarDeNovoAction({ ...DE_NOVO, procedureId: PROC_DE_FORA }),
+    ).toEqual({ ok: false, error: "Procedimento não encontrado." });
+    expect(escritas()).toEqual([]);
+  });
+
+  it("o texto aprovado antes que as regras de hoje recusam não é aprovado de novo (CFM-2)", async () => {
+    semAguardando();
+    const v1 = estado.tabelas.preparo_do_procedimento?.find((v) => v.id === V1);
+    if (v1) {
+      v1.texto = "Jejum de 8 horas. O exame custa R$ 250,00.";
+    }
+    papel("leitura", { rt: true });
+    const resultado = await aprovarDeNovoAction(DE_NOVO);
+    expect(resultado.ok).toBe(false);
+    expect(resultado.ok ? undefined : resultado.code).toBe("texto_recusado");
+    expect(resultado.ok ? "" : resultado.error).toMatch(
+      /^Este texto não pode ser aprovado\. No trecho “O exame custa R\$ 250,00\.”, tire o valor/,
+    );
+    expect(escritas()).toEqual([]);
+  });
+
+  it("a versão nova não é o texto lido (o hash): fica aguardando, sem aprovar", async () => {
+    semAguardando();
+    estado.respostas.salvar_preparo_do_procedimento = {
+      data: { versao_id: NOVA, versao: 3, texto_sha256: SHA_NOVA },
+      error: null,
+    };
+    papel("leitura", { rt: true });
+    expect(await aprovarDeNovoAction(DE_NOVO)).toEqual({
+      ok: false,
+      error:
+        "Não foi possível aprovar agora. O texto ficou aguardando o RT: feche e use Revisar e aprovar.",
+      code: "ficou_aguardando",
+    });
+    expect(escritas()).toEqual(["salvar_preparo_do_procedimento"]);
+  });
+
   it("a aprovação falhou depois de salvar: o texto ficou aguardando o RT", async () => {
+    semAguardando();
     papel("leitura", { rt: true });
     estado.respostas.aprovar_preparo_do_procedimento = {
       data: null,
@@ -502,6 +713,31 @@ describe("aprovar de novo", () => {
         "Outro texto foi aprovado agora. Feche e abra de novo. O texto ficou aguardando o RT.",
       code: "outra_aprovacao",
     });
+    estado.respostas.aprovar_preparo_do_procedimento = {
+      data: null,
+      error: { code: "XX000", message: "qualquer coisa" },
+    };
+    expect(await aprovarDeNovoAction(DE_NOVO)).toEqual({
+      ok: false,
+      error: T.ficouAguardandoSemAprovar,
+      code: "ficou_aguardando",
+    });
+  });
+
+  it("sem o nome lido (a tela antiga), o Zod recusa antes de tudo", async () => {
+    semAguardando();
+    papel("leitura", { rt: true });
+    expect(
+      await aprovarDeNovoAction({
+        procedureId: PROC,
+        versaoLida: 2,
+        textoSha256: SHA_V1,
+      }),
+    ).toEqual({
+      ok: false,
+      error: "Não foi possível aprovar agora. Tente de novo.",
+    });
+    expect(estado.rpcs).toEqual([]);
   });
 });
 
@@ -579,10 +815,29 @@ describe("os avisos do texto para o diálogo do RT", () => {
     expect(await avisosDoPreparoAction({ versaoId: V1 })).toEqual({
       ok: true,
       avisos: ["orientacao_clinica"],
+      recusa: null,
     });
     expect(await avisosDoPreparoAction({ versaoId: V_DE_FORA })).toEqual({
       ok: false,
       error: "Este texto não foi encontrado. Feche e abra de novo.",
     });
+  });
+
+  it("o texto que as regras de hoje recusam vem com a frase do que tirar (CFM-2)", async () => {
+    estado.tabelas.preparo_do_procedimento?.push({
+      id: V_ANTIGO,
+      clinic_id: CLINICA,
+      procedure_id: PROC,
+      versao: 3,
+      situacao: "aguardando_rt",
+      texto: "Jejum de 8 horas. Veja o antes e depois no nosso Instagram.",
+      texto_sha256: SHA_ANTIGO,
+    });
+    const resultado = await avisosDoPreparoAction({ versaoId: V_ANTIGO });
+    expect(resultado.ok).toBe(true);
+    expect(resultado.ok ? resultado.recusa : null).toMatch(
+      /^No trecho “Veja o antes e depois no nosso Instagram\.”, tire a menção a antes e depois/,
+    );
+    expect(escritas()).toEqual([]);
   });
 });

@@ -68,11 +68,14 @@ const {
 const { ProcedimentosTab } =
   await import("@/components/cadastros/procedimentos-tab");
 const {
+  citarTrecho,
   FRASES_SEM_PERMISSAO,
   TEXTOS_DO_PREPARO: T,
   contadorDoTexto,
   dataEHoraNoFuso,
   frasesDasRecusas,
+  frasesDoTexto,
+  prepararTextoDoPreparo,
   problemaNoTextoDoPreparo,
   traduzirErroDoPreparo,
 } = await import("@/components/cadastros/preparo-na-tela");
@@ -594,17 +597,54 @@ describe("o editor do texto", () => {
       "A orientação de preparo pode ter até 3.500 caracteres.",
     );
     expect(problemaNoTextoDoPreparo("Olá {{nome}}")).toContain("chaves");
-    expect(problemaNoTextoDoPreparo("Jejum\u200b de 8 horas")).toContain(
-      "invisíveis",
-    );
     expect(problemaNoTextoDoPreparo("  Jejum de 8 horas.\r\n")).toBeNull();
     expect(problemaNoTextoDoPreparo(TEXTO_NOVO)).toBeNull();
+  });
+
+  it("o invisível diz a linha e as palavras que vêm antes dele (TELA-8)", () => {
+    expect(problemaNoTextoDoPreparo("Jejum\u200b de 8 horas")).toBe(
+      "Tire o caractere invisível da linha 1, logo depois de “Jejum”: apague e escreva de novo esse pedaço.",
+    );
+    // O hifen invisivel do Word, no meio da palavra, na segunda linha.
+    expect(
+      problemaNoTextoDoPreparo(
+        "Jejum de 8 horas.\nTome o laxan\u00adte às 18h.",
+      ),
+    ).toBe(
+      "Tire o caractere invisível da linha 2, logo depois de “Tome o laxan”: apague e escreva de novo esse pedaço.",
+    );
+    expect(problemaNoTextoDoPreparo("Jejum.\n\u200bTraga o pedido.")).toBe(
+      "Tire o caractere invisível do começo da linha 2: apague e escreva de novo o começo dessa linha.",
+    );
+  });
+
+  it("o emoji com junção é apontado pelo próprio emoji (TELA-8)", () => {
+    const medica = "\u{1F469}\u200D\u2695\uFE0F";
+    expect(
+      problemaNoTextoDoPreparo(`Jejum de 8 horas ${medica} e traga o pedido.`),
+    ).toBe(
+      `Tire o emoji ${medica}: ele leva um caractere invisível, que não pode ir na orientação de preparo.`,
+    );
+    // O emoji simples passa.
+    expect(
+      problemaNoTextoDoPreparo("Jejum de 8 horas \u{1F37D}\uFE0F."),
+    ).toBeNull();
+  });
+
+  it("a tabulação da lista do Word vira espaço: nunca vira recusa (TELA-8)", () => {
+    const doWord = "1.\tJejum de 8 horas.\n2.\tTraga o pedido médico.";
+    expect(problemaNoTextoDoPreparo(doWord)).toBeNull();
+    expect(prepararTextoDoPreparo(doWord)).toBe(
+      "1. Jejum de 8 horas.\n2. Traga o pedido médico.",
+    );
+    expect(contadorDoTexto("a\tb")).toBe("3 de 3.500");
+    expect(prepararTextoDoPreparo("  Jejum.\r\n\t")).toBe("Jejum.");
   });
 
   it("as frases das recusas por categoria (promessa, oferta, antes e depois, preço e formato)", () => {
     expect(frasesDasRecusas([])).toBeNull();
     expect(frasesDasRecusas(["promessa_resultado"])).toBe(
-      "Tire a promessa de resultado: a orientação de preparo não pode prometer resultado (Resolução CFM 2.336/2023).",
+      "Tire a promessa de resultado (palavras como garantir, 100%, sem dor ou definitivo): a orientação de preparo não pode prometer resultado (Resolução CFM 2.336/2023).",
     );
     const varias = frasesDasRecusas([
       "oferta_casada",
@@ -616,6 +656,48 @@ describe("o editor do texto", () => {
     expect(varias).toContain("Tire o valor");
     expect(varias).toContain("Tire o link");
     expect(varias).toContain("antes e depois");
+  });
+
+  it("com o trecho em que a regra achou o problema, a frase diz onde (TELA-8)", () => {
+    expect(
+      frasesDasRecusas(["promessa_resultado", "formato_invalido"], {
+        promessa_resultado:
+          "Para garantir a qualidade das imagens, faça jejum de 8 horas.",
+      }),
+    ).toBe(
+      "No trecho “Para garantir a qualidade das imagens, faça jejum de 8...”, tire a promessa de resultado (palavras como garantir, 100%, sem dor ou definitivo): a orientação de preparo não pode prometer resultado (Resolução CFM 2.336/2023). Tire o link, o arroba e os caracteres fora do comum: o paciente recebe só o texto (escreva mcg no lugar de µg).",
+    );
+    // A categoria sem frase propria tambem aponta o trecho.
+    expect(
+      frasesDasRecusas(["acao_nao_executada"], { acao_nao_executada: "X" }),
+    ).toBe("No trecho “X”, confira o texto da orientação de preparo.");
+    // A chave do prototipo nunca vira trecho.
+    expect(frasesDasRecusas(["toString"], {})).toBe(
+      "Confira o texto da orientação de preparo.",
+    );
+  });
+
+  it("o trecho entre aspas, curto, sem cortar palavra", () => {
+    expect(citarTrecho("  Jejum   de 8\nhoras. ")).toBe("“Jejum de 8 horas.”");
+    const longo = citarTrecho(
+      "Na véspera do exame, faça dieta líquida sem resíduos e tome bastante água ao longo do dia.",
+    );
+    expect(longo).toBe(
+      "“Na véspera do exame, faça dieta líquida sem resíduos e tome...”",
+    );
+  });
+
+  it("as frases do texto: pelo fim de frase e pela quebra de linha, sem cortar hora nem decimal", () => {
+    expect(
+      frasesDoTexto(
+        "Jejum de 8 horas. Às 18:00, tome o soro a 0,9%.\nTraga o pedido!\n\nVenha acompanhado",
+      ),
+    ).toEqual([
+      "Jejum de 8 horas.",
+      "Às 18:00, tome o soro a 0,9%.",
+      "Traga o pedido!",
+      "Venha acompanhado",
+    ]);
   });
 });
 
@@ -699,6 +781,27 @@ describe("os erros do banco em frase de recepção (contrato 4.6)", () => {
       "Confira o texto da orientação de preparo.",
     );
   });
+
+  it.each([
+    ["salvar", FRASES_SEM_PERMISSAO.escrever],
+    ["aprovar", FRASES_SEM_PERMISSAO.aprovar],
+    ["devolver", FRASES_SEM_PERMISSAO.aprovar],
+    ["descartar", FRASES_SEM_PERMISSAO.descartar],
+    ["suspender", FRASES_SEM_PERMISSAO.suspender],
+  ] as const)(
+    "o 42501 técnico do Postgres (%s) vira a frase da ação, nunca inglês na tela (TELA-10)",
+    (acao, frase) => {
+      expect(
+        traduzirErroDoPreparo(acao, {
+          code: "42501",
+          message: "permission denied for function qualquer_coisa",
+        }),
+      ).toEqual({ ok: false, error: frase, code: "sem_permissao" });
+      expect(
+        traduzirErroDoPreparo(acao, { code: "42501", message: "" }).error,
+      ).toBe(frase);
+    },
+  );
 
   it("o 42501 mostra a frase da RPC como veio", () => {
     expect(

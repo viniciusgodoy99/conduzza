@@ -33,6 +33,20 @@ export const FRASES_SEM_PERMISSAO = {
     "Somente administradores, gestores ou o responsável técnico suspendem o envio da orientação de preparo.",
 } as const;
 
+/**
+ * A equipe Conduzza (super admin) escreve, descarta e suspende, mas nunca
+ * aprova nem devolve, nem quando tambem e o RT designado (D-71; revisao das
+ * telas, TELA-9): a dica dos botoes de aprovar e a recusa da action.
+ */
+export const FRASE_DA_EQUIPE_CONDUZZA =
+  "A equipe Conduzza não aprova a orientação de preparo. Só o responsável técnico da clínica aprova.";
+
+/** As frases 42501 que as RPCs mandam, para conferir a que chega do banco. */
+const FRASES_42501_DO_BANCO: ReadonlySet<string> = new Set([
+  ...Object.values(FRASES_SEM_PERMISSAO),
+  FRASE_DA_EQUIPE_CONDUZZA,
+]);
+
 // ---------------------------------------------------------------------------
 // Os textos da secao e do dialogo
 // ---------------------------------------------------------------------------
@@ -55,6 +69,8 @@ export const TEXTOS_DO_PREPARO = {
     "Nenhuma orientação de preparo escrita para este procedimento.",
   emVigor: "Em vigor",
   aguardando: "Texto novo aguardando o RT",
+  /** O texto antigo copiado pela migration (D-83), que ninguem escreveu agora. */
+  aguardandoTextoAntigo: "Texto do cadastro aguardando o RT",
   aprovadaParada: "Aprovada, sem envio",
   suspensa: "Envio suspenso",
   enquantoComVigor:
@@ -73,7 +89,41 @@ export const TEXTOS_DO_PREPARO = {
   enviando: "Enviando...",
   cancelar: "Cancelar",
   descartar: "Descartar texto novo",
+  descartarTextoAntigo: "Descartar este texto",
   descartando: "Descartando...",
+  // A confirmacao do descarte (revisao das telas, TELA-5): grava na hora e
+  // o texto sai da tela.
+  descartarTitulo: "Descartar o texto novo?",
+  descartarTituloTextoAntigo: "Descartar este texto?",
+  descartarCorpo: "Ele não vai para o responsável técnico e sai desta tela.",
+  descartarCorpoDoRt:
+    "Ele não vai para o responsável técnico e sai desta tela. Para pedir uma mudança a quem escreveu, use Devolver, em Revisar e aprovar.",
+  descartarConfirmar: "Descartar texto",
+  // O texto digitado e nao enviado (revisao das telas, TELA-4): nunca se
+  // perde em silencio.
+  rascunhoTitulo: "Descartar o que foi digitado?",
+  rascunhoAoCancelar:
+    "O texto da orientação de preparo ainda não foi enviado para o responsável técnico. Se você cancelar, ele se perde.",
+  rascunhoAoFechar:
+    "O texto da orientação de preparo ainda não foi enviado para o responsável técnico. Se você fechar, ele se perde.",
+  rascunhoAoSalvar:
+    "O texto da orientação de preparo ainda não foi enviado para o responsável técnico. O Salvar grava o procedimento, mas não esse texto: para guardar o texto, use antes Enviar para o RT aprovar.",
+  continuarEditando: "Continuar editando",
+  descartarOTexto: "Descartar o texto",
+  descartarEFechar: "Descartar e fechar",
+  salvarSemOTexto: "Salvar sem o texto",
+  // Outra pessoa salvou enquanto o editor estava aberto (TELA-3): o texto
+  // digitado fica, e o texto novo aparece acima antes do proximo envio.
+  outraPessoaSalvou:
+    "Outra pessoa salvou um texto novo enquanto você escrevia, e ele aparece acima. Leia antes de enviar o seu de novo.",
+  outraPessoaSalvouAguardando:
+    "Outra pessoa salvou um texto novo enquanto você escrevia, e ele aparece acima, aguardando o RT. Leia antes de enviar o seu de novo: o seu toma o lugar dele.",
+  // O texto aguardando escrito com o nome antigo do procedimento (TELA-6):
+  // a aprovacao prende o nome, entao ele precisa ser enviado de novo.
+  nomeMudouNoAguardando:
+    "O nome do procedimento mudou depois que este texto foi escrito. Envie o texto de novo para o responsável técnico aprovar.",
+  dicaDoNomeMudou: "Envie o texto de novo com o nome novo antes de aprovar.",
+  enviarDeNovo: "Enviar de novo com o nome novo",
   revisar: "Revisar e aprovar",
   aprovarDeNovo: "Aprovar de novo",
   suspender: "Suspender o envio",
@@ -91,12 +141,16 @@ export const TEXTOS_DO_PREPARO = {
   suspendendo: "Suspendendo...",
   avisoDoNome:
     "Mudar o nome tira a aprovação da orientação de preparo: o responsável técnico precisa aprovar de novo.",
-  filtrarAguardando: "Mostrar só Aguardando o RT",
+  avisoDoNomeAguardando:
+    "Com o nome novo, o texto que espera o responsável técnico precisa ser enviado de novo.",
+  filtrarAguardando: "Mostrar só os que esperam sua aprovação",
   mostrarTodos: "Mostrar todos os procedimentos",
   nenhumAguardando: "Nenhum procedimento espera a sua aprovação agora.",
+  textoIndisponivel: "Não foi possível carregar este texto.",
   // O dialogo de aprovacao (desenho 5.2)
   comoRecebe: "Como o paciente recebe",
   oQueMudou: "O que mudou desde o texto em vigor",
+  oQueMudouDesdeOUltimo: "O que mudou desde o último texto aprovado",
   semTextoEmVigor: "Não há texto em vigor: o texto inteiro é novo.",
   mesmoTexto:
     "O texto é o mesmo que já foi aprovado. A aprovação passa a valer com o responsável técnico e o nome do procedimento de agora.",
@@ -118,15 +172,37 @@ export const TEXTOS_DO_PREPARO = {
     "Orientação aprovada. A régua e o assistente passam a enviar este texto.",
   devolvido: "Texto devolvido com o seu comentário.",
   naoEMaisORt: "Você não é mais o responsável técnico desta clínica.",
+  rtMudouAoLer:
+    "O responsável técnico da clínica mudou enquanto você lia. Feche e abra de novo.",
+  // As recusas do "Aprovar de novo" e do aprovar (TELA-1, TELA-11 e CFM-2)
+  textoNovoAguardando:
+    "Há um texto novo esperando a sua aprovação. Feche e abra de novo para revisar o texto novo.",
+  nomeMudouAoLer:
+    "O nome do procedimento mudou enquanto você lia. Feche e abra de novo.",
+  ficouAguardando: "O texto ficou aguardando o RT.",
+  ficouAguardandoSemAprovar:
+    "Não foi possível aprovar agora. O texto ficou aguardando o RT: feche e use Revisar e aprovar.",
+  naoPodeSerAprovado: "Este texto não pode ser aprovado.",
 } as const;
 
 export function aprovarTitulo(procedimento: string): string {
   return `Aprovar orientação de preparo de ${procedimento}`;
 }
 
-/** "{n} de 3.500" (pontos de codigo do texto ja normalizado). */
+/**
+ * O texto como vai para a action e para o banco (TELA-8): a tabulacao (o
+ * recuo da tecla Tab, que a lista numerada colada do Word traz, como em
+ * "1.<Tab>Jejum de 8 horas.") vira espaco, e depois a normalizacao do banco
+ * (normalizarTextoDoPreparo: CR para LF, NFC e as pontas). O banco continua
+ * recusando a tabulacao crua; ela so nunca chega la.
+ */
+export function prepararTextoDoPreparo(texto: string): string {
+  return normalizarTextoDoPreparo(texto.replace(/\t/g, " "));
+}
+
+/** "{n} de 3.500" (pontos de codigo do texto como vai para o banco). */
 export function contadorDoTexto(texto: string): string {
-  const tamanho = Array.from(normalizarTextoDoPreparo(texto)).length;
+  const tamanho = Array.from(prepararTextoDoPreparo(texto)).length;
   return `${tamanho.toLocaleString("pt-BR")} de ${LIMITE_DO_TEXTO_DO_PREPARO.toLocaleString("pt-BR")}`;
 }
 
@@ -208,14 +284,89 @@ export const ROTULO_DA_SITUACAO: Record<SituacaoDoPreparo, string> = {
 // A conferencia do texto antes da RPC (a mesma no navegador e na action)
 // ---------------------------------------------------------------------------
 
+const MAXIMO_DO_TRECHO = 60;
+
 /**
- * O problema do texto como o banco o guardaria (normalizado), ou null: o
- * espelho de preparo_texto_valido em frase de recepcao. As recusas de
- * conteudo (promessa, oferta casada, preco, link) sao do servidor
- * (problemasDoTextoDoPreparo) e chegam pela action.
+ * O trecho do texto entre aspas, curto: os brancos viram um espaco so, e o
+ * que passa de 60 caracteres corta na ultima palavra inteira, com "...".
+ */
+export function citarTrecho(trecho: string): string {
+  const limpo = trecho.replace(/\s+/gu, " ").trim();
+  const pontos = Array.from(limpo);
+  if (pontos.length <= MAXIMO_DO_TRECHO) {
+    return `“${limpo}”`;
+  }
+  const corte = pontos.slice(0, MAXIMO_DO_TRECHO).join("");
+  const espaco = corte.lastIndexOf(" ");
+  const curto = espaco > MAXIMO_DO_TRECHO / 2 ? corte.slice(0, espaco) : corte;
+  return `“${curto.replace(/[\s.,;:!?]+$/u, "")}...”`;
+}
+
+/**
+ * As frases de um texto da clinica, na ordem: o corte e no fim de frase
+ * (ponto, exclamacao, interrogacao, ponto e virgula, dois pontos ou
+ * reticencias seguidos de branco) e na quebra de linha. "18:00" e "0,9" nao
+ * cortam. E so para a tela apontar o trecho de uma recusa.
+ */
+export function frasesDoTexto(texto: string): string[] {
+  return texto
+    .split(/(?<=[.!?;:…])\s+|\n+/u)
+    .map((frase) => frase.trim())
+    .filter((frase) => frase !== "");
+}
+
+// Os caracteres que o CHECK recusa alem das chaves: o controle (menos o
+// "\n") e os invisiveis. ESPELHO de CONTROLE_NO_TEXTO e INVISIVEL_NO_TEXTO
+// (lib/domain/preparo.ts, privados la), so para a frase dizer ONDE esta o
+// caractere: quem decide se o texto vale e textoDoPreparoValido, e sem achar
+// o caractere aqui a frase e a geral.
+const CARACTERE_RECUSADO =
+  /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\ufeff]/u;
+
+// O emoji com juncao (a medica: U+1F469, U+200D e U+2695): uma figura so na
+// tela, que leva o U+200D, um dos invisiveis que o banco recusa.
+const EMOJI_COM_JUNCAO =
+  /\p{Extended_Pictographic}[\ufe0f\u{1f3fb}-\u{1f3ff}]?(?:\u200d\p{Extended_Pictographic}[\ufe0f\u{1f3fb}-\u{1f3ff}]?)+/u;
+
+const FRASE_DO_INVISIVEL =
+  "Tire os caracteres invisíveis do texto (copie de novo, sem formatação).";
+
+/**
+ * A frase do caractere que o banco recusa, dizendo qual e onde (TELA-8): o
+ * emoji com juncao pelo proprio emoji; os outros pela linha e pelas palavras
+ * que vem logo antes (o invisivel nao aparece na tela). Sem achar, a frase
+ * geral.
+ */
+export function fraseDoCaractereRecusado(texto: string): string {
+  const emoji = EMOJI_COM_JUNCAO.exec(texto);
+  if (emoji) {
+    return `Tire o emoji ${emoji[0]}: ele leva um caractere invisível, que não pode ir na orientação de preparo.`;
+  }
+  const achado = CARACTERE_RECUSADO.exec(texto);
+  if (!achado) {
+    return FRASE_DO_INVISIVEL;
+  }
+  const antes = texto.slice(0, achado.index);
+  const linha = antes.split("\n").length;
+  const palavras = antes
+    .slice(antes.lastIndexOf("\n") + 1)
+    .split(/\s+/u)
+    .filter((palavra) => palavra !== "")
+    .slice(-4)
+    .join(" ");
+  return palavras === ""
+    ? `Tire o caractere invisível do começo da linha ${linha}: apague e escreva de novo o começo dessa linha.`
+    : `Tire o caractere invisível da linha ${linha}, logo depois de ${citarTrecho(palavras)}: apague e escreva de novo esse pedaço.`;
+}
+
+/**
+ * O problema do texto como o banco o guardaria (prepararTextoDoPreparo), ou
+ * null: o espelho de preparo_texto_valido em frase de recepcao, dizendo o
+ * que tirar. As recusas de conteudo (promessa, oferta casada, preco, link)
+ * sao do servidor (problemasDoTextoDoPreparo) e chegam pela action.
  */
 export function problemaNoTextoDoPreparo(texto: string): string | null {
-  const normalizado = normalizarTextoDoPreparo(texto);
+  const normalizado = prepararTextoDoPreparo(texto);
   if (normalizado === "") {
     return "Escreva a orientação de preparo.";
   }
@@ -226,7 +377,7 @@ export function problemaNoTextoDoPreparo(texto: string): string | null {
     return "Tire as chaves {{ e }} do texto: elas não podem ir na orientação de preparo.";
   }
   if (!textoDoPreparoValido(normalizado)) {
-    return "Tire os caracteres invisíveis do texto (copie de novo, sem formatação).";
+    return fraseDoCaractereRecusado(normalizado);
   }
   return null;
 }
@@ -234,38 +385,57 @@ export function problemaNoTextoDoPreparo(texto: string): string | null {
 /**
  * A frase de cada categoria que problemasDoTextoDoPreparo RECUSA (D-80: o
  * remedio, a dose e o jejum so avisam; promessa, oferta casada, antes e
- * depois, preco e link nunca entram, nem aprovados pelo RT).
+ * depois, preco e link nunca entram, nem aprovados pelo RT), com exemplos
+ * do que conta, para quem escreve achar o que tirar. Triagem e diagnostico
+ * hoje so avisam; a frase existe para o dia em que recusarem (CFM-3).
  */
 const FRASE_DA_RECUSA: Record<string, string> = {
   promessa_resultado:
-    "Tire a promessa de resultado: a orientação de preparo não pode prometer resultado (Resolução CFM 2.336/2023).",
+    "Tire a promessa de resultado (palavras como garantir, 100%, sem dor ou definitivo): a orientação de preparo não pode prometer resultado (Resolução CFM 2.336/2023).",
   oferta_casada:
-    "Tire a oferta de brinde ou de outro procedimento: a orientação de preparo não oferece nada junto (a palavra kit também conta como oferta).",
+    "Tire a oferta de brinde ou de outro procedimento (palavras como grátis, brinde, pacote, combo, promoção ou kit): a orientação de preparo não oferece nada junto.",
   antes_depois:
-    "Tire a menção a antes e depois: a orientação de preparo não pode mostrar resultado (Resolução CFM 2.336/2023).",
+    "Tire a menção a antes e depois (fotos, vídeos ou depoimentos de pacientes): a orientação de preparo não pode mostrar resultado (Resolução CFM 2.336/2023).",
   preco_nao_verificado:
-    "Tire o valor e as condições de pagamento: o preço não vai na orientação de preparo.",
+    "Tire o valor e as condições de pagamento (R$, desconto ou parcelas): o preço não vai na orientação de preparo.",
   formato_invalido:
     "Tire o link, o arroba e os caracteres fora do comum: o paciente recebe só o texto (escreva mcg no lugar de µg).",
+  triagem:
+    "Tire a avaliação de sintoma (dizer se um sintoma é normal, esperado ou grave): a orientação de preparo não avalia sintomas (Resolução CFM 2.314/2022).",
+  diagnostico:
+    "Tire o diagnóstico (dizer o que a pessoa tem ou pode ter): a orientação de preparo não faz diagnóstico.",
 };
 
 const FRASE_DA_RECUSA_SEM_NOME = "Confira o texto da orientação de preparo.";
 
-/** As frases das recusas, sem repetir, na ordem que vieram; null sem recusa. */
-export function frasesDasRecusas(recusas: readonly string[]): string | null {
+function comMinusculaNoComeco(frase: string): string {
+  return frase.charAt(0).toLocaleLowerCase("pt-BR") + frase.slice(1);
+}
+
+/**
+ * As frases das recusas, sem repetir, na ordem que vieram; null sem recusa.
+ * Com o trecho em que cada recusa foi achada (a action confere frase a
+ * frase, no servidor), a frase diz onde: "No trecho “...”, tire ...".
+ */
+export function frasesDasRecusas(
+  recusas: readonly string[],
+  trechos: Readonly<Record<string, string>> = {},
+): string | null {
   if (recusas.length === 0) {
     return null;
   }
-  const frases = [
-    ...new Set(
-      recusas.map((r) =>
-        Object.hasOwn(FRASE_DA_RECUSA, r)
-          ? (FRASE_DA_RECUSA[r] ?? FRASE_DA_RECUSA_SEM_NOME)
-          : FRASE_DA_RECUSA_SEM_NOME,
-      ),
-    ),
-  ];
-  return frases.join(" ");
+  const frases = recusas.map((categoria) => {
+    const base = Object.hasOwn(FRASE_DA_RECUSA, categoria)
+      ? (FRASE_DA_RECUSA[categoria] ?? FRASE_DA_RECUSA_SEM_NOME)
+      : FRASE_DA_RECUSA_SEM_NOME;
+    const trecho = Object.hasOwn(trechos, categoria)
+      ? trechos[categoria]
+      : undefined;
+    return trecho
+      ? `No trecho ${citarTrecho(trecho)}, ${comMinusculaNoComeco(base)}`
+      : base;
+  });
+  return [...new Set(frases)].join(" ");
 }
 
 // ---------------------------------------------------------------------------
@@ -277,8 +447,12 @@ export type AcaoDoPreparo =
 
 /**
  * O que a tela faz com a recusa: "sem_permissao" (42501; no dialogo do RT
- * vira "Voce nao e mais o responsavel tecnico desta clinica.") e os codigos
- * de quem chegou depois (a tela recarrega o que mostra).
+ * vira "Voce nao e mais o responsavel tecnico desta clinica."), os codigos
+ * de quem chegou depois (a tela recarrega o que mostra) e os da propria
+ * action: "texto_novo_aguardando" (o "Aprovar de novo" com texto novo
+ * esperando o RT), "ficou_aguardando" (o "Aprovar de novo" salvou e nao
+ * aprovou), "texto_recusado" (as regras de hoje recusam o texto) e
+ * "versao_inexistente" (a versao sumiu ou e de outra clinica).
  */
 export type CodigoDaRecusa =
   | "sem_permissao"
@@ -287,7 +461,11 @@ export type CodigoDaRecusa =
   | "nao_aguarda_aprovacao"
   | "nome_mudou"
   | "outra_aprovacao"
-  | "sem_preparo_aprovado";
+  | "sem_preparo_aprovado"
+  | "versao_inexistente"
+  | "texto_novo_aguardando"
+  | "ficou_aguardando"
+  | "texto_recusado";
 
 export type RecusaDoPreparo = {
   ok: false;
@@ -330,13 +508,26 @@ const CODIGOS_DA_TELA: ReadonlySet<string> = new Set([
   "nome_mudou",
   "outra_aprovacao",
   "sem_preparo_aprovado",
+  "versao_inexistente",
 ]);
+
+/** A frase 42501 de cada acao: a que a RPC dela manda. */
+const FRASE_42501_DA_ACAO: Record<AcaoDoPreparo, string> = {
+  salvar: FRASES_SEM_PERMISSAO.escrever,
+  aprovar: FRASES_SEM_PERMISSAO.aprovar,
+  devolver: FRASES_SEM_PERMISSAO.aprovar,
+  descartar: FRASES_SEM_PERMISSAO.descartar,
+  suspender: FRASES_SEM_PERMISSAO.suspender,
+};
 
 /**
  * A recusa do banco (error.code e o SQLSTATE; error.message e o codigo de
  * negocio ou, no 42501, a frase pronta) em frase de recepcao. O texto_mudou
  * tem duas frases: quem salva chegou depois de outro Salvar; quem aprova leu
- * um texto que mudou. Sem traducao: a frase de sempre da acao.
+ * um texto que mudou. O 42501 so mostra a frase do banco quando ela e uma
+ * das quatro das RPCs (TELA-10): o texto tecnico do Postgres ("permission
+ * denied for function ...", o grant que faltou) vira a frase da acao. Sem
+ * traducao: a frase de sempre da acao.
  */
 export function traduzirErroDoPreparo(
   acao: AcaoDoPreparo,
@@ -346,7 +537,9 @@ export function traduzirErroDoPreparo(
   if (erro.code === "42501") {
     return {
       ok: false,
-      error: mensagem.trim() === "" ? erroDeSempre(acao) : mensagem,
+      error: FRASES_42501_DO_BANCO.has(mensagem)
+        ? mensagem
+        : FRASE_42501_DA_ACAO[acao],
       code: "sem_permissao",
     };
   }
