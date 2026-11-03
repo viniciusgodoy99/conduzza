@@ -13,6 +13,16 @@ import {
   VERSAO_DA_POLITICA_DO_CLASSIFICADOR,
 } from "@/lib/integrations/llm/classificador-de-entrada";
 import type { ClienteDoVerificador } from "@/lib/integrations/llm/verificador";
+// [AG7 preparo] início
+import { versaoDoPortao } from "@/lib/domain/conformidade/filtro";
+import {
+  FRASE_DO_PREPARO_COM_A_HABILIDADE,
+  FRASE_DO_PREPARO_SEM_A_HABILIDADE,
+  POLITICA_DO_CLASSIFICADOR_COM_PREPARO,
+  politicaDoClassificador,
+  versaoDaPoliticaDoClassificador,
+} from "@/lib/integrations/llm/classificador-de-entrada";
+// [AG7 preparo] fim
 
 // O classificador de entrada com cliente falso. A regra que importa: so
 // segue para o agente com exatamente ["nenhum"] e confianca alta ou media.
@@ -650,3 +660,114 @@ describe("politica do classificador na AG2", () => {
     );
   });
 });
+
+// [AG7 preparo] início
+// AG7 (03/11/2026; D-81): o classificador recebe a variante por chamada. Sem
+// a habilidade "Enviar orientacao de preparo", a politica e a versao sao as
+// de hoje, byte a byte (o teste da AG2, acima, continua valendo); com ela,
+// so a frase do jejum muda: pedir o preparo e nenhum, e a duvida sobre o
+// preparo aplicada a pessoa continua assunto_clinico. O portao
+// deterministico nao muda.
+describe("AG7: a variante do preparo no classificador", () => {
+  it("sem a habilidade, a politica e a versao sao as de hoje, byte a byte", () => {
+    expect(politicaDoClassificador()).toBe(POLITICA_DO_CLASSIFICADOR);
+    expect(politicaDoClassificador({ comPreparo: false })).toBe(
+      POLITICA_DO_CLASSIFICADOR,
+    );
+    // A versao de antes da AG7 (a da AG6b na branch).
+    expect(VERSAO_DA_POLITICA_DO_CLASSIFICADOR).toBe(
+      "classificador-03718b05f3a2",
+    );
+    expect(versaoDaPoliticaDoClassificador()).toBe(
+      VERSAO_DA_POLITICA_DO_CLASSIFICADOR,
+    );
+    expect(versaoDaPoliticaDoClassificador({ comPreparo: false })).toBe(
+      VERSAO_DA_POLITICA_DO_CLASSIFICADOR,
+    );
+    expect(
+      POLITICA_DO_CLASSIFICADOR.split(FRASE_DO_PREPARO_SEM_A_HABILIDADE),
+    ).toHaveLength(2);
+  });
+
+  it("com a habilidade, so a frase do jejum na linha do assunto_clinico troca", () => {
+    const variante = politicaDoClassificador({ comPreparo: true });
+    expect(variante).toBe(POLITICA_DO_CLASSIFICADOR_COM_PREPARO);
+    expect(variante).not.toContain(FRASE_DO_PREPARO_SEM_A_HABILIDADE);
+    expect(variante.split(FRASE_DO_PREPARO_COM_A_HABILIDADE)).toHaveLength(2);
+    expect(
+      variante.replace(
+        FRASE_DO_PREPARO_COM_A_HABILIDADE,
+        FRASE_DO_PREPARO_SEM_A_HABILIDADE,
+      ),
+    ).toBe(POLITICA_DO_CLASSIFICADOR);
+    const antes = POLITICA_DO_CLASSIFICADOR.split("\n");
+    const depois = variante.split("\n");
+    expect(depois).toHaveLength(antes.length);
+    const mudou = depois.filter((linha, i) => linha !== antes[i]);
+    expect(mudou).toHaveLength(1);
+    expect(mudou[0]).toBe(
+      `- assunto_clinico: pergunta sobre remédio, cuidados, riscos, efeitos, resultados, gravidez, amamentação, doenças, o resultado de um exame ou se precisa fazer um exame, contraindicações, ou qualquer dúvida que só um profissional de saúde pode responder. ${FRASE_DO_PREPARO_COM_A_HABILIDADE}`,
+    );
+    expect(variante).not.toMatch(/[–—]/);
+  });
+
+  it("a frase nova: pedir o preparo e nenhum; a duvida aplicada a pessoa continua assunto_clinico", () => {
+    for (const trecho of [
+      "Pedir a orientação de preparo de um procedimento, ou perguntar de forma geral se ele tem preparo ou exige jejum, sem contar uma situação de saúde da própria pessoa, é nenhum",
+      "a recepção manda o texto aprovado pela clínica",
+      "Continua assunto_clinico: a dúvida sobre o preparo aplicada à pessoa (um remédio que toma, uma doença, gravidez, se pode comer ou beber algo, o que fazer se esqueceu ou não conseguiu seguir), a dúvida sobre o texto recebido e os cuidados depois do procedimento.",
+    ]) {
+      expect(FRASE_DO_PREPARO_COM_A_HABILIDADE).toContain(trecho);
+    }
+    expect(FRASE_DO_PREPARO_COM_A_HABILIDADE).not.toMatch(/[–—]/);
+  });
+
+  it("a versao da variante e outra, no mesmo formato", () => {
+    const versao = versaoDaPoliticaDoClassificador({ comPreparo: true });
+    expect(versao).toMatch(/^classificador-[0-9a-f]{12}$/);
+    expect(versao).not.toBe(VERSAO_DA_POLITICA_DO_CLASSIFICADOR);
+  });
+
+  it("a chamada usa a variante pedida", async () => {
+    for (const [comPreparo, esperada] of [
+      [true, POLITICA_DO_CLASSIFICADOR_COM_PREPARO],
+      [false, POLITICA_DO_CLASSIFICADOR],
+      [undefined, POLITICA_DO_CLASSIFICADOR],
+    ] as const) {
+      const { cliente, parse } = clienteFalso(async () =>
+        resposta({ gatilhos: ["nenhum"], confianca: "alta" }),
+      );
+      const classificar = criarClassificadorDeEntrada({
+        cliente,
+        modelo: "gpt-6-luna",
+      });
+      const resultado = await classificar({
+        mensagens: ["qual o preparo da colonoscopia?"],
+        comPreparo,
+      });
+      expect(resultado).toMatchObject({ tipo: "classificacao" });
+      const [params] = parse.mock.calls[0] as unknown as [
+        Record<string, unknown>,
+      ];
+      expect(params.instructions, String(comPreparo)).toBe(esperada);
+    }
+  });
+
+  it("o portao deterministico nao muda (D-81): o pedido passa, a duvida da pessoa e o exame escalam", () => {
+    expect(gatilhosDosTextos(["qual o preparo da colonoscopia?"])).toEqual([]);
+    expect(gatilhosDosTextos(["precisa de jejum pro ultrassom?"])).toEqual([]);
+    expect(
+      gatilhosDosTextos(["tomo remédio de pressão, posso tomar no dia?"]),
+    ).toContain("assunto_clinico");
+    expect(gatilhosDosTextos(["estou grávida, qual o preparo?"])).toContain(
+      "assunto_clinico",
+    );
+    expect(gatilhosDosTextos(["qual o preparo do exame de sangue?"])).toContain(
+      "assunto_clinico",
+    );
+    // A versao do portao de antes da AG7 (a da AG6a, 2a rodada): a AG7 nao
+    // mexe no portao. Quem mudar o portao depois atualiza esta linha.
+    expect(versaoDoPortao()).toBe("portao-9e835642d49a");
+  });
+});
+// [AG7 preparo] fim
