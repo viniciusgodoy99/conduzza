@@ -63,7 +63,7 @@ import type {
 // agente (os cartoes da aba WhatsApp da Tela 6, no modo do painel), o gasto
 // contra o teto e o proprio teto. De paciente, so contagens; nome, e-mail,
 // papel e ultimo acesso sao da equipe da clinica. A pagina
-// (app/(app)/painel-geral/[clinicId]/page.tsx) le os dados; aqui so se
+// (app/(admin)/painel-geral/[clinicId]/page.tsx) le os dados; aqui so se
 // desenha, e cada leitura de apoio que falhou mostra o erro no proprio
 // cartao (nunca um cartao vazio que afirma o que nao leu). Server
 // Component; os cartoes com acao sao filhos client.

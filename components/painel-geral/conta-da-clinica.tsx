@@ -8,7 +8,7 @@ import {
   reativarClinicaAction,
   suspenderClinicaAction,
   type ResultadoDoPainel,
-} from "@/app/(app)/painel-geral/actions";
+} from "@/app/(admin)/painel-geral/actions";
 import {
   dataEHoraNaClinica,
   MOTIVO_MAXIMO,

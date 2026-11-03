@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { exportarPainel } from "@/app/(app)/painel-geral/exportar/exportar-painel";
+import { exportarPainel } from "@/app/(admin)/painel-geral/exportar/exportar-painel";
 import { TEXTOS_DO_PAINEL } from "@/components/painel-geral/painel-geral";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { log } from "@/lib/log";

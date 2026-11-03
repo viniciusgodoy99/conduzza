@@ -11,7 +11,8 @@ import { createClient } from "@/lib/supabase/server";
 
 // Painel geral (onda 1, decisao do dono de 20/10/2026; desde 26/10/2026, o
 // acompanhamento de cliente): todas as clinicas do sistema, so para a
-// equipe Conduzza (a guarda e o layout desta rota). Uma leitura so
+// equipe Conduzza (a guarda e o layout da area do super admin,
+// app/(admin)/layout.tsx, com o menu proprio desde 03/11/2026). Uma leitura so
 // (painel_cs_das_clinicas, SECURITY DEFINER e so do super admin): os
 // cartoes do topo e a lista, com busca e filtros no cliente. De paciente, so
 // contagens; nome e e-mail sao da equipe da clinica (dado de operacao),

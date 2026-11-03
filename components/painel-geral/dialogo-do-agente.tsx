@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import {
   definirAgenteDaClinicaAction,
   type ResultadoDoPainel,
-} from "@/app/(app)/painel-geral/actions";
+} from "@/app/(admin)/painel-geral/actions";
 import {
   dolares,
   estadoDaConfirmacao,

@@ -7,7 +7,7 @@ import { adminClient } from "../rls/stack";
 // pelo cliente de servico (como o motor, a ingestao e o painel chegam ao
 // banco pelo PostgREST). O que esta em jogo:
 // - suspender_clinica e reativar_clinica: as recusas chegam com o codigo e a
-//   CHAVE que a tela traduz (app/(app)/painel-geral/actions.ts compara
+//   CHAVE que a tela traduz (app/(admin)/painel-geral/actions.ts compara
 //   error.message com clinica_ja_suspensa, clinica_nao_suspensa,
 //   clinica_de_teste, clinica_suspensa e sem_liberacao), sem laco de
 //   retentativa do PostgREST (nenhuma e 40001); a linha, a trilha e a

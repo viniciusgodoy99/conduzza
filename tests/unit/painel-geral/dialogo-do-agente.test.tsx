@@ -30,7 +30,7 @@ vi.mock("@/components/ui/dialog", () => {
 vi.mock("sonner", () => ({
   toast: { success: () => undefined, error: () => undefined },
 }));
-vi.mock("@/app/(app)/painel-geral/actions", () => ({
+vi.mock("@/app/(admin)/painel-geral/actions", () => ({
   definirAgenteDaClinicaAction: vi.fn(),
 }));
 
