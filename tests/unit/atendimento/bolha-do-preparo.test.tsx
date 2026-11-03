@@ -32,8 +32,15 @@ import {
   LINHA_DO_RT,
   mensagemDoPreparo,
   RODAPE_DO_PREPARO,
+  SEM_ENVIOS_DO_PREPARO,
 } from "@/lib/domain/preparo";
-import type { MessageItem, QuotedMessage } from "@/lib/queries/conversations";
+import {
+  conversationKeys,
+  fetchEnviosDoPreparo,
+  jobsQuePodemSerDoPreparo,
+  type MessageItem,
+  type QuotedMessage,
+} from "@/lib/queries/conversations";
 
 // AG7 (03/11/2026, contrato 3.3 e 7.4; desenho 5.5): a orientacao de preparo
 // aprovada pelo responsavel tecnico (RT) sai como mensagem do SISTEMA
@@ -45,7 +52,13 @@ import type { MessageItem, QuotedMessage } from "@/lib/queries/conversations";
 // citacao dela tambem diz "Assistente". A frase fixa, a nota da passagem e o
 // texto da equipe continuam como hoje: so o corpo no formato inteiro, do
 // sistema, vira preparo. O fio traz o job_id (revisao das telas, TELA-13): o
-// corpo no formato do preparo sem job nao e o preparo. Nada aqui chama rede.
+// corpo no formato do preparo sem job nao e o preparo. E o fechamento entre
+// as frentes (TELA-13 e CFM-10a): so com o envio confirmado, o job da
+// mensagem com a decisao 'enviou_preparo' no ai_decision_log (a consulta
+// separada do fio, fetchEnviosDoPreparo). O passo de regua escrito no mesmo
+// formato tem o job da regua, sem a decisao, e fica como mensagem comum do
+// sistema; sem a consulta (carregando ou com erro), tambem (falha fechada).
+// Nada aqui chama rede.
 
 // A meia-risca (U+2013) e o travessao (U+2014), montados pelo codigo para
 // que nenhum dos dois apareca neste arquivo.
@@ -80,6 +93,10 @@ const RAIZ = path.resolve(__dirname, "../../..");
 
 /** O job da IA que enviou o preparo (ficticio). */
 const JOB_DA_IA = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+/** O job de um passo de regua (ficticio): nunca tem a decisao do envio. */
+const JOB_DA_REGUA = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+/** Os envios confirmados: a decisao 'enviou_preparo' do job da IA. */
+const ENVIOS = new Set([JOB_DA_IA]);
 
 /** Os arquivos do Atendimento com bloco da AG7. */
 const ARQUIVOS_DA_AG7 = [
@@ -135,12 +152,14 @@ function bolha(
   message: MessageItem,
   extra: Partial<Parameters<typeof MessageBubble>[0]> = {},
 ): string {
+  const envios = extra.enviosDoPreparo ?? ENVIOS;
   return renderToStaticMarkup(
     <MessageBubble
       message={message}
-      authorName={autorDaBolha(message, NOMES)}
+      authorName={autorDaBolha(message, NOMES, envios)}
       authorNames={NOMES}
       timezone="America/Fortaleza"
+      enviosDoPreparo={envios}
       {...extra}
     />,
   );
@@ -180,12 +199,12 @@ describe("AG7: a mensagem do preparo no Atendimento", () => {
     expect(PREPARO).toBe(
       `Orientação de preparo para Colonoscopia\nResponsável técnico da clínica: Dra. Ana Souza (CRM-CE 12345)\n\n${TEXTO}\n\n${RODAPE_DO_PREPARO}`,
     );
-    expect(ehMensagemDoPreparo(mensagem())).toBe(true);
+    expect(ehMensagemDoPreparo(mensagem(), ENVIOS)).toBe(true);
   });
 
   it("assina Assistente, como a IA, com ou sem o mapa de nomes", () => {
-    expect(autorDaBolha(mensagem(), NOMES)).toBe("Assistente");
-    expect(autorDaBolha(mensagem(), {})).toBe("Assistente");
+    expect(autorDaBolha(mensagem(), NOMES, ENVIOS)).toBe("Assistente");
+    expect(autorDaBolha(mensagem(), {}, ENVIOS)).toBe("Assistente");
   });
 });
 
@@ -289,8 +308,8 @@ describe("AG7: a bolha do preparo", () => {
 describe("AG7: o que não é o preparo continua como hoje", () => {
   it("a frase fixa de escalonamento: Aviso automático, na pele neutra, sem a linha do texto aprovado", () => {
     const frase = mensagem({ body: FRASE_DE_ESCALONAMENTO });
-    expect(ehMensagemDoPreparo(frase)).toBe(false);
-    expect(autorDaBolha(frase, NOMES)).toBe(AUTOR_DO_AVISO_AUTOMATICO);
+    expect(ehMensagemDoPreparo(frase, ENVIOS)).toBe(false);
+    expect(autorDaBolha(frase, NOMES, ENVIOS)).toBe(AUTOR_DO_AVISO_AUTOMATICO);
     const html = bolha(frase);
     expect(linhaDeAutor(html)).toContain("data-aviso-automatico");
     expect(linhaDeAutor(html)).not.toContain(">IA<");
@@ -305,8 +324,8 @@ describe("AG7: o que não é o preparo continua como hoje", () => {
       delivery_status: null,
       body: `${CABECALHO_DA_NOTA_DA_PASSAGEM}\nParou em: o paciente descreveu um sintoma.`,
     });
-    expect(ehMensagemDoPreparo(nota)).toBe(false);
-    expect(autorDaBolha(nota, NOMES)).toBe("Assistente");
+    expect(ehMensagemDoPreparo(nota, ENVIOS)).toBe(false);
+    expect(autorDaBolha(nota, NOMES, ENVIOS)).toBe("Assistente");
     const html = bolha(nota);
     expect(linhaDeAutor(html)).toContain("data-nota-da-ia");
     expect(linhaDeAutor(html)).toContain("Nota interna, o paciente não vê");
@@ -317,8 +336,8 @@ describe("AG7: o que não é o preparo continua como hoje", () => {
 
   it("a nota interna com o mesmo texto do preparo continua Automação", () => {
     const nota = mensagem({ is_internal_note: true, delivery_status: null });
-    expect(ehMensagemDoPreparo(nota)).toBe(false);
-    expect(autorDaBolha(nota, NOMES)).toBe(AUTOR_DA_AUTOMACAO);
+    expect(ehMensagemDoPreparo(nota, ENVIOS)).toBe(false);
+    expect(autorDaBolha(nota, NOMES, ENVIOS)).toBe(AUTOR_DA_AUTOMACAO);
     const html = bolha(nota);
     expect(classesDaBolha(html)).toContain("bg-warning-bg");
     expect(linhaDeAutor(html)).not.toMatch(/lucide-sparkles/);
@@ -362,8 +381,8 @@ describe("AG7: o que não é o preparo continua como hoje", () => {
     "$caso, com o mesmo texto: pele da atendente, sem a linha do texto aprovado",
     ({ campos, autor }) => {
       const daEquipe = mensagem(campos);
-      expect(ehMensagemDoPreparo(daEquipe)).toBe(false);
-      expect(autorDaBolha(daEquipe, NOMES)).toBe(autor);
+      expect(ehMensagemDoPreparo(daEquipe, ENVIOS)).toBe(false);
+      expect(autorDaBolha(daEquipe, NOMES, ENVIOS)).toBe(autor);
       const html = bolha(daEquipe);
       const classes = classesDaBolha(html);
       expect(classes).toContain("bg-bubble-out");
@@ -391,21 +410,23 @@ describe("AG7: o que não é o preparo continua como hoje", () => {
     "%s: não vira preparo (sem linha de autor, na pele da atendente)",
     (_caso, body) => {
       const quase = mensagem({ body });
-      expect(ehMensagemDoPreparo(quase)).toBe(false);
-      expect(autorDaBolha(quase, NOMES)).toBeNull();
+      expect(ehMensagemDoPreparo(quase, ENVIOS)).toBe(false);
+      expect(autorDaBolha(quase, NOMES, ENVIOS)).toBeNull();
       const html = bolha(quase);
       expect(classesDaBolha(html)).toContain("bg-bubble-out");
       expect(linhaDeAutor(html)).not.toContain("Assistente");
       expect(html).not.toContain("data-preparo");
       expect(html).not.toContain(LINHA_DO_PREPARO_APROVADO);
-      expect(autorDaCitacao(citada({ body }), "Maria", NOMES)).toBe("Sistema");
+      expect(autorDaCitacao(citada({ body }), "Maria", NOMES, ENVIOS)).toBe(
+        "Sistema",
+      );
     },
   );
 
   it("a resposta da IA continua da IA, sem a linha do texto aprovado", () => {
     const daIa = mensagem({ author: "ia" });
-    expect(ehMensagemDoPreparo(daIa)).toBe(false);
-    expect(autorDaBolha(daIa, NOMES)).toBe("Assistente");
+    expect(ehMensagemDoPreparo(daIa, ENVIOS)).toBe(false);
+    expect(autorDaBolha(daIa, NOMES, ENVIOS)).toBe("Assistente");
     const html = bolha(daIa);
     expect(classesDaBolha(html)).toContain("bg-bubble-ai");
     expect(linhaDeAutor(html).match(/>IA</g)).toHaveLength(1);
@@ -419,8 +440,8 @@ describe("AG7: o que não é o preparo continua como hoje", () => {
       author: "paciente",
       delivery_status: null,
     });
-    expect(ehMensagemDoPreparo(doPaciente)).toBe(false);
-    expect(autorDaBolha(doPaciente, NOMES)).toBeNull();
+    expect(ehMensagemDoPreparo(doPaciente, ENVIOS)).toBe(false);
+    expect(autorDaBolha(doPaciente, NOMES, ENVIOS)).toBeNull();
     const html = bolha(doPaciente);
     expect(html).toContain("justify-start");
     expect(classesDaBolha(html)).toContain("bg-card");
@@ -437,10 +458,10 @@ describe("AG7: o que não é o preparo continua como hoje", () => {
       },
     ] as const satisfies readonly Partial<MessageItem>[]) {
       expect(
-        ehMensagemDoPreparo(mensagem(campos)),
+        ehMensagemDoPreparo(mensagem(campos), ENVIOS),
         JSON.stringify(campos),
       ).toBe(false);
-      expect(autorDaBolha(mensagem(campos), NOMES)).toBeNull();
+      expect(autorDaBolha(mensagem(campos), NOMES, ENVIOS)).toBeNull();
     }
   });
 });
@@ -448,14 +469,14 @@ describe("AG7: o que não é o preparo continua como hoje", () => {
 describe("AG7: o corpo no formato do preparo sem job não é o preparo (TELA-13)", () => {
   it("sem job: nem Assistente, nem a linha do texto aprovado, nem na citação", () => {
     const semJob = mensagem({ job_id: null });
-    expect(ehMensagemDoPreparo(semJob)).toBe(false);
-    expect(autorDaBolha(semJob, NOMES)).toBeNull();
+    expect(ehMensagemDoPreparo(semJob, ENVIOS)).toBe(false);
+    expect(autorDaBolha(semJob, NOMES, ENVIOS)).toBeNull();
     const html = bolha(semJob);
     expect(html).not.toContain(LINHA_DO_PREPARO_APROVADO);
     expect(html).not.toContain("data-preparo");
-    expect(autorDaCitacao(citada({ job_id: null }), "Maria", NOMES)).toBe(
-      "Sistema",
-    );
+    expect(
+      autorDaCitacao(citada({ job_id: null }), "Maria", NOMES, ENVIOS),
+    ).toBe("Sistema");
   });
 
   it("o fio e a citada trazem o job_id do banco", () => {
@@ -469,11 +490,177 @@ describe("AG7: o corpo no formato do preparo sem job não é o preparo (TELA-13)
   });
 });
 
+describe("AG7: só com o envio confirmado no ai_decision_log (TELA-13 e CFM-10a)", () => {
+  it("o passo de régua escrito no formato do preparo: mensagem comum do sistema", () => {
+    // O job da regua nunca tem a decisao 'enviou_preparo'.
+    const daRegua = mensagem({ job_id: JOB_DA_REGUA });
+    expect(ehMensagemDoPreparo(daRegua, ENVIOS)).toBe(false);
+    expect(autorDaBolha(daRegua, NOMES, ENVIOS)).toBeNull();
+    const html = bolha(daRegua);
+    // A pele de sempre da mensagem automatica, sem a linha de autor da IA,
+    // sem o selo e sem a linha do texto aprovado; o texto inteiro continua.
+    expect(classesDaBolha(html)).toContain("bg-bubble-out");
+    expect(classesDaBolha(html)).not.toContain("bg-bubble-ai");
+    expect(linhaDeAutor(html)).not.toContain("Assistente");
+    expect(linhaDeAutor(html)).not.toContain(">IA<");
+    expect(html).not.toContain("data-preparo");
+    expect(html).not.toContain(LINHA_DO_PREPARO_APROVADO);
+    expect(html).toContain("Orientação de preparo para Colonoscopia");
+    // A citacao dele: "Sistema", como a regua.
+    expect(
+      autorDaCitacao(citada({ job_id: JOB_DA_REGUA }), "Maria", NOMES, ENVIOS),
+    ).toBe("Sistema");
+  });
+
+  it("sem a confirmação (a consulta carregando ou com erro): falha fechada, nem a do job da IA vira preparo", () => {
+    const daIa = mensagem();
+    expect(ehMensagemDoPreparo(daIa, SEM_ENVIOS_DO_PREPARO)).toBe(false);
+    expect(autorDaBolha(daIa, NOMES)).toBeNull();
+    const html = bolha(daIa, { enviosDoPreparo: SEM_ENVIOS_DO_PREPARO });
+    expect(html).not.toContain("data-preparo");
+    expect(html).not.toContain(LINHA_DO_PREPARO_APROVADO);
+    // Sem os envios passados (o padrao), tambem nao: quem esquece nao assina.
+    const semProp = renderToStaticMarkup(
+      <MessageBubble
+        message={daIa}
+        authorName={null}
+        authorNames={NOMES}
+        timezone="America/Fortaleza"
+      />,
+    );
+    expect(semProp).not.toContain(LINHA_DO_PREPARO_APROVADO);
+    expect(autorDaCitacao(citada(), "Maria", NOMES)).toBe("Sistema");
+    // Com a confirmacao, a mesma mensagem e o preparo (anti falso positivo).
+    expect(bolha(daIa)).toContain(LINHA_DO_PREPARO_APROVADO);
+  });
+
+  it("os jobs que a consulta confere: só os das mensagens e das citadas no formato do preparo", () => {
+    const outra = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    const lista = [
+      mensagem(),
+      mensagem({ id: "a2", job_id: JOB_DA_REGUA }),
+      // Repetida: um job so uma vez.
+      mensagem({ id: "a3" }),
+      // Fora do formato, da equipe, nota, sem job ou com job invalido: nao.
+      mensagem({ id: "a4", job_id: outra, body: "Lembrete: amanhã às 9h." }),
+      mensagem({
+        id: "a5",
+        job_id: outra,
+        author: "usuario",
+        author_user_id: ANA,
+      }),
+      mensagem({ id: "a6", job_id: outra, is_internal_note: true }),
+      mensagem({ id: "a7", job_id: null }),
+      mensagem({ id: "a8", job_id: "temp-1" }),
+      // A citada no formato do preparo, de outro job.
+      mensagem({
+        id: "a9",
+        direction: "entrada",
+        author: "paciente",
+        body: "Recebi.",
+        job_id: null,
+        reply_to: citada({ job_id: outra }),
+      }),
+    ];
+    expect(jobsQuePodemSerDoPreparo(lista)).toEqual([
+      JOB_DA_IA,
+      JOB_DA_REGUA,
+      outra,
+    ]);
+    expect(jobsQuePodemSerDoPreparo([mensagem({ body: "Oi" })])).toEqual([]);
+  });
+
+  it("a consulta: pela sessão, só a decisão enviou_preparo da clínica, em lotes; erro lança", async () => {
+    const chamadas: { filtros: [string, unknown][]; ids: string[] }[] = [];
+    let erro: { code: string; message: string } | null = null;
+    const cliente = {
+      from: (tabela: string) => {
+        expect(tabela).toBe("ai_decision_log");
+        const filtros: [string, unknown][] = [];
+        const api = {
+          select: (colunas: string) => {
+            expect(colunas).toBe("job_id");
+            return api;
+          },
+          eq: (coluna: string, valor: unknown) => {
+            filtros.push([coluna, valor]);
+            return api;
+          },
+          in: async (coluna: string, ids: string[]) => {
+            expect(coluna).toBe("job_id");
+            chamadas.push({ filtros: [...filtros], ids });
+            return {
+              data: erro
+                ? null
+                : ids
+                    .filter((id) => id === JOB_DA_IA)
+                    .map((id) => ({ job_id: id })),
+              error: erro,
+            };
+          },
+        };
+        return api;
+      },
+    };
+    const muitos = Array.from(
+      { length: 150 },
+      (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+    );
+    const envios = await fetchEnviosDoPreparo(
+      cliente as never,
+      "11111111-1111-4111-8111-111111111111",
+      [JOB_DA_IA, JOB_DA_REGUA, "temp-1", ...muitos],
+    );
+    expect([...envios]).toEqual([JOB_DA_IA]);
+    expect(chamadas).toHaveLength(2);
+    expect(chamadas[0]?.filtros).toEqual([
+      ["clinic_id", "11111111-1111-4111-8111-111111111111"],
+      ["desfecho", "enviou_preparo"],
+    ]);
+    expect(chamadas[0]?.ids).toHaveLength(100);
+    expect(chamadas.flatMap((c) => c.ids)).not.toContain("temp-1");
+    // Sem job valido, a consulta nem sai.
+    chamadas.length = 0;
+    expect(
+      (await fetchEnviosDoPreparo(cliente as never, "c", ["temp-1"])).size,
+    ).toBe(0);
+    expect(chamadas).toHaveLength(0);
+    // Erro lanca, sem o texto do banco.
+    erro = { code: "XX000", message: "algo do banco" };
+    await expect(
+      fetchEnviosDoPreparo(cliente as never, "c", [JOB_DA_IA]),
+    ).rejects.toThrow("envios do preparo ilegiveis");
+  });
+
+  it("a chave mora debaixo da das mensagens (o evento de message rele) e o Atendimento passa os envios ao fio e ao compositor", () => {
+    const chave = conversationKeys.enviosDoPreparo("c1");
+    expect(chave.slice(0, 2)).toEqual([...conversationKeys.messages("c1")]);
+    const inbox = readFileSync(
+      path.join(RAIZ, "app/(app)/atendimento/inbox-client.tsx"),
+      "utf8",
+    );
+    expect(inbox).toMatch(
+      /fetchEnviosDoPreparo\(supabase, clinicId, jobsDoPreparo\)/,
+    );
+    expect(inbox.match(/enviosDoPreparo=\{enviosDoPreparo\}/g)).toHaveLength(2);
+    const fio = readFileSync(
+      path.join(RAIZ, "components/atendimento/thread.tsx"),
+      "utf8",
+    );
+    expect(fio).toMatch(/enviosDoPreparo=\{enviosDoPreparo\}/);
+  });
+});
+
 describe("AG7: a citação do preparo", () => {
   it("diz Assistente; a frase fixa, a nota, a régua, a equipe e o celular continuam como antes", () => {
-    expect(autorDaCitacao(citada(), "Maria", NOMES)).toBe("Assistente");
+    expect(autorDaCitacao(citada(), "Maria", NOMES, ENVIOS)).toBe("Assistente");
     expect(
-      autorDaCitacao(citada({ body: FRASE_DE_ESCALONAMENTO }), "Maria", NOMES),
+      autorDaCitacao(
+        citada({ body: FRASE_DE_ESCALONAMENTO }),
+        "Maria",
+        NOMES,
+        ENVIOS,
+      ),
     ).toBe(AUTOR_DO_AVISO_AUTOMATICO);
     expect(
       autorDaCitacao(
@@ -483,27 +670,39 @@ describe("AG7: a citação do preparo", () => {
         }),
         "Maria",
         NOMES,
+        ENVIOS,
       ),
     ).toBe("Assistente");
     // A nota interna com o mesmo texto: a citacao da nota de automacao.
     expect(
-      autorDaCitacao(citada({ is_internal_note: true }), "Maria", NOMES),
+      autorDaCitacao(
+        citada({ is_internal_note: true }),
+        "Maria",
+        NOMES,
+        ENVIOS,
+      ),
     ).toBe("Sistema");
     expect(
       autorDaCitacao(
         citada({ author: "usuario", author_user_id: ANA }),
         "Maria",
         NOMES,
+        ENVIOS,
       ),
     ).toBe("Ana Recepção");
-    expect(autorDaCitacao(citada({ pelo_celular: true }), "Maria", NOMES)).toBe(
-      AUTOR_PELO_CELULAR,
-    );
-    expect(autorDaCitacao(citada({ author: "ia" }), "Maria", NOMES)).toBe(
-      "Assistente",
-    );
     expect(
-      autorDaCitacao(citada({ content_type: "imagem" }), "Maria", NOMES),
+      autorDaCitacao(citada({ pelo_celular: true }), "Maria", NOMES, ENVIOS),
+    ).toBe(AUTOR_PELO_CELULAR);
+    expect(
+      autorDaCitacao(citada({ author: "ia" }), "Maria", NOMES, ENVIOS),
+    ).toBe("Assistente");
+    expect(
+      autorDaCitacao(
+        citada({ content_type: "imagem" }),
+        "Maria",
+        NOMES,
+        ENVIOS,
+      ),
     ).toBe("Sistema");
   });
 

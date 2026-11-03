@@ -59,6 +59,12 @@ import type {
   NumeroDaConversa,
   TravaDoNumero,
 } from "@/lib/domain/numeros-do-inbox";
+// [AG7 preparo] início
+import {
+  SEM_ENVIOS_DO_PREPARO,
+  type EnviosDoPreparo,
+} from "@/lib/domain/preparo";
+// [AG7 preparo] fim
 import {
   alvoDoBotao,
   anuncioDaLista,
@@ -293,6 +299,9 @@ export function Composer({
   mensagensPadrao,
   nomeDaClinica = "",
   agendamento,
+  // [AG7 preparo] início
+  enviosDoPreparo = SEM_ENVIOS_DO_PREPARO,
+  // [AG7 preparo] fim
 }: {
   conversation: ConversationListItem;
   viewerId: string;
@@ -381,6 +390,14 @@ export function Composer({
    * resposta esta bloqueada (os avisos de autorizacao e de numero explicam).
    */
   agendamento?: AgendamentoDoCompositor;
+  // [AG7 preparo] início
+  /**
+   * Os envios da orientacao de preparo confirmados no ai_decision_log
+   * (TELA-13): a citada so assina "Assistente" como o preparo com o job
+   * dela entre eles. Vazio: a citada do sistema assina "Sistema".
+   */
+  enviosDoPreparo?: EnviosDoPreparo;
+  // [AG7 preparo] fim
 }) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
@@ -991,6 +1008,8 @@ export function Composer({
               citando,
               conversation.contact.name ?? conversation.contact.phone_e164,
               authorNames,
+              // [AG7 preparo] o preparo so com o envio confirmado (TELA-13)
+              enviosDoPreparo,
             )}
             mensagem={citando}
             className="min-w-0 flex-1"

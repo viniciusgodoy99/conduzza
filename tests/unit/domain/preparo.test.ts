@@ -20,8 +20,10 @@ import {
   mensagemDoPreparo,
   normalizarTextoDoPreparo,
   partesDaMensagemDoPreparo,
+  podeSerAMensagemDoPreparo,
   procedimentoDaMensagemDoPreparo,
   RODAPE_DO_PREPARO,
+  SEM_ENVIOS_DO_PREPARO,
   semOPreparo,
   SITUACOES_DO_PREPARO,
   situacaoDoPreparoNaTela,
@@ -364,6 +366,10 @@ describe("partesDaMensagemDoPreparo e procedimentoDaMensagemDoPreparo", () => {
 });
 
 describe("ehMensagemDoPreparo (a bolha do Atendimento)", () => {
+  const JOB = "11111111-1111-4111-8111-111111111111";
+  const JOB_DA_REGUA = "22222222-2222-4222-8222-222222222222";
+  /** O envio confirmado: a decisao 'enviou_preparo' do job (TELA-13). */
+  const ENVIOS = new Set([JOB]);
   const doSistema = {
     author: "sistema",
     body: MENSAGEM,
@@ -373,49 +379,79 @@ describe("ehMensagemDoPreparo (a bolha do Atendimento)", () => {
     content_type: "texto",
     pelo_celular: false,
     media_url: null,
+    job_id: JOB,
   };
 
-  it("a mensagem do sistema no formato e o preparo", () => {
-    expect(ehMensagemDoPreparo(doSistema)).toBe(true);
-    // O fio nao traz job_id, direcao nem tipo: o corpo e o autor bastam.
+  it("a mensagem do sistema no formato, com o envio confirmado, e o preparo", () => {
+    expect(ehMensagemDoPreparo(doSistema, ENVIOS)).toBe(true);
+    expect(podeSerAMensagemDoPreparo(doSistema)).toBe(true);
+    // Direcao e tipo podem faltar (o reconhecimento le o que vier).
     expect(
-      ehMensagemDoPreparo({
-        author: "sistema",
-        body: MENSAGEM,
-        is_internal_note: false,
-      }),
+      ehMensagemDoPreparo(
+        {
+          author: "sistema",
+          body: MENSAGEM,
+          is_internal_note: false,
+          job_id: JOB,
+        },
+        ENVIOS,
+      ),
     ).toBe(true);
-    expect(ehMensagemDoPreparo({ ...doSistema, job_id: "job-1" })).toBe(true);
+  });
+
+  it("sem a decisao 'enviou_preparo' do job, nao e o preparo (TELA-13 e CFM-10a)", () => {
+    // O passo de regua escrito no mesmo formato: o job da regua nunca tem a
+    // decisao do envio do preparo.
+    const daRegua = { ...doSistema, job_id: JOB_DA_REGUA };
+    expect(podeSerAMensagemDoPreparo(daRegua)).toBe(true);
+    expect(ehMensagemDoPreparo(daRegua, ENVIOS)).toBe(false);
+    // A consulta ainda nao voltou, ou falhou: nenhum envio, falha fechada.
+    expect(ehMensagemDoPreparo(doSistema, SEM_ENVIOS_DO_PREPARO)).toBe(false);
+    expect(SEM_ENVIOS_DO_PREPARO.size).toBe(0);
+    // Sem job (o fio antigo, a mensagem montada sem o campo): nao e.
+    const semJob = { ...doSistema, job_id: undefined };
+    expect(podeSerAMensagemDoPreparo(semJob)).toBe(false);
+    expect(ehMensagemDoPreparo(semJob, ENVIOS)).toBe(false);
+    expect(
+      ehMensagemDoPreparo({ ...doSistema, job_id: "" }, new Set([""])),
+    ).toBe(false);
   });
 
   it("a frase fixa, a nota da passagem e o texto da equipe nao sao o preparo", () => {
     expect(
-      ehMensagemDoPreparo({ ...doSistema, body: FRASE_DE_ESCALONAMENTO }),
+      ehMensagemDoPreparo(
+        { ...doSistema, body: FRASE_DE_ESCALONAMENTO },
+        ENVIOS,
+      ),
     ).toBe(false);
     expect(
-      ehMensagemDoPreparo({
-        ...doSistema,
-        is_internal_note: true,
-        body: `${CABECALHO_DA_NOTA_DA_PASSAGEM}\nMotivo: assunto clínico.`,
-      }),
+      ehMensagemDoPreparo(
+        {
+          ...doSistema,
+          is_internal_note: true,
+          body: `${CABECALHO_DA_NOTA_DA_PASSAGEM}\nMotivo: assunto clínico.`,
+        },
+        ENVIOS,
+      ),
     ).toBe(false);
     expect(
-      ehMensagemDoPreparo({
-        ...doSistema,
-        author: "usuario",
-        author_user_id: "u1",
-      }),
+      ehMensagemDoPreparo(
+        { ...doSistema, author: "usuario", author_user_id: "u1" },
+        ENVIOS,
+      ),
     ).toBe(false);
-    expect(ehMensagemDoPreparo({ ...doSistema, author: "usuario" })).toBe(
+    expect(
+      ehMensagemDoPreparo({ ...doSistema, author: "usuario" }, ENVIOS),
+    ).toBe(false);
+    expect(ehMensagemDoPreparo({ ...doSistema, author: "ia" }, ENVIOS)).toBe(
       false,
     );
-    expect(ehMensagemDoPreparo({ ...doSistema, author: "ia" })).toBe(false);
-    expect(ehMensagemDoPreparo({ ...doSistema, author: "paciente" })).toBe(
-      false,
-    );
+    expect(
+      ehMensagemDoPreparo({ ...doSistema, author: "paciente" }, ENVIOS),
+    ).toBe(false);
   });
 
-  it("nota, celular, entrada, midia, pessoa ou job nulo: nao e o preparo", () => {
+  it("nota, celular, entrada, midia, pessoa ou job nulo: nao e o preparo, nem com o envio", () => {
     for (const desvio of [
       { is_internal_note: true },
       { pelo_celular: true },
@@ -430,7 +466,11 @@ describe("ehMensagemDoPreparo (a bolha do Atendimento)", () => {
       { body: `${MENSAGEM} ` },
     ]) {
       expect(
-        ehMensagemDoPreparo({ ...doSistema, ...desvio }),
+        ehMensagemDoPreparo({ ...doSistema, ...desvio }, ENVIOS),
+        JSON.stringify(desvio),
+      ).toBe(false);
+      expect(
+        podeSerAMensagemDoPreparo({ ...doSistema, ...desvio }),
         JSON.stringify(desvio),
       ).toBe(false);
     }

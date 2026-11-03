@@ -556,16 +556,31 @@ export type MensagemParaReconhecer = {
 };
 
 /**
- * A mensagem e a orientacao de preparo enviada pelo sistema? Saida do
- * sistema (author 'sistema', sem pessoa), em texto, que nao e nota interna,
- * nao saiu pelo celular e nao tem midia, com o corpo no formato da mensagem
- * do preparo (cabecalho, linha do RT, texto e rodape). No molde de
- * ehNotaDaPassagemDaIa (lib/agente/nota-da-passagem.ts) e de
- * ehAvisoAutomaticoDaIa (components/atendimento/aviso-automatico.ts): o fio
- * nao traz o job_id; quando ele vier junto, nulo nao e o preparo (a mensagem
- * sai sempre pelo job da IA).
+ * Os jobs que enviaram a orientacao de preparo de verdade: o job_id de cada
+ * decisao 'enviou_preparo' do ai_decision_log (a sessao le, com a mesma RLS
+ * da mensagem). Revisao da AG7 (TELA-13 e CFM-10a): so com o job do envio a
+ * bolha do Atendimento assina "Assistente" e diz "Texto aprovado pelo
+ * responsavel tecnico". Um passo de regua ou uma automacao escritos pela
+ * clinica no mesmo formato tem o job da regua, que nunca tem essa decisao, e
+ * aparece como mensagem comum do sistema.
  */
-export function ehMensagemDoPreparo(m: MensagemParaReconhecer): boolean {
+export type EnviosDoPreparo = ReadonlySet<string>;
+
+/** Nenhum envio confirmado (a consulta desligada, carregando ou com erro). */
+export const SEM_ENVIOS_DO_PREPARO: EnviosDoPreparo = new Set<string>();
+
+/**
+ * A mensagem tem tudo da orientacao de preparo enviada pelo sistema, menos a
+ * confirmacao do envio: saida do sistema (author 'sistema', sem pessoa), em
+ * texto, que nao e nota interna, nao saiu pelo celular, nao tem midia, tem
+ * job_id e tem o corpo no formato da mensagem do preparo (cabecalho, linha
+ * do RT, texto e rodape). E o recorte dos jobs que o Atendimento confere na
+ * decisao (jobsQuePodemSerDoPreparo); quem DESENHA a bolha usa
+ * ehMensagemDoPreparo, que exige o envio. No molde de ehNotaDaPassagemDaIa
+ * (lib/agente/nota-da-passagem.ts) e de ehAvisoAutomaticoDaIa
+ * (components/atendimento/aviso-automatico.ts).
+ */
+export function podeSerAMensagemDoPreparo(m: MensagemParaReconhecer): boolean {
   const corpo = m.body ?? null;
   return (
     m.author === "sistema" &&
@@ -575,9 +590,32 @@ export function ehMensagemDoPreparo(m: MensagemParaReconhecer): boolean {
     (m.direction === undefined || m.direction === "saida") &&
     (m.content_type === undefined || m.content_type === "texto") &&
     (m.media_url === undefined || m.media_url === null) &&
-    m.job_id !== null &&
+    typeof m.job_id === "string" &&
+    m.job_id !== "" &&
     corpo !== null &&
     partesDaMensagemDoPreparo(corpo) !== null
+  );
+}
+
+/**
+ * A mensagem e a orientacao de preparo enviada pelo sistema? Tudo de
+ * podeSerAMensagemDoPreparo e o job dela entre os envios confirmados
+ * (EnviosDoPreparo: a decisao 'enviou_preparo' do mesmo job; TELA-13 e
+ * CFM-10a). Sem a confirmacao (a consulta ainda nao voltou, falhou, ou o job
+ * e da regua), nao e: falha fechada, a mensagem fica como mensagem comum do
+ * sistema. O gatilho de message so deixa a linha 'sistema' do job da IA
+ * passar com o corpo igual a mensagem remontada da versao em vigor e a
+ * decisao do mesmo job (migration 20261103100000), e cada job manda uma
+ * mensagem so (message.job_id e unico).
+ */
+export function ehMensagemDoPreparo(
+  m: MensagemParaReconhecer,
+  envios: EnviosDoPreparo,
+): boolean {
+  return (
+    podeSerAMensagemDoPreparo(m) &&
+    typeof m.job_id === "string" &&
+    envios.has(m.job_id)
   );
 }
 

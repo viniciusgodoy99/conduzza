@@ -12,6 +12,12 @@ import type {
 // [AG6b mídia] fim
 import { corDoNumero, type CorDoNumero } from "@/lib/domain/cor-do-numero";
 import { recencia } from "@/lib/domain/filtros-da-conversa";
+// [AG7 preparo] início
+import {
+  podeSerAMensagemDoPreparo,
+  type EnviosDoPreparo,
+} from "@/lib/domain/preparo";
+// [AG7 preparo] fim
 import { log } from "@/lib/log";
 
 // Tipos e fetchers do Inbox. Sem tipos gerados do banco (pendencia
@@ -446,6 +452,16 @@ export const conversationKeys = {
   leiturasDaMidia: (conversationId: string) =>
     ["messages", conversationId, "leituras-da-midia"] as const,
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  /**
+   * Os envios da orientacao de preparo confirmados no ai_decision_log
+   * (fetchEnviosDoPreparo), DEBAIXO da chave das mensagens da conversa: o
+   * mesmo evento de message que rele o fio rele os envios (a decisao e
+   * gravada antes da mensagem, e a mensagem nova chega pelo canal).
+   */
+  enviosDoPreparo: (conversationId: string) =>
+    ["messages", conversationId, "envios-do-preparo"] as const,
+  // [AG7 preparo] fim
   decisions: (conversationId: string) => ["decisions", conversationId] as const,
   consent: (contactId: string) => ["consent", contactId] as const,
 };
@@ -1136,6 +1152,99 @@ export function leituraDaMensagem(
     : null;
 }
 // [AG6b mídia] fim
+
+// [AG7 preparo] início
+// OS ENVIOS DA ORIENTACAO DE PREPARO (revisao da AG7, TELA-13 e CFM-10a). A
+// bolha so diz "Texto aprovado pelo responsavel tecnico" (e assina
+// "Assistente") quando o job da mensagem tem a decisao 'enviou_preparo' no
+// ai_decision_log: o gatilho de message so deixa essa linha do job da IA
+// passar com a decisao do mesmo job e o corpo igual a mensagem remontada da
+// versao em vigor. Um passo de regua ou uma automacao escritos no mesmo
+// formato tem o job da regua, sem essa decisao, e ficam como mensagem comum
+// do sistema.
+//
+// Consulta PROPRIA, fora do select do fio (a licao do achado 16), pela
+// SESSAO: a policy de leitura de ai_decision_log e a mesma da mensagem
+// (membro ativo da clinica; o profissional so na conversa atribuida a ele;
+// a clinica de conta suspensa fora), e as colunas job_id e desfecho estao no
+// grant da sessao (M1). So vao os jobs das mensagens que podem ser o preparo
+// (o formato inteiro, do sistema, com job): numa conversa sem preparo, a
+// consulta nem sai. Falha fechada: carregando ou com erro, nenhum envio
+// confirmado, e a mensagem aparece como mensagem comum do sistema. Nada
+// daqui vai para log.
+
+/** Os ids de job validos (a bolha otimista nao tem job). */
+const UUID_DO_JOB =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Os job_id do fio que podem ser do preparo, sem repetir e na ordem do fio:
+ * as mensagens e as citadas delas (a citacao tambem assina "Assistente").
+ */
+export function jobsQuePodemSerDoPreparo(
+  mensagens: readonly MessageItem[],
+): string[] {
+  const jobs = new Set<string>();
+  for (const mensagem of mensagens) {
+    for (const candidata of [mensagem, mensagem.reply_to]) {
+      if (
+        candidata &&
+        podeSerAMensagemDoPreparo(candidata) &&
+        typeof candidata.job_id === "string" &&
+        UUID_DO_JOB.test(candidata.job_id)
+      ) {
+        jobs.add(candidata.job_id);
+      }
+    }
+  }
+  return [...jobs];
+}
+
+/** Jobs por consulta: o filtro in.(...) vai na URL. */
+const LOTE_DOS_ENVIOS = 100;
+
+/**
+ * Os jobs, entre os dados, que tem a decisao 'enviou_preparo' da clinica
+ * (pela sessao, com a RLS). Erro LANCA, sem nada do erro do banco no texto:
+ * a tela fica sem a confirmacao (falha fechada), e o fio continua.
+ */
+export async function fetchEnviosDoPreparo(
+  supabase: SupabaseClient,
+  clinicId: string,
+  jobIds: readonly string[],
+): Promise<EnviosDoPreparo> {
+  const ids = [...new Set(jobIds.filter((id) => UUID_DO_JOB.test(id)))];
+  if (ids.length === 0) {
+    return new Set<string>();
+  }
+  const lotes: string[][] = [];
+  for (let inicio = 0; inicio < ids.length; inicio += LOTE_DOS_ENVIOS) {
+    lotes.push(ids.slice(inicio, inicio + LOTE_DOS_ENVIOS));
+  }
+  const respostas = await Promise.all(
+    lotes.map((lote) =>
+      supabase
+        .from("ai_decision_log")
+        .select("job_id")
+        .eq("clinic_id", clinicId)
+        .eq("desfecho", "enviou_preparo")
+        .in("job_id", lote),
+    ),
+  );
+  const envios = new Set<string>();
+  for (const { data, error } of respostas) {
+    if (error) {
+      throw new Error("envios do preparo ilegiveis");
+    }
+    for (const linha of (data ?? []) as { job_id?: unknown }[]) {
+      if (typeof linha.job_id === "string") {
+        envios.add(linha.job_id);
+      }
+    }
+  }
+  return envios;
+}
+// [AG7 preparo] fim
 
 export async function fetchComplianceDecisions(
   supabase: SupabaseClient,

@@ -69,7 +69,11 @@ import {
   type MotivoDeIndisponivel,
 } from "@/lib/domain/midia-recebida";
 // [AG7 preparo] início
-import { ehMensagemDoPreparo } from "@/lib/domain/preparo";
+import {
+  ehMensagemDoPreparo,
+  SEM_ENVIOS_DO_PREPARO,
+  type EnviosDoPreparo,
+} from "@/lib/domain/preparo";
 // [AG7 preparo] fim
 import type {
   // [AG6b mídia] início
@@ -98,7 +102,10 @@ import { cn } from "@/lib/utils";
 // A orientacao de preparo aprovada pelo responsavel tecnico, que o sistema
 // envia palavra por palavra pelo job da IA (author 'sistema'), fica a direita
 // na pele da IA, com a linha de autoria da IA e, dentro da bolha, a linha
-// "Texto aprovado pelo responsável técnico" na cor de apoio.
+// "Texto aprovado pelo responsável técnico" na cor de apoio. So com o envio
+// confirmado: o job da mensagem tem a decisao 'enviou_preparo' no
+// ai_decision_log (TELA-13 e CFM-10a). Sem ela, a mesma mensagem fica como
+// mensagem comum do sistema (o passo de regua escrito no mesmo formato).
 // [AG7 preparo] fim
 //
 // --bolha-meta e a cor de apoio de cada pele (hora, legenda, rotulos de
@@ -764,6 +771,9 @@ export function MessageBubble({
   leituraDaMidia = null,
   leituraIndisponivel = false,
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  enviosDoPreparo = SEM_ENVIOS_DO_PREPARO,
+  // [AG7 preparo] fim
 }: {
   message: MessageItem;
   authorName: string | null;
@@ -815,6 +825,14 @@ export function MessageBubble({
    */
   leituraIndisponivel?: boolean;
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  /**
+   * Os envios da orientacao de preparo confirmados no ai_decision_log (a
+   * consulta separada do fio, fetchEnviosDoPreparo). Sem o job desta
+   * mensagem entre eles, ela nao e o preparo (TELA-13).
+   */
+  enviosDoPreparo?: EnviosDoPreparo;
+  // [AG7 preparo] fim
 }) {
   if (message.content_type === "evento") {
     return <SystemEventCard message={message} timezone={timezone} />;
@@ -842,8 +860,9 @@ export function MessageBubble({
   // sistema envia palavra por palavra pelo job da IA (author 'sistema', sem
   // pessoa, fora de nota): a pele e a linha de autor da IA (o brilho,
   // "Assistente" e o selo "IA") e, dentro da bolha, a linha do texto
-  // aprovado. Sem isto, o 'sistema' fora de nota cai na pele da atendente.
-  const preparo = ehMensagemDoPreparo(message);
+  // aprovado. So com o envio confirmado (a decisao 'enviou_preparo' do job;
+  // TELA-13): sem ele, o 'sistema' fora de nota fica na pele de sempre.
+  const preparo = ehMensagemDoPreparo(message, enviosDoPreparo);
   // [AG7 preparo] fim
   // Saiu de uma mensagem agendada (A1 do desenho final): a linha de autor
   // diz quem assina e que ela saiu sozinha na hora marcada, com o relogio
@@ -1063,6 +1082,8 @@ export function MessageBubble({
                 nomes={authorNames}
                 aoIrParaCitada={onIrParaCitada}
                 citadaEstaNaTela={citadaEstaNaTela}
+                // [AG7 preparo] a citada do preparo, so com o envio confirmado
+                enviosDoPreparo={enviosDoPreparo}
               />
               {message.content_type === "audio" ? (
                 <AudioBody

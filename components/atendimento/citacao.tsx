@@ -18,7 +18,11 @@ import {
   ehNotaDaPassagemDaIa,
 } from "@/lib/agente/nota-da-passagem";
 // [AG7 preparo] início
-import { ehMensagemDoPreparo } from "@/lib/domain/preparo";
+import {
+  ehMensagemDoPreparo,
+  SEM_ENVIOS_DO_PREPARO,
+  type EnviosDoPreparo,
+} from "@/lib/domain/preparo";
 // [AG7 preparo] fim
 import type { MessageItem, QuotedMessage } from "@/lib/queries/conversations";
 import { cn } from "@/lib/utils";
@@ -60,9 +64,13 @@ export function autorDaCitacao(
   mensagem: Pick<
     QuotedMessage,
     "author" | "author_user_id" | "pelo_celular" | "body" | "is_internal_note"
-  >,
+  > &
+    Partial<Pick<QuotedMessage, "job_id">>,
   contato: string,
   nomes: Record<string, string>,
+  // [AG7 preparo] os envios do preparo confirmados (TELA-13); sem eles, a
+  // citada do sistema no formato do preparo assina "Sistema" (falha fechada).
+  enviosDoPreparo: EnviosDoPreparo = SEM_ENVIOS_DO_PREPARO,
 ): string {
   if (mensagem.author === "paciente") {
     return contato;
@@ -94,9 +102,11 @@ export function autorDaCitacao(
   }
   // [AG7 preparo] início
   // A orientacao de preparo aprovada pelo responsavel tecnico (AG7), que o
-  // sistema envia pelo job da IA: a mesma assinatura da bolha. A mensagem
-  // automatica da regua continua "Sistema".
-  if (ehMensagemDoPreparo(mensagem)) {
+  // sistema envia pelo job da IA: a mesma assinatura da bolha, so com o
+  // envio confirmado (a decisao 'enviou_preparo' do job; TELA-13). A
+  // mensagem automatica da regua, mesmo no formato do preparo, continua
+  // "Sistema".
+  if (ehMensagemDoPreparo(mensagem, enviosDoPreparo)) {
     return "Assistente";
   }
   // [AG7 preparo] fim
@@ -180,11 +190,18 @@ export function CitacaoDaBolha({
   nomes,
   aoIrParaCitada,
   citadaEstaNaTela = false,
+  // [AG7 preparo] início
+  enviosDoPreparo = SEM_ENVIOS_DO_PREPARO,
+  // [AG7 preparo] fim
 }: {
   message: MessageItem;
   contato: string;
   nomes: Record<string, string>;
   aoIrParaCitada?: (id: string) => void;
+  // [AG7 preparo] início
+  /** Os envios do preparo confirmados (TELA-13): a citada do preparo. */
+  enviosDoPreparo?: EnviosDoPreparo;
+  // [AG7 preparo] fim
   /**
    * A mensagem citada está entre as que já foram carregadas?
    *
@@ -200,7 +217,7 @@ export function CitacaoDaBolha({
     const citada = message.reply_to;
     return (
       <BlocoDeCitacao
-        autor={autorDaCitacao(citada, contato, nomes)}
+        autor={autorDaCitacao(citada, contato, nomes, enviosDoPreparo)}
         mensagem={citada}
         aoClicar={
           aoIrParaCitada && citadaEstaNaTela
