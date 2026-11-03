@@ -16,7 +16,11 @@ vi.mock("@/lib/integrations/whatsapp/send", () => ({
 
 import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
 import { sendWhatsAppMenu } from "@/lib/integrations/whatsapp/send";
-import { executarPassoDeRegua, modeloPedePreparo } from "@/lib/jobs/regua";
+import {
+  executarPassoDeRegua,
+  modeloPedePreparo,
+  modeloSemALinhaDoPreparo,
+} from "@/lib/jobs/regua";
 import type { Job } from "@/lib/jobs/worker";
 import { log } from "@/lib/log";
 
@@ -57,6 +61,8 @@ type Cenario = {
   /** O retorno de preparo_em_vigor_do_procedimento. */
   preparo?: unknown;
   erroDoPreparo?: boolean;
+  /** O codigo do erro da leitura (padrao: 57014). */
+  codigoDoErro?: string;
   manual?: boolean;
   /** O toque venceu num dia e sai no seguinte (o toque atrasado). */
   atrasado?: boolean;
@@ -144,7 +150,7 @@ function montar(c: Cenario = {}) {
       reagendar_job: () => ({ data: true, error: null }),
       preparo_em_vigor_do_procedimento: () =>
         c.erroDoPreparo
-          ? { data: null, error: { code: "57014" } }
+          ? { data: null, error: { code: c.codigoDoErro ?? "57014" } }
           : { data: c.preparo ?? null, error: null },
     },
   });
@@ -327,5 +333,119 @@ describe("o {{preparo}} do toque", () => {
     const corpo = corpoEnviado();
     expect(corpo).toContain(APROVADO);
     expect(corpo).toContain("27/10/2026 às 16:00");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Revisao da AG7
+// ---------------------------------------------------------------------------
+
+describe("revisao da AG7 (CFM-2): o texto em vigor com recusa nunca sai", () => {
+  it.each([
+    [
+      "promessa de resultado",
+      "Venha sem maquiagem. Resultado garantido, você vai sair renovada!",
+      "promessa_resultado",
+    ],
+    [
+      "oferta casada",
+      "Jejum de 8 horas. Na compra do exame, o retorno sai de brinde.",
+      "oferta_casada",
+    ],
+    [
+      "link",
+      "Jejum de 8 horas. Veja o vídeo em https://exemplo.com/preparo.",
+      "formato_invalido",
+    ],
+  ])(
+    "%s: a linha some, o resto da confirmacao sai, e o log so com as categorias",
+    async (_n, texto, categoria) => {
+      const b = montar({ preparo: emVigor(texto) });
+      expect(await executarPassoDeRegua(b.admin, job(), WORKER)).toEqual({
+        ok: true,
+      });
+      expect(corpoEnviado()).toBe(
+        "Oi, Paciente! Sua Colonoscopia é dia 28/10/2026 às 08:00.\nPodemos confirmar sua presença?",
+      );
+      expect(vi.mocked(log.warn)).toHaveBeenCalledWith(
+        "regua_preparo_recusado",
+        { clinic_id: CLINICA, job_id: JOB, kind: categoria },
+      );
+      const tudo = JSON.stringify(vi.mocked(log.warn).mock.calls);
+      expect(tudo).not.toContain(texto.slice(0, 20));
+    },
+  );
+});
+
+describe("revisao da AG7 (BANCO-4): a funcao do banco ausente (o rollback com este codigo no ar)", () => {
+  it.each(["42883", "PGRST202"])(
+    "%s: a linha do {{preparo}} some e o resto da confirmacao sai, sem tentar de novo",
+    async (codigo) => {
+      const b = montar({ erroDoPreparo: true, codigoDoErro: codigo });
+      expect(await executarPassoDeRegua(b.admin, job(), WORKER)).toEqual({
+        ok: true,
+      });
+      expect(corpoEnviado()).toBe(
+        "Oi, Paciente! Sua Colonoscopia é dia 28/10/2026 às 08:00.\nPodemos confirmar sua presença?",
+      );
+      expect(vi.mocked(log.warn)).toHaveBeenCalledWith(
+        "regua_preparo_sem_funcao",
+        { clinic_id: CLINICA, job_id: JOB, error_code: codigo },
+      );
+    },
+  );
+
+  it("outro erro continua tentando de novo (nada sai)", async () => {
+    const b = montar({ erroDoPreparo: true, codigoDoErro: "08006" });
+    await expect(executarPassoDeRegua(b.admin, job(), WORKER)).rejects.toThrow(
+      "preparo_ilegivel: 08006",
+    );
+    expect(vi.mocked(sendWhatsAppMenu)).not.toHaveBeenCalled();
+  });
+});
+
+describe("revisao da AG7 (MOTOR-4): sem texto em vigor, a linha inteira que pedia {{preparo}} sai", () => {
+  it.each([
+    ["Preparo: {{preparo}}"],
+    ["Lembre do preparo ({{preparo}})."],
+    ["Siga o preparo abaixo: {{ preparo }}"],
+    ["Siga o preparo abaixo:\n{{preparo}}"],
+  ])("%j: o toque sem a linha (e sem a que so a apresentava)", async (meio) => {
+    const b = montar({
+      modelo: `Oi, {{nome}}! Sua {{procedimento}} é amanhã.\n${meio}\nPodemos confirmar sua presença?`,
+      preparo: null,
+    });
+    expect(await executarPassoDeRegua(b.admin, job(), WORKER)).toEqual({
+      ok: true,
+    });
+    expect(corpoEnviado()).toBe(
+      "Oi, Paciente! Sua Colonoscopia é amanhã.\nPodemos confirmar sua presença?",
+    );
+  });
+
+  it("com o texto em vigor, o modelo fica como esta (a linha leva o texto inteiro)", async () => {
+    const b = montar({
+      modelo:
+        "Oi, {{nome}}!\nSiga o preparo abaixo:\n{{preparo}}\nPodemos confirmar sua presença?",
+      preparo: emVigor(),
+    });
+    expect(await executarPassoDeRegua(b.admin, job(), WORKER)).toEqual({
+      ok: true,
+    });
+    expect(corpoEnviado()).toBe(
+      `Oi, Paciente!\nSiga o preparo abaixo:\n${APROVADO}\nPodemos confirmar sua presença?`,
+    );
+  });
+
+  it("modeloSemALinhaDoPreparo: so as linhas do preparo (e a apresentacao logo antes) saem", () => {
+    expect(
+      modeloSemALinhaDoPreparo(
+        "Atenção:\nOi {{nome}}\nSiga:\n{{preparo}}\nAté amanhã.",
+      ),
+    ).toBe("Atenção:\nOi {{nome}}\nAté amanhã.");
+    expect(modeloSemALinhaDoPreparo("{{preparo}}")).toBe("");
+    expect(modeloSemALinhaDoPreparo("Sem campo nenhum.")).toBe(
+      "Sem campo nenhum.",
+    );
   });
 });
