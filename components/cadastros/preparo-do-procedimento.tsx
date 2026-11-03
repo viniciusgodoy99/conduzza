@@ -33,8 +33,8 @@ import {
   TEXTOS_DO_PREPARO as T,
   textoAntigo,
 } from "@/components/cadastros/preparo-na-tela";
+import { BotaoProtegido } from "@/components/cadastros/comum";
 import { Aviso } from "@/components/shared/aviso";
-import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import {
@@ -186,43 +186,6 @@ export function ChipDoPreparo({
       size="sm"
       definition={PREPARO_DO_PROCEDIMENTO_STATUS[situacao]}
     />
-  );
-}
-
-/** Botao visivel sempre; sem permissao, desabilitado com a frase do banco. */
-function BotaoDoPreparo({
-  pode,
-  dica,
-  onClick,
-  children,
-  variant = "outline",
-  disabled = false,
-}: {
-  pode: boolean;
-  dica: string;
-  onClick: () => void;
-  children: React.ReactNode;
-  variant?: "default" | "outline" | "ghost";
-  disabled?: boolean;
-}) {
-  if (pode) {
-    return (
-      <Button
-        variant={variant}
-        className="h-10"
-        onClick={onClick}
-        disabled={disabled}
-      >
-        {children}
-      </Button>
-    );
-  }
-  return (
-    <DisabledWithHint hint={dica}>
-      <Button variant={variant} className="h-10" disabled>
-        {children}
-      </Button>
-    </DisabledWithHint>
   );
 }
 
@@ -698,18 +661,18 @@ export function SecaoDoPreparo({
       </p>
       <div className="flex flex-wrap gap-2">
         {situacao === "aprovada" && versao === aprovada ? (
-          <BotaoDoPreparo
-            pode={podeEscrever}
+          <BotaoProtegido
+            podeEditar={podeEscrever}
             dica={FRASES_SEM_PERMISSAO.suspender}
             onClick={() => setConfirmandoSuspensao(true)}
             disabled={ocupado}
           >
             {T.suspender}
-          </BotaoDoPreparo>
+          </BotaoProtegido>
         ) : null}
         {baseDoAprovarDeNovo !== null && versao === baseDoAprovarDeNovo ? (
-          <BotaoDoPreparo
-            pode={podeAprovar}
+          <BotaoProtegido
+            podeEditar={podeAprovar}
             dica={FRASES_SEM_PERMISSAO.aprovar}
             variant="default"
             onClick={() =>
@@ -721,7 +684,7 @@ export function SecaoDoPreparo({
             disabled={ocupado}
           >
             {T.aprovarDeNovo}
-          </BotaoDoPreparo>
+          </BotaoProtegido>
         ) : null}
       </div>
     </div>
@@ -759,24 +722,24 @@ export function SecaoDoPreparo({
             {situacao === "aprovada" ? T.enquantoComVigor : T.enquantoSemVigor}
           </p>
           <div className="flex flex-wrap gap-2">
-            <BotaoDoPreparo
-              pode={podeAprovar}
+            <BotaoProtegido
+              podeEditar={podeAprovar}
               dica={FRASES_SEM_PERMISSAO.aprovar}
               variant="default"
               onClick={() => setPedido({ modo: "aprovar", versao: aguardando })}
               disabled={ocupado}
             >
               {T.revisar}
-            </BotaoDoPreparo>
-            <BotaoDoPreparo
-              pode={podeEscrever}
+            </BotaoProtegido>
+            <BotaoProtegido
+              podeEditar={podeEscrever}
               dica={FRASES_SEM_PERMISSAO.descartar}
               variant="ghost"
               onClick={() => void descartar(aguardando)}
               disabled={ocupado}
             >
               {descartando ? T.descartando : T.descartar}
-            </BotaoDoPreparo>
+            </BotaoProtegido>
           </div>
         </div>
       ) : null}
@@ -809,15 +772,15 @@ export function SecaoDoPreparo({
         />
       ) : (
         <div className="flex flex-wrap gap-2">
-          <BotaoDoPreparo
-            pode={podeEscrever}
+          <BotaoProtegido
+            podeEditar={podeEscrever}
             dica={FRASES_SEM_PERMISSAO.escrever}
             onClick={abrirEditor}
             disabled={ocupado}
           >
             <PenLine aria-hidden />
             {versoes.length === 0 ? T.escrever : T.escreverNovo}
-          </BotaoDoPreparo>
+          </BotaoProtegido>
           {versoes.length > 0 ? (
             <Button
               variant="ghost"
