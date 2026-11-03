@@ -96,7 +96,9 @@ import {
   FRASE_DO_PREPARO_DEPOIS_DE_MARCAR,
   LINHA_DO_RT,
   RODAPE_DO_PREPARO,
+  SUBSTITUTO_DA_FALA_SEM_A_MASCARA,
   SUBSTITUTO_DO_TEXTO_DO_PREPARO,
+  substitutoDaFalaNoFormatoDoPreparo,
   substitutoDaMensagemDoPreparo,
 } from "@/lib/domain/preparo";
 import { FERRAMENTA_ENVIAR_PREPARO } from "./ferramentas/enviar-preparo";
@@ -602,6 +604,11 @@ export const FONTES_DA_VERSAO_DO_PROMPT = {
     SUBSTITUTO_DO_TEXTO_DO_PREPARO,
     substitutoDaMensagemDoPreparo("{}"),
     substitutoDaMensagemDoPreparo(""),
+    // Revisao da AG7 (CFM-1 e CFM-10): a fala no formato que nao e a do
+    // sistema e a fala sem a mascara refeita.
+    substitutoDaFalaNoFormatoDoPreparo("{}"),
+    substitutoDaFalaNoFormatoDoPreparo(""),
+    SUBSTITUTO_DA_FALA_SEM_A_MASCARA,
   ],
   // [AG7 preparo] fim
   respostasFechadas: [

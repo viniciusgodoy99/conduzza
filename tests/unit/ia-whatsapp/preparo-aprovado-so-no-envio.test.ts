@@ -23,6 +23,7 @@ import {
   montarCatalogoDoAgente,
   type CatalogoDoAgente,
 } from "@/lib/agente/ferramentas/buscar-procedimento";
+import { mascararNome } from "@/lib/agente/historico";
 import { executarTurnoDoAgente, type ClienteDoAgente } from "@/lib/agente/laco";
 import { configPadraoDoAgente } from "@/lib/domain/agente/config";
 import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
@@ -584,4 +585,132 @@ describe("o texto do preparo aprovado so aparece no envio", () => {
     ]);
     semOTexto("log", logs.join(""));
   });
+});
+
+// ---------------------------------------------------------------------------
+// Revisao da AG7 (CFM-1 e MOTOR-1): a varredura com o nome do contato
+// dentro dos textos de preparo da clinica
+// ---------------------------------------------------------------------------
+
+/** Minusculas, sem acento, o que nao e letra nem numero vira espaco. */
+function normalizado(texto: string): string {
+  return texto
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+/**
+ * As frases de um texto de preparo (por linha, ponto e dois pontos) com tres
+ * palavras ou mais, normalizadas, como sairam e com a mascara do nome.
+ */
+function frasesDoTexto(texto: string, nome: string): string[] {
+  const doTexto = (t: string) =>
+    t
+      .split(/[.!?:\n]+/u)
+      .map(normalizado)
+      .filter((frase) => frase.split(" ").length >= 3);
+  return [
+    ...new Set([...doTexto(texto), ...doTexto(mascararNome(texto, nome))]),
+  ];
+}
+
+describe("revisao da AG7 (CFM-1): nenhum texto de preparo da clinica vai a OpenAI, nem com o nome do contato dentro dele", () => {
+  const CASOS = [
+    {
+      nome: "Clara Souza",
+      textos: [
+        "Na véspera, faça dieta líquida clara: água, chá e suco coado.\nÀs 18h, tome 2 comprimidos de bisacodil 5 mg.\nJejum de 8 horas antes do exame.",
+        "Venha sem maquiagem, Clara, e com o rosto limpo.",
+      ],
+    },
+    {
+      nome: "Sol Andrade",
+      textos: [
+        "Evite exposição ao sol por 15 dias antes do procedimento.\nSuspenda o uso de ácido retinoico 7 dias antes.",
+      ],
+    },
+    {
+      nome: "João Pereira",
+      textos: [
+        "O Dr. João pede jejum de 12 horas antes do exame.\nTome o manitol a 20% às 20h da véspera.",
+      ],
+    },
+    {
+      nome: "Maria Lima",
+      textos: [
+        "Chegue à Clínica Santa Maria 30 minutos antes.\nJejum de 8 horas antes do exame, inclusive de água.\nTome 2 comprimidos de bisacodil 5 mg às 18h.",
+      ],
+    },
+    {
+      // A contato que derruba as duas ancoras da mensagem do sistema.
+      nome: "Preparo Silva",
+      textos: [
+        "Na véspera, só líquidos claros.\nTome 2 comprimidos de bisacodil 5 mg às 18h.",
+      ],
+    },
+  ] as const;
+
+  it.each(CASOS)(
+    "contato $nome: o toque da regua, a mensagem do sistema e o texto antigo no historico; a OpenAI le so os marcadores",
+    async ({ nome, textos }) => {
+      const [aprovado] = textos;
+      const primeiro = nome.split(" ")[0] ?? nome;
+      const mensagemDoSistema = mensagemDoPreparo({
+        procedimento: "Colonoscopia",
+        rt: RT_DE_TESTE,
+        texto: aprovado,
+      });
+      const contato = banco
+        .linhas("contact")
+        .find((linha) => linha.id === CONTATO);
+      if (contato === undefined) {
+        throw new Error("contato");
+      }
+      contato.name = nome;
+      estado.catalogo = { ...catalogo(), textosDePreparo: [...textos] };
+      const mensagens = banco.linhas("message");
+      for (const linha of mensagens) {
+        if (linha.id === "r1") {
+          linha.body = `Oi, ${primeiro}! Amanhã você tem Colonoscopia.\n${textos[1] ?? aprovado}\nPodemos confirmar sua presença?`;
+        }
+        if (linha.id === "r2") {
+          linha.body = `Oi, ${primeiro}! Amanhã, 13/10/2026 às 16:00, você tem Colonoscopia.\n${aprovado}\nPodemos confirmar sua presença?`;
+        }
+        if (linha.id === "p0") {
+          linha.body = mensagemDoSistema;
+        }
+      }
+      const doModelo = "Atendemos de segunda a sexta.";
+      const { resultado, openAi } = await rodar(JOB, "m1", [
+        respostaFinal(doModelo),
+      ]);
+      expect(resultado).toEqual({ ok: true });
+      // O classificador, o agente e o verificador foram chamados.
+      expect(openAi.create).toHaveBeenCalledTimes(1);
+      expect(openAi.parse).toHaveBeenCalledTimes(2);
+
+      const tudo = ` ${normalizado(JSON.stringify(openAi.corpos))} `;
+      for (const texto of textos) {
+        for (const frase of frasesDoTexto(texto, nome)) {
+          expect(tudo, `${nome}: ${frase}`).not.toContain(` ${frase} `);
+        }
+      }
+      for (const palavra of ["bisacodil", "manitol", "retinoico"]) {
+        expect(tudo).not.toContain(palavra);
+      }
+      // O historico tem os marcadores e o nome continua mascarado.
+      const historico = JSON.stringify(
+        openAi.corpos.find((c) => Array.isArray(c.tools))?.input,
+      );
+      expect(historico).toContain(
+        "(o texto da orientação de preparo aprovada pela clínica estava aqui)",
+      );
+      expect(historico).toContain("aprovada pela clínica, foi enviada aqui.");
+      expect(historico).not.toContain(primeiro);
+      semOTexto("log", logs.join(""));
+    },
+  );
 });

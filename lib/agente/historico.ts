@@ -7,7 +7,7 @@ import {
   type AutoriaDaClinica,
   type MensagemDaConversa,
 } from "./laco";
-import { MARCA_DO_NOME } from "./marca-do-nome";
+import { MARCA_DO_NOME, mascararNome } from "./marca-do-nome";
 // [AG6b mídia] início
 import { estadoDoArquivo, type MidiaDaConversa } from "./midia";
 // [AG6b mídia] fim
@@ -37,6 +37,13 @@ import type { AberturaDaJanela } from "./whatsapp";
 //  - texto com media_url (video, localizacao e cartao chegam como texto) e
 //    corpo vazio viram midia: o portao de entrada escala. Audio vai sem a
 //    transcricao (escala como midia);
+//  - [AG7 preparo] a fala da clinica de texto leva tambem o corpo como saiu
+//    (textoOriginalDaClinica, sem a mascara do nome; so o servidor le): o
+//    laco troca nele o texto do preparo pelo marcador e so DEPOIS refaz a
+//    mascara (revisao da AG7, CFM-1 e MOTOR-1). Com a troca no texto ja
+//    mascarado, o nome do contato dentro do texto aprovado ("dieta liquida
+//    clara" da Clara, "Dr. Joao", "Clinica Santa Maria") desfazia a
+//    igualdade, e o toque da regua ia inteiro ao modelo;
 //  - o nome do contato (inteiro e o primeiro nome, sem diferenciar
 //    maiusculas e acentos) vira MARCA_DO_NOME ("Fulano") em todas as
 //    mensagens, no `texto`, que e o que vai a OpenAI. Palavra comum, SEM
@@ -123,8 +130,10 @@ export type HistoricoDaConversa = {
 };
 
 // A marca do nome mora em ./marca-do-nome (o laco tira a marca da resposta
-// do modelo sem importar este arquivo, que importa o laco).
-export { MARCA_DO_NOME };
+// do modelo sem importar este arquivo, que importa o laco). [AG7 preparo] A
+// mascara tambem (mascararNome): o laco a refaz na fala da clinica depois de
+// trocar o texto do preparo pelo marcador (CFM-1).
+export { MARCA_DO_NOME, mascararNome };
 
 /** Estados de ai_turno que encerram as mensagens lidas (contrato 1.1). */
 const ESTADOS_ENCERRADOS: ReadonlySet<string> = new Set([
@@ -157,104 +166,6 @@ type LinhaDoTurno = {
   estado: string;
   mensagens_lidas: string[] | null;
 };
-
-// ---------------------------------------------------------------------------
-// Nome do contato
-// ---------------------------------------------------------------------------
-
-const LETRA_OU_DIGITO = /[\p{L}\p{N}]/u;
-
-/** Minusculo e sem acento, caractere a caractere (com o mapa de volta). */
-function normalizarComMapa(texto: string): { texto: string; origem: number[] } {
-  let normal = "";
-  const origem: number[] = [];
-  let indice = 0;
-  for (const caractere of texto) {
-    const simples = caractere
-      .normalize("NFD")
-      .replace(/\p{M}/gu, "")
-      .toLowerCase();
-    for (const parte of simples) {
-      normal += parte;
-      origem.push(indice);
-    }
-    indice += caractere.length;
-  }
-  return { texto: normal, origem };
-}
-
-function normalizar(texto: string): string {
-  return normalizarComMapa(texto).texto;
-}
-
-/** O nome inteiro e o primeiro nome, normalizados, do maior para o menor. */
-function formasDoNome(nome: string | null): string[] {
-  const limpo = (nome ?? "").trim().replace(/\s+/g, " ");
-  if (limpo === "") {
-    return [];
-  }
-  const formas = new Set<string>();
-  const inteiro = normalizar(limpo);
-  const primeiro = normalizar(limpo.split(" ")[0] ?? "");
-  // Uma letra so mascararia "a" e "e" em todo texto: fica de fora.
-  for (const forma of [inteiro, primeiro]) {
-    if (Array.from(forma).filter((c) => LETRA_OU_DIGITO.test(c)).length >= 2) {
-      formas.add(forma);
-    }
-  }
-  return [...formas].sort((a, b) => b.length - a.length);
-}
-
-/**
- * Troca o nome do contato (inteiro e o primeiro nome, palavra inteira, sem
- * diferenciar maiusculas e acentos) por MARCA_DO_NOME.
- */
-export function mascararNome(texto: string, nome: string | null): string {
-  const formas = formasDoNome(nome);
-  if (formas.length === 0 || texto === "") {
-    return texto;
-  }
-  const { texto: normal, origem } = normalizarComMapa(texto);
-  const trechos: { inicio: number; fim: number }[] = [];
-  const ocupado = new Array<boolean>(normal.length).fill(false);
-  for (const forma of formas) {
-    let de = 0;
-    while (de <= normal.length - forma.length) {
-      const achou = normal.indexOf(forma, de);
-      if (achou < 0) {
-        break;
-      }
-      const fim = achou + forma.length;
-      const antes = achou > 0 ? normal[achou - 1] : "";
-      const depois = fim < normal.length ? normal[fim] : "";
-      const palavraInteira =
-        !(antes && LETRA_OU_DIGITO.test(antes)) &&
-        !(depois && LETRA_OU_DIGITO.test(depois));
-      const livre = !ocupado.slice(achou, fim).some(Boolean);
-      if (palavraInteira && livre) {
-        for (let i = achou; i < fim; i += 1) {
-          ocupado[i] = true;
-        }
-        const inicioOriginal = origem[achou] ?? 0;
-        const ultimo = origem[fim - 1] ?? inicioOriginal;
-        // O fim no original: o caractere inteiro do ultimo indice.
-        const fimOriginal =
-          ultimo + ((texto.codePointAt(ultimo) ?? 0) > 0xffff ? 2 : 1);
-        trechos.push({ inicio: inicioOriginal, fim: fimOriginal });
-      }
-      de = achou + 1;
-    }
-  }
-  if (trechos.length === 0) {
-    return texto;
-  }
-  trechos.sort((a, b) => b.inicio - a.inicio);
-  let saida = texto;
-  for (const { inicio, fim } of trechos) {
-    saida = `${saida.slice(0, inicio)}${MARCA_DO_NOME}${saida.slice(fim)}`;
-  }
-  return saida;
-}
 
 // ---------------------------------------------------------------------------
 // Mapeamento
@@ -328,9 +239,18 @@ export function mensagemDaLinha(
     };
   }
   const texto = mascararNome(corpo, nomeDoContato);
+  // [AG7 preparo] A fala da clinica leva tambem o corpo como saiu, SEM a
+  // mascara (textoOriginalDaClinica): o laco troca o texto do preparo pelo
+  // marcador NELE e so depois refaz a mascara (CFM-1). So o servidor le.
   return autor === "paciente"
     ? { autor, texto, tipo: "texto", textoOriginal: corpo }
-    : { autor, ...autoria, texto, tipo: "texto" };
+    : {
+        autor,
+        ...autoria,
+        texto,
+        tipo: "texto",
+        textoOriginalDaClinica: corpo,
+      };
 }
 
 /** message.author da fala da clinica como a autoria do laco (ou nula). */

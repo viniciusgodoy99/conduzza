@@ -39,7 +39,10 @@ import {
 } from "@/lib/domain/agente/config";
 import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
 import { LIMITE_DO_RASCUNHO } from "@/lib/domain/conformidade/filtro-deterministico";
-import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
+import {
+  FRASE_DE_ESCALONAMENTO,
+  FRASE_DO_ASSISTENTE_VIRTUAL,
+} from "@/lib/domain/conformidade/frase-fixa";
 import type {
   EntradaDoVerificador,
   ResultadoDoVerificador,
@@ -814,25 +817,46 @@ describe("nenhum texto de preparo da clinica sai do servidor", () => {
 
   it("o cabecalho mascarado pelo nome do contato: o rodape ainda reconhece a mensagem", async () => {
     // A contato chamada "De Souza": a mascara troca o "de" do cabecalho.
-    const mascarada = mascararNome(
-      mensagemDoPreparo({
-        procedimento: "Exame",
-        rt: RT_DE_TESTE,
-        texto: TEXTO_DO_PREPARO_DE_TESTE,
-      }),
-      "De Souza",
-    );
+    const mensagem = mensagemDoPreparo({
+      procedimento: "Exame",
+      rt: RT_DE_TESTE,
+      texto: TEXTO_DO_PREPARO_DE_TESTE,
+    });
+    const mascarada = mascararNome(mensagem, "De Souza");
     expect(mascarada.startsWith("Orientação de preparo")).toBe(false);
-    const { corpos } = await turno([final("Posso ajudar em algo mais?")], {
+    // Sem o corpo como saiu (quem montou a mensagem a mao): o rodape
+    // reconhece, e o substituto nao diz "aprovada" (a mascara desmontou o
+    // formato inteiro, que so a mensagem do sistema tem; CFM-10).
+    const semOriginal = await turno([final("Posso ajudar em algo mais?")], {
       mensagens: [
         paciente("Qual o preparo?"),
         { autor: "assistente", autoria: "sistema", texto: mascarada },
         paciente("Obrigada"),
       ],
     });
-    semTextoDaClinica("corpos", corpos);
-    expect(JSON.stringify(corpos[0]?.input)).toContain(
-      "Mensagem do sistema: a orientação de preparo, aprovada pela clínica, foi enviada aqui.",
+    semTextoDaClinica("corpos", semOriginal.corpos);
+    expect(JSON.stringify(semOriginal.corpos[0]?.input)).toContain(
+      "Mensagem da clínica: uma orientação de preparo foi enviada aqui.",
+    );
+    // Com o corpo como saiu (o historico do WhatsApp, CFM-1): a troca vem
+    // antes da mascara, e o substituto do sistema volta inteiro (texto fixo:
+    // a mascara nao mexe nele).
+    const comOriginal = await turno([final("Posso ajudar em algo mais?")], {
+      nomeDoContato: "De Souza",
+      mensagens: [
+        paciente("Qual o preparo?"),
+        {
+          autor: "assistente",
+          autoria: "sistema",
+          texto: mascarada,
+          textoOriginalDaClinica: mensagem,
+        },
+        paciente("Obrigada"),
+      ],
+    });
+    semTextoDaClinica("corpos", comOriginal.corpos);
+    expect(JSON.stringify(comOriginal.corpos[0]?.input)).toContain(
+      "Mensagem do sistema: a orientação de preparo de Exame, aprovada pela clínica, foi enviada aqui.",
     );
   });
 });
@@ -1293,6 +1317,57 @@ describe("o simulador com o preparo", () => {
     expect(JSON.stringify(seguinte.corpos[0]?.input)).toContain(
       "Mensagem do sistema: a orientação de preparo de Consulta, aprovada pela clínica, foi enviada aqui.",
     );
+  });
+
+  it("revisao da AG7 (MOTOR-6): a resposta depois do preparo leva o aviso de assistente virtual, como no WhatsApp (a mensagem do preparo e do sistema)", async () => {
+    const b = bancoDoSimulador(MENSAGEM);
+    const pedido = "Me manda a orientação de preparo da consulta, por favor";
+    const { r } = await simular(
+      b,
+      [{ autor: "paciente", texto: pedido }],
+      [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
+    );
+    if (!r.ok) {
+      throw new Error("o primeiro turno falhou");
+    }
+    const seguinte = await simular(
+      b,
+      [
+        { autor: "paciente", texto: pedido },
+        { autor: "assistente", texto: r.resposta, assinatura: r.assinatura },
+        { autor: "paciente", texto: "Obrigada! Vocês atendem aos sábados?" },
+      ],
+      [final("Atendemos de segunda a sexta.")],
+      r.estado,
+    );
+    expect(seguinte.r.ok).toBe(true);
+    if (!seguinte.r.ok) {
+      return;
+    }
+    expect(seguinte.r.resposta).toBe(
+      `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\nAtendemos de segunda a sexta.`,
+    );
+    // Com uma resposta da IA antes, o aviso nao repete.
+    const terceira = await simular(
+      b,
+      [
+        { autor: "paciente", texto: pedido },
+        { autor: "assistente", texto: r.resposta, assinatura: r.assinatura },
+        { autor: "paciente", texto: "Obrigada! Vocês atendem aos sábados?" },
+        {
+          autor: "assistente",
+          texto: seguinte.r.resposta,
+          assinatura: seguinte.r.assinatura,
+        },
+        { autor: "paciente", texto: "E aos domingos?" },
+      ],
+      [final("Aos domingos não atendemos.")],
+      seguinte.r.estado,
+    );
+    expect(terceira.r.ok).toBe(true);
+    if (terceira.r.ok) {
+      expect(terceira.r.resposta).toBe("Aos domingos não atendemos.");
+    }
   });
 
   it("fora de vigor na hora: a passagem (a frase), como num turno de verdade", async () => {

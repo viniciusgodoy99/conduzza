@@ -141,6 +141,31 @@ export function substitutoDaMensagemDoPreparo(procedimento: string): string {
     : `Mensagem do sistema: a orientação de preparo de ${nome}, aprovada pela clínica, foi enviada aqui.`;
 }
 
+/**
+ * Revisao da AG7 (CFM-10): o que o modelo le no lugar de uma fala da clinica
+ * NO FORMATO da mensagem do preparo (o cabecalho ou o rodape fixos) que nao e
+ * a do sistema: a da equipe, a da IA, a de autoria desconhecida. Nunca diz
+ * "aprovada" (ninguem conferiu que o RT aprovou aquele texto) e nunca deixa
+ * o texto ir ao modelo.
+ */
+export function substitutoDaFalaNoFormatoDoPreparo(
+  procedimento: string,
+): string {
+  const nome = procedimento.trim();
+  return nome === ""
+    ? "Mensagem da clínica: uma orientação de preparo foi enviada aqui."
+    : `Mensagem da clínica: uma orientação de preparo de ${nome} foi enviada aqui.`;
+}
+
+/**
+ * Revisao da AG7 (CFM-1): o que o modelo le no lugar de uma fala da clinica
+ * que tinha texto de preparo quando o laco nao recebeu o nome do contato para
+ * refazer a mascara (quem montou o historico esqueceu: falha fechada, nem o
+ * preparo nem o nome vao ao modelo).
+ */
+export const SUBSTITUTO_DA_FALA_SEM_A_MASCARA =
+  "(a clínica mandou uma mensagem que não aparece aqui)";
+
 // ---------------------------------------------------------------------------
 // O texto: normalizacao e validade (espelho de preparo_texto_valido)
 // ---------------------------------------------------------------------------
@@ -393,6 +418,38 @@ export function semOPreparo(texto: string, textos: readonly string[]): string {
   if (typeof texto !== "string" || texto === "") {
     return texto;
   }
+  const nfc = texto.normalize("NFC");
+  const trechos = trechosDoPreparo(nfc, textos);
+  if (trechos.length === 0) {
+    return trechos === SEM_AGULHA ? texto : nfc;
+  }
+  let saida = "";
+  let ultimo = 0;
+  for (const { inicio, fim } of trechos) {
+    saida += nfc.slice(ultimo, inicio) + SUBSTITUTO_DO_TEXTO_DO_PREPARO;
+    ultimo = fim;
+  }
+  return saida + nfc.slice(ultimo);
+}
+
+/** Um trecho do texto, em indices de unidade UTF-16 ([inicio, fim)). */
+export type TrechoDoPreparo = { inicio: number; fim: number };
+
+// A lista vazia de quando nao ha agulha nenhuma (semOPreparo devolve o texto
+// como veio, sem a NFC, como sempre).
+const SEM_AGULHA: readonly TrechoDoPreparo[] = Object.freeze([]);
+
+/**
+ * Os trechos de `texto` (JA em NFC) iguais a um texto de preparo da clinica,
+ * em ordem e sem sobrepor: a mesma busca de semOPreparo (o texto mais longo
+ * primeiro, os brancos como \s+, as pontas sem cortar palavra, o trecho ja
+ * trocado nunca lido de novo). Revisao da AG7 (CFM-1): o laco troca estes
+ * trechos no corpo como saiu e refaz a mascara do nome so no resto.
+ */
+export function trechosDoPreparo(
+  texto: string,
+  textos: readonly string[],
+): readonly TrechoDoPreparo[] {
   const agulhas = [
     ...new Set(
       (Array.isArray(textos) ? textos : [])
@@ -401,40 +458,34 @@ export function semOPreparo(texto: string, textos: readonly string[]): string {
         .filter((t) => /[\p{L}\p{N}]/u.test(t)),
     ),
   ].sort((a, b) => b.length - a.length);
-  if (agulhas.length === 0) {
-    return texto;
+  if (agulhas.length === 0 || typeof texto !== "string" || texto === "") {
+    return SEM_AGULHA;
   }
-  type Parte = { marcador: boolean; texto: string };
-  let partes: Parte[] = [{ marcador: false, texto: texto.normalize("NFC") }];
+  let livres: TrechoDoPreparo[] = [{ inicio: 0, fim: texto.length }];
+  const tomados: TrechoDoPreparo[] = [];
   for (const agulha of agulhas) {
     const regex = regexDoTexto(agulha);
-    partes = partes.flatMap((parte): Parte[] => {
-      if (parte.marcador) {
-        return [parte];
-      }
-      const novas: Parte[] = [];
+    const restantes: TrechoDoPreparo[] = [];
+    for (const livre of livres) {
+      const pedaco = texto.slice(livre.inicio, livre.fim);
       let ultimo = 0;
-      for (const achado of parte.texto.matchAll(regex)) {
+      for (const achado of pedaco.matchAll(regex)) {
         const inicio = achado.index ?? 0;
-        novas.push({
-          marcador: false,
-          texto: parte.texto.slice(ultimo, inicio),
+        restantes.push({
+          inicio: livre.inicio + ultimo,
+          fim: livre.inicio + inicio,
         });
-        novas.push({ marcador: true, texto: "" });
+        tomados.push({
+          inicio: livre.inicio + inicio,
+          fim: livre.inicio + inicio + achado[0].length,
+        });
         ultimo = inicio + achado[0].length;
       }
-      if (novas.length === 0) {
-        return [parte];
-      }
-      novas.push({ marcador: false, texto: parte.texto.slice(ultimo) });
-      return novas;
-    });
+      restantes.push({ inicio: livre.inicio + ultimo, fim: livre.fim });
+    }
+    livres = restantes;
   }
-  return partes
-    .map((parte) =>
-      parte.marcador ? SUBSTITUTO_DO_TEXTO_DO_PREPARO : parte.texto,
-    )
-    .join("");
+  return tomados.sort((a, b) => a.inicio - b.inicio);
 }
 
 // ---------------------------------------------------------------------------

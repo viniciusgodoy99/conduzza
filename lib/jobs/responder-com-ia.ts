@@ -1185,6 +1185,9 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
       verificador: c.deps.criarVerificador(identificador ?? ""),
       classificador: c.deps.criarClassificador(identificador ?? ""),
       dataDeNascimento: contato.birth_date,
+      // [AG7 preparo] O nome da mascara do historico: o laco a refaz na fala
+      // da clinica depois de trocar o texto do preparo (CFM-1).
+      nomeDoContato: contato.name,
       contato: tipoDoContato,
       foraDoAssuntoNaJanela: foraDoAssunto,
       primeiraRespostaDaIa: !historico.iaRespondeuNaJanela,

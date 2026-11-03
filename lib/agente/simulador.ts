@@ -62,6 +62,7 @@ import { carregarCatalogoDoAgente, carregarConfigDoRascunho } from "./contexto";
 import { ROTULO_DO_MOTIVO_DE_ESCALONAMENTO } from "@/lib/domain/agente/config";
 import { lerPreparoParaEnvio } from "./contexto";
 import { PASSO_DO_PREPARO_FORA_DE_VIGOR } from "./ferramentas/enviar-preparo";
+import { partesDaMensagemDoPreparo } from "@/lib/domain/preparo";
 // [AG7 preparo] fim
 import { acertarGasto, reservarGasto } from "./gasto";
 import {
@@ -567,11 +568,26 @@ export async function simularTurno(
   }
   // Revisao da AG4 (achado 1): no simulador, toda fala do assistente e da
   // IA (o historico e assinado), a autoria que a pergunta do cancelamento e
-  // da remarcacao confere.
+  // da remarcacao confere. [AG7 preparo] Revisao da AG7 (CFM-10 e MOTOR-6):
+  // menos a mensagem do preparo (no formato inteiro), que e do SISTEMA, como
+  // no WhatsApp: o historico assinado garante que o servidor a mostrou, e a
+  // resposta do modelo nesse formato nunca passa no filtro (AG7-S13). Assim o
+  // modelo le o mesmo substituto e a resposta seguinte leva o aviso de
+  // assistente virtual, como no WhatsApp.
   const mensagens: MensagemDaConversa[] = falas.map((fala) =>
     fala.autor === "assistente"
-      ? { autor: fala.autor, autoria: "ia", texto: fala.texto }
+      ? {
+          autor: fala.autor,
+          autoria:
+            partesDaMensagemDoPreparo(fala.texto) !== null ? "sistema" : "ia",
+          texto: fala.texto,
+        }
       : { autor: fala.autor, texto: fala.texto },
+  );
+  // [AG7 preparo] A primeira resposta da IA: nenhuma fala da IA (a mensagem
+  // do preparo e do sistema), a mesma regra do executor (MOTOR-6).
+  const primeiraRespostaDaIa = !mensagens.some(
+    (m) => m.autor === "assistente" && m.autoria === "ia",
   );
 
   // AG3: o estado do atendimento simulado, ligado a ultima resposta.
@@ -742,6 +758,8 @@ export async function simularTurno(
     classificador,
     contato,
     foraDoAssuntoNaJanela: foraDoAssuntoNoSimulador(falas),
+    // [AG7 preparo] MOTOR-6: o aviso de assistente virtual como no WhatsApp.
+    primeiraRespostaDaIa,
     conferirTrava: () => iaPodeSimular(admin, clinicId),
     agenda: portaDaAgendaDoSimulador(admin, {
       clinicId,
