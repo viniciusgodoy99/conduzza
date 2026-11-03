@@ -30,6 +30,8 @@ import {
 } from "@/lib/domain/conformidade/filtro";
 import {
   FONTES_DAS_REGRAS_EM_CODIGO,
+  perguntaDePreparo,
+  REGRA_DA_RESPOSTA_AO_PREPARO,
   REGRA_DO_TRECHO_DO_PREPARO,
 } from "@/lib/domain/conformidade/filtro-deterministico";
 import { PADROES_DE_SAIDA } from "@/lib/domain/conformidade/padroes";
@@ -1244,6 +1246,132 @@ describe("AG7: o preparo escrito pelo modelo e o trecho do texto da clinica", ()
         expect(decisao.aprovado).toBe(true);
       }
     });
+  });
+});
+// [AG7 preparo] fim
+
+// [AG7 preparo] início
+describe("revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum", () => {
+  const RESPOSTA = {
+    categoria: "orientacao_clinica",
+    regra: REGRA_DA_RESPOSTA_AO_PREPARO,
+  };
+  const com = (mensagensDoPaciente: string[]) => ({
+    ...CONTEXTO_PADRAO,
+    nomesDoCatalogo: [...CONTEXTO_PADRAO.nomesDoCatalogo, "Glicemia de jejum"],
+    mensagensDoPaciente,
+  });
+
+  it("a pergunta: o assunto (preparo, jejum, dieta, laxante, comer antes) com pergunta ou pedido", () => {
+    for (const pergunta of [
+      "precisa de jejum pra colonoscopia?",
+      "tem preparo?",
+      "qual o preparo da endoscopia",
+      "me manda a orientação de preparo",
+      "jejum de quantas horas",
+      "posso comer antes do exame?",
+      "tem que tomar laxante?",
+    ]) {
+      expect(perguntaDePreparo([pergunta], []), pergunta).toBe(true);
+    }
+    for (const naoE of [
+      "obrigada pelo preparo",
+      "recebi o preparo, valeu",
+      "quanto custa a glicemia de jejum?",
+      "o exame de glicose em jejum é amanhã?",
+      "vocês atendem aos sábados?",
+    ]) {
+      expect(perguntaDePreparo([naoE], []), naoE).toBe(false);
+    }
+    // O nome do catalogo com jejum (mascarado) nao e pergunta de jejum.
+    expect(
+      perguntaDePreparo(
+        ["quanto custa a Glicemia de jejum?"],
+        ["Glicemia de jejum"],
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    "Precisa sim.",
+    "Sim, 8 horas.",
+    "Não precisa.",
+    "Pro ultrassom de abdome, não.",
+    "Tem sim, é simples.",
+    "Claro! Só uma dieta levinha na véspera.",
+    "Sim, quer receber a orientação de preparo?",
+    "Precisa sim. Posso te enviar a orientação de preparo?",
+    "Temos horário amanhã às 10h. Pode ser?",
+    "De 8 horas. Quer receber a orientação de preparo?",
+  ])("barra %j depois de 'precisa de jejum pra colonoscopia?'", (rascunho) => {
+    expect(
+      avaliarRegras(rascunho, com(["precisa de jejum pra colonoscopia?"]))
+        .achados,
+    ).toContainEqual(RESPOSTA);
+  });
+
+  it.each([
+    "Quer receber a orientação de preparo da colonoscopia?",
+    "Para qual procedimento você quer a orientação de preparo?",
+    "Claro! Qual exame você vai fazer?",
+    "Se quiser, posso te enviar a orientação de preparo aprovada pela clínica.",
+    "Temos horário amanhã às 10h com a Dra. Ana. Pode ser? Quer receber a orientação de preparo da colonoscopia?",
+  ])(
+    "passa %j depois da pergunta (a oferta, a pergunta do procedimento)",
+    (rascunho) => {
+      expect(
+        avaliarRegras(rascunho, com(["precisa de jejum pra colonoscopia?"]))
+          .achados,
+      ).not.toContainEqual(RESPOSTA);
+    },
+  );
+
+  it("sem a pergunta, a regra nao roda (a resposta de sempre passa)", () => {
+    expect(
+      avaliarRegras(
+        "Atendemos de segunda a sexta.",
+        com(["vocês atendem aos sábados?"]),
+      ).achados,
+    ).toEqual([]);
+    expect(
+      avaliarRegras(
+        "A Glicemia de jejum custa R$ 250,00.",
+        com(["quanto custa a glicemia de jejum?"]),
+      ).achados,
+    ).toEqual([]);
+  });
+
+  it("com os fatos: a F2 colada pelo sistema conta como a forma permitida, e os textos colados saem antes", () => {
+    const F2 = FRASE_DO_PREPARO_DEPOIS_DE_MARCAR;
+    const comAF2 = {
+      ...com(["quero marcar colonoscopia amanhã, precisa de jejum?"]),
+      fatos: { ...fatosVazios(2026), textosColados: [F2] },
+    };
+    expect(
+      avaliarRegras(`Pronto, ficou pedida para amanhã.\n\n${F2}`, comAF2)
+        .achados,
+    ).not.toContainEqual(RESPOSTA);
+    // A F2 escrita pelo modelo (sem estar nos colados) nao conta.
+    const semColar = {
+      ...com(["quero marcar colonoscopia amanhã, precisa de jejum?"]),
+      fatos: fatosVazios(2026),
+    };
+    expect(
+      avaliarRegras(`Pronto, ficou pedida para amanhã.\n\n${F2}`, semColar)
+        .achados,
+    ).toContainEqual(RESPOSTA);
+    // A resposta curta junto da F2 colada continua barrada.
+    expect(
+      avaliarRegras(`Precisa sim.\n\n${F2}`, comAF2).achados,
+    ).toContainEqual(RESPOSTA);
+  });
+
+  it("a regra esta nas fontes da versao das regras", () => {
+    expect(
+      FONTES_DAS_REGRAS_EM_CODIGO.some((fonte) =>
+        fonte.startsWith(`${REGRA_DA_RESPOSTA_AO_PREPARO}: `),
+      ),
+    ).toBe(true);
   });
 });
 // [AG7 preparo] fim

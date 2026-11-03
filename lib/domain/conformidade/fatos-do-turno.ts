@@ -6026,7 +6026,7 @@ function promessasDaEspera(
 // A regra
 // ---------------------------------------------------------------------------
 
-function semTextosColados(
+export function semTextosColados(
   rascunho: string,
   colados: readonly string[],
 ): string {

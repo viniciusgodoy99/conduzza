@@ -748,6 +748,35 @@ describe("o modelo continua barrado ao escrever preparo", () => {
     expect(verificador).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "Precisa sim.",
+    "Não precisa.",
+    "Sim, 8 horas.",
+    "Tem sim, é simples.",
+  ])(
+    "revisao da AG7 (CFM-5): a resposta curta %j a pergunta de jejum barra na regra, sem o verificador",
+    async (resposta) => {
+      const { r } = await turno([final(resposta)], {
+        mensagens: [
+          paciente("Oi"),
+          {
+            autor: "assistente",
+            autoria: "ia",
+            texto: "Olá! Como posso ajudar?",
+          },
+          paciente("precisa de jejum pra colonoscopia?"),
+        ],
+      });
+      expect(r.tipo).toBe("frase_fixa");
+      expect(r.desfecho).toMatchObject({
+        tipo: "bloqueou",
+        categoria: "orientacao_clinica",
+        camada: "regra",
+      });
+      expect(verificador).not.toHaveBeenCalled();
+    },
+  );
+
   it("parafraseado (so o verificador pega): passa pelo verificador e e barrado", async () => {
     verificador.mockImplementation(async (pedido) => {
       pedidosAoVerificador.push(pedido);
@@ -763,10 +792,22 @@ describe("o modelo continua barrado ao escrever preparo", () => {
       };
     });
     // Revisao da AG7 (CFM-4): "so caldos" ja barra nas regras; a parafrase
-    // que so o verificador pega e outra.
-    const { r } = await turno([
-      final("Na véspera, capriche nos caldos e na gelatina."),
-    ]);
+    // que so o verificador pega e outra. E a pendente nao pede o preparo
+    // (depois do pedido, a resposta sem a oferta ja barra na regra, CFM-5).
+    const { r } = await turno(
+      [final("Na véspera, capriche nos caldos e na gelatina.")],
+      {
+        mensagens: [
+          paciente("Oi"),
+          {
+            autor: "assistente",
+            autoria: "ia",
+            texto: "Olá! Como posso ajudar?",
+          },
+          paciente("Vocês atendem aos sábados?"),
+        ],
+      },
+    );
     expect(verificador).toHaveBeenCalledTimes(1);
     expect(r.desfecho).toMatchObject({ tipo: "bloqueou", camada: "modelo" });
   });
@@ -1403,7 +1444,8 @@ describe("o simulador com o preparo", () => {
       mensagemDoPreparo({
         procedimento: "Consulta",
         rt: RT_DE_TESTE,
-        texto: "Venha sem maquiagem. Resultado garantido, você vai sair renovada!",
+        texto:
+          "Venha sem maquiagem. Resultado garantido, você vai sair renovada!",
       }),
     );
     const { r } = await simular(

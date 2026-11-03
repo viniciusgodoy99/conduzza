@@ -44,6 +44,8 @@ import {
 import {
   FONTES_DOS_FATOS,
   regrasDosFatos,
+  // [AG7 preparo] A resposta a pergunta do preparo sem os textos colados.
+  semTextosColados,
   trechosDeEnderecoDasFerramentas,
   type FatosDoTurno,
 } from "@/lib/domain/conformidade/fatos-do-turno";
@@ -55,6 +57,9 @@ import {
   distanciaDeEdicao,
   FONTES_DA_NORMALIZACAO,
   frasesDasVisoes,
+  // [AG7 preparo] A pergunta e a resposta do preparo (CFM-5).
+  mascararNomes,
+  normalizarBase,
   neutralizador,
   ocorreNoInicioDePalavra,
   sinaisDeOfuscacao,
@@ -76,6 +81,7 @@ import {
 // preparo-aprovado.ts a reexporta: este arquivo nao importa
 // preparo-aprovado.ts, que importa este (ciclo de import).
 import {
+  FRASE_DO_PREPARO_DEPOIS_DE_MARCAR,
   TAMANHO_MINIMO_DO_TRECHO,
   trechoDePreparoNaResposta,
 } from "@/lib/domain/preparo";
@@ -416,6 +422,136 @@ const neutralizarSaida = neutralizador(NEUTRALIZACOES_DE_SAIDA);
  * clinica (orientacao_clinica, camada regra). So roda com textosDePreparo.
  */
 export const REGRA_DO_TRECHO_DO_PREPARO = "trecho_do_preparo_da_clinica";
+
+/**
+ * Revisao da AG7 (CFM-5): a resposta da IA a uma pergunta de preparo ou de
+ * jejum do paciente (orientacao_clinica, camada regra). Com a habilidade
+ * "Enviar orientacao de preparo", o classificador deixa a pergunta geral
+ * chegar ao modelo (D-81: o portao nao muda), e o turno certo e
+ * enviar_preparo (sem rascunho) ou a passagem. O rascunho so passa com uma
+ * das formas permitidas (a oferta do envio, a pergunta do procedimento ou a
+ * F2 colada pelo sistema) e sem nenhuma frase que responda ("Precisa sim.",
+ * "Sim, 8 horas.", "Não precisa.", "Pro ultrassom de abdome, não.", "Tem
+ * sim, é simples."). Sem a habilidade, a pergunta escala no classificador:
+ * a regra vale tambem (falha fechada). Antes, so o verificador barrava a
+ * resposta curta (AG7-S07).
+ */
+export const REGRA_DA_RESPOSTA_AO_PREPARO = "resposta_ao_preparo";
+
+// O assunto: o preparo, o jejum, a dieta e o laxante, ou o "posso comer"
+// aplicado ao procedimento. Lido na visao base (minusculas, sem acento), com
+// os nomes do catalogo mascarados ("Glicemia de jejum" e procedimento) e sem
+// o nome do exame de sangue de jejum.
+const ASSUNTO_DO_PREPARO =
+  "\\b(?:jejum|preparo|preparos|preparacao|preparar|laxantes?|dieta)\\b|\\b(?:posso|pode|podem|devo|deve|tenho que|tem que|precisa|preciso|da pra|da para)\\b (?:\\w+ ){0,3}?(?:comer|beber|tomar|ingerir|almocar|jantar|lanchar|mastigar)\\b";
+// A pergunta ou o pedido (a mensagem que so cita o preparo, "obrigada pelo
+// preparo", nao conta).
+const PERGUNTA_OU_PEDIDO =
+  "\\?|\\b(?:qual|quais|como|quanto|quantas|quantos|precisa|preciso|tem|posso|pode|devo|deve|manda|mande|envia|envie|passa|passe|quero|queria|gostaria|orientac(?:ao|oes)|me diz|me fala|sabe|sabia)\\b";
+// O exame que tem jejum no nome nao e pergunta de jejum.
+const EXAME_DE_JEJUM = "\\b(?:glicemia|glicose) (?:de|em) jejum\\b";
+// As formas permitidas, numa frase que e pergunta: a oferta do envio e a
+// pergunta do procedimento.
+const OFERTA_DO_PREPARO =
+  "\\b(?:quer|queria|gostaria|deseja|prefere)\\b (?:\\w+ ){0,3}?(?:receber|que (?:eu )?(?:te |lhe )?(?:envie|mande|encaminhe))\\b.*\\b(?:orientac(?:ao|oes)|preparo)\\b|\\bposso (?:te |lhe )?(?:enviar|mandar|encaminhar)\\b.*\\b(?:orientac(?:ao|oes)|preparo)\\b";
+const PERGUNTA_DO_PROCEDIMENTO =
+  "\\b(?:qual|quais|que|de qual|para qual|pra qual|em qual)\\b (?:\\w+ ){0,2}?(?:procedimentos?|exames?|consultas?)\\b";
+// As palavras de abertura que nao mudam a frase ("Claro!", "Olha,").
+const ABERTURA =
+  "^(?:(?:oi|ola|claro|certo|entao|olha|bom|pois e|ah|perfeito|otimo|beleza|tudo bem|isso)\\b[ ,!.]*)*";
+// A frase afirmativa que responde: comeca pela resposta (sim, nao, o verbo
+// da pergunta), termina nela (", nao."), diz a necessidade, qualifica o
+// preparo (tranquilo, simples, rapido) ou da um tempo de jejum (o numero de
+// horas sem "as" na frente, que e hora do dia).
+const COMECA_RESPONDENDO = `${ABERTURA}(?:sim|nao|precisa|precisam|necessita|e necessario|e preciso|tem|tem que|pode|podem|deve|devem|basta|bastam|so|apenas|somente|nenhum|nenhuma|nada|exige|dispensa)\\b`;
+const RESPOSTA_NA_FRASE = [
+  COMECA_RESPONDENDO,
+  ",? (?:sim|nao)[ .!]*$",
+  "\\b(?:precisa|precisam|necessari[oa]s?|preciso|exige|exigem|dispensa|obrigatori[oa]s?)\\b",
+  "\\b(?:e|eh|fica|vai ser|sera|bem|super)\\b (?:bem |bastante |super |mais )?(?:tranquil\\w*|simples|rapid\\w*|levinh\\w*|facil|faceis|suave)\\b",
+  "(?<!\\b(?:as|das|pelas|ate as|a partir das|por volta das) )\\b(?:\\d{1,2}|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|doze)\\s?(?:h|hs|horas?)\\b",
+].join("|");
+// A pergunta que comeca respondendo ("Sim, quer receber...?", "Precisa sim,
+// posso enviar?"); "Pode ser amanha?" e pergunta de agenda.
+const PERGUNTA_QUE_RESPONDE = `${ABERTURA}(?:sim|nao|(?:precisa|tem|pode|deve|e) (?:sim|nao))\\b`;
+
+const REGEX_DO_ASSUNTO = new RegExp(ASSUNTO_DO_PREPARO);
+const REGEX_DA_PERGUNTA = new RegExp(PERGUNTA_OU_PEDIDO);
+const REGEX_DO_EXAME_DE_JEJUM = new RegExp(EXAME_DE_JEJUM, "g");
+const REGEX_DA_OFERTA = new RegExp(OFERTA_DO_PREPARO);
+const REGEX_DA_PERGUNTA_DO_PROCEDIMENTO = new RegExp(PERGUNTA_DO_PROCEDIMENTO);
+const REGEX_DA_RESPOSTA = new RegExp(RESPOSTA_NA_FRASE);
+const REGEX_DA_PERGUNTA_QUE_RESPONDE = new RegExp(PERGUNTA_QUE_RESPONDE);
+
+/** Alguma mensagem pendente do paciente pergunta (ou pede) preparo ou jejum? */
+export function perguntaDePreparo(
+  mensagensDoPaciente: readonly string[],
+  nomesDoCatalogo: readonly string[],
+): boolean {
+  return mensagensDoPaciente.some((mensagem) => {
+    const base = mascararNomes(
+      normalizarBase(mensagem),
+      nomesDoCatalogo,
+    ).replace(REGEX_DO_EXAME_DE_JEJUM, " ");
+    return REGEX_DO_ASSUNTO.test(base) && REGEX_DA_PERGUNTA.test(base);
+  });
+}
+
+/** As frases do rascunho (base), com o sinal de que terminam em pergunta. */
+function frasesDoRascunho(
+  texto: string,
+): { frase: string; pergunta: boolean }[] {
+  const frases: { frase: string; pergunta: boolean }[] = [];
+  for (const pedaco of texto.split(/(?<=[.!?])\s+|\n+/u)) {
+    const base = normalizarBase(pedaco);
+    if (/[a-z0-9]/.test(base)) {
+      frases.push({ frase: base, pergunta: /\?\s*$/.test(base) });
+    }
+  }
+  return frases;
+}
+
+/**
+ * Revisao da AG7 (CFM-5): o rascunho responde a pergunta de preparo ou de
+ * jejum do paciente? (So quando ha a pergunta.) Os textos colados pelo
+ * sistema (a saudacao, o aviso, a F2, o encerramento) saem antes; a F2
+ * colada conta como forma permitida.
+ */
+export function respondeAPerguntaDePreparo(
+  rascunho: string,
+  contexto: Pick<
+    ContextoDasRegras,
+    "mensagensDoPaciente" | "nomesDoCatalogo" | "fatos"
+  >,
+): boolean {
+  if (
+    !perguntaDePreparo(contexto.mensagensDoPaciente, contexto.nomesDoCatalogo)
+  ) {
+    return false;
+  }
+  const colados = contexto.fatos?.textosColados ?? [];
+  const comAF2 =
+    colados.includes(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR) &&
+    rascunho.includes(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR);
+  const frases = frasesDoRascunho(
+    semTextosColados(rascunho, [...colados, FRASE_DO_PREPARO_DEPOIS_DE_MARCAR]),
+  );
+  const permitida =
+    comAF2 ||
+    frases.some(
+      ({ frase, pergunta }) =>
+        REGEX_DA_OFERTA.test(frase) ||
+        (pergunta && REGEX_DA_PERGUNTA_DO_PROCEDIMENTO.test(frase)),
+    );
+  if (!permitida) {
+    return true;
+  }
+  return frases.some(({ frase, pergunta }) =>
+    pergunta
+      ? REGEX_DA_PERGUNTA_QUE_RESPONDE.test(frase)
+      : REGEX_DA_RESPOSTA.test(frase),
+  );
+}
 // [AG7 preparo] fim
 
 /**
@@ -441,6 +577,8 @@ export const FONTES_DAS_REGRAS_EM_CODIGO: readonly string[] = [
   `com os fatos, acima de ${LIMITE_DO_RASCUNHO} caracteres: so formato_invalido/longo, sem ler o resto`,
   // [AG7 preparo] início
   `${REGRA_DO_TRECHO_DO_PREPARO}: com os textos de preparo da clinica, a frase de ${TAMANHO_MINIMO_DO_TRECHO} caracteres ou mais de um deles (ou o texto inteiro) que aparece inteira no rascunho, os dois lados em minusculas, sem acento, sem pontuacao e com espaco unico (orientacao_clinica)`,
+  // Revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum.
+  `${REGRA_DA_RESPOSTA_AO_PREPARO}: com a pergunta (${ASSUNTO_DO_PREPARO} e ${PERGUNTA_OU_PEDIDO}, sem ${EXAME_DE_JEJUM}) nas mensagens do paciente, o rascunho sem os textos colados so passa com a F2 colada, a oferta (${OFERTA_DO_PREPARO}) ou a pergunta do procedimento (${PERGUNTA_DO_PROCEDIMENTO}), e sem frase afirmativa que responda (${RESPOSTA_NA_FRASE}) nem pergunta que comeca respondendo (${PERGUNTA_QUE_RESPONDE}) (orientacao_clinica)`,
   // [AG7 preparo] fim
   CNPJ_COM_MASCARA.source,
   ...NEUTRALIZACOES_DE_SAIDA.map(({ nome, fonte, troca }) =>
@@ -747,6 +885,15 @@ export function avaliarRegras(
     achados.push({
       categoria: "orientacao_clinica",
       regra: REGRA_DO_TRECHO_DO_PREPARO,
+    });
+  }
+  // Revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum
+  // do paciente (a resposta curta, "Precisa sim.", que so o verificador
+  // barrava).
+  if (respondeAPerguntaDePreparo(rascunho, contexto)) {
+    achados.push({
+      categoria: "orientacao_clinica",
+      regra: REGRA_DA_RESPOSTA_AO_PREPARO,
     });
   }
   // [AG7 preparo] fim

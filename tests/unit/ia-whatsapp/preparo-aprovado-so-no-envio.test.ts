@@ -562,6 +562,17 @@ describe("o texto do preparo aprovado so aparece no envio", () => {
   it("o turno seguinte, com a resposta do modelo: o historico, o classificador e o verificador sem o texto; a resposta leva o aviso de assistente virtual", async () => {
     await rodar(JOB, "m1", [enviarPreparoPeloModelo()]);
     resetFakeProvider();
+    // O banco em memoria nao poe os padroes das colunas (pelo_celular e
+    // is_internal_note falsos, deleted_at nulo): a mensagem do preparo do
+    // job entra no historico seguinte como no banco de verdade (a resposta
+    // do m1; so o m2 fica pendente).
+    for (const linha of banco.linhas("message")) {
+      if (linha.job_id === JOB) {
+        linha.pelo_celular = false;
+        linha.is_internal_note = false;
+        linha.deleted_at = null;
+      }
+    }
     banco.linhas("message").push(
       mensagemNoBanco("m2", {
         author: "paciente",
@@ -681,6 +692,12 @@ describe("revisao da AG7 (CFM-1): nenhum texto de preparo da clinica vai a OpenA
         }
         if (linha.id === "p0") {
           linha.body = mensagemDoSistema;
+        }
+        // A pergunta pendente nao e de preparo: o modelo responde em texto
+        // (a resposta a pergunta de preparo so passa com a oferta, CFM-5), e
+        // o classificador, o agente e o verificador leem o historico.
+        if (linha.id === "m1") {
+          linha.body = "Vocês atendem aos sábados?";
         }
       }
       const doModelo = "Atendemos de segunda a sexta.";
