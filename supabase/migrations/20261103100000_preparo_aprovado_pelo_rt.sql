@@ -412,9 +412,11 @@ as $function$
            -- (2 ou mais letras, digitos ou hifen, o ponto e uma das
            -- terminacoes do filtro, com o pais opcional).
            b.base ~ '(://|\mhttps?\M|\mwww\.|\m[a-z0-9-]{2,}\.(com|net|org|br|io|ly|me|gl|co|app|link|site|info|xyz|online|store|shop|page|to|cc|ai|gg|tk|ml)(\.[a-z]{2})?\M)'
-           -- O valor em reais: "R$" seguido do numero, ou o numero seguido
-           -- de "reais".
-           or b.base ~ '(\mr\$ ?[0-9]|\m[0-9]+([.,][0-9]+)* ?reais\M)'
+           -- O valor em reais: "R$" seguido do numero, ou o numero, um
+           -- espaco e "reais" (o "50reais" colado o filtro nao le como
+           -- dinheiro: fica fora, para o banco nunca recusar o que o TS
+           -- aceita).
+           or b.base ~ '(\mr\$ ?[0-9]|\m[0-9]+([.,][0-9]+)* reais\M)'
            -- O arroba: "@" seguido de 2 ou mais letras, digitos, ponto ou
            -- sublinhado, no comeco ou depois de branco ou pontuacao (nunca
            -- o e-mail, que o dominio ja pega), e a palavra "arroba".
