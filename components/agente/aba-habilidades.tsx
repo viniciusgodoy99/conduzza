@@ -32,6 +32,9 @@ import {
   type HabilidadesDoAgente,
   type PrazosDoAgente,
 } from "@/lib/domain/agente/config";
+// [AG7 preparo] início
+import type { PreparoDaHabilidade } from "@/lib/domain/preparo";
+// [AG7 preparo] fim
 
 // Aba Habilidades da Tela 6: a lista FECHADA (lib/domain/agente), cada uma
 // com titulo, uma linha de descricao e a chave. As travadas (Responder
@@ -98,12 +101,15 @@ import {
 // (titulo e descricao da configuracao, HABILIDADES_DO_AGENTE). Leva a nota
 // da fase de teste (TEXTOS_DO_AGENTE.preparoNaFaseDeTeste), para todos os
 // papeis. Quando a pagina conferiu que nenhum procedimento ativo tem
-// orientacao aprovada pelo responsavel tecnico em vigor (haPreparoEmVigor
-// falso, lido pela sessao para todo papel, a recepcao inclusive), a dica
-// escrita embaixo dela, como a da midia que ainda nao vale: com a chave
-// ligada, o pedido de preparo passa para a equipe. A dica nao trava a chave
-// e entra na descricao dela (aria-describedby), depois da nota e da dica
-// do servidor. Sem a leitura (nulo), sem a dica: a tela nao inventa.
+// orientacao aprovada pelo responsavel tecnico em vigor
+// (preparoDaHabilidade "sem_texto_aprovado", lido pela sessao para todo
+// papel, a recepcao inclusive), ou que as regras de hoje recusam o texto de
+// todas ("aprovada_sem_envio", revisao curta: o texto nao sai e Cadastros
+// mostra "Aprovada, sem envio"), a dica escrita embaixo dela, como a da
+// midia que ainda nao vale: com a chave ligada, o pedido de preparo passa
+// para a equipe. A dica nao trava a chave e entra na descricao dela
+// (aria-describedby), depois da nota e da dica do servidor. Sem a leitura
+// (nulo), sem a dica: a tela nao inventa.
 // [AG7 preparo] fim
 
 /** As habilidades que, nesta fase de teste, levam a nota do telefone. */
@@ -176,7 +182,7 @@ export function AbaHabilidades({
   midiaNoServidor,
   // [AG6b mídia] fim
   // [AG7 preparo] início
-  haPreparoEmVigor,
+  preparoDaHabilidade,
   // [AG7 preparo] fim
 }: {
   habilidades: Record<string, boolean>;
@@ -202,11 +208,12 @@ export function AbaHabilidades({
   // [AG6b mídia] fim
   // [AG7 preparo] início
   /**
-   * Algum procedimento ativo tem orientacao de preparo aprovada em vigor
-   * (calculado na pagina)? Falso: a dica em "Enviar orientação de preparo".
-   * Nulo ou ausente: sem a dica (a tela nao inventa).
+   * A orientacao de preparo aprovada na clinica (calculado na pagina, com as
+   * regras de hoje conferidas no servidor). "sem_texto_aprovado" ou
+   * "aprovada_sem_envio": a dica em "Enviar orientação de preparo". Nulo ou
+   * ausente: sem a dica (a tela nao inventa).
    */
-  haPreparoEmVigor?: boolean | null;
+  preparoDaHabilidade?: PreparoDaHabilidade | null;
   // [AG7 preparo] fim
 }) {
   const efetivas = habilidadesComAgenda(habilidades, agenda, prazos);
@@ -258,7 +265,7 @@ export function AbaHabilidades({
             const idSemPreparo = `${idRotulo}-sem-preparo`;
             const semPreparo = notaDoPreparoSemTextoAprovado(
               habilidade.chave,
-              haPreparoEmVigor,
+              preparoDaHabilidade,
             );
             // [AG7 preparo] fim
             const chave = (
@@ -314,8 +321,8 @@ export function AbaHabilidades({
                   ) : null}
                   {/* [AG6b mídia] fim */}
                   {/* [AG7 preparo] início: nenhum procedimento com
-                      orientacao aprovada em vigor (dica escrita, como a do
-                      servidor; a chave continua livre). */}
+                      orientacao aprovada em vigor que possa sair (dica
+                      escrita, como a do servidor; a chave continua livre). */}
                   {semPreparo ? (
                     <span
                       id={idSemPreparo}

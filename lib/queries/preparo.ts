@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   SITUACOES_DO_PREPARO,
   situacaoDoPreparoNaTela,
+  type PreparoDaHabilidade,
   type SituacaoDoPreparo,
   type SituacaoDoPreparoNaTela,
   type VersaoNaTela,
@@ -28,7 +29,9 @@ import { fetchProfileNames } from "@/lib/queries/profiles";
 // O texto (ate 3.500 caracteres) so e lido das versoes que a tela mostra
 // (revisao das telas, TELA-14): cada Salvar cria uma versao, e ler o texto de
 // todas a cada carga e a cada volta do foco pesava sem servir a ninguem. A
-// lista "Ver versoes" e a Tela 6 nao mostram texto.
+// lista "Ver versoes" nao mostra texto. A Tela 6 tambem nao, mas le o texto
+// das versoes EM VIGOR (uma por procedimento, no maximo) para o servidor
+// conferir as regras de hoje (revisao curta da AG7, a sobra da CURTA-5).
 
 export type ResponsavelTecnico = {
   id: string;
@@ -442,35 +445,73 @@ export function procedimentosEsperandoORt(
 }
 
 /**
- * Algum procedimento ATIVO tem orientacao em vigor? (a nota da habilidade
- * "Enviar orientacao de preparo" na Tela 6: a IA so ve procedimento ativo).
+ * As versoes aprovadas EM VIGOR dos procedimentos ATIVOS (a nota da
+ * habilidade "Enviar orientacao de preparo" na Tela 6: a IA so ve
+ * procedimento ativo): de cada procedimento com o chip "aprovada" (o RT da
+ * versao e o aberto, com acesso, e o nome nao mudou), a aprovada mais nova.
  */
-export function algumPreparoEmVigor(
+export function versoesEmVigorDosAtivos(
   dados: Pick<PreparosDaClinica, "versoes" | "rtAberto" | "rtComAcesso">,
   procedimentos: readonly { id: string; name: string; active: boolean }[],
-): boolean {
+): string[] {
   const completos: PreparosDaClinica = {
     ...PREPAROS_VAZIOS,
     versoes: dados.versoes,
     rtAberto: dados.rtAberto,
     rtComAcesso: dados.rtComAcesso,
   };
-  return procedimentos.some(
-    (p) => p.active && situacaoDoProcedimento(completos, p) === "aprovada",
-  );
+  return procedimentos.flatMap((p) => {
+    if (!p.active || situacaoDoProcedimento(completos, p) !== "aprovada") {
+      return [];
+    }
+    const aprovada = versoesDoProcedimento(completos, p.id)
+      .filter((v) => v.situacao === "aprovado")
+      .at(-1);
+    return aprovada ? [aprovada.id] : [];
+  });
 }
 
 /**
- * Para a Tela 6 (a nota "Nenhum procedimento tem orientacao aprovada pelo
- * responsavel tecnico"): le so as versoes aprovadas (sem o texto, TELA-14),
- * o RT aberto, o vinculo dele e os procedimentos ativos. Vale para todo papel que abre a Tela 6 (a
- * recepcao inclusive). Erro LANCA: quem chama decide (a pagina nao mostra a
- * nota quando nao conferiu).
+ * A nota da Tela 6 a partir das versoes em vigor e dos textos lidos (revisao
+ * curta da AG7, a sobra da CURTA-5): sem nenhuma, "sem_texto_aprovado";
+ * quando as regras de hoje recusam o texto de todas (o envio e a regua nao
+ * as deixam sair, e Cadastros as mostra como "Aprovada, sem envio"),
+ * "aprovada_sem_envio"; senao, "sai". O texto que nao veio na leitura conta
+ * como o que sai: sem conferir, a tela nao inventa a nota.
  */
-export async function fetchHaPreparoEmVigor(
+export function preparoDaHabilidade(
+  emVigor: readonly string[],
+  textos: ReadonlyMap<string, string>,
+  recusado: (texto: string) => boolean,
+): PreparoDaHabilidade {
+  if (emVigor.length === 0) {
+    return "sem_texto_aprovado";
+  }
+  return emVigor.some((id) => {
+    const texto = textos.get(id);
+    return texto === undefined || !recusado(texto);
+  })
+    ? "sai"
+    : "aprovada_sem_envio";
+}
+
+/**
+ * Para a Tela 6 (a nota de "Enviar orientação de preparo"): le as versoes
+ * aprovadas (sem o texto, TELA-14), o RT aberto, o vinculo dele e os
+ * procedimentos ativos; depois, so o texto das versoes EM VIGOR (uma por
+ * procedimento, no maximo), para conferir as regras de hoje. `recusado` e
+ * a conferencia do SERVIDOR: o filtro de conformidade nunca vai ao
+ * navegador, e a pagina passa recusadoPelasRegrasDeHoje
+ * (app/(app)/cadastros/recusas-do-preparo.ts), o mesmo criterio do chip
+ * "Aprovada, sem envio" de Cadastros. Vale para todo papel que abre a Tela 6
+ * (a recepcao inclusive). Erro LANCA: quem chama decide (a pagina nao mostra
+ * a nota quando nao conferiu).
+ */
+export async function fetchPreparoDaHabilidade(
   supabase: SupabaseClient,
   clinicId: string,
-): Promise<boolean> {
+  recusado: (texto: string) => boolean,
+): Promise<PreparoDaHabilidade> {
   const [versoes, rt, procedimentos] = await Promise.all([
     supabase
       .from("preparo_do_procedimento")
@@ -494,7 +535,7 @@ export async function fetchHaPreparoEmVigor(
     .map(lerVersao)
     .filter((v): v is VersaoDoPreparo => v !== null);
   if (aprovadas.length === 0 || rt === null) {
-    return false;
+    return "sem_texto_aprovado";
   }
   const rtComAcesso = await temAcessoAtivo(supabase, clinicId, rt.userId);
   const ativos = ((procedimentos.data ?? []) as Linha[]).flatMap((p) =>
@@ -502,8 +543,13 @@ export async function fetchHaPreparoEmVigor(
       ? [{ id: p.id, name: p.name, active: p.active === true }]
       : [],
   );
-  return algumPreparoEmVigor(
+  const emVigor = versoesEmVigorDosAtivos(
     { versoes: aprovadas, rtAberto: rt, rtComAcesso },
     ativos,
   );
+  if (emVigor.length === 0) {
+    return "sem_texto_aprovado";
+  }
+  const textos = await lerTextosDasVersoes(supabase, clinicId, emVigor);
+  return preparoDaHabilidade(emVigor, textos, recusado);
 }

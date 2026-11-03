@@ -1,6 +1,9 @@
 import { Sparkles } from "lucide-react";
 import { redirect } from "next/navigation";
 
+// [AG7 preparo] início
+import { recusadoPelasRegrasDeHoje } from "@/app/(app)/cadastros/recusas-do-preparo";
+// [AG7 preparo] fim
 import { CartaoDaProntidao } from "@/components/agente/cartao-da-prontidao";
 import { PainelDoAgente } from "@/components/agente/painel-do-agente";
 import {
@@ -43,7 +46,7 @@ import {
 import { iaLiberadaNoAmbiente } from "@/lib/ia/liberacao";
 import { fetchProntidaoDoCadastro } from "@/lib/queries/cadastro-para-o-agente";
 // [AG7 preparo] início
-import { fetchHaPreparoEmVigor } from "@/lib/queries/preparo";
+import { fetchPreparoDaHabilidade } from "@/lib/queries/preparo";
 // [AG7 preparo] fim
 import {
   abaDaIaVisivel,
@@ -81,8 +84,11 @@ import { createClient } from "@/lib/supabase/server";
 // [AG7 preparo] início
 // Orientacao de preparo (AG7): para TODO papel que abre a tela, se algum
 // procedimento ativo tem orientacao aprovada pelo responsavel tecnico em
-// vigor (fetchHaPreparoEmVigor, pela sessao). Sem nenhuma, a habilidade
-// "Enviar orientação de preparo" diz que o pedido passa para a equipe.
+// vigor que as regras de hoje deixam sair (fetchPreparoDaHabilidade, pela
+// sessao; as regras conferidas aqui no servidor, recusadoPelasRegrasDeHoje,
+// o mesmo criterio do "Aprovada, sem envio" de Cadastros). Sem nenhuma, a
+// habilidade "Enviar orientação de preparo" diz que o pedido passa para a
+// equipe; com todas recusadas pelas regras de hoje, diz isso tambem.
 // Leitura que falha vira nulo, e a dica nao aparece (a tela nao inventa).
 // [AG7 preparo] fim
 //
@@ -326,13 +332,16 @@ export default async function AgentePage({
     : Promise.resolve(null);
   // [AG7 preparo] início
   // A dica de "Enviar orientação de preparo" (nenhum procedimento ativo com
-  // orientacao aprovada pelo responsavel tecnico em vigor), tambem em
-  // paralelo: pela SESSAO e para TODO papel que abre a Tela 6 (a recepcao
-  // inclusive; as tabelas do preparo tem a policy "membro ativo le"). Nunca
-  // lanca: erro vira nulo (nao conferiu, e a dica nao aparece).
-  const lendoOPreparo = fetchHaPreparoEmVigor(supabase, clinicId).catch(
-    () => null,
-  );
+  // orientacao aprovada pelo responsavel tecnico em vigor, ou todas
+  // recusadas pelas regras de hoje), tambem em paralelo: pela SESSAO e para
+  // TODO papel que abre a Tela 6 (a recepcao inclusive; as tabelas do
+  // preparo tem a policy "membro ativo le"). Nunca lanca: erro vira nulo
+  // (nao conferiu, e a dica nao aparece).
+  const lendoOPreparo = fetchPreparoDaHabilidade(
+    supabase,
+    clinicId,
+    recusadoPelasRegrasDeHoje,
+  ).catch(() => null);
   // [AG7 preparo] fim
   const [lido, versoes, extras, motivo, abaWhatsapp] = await Promise.all([
     seguro(
@@ -364,7 +373,7 @@ export default async function AgentePage({
   ]);
   const prontidao = await lendoAProntidao;
   // [AG7 preparo] início
-  const haPreparoEmVigor = await lendoOPreparo;
+  const preparoDaHabilidade = await lendoOPreparo;
   // [AG7 preparo] fim
   const emUso = abaWhatsapp ? emUsoNoWhatsapp(abaWhatsapp) : false;
 
@@ -433,7 +442,7 @@ export default async function AgentePage({
     // o SDK nunca vai ao navegador (revisao das telas da AG6b, item 3).
     midiaNoServidor: midiaNoServidor(),
     // [AG7 preparo] início
-    haPreparoEmVigor,
+    preparoDaHabilidade,
     // [AG7 preparo] fim
   };
 

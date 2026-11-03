@@ -1133,6 +1133,21 @@ export type SituacaoDoPreparoNaTela =
 export type SituacaoDoChipDoPreparo =
   SituacaoDoPreparoNaTela | "aprovada_sem_envio";
 
+/**
+ * A orientacao de preparo na Tela 6, para a nota de "Enviar orientação de
+ * preparo" (lida na pagina pela sessao, para todo papel que abre a tela):
+ *  - "sai": algum procedimento ativo tem texto aprovado em vigor que as
+ *    regras de hoje deixam sair (sem nota);
+ *  - "aprovada_sem_envio": ha texto aprovado em vigor, mas as regras de hoje
+ *    recusam o de todos: o envio e a regua nao os deixam sair, e Cadastros
+ *    os mostra como "Aprovada, sem envio" (revisao curta da AG7, a sobra da
+ *    CURTA-5 na Tela 6);
+ *  - "sem_texto_aprovado": nenhum procedimento ativo tem texto aprovado em
+ *    vigor.
+ */
+export type PreparoDaHabilidade =
+  "sai" | "aprovada_sem_envio" | "sem_texto_aprovado";
+
 /** As situacoes de quem ja foi aprovado um dia (a linha do envio). */
 const JA_APROVADAS: ReadonlySet<SituacaoDoPreparo> = new Set([
   "aprovado",

@@ -458,9 +458,10 @@ export function PainelDoAgente({
                 midiaNoServidor={dados.midiaNoServidor}
                 // [AG7 preparo] início
                 // a dica de "Enviar orientação de preparo" quando nenhum
-                // procedimento tem orientacao aprovada em vigor (a pagina
-                // confere, para todo papel)
-                haPreparoEmVigor={dados.haPreparoEmVigor}
+                // procedimento tem orientacao aprovada em vigor que as
+                // regras de hoje deixam sair (a pagina confere, para todo
+                // papel)
+                preparoDaHabilidade={dados.preparoDaHabilidade}
                 // [AG7 preparo] fim
                 ocupado={(chave) => ocupado(`habilidade-${chave}`)}
                 aoAlternar={(proximas, habilidade) =>

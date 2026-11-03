@@ -6,6 +6,9 @@ import type {
   // [AG6b mídia] fim
   Mudanca,
 } from "@/lib/domain/agente/config";
+// [AG7 preparo] início
+import type { PreparoDaHabilidade } from "@/lib/domain/preparo";
+// [AG7 preparo] fim
 
 // Tipos da tela do Agente de IA (Tela 6): o que a pagina (servidor) monta e
 // o painel (cliente) desenha. Ficam aqui, e nao nas queries, para a tela nao
@@ -84,14 +87,15 @@ export type DadosDoPainel = {
   // [AG6b mídia] fim
   // [AG7 preparo] início
   /**
-   * Algum procedimento ativo tem orientacao de preparo aprovada pelo
-   * responsavel tecnico em vigor? Lido na pagina pela sessao
-   * (fetchHaPreparoEmVigor, lib/queries/preparo.ts), para todo papel que
-   * abre a Tela 6. Falso: "Enviar orientação de preparo" diz que o pedido
-   * passa para a equipe. Nulo ou ausente: nao conferiu (a tela nao inventa a
-   * nota).
+   * A orientacao de preparo aprovada pelo responsavel tecnico na clinica,
+   * para a nota de "Enviar orientação de preparo": lida na pagina pela
+   * sessao, com as regras de hoje conferidas no servidor
+   * (fetchPreparoDaHabilidade, lib/queries/preparo.ts), para todo papel que
+   * abre a Tela 6. "sem_texto_aprovado" ou "aprovada_sem_envio": a nota diz
+   * que o pedido passa para a equipe (e por que). Nulo ou ausente: nao
+   * conferiu (a tela nao inventa a nota).
    */
-  haPreparoEmVigor?: boolean | null;
+  preparoDaHabilidade?: PreparoDaHabilidade | null;
   // [AG7 preparo] fim
 };
 

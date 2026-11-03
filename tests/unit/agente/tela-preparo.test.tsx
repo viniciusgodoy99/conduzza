@@ -38,7 +38,10 @@ import {
 // teste e, quando a pagina conferiu que nenhum procedimento ativo tem
 // orientacao aprovada em vigor, a dica de que o pedido passa para a equipe,
 // tambem para a recepcao (a chave visivel e desabilitada, com a dica de
-// sempre); a pagina lendo o preparo pela sessao para todo papel; o cenario
+// sempre); a revisao curta (a sobra da CURTA-5): o texto aprovado que as
+// regras de hoje recusam nao conta, e a dica diz que ele nao sai e aparece
+// como "Aprovada, sem envio" em Cadastros; a pagina lendo o preparo pela
+// sessao para todo papel, com as regras conferidas no servidor; o cenario
 // "Paciente pedindo o preparo" antes da lista de espera; e a fala do
 // simulador com a mensagem montada pelo sistema e a marca, que nao encerra a
 // conversa. Tudo renderizado no servidor; banco, sessao e motor sao falsos:
@@ -68,7 +71,7 @@ const banco = vi.hoisted(() => ({
   carregarConfigDoRascunho: vi.fn(),
   carregarCatalogoDoAgente: vi.fn(),
   carregarExtrasDoPainel: vi.fn(),
-  fetchHaPreparoEmVigor: vi.fn(),
+  fetchPreparoDaHabilidade: vi.fn(),
 }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: banco.createClient }));
 vi.mock("@/lib/supabase/admin", () => ({
@@ -93,7 +96,7 @@ vi.mock("@/lib/agente/painel", () => ({
   carregarExtrasDoPainel: banco.carregarExtrasDoPainel,
 }));
 vi.mock("@/lib/queries/preparo", () => ({
-  fetchHaPreparoEmVigor: banco.fetchHaPreparoEmVigor,
+  fetchPreparoDaHabilidade: banco.fetchPreparoDaHabilidade,
 }));
 vi.mock("@/components/agente/acoes", () => ({
   acoesDoAgente: {
@@ -129,6 +132,10 @@ const {
   TEXTOS_DO_PREPARO,
 } = await import("@/components/agente/textos");
 const { default: AgentePage } = await import("@/app/(app)/agente/page");
+// A conferencia das regras de hoje que a pagina passa a leitura (servidor).
+const { recusadoPelasRegrasDeHoje } =
+  await import("@/app/(app)/cadastros/recusas-do-preparo");
+const { PREPARO_DO_PROCEDIMENTO_STATUS } = await import("@/lib/design/status");
 
 /** A chave como string: o tipo ChaveDaHabilidade so a conhece depois da M. */
 const PREPARO: string = "enviar_preparo";
@@ -147,6 +154,20 @@ const DO_DESENHO = {
     "Nenhum procedimento tem orientação aprovada pelo responsável técnico. Com a chave ligada, o pedido de preparo passa para a equipe.",
   marca: "Enviado pelo sistema: texto aprovado pelo responsável técnico",
 } as const;
+
+/**
+ * Revisao curta da AG7 (a sobra da CURTA-5 na Tela 6): o texto aprovado em
+ * vigor que as regras de hoje recusam nao sai, e Cadastros o mostra como
+ * "Aprovada, sem envio".
+ */
+const APROVADA_SEM_ENVIO =
+  "Nenhuma orientação aprovada pelo responsável técnico pode ser enviada: as regras de hoje não deixam o texto sair (em Cadastros, aparece como “Aprovada, sem envio”). Com a chave ligada, o pedido de preparo passa para a equipe.";
+
+/** Os dois estados que levam a dica, com o texto de cada um. */
+const ESTADOS_COM_A_DICA = [
+  ["sem_texto_aprovado", DO_DESENHO.semTextoAprovado],
+  ["aprovada_sem_envio", APROVADA_SEM_ENVIO],
+] as const;
 
 /** A nota da fase de teste que a frente T propos (pendente do dono). */
 const NOTA_DA_FASE_DE_TESTE =
@@ -310,7 +331,7 @@ beforeEach(() => {
     publicada: null,
     mudancas: [],
   });
-  banco.fetchHaPreparoEmVigor.mockResolvedValue(true);
+  banco.fetchPreparoDaHabilidade.mockResolvedValue("sai");
 });
 
 // ---------------------------------------------------------------------------
@@ -356,31 +377,51 @@ describe("a dica de quando nenhum procedimento tem orientação aprovada", () =>
     );
   });
 
-  it("só em Enviar orientação de preparo, e só quando a página conferiu que não há nenhuma", () => {
-    expect(notaDoPreparoSemTextoAprovado(PREPARO, false)).toBe(
+  it("só em Enviar orientação de preparo, e só quando a página conferiu que não há nenhuma que saia", () => {
+    expect(notaDoPreparoSemTextoAprovado(PREPARO, "sem_texto_aprovado")).toBe(
       DO_DESENHO.semTextoAprovado,
     );
-    // Com texto em vigor, ou sem a leitura (nulo ou ausente): sem a dica.
-    expect(notaDoPreparoSemTextoAprovado(PREPARO, true)).toBeNull();
+    expect(notaDoPreparoSemTextoAprovado(PREPARO, "aprovada_sem_envio")).toBe(
+      APROVADA_SEM_ENVIO,
+    );
+    // Com texto em vigor que sai, ou sem a leitura (nulo ou ausente): sem a
+    // dica.
+    expect(notaDoPreparoSemTextoAprovado(PREPARO, "sai")).toBeNull();
     expect(notaDoPreparoSemTextoAprovado(PREPARO, null)).toBeNull();
     expect(notaDoPreparoSemTextoAprovado(PREPARO, undefined)).toBeNull();
     for (const habilidade of HABILIDADES_DO_AGENTE) {
       if (habilidade.chave !== PREPARO) {
-        expect(
-          notaDoPreparoSemTextoAprovado(habilidade.chave, false),
-          habilidade.chave,
-        ).toBeNull();
+        for (const [estado] of ESTADOS_COM_A_DICA) {
+          expect(
+            notaDoPreparoSemTextoAprovado(habilidade.chave, estado),
+            `${habilidade.chave} ${estado}`,
+          ).toBeNull();
+        }
       }
     }
   });
 
+  it("revisão curta: o texto aprovado que as regras de hoje recusam não sai, e a dica diz como ele aparece em Cadastros", () => {
+    expect(TEXTOS_DO_PREPARO.aprovadaSemEnvio).toBe(APROVADA_SEM_ENVIO);
+    // O nome do chip de Cadastros, letra por letra (lib/design/status.ts).
+    expect(TEXTOS_DO_PREPARO.aprovadaSemEnvio).toContain(
+      `“${PREPARO_DO_PROCEDIMENTO_STATUS.aprovada_sem_envio.label}”`,
+    );
+    // E a mesma consequencia da dica de sempre.
+    expect(TEXTOS_DO_PREPARO.aprovadaSemEnvio).toContain(
+      "Com a chave ligada, o pedido de preparo passa para a equipe.",
+    );
+  });
+
   it("nenhuma outra habilidade da aba ganha a dica", () => {
-    const html = habilidades({ haPreparoEmVigor: false });
-    const ids = html.match(/id="agente-habilidade-[^"]+-sem-preparo"/g) ?? [];
-    for (const id of ids) {
-      expect(id).toBe(`id="agente-habilidade-${PREPARO}-sem-preparo"`);
+    for (const [estado] of ESTADOS_COM_A_DICA) {
+      const html = habilidades({ preparoDaHabilidade: estado });
+      const ids = html.match(/id="agente-habilidade-[^"]+-sem-preparo"/g) ?? [];
+      for (const id of ids) {
+        expect(id).toBe(`id="agente-habilidade-${PREPARO}-sem-preparo"`);
+      }
+      expect(ids.length, estado).toBeLessThanOrEqual(1);
     }
-    expect(ids.length).toBeLessThanOrEqual(1);
   });
 });
 
@@ -558,19 +599,25 @@ describe(
       sessao.atual = quem;
       const html = await pagina();
       expect(texto(html)).toContain("Publicar alterações");
-      expect(banco.fetchHaPreparoEmVigor).toHaveBeenCalledTimes(1);
-      expect(banco.fetchHaPreparoEmVigor).toHaveBeenCalledWith(
+      expect(banco.fetchPreparoDaHabilidade).toHaveBeenCalledTimes(1);
+      // As regras de hoje conferidas no servidor, com o mesmo criterio do
+      // "Aprovada, sem envio" de Cadastros (revisao curta).
+      expect(banco.fetchPreparoDaHabilidade).toHaveBeenCalledWith(
         CLIENTE_DA_SESSAO,
         CLINICA,
+        recusadoPelasRegrasDeHoje,
       );
     });
 
     it("a leitura que falha não derruba a tela: o painel continua, sem a dica", async () => {
       sessao.atual = contexto("recepcao");
-      banco.fetchHaPreparoEmVigor.mockRejectedValue(new Error("rede"));
+      banco.fetchPreparoDaHabilidade.mockRejectedValue(new Error("rede"));
       const html = await pagina();
       expect(texto(html)).toContain("Publicar alterações");
       expect(html).not.toContain(DO_DESENHO.semTextoAprovado);
+      expect(html).not.toContain(
+        PREPARO_DO_PROCEDIMENTO_STATUS.aprovada_sem_envio.label,
+      );
       expect(texto(html)).not.toContain("Não foi possível carregar");
     });
 
@@ -582,7 +629,7 @@ describe(
       expect(texto(html)).toContain(
         "A recepcionista de IA ainda não está ligada nesta clínica",
       );
-      expect(banco.fetchHaPreparoEmVigor).not.toHaveBeenCalled();
+      expect(banco.fetchPreparoDaHabilidade).not.toHaveBeenCalled();
     });
   },
 );
@@ -592,9 +639,13 @@ describe("cópia da AG7 na Tela 6", () => {
     const amostras: [string, string][] = [
       ["preparoNaFaseDeTeste", TEXTOS_DO_AGENTE.preparoNaFaseDeTeste],
       ["semTextoAprovado", TEXTOS_DO_PREPARO.semTextoAprovado],
+      ["aprovadaSemEnvio", TEXTOS_DO_PREPARO.aprovadaSemEnvio],
       ["marcaDoSimulador", TEXTOS_DO_PREPARO.marcaDoSimulador],
       ["fala", texto(fala())],
-      ["habilidades", texto(habilidades({ haPreparoEmVigor: false }))],
+      ...ESTADOS_COM_A_DICA.map(([estado]): [string, string] => [
+        `habilidades ${estado}`,
+        texto(habilidades({ preparoDaHabilidade: estado })),
+      ]),
       ...CENARIOS_DO_SIMULADOR.filter((c) => c.chave === "preparo").flatMap(
         (c): [string, string][] => [
           [`${c.chave}.rotulo`, c.rotulo],
@@ -670,35 +721,44 @@ describe("[depende do merge da frente M] o cartão Enviar orientação de prepar
     expect(html).not.toMatch(presaPelaDica(PREPARO));
   });
 
-  it("nenhum procedimento com orientação aprovada: a dica embaixo da nota, ligada ou desligada, com a chave livre", () => {
-    for (const ligada of [false, true]) {
-      const html = habilidades({
-        habilidades: habilidadesEfetivas({ [PREPARO]: ligada }),
-        haPreparoEmVigor: false,
-      });
-      // Dica escrita, como a da midia que ainda nao vale (so texto).
-      expect(html).toContain(
-        `<span id="agente-habilidade-${PREPARO}-sem-preparo" class="text-xs font-semibold text-text-secondary">${DO_DESENHO.semTextoAprovado}</span>`,
-      );
-      expect(html.indexOf(NOTA_DA_FASE_DE_TESTE)).toBeLessThan(
-        html.indexOf(DO_DESENHO.semTextoAprovado),
-      );
-      const tag = chaveDa(html, PREPARO);
-      expect(tag).toContain(`aria-checked="${ligada}"`);
-      expect(tag).not.toMatch(/ disabled=""/);
-      // A nota e a dica descrevem a chave, na ordem da tela.
-      expect(tag).toContain(
-        `aria-describedby="agente-habilidade-${PREPARO}-fase-de-teste agente-habilidade-${PREPARO}-sem-preparo"`,
-      );
-    }
-  });
+  it.each(ESTADOS_COM_A_DICA)(
+    "nenhuma orientação aprovada que saia (%s): a dica embaixo da nota, ligada ou desligada, com a chave livre",
+    (estado, dica) => {
+      for (const ligada of [false, true]) {
+        const html = habilidades({
+          habilidades: habilidadesEfetivas({ [PREPARO]: ligada }),
+          preparoDaHabilidade: estado,
+        });
+        // Dica escrita, como a da midia que ainda nao vale (so texto).
+        expect(html).toContain(
+          `<span id="agente-habilidade-${PREPARO}-sem-preparo" class="text-xs font-semibold text-text-secondary">${dica}</span>`,
+        );
+        expect(html.indexOf(NOTA_DA_FASE_DE_TESTE)).toBeLessThan(
+          html.indexOf(dica),
+        );
+        // Uma dica so: a do estado lido.
+        for (const [outro, outraDica] of ESTADOS_COM_A_DICA) {
+          if (outro !== estado) {
+            expect(html).not.toContain(outraDica);
+          }
+        }
+        const tag = chaveDa(html, PREPARO);
+        expect(tag).toContain(`aria-checked="${ligada}"`);
+        expect(tag).not.toMatch(/ disabled=""/);
+        // A nota e a dica descrevem a chave, na ordem da tela.
+        expect(tag).toContain(
+          `aria-describedby="agente-habilidade-${PREPARO}-fase-de-teste agente-habilidade-${PREPARO}-sem-preparo"`,
+        );
+      }
+    },
+  );
 
-  it("com orientação em vigor, ou sem a leitura da página: sem a dica", () => {
-    for (const haPreparoEmVigor of [true, null, undefined]) {
-      const html = habilidades({ haPreparoEmVigor });
-      expect(html, String(haPreparoEmVigor)).not.toContain(
-        DO_DESENHO.semTextoAprovado,
-      );
+  it("com orientação em vigor que sai, ou sem a leitura da página: sem a dica", () => {
+    for (const preparoDaHabilidade of ["sai", null, undefined] as const) {
+      const html = habilidades({ preparoDaHabilidade });
+      for (const [, dica] of ESTADOS_COM_A_DICA) {
+        expect(html, String(preparoDaHabilidade)).not.toContain(dica);
+      }
       expect(html).not.toContain(`agente-habilidade-${PREPARO}-sem-preparo`);
       // A nota da fase de teste continua.
       expect(html).toContain(NOTA_DA_FASE_DE_TESTE);
@@ -706,34 +766,42 @@ describe("[depende do merge da frente M] o cartão Enviar orientação de prepar
   });
 
   it("recepção: a chave visível e desabilitada, com a dica de sempre no cursor; a nota e a dica continuam", () => {
-    const html = habilidades({
-      podeEditar: false,
-      dica: DICA_RECEPCAO,
-      haPreparoEmVigor: false,
-    });
-    expect(chaveDa(html, PREPARO)).toMatch(/ disabled=""/);
-    // A dica de permissao mora no tooltip (DisabledWithHint), que o HTML
-    // estatico nao abre: o que se ve e o span focavel em volta da chave.
-    expect(html).toMatch(presaPelaDica(PREPARO));
-    expect(html).toContain(NOTA_DA_FASE_DE_TESTE);
-    expect(html).toContain(DO_DESENHO.semTextoAprovado);
+    for (const [estado, dica] of ESTADOS_COM_A_DICA) {
+      const html = habilidades({
+        podeEditar: false,
+        dica: DICA_RECEPCAO,
+        preparoDaHabilidade: estado,
+      });
+      expect(chaveDa(html, PREPARO)).toMatch(/ disabled=""/);
+      // A dica de permissao mora no tooltip (DisabledWithHint), que o HTML
+      // estatico nao abre: o que se ve e o span focavel em volta da chave.
+      expect(html).toMatch(presaPelaDica(PREPARO));
+      expect(html).toContain(NOTA_DA_FASE_DE_TESTE);
+      expect(html, estado).toContain(dica);
+    }
   });
 
   it(
     "o painel leva o que a página leu até a aba, também para a recepção",
     { timeout: 30_000 },
     () => {
-      expect(painel(dadosDeTeste({ haPreparoEmVigor: false }))).toContain(
-        DO_DESENHO.semTextoAprovado,
+      for (const [estado, dica] of ESTADOS_COM_A_DICA) {
+        expect(
+          painel(dadosDeTeste({ preparoDaHabilidade: estado })),
+          estado,
+        ).toContain(dica);
+      }
+      const comTextoQueSai = painel(
+        dadosDeTeste({ preparoDaHabilidade: "sai" }),
       );
-      expect(painel(dadosDeTeste({ haPreparoEmVigor: true }))).not.toContain(
-        DO_DESENHO.semTextoAprovado,
-      );
+      for (const [, dica] of ESTADOS_COM_A_DICA) {
+        expect(comTextoQueSai).not.toContain(dica);
+      }
       const recepcao = painel(
         dadosDeTeste({
           podeEditar: false,
           dicaSemPermissao: DICA_RECEPCAO,
-          haPreparoEmVigor: false,
+          preparoDaHabilidade: "sem_texto_aprovado",
         }),
       );
       expect(recepcao).toContain(DO_DESENHO.semTextoAprovado);
@@ -742,14 +810,14 @@ describe("[depende do merge da frente M] o cartão Enviar orientação de prepar
     },
   );
 
-  it(
-    "a página da recepção, sem nenhuma orientação aprovada: a dica na aba",
+  it.each(ESTADOS_COM_A_DICA)(
+    "a página da recepção (%s): a dica na aba",
     { timeout: 30_000 },
-    async () => {
+    async (estado, dica) => {
       sessao.atual = contexto("recepcao");
-      banco.fetchHaPreparoEmVigor.mockResolvedValue(false);
+      banco.fetchPreparoDaHabilidade.mockResolvedValue(estado);
       const html = await pagina();
-      expect(html).toContain(DO_DESENHO.semTextoAprovado);
+      expect(html).toContain(dica);
       expect(chaveDa(html, PREPARO)).toMatch(/ disabled=""/);
     },
   );
@@ -780,12 +848,14 @@ describe("[depende do merge da frente M] o cartão Enviar orientação de prepar
   );
 
   it("sem travessão no cartão", () => {
-    const html = habilidades({
-      podeEditar: false,
-      dica: DICA_RECEPCAO,
-      haPreparoEmVigor: false,
-    });
-    expect(html).toContain(DO_DESENHO.titulo);
-    expect(html).not.toMatch(/[—–]/);
+    for (const [estado] of ESTADOS_COM_A_DICA) {
+      const html = habilidades({
+        podeEditar: false,
+        dica: DICA_RECEPCAO,
+        preparoDaHabilidade: estado,
+      });
+      expect(html).toContain(DO_DESENHO.titulo);
+      expect(html, estado).not.toMatch(/[—–]/);
+    }
   });
 });

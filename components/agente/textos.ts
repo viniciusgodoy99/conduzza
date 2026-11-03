@@ -9,6 +9,9 @@ import {
   type MidiaNoServidor,
 } from "@/lib/domain/agente/config";
 // [AG6b mídia] fim
+// [AG7 preparo] início
+import type { PreparoDaHabilidade } from "@/lib/domain/preparo";
+// [AG7 preparo] fim
 
 // Textos e regras puras da tela do Agente de IA (Tela 6). Modulo PURO: o
 // teste de tela confere a copia daqui (sem travessao, sem jargao) e a
@@ -639,9 +642,11 @@ export function dicaDaMidiaNoServidor(
 // nota da fase de teste, em TEXTOS_DO_AGENTE.preparoNaFaseDeTeste. Aqui
 // fica o que a tela decide e escreve fora da configuracao:
 //  - a nota de quando nenhum procedimento ativo tem orientacao aprovada em
-//    vigor (lida na pagina pela sessao, fetchHaPreparoEmVigor, para todo
-//    papel que abre a Tela 6, a recepcao inclusive). E dica escrita, como a
-//    da midia que ainda nao vale: nao trava a chave;
+//    vigor (lida na pagina pela sessao, fetchPreparoDaHabilidade, para todo
+//    papel que abre a Tela 6, a recepcao inclusive), ou de quando as regras
+//    de hoje recusam o texto de todas (revisao curta da AG7: o texto nao
+//    sai, e Cadastros o mostra como "Aprovada, sem envio"). E dica escrita,
+//    como a da midia que ainda nao vale: nao trava a chave;
 //  - a marca da fala do simulador que traz a mensagem montada pelo sistema
 //    (a IA so escolheu o procedimento; o texto e o que o responsavel tecnico
 //    aprovou, palavra por palavra). Texto, sem icone.
@@ -652,24 +657,34 @@ export const HABILIDADE_ENVIAR_PREPARO = "enviar_preparo";
 export const TEXTOS_DO_PREPARO = {
   semTextoAprovado:
     "Nenhum procedimento tem orientação aprovada pelo responsável técnico. Com a chave ligada, o pedido de preparo passa para a equipe.",
+  // Revisao curta da AG7 (a sobra da CURTA-5 na Tela 6): ha texto aprovado
+  // em vigor, mas as regras de hoje recusam o de todos.
+  aprovadaSemEnvio:
+    "Nenhuma orientação aprovada pelo responsável técnico pode ser enviada: as regras de hoje não deixam o texto sair (em Cadastros, aparece como “Aprovada, sem envio”). Com a chave ligada, o pedido de preparo passa para a equipe.",
   marcaDoSimulador:
     "Enviado pelo sistema: texto aprovado pelo responsável técnico",
 } as const;
 
 /**
  * A nota de "Enviar orientação de preparo" quando nenhum procedimento ativo
- * tem orientacao aprovada em vigor, ou nula: as outras habilidades, algum
- * texto em vigor, ou sem a leitura (`haPreparoEmVigor` nulo ou ausente: a
- * pagina nao conferiu, e a tela nao inventa a nota). Vale ligada ou
- * desligada.
+ * tem orientacao aprovada em vigor que possa sair: sem texto aprovado
+ * ("sem_texto_aprovado") ou com todos recusados pelas regras de hoje
+ * ("aprovada_sem_envio"). Nula para as outras habilidades, com algum texto
+ * que sai, ou sem a leitura (`preparoDaHabilidade` nulo ou ausente: a pagina
+ * nao conferiu, e a tela nao inventa a nota). Vale ligada ou desligada.
  */
 export function notaDoPreparoSemTextoAprovado(
   chave: string,
-  haPreparoEmVigor: boolean | null | undefined,
+  preparoDaHabilidade: PreparoDaHabilidade | null | undefined,
 ): string | null {
   if (chave !== HABILIDADE_ENVIAR_PREPARO) {
     return null;
   }
-  return haPreparoEmVigor === false ? TEXTOS_DO_PREPARO.semTextoAprovado : null;
+  if (preparoDaHabilidade === "sem_texto_aprovado") {
+    return TEXTOS_DO_PREPARO.semTextoAprovado;
+  }
+  return preparoDaHabilidade === "aprovada_sem_envio"
+    ? TEXTOS_DO_PREPARO.aprovadaSemEnvio
+    : null;
 }
 // [AG7 preparo] fim

@@ -7,7 +7,9 @@ import { problemasDoTextoDoPreparo } from "@/lib/domain/conformidade/preparo-apr
 // preparo-aprovado.ts, so o servidor importa daqui. As Server Actions
 // do preparo (preparo-actions.ts) recusam com estas frases antes da RPC, e a
 // pagina e a action das recusas marcam o texto ja aprovado que as regras de
-// hoje nao deixam sair (a secao mostra "Aprovada, sem envio").
+// hoje nao deixam sair (a secao mostra "Aprovada, sem envio"). A pagina da
+// Tela 6 (app/(app)/agente/page.tsx) confere o mesmo para a nota da
+// habilidade "Enviar orientação de preparo".
 
 /**
  * As recusas de hoje no texto (problemasDoTextoDoPreparo: promessa, oferta
@@ -48,6 +50,17 @@ function recusaConferida(texto: string): string | null {
   }
   RECUSAS_CONFERIDAS.set(texto, frase);
   return frase;
+}
+
+/**
+ * As regras de hoje recusam o texto? O mesmo criterio do chip "Aprovada, sem
+ * envio" (recusasDasVersoesAprovadas), com as recusas ja conferidas. A nota
+ * da habilidade "Enviar orientação de preparo" na Tela 6 le daqui
+ * (fetchPreparoDaHabilidade; revisao curta da AG7, a sobra da CURTA-5): o
+ * texto aprovado que nao sai nao conta como orientacao que a IA manda.
+ */
+export function recusadoPelasRegrasDeHoje(texto: string): boolean {
+  return recusaConferida(texto) !== null;
 }
 
 /** As situacoes de quem ja foi aprovado e pode voltar a sair. */
