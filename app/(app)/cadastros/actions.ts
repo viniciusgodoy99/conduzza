@@ -3,6 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+// [AG7 preparo] início
+import { problemaNoNomeDoProcedimento } from "@/components/cadastros/preparo-na-tela";
+// [AG7 preparo] fim
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import {
   camposDaUnidadeParaOAgenteSchema,
@@ -710,6 +713,10 @@ async function salvarEntidade(
   tabela: string,
   schema: z.ZodType<Record<string, unknown>>,
   input: unknown,
+  // [AG7 preparo] A recusa propria da entidade, depois do Zod e antes de
+  // gravar, com a frase da tela (o nome do procedimento: revisao curta da
+  // AG7, a sobra da CURTA-6). Ausente: so o Zod.
+  recusa?: (dados: Record<string, unknown>) => string | null,
 ): Promise<CadastroActionResult> {
   const guard = await requireEditor();
   if ("error" in guard) {
@@ -719,6 +726,12 @@ async function salvarEntidade(
   if (!parsed.success) {
     return { ok: false, error: "Confira os campos informados." };
   }
+  // [AG7 preparo] início
+  const recusado = recusa ? recusa(parsed.data) : null;
+  if (recusado !== null) {
+    return { ok: false, error: recusado };
+  }
+  // [AG7 preparo] fim
   const supabase = await createClient();
   const { id, ...campos } = parsed.data as { id?: string } & Record<
     string,
@@ -781,6 +794,13 @@ async function salvarEntidade(
 // A RPC copia a chave do procedimento como estava gravada, entao, quando a
 // pessoa mudou a chave no mesmo Salvar, e este alinhamento que a leva aos
 // vinculos: o erro dele agora e conferido e volta como gravacao parcial.
+//
+// [AG7 preparo] Revisao curta da AG7 (a sobra da CURTA-6): o nome vai no
+// cabecalho da orientacao de preparo, e o banco recusa no preparo o nome com
+// caractere invisivel, marca de direcao ou controle colado de outro lugar
+// (preparo_nome_valido). O Salvar recusa aqui, antes de gravar, com a frase
+// que diz o que tirar (problemaNoNomeDoProcedimento, pelo espelho
+// nomeDoPreparoValido); a tela confere o mesmo antes de chamar.
 export async function salvarProcedimentoAction(
   input: unknown,
 ): Promise<CadastroActionResult> {
@@ -788,6 +808,11 @@ export async function salvarProcedimentoAction(
     "procedure",
     procedimentoSchema,
     input,
+    // [AG7 preparo]
+    (dados) =>
+      typeof dados.name === "string"
+        ? problemaNoNomeDoProcedimento(dados.name)
+        : null,
   );
   if (!resultado.ok || !resultado.id) {
     return resultado;

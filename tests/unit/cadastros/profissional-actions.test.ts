@@ -1132,6 +1132,59 @@ describe("salvarProcedimentoAction: alinhamento de IA pode agendar", () => {
     expect(resultado.error).not.toMatch(/[–—]/);
   });
 
+  // [AG7 preparo] Revisao curta da AG7 (a sobra da CURTA-6): o nome com
+  // caractere invisivel, marca de direcao ou tabulacao colados de outro
+  // lugar (o banco recusa no preparo: preparo_nome_valido) volta com a frase
+  // que diz o que tirar, antes de gravar qualquer coisa, ao editar e ao
+  // criar.
+  it.each([
+    [
+      "a marca de direção colada no fim",
+      "Ultrassom de abdome total‎",
+      "Tire o caractere invisível do nome do procedimento, logo depois de “Ultrassom de abdome total”: apague e escreva de novo esse pedaço do nome e salve de novo.",
+    ],
+    [
+      "o invisível no começo (o Zod só apara os brancos)",
+      "​Colonoscopia",
+      "Tire o caractere invisível do começo do nome do procedimento: apague e escreva de novo o começo do nome e salve de novo.",
+    ],
+    [
+      "a tabulação colada no meio",
+      "Consulta\tendocrinologia",
+      "O nome do procedimento tem uma tabulação ou outro caractere colado de outro lugar. Apague o nome, escreva de novo e salve.",
+    ],
+  ])(
+    "o nome com %s: recusado com a frase, nada gravado",
+    async (_caso, nome, frase) => {
+      const editar = await salvarProcedimentoAction({
+        ...PROCEDIMENTO_NA_TELA,
+        name: nome,
+      });
+      expect(editar).toEqual({ ok: false, error: frase });
+      const novo: Linha = { ...PROCEDIMENTO_NA_TELA, name: nome };
+      delete novo.id;
+      expect(await salvarProcedimentoAction(novo)).toEqual({
+        ok: false,
+        error: frase,
+      });
+      expect(estado.eventos).toEqual([]);
+      expect(frase).not.toMatch(/[–—]/);
+    },
+  );
+
+  it("o papel vem antes do nome: a recepção recebe a frase de sempre, e nada é gravado", async () => {
+    sessao.active.role = "recepcao";
+    const resultado = await salvarProcedimentoAction({
+      ...PROCEDIMENTO_NA_TELA,
+      name: "Colono‎scopia",
+    });
+    expect(resultado).toEqual({
+      ok: false,
+      error: "Somente administradores e gestores alteram os cadastros.",
+    });
+    expect(estado.eventos).toEqual([]);
+  });
+
   it("ao criar não alinha nada: sem vínculo ainda, o retorno é ok com o id do insert", async () => {
     // Mesmo com o UPDATE de service_link quebrado, a criação não vira
     // parcial: a tela de hoje descartaria o id e o próximo Salvar duplicaria

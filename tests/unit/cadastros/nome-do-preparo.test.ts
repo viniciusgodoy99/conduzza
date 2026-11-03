@@ -3,8 +3,13 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { fraseDoNomeComInvisivel } from "@/components/cadastros/preparo-na-tela";
 import {
+  FRASE_DO_NOME_COM_CONTROLE,
+  fraseDoNomeComInvisivel,
+  problemaNoNomeDoProcedimento,
+} from "@/components/cadastros/preparo-na-tela";
+import {
+  controleNoNome,
   invisivelNoNome,
   LIMITE_DO_NOME_DO_PREPARO,
   nomeDoPreparoValido,
@@ -168,9 +173,76 @@ describe("revisao curta da AG7 (CURTA-6): a frase diz o que tirar e onde", () =>
       "\u2066A",
       "A \u{1f469}\u200d\u2695\ufe0f",
     ]) {
-      for (const de of ["procedimento", "rt"] as const) {
+      for (const de of ["procedimento", "rt", "cadastro"] as const) {
         expect(fraseDoNomeComInvisivel(nome, de)).not.toMatch(/[\u2013\u2014]/);
       }
     }
+    expect(FRASE_DO_NOME_COM_CONTROLE).not.toMatch(/[\u2013\u2014]/);
+  });
+});
+
+// A sobra da revisao curta: o nome com invisivel passava no Salvar do
+// procedimento em Cadastros (o Zod so aparava e contava), e o texto daquele
+// procedimento nunca chegava ao RT. O Salvar confere o espelho de
+// preparo_nome_valido e diz o que tirar.
+describe("revisao curta da AG7 (a sobra da CURTA-6): o nome no Salvar do procedimento", () => {
+  it("a frase do proprio Salvar: o que tirar e salvar de novo (sem o envio do texto)", () => {
+    expect(
+      fraseDoNomeComInvisivel("Ultrassom de abdome total\u200e", "cadastro"),
+    ).toBe(
+      "Tire o caractere invis\u00edvel do nome do procedimento, logo depois de \u201cUltrassom de abdome total\u201d: apague e escreva de novo esse peda\u00e7o do nome e salve de novo.",
+    );
+    expect(fraseDoNomeComInvisivel("\u200bColonoscopia", "cadastro")).toBe(
+      "Tire o caractere invis\u00edvel do come\u00e7o do nome do procedimento: apague e escreva de novo o come\u00e7o do nome e salve de novo.",
+    );
+    const medica = "\u{1f469}\u200d\u2695\ufe0f";
+    expect(fraseDoNomeComInvisivel(`Consulta ${medica}`, "cadastro")).toBe(
+      `Tire o emoji ${medica} do nome do procedimento: ele leva um caractere invis\u00edvel, que n\u00e3o pode ir na mensagem ao paciente. Apague o emoji e salve de novo.`,
+    );
+  });
+
+  it("problemaNoNomeDoProcedimento: o invisivel com a frase, o controle com a frase propria, o resto passa", () => {
+    expect(problemaNoNomeDoProcedimento("Colonoscopia")).toBeNull();
+    expect(
+      problemaNoNomeDoProcedimento("Mamografia 100% digital (bilateral)"),
+    ).toBeNull();
+    // O dente fora do plano basico nao e invisivel.
+    expect(problemaNoNomeDoProcedimento("Limpeza \u{1f9b7}")).toBeNull();
+    expect(problemaNoNomeDoProcedimento("Colono\u200escopia")).toBe(
+      fraseDoNomeComInvisivel("Colono\u200escopia", "cadastro"),
+    );
+    expect(problemaNoNomeDoProcedimento("Colonoscopia\tadulto")).toBe(
+      FRASE_DO_NOME_COM_CONTROLE,
+    );
+    // O tamanho e as pontas ficam com o formulario e o Zod.
+    expect(problemaNoNomeDoProcedimento("a".repeat(121))).toBeNull();
+  });
+
+  it("recusa tudo o que o espelho recusa no meio do nome, e nada que ele aceita", () => {
+    const classes = [
+      ...corpoDaFuncao().matchAll(/p_nome !~ '\[([^\]]+)\]'/g),
+    ].map((m) => pontosDaClasse(m[1] ?? ""));
+    for (const ponto of new Set(classes.flatMap((classe) => [...classe]))) {
+      const nome = `Ana${String.fromCodePoint(ponto)}Souza`;
+      expect(
+        problemaNoNomeDoProcedimento(nome),
+        ponto.toString(16),
+      ).not.toBeNull();
+      expect(
+        invisivelNoNome(nome) !== null || controleNoNome(nome),
+        ponto.toString(16),
+      ).toBe(true);
+    }
+    for (const nome of ["Colonoscopia", "Raio X", "Consulta (retorno)"]) {
+      expect(nomeDoPreparoValido(nome)).toBe(true);
+      expect(problemaNoNomeDoProcedimento(nome)).toBeNull();
+    }
+  });
+
+  it("controleNoNome: so o controle (C0, DEL e C1), nunca o invisivel", () => {
+    expect(controleNoNome("Colonoscopia")).toBe(false);
+    expect(controleNoNome("Colono\tscopia")).toBe(true);
+    expect(controleNoNome("Colono\u0085scopia")).toBe(true);
+    expect(controleNoNome("Colono\u200escopia")).toBe(false);
   });
 });

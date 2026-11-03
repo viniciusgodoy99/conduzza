@@ -3,8 +3,10 @@ import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 import {
+  controleNoNome,
   invisivelNoNome,
   LIMITE_DO_TEXTO_DO_PREPARO,
+  nomeDoPreparoValido,
   normalizarTextoDoPreparo,
   textoDoPreparoValido,
   type ConteudoRecusadoPeloBanco,
@@ -416,21 +418,25 @@ function emojiDaPosicao(texto: string, posicao: number): string | null {
  * recusa; comum no nome colado de um site), em frase que diz o que tirar e
  * onde: o emoji que leva o invisivel pelo proprio emoji; o resto pelas
  * palavras logo antes (o invisivel nao aparece na tela). null: o nome nao
- * tem nenhum.
+ * tem nenhum. `de`: o nome do procedimento no envio do texto ao RT
+ * ("procedimento"), o do RT ("rt") ou o do procedimento no proprio Salvar
+ * de Cadastros ("cadastro", a sobra da revisao curta).
  */
 export function fraseDoNomeComInvisivel(
   nome: string,
-  de: "procedimento" | "rt",
+  de: "procedimento" | "rt" | "cadastro",
 ): string | null {
   const achado = invisivelNoNome(nome);
   if (achado === null) {
     return null;
   }
-  const doNome = de === "procedimento" ? "do nome do procedimento" : "do nome";
+  const doNome = de === "rt" ? "do nome" : "do nome do procedimento";
   const depois =
     de === "procedimento"
       ? ", salve o procedimento e envie o texto de novo."
-      : ".";
+      : de === "cadastro"
+        ? " e salve de novo."
+        : ".";
   const emoji = emojiDaPosicao(nome, achado.posicao);
   if (emoji) {
     return `Tire o emoji ${emoji} ${doNome}: ele leva um caractere invisível, que não pode ir na mensagem ao paciente. Apague o emoji${depois}`;
@@ -444,6 +450,37 @@ export function fraseDoNomeComInvisivel(
   return palavras === ""
     ? `Tire o caractere invisível do começo ${doNome}: apague e escreva de novo o começo do nome${depois}`
     : `Tire o caractere invisível ${doNome}, logo depois de ${citarTrecho(palavras)}: apague e escreva de novo esse pedaço do nome${depois}`;
+}
+
+/**
+ * O nome do procedimento com a tabulacao ou outro caractere de controle
+ * colado de outro lugar (o resto do que preparo_nome_valido recusa; o
+ * formulario ja tira a quebra de linha).
+ */
+export const FRASE_DO_NOME_COM_CONTROLE =
+  "O nome do procedimento tem uma tabulação ou outro caractere colado de outro lugar. Apague o nome, escreva de novo e salve.";
+
+/**
+ * Revisao curta da AG7 (a sobra da CURTA-6): o nome no Salvar do
+ * procedimento em Cadastros (a tela, antes de gravar qualquer coisa, e a
+ * action salvarProcedimentoAction, de novo). O nome vai no cabecalho da
+ * orientacao de preparo e nas mensagens ao paciente, e o banco o recusa no
+ * preparo (preparo_nome_valido: invisivel, marca de direcao e controle):
+ * sem conferir aqui, o procedimento era salvo e o texto dele nunca chegava
+ * ao RT. O espelho nomeDoPreparoValido decide; a frase diz o que tirar (o
+ * invisivel pelas palavras logo antes ou pelo emoji que o leva). null: o
+ * nome vale para o preparo (o tamanho e as pontas sao do formulario e do
+ * Zod, que conferem antes).
+ */
+export function problemaNoNomeDoProcedimento(nome: string): string | null {
+  if (nomeDoPreparoValido(nome)) {
+    return null;
+  }
+  const invisivel = fraseDoNomeComInvisivel(nome, "cadastro");
+  if (invisivel !== null) {
+    return invisivel;
+  }
+  return controleNoNome(nome) ? FRASE_DO_NOME_COM_CONTROLE : null;
 }
 
 /**

@@ -39,7 +39,10 @@ import {
   SecaoDoPreparo,
   type PreparoDaAba,
 } from "@/components/cadastros/preparo-do-procedimento";
-import { TEXTOS_DO_PREPARO } from "@/components/cadastros/preparo-na-tela";
+import {
+  problemaNoNomeDoProcedimento,
+  TEXTOS_DO_PREPARO,
+} from "@/components/cadastros/preparo-na-tela";
 // [AG7 preparo] fim
 import {
   nomeDoConvenioDoRequisito,
@@ -1568,6 +1571,15 @@ export function ProcedimentosTab({
     };
     if (form.name.trim().length < NOME_MINIMO) {
       recusar("Informe o nome do procedimento.");
+      return;
+    }
+    // [AG7 preparo] Revisao curta da AG7 (a sobra da CURTA-6): o caractere
+    // invisivel, a marca de direcao ou a tabulacao colados no nome (o banco
+    // recusa no preparo). Nada e gravado, e a frase diz o que tirar; a
+    // action confere de novo.
+    const problemaDoNome = problemaNoNomeDoProcedimento(form.name.trim());
+    if (problemaDoNome !== null) {
+      recusar(problemaDoNome);
       return;
     }
     const centavos = lerReais(form.preco_reais);

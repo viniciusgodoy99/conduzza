@@ -402,6 +402,16 @@ export function invisivelNoNome(nome: string): { posicao: number } | null {
   return achado === null ? null : { posicao: achado.index };
 }
 
+/**
+ * O nome tem um caractere de controle que preparo_nome_valido recusa (C0,
+ * DEL e C1: a tabulacao colada de outro lugar)? O resto da regra do nome
+ * (os invisiveis) e de invisivelNoNome. Revisao curta da AG7, a sobra da
+ * CURTA-6: o Salvar do procedimento em Cadastros diz o que tirar.
+ */
+export function controleNoNome(nome: string): boolean {
+  return typeof nome === "string" && CONTROLE_NO_NOME.test(nome);
+}
+
 // ---------------------------------------------------------------------------
 // O conteudo que o banco recusa sozinho (espelho de preparo_texto_recusado)
 // ---------------------------------------------------------------------------
