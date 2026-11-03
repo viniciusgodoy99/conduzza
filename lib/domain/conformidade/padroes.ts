@@ -1038,6 +1038,45 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
     "cuidados_do_procedimento",
     "\\bcuidados? (?:pos|pre|antes|depois|apos|com a pele|com o local|com a regiao|especiais)",
   ),
+  // [AG7 preparo] início
+  // AG7 (03/11/2026). A D-80 vale so para o texto aprovado pelo RT, que o
+  // SISTEMA manda palavra por palavra; o preparo escrito pelo MODELO continua
+  // barrado. Alem do jejum, do suspender o remedio, do beber liquido e dos
+  // cuidados (acima), o preparo dito com outras palavras: a dieta ("dieta
+  // liquida", "a dieta e leve", "sem residuos"), os liquidos claros, comer e
+  // beber negados ("nao coma", "sem comer", "nao pode beber", "nao tome
+  // nada"), o que evitar comer, a bexiga cheia, a lavagem intestinal e a
+  // quantidade de liquido ("beba os 4 litros"). E o anuncio do preparo
+  // ("Segue o preparo abaixo"): o turno do preparo nunca leva texto do
+  // modelo, entao essa frase dele nunca e verdadeira. Nenhum dos dois pega a
+  // frase F2 do sistema, a oferta ("Quer receber a orientacao de preparo da
+  // colonoscopia?") nem a pergunta ("Para qual procedimento voce quer a
+  // orientacao de preparo?"), nem a recepcao de sempre ("Nao precisa levar
+  // nada", "Evite chegar atrasado", "tome um copo de agua enquanto espera"):
+  // os controles AG7-C da bateria.
+  p(
+    "orientacao_clinica",
+    "preparo_alimentar",
+    [
+      "\\bdieta (?:\\w+ )?(?:liquidas?|leves?|pastosas?|brandas?|restritas?|sem (?:residuos?|fibras?|gorduras?|lactose|gluten)|pobre em|livre de)\\b",
+      "\\bliquidos? (?:claros?|coados?|ralos?|sem residuos?)\\b",
+      "\\b(?:nao|sem) (?:coma|comer|beba|beber|ingira|ingerir|mastigue|mastigar|fume|fumar)\\b",
+      "\\bnao (?:pode|deve|podera|devera|precisa) (?:\\w+ )?(?:comer|beber|ingerir|mastigar|fumar|se alimentar)\\b",
+      "\\bnao (?:tome|tomar) (?:nada|cafe|leite|agua|liquidos?|sucos?|chas?|bebidas?)\\b",
+      "\\bevit(?:e|em|ar|a)\\b (?:\\w+ ){0,2}?(?:comer|beber|ingerir|alimentos?|comidas?|frituras?|gordur\\w*|leite|laticinios|derivados|graos?|sementes?|verduras?|legumes|frutas?|refeic\\w*|carnes?|fibras?|refrigerantes?)\\b",
+      "\\bbexiga (?:cheia|vazia)\\b|\\b(?:nao|sem) urin(?:e|ar)\\b",
+      "\\blavagem intestinal\\b|\\benemas?\\b|\\bclister\\b",
+      "\\b(?:beba|beber|bebe|tome|tomar|toma|ingira|ingerir)\\b (?:\\w+ ){0,3}?(?:\\d+(?:[.,]\\d+)?|meio|meia|um|uma|dois|duas|tres|quatro|cinco|seis) ?(?:litros?|l)\\b",
+    ].join("|"),
+  ),
+  p(
+    "orientacao_clinica",
+    "anuncia_preparo",
+    // "Segue", "abaixo" ou "a seguir" colado no preparo (ate quatro palavras
+    // entre eles, sem pontuacao no meio).
+    "\\bseguem?\\b(?: \\w+){0,4}? preparo\\b|\\bpreparo\\b(?: \\w+){0,4}? (?:seguem?|abaixo|a seguir)\\b|\\b(?:abaixo|a seguir)\\b,?(?: \\w+){0,4}? preparo\\b",
+  ),
+  // [AG7 preparo] fim
   // [AG6 urgência] início
   // AG6a (revisao de 28/10/2026, caso AG6-S12): a conduta com o corpo e os
   // primeiros socorros. A IA nunca diz o que fazer com o corpo, nem para

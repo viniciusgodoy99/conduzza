@@ -16,7 +16,26 @@ import {
   CONTROLES_DE_SAIDA,
   contextoDo,
   FRASES_DE_RECEPCAO,
+  // [AG7 preparo] início
+  FRASE_DO_PREPARO_SO_DO_TRECHO,
+  TEXTO_DO_PREPARO_DE_TESTE,
+  // [AG7 preparo] fim
 } from "@/tests/fixtures/ia/conformidade/casos";
+// [AG7 preparo] início
+import {
+  filtrarSaida,
+  MAXIMO_DE_TEXTOS_DE_PREPARO,
+  MAXIMO_DO_TEXTO_DE_PREPARO_NO_FILTRO,
+  versaoDasRegras,
+} from "@/lib/domain/conformidade/filtro";
+import {
+  FONTES_DAS_REGRAS_EM_CODIGO,
+  REGRA_DO_TRECHO_DO_PREPARO,
+} from "@/lib/domain/conformidade/filtro-deterministico";
+import { PADROES_DE_SAIDA } from "@/lib/domain/conformidade/padroes";
+import type { Verificador } from "@/lib/domain/conformidade/veredicto";
+import { FRASE_DO_PREPARO_DEPOIS_DE_MARCAR } from "@/lib/domain/preparo";
+// [AG7 preparo] fim
 
 // A camada deterministica sozinha: todo caso que nao e "so do modelo" TEM de
 // disparar a categoria esperada, e nenhum controle pode disparar nada.
@@ -1040,3 +1059,191 @@ describe("revisão final (A2): o ponto de referência da ferramenta não sai das
   });
 });
 // [AG6b mídia] fim
+
+// [AG7 preparo] início
+// AG7 (03/11/2026; D-80 so vale para a mensagem do sistema): o preparo
+// escrito pelo modelo continua barrado. A regra nova do trecho
+// (trecho_do_preparo_da_clinica) so roda com os textos de preparo da clinica
+// no contexto, e os padroes novos (preparo_alimentar e anuncia_preparo)
+// pegam o preparo dito com outras palavras sem pegar a recepcao de sempre.
+describe("AG7: o preparo escrito pelo modelo e o trecho do texto da clinica", () => {
+  const TEXTOS = [TEXTO_DO_PREPARO_DE_TESTE];
+  const comTextos = { ...CONTEXTO_PADRAO, textosDePreparo: TEXTOS };
+  const TRECHO = {
+    categoria: "orientacao_clinica",
+    regra: "trecho_do_preparo_da_clinica",
+  };
+
+  it("a regra do trecho so roda com textosDePreparo", () => {
+    expect(REGRA_DO_TRECHO_DO_PREPARO).toBe("trecho_do_preparo_da_clinica");
+    expect(
+      avaliarRegras(FRASE_DO_PREPARO_SO_DO_TRECHO, CONTEXTO_PADRAO).achados,
+    ).toEqual([]);
+    expect(avaliarRegras(FRASE_DO_PREPARO_SO_DO_TRECHO, comTextos)).toEqual({
+      categorias: ["orientacao_clinica"],
+      achados: [TRECHO],
+    });
+    expect(
+      avaliarRegras(FRASE_DO_PREPARO_SO_DO_TRECHO, {
+        ...CONTEXTO_PADRAO,
+        textosDePreparo: [],
+      }).achados,
+    ).toEqual([]);
+    // Com os fatos do turno (a resposta curta), a regra roda do mesmo jeito.
+    expect(
+      avaliarRegras(FRASE_DO_PREPARO_SO_DO_TRECHO, {
+        ...comTextos,
+        fatos: fatosVazios(2026),
+      }).achados,
+    ).toContainEqual(TRECHO);
+  });
+
+  it("com os fatos e mais de 700 caracteres, cai antes como formato_invalido/longo", () => {
+    const longo = `${FRASE_DO_PREPARO_SO_DO_TRECHO} ${"Tudo certo por aqui. ".repeat(40)}`;
+    expect(Array.from(longo).length).toBeGreaterThan(LIMITE_DO_RASCUNHO);
+    expect(
+      avaliarRegras(longo, { ...comTextos, fatos: fatosVazios(2026) }),
+    ).toEqual({
+      categorias: ["formato_invalido"],
+      achados: [{ categoria: "formato_invalido", regra: "longo" }],
+    });
+    // Sem os fatos (o texto estatico), todas as regras leem: o trecho tambem.
+    expect(avaliarRegras(longo, comTextos).achados).toContainEqual(TRECHO);
+  });
+
+  it.each([
+    ["A dieta é líquida sem resíduos no dia anterior.", "preparo_alimentar"],
+    ["Faça dieta leve na véspera.", "preparo_alimentar"],
+    ["No dia anterior, só líquidos claros.", "preparo_alimentar"],
+    ["Não coma nada depois da meia-noite.", "preparo_alimentar"],
+    ["Fique 8 horas sem comer.", "preparo_alimentar"],
+    ["Não pode beber nada 2 horas antes.", "preparo_alimentar"],
+    ["Não tome café no dia do exame.", "preparo_alimentar"],
+    ["Evite comer frituras na véspera.", "preparo_alimentar"],
+    ["Evite alimentos com fibras.", "preparo_alimentar"],
+    ["Venha com a bexiga cheia.", "preparo_alimentar"],
+    ["Não urine antes do exame.", "preparo_alimentar"],
+    ["Faça uma lavagem intestinal na véspera.", "preparo_alimentar"],
+    ["Beba os 4 litros de manitol.", "preparo_alimentar"],
+    ["Tome meio litro de solução às 20h.", "preparo_alimentar"],
+    ["Segue o preparo abaixo.", "anuncia_preparo"],
+    // Cada alternativa sozinha: "segue" antes, "abaixo" depois e antes.
+    ["Segue o preparo da colonoscopia.", "anuncia_preparo"],
+    ["Seguem as orientações de preparo.", "anuncia_preparo"],
+    ["O preparo vem a seguir.", "anuncia_preparo"],
+    ["Seguem abaixo as orientações de preparo:", "anuncia_preparo"],
+    ["O preparo da colonoscopia está logo abaixo.", "anuncia_preparo"],
+    ["Abaixo, o preparo da colonoscopia.", "anuncia_preparo"],
+    ["A seguir, a orientação de preparo.", "anuncia_preparo"],
+  ])("%s: %s", (rascunho, regra) => {
+    expect(avaliarRegras(rascunho, CONTEXTO_PADRAO).achados).toContainEqual({
+      categoria: "orientacao_clinica",
+      regra,
+    });
+  });
+
+  it("a recepcao de sempre perto dos padroes novos passa (precisao)", () => {
+    for (const rascunho of [
+      FRASE_DO_PREPARO_DEPOIS_DE_MARCAR,
+      "Para qual procedimento você quer a orientação de preparo?",
+      "Quer receber a orientação de preparo da colonoscopia?",
+      "Me diga qual é o procedimento, e o sistema envia a orientação de preparo aprovada pela clínica.",
+      "A orientação de preparo da colonoscopia é enviada pelo sistema, exatamente como a clínica aprovou.",
+      "Vou passar a sua dúvida sobre o preparo para a equipe.",
+      "Não precisa levar nada, só o documento com foto.",
+      "Evite chegar atrasado, por favor.",
+      "Fique à vontade e tome um copo de água enquanto espera.",
+      "Tome o tempo que precisar para decidir.",
+      "Temos nutricionista para montar sua dieta.",
+      "Segue o horário de funcionamento: de segunda a sexta, das 8h às 18h.",
+      "Segue a lista dos documentos logo abaixo.",
+      "A seguir, me diga para qual procedimento você quer marcar.",
+    ]) {
+      expect(avaliarRegras(rascunho, comTextos).achados, rascunho).toEqual([]);
+    }
+  });
+
+  it("os padroes novos sao de orientacao clinica e a versao das regras mudou", () => {
+    expect(
+      PADROES_DE_SAIDA.filter(
+        (p) => p.nome === "preparo_alimentar" || p.nome === "anuncia_preparo",
+      ).map((p) => [p.nome, p.categoria]),
+    ).toEqual([
+      ["preparo_alimentar", "orientacao_clinica"],
+      ["anuncia_preparo", "orientacao_clinica"],
+    ]);
+    expect(
+      FONTES_DAS_REGRAS_EM_CODIGO.some((fonte) =>
+        fonte.startsWith("trecho_do_preparo_da_clinica: "),
+      ),
+    ).toBe(true);
+    // A versao de antes da AG7 (a da AG6b na branch).
+    expect(versaoDasRegras()).toMatch(/^regras-[0-9a-f]{12}$/);
+    expect(versaoDasRegras()).not.toBe("regras-f1727c422aab");
+  });
+
+  describe("contextoValido falha fechado com a lista de textos malformada", () => {
+    const aprova: Verificador = async () => ({
+      tipo: "veredicto",
+      veredicto: { aprovado: true, violacoes: [], confianca: "alta" },
+      modelo: "gpt-6-luna",
+      uso: null,
+    });
+    const RASCUNHO = "Tenho horário amanhã às 10h. Pode ser?";
+
+    it.each([
+      ["nulo", null],
+      ["texto solto", TEXTO_DO_PREPARO_DE_TESTE],
+      ["objeto", { textos: TEXTOS }],
+      ["numero na lista", [TEXTO_DO_PREPARO_DE_TESTE, 1]],
+      ["texto vazio", [""]],
+      ["nulo na lista", [null]],
+      ["textos demais", Array.from({ length: 201 }, (_, i) => `texto ${i}`)],
+      ["texto longo demais", ["a".repeat(4001)]],
+    ])(
+      "%s: bloqueia como falha, sem chamar o verificador",
+      async (_nome, textos) => {
+        let chamou = false;
+        const decisao = await filtrarSaida({
+          rascunho: RASCUNHO,
+          contexto: {
+            ...CONTEXTO_PADRAO,
+            textosDePreparo: textos as unknown as string[],
+          },
+          verificador: async (entrada) => {
+            chamou = true;
+            return aprova(entrada);
+          },
+        });
+        expect(decisao).toMatchObject({
+          aprovado: false,
+          categoria: "falha_verificador",
+          camada: "falha",
+          motivoDaFalha: "desconhecida",
+        });
+        expect(chamou).toBe(false);
+      },
+    );
+
+    it("no limite (200 textos de 4.000 caracteres) e sem a lista, aprova", async () => {
+      expect(MAXIMO_DE_TEXTOS_DE_PREPARO).toBe(200);
+      expect(MAXIMO_DO_TEXTO_DE_PREPARO_NO_FILTRO).toBe(4000);
+      const noLimite = Array.from({ length: 200 }, (_, i) =>
+        `${i} ${"a".repeat(3990)}`.slice(0, 4000),
+      );
+      for (const contexto of [
+        { ...CONTEXTO_PADRAO, textosDePreparo: noLimite },
+        { ...CONTEXTO_PADRAO, textosDePreparo: undefined },
+        CONTEXTO_PADRAO,
+      ]) {
+        const decisao = await filtrarSaida({
+          rascunho: RASCUNHO,
+          contexto,
+          verificador: aprova,
+        });
+        expect(decisao.aprovado).toBe(true);
+      }
+    });
+  });
+});
+// [AG7 preparo] fim

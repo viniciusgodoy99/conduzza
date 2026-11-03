@@ -30,6 +30,11 @@
 //    so das vedacoes clinicas que a mascara do catalogo cobre, como o nome
 //    do catalogo (trechosDeEnderecoDasFerramentas); o resto do rascunho
 //    continua lido.
+//  - [AG7 preparo] o trecho do preparo: com os textos de preparo da
+//    clinica (textosDePreparo, opcional como os fatos), a resposta que copia
+//    uma frase de um deles e orientacao clinica (trechoDePreparoNaResposta,
+//    lib/domain/preparo.ts). O texto aprovado pelo RT sai pelo sistema,
+//    palavra por palavra (D-80); pelo modelo, nunca.
 
 import {
   CATEGORIAS_DE_CONFORMIDADE,
@@ -66,6 +71,15 @@ import {
   NEUTRALIZACOES_DE_SAIDA,
   PADROES_DE_SAIDA,
 } from "@/lib/domain/conformidade/padroes";
+// [AG7 preparo] início
+// A regra do trecho mora no modulo puro (lib/domain/preparo.ts) e
+// preparo-aprovado.ts a reexporta: este arquivo nao importa
+// preparo-aprovado.ts, que importa este (ciclo de import).
+import {
+  TAMANHO_MINIMO_DO_TRECHO,
+  trechoDePreparoNaResposta,
+} from "@/lib/domain/preparo";
+// [AG7 preparo] fim
 
 /** Rascunho acima disso e formato invalido (plano de seguranca 2.2). */
 export const LIMITE_DO_RASCUNHO = 700;
@@ -85,6 +99,15 @@ export type ContextoDasRegras = {
    * estatico, retomada do envio). O turno da IA sempre passa.
    */
   fatos?: FatosDoTurno;
+  // [AG7 preparo] início
+  /**
+   * Os textos de preparo da clinica (textos_de_preparo_da_clinica: toda
+   * versao e o prep_instructions que a regua mandou antes da AG7), que NUNCA
+   * vao ao modelo. Ausente: a regra do trecho nao roda (texto estatico,
+   * retomada do envio, o texto do proprio preparo). O turno da IA passa.
+   */
+  textosDePreparo?: readonly string[];
+  // [AG7 preparo] fim
 };
 
 export type AchadoDaRegra = {
@@ -387,6 +410,14 @@ function temDadoPessoalAlemDoCnpj(texto: string): boolean {
 // R$ 200", "cortesia do estacionamento"), trocada antes dos padroes.
 const neutralizarSaida = neutralizador(NEUTRALIZACOES_DE_SAIDA);
 
+// [AG7 preparo] início
+/**
+ * AG7: a resposta da IA que copia um trecho de um texto de preparo da
+ * clinica (orientacao_clinica, camada regra). So roda com textosDePreparo.
+ */
+export const REGRA_DO_TRECHO_DO_PREPARO = "trecho_do_preparo_da_clinica";
+// [AG7 preparo] fim
+
 /**
  * As regras que vivem em codigo (preco, formato estrutural, catalogo sem
  * mascara, expressoes permitidas), para a versao das regras (filtro.ts)
@@ -408,6 +439,9 @@ export const FONTES_DAS_REGRAS_EM_CODIGO: readonly string[] = [
   `sem o endereco da ferramenta: ${[...CATEGORIAS_SEM_O_ENDERECO].join(",")}`,
   // Revisao final de 31/10/2026: a saida cedo do rascunho longo.
   `com os fatos, acima de ${LIMITE_DO_RASCUNHO} caracteres: so formato_invalido/longo, sem ler o resto`,
+  // [AG7 preparo] início
+  `${REGRA_DO_TRECHO_DO_PREPARO}: com os textos de preparo da clinica, a frase de ${TAMANHO_MINIMO_DO_TRECHO} caracteres ou mais de um deles (ou o texto inteiro) que aparece inteira no rascunho, os dois lados em minusculas, sem acento, sem pontuacao e com espaco unico (orientacao_clinica)`,
+  // [AG7 preparo] fim
   CNPJ_COM_MASCARA.source,
   ...NEUTRALIZACOES_DE_SAIDA.map(({ nome, fonte, troca }) =>
     [nome, fonte, troca].join(" "),
@@ -701,6 +735,21 @@ export function avaliarRegras(
       }),
     );
   }
+
+  // [AG7 preparo] início
+  // O trecho do preparo (AG7): a resposta que copia uma frase de um texto de
+  // preparo da clinica e barrada, mesmo sem palavra nenhuma dos padroes. O
+  // texto aprovado so sai pela mensagem do sistema, nunca pelo modelo.
+  if (
+    contexto.textosDePreparo !== undefined &&
+    trechoDePreparoNaResposta(rascunho, contexto.textosDePreparo)
+  ) {
+    achados.push({
+      categoria: "orientacao_clinica",
+      regra: REGRA_DO_TRECHO_DO_PREPARO,
+    });
+  }
+  // [AG7 preparo] fim
 
   // Contexto: o paciente falou de saude.
   for (const gatilho of gatilhosDosTextos(contexto.mensagensDoPaciente)) {
