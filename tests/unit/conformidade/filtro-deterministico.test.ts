@@ -1418,6 +1418,74 @@ describe("revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum",
   });
 });
 
+// Revisao curta da AG7 (CURTA-3): os padroes novos da CFM-4 barravam a frase
+// de catalogo da clinica de estetica. O contexto e o da sonda do relatorio
+// (o catalogo de estetica mascarado e a pergunta da pessoa); as frases
+// passavam sem achado nenhum na 9284bdc e voltam a passar, e o preparo dito
+// como instrucao continua barrado.
+describe("revisao curta da AG7 (CURTA-3): os padroes da CFM-4 so barram a instrucao", () => {
+  const CATALOGO_DA_SONDA = [
+    "Limpeza de pele",
+    "Peeling de diamante",
+    "Peeling químico",
+    "Criolipólise",
+    "Lipoaspiração",
+    "Toxina botulínica",
+    "Microagulhamento",
+  ];
+  const daSonda = (nomesDoCatalogo: readonly string[]) => ({
+    precosDoTurno: [],
+    nomesDoCatalogo,
+    mensagensDoPaciente: ["vocês fazem depilação a laser?"],
+  });
+
+  it.each([
+    "Aqui na clínica não faz depilação a laser, só limpeza de pele.",
+    "A Dra. Ana não faz esfoliação, só o peeling químico.",
+    "O peeling de diamante não usa ácidos.",
+    "O microagulhamento não usa ácido, só as agulhas.",
+    "A limpeza de pele é uma coisa leve, dura uma hora.",
+    "A criolipólise tira a gordura localizada sem cortes.",
+    "A lipo tira a gordura localizada.",
+  ])("%j passa sem achado nenhum, com e sem o catalogo", (rascunho) => {
+    expect(avaliarRegras(rascunho, daSonda(CATALOGO_DA_SONDA)).achados).toEqual(
+      [],
+    );
+    expect(avaliarRegras(rascunho, daSonda([])).achados).toEqual([]);
+  });
+
+  it.each([
+    [
+      "Não faça depilação nem use ácidos 7 dias antes.",
+      "cuidado_antes_do_procedimento",
+    ],
+    ["Não faz depilação 7 dias antes.", "cuidado_antes_do_procedimento"],
+    [
+      "Fique sem usar ácido 7 dias antes do peeling.",
+      "cuidado_antes_do_procedimento",
+    ],
+    [
+      "Não usar ácidos na semana do procedimento.",
+      "cuidado_antes_do_procedimento",
+    ],
+    ["Evite fazer depilação na véspera.", "cuidado_antes_do_procedimento"],
+    [
+      "Você não pode fazer depilação 7 dias antes.",
+      "cuidado_antes_do_procedimento",
+    ],
+    ["Come algo leve na véspera.", "preparo_alimentar"],
+    ["Prefira algo leve na véspera.", "preparo_alimentar"],
+    ["Coma uma coisa bem leve antes do exame.", "preparo_alimentar"],
+    ["Corte a gordura e a fritura 3 dias antes.", "preparo_alimentar"],
+    ["Na véspera, corta a gordura.", "preparo_alimentar"],
+    ["Tira o feijão e a salada do cardápio 3 dias antes.", "preparo_alimentar"],
+  ])("%j continua barrada (%s)", (rascunho, regra) => {
+    expect(
+      avaliarRegras(rascunho, daSonda(CATALOGO_DA_SONDA)).achados,
+    ).toContainEqual({ categoria: "orientacao_clinica", regra });
+  });
+});
+
 // Revisao curta da AG7 (CURTA-1): a regra barrava a resposta de recepcao
 // quando a mensagem citava o preparo, a dieta da clinica de nutricao e a
 // pergunta do procedimento que a CFM-7 pede. Os pares da sonda do relatorio

@@ -1121,14 +1121,22 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
       // antes; a comida leve ou liquida; o "so" caldo, sopa, gelatina ou
       // cha; o "sem" e o "corta" ou "tira" de um alimento; a quantidade de
       // copos (dois ou mais: "tome um copo de agua enquanto espera" e
-      // recepcao, o controle AG7-C).
+      // recepcao, o controle AG7-C). Revisao curta (CURTA-3): o "algo" e a
+      // "coisa" leve so com comer por perto ou com a vespera depois ("a
+      // limpeza de pele e uma coisa leve" e catalogo), e a gordura so com o
+      // "corte" ou o "tire" de quem manda, ou com o "corta" e o "tira" no
+      // comeco da frase ("a criolipolise tira a gordura localizada" descreve
+      // o procedimento).
       "\\bbarriga (?:vazia|vaziinha)\\b",
       "\\bnada de (?:comida|comidas|comer|beber|bebida|bebidas|alimento|alimentos|liquido|liquidos|agua|folhas?|fibras?|sementes?|cascas?|verduras?|frutas?|graos?|leite|carnes?)\\b",
       "\\b(?:nao|sem|nem) (?:\\w+ )?xixi\\b|\\bsegur(?:e|a|ar|em|ando) (?:o |seu |teu )?xixi\\b|\\bxixi\\b (?:\\w+ ){0,2}?antes\\b",
-      "\\b(?:alimentacao|alimentacoes|refeicao|refeicoes|comida|comidas|algo|coisa|coisas) (?:bem |mais |bem mais )?(?:leves?|levinh\\w*|liquid\\w*|pastos\\w*)\\b",
+      "\\b(?:alimentacao|alimentacoes|refeicao|refeicoes|comida|comidas) (?:bem |mais |bem mais )?(?:leves?|levinh\\w*|liquid\\w*|pastos\\w*)\\b",
+      "\\b(?:come|coma|comam|comer|almoce|almoca|almocar|jante|janta|jantar|lanche|lancha|lanchar)\\b (?:\\w+ ){0,2}?(?:algo|coisa|coisas|coisinha|coisinhas) (?:bem |mais |bem mais )?(?:leves?|levinh\\w*|liquid\\w*|pastos\\w*)\\b",
+      "\\b(?:algo|coisa|coisas|coisinha|coisinhas) (?:bem |mais |bem mais )?(?:leves?|levinh\\w*|liquid\\w*|pastos\\w*) (?:\\w+ ){0,3}?(?:na vespera|no dia anterior|antes d[oa] (?:\\u00a7|exames?|procedimentos?))\\b",
       "\\b(?:so|apenas|somente)\\b (?:\\w+ )?(?:caldos?|caldinhos?|sopas?|sopinhas?|gelatinas?|chas?|agua de coco|liquidos?)\\b",
       "\\bsem (?:\\w+ )?(?:verduras?|frutas?|folhas?|sementes?|cascas?|fibras?|graos?|legumes|feijao|carnes?|leite|laticinios)\\b",
-      "\\b(?:corta|corte|cortar|tira|tire|tirar|retire|retirar)\\b (?:\\w+ ){0,2}?(?:fibras?|carnes?|verduras?|frutas?|folhas?|sementes?|cascas?|graos?|feijao|saladas?|leite|laticinios|gordur\\w*|frituras?|doces?|acucar|cafe|alcool)\\b",
+      "\\b(?:corta|corte|cortar|tira|tire|tirar|retire|retirar)\\b (?:\\w+ ){0,2}?(?:fibras?|carnes?|verduras?|frutas?|folhas?|sementes?|cascas?|graos?|feijao|saladas?|leite|laticinios|frituras?|doces?|acucar|cafe|alcool)\\b",
+      "(?:\\b(?:corte|cortar|tire|tirar|retire|retirar)|(?:^|[.!?;:,] )(?:corta|tira))\\b (?:\\w+ ){0,2}?gordur\\w*",
       "\\b(?:\\d+|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez)\\b (?:\\w+ )?copos (?:de )?(?:agua|liquido|liquidos|suco|sucos|cha|chas)\\b",
     ].join("|"),
   ),
@@ -1136,9 +1144,19 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
     "orientacao_clinica",
     "cuidado_antes_do_procedimento",
     // Revisao da AG7 (CFM-4): o cuidado com a pele antes do procedimento
-    // dito curto ("Nao faca depilacao nem use acidos 7 dias antes"), so com
-    // o verbo de quem faz ("nao fazemos depilacao a laser" e catalogo).
-    "\\b(?:nao|nem|sem|evite|evitar)\\b (?:\\w+ )?(?:faca|faz|fazer|fizer|use|usa|usar|passe|passa|passar|aplique|aplica|aplicar)\\b (?:\\w+ ){0,2}?(?:depilac\\w*|esfolia\\w*|acidos?\\b|retinoi\\w*|clareador\\w*|bronzea\\w*|autobronzead\\w*)",
+    // dito curto ("Nao faca depilacao nem use acidos 7 dias antes").
+    // Revisao curta (CURTA-3): so a instrucao, e nao a descricao do
+    // catalogo ("a clinica nao faz depilacao", "o peeling nao usa acidos",
+    // "nao fazemos depilacao a laser"): o imperativo e o infinitivo
+    // ("nao faca", "nem use", "nao usar", "evite passar"), com o "deve",
+    // "pode" ou "precisa" no meio; e o "nao faz" ou "nao usa" (o
+    // imperativo falado) e o "sem usar" so com o antes ou a vespera na
+    // frase ("Nao faz depilacao 7 dias antes").
+    [
+      "\\b(?:nao|nem|evite|evitem|evitar)\\b (?:(?:deve|devem|pode|podem|precisa|precisam|devera|podera)\\b )?(?:faca|facam|fazer|use|usem|usar|passe|passem|passar|aplique|apliquem|aplicar)\\b (?:\\w+ ){0,2}?(?:depilac\\w*|esfolia\\w*|acidos?\\b|retinoi\\w*|clareador\\w*|bronzea\\w*|autobronzead\\w*)",
+      "\\b(?:nao|nem) (?:faz|usa|passa|aplica)\\b (?:\\w+ ){0,2}?(?:depilac\\w*|esfolia\\w*|acidos?\\b|retinoi\\w*|clareador\\w*|bronzea\\w*|autobronzead\\w*)[^.!?;]{0,60}?\\b(?:antes|vespera|dia anterior)\\b",
+      "\\bsem (?:fazer|usar|passar|aplicar)\\b (?:\\w+ ){0,2}?(?:depilac\\w*|esfolia\\w*|acidos?\\b|retinoi\\w*|clareador\\w*|bronzea\\w*|autobronzead\\w*)[^.!?;]{0,60}?\\b(?:antes|vespera|dia anterior)\\b",
+    ].join("|"),
   ),
   p(
     "orientacao_clinica",

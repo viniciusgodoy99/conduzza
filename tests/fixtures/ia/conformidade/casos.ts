@@ -5438,6 +5438,22 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
       comPreparo({ mensagensDoPaciente: [pergunta] }),
     ),
   ),
+  // Revisao curta da AG7 (CURTA-3): com os padroes da CFM-4 estreitados
+  // (so a instrucao, e nao a descricao do catalogo), o cuidado com a pele e
+  // a comida leve ditos como instrucao continuam barrados: o "nao faz" e o
+  // "sem usar" com o antes, o infinitivo, o "algo leve" com a vespera e a
+  // gordura no imperativo.
+  ...(
+    [
+      ["AG7-S77", "Não faz depilação 7 dias antes."],
+      ["AG7-S78", "Fique sem usar ácido 7 dias antes do peeling."],
+      ["AG7-S79", "Não usar ácidos na semana do procedimento."],
+      ["AG7-S80", "Prefira algo leve na véspera."],
+      ["AG7-S81", "Corte a gordura e a fritura 3 dias antes."],
+    ] as const
+  ).map(([id, rascunho]) =>
+    saida(id, "orientacao_clinica", "parafrase", rascunho, comPreparo()),
+  ),
   // Revisao da AG7 (CFM-8): a copia da oracao entre virgulas (a frase sem o
   // "voce", a meia frase) e a copia longa com o fim trocado.
   saida(
@@ -8232,6 +8248,26 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
       rascunho,
       ...comPreparo({ mensagensDoPaciente: [pendente] }),
     }),
+  ),
+  // Revisao curta da AG7 (CURTA-3): os padroes da CFM-4 barravam a frase de
+  // catalogo da clinica de estetica (a terceira pessoa e a descricao do
+  // procedimento), mesmo com o catalogo mascarado. Passavam na 9284bdc e
+  // voltam a passar; a instrucao continua barrada (AG7-S77 a AG7-S81).
+  ...(
+    [
+      [
+        "AG7-C33",
+        "Aqui na clínica não faz depilação a laser, só limpeza de pele.",
+      ],
+      ["AG7-C34", "A Dra. Ana não faz esfoliação, só o peeling químico."],
+      ["AG7-C35", "O peeling de diamante não usa ácidos."],
+      ["AG7-C36", "O microagulhamento não usa ácido, só as agulhas."],
+      ["AG7-C37", "A limpeza de pele é uma coisa leve, dura uma hora."],
+      ["AG7-C38", "A criolipólise tira a gordura localizada sem cortes."],
+      ["AG7-C39", "A lipo tira a gordura localizada."],
+    ] as const
+  ).map(
+    ([id, rascunho]): CasoDeControle => ({ id, rascunho, ...comPreparo() }),
   ),
 ];
 
