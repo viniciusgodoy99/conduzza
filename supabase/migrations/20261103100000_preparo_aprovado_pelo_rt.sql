@@ -50,7 +50,8 @@
 --      texto nunca muda; a maquina de estados; a aprovacao so pelo RT
 --      vigente, com o hash conferido).
 --   6. As funcoes internas (responsavel_tecnico_vigente, preparo_em_vigor,
---      mensagem_do_preparo), a da tela (user_e_responsavel_tecnico), as do
+--      mensagem_do_preparo), a da tela (user_e_responsavel_tecnico: falsa na
+--      clinica de conta suspensa e para o super admin), as do
 --      servidor (ler_preparo_para_envio, preparos_em_vigor_da_clinica,
 --      textos_de_preparo_da_clinica, preparo_em_vigor_do_procedimento) e as
 --      RPCs das telas (salvar, aprovar, devolver, descartar e suspender o
@@ -119,17 +120,24 @@
 --     42501 (suspender) -> (trava o procedimento e a aprovada) ->
 --     sem_preparo_aprovado -> {versao_id}.
 --   definir o RT: 22004 -> nome_invalido -> conselho_invalido ->
---     numero_invalido -> uf_invalida -> 42501 (RT) ->
+--     numero_invalido -> uf_invalida -> 42501 (RT) -> 42501 (RT) de novo se
+--     a pessoa escolhida e super admin (TELA-9) ->
 --     responsavel_nao_e_membro_ativo -> (trava a linha aberta) ->
---     (23505: outra_definicao) -> o id.
+--     outra_definicao (a linha aberta nasceu depois do comeco desta
+--     transacao: outra definicao ganhou a corrida) -> (23505:
+--     outra_definicao) -> o id.
 --   encerrar o RT: 22004 -> 42501 (RT) -> (trava a linha aberta) ->
---     sem_responsavel_tecnico.
+--     sem_responsavel_tecnico -> outra_definicao (a linha aberta nasceu
+--     depois do comeco desta transacao).
 -- QUEM PASSA: escrever, descartar e suspender: administrador ou gestor
 -- ativo, o super admin ou o RT vigente (de qualquer papel; o pendente nunca,
 -- porque nao e ativo); aprovar e devolver: so o RT vigente (nem o
 -- administrador, nem o super admin: aprovar e ato clinico, D-71); definir e
 -- encerrar o RT: so o administrador pleno (sem a marca de Implementador) ou
--- o super admin.
+-- o super admin. A sessao so age como RT (user_e_responsavel_tecnico) fora
+-- da clinica de conta suspensa (como user_has_role: a equipe da clinica
+-- suspensa nao escreve nada) e nunca sendo super admin, mesmo com vinculo
+-- ativo e designada antes (D-71); e o super admin nunca e escolhido como RT.
 --
 -- TRAVAS (medidas no Postgres local: pg_locks da transacao depois da
 -- migration). TODAS no comeco, no bloco 0, antes de qualquer mudanca, numa
@@ -830,7 +838,7 @@ revoke all on function public.responsavel_tecnico_vigente(uuid)
 comment on function public.responsavel_tecnico_vigente(uuid) is
   'Interna (AG7; nenhum papel da API executa): o id da designacao aberta (ate nulo) de responsavel_tecnico da clinica cujo user_id tem clinic_member da clinica com status ativo; nulo se nao houver. O RT que perde o acesso deixa de ser vigente na hora (falha fechada). Usada pelo gatilho de aprovacao, por preparo_em_vigor e pelas RPCs.';
 
--- A sessao e o RT vigente desta clinica? (as telas)
+-- A sessao e o RT vigente desta clinica? (as telas e as RPCs)
 create function public.user_e_responsavel_tecnico(p_clinic_id uuid)
 returns boolean
 language plpgsql
@@ -840,6 +848,16 @@ set search_path to ''
 as $function$
 begin
   if auth.uid() is null or p_clinic_id is null then
+    return false;
+  end if;
+  -- Conta suspensa: a equipe da clinica nao le nem escreve nada (como
+  -- user_has_role, user_active_clinic_ids e user_can_write; BANCO-1).
+  if exists (select 1 from public.clinica_suspensa s where s.clinic_id = p_clinic_id) then
+    return false;
+  end if;
+  -- O super admin nunca age como RT, nem com vinculo ativo e designado antes
+  -- (D-71: aprovar e ato clinico; TELA-9).
+  if public.is_product_admin() then
     return false;
   end if;
   return exists (
@@ -856,7 +874,7 @@ grant execute on function public.user_e_responsavel_tecnico(uuid)
   to authenticated, service_role;
 
 comment on function public.user_e_responsavel_tecnico(uuid) is
-  'A sessao (auth.uid()) e o RT vigente desta clinica? (AG7; as telas e as RPCs.) Sem sessao ou sem clinica: falso. Nao entra em policy de dado de paciente.';
+  'A sessao (auth.uid()) e o RT vigente desta clinica e pode agir como RT? (AG7; as telas e as RPCs.) Falso sem sessao ou sem clinica, na clinica de conta suspensa (clinica_suspensa: a equipe da clinica nao escreve nada, como em user_has_role) e para o super admin (is_product_admin, mesmo com vinculo ativo e designado antes: D-71). Nao entra em policy de dado de paciente.';
 
 -- A versao esta em vigor? (a definicao do cabecalho)
 create function public.preparo_em_vigor(p_clinic_id uuid, p_versao_id uuid)
@@ -1407,7 +1425,7 @@ grant execute on function public.devolver_preparo_do_procedimento(uuid, text)
   to authenticated;
 
 comment on function public.devolver_preparo_do_procedimento(uuid, text) is
-  'Cadastros (authenticated). AG7: o RT vigente devolve a versao aguardando, com o comentario. Na ordem: 22004 parametro_nulo (a versao ou o comentario nulo); 22023 comentario_invalido (cadastro_texto_valido(.., 300): 1 a 300, aparado); P0001 versao_inexistente; 42501 "Só o responsável técnico da clínica aprova a orientação de preparo."; as travas (o procedimento, depois a versao); P0001 nao_aguarda_aprovacao; a versao vira devolvido com o comentario. Trilha devolveu_preparo {procedure_id, versao, codigo}. Nunca 40001 nem 40P01.';
+  'Cadastros (authenticated). AG7: o RT vigente devolve a versao aguardando, com o comentario. Na ordem: 22004 parametro_nulo (a versao ou o comentario nulo); 22023 comentario_invalido (cadastro_texto_valido(.., 300): 1 a 300, aparado); P0001 versao_inexistente; 42501 "Só o responsável técnico da clínica aprova a orientação de preparo." (so o RT vigente, pela sessao: nem o super admin, nem o RT da clinica de conta suspensa); as travas (o procedimento, depois a versao); P0001 nao_aguarda_aprovacao; a versao vira devolvido com o comentario. Trilha devolveu_preparo {procedure_id, versao, codigo}. Nunca 40001 nem 40P01.';
 
 -- Descartar o texto que espera o RT.
 create function public.descartar_preparo_do_procedimento(p_versao_id uuid)
@@ -1466,7 +1484,7 @@ grant execute on function public.descartar_preparo_do_procedimento(uuid)
   to authenticated;
 
 comment on function public.descartar_preparo_do_procedimento(uuid) is
-  'Cadastros (authenticated). AG7: descarta a versao aguardando o RT. Na ordem: 22004 parametro_nulo; P0001 versao_inexistente; 42501 "Somente administradores, gestores ou o responsável técnico descartam o texto novo da orientação de preparo." (passam: administrador ou gestor ativo, super admin, RT vigente); as travas (o procedimento, depois a versao); P0001 nao_aguarda_aprovacao; a versao vira descartado. Trilha descartou_preparo {procedure_id, versao, codigo}. Nunca 40001 nem 40P01.';
+  'Cadastros (authenticated). AG7: descarta a versao aguardando o RT. Na ordem: 22004 parametro_nulo; P0001 versao_inexistente; 42501 "Somente administradores, gestores ou o responsável técnico descartam o texto novo da orientação de preparo." (passam: administrador ou gestor ativo, super admin, RT vigente fora da clinica suspensa); as travas (o procedimento, depois a versao); P0001 nao_aguarda_aprovacao; a versao vira descartado. Trilha descartou_preparo {procedure_id, versao, codigo}. Nunca 40001 nem 40P01.';
 
 -- Suspender o envio do texto aprovado (parar e sempre o lado seguro).
 create function public.suspender_preparo_do_procedimento(p_procedure_id uuid, p_comentario text default null)
@@ -1531,7 +1549,7 @@ grant execute on function public.suspender_preparo_do_procedimento(uuid, text)
   to authenticated;
 
 comment on function public.suspender_preparo_do_procedimento(uuid, text) is
-  'Cadastros (authenticated). AG7: suspende o envio da versao aprovada do procedimento (D-72; parar e sempre o lado seguro). Na ordem: 22004 parametro_nulo (o procedimento nulo); 22023 comentario_invalido (o comentario veio e nao cabe em cadastro_texto_valido(.., 300)); P0001 procedimento_inexistente; 42501 "Somente administradores, gestores ou o responsável técnico suspendem o envio da orientação de preparo." (passam: administrador ou gestor ativo, super admin, RT vigente); as travas (o procedimento, depois a aprovada); P0001 sem_preparo_aprovado; a aprovada vira suspenso (com o comentario, se veio). Retomar e aprovar de novo, numa versao nova com o mesmo texto. Trilha suspendeu_preparo {procedure_id, versao, codigo}. Devolve {versao_id}. Nunca 40001 nem 40P01.';
+  'Cadastros (authenticated). AG7: suspende o envio da versao aprovada do procedimento (D-72; parar e sempre o lado seguro). Na ordem: 22004 parametro_nulo (o procedimento nulo); 22023 comentario_invalido (o comentario veio e nao cabe em cadastro_texto_valido(.., 300)); P0001 procedimento_inexistente; 42501 "Somente administradores, gestores ou o responsável técnico suspendem o envio da orientação de preparo." (passam: administrador ou gestor ativo, super admin, RT vigente fora da clinica suspensa); as travas (o procedimento, depois a aprovada); P0001 sem_preparo_aprovado; a aprovada vira suspenso (com o comentario, se veio). Retomar e aprovar de novo, numa versao nova com o mesmo texto. Trilha suspendeu_preparo {procedure_id, versao, codigo}. Devolve {versao_id}. Nunca 40001 nem 40P01.';
 
 -- Definir o RT da clinica (encerra o anterior, se houver).
 create function public.definir_responsavel_tecnico(p_clinic_id uuid, p_user_id uuid, p_nome text,
@@ -1566,6 +1584,11 @@ begin
     raise exception using errcode = '22023', message = 'uf_invalida';
   end if;
   if not (public.user_e_admin_pleno(p_clinic_id) or public.is_product_admin()) then
+    raise exception using errcode = '42501', message = c_frase_rt;
+  end if;
+  -- O super admin nunca e o RT (D-71: aprovar e ato clinico; TELA-9), nem com
+  -- vinculo ativo: nem se definindo, nem escolhido pelo administrador.
+  if exists (select 1 from public.product_admin pa where pa.user_id = p_user_id) then
     raise exception using errcode = '42501', message = c_frase_rt;
   end if;
   if not exists (
@@ -1608,7 +1631,7 @@ grant execute on function public.definir_responsavel_tecnico(uuid, uuid, text, t
   to authenticated;
 
 comment on function public.definir_responsavel_tecnico(uuid, uuid, text, text, text, text) is
-  'Configuracoes (authenticated). AG7: define o RT da clinica (D-70): encerra a designacao aberta (ate, encerrado_por) e cria a nova (desde, definido_por = auth.uid()), na mesma transacao. As aprovacoes do anterior param de valer na hora (D-73). Na ordem: 22004 parametro_nulo; 22023 nome_invalido (1 a 120, aparado, sem controle), conselho_invalido (CRM, CRO, CRBM, CRF, COREN, CREFITO, CRN, CRP, CRFa, CREF), numero_invalido (1 a 20 de letras, digitos, ponto, barra e hifen) e uf_invalida (as 27); 42501 "Só o administrador da clínica define o responsável técnico." (so o administrador pleno, sem a marca de Implementador, ou o super admin); P0001 responsavel_nao_e_membro_ativo (a pessoa sem clinic_member ativo na clinica, de qualquer papel); a trava da linha aberta (FOR UPDATE); o 23505 vira P0001 outra_definicao. Trilha definiu_responsavel_tecnico {user_id}. Devolve o id da designacao nova. Nunca 40001 nem 40P01.';
+  'Configuracoes (authenticated). AG7: define o RT da clinica (D-70): encerra a designacao aberta (ate, encerrado_por) e cria a nova (desde, definido_por = auth.uid()), na mesma transacao. As aprovacoes do anterior param de valer na hora (D-73). Na ordem: 22004 parametro_nulo; 22023 nome_invalido (preparo_nome_valido: 1 a 120, aparado, sem controle, sem invisivel e sem marca de direcao), conselho_invalido (CRM, CRO, CRBM, CRF, COREN, CREFITO, CRN, CRP, CRFa, CREF), numero_invalido (1 a 20 de letras, digitos, ponto, barra e hifen) e uf_invalida (as 27); 42501 "Só o administrador da clínica define o responsável técnico." (so o administrador pleno, sem a marca de Implementador, ou o super admin); 42501 com a mesma frase se a pessoa escolhida e super admin (product_admin; nem ele mesmo, nem com vinculo ativo: D-71, TELA-9); P0001 responsavel_nao_e_membro_ativo (a pessoa sem clinic_member ativo na clinica, de qualquer papel); a trava da linha aberta (FOR UPDATE); P0001 outra_definicao se a linha aberta nasceu depois do comeco desta transacao (outra definicao ganhou a corrida; BANCO-6); o 23505 vira P0001 outra_definicao. Trilha definiu_responsavel_tecnico {user_id}. Devolve o id da designacao nova. Nunca 40001 nem 40P01.';
 
 -- Encerrar o RT da clinica (a clinica fica sem RT: nada sai).
 create function public.encerrar_responsavel_tecnico(p_clinic_id uuid)
