@@ -1322,6 +1322,46 @@ describe("a F2 depois de marcar", () => {
     expect(ultimo?.resumoDosFatos).toContain(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR);
   });
 
+  it("revisao da AG7 (MOTOR-3): a F2 que o modelo escreve sozinho (sem marcar) nao vai ao verificador como colada pelo sistema", async () => {
+    const pedidos: EntradaDoVerificador[] = [];
+    verificador.mockImplementation(async (pedido) => {
+      pedidos.push(pedido);
+      return {
+        tipo: "veredicto",
+        veredicto: { aprovado: true, violacoes: [], confianca: "alta" },
+        modelo: "gpt-6-luna",
+        uso: { ...USO_LIDO },
+      };
+    });
+    await turno(
+      [
+        final(
+          `Atendemos de segunda a sexta. ${FRASE_DO_PREPARO_DEPOIS_DE_MARCAR}`,
+        ),
+      ],
+      {
+        mensagens: [
+          paciente("Oi"),
+          {
+            autor: "assistente",
+            autoria: "ia",
+            texto: "Olá! Como posso ajudar?",
+          },
+          paciente("Vocês atendem aos sábados?"),
+        ],
+      },
+    );
+    const ultimo = pedidos.at(-1);
+    expect(ultimo?.rascunho).toContain(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR);
+    // A secao dos textos colados nao a lista (so o rascunho a tem).
+    expect(ultimo?.resumoDosFatos).toContain(
+      "Textos fixos da clínica colados pelo sistema nesta resposta",
+    );
+    expect(ultimo?.resumoDosFatos ?? "").not.toContain(
+      FRASE_DO_PREPARO_DEPOIS_DE_MARCAR,
+    );
+  });
+
   it("sem texto em vigor do procedimento marcado, ou com a habilidade desligada: sem a F2", async () => {
     const semTexto = await marcar({
       catalogo: {

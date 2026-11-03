@@ -3448,6 +3448,11 @@ async function turnoDoAgente(
     // Revisao 2 da AG2: as respostas da base que o modelo disse ter usado,
     // para o resumo dos fatos que vai ao verificador.
     const respostasDaBase: string[] = [];
+    // [AG7 preparo] Revisao da AG7 (MOTOR-3): o turno colou a F2 (a
+    // marcacao de um procedimento com texto em vigor). So ela entra nos
+    // textos colados dos fatos; a F2 que o modelo escreveu sozinho e
+    // afirmacao dele, e o verificador a julga como tal.
+    let comAF2 = false;
 
     if (fraseDaAgenda !== null) {
       // AG4: a frase fixa da agenda, com a saudacao e o aviso colados como
@@ -3569,7 +3574,7 @@ async function turnoDoAgente(
       // orientacao de preparo em vigor, com a habilidade ligada: o sistema
       // cola a F2 depois da resposta, e ela passa pelo filtro inteiro.
       const marcado = agendaDoTurno.procedimentoMarcadoNoTurno();
-      const comAF2 =
+      comAF2 =
         marcado !== null &&
         permitidas.has(NOME_DO_ENVIO_DO_PREPARO) &&
         entrada.catalogo.preparosEmVigor?.has(marcado) === true;
@@ -3607,10 +3612,12 @@ async function turnoDoAgente(
         // [AG6b mídia] Os pedidos lidos na conversa (so os nomes do
         // Cadastro), para o resumo dos fatos do verificador.
         pedidos: pedidosDoTurno(mensagensDoTurno, entrada.catalogo),
-        // [AG7 preparo] A F2, so quando o turno a colou no rascunho.
-        fraseDoPreparo: rascunho.includes(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR)
-          ? FRASE_DO_PREPARO_DEPOIS_DE_MARCAR
-          : null,
+        // [AG7 preparo] A F2, so quando o turno a colou no rascunho (MOTOR-3:
+        // nunca a que o modelo escreveu sozinho).
+        fraseDoPreparo:
+          comAF2 && rascunho.includes(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR)
+            ? FRASE_DO_PREPARO_DEPOIS_DE_MARCAR
+            : null,
       });
     } catch {
       log.warn("ia_agente_fatos_falharam", {
