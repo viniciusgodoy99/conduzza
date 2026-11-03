@@ -15,6 +15,8 @@ import {
   type MotivoDaEsperaDoCanal,
 } from "@/lib/domain/espera-do-canal";
 import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
+// [AG7 preparo]
+import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
 import {
   CORPO_DO_MENU_APOS_MIDIA,
   MENU_CONFIRMACAO,
@@ -133,7 +135,9 @@ type LinhaDaConsulta = {
   /** O paciente pediu para remarcar (gravado pelo interceptador). */
   remarcacao_pedida_em: string | null;
   service_link: {
-    procedure: { name: string; prep_instructions: string | null } | null;
+    // [AG7 preparo] O id do procedimento (o preparo em vigor dele); o
+    // prep_instructions nem e lido desde a AG7 (D-74).
+    procedure: { id: string; name: string } | null;
   } | null;
   professional: { name: string } | null;
 };
@@ -290,7 +294,7 @@ async function carregarConsulta(
     .select(
       `id, status, starts_at, send_confirmation, remarcacao_pedida_em,
        service_link:service_link_id (
-         procedure:procedure_id ( name, prep_instructions )
+         procedure:procedure_id ( id, name )
        ),
        professional:professional_id ( name )`,
     )
@@ -624,6 +628,9 @@ function valoresDoModelo(
   run: LinhaDaRun,
   consulta: LinhaDaConsulta,
   timezone: string,
+  // [AG7 preparo] O texto em vigor, aprovado pelo RT e conferido por hash
+  // (preparoDoToque), ou null: a linha do {{preparo}} some.
+  preparo: string | null,
 ): Record<string, string | null> {
   // Data e hora SEMPRE no fuso da clinica (regra 3.6): o banco guarda UTC e o
   // paciente le o relogio dele.
@@ -636,9 +643,85 @@ function valoresDoModelo(
     profissional: consulta.professional?.name ?? null,
     data: format(inicio, "dd/MM/yyyy", { locale: ptBR }),
     hora: format(inicio, "HH:mm", { locale: ptBR }),
-    preparo: procedimento?.prep_instructions ?? null,
+    // [AG7 preparo] (era procedimento?.prep_instructions)
+    preparo,
   };
 }
+
+// [AG7 preparo] início
+const UUID_DO_PREPARO =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SHA256_DO_PREPARO = /^[0-9a-f]{64}$/;
+
+/**
+ * AG7 (D-74): o modelo do passo usa {{preparo}}? A mesma leitura do
+ * renderizador (lib/domain/modelo-mensagem.ts): {{chave}} com a chave
+ * aparada.
+ */
+export function modeloPedePreparo(modelo: string | null): boolean {
+  if (!modelo) {
+    return false;
+  }
+  for (const achado of modelo.matchAll(/\{\{([^{}]*)\}\}/g)) {
+    if ((achado[1] ?? "").trim() === "preparo") {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * AG7 (D-74, contrato 3.1, REGUA): o {{preparo}} do toque e SO o texto em
+ * vigor do procedimento da consulta (preparo_em_vigor_do_procedimento:
+ * aprovado pelo responsavel tecnico vigente, com o mesmo texto e o mesmo
+ * nome do procedimento), conferido por hash logo antes de renderizar.
+ * null: sem procedimento, sem texto em vigor, ou leitura fora do formato ou
+ * com o hash diferente (a linha some, e o log `regua_preparo_divergente`
+ * so com ids). Erro da leitura lanca (o job tenta de novo, como a leitura
+ * da consulta). O prep_instructions nunca e lido.
+ */
+async function preparoDoToque(
+  admin: SupabaseClient,
+  e: { clinicId: string; procedureId: string | null; jobId: string },
+): Promise<string | null> {
+  if (e.procedureId === null) {
+    return null;
+  }
+  const { data, error } = await admin.rpc("preparo_em_vigor_do_procedimento", {
+    p_clinic_id: e.clinicId,
+    p_procedure_id: e.procedureId,
+  });
+  if (error) {
+    throw new ErroComCodigoDeJob(`preparo_ilegivel: ${codigoDoErro(error)}`);
+  }
+  if (data === null || data === undefined) {
+    return null;
+  }
+  const lido = data as {
+    versao_id?: unknown;
+    texto?: unknown;
+    texto_sha256?: unknown;
+  };
+  const formatoOk =
+    typeof data === "object" &&
+    !Array.isArray(data) &&
+    typeof lido.versao_id === "string" &&
+    UUID_DO_PREPARO.test(lido.versao_id) &&
+    typeof lido.texto === "string" &&
+    lido.texto.trim() !== "" &&
+    typeof lido.texto_sha256 === "string" &&
+    SHA256_DO_PREPARO.test(lido.texto_sha256);
+  if (!formatoOk || sha256DoTexto(lido.texto as string) !== lido.texto_sha256) {
+    log.warn("regua_preparo_divergente", {
+      clinic_id: e.clinicId,
+      job_id: e.jobId,
+      status: formatoOk ? "hash" : "formato",
+    });
+    return null;
+  }
+  return lido.texto as string;
+}
+// [AG7 preparo] fim
 
 export async function executarPassoDeRegua(
   admin: SupabaseClient,
@@ -1012,14 +1095,42 @@ export async function executarPassoDeRegua(
   // 6. ENVIO. O conteudo do passo e texto e/ou anexo (decisao do dono em
   // 19/09/2026: pode ser so o audio). Sem nenhum dos dois, o toque e
   // definitivamente invalido.
-  const body = modelo && modelo.trim()
-    ? renderizarModelo(
-        modelo,
-        consulta
-          ? valoresDoModelo(run, consulta, timezone)
-          : valoresDeFollowup(run),
-      ).trim()
-    : "";
+  // [AG7 preparo] início
+  // AG7 (D-74): o {{preparo}} e so o texto em vigor do procedimento da
+  // consulta, aprovado pelo RT e conferido por hash AQUI, logo antes de
+  // renderizar (contrato, secao 0, item 25: a consulta lida no passo 2;
+  // a defesa da remarcacao, abaixo, rele a consulta depois do corpo).
+  // Sem texto em vigor, a linha some. So le quando o modelo pede.
+  const preparoDoPasso =
+    consulta && modelo && modeloPedePreparo(modelo)
+      ? await preparoDoToque(admin, {
+          clinicId: job.clinic_id,
+          procedureId: consulta.service_link?.procedure?.id ?? null,
+          jobId: job.id,
+        })
+      : null;
+  const renderizar = (preparo: string | null) =>
+    modelo && modelo.trim()
+      ? renderizarModelo(
+          modelo,
+          consulta
+            ? valoresDoModelo(run, consulta, timezone, preparo)
+            : valoresDeFollowup(run),
+        ).trim()
+      : "";
+  let body = renderizar(preparoDoPasso);
+  // A pos-condicao: com {{preparo}} e texto em vigor, o corpo leva o texto
+  // INTEIRO, palavra por palavra. Senao (o renderizador mexeu nele), o toque
+  // sai sem ele e o log diz, so com ids.
+  if (preparoDoPasso !== null && !body.includes(preparoDoPasso)) {
+    log.warn("regua_preparo_divergente", {
+      clinic_id: job.clinic_id,
+      job_id: job.id,
+      status: "fora_do_corpo",
+    });
+    body = renderizar(null);
+  }
+  // [AG7 preparo] fim
   if (!body && !passo.media_path) {
     return { ok: false, erro: "passo_sem_conteudo", definitivo: true };
   }
