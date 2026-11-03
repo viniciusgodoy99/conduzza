@@ -13,22 +13,32 @@ vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({}) }));
 
 import {
   AJUDA_DO_CAMPO_DO_PREPARO,
+  AVISO_DO_PREPARO_SOZINHO,
   EditorDePasso,
+  NOTA_DO_PREPARO_NA_PREVIA,
+  previaDoPasso,
   valoresDeAmostra,
 } from "@/components/automacoes/editor-de-passo";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { PLACEHOLDERS } from "@/lib/domain/modelo-mensagem";
+import {
+  modeloSemOPreparo,
+  PLACEHOLDERS,
+  renderizarModelo,
+} from "@/lib/domain/modelo-mensagem";
 import type { PassoDaReguaDaTela } from "@/lib/queries/confirmacoes";
 
 // AG7 em Automacoes (desenho da AG7, secao 5.5; contrato 3.3): no editor do
 // passo da regua, logo depois dos chips dos campos e so quando a regua
 // oferece o {{preparo}}, a linha que diz o que ele vira no envio: a
-// orientacao aprovada pelo responsavel tecnico, e a linha some sem texto
-// aprovado. A amostra e o "Testar envio" continuam com o preparo vazio
-// (nenhum texto clinico no teste). Nada aqui chama acao nem rede.
+// orientacao aprovada pelo responsavel tecnico, e, sem texto aprovado, o que
+// sai (revisao curta, CURTA-4: o campo e a frase que so o apresenta; a
+// mensagem que fica vazia nao sai). A amostra e o "Testar envio" continuam
+// com o preparo vazio (nenhum texto clinico no teste), e a previa mostra o
+// toque como a regua o manda sem texto aprovado. Nada aqui chama acao nem
+// rede.
 
 const AJUDA =
-  "{{preparo}}: a orientação de preparo aprovada pelo responsável técnico do procedimento. Sem texto aprovado, a linha some.";
+  "{{preparo}}: a orientação de preparo aprovada pelo responsável técnico do procedimento. Sem texto aprovado, saem o campo e a frase que só o apresenta (como “Siga o preparo:”), e o resto da mensagem sai como está. A mensagem que ficar vazia não sai.";
 
 const PASSO: PassoDaReguaDaTela = {
   id: "44444444-4444-4444-8444-444444444444",
@@ -121,5 +131,59 @@ describe("a ajuda do {{preparo}} no editor do passo", () => {
   it("sem travessão", () => {
     expect(AJUDA).not.toMatch(/[—–]/);
     expect(editor()).not.toMatch(/[—–]/);
+    expect(NOTA_DO_PREPARO_NA_PREVIA).not.toMatch(/[—–]/);
+    expect(AVISO_DO_PREPARO_SOZINHO).not.toMatch(/[—–]/);
+  });
+});
+
+// Revisao curta da AG7 (CURTA-4): a previa mostrava o campo vazio e a linha
+// que o apresentava ("Siga o preparo abaixo:"), e a regua tirava a linha
+// inteira. Agora as duas usam modeloSemOPreparo: a previa e o toque sem
+// texto aprovado.
+describe("revisao curta da AG7 (CURTA-4): a prévia mostra o que a régua manda sem texto aprovado", () => {
+  function previaNa(html: string): string {
+    return texto(html.slice(html.indexOf("Como o paciente vê")));
+  }
+
+  it.each([
+    "Oi, {{nome}}! Confirma {{procedimento}} amanhã às {{hora}}? {{preparo}}",
+    "Sua consulta é amanhã, {{data}} às {{hora}}. {{preparo}}\nPodemos confirmar sua presença?",
+    "Olá {{nome}}, seguem os dados da sua consulta de amanhã:\n{{preparo}}\nData: {{data}} às {{hora}}.",
+    "Oi, {{nome}}!\nSiga o preparo abaixo:\n{{preparo}}\nPodemos confirmar sua presença?",
+  ])("%j: a prévia é a função da régua com a amostra", (modelo) => {
+    const esperado = renderizarModelo(
+      modeloSemOPreparo(modelo),
+      valoresDeAmostra("Clínica Exemplo"),
+    );
+    expect(previaDoPasso(modelo, "Clínica Exemplo")).toBe(esperado);
+    expect(esperado).not.toContain("preparo abaixo");
+    const html = editor({ passo: { ...PASSO, fixed_body: modelo } });
+    for (const linha of esperado.split("\n")) {
+      expect(previaNa(html)).toContain(linha);
+    }
+    expect(previaNa(html)).not.toContain("Siga o preparo");
+    expect(previaNa(html)).toContain(NOTA_DO_PREPARO_NA_PREVIA);
+  });
+
+  it("o passo só com o {{preparo}}: a prévia avisa que a mensagem não sai", () => {
+    for (const modelo of [
+      "{{preparo}}",
+      "Siga o preparo abaixo:\n{{preparo}}",
+    ]) {
+      expect(previaDoPasso(modelo, "Clínica Exemplo")).toBe("");
+      const html = editor({ passo: { ...PASSO, fixed_body: modelo } });
+      expect(html).toContain("data-aviso-do-preparo");
+      expect(texto(html)).toContain(AVISO_DO_PREPARO_SOZINHO);
+    }
+    // Com o resto da mensagem, sem o aviso.
+    expect(editor()).not.toContain("data-aviso-do-preparo");
+  });
+
+  it("sem o {{preparo}} no texto, nem a nota nem o aviso", () => {
+    const html = editor({
+      passo: { ...PASSO, fixed_body: "Oi, {{nome}}! Podemos confirmar?" },
+    });
+    expect(html).not.toContain(NOTA_DO_PREPARO_NA_PREVIA);
+    expect(html).not.toContain("data-aviso-do-preparo");
   });
 });

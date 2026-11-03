@@ -13,7 +13,10 @@ import {
 } from "@/components/automacoes/vinculo-da-regua";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { recusaDeFollowup, type PapelDeEtapa } from "@/lib/domain/jornada";
-import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
+import {
+  modeloSemOPreparo,
+  renderizarModelo,
+} from "@/lib/domain/modelo-mensagem";
 import { canEdit } from "@/lib/domain/permissions";
 import {
   mesmoFiltro,
@@ -1564,9 +1567,12 @@ export async function testarEnvioAction(
     Date.now() + 24 * 60 * 60_000,
     (clinica?.timezone as string) ?? "America/Fortaleza",
   );
-  const corpo = !temTexto
-    ? "Teste da régua"
-    : `Teste da régua: ${renderizarModelo(passo.fixed_body as string, {
+  // [AG7 preparo] O teste como a regua manda sem texto de preparo aprovado
+  // (revisao curta da AG7, CURTA-4: a mesma funcao da regua e da previa).
+  // Sem nada para mandar, o teste diz so "Teste da régua".
+  const renderizado = !temTexto
+    ? ""
+    : renderizarModelo(modeloSemOPreparo(passo.fixed_body as string), {
         nome: "Maria",
         clinica: (clinica?.name as string) ?? "sua clínica",
         data: format(amanha, "dd/MM/yyyy", { locale: ptBR }),
@@ -1574,7 +1580,10 @@ export async function testarEnvioAction(
         profissional: "Dra. Exemplo",
         procedimento: "Consulta",
         preparo: "",
-      }).trim()}`;
+      }).trim();
+  const corpo = renderizado
+    ? `Teste da régua: ${renderizado}`
+    : "Teste da régua";
 
   // Conta suspensa (onda 1, decisao do dono de 20/10/2026): nada sai, por
   // nenhum caminho. Este fala com o provedor direto (fora de

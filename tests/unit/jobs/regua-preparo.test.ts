@@ -15,11 +15,14 @@ vi.mock("@/lib/integrations/whatsapp/send", () => ({
 }));
 
 import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
+import {
+  modeloPedePreparo,
+  modeloSemOPreparo,
+} from "@/lib/domain/modelo-mensagem";
 import { sendWhatsAppMenu } from "@/lib/integrations/whatsapp/send";
 import {
   executarPassoDeRegua,
-  modeloPedePreparo,
-  modeloSemALinhaDoPreparo,
+  MOTIVO_SEM_PREPARO_APROVADO,
 } from "@/lib/jobs/regua";
 import type { Job } from "@/lib/jobs/worker";
 import { log } from "@/lib/log";
@@ -437,15 +440,118 @@ describe("revisao da AG7 (MOTOR-4): sem texto em vigor, a linha inteira que pedi
     );
   });
 
-  it("modeloSemALinhaDoPreparo: so as linhas do preparo (e a apresentacao logo antes) saem", () => {
+  it("modeloSemOPreparo: so as linhas do preparo (e a apresentacao logo antes) saem", () => {
     expect(
-      modeloSemALinhaDoPreparo(
+      modeloSemOPreparo(
         "Atenção:\nOi {{nome}}\nSiga:\n{{preparo}}\nAté amanhã.",
       ),
     ).toBe("Atenção:\nOi {{nome}}\nAté amanhã.");
-    expect(modeloSemALinhaDoPreparo("{{preparo}}")).toBe("");
-    expect(modeloSemALinhaDoPreparo("Sem campo nenhum.")).toBe(
-      "Sem campo nenhum.",
+    expect(modeloSemOPreparo("{{preparo}}")).toBe("");
+    expect(modeloSemOPreparo("Sem campo nenhum.")).toBe("Sem campo nenhum.");
+  });
+});
+
+// Revisao curta da AG7 (CURTA-4): a MOTOR-4 tirava a linha inteira do
+// {{preparo}}, com o que mais estivesse nela, e o passo de uma linha so nao
+// saia (passo_sem_conteudo). Agora sai so o campo e o que apenas o
+// apresentava; o passo que fica vazio nao sai, com o motivo gravado no
+// toque; e a previa do editor usa a mesma funcao.
+describe("revisao curta da AG7 (CURTA-4): sem texto em vigor, so o campo e o que o apresentava saem", () => {
+  it.each([
+    [
+      "o campo no fim da linha da pergunta",
+      "Oi, {{nome}}! Confirma {{procedimento}} amanhã às {{hora}}? {{preparo}}",
+      "Oi, Paciente! Confirma Colonoscopia amanhã às 08:00?",
+    ],
+    [
+      "o campo no fim da linha da data",
+      "Sua consulta é amanhã, {{data}} às {{hora}}. {{preparo}}\nPodemos confirmar sua presença?",
+      "Sua consulta é amanhã, 28/10/2026 às 08:00.\nPodemos confirmar sua presença?",
+    ],
+    [
+      "a saudacao terminada em dois pontos antes do campo",
+      "Olá {{nome}}, seguem os dados da sua consulta de amanhã:\n{{preparo}}\nData: {{data}} às {{hora}}.",
+      "Olá Paciente, seguem os dados da sua consulta de amanhã:\nData: 28/10/2026 às 08:00.",
+    ],
+    [
+      "o rotulo do preparo na mesma linha da pergunta",
+      "Confirma {{procedimento}} amanhã? Siga o preparo: {{preparo}}",
+      "Confirma Colonoscopia amanhã?",
+    ],
+    [
+      "a apresentacao com uma linha em branco antes do campo",
+      "Oi, {{nome}}!\nSiga o preparo abaixo:\n\n{{preparo}}\nPodemos confirmar sua presença?",
+      "Oi, Paciente!\n\nPodemos confirmar sua presença?",
+    ],
+  ])("%s: o resto da mensagem sai", async (_n, modelo, esperado) => {
+    const b = montar({ modelo, preparo: null });
+    expect(await executarPassoDeRegua(b.admin, job(), WORKER)).toEqual({
+      ok: true,
+    });
+    expect(corpoEnviado()).toBe(esperado);
+  });
+
+  it("com o texto em vigor, o campo no fim da linha leva o texto inteiro", async () => {
+    const b = montar({
+      modelo:
+        "Oi, {{nome}}! Confirma {{procedimento}} amanhã às {{hora}}? {{preparo}}",
+      preparo: emVigor(),
+    });
+    expect(await executarPassoDeRegua(b.admin, job(), WORKER)).toEqual({
+      ok: true,
+    });
+    expect(corpoEnviado()).toBe(
+      `Oi, Paciente! Confirma Colonoscopia amanhã às 08:00? ${APROVADO}`,
     );
+  });
+
+  it.each([
+    ["{{preparo}}"],
+    ["Preparo: {{preparo}}"],
+    ["Siga o preparo abaixo:\n{{preparo}}"],
+  ])(
+    "%j sem texto em vigor: o passo fica vazio e nao sai, com o motivo gravado no toque",
+    async (modelo) => {
+      const b = montar({ modelo, preparo: null });
+      expect(await executarPassoDeRegua(b.admin, job(), WORKER)).toEqual({
+        ok: true,
+      });
+      expect(vi.mocked(sendWhatsAppMenu)).not.toHaveBeenCalled();
+      const fechou = b.tabelas.find(
+        (c) => c.tabela === "cadence_run" && eUpdate(c),
+      );
+      expect(
+        fechou?.metodos.find((m) => m.metodo === "update")?.args[0],
+      ).toEqual({
+        skipped_reason: "falha_envio",
+        motivo_da_falha: MOTIVO_SEM_PREPARO_APROVADO,
+      });
+    },
+  );
+
+  it("o mesmo passo com o texto em vigor sai com o texto", async () => {
+    const b = montar({ modelo: "{{preparo}}", preparo: emVigor() });
+    expect(await executarPassoDeRegua(b.admin, job(), WORKER)).toEqual({
+      ok: true,
+    });
+    expect(corpoEnviado()).toBe(APROVADO);
+  });
+
+  it("modeloSemOPreparo: as frases da linha que nao so apresentam o preparo ficam", () => {
+    expect(modeloSemOPreparo("Lembre do preparo ({{preparo}}).")).toBe("");
+    expect(
+      modeloSemOPreparo("Preparo: {{preparo}}. Até amanhã, {{nome}}!"),
+    ).toBe("Até amanhã, {{nome}}!");
+    // A pergunta que cita o preparo fica (ela e a confirmacao).
+    expect(
+      modeloSemOPreparo("Confirma a consulta e o preparo? {{preparo}}"),
+    ).toBe("Confirma a consulta e o preparo?");
+    // A linha antes que nao apresenta o preparo fica.
+    expect(
+      modeloSemOPreparo("Seguem os dados da sua consulta:\n{{preparo}}"),
+    ).toBe("Seguem os dados da sua consulta:");
+    // Sem o campo, nada muda.
+    const semCampo = "Oi, {{nome}}!\nSiga o preparo abaixo:\nAté amanhã.";
+    expect(modeloSemOPreparo(semCampo)).toBe(semCampo);
   });
 });
