@@ -281,6 +281,37 @@ describe("habilidades", () => {
     expect(porChave.passar_para_equipe?.ferramentas).toEqual([
       "escalar_humano",
     ]);
+    // [AG7 preparo] início
+    // AG7 (D-79): desligada por padrao, sem dependencia, so a ferramenta do
+    // envio; o texto da tela mora aqui.
+    expect(porChave.enviar_preparo).toEqual({
+      chave: "enviar_preparo",
+      titulo: "Enviar orientação de preparo",
+      descricao:
+        "Quando o paciente pede, manda a orientação de preparo do procedimento exatamente como o responsável técnico aprovou no Cadastro. Dúvida sobre o preparo passa para a equipe.",
+      travada: false,
+      ferramentas: ["enviar_preparo"],
+      padrao: false,
+      precisaDaAgenda: false,
+      precisaDaHabilidade: null,
+      precisaDoPrazo: null,
+      dicaDaDependencia: null,
+    });
+    expect(
+      ferramentasDoAgente(
+        { enviar_preparo: true },
+        { antecedenciaHoras: null, horizonteDias: null },
+        null,
+      ),
+    ).toContain("enviar_preparo");
+    expect(
+      ferramentasDoAgente(
+        {},
+        { antecedenciaHoras: null, horizonteDias: null },
+        null,
+      ),
+    ).not.toContain("enviar_preparo");
+    // [AG7 preparo] fim
     // AG4: cancelar e remarcar, com as dependencias (o prazo; remarcar
     // tambem "Agendar consulta").
     expect(porChave.cancelar).toMatchObject({
