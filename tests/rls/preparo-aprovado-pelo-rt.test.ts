@@ -94,7 +94,10 @@ let clinicaB = "";
 const procedimentos = new Map<string, string>();
 const procedimento = (apelido: string) => procedimentos.get(apelido)!;
 
-async function inserir(tabela: string, linha: Record<string, unknown>): Promise<string> {
+async function inserir(
+  tabela: string,
+  linha: Record<string, unknown>,
+): Promise<string> {
   const { data } = await admin
     .from(tabela)
     .insert(linha)
@@ -183,8 +186,16 @@ async function salvar(
   return { data: data as Salvo | null, error: error as Erro };
 }
 
-async function salvarOk(apelido: string, procedimentoId: string, textoNovo: string): Promise<Salvo> {
-  const { data, error } = await salvar(como(apelido), procedimentoId, textoNovo);
+async function salvarOk(
+  apelido: string,
+  procedimentoId: string,
+  textoNovo: string,
+): Promise<Salvo> {
+  const { data, error } = await salvar(
+    como(apelido),
+    procedimentoId,
+    textoNovo,
+  );
   expect(error, `${apelido} salva`).toBeNull();
   return data!;
 }
@@ -197,7 +208,11 @@ async function aprovar(cliente: SupabaseClient, salvo: Salvo): Promise<Erro> {
   return error as Erro;
 }
 
-async function definirRt(cliente: SupabaseClient, clinicId: string, pessoa: string): Promise<Erro> {
+async function definirRt(
+  cliente: SupabaseClient,
+  clinicId: string,
+  pessoa: string,
+): Promise<Erro> {
   const { error } = await cliente.rpc("definir_responsavel_tecnico", {
     p_clinic_id: clinicId,
     p_user_id: pessoa,
@@ -209,8 +224,15 @@ async function definirRt(cliente: SupabaseClient, clinicId: string, pessoa: stri
   return error as Erro;
 }
 
-async function contar(cliente: SupabaseClient, tabela: string, clinicId: string): Promise<number> {
-  const { data, error } = await cliente.from(tabela).select("id").eq("clinic_id", clinicId);
+async function contar(
+  cliente: SupabaseClient,
+  tabela: string,
+  clinicId: string,
+): Promise<number> {
+  const { data, error } = await cliente
+    .from(tabela)
+    .select("id")
+    .eq("clinic_id", clinicId);
   expect(error, `${tabela} pela sessao`).toBeNull();
   return (data as unknown[]).length;
 }
@@ -234,7 +256,14 @@ beforeAll(async () => {
     ["pA6", clinicaA, "Raio X"],
     ["pB", clinicaB, "Colonoscopia"],
   ] as const) {
-    procedimentos.set(apelido, await inserir("procedure", { clinic_id: clinica, name: nome, active: true }));
+    procedimentos.set(
+      apelido,
+      await inserir("procedure", {
+        clinic_id: clinica,
+        name: nome,
+        active: true,
+      }),
+    );
   }
 
   await criarPessoa("admin-a", clinicaA, "admin");
@@ -259,8 +288,18 @@ beforeAll(async () => {
   // aprovado em cada (a colonoscopia).
   expect(await definirRt(como("admin-a"), clinicaA, idDe("rt-a"))).toBeNull();
   expect(await definirRt(como("admin-b"), clinicaB, idDe("rt-b"))).toBeNull();
-  expect(await aprovar(como("rt-a"), await salvarOk("admin-a", procedimento("pA"), texto(8)))).toBeNull();
-  expect(await aprovar(como("rt-b"), await salvarOk("admin-b", procedimento("pB"), texto(9)))).toBeNull();
+  expect(
+    await aprovar(
+      como("rt-a"),
+      await salvarOk("admin-a", procedimento("pA"), texto(8)),
+    ),
+  ).toBeNull();
+  expect(
+    await aprovar(
+      como("rt-b"),
+      await salvarOk("admin-b", procedimento("pB"), texto(9)),
+    ),
+  ).toBeNull();
 }, 180_000);
 
 afterAll(async () => {
@@ -293,14 +332,29 @@ describe("as duas tabelas: quem le", () => {
         "rt-a",
         "rt2-a",
       ]) {
-        expect(await contar(como(apelido), tabela, clinicaA), `${apelido} le ${tabela} da A`).toBe(daA);
-        expect(await contar(como(apelido), tabela, clinicaB), `${apelido} le ${tabela} da B`).toBe(0);
+        expect(
+          await contar(como(apelido), tabela, clinicaA),
+          `${apelido} le ${tabela} da A`,
+        ).toBe(daA);
+        expect(
+          await contar(como(apelido), tabela, clinicaB),
+          `${apelido} le ${tabela} da B`,
+        ).toBe(0);
       }
       for (const apelido of ["admin-b", "rt-b"]) {
-        expect(await contar(como(apelido), tabela, clinicaB), `${apelido} le ${tabela} da B`).toBe(daB);
-        expect(await contar(como(apelido), tabela, clinicaA), `${apelido} le ${tabela} da A`).toBe(0);
+        expect(
+          await contar(como(apelido), tabela, clinicaB),
+          `${apelido} le ${tabela} da B`,
+        ).toBe(daB);
+        expect(
+          await contar(como(apelido), tabela, clinicaA),
+          `${apelido} le ${tabela} da A`,
+        ).toBe(0);
       }
-      expect(await contar(como("pendente-a"), tabela, clinicaA), `o pendente le ${tabela}`).toBe(0);
+      expect(
+        await contar(como("pendente-a"), tabela, clinicaA),
+        `o pendente le ${tabela}`,
+      ).toBe(0);
     }
   });
 
@@ -314,12 +368,19 @@ describe("as duas tabelas: quem le", () => {
   it("a tela le as colunas da versao e do RT", async () => {
     const { data, error } = await como("recepcao-a")
       .from("preparo_do_procedimento")
-      .select("versao, situacao, texto, texto_sha256, nome_do_procedimento, rt_id, aprovado_em")
+      .select(
+        "versao, situacao, texto, texto_sha256, nome_do_procedimento, rt_id, aprovado_em",
+      )
       .eq("procedure_id", procedimento("pA"))
       .eq("situacao", "aprovado")
       .single();
     expect(error).toBeNull();
-    expect(data).toMatchObject({ versao: 1, situacao: "aprovado", texto: texto(8), nome_do_procedimento: "Colonoscopia" });
+    expect(data).toMatchObject({
+      versao: 1,
+      situacao: "aprovado",
+      texto: texto(8),
+      nome_do_procedimento: "Colonoscopia",
+    });
     const { data: rt, error: erroRt } = await como("leitura-a")
       .from("responsavel_tecnico")
       .select("user_id, nome, conselho, numero, uf, ate")
@@ -327,7 +388,14 @@ describe("as duas tabelas: quem le", () => {
       .is("ate", null)
       .single();
     expect(erroRt).toBeNull();
-    expect(rt).toEqual({ user_id: idDe("rt-a"), nome: "Dra. Ana Souza", conselho: "CRM", numero: "12345", uf: "CE", ate: null });
+    expect(rt).toEqual({
+      user_id: idDe("rt-a"),
+      nome: "Dra. Ana Souza",
+      conselho: "CRM",
+      numero: "12345",
+      uf: "CE",
+      ate: null,
+    });
   });
 });
 
@@ -354,9 +422,15 @@ describe("as duas tabelas: ninguem grava pela API", () => {
         escrito_por: idDe("admin-a"),
       });
       expect(r1.error?.code).toBe(PERMISSAO_NEGADA);
-      const r2 = await cliente.from("preparo_do_procedimento").update({ situacao: "suspenso" }).eq("id", versao);
+      const r2 = await cliente
+        .from("preparo_do_procedimento")
+        .update({ situacao: "suspenso" })
+        .eq("id", versao);
       expect(r2.error?.code).toBe(PERMISSAO_NEGADA);
-      const r3 = await cliente.from("preparo_do_procedimento").delete().eq("id", versao);
+      const r3 = await cliente
+        .from("preparo_do_procedimento")
+        .delete()
+        .eq("id", versao);
       expect(r3.error?.code).toBe(PERMISSAO_NEGADA);
       const r4 = await cliente.from("responsavel_tecnico").insert({
         clinic_id: clinicaA,
@@ -367,9 +441,15 @@ describe("as duas tabelas: ninguem grava pela API", () => {
         uf: "CE",
       });
       expect(r4.error?.code).toBe(PERMISSAO_NEGADA);
-      const r5 = await cliente.from("responsavel_tecnico").update({ nome: "Outro" }).eq("clinic_id", clinicaA);
+      const r5 = await cliente
+        .from("responsavel_tecnico")
+        .update({ nome: "Outro" })
+        .eq("clinic_id", clinicaA);
       expect(r5.error?.code).toBe(PERMISSAO_NEGADA);
-      const r6 = await cliente.from("responsavel_tecnico").delete().eq("clinic_id", clinicaA);
+      const r6 = await cliente
+        .from("responsavel_tecnico")
+        .delete()
+        .eq("clinic_id", clinicaA);
       expect(r6.error?.code).toBe(PERMISSAO_NEGADA);
     }
     expect(await situacao(versao)).toBe("aprovado");
@@ -379,8 +459,20 @@ describe("as duas tabelas: ninguem grava pela API", () => {
 
 describe("salvar e descartar: administrador, gestor e o RT de qualquer papel", () => {
   it("administrador, gestor e o RT (profissional) salvam; recepcao, profissional, leitura, pendente e a B nao", async () => {
-    for (const apelido of ["recepcao-a", "profissional-a", "leitura-a", "pendente-a", "rt2-a", "admin-b", "rt-b"]) {
-      const { error } = await salvar(como(apelido), procedimento("pA2"), texto(2));
+    for (const apelido of [
+      "recepcao-a",
+      "profissional-a",
+      "leitura-a",
+      "pendente-a",
+      "rt2-a",
+      "admin-b",
+      "rt-b",
+    ]) {
+      const { error } = await salvar(
+        como(apelido),
+        procedimento("pA2"),
+        texto(2),
+      );
       expect(error?.code, `${apelido} salva`).toBe(PERMISSAO_NEGADA);
       expect(error?.message).toBe(FRASE_ESCREVER);
     }
@@ -390,9 +482,15 @@ describe("salvar e descartar: administrador, gestor e o RT de qualquer papel", (
     }
     expect(await maiorVersao(procedimento("pA2"))).toBe(0);
     // O positivo: cada um grava a versao seguinte.
-    expect((await salvarOk("admin-a", procedimento("pA2"), texto(2))).versao).toBe(1);
-    expect((await salvarOk("gestor-a", procedimento("pA2"), texto(3))).versao).toBe(2);
-    expect((await salvarOk("rt-a", procedimento("pA2"), texto(4))).versao).toBe(3);
+    expect(
+      (await salvarOk("admin-a", procedimento("pA2"), texto(2))).versao,
+    ).toBe(1);
+    expect(
+      (await salvarOk("gestor-a", procedimento("pA2"), texto(3))).versao,
+    ).toBe(2);
+    expect((await salvarOk("rt-a", procedimento("pA2"), texto(4))).versao).toBe(
+      3,
+    );
   });
 
   it("descartar: administrador, gestor e o RT; os outros 42501", async () => {
@@ -402,13 +500,26 @@ describe("salvar e descartar: administrador, gestor e o RT de qualquer papel", (
       ["rt-a", 7],
     ] as const) {
       const salvo = await salvarOk("admin-a", procedimento("pA3"), texto(n));
-      for (const outro of ["recepcao-a", "profissional-a", "leitura-a", "pendente-a", "admin-b", "rt-b"]) {
-        const { error } = await como(outro).rpc("descartar_preparo_do_procedimento", { p_versao_id: salvo.versao_id });
+      for (const outro of [
+        "recepcao-a",
+        "profissional-a",
+        "leitura-a",
+        "pendente-a",
+        "admin-b",
+        "rt-b",
+      ]) {
+        const { error } = await como(outro).rpc(
+          "descartar_preparo_do_procedimento",
+          { p_versao_id: salvo.versao_id },
+        );
         expect(error?.code, `${outro} descarta`).toBe(PERMISSAO_NEGADA);
         expect(error?.message).toBe(FRASE_DESCARTAR);
       }
       expect(await situacao(salvo.versao_id)).toBe("aguardando_rt");
-      const { error } = await como(apelido).rpc("descartar_preparo_do_procedimento", { p_versao_id: salvo.versao_id });
+      const { error } = await como(apelido).rpc(
+        "descartar_preparo_do_procedimento",
+        { p_versao_id: salvo.versao_id },
+      );
       expect(error, `${apelido} descarta`).toBeNull();
       expect(await situacao(salvo.versao_id)).toBe("descartado");
     }
@@ -418,7 +529,16 @@ describe("salvar e descartar: administrador, gestor e o RT de qualquer papel", (
 describe("aprovar e devolver: so o RT vigente", () => {
   it("o administrador, o gestor, o Implementador, a leitura e o RT da B nao aprovam; o RT aprova", async () => {
     const salvo = await salvarOk("admin-a", procedimento("pA4"), texto(10));
-    for (const apelido of ["admin-a", "gestor-a", "impl-a", "recepcao-a", "leitura-a", "rt2-a", "rt-b", "admin-b"]) {
+    for (const apelido of [
+      "admin-a",
+      "gestor-a",
+      "impl-a",
+      "recepcao-a",
+      "leitura-a",
+      "rt2-a",
+      "rt-b",
+      "admin-b",
+    ]) {
       const error = await aprovar(como(apelido), salvo);
       expect(error?.code, `${apelido} aprova`).toBe(PERMISSAO_NEGADA);
       expect(error?.message).toBe(FRASE_APROVAR);
@@ -433,17 +553,23 @@ describe("aprovar e devolver: so o RT vigente", () => {
   it("devolver: so o RT; o administrador recebe a frase de aprovar", async () => {
     const salvo = await salvarOk("admin-a", procedimento("pA5"), texto(11));
     for (const apelido of ["admin-a", "gestor-a", "rt-b"]) {
-      const { error } = await como(apelido).rpc("devolver_preparo_do_procedimento", {
-        p_versao_id: salvo.versao_id,
-        p_comentario: "Falta a dieta.",
-      });
+      const { error } = await como(apelido).rpc(
+        "devolver_preparo_do_procedimento",
+        {
+          p_versao_id: salvo.versao_id,
+          p_comentario: "Falta a dieta.",
+        },
+      );
       expect(error?.code, `${apelido} devolve`).toBe(PERMISSAO_NEGADA);
       expect(error?.message).toBe(FRASE_APROVAR);
     }
-    const { error } = await como("rt-a").rpc("devolver_preparo_do_procedimento", {
-      p_versao_id: salvo.versao_id,
-      p_comentario: "Falta a dieta.",
-    });
+    const { error } = await como("rt-a").rpc(
+      "devolver_preparo_do_procedimento",
+      {
+        p_versao_id: salvo.versao_id,
+        p_comentario: "Falta a dieta.",
+      },
+    );
     expect(error).toBeNull();
     expect(await situacao(salvo.versao_id)).toBe("devolvido");
   });
@@ -457,7 +583,10 @@ describe("aprovar e devolver: so o RT vigente", () => {
       .eq("clinic_id", clinicaA)
       .eq("user_id", idDe("rt-a"))
       .throwOnError();
-    const { data: semAcesso } = await como("rt-a").rpc("user_e_responsavel_tecnico", { p_clinic_id: clinicaA });
+    const { data: semAcesso } = await como("rt-a").rpc(
+      "user_e_responsavel_tecnico",
+      { p_clinic_id: clinicaA },
+    );
     expect(semAcesso).toBe(false);
     expect((await aprovar(como("rt-a"), salvo))?.code).toBe(PERMISSAO_NEGADA);
     await admin
@@ -467,7 +596,10 @@ describe("aprovar e devolver: so o RT vigente", () => {
       .eq("user_id", idDe("rt-a"))
       .throwOnError();
     // Encerrado pelo administrador.
-    const { error: erroEncerrar } = await como("admin-a").rpc("encerrar_responsavel_tecnico", { p_clinic_id: clinicaA });
+    const { error: erroEncerrar } = await como("admin-a").rpc(
+      "encerrar_responsavel_tecnico",
+      { p_clinic_id: clinicaA },
+    );
     expect(erroEncerrar).toBeNull();
     expect((await aprovar(como("rt-a"), salvo))?.code).toBe(PERMISSAO_NEGADA);
     expect(await situacao(salvo.versao_id)).toBe("aguardando_rt");
@@ -480,20 +612,37 @@ describe("aprovar e devolver: so o RT vigente", () => {
 describe("suspender: administrador, gestor e o RT", () => {
   it("recepcao, leitura e a B nao; o gestor e o RT suspendem", async () => {
     for (const apelido of ["admin-a", "gestor-a", "rt-a"]) {
-      const salvo = await salvarOk("admin-a", procedimento("pA6"), texto(20 + (await maiorVersao(procedimento("pA6")))));
+      const salvo = await salvarOk(
+        "admin-a",
+        procedimento("pA6"),
+        texto(20 + (await maiorVersao(procedimento("pA6")))),
+      );
       expect(await aprovar(como("rt-a"), salvo)).toBeNull();
-      for (const outro of ["recepcao-a", "profissional-a", "leitura-a", "pendente-a", "admin-b", "rt-b"]) {
-        const { error } = await como(outro).rpc("suspender_preparo_do_procedimento", {
-          p_procedure_id: procedimento("pA6"),
-          p_comentario: "Revisar.",
-        });
+      for (const outro of [
+        "recepcao-a",
+        "profissional-a",
+        "leitura-a",
+        "pendente-a",
+        "admin-b",
+        "rt-b",
+      ]) {
+        const { error } = await como(outro).rpc(
+          "suspender_preparo_do_procedimento",
+          {
+            p_procedure_id: procedimento("pA6"),
+            p_comentario: "Revisar.",
+          },
+        );
         expect(error?.code, `${outro} suspende`).toBe(PERMISSAO_NEGADA);
         expect(error?.message).toBe(FRASE_SUSPENDER);
       }
       expect(await situacao(salvo.versao_id)).toBe("aprovado");
-      const { data, error } = await como(apelido).rpc("suspender_preparo_do_procedimento", {
-        p_procedure_id: procedimento("pA6"),
-      });
+      const { data, error } = await como(apelido).rpc(
+        "suspender_preparo_do_procedimento",
+        {
+          p_procedure_id: procedimento("pA6"),
+        },
+      );
       expect(error, `${apelido} suspende`).toBeNull();
       expect(data).toEqual({ versao_id: salvo.versao_id });
       expect(await situacao(salvo.versao_id)).toBe("suspenso");
@@ -503,16 +652,30 @@ describe("suspender: administrador, gestor e o RT", () => {
 
 describe("definir e encerrar o RT: so o administrador pleno", () => {
   it("o gestor, o Implementador, o RT, a recepcao e o administrador da B nao definem nem encerram", async () => {
-    for (const apelido of ["gestor-a", "impl-a", "rt-a", "recepcao-a", "leitura-a", "pendente-a", "admin-b", "rt-b"]) {
+    for (const apelido of [
+      "gestor-a",
+      "impl-a",
+      "rt-a",
+      "recepcao-a",
+      "leitura-a",
+      "pendente-a",
+      "admin-b",
+      "rt-b",
+    ]) {
       const error = await definirRt(como(apelido), clinicaA, idDe("rt2-a"));
       expect(error?.code, `${apelido} define`).toBe(PERMISSAO_NEGADA);
       expect(error?.message).toBe(FRASE_RT);
-      const { error: erroEncerrar } = await como(apelido).rpc("encerrar_responsavel_tecnico", { p_clinic_id: clinicaA });
+      const { error: erroEncerrar } = await como(apelido).rpc(
+        "encerrar_responsavel_tecnico",
+        { p_clinic_id: clinicaA },
+      );
       expect(erroEncerrar?.code, `${apelido} encerra`).toBe(PERMISSAO_NEGADA);
       expect(erroEncerrar?.message).toBe(FRASE_RT);
     }
     for (const cliente of [anonClient(), admin]) {
-      expect((await definirRt(cliente, clinicaA, idDe("rt2-a")))?.code).toBe(PERMISSAO_NEGADA);
+      expect((await definirRt(cliente, clinicaA, idDe("rt2-a")))?.code).toBe(
+        PERMISSAO_NEGADA,
+      );
     }
     // A pessoa sem vinculo ativo (o pendente, alguem da B) nao vira RT.
     for (const apelido of ["pendente-a", "rt-b"]) {
@@ -532,13 +695,20 @@ describe("definir e encerrar o RT: so o administrador pleno", () => {
 
   it("user_e_responsavel_tecnico certo para cada um", async () => {
     for (const apelido of SESSOES) {
-      const { data, error } = await como(apelido).rpc("user_e_responsavel_tecnico", { p_clinic_id: clinicaA });
+      const { data, error } = await como(apelido).rpc(
+        "user_e_responsavel_tecnico",
+        { p_clinic_id: clinicaA },
+      );
       expect(error, apelido).toBeNull();
       expect(data, apelido).toBe(apelido === "rt-a");
     }
-    const { data: daB } = await como("rt-b").rpc("user_e_responsavel_tecnico", { p_clinic_id: clinicaB });
+    const { data: daB } = await como("rt-b").rpc("user_e_responsavel_tecnico", {
+      p_clinic_id: clinicaB,
+    });
     expect(daB).toBe(true);
-    const { error } = await anonClient().rpc("user_e_responsavel_tecnico", { p_clinic_id: clinicaA });
+    const { error } = await anonClient().rpc("user_e_responsavel_tecnico", {
+      p_clinic_id: clinicaA,
+    });
     expect(error?.code).toBe(PERMISSAO_NEGADA);
   });
 });
@@ -555,20 +725,36 @@ describe("a clinica A contra a B, em toda RPC", () => {
     const versaoB = daB as { id: string; texto_sha256: string };
     for (const apelido of ["admin-a", "rt-a"]) {
       const cliente = como(apelido);
-      expect((await salvar(cliente, procedimento("pB"), texto(30))).error?.code).toBe(PERMISSAO_NEGADA);
       expect(
-        (await aprovar(cliente, { versao_id: versaoB.id, versao: 1, texto_sha256: versaoB.texto_sha256 }))?.code,
+        (await salvar(cliente, procedimento("pB"), texto(30))).error?.code,
+      ).toBe(PERMISSAO_NEGADA);
+      expect(
+        (
+          await aprovar(cliente, {
+            versao_id: versaoB.id,
+            versao: 1,
+            texto_sha256: versaoB.texto_sha256,
+          })
+        )?.code,
       ).toBe(PERMISSAO_NEGADA);
       for (const [rpc, args] of [
-        ["devolver_preparo_do_procedimento", { p_versao_id: versaoB.id, p_comentario: "Nao." }],
+        [
+          "devolver_preparo_do_procedimento",
+          { p_versao_id: versaoB.id, p_comentario: "Nao." },
+        ],
         ["descartar_preparo_do_procedimento", { p_versao_id: versaoB.id }],
-        ["suspender_preparo_do_procedimento", { p_procedure_id: procedimento("pB") }],
+        [
+          "suspender_preparo_do_procedimento",
+          { p_procedure_id: procedimento("pB") },
+        ],
         ["encerrar_responsavel_tecnico", { p_clinic_id: clinicaB }],
       ] as const) {
         const { error } = await cliente.rpc(rpc, args);
         expect(error?.code, `${apelido} ${rpc} na B`).toBe(PERMISSAO_NEGADA);
       }
-      expect((await definirRt(cliente, clinicaB, idDe("admin-a")))?.code).toBe(PERMISSAO_NEGADA);
+      expect((await definirRt(cliente, clinicaB, idDe("admin-a")))?.code).toBe(
+        PERMISSAO_NEGADA,
+      );
     }
     expect(await situacao(versaoB.id)).toBe("aprovado");
   });
@@ -585,10 +771,16 @@ describe("as funcoes do servidor e as internas", () => {
       .throwOnError();
     const versao = (aprovada as { id: string }).id;
     const doServidor: [string, Record<string, unknown>][] = [
-      ["ler_preparo_para_envio", { p_clinic_id: clinicaA, p_versao_id: versao }],
+      [
+        "ler_preparo_para_envio",
+        { p_clinic_id: clinicaA, p_versao_id: versao },
+      ],
       ["preparos_em_vigor_da_clinica", { p_clinic_id: clinicaA }],
       ["textos_de_preparo_da_clinica", { p_clinic_id: clinicaA }],
-      ["preparo_em_vigor_do_procedimento", { p_clinic_id: clinicaA, p_procedure_id: procedimento("pA") }],
+      [
+        "preparo_em_vigor_do_procedimento",
+        { p_clinic_id: clinicaA, p_procedure_id: procedimento("pA") },
+      ],
     ];
     const internas: [string, Record<string, unknown>][] = [
       ["preparo_texto_valido", { p_texto: "Jejum." }],
@@ -652,7 +844,10 @@ describe.skipIf(!COM_SUPER_ADMIN)("o super admin (opt-in)", () => {
     superAdmin = data.user.id;
     // O usuario sai no afterAll geral, depois das clinicas.
     ids.set("super", superAdmin);
-    await admin.from("product_admin").insert({ user_id: superAdmin }).throwOnError();
+    await admin
+      .from("product_admin")
+      .insert({ user_id: superAdmin })
+      .throwOnError();
     const cliente = anonClient();
     const { error: erroLogin } = await cliente.auth.signInWithPassword({
       email: EMAIL_DO_SUPER,
@@ -666,9 +861,35 @@ describe.skipIf(!COM_SUPER_ADMIN)("o super admin (opt-in)", () => {
 
   afterAll(async () => {
     if (superAdmin) {
-      const { error } = await admin.from("product_admin").delete().eq("user_id", superAdmin);
+      const { error } = await admin
+        .from("product_admin")
+        .delete()
+        .eq("user_id", superAdmin);
       expect(error, "tirar o product_admin sintetico").toBeNull();
     }
+  });
+
+  it("nao grava nas duas tabelas pela API (so pelas RPCs)", async () => {
+    const sessao = sessaoDoSuper!;
+    const r1 = await sessao.from("responsavel_tecnico").insert({
+      clinic_id: clinicaB,
+      user_id: idDe("admin-b"),
+      nome: "Dra. Pela API",
+      conselho: "CRM",
+      numero: "1",
+      uf: "CE",
+    });
+    expect(r1.error?.code).toBe(PERMISSAO_NEGADA);
+    const r2 = await sessao
+      .from("preparo_do_procedimento")
+      .update({ situacao: "suspenso" })
+      .eq("clinic_id", clinicaA);
+    expect(r2.error?.code).toBe(PERMISSAO_NEGADA);
+    const r3 = await sessao
+      .from("preparo_do_procedimento")
+      .delete()
+      .eq("clinic_id", clinicaA);
+    expect(r3.error?.code).toBe(PERMISSAO_NEGADA);
   });
 
   it("le as duas clinicas, escreve, descarta e suspende; nao aprova", async () => {
@@ -676,18 +897,26 @@ describe.skipIf(!COM_SUPER_ADMIN)("o super admin (opt-in)", () => {
     expect(await contar(sessao, "preparo_do_procedimento", clinicaA)).toBe(
       await contar(admin, "preparo_do_procedimento", clinicaA),
     );
-    expect(await contar(sessao, "responsavel_tecnico", clinicaB)).toBe(await contar(admin, "responsavel_tecnico", clinicaB));
+    expect(await contar(sessao, "responsavel_tecnico", clinicaB)).toBe(
+      await contar(admin, "responsavel_tecnico", clinicaB),
+    );
     const salvo = (await salvar(sessao, procedimento("pA2"), texto(40))).data!;
     expect(salvo.versao).toBeGreaterThan(0);
     const error = await aprovar(sessao, salvo);
     expect(error?.code).toBe(PERMISSAO_NEGADA);
     expect(error?.message).toBe(FRASE_APROVAR);
-    const { error: erroDescartar } = await sessao.rpc("descartar_preparo_do_procedimento", { p_versao_id: salvo.versao_id });
+    const { error: erroDescartar } = await sessao.rpc(
+      "descartar_preparo_do_procedimento",
+      { p_versao_id: salvo.versao_id },
+    );
     expect(erroDescartar).toBeNull();
-    const { error: erroSuspender } = await sessao.rpc("suspender_preparo_do_procedimento", {
-      p_procedure_id: procedimento("pA"),
-      p_comentario: "Suspenso pela equipe Conduzza.",
-    });
+    const { error: erroSuspender } = await sessao.rpc(
+      "suspender_preparo_do_procedimento",
+      {
+        p_procedure_id: procedimento("pA"),
+        p_comentario: "Suspenso pela equipe Conduzza.",
+      },
+    );
     expect(erroSuspender).toBeNull();
   });
 
@@ -702,7 +931,9 @@ describe.skipIf(!COM_SUPER_ADMIN)("o super admin (opt-in)", () => {
       .single()
       .throwOnError();
     expect((data as { user_id: string }).user_id).toBe(idDe("admin-b"));
-    const { error } = await sessao.rpc("encerrar_responsavel_tecnico", { p_clinic_id: clinicaB });
+    const { error } = await sessao.rpc("encerrar_responsavel_tecnico", {
+      p_clinic_id: clinicaB,
+    });
     expect(error).toBeNull();
   });
 });

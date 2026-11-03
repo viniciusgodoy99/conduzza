@@ -63,14 +63,22 @@ const WORKER = `preparo-int-${sufixo}`;
 
 const CABECALHO = "Orientação de preparo para ";
 const LINHA_DO_RT = "Responsável técnico da clínica: ";
-const RODAPE = "Se tiver qualquer dúvida sobre o preparo, responda por aqui que a equipe da clínica te ajuda.";
+const RODAPE =
+  "Se tiver qualquer dúvida sobre o preparo, responda por aqui que a equipe da clínica te ajuda.";
 const TEXTO_DA_COLONOSCOPIA =
   "No dia anterior, faça dieta líquida sem resíduos.\nÀs 18h, tome 2 comprimidos de bisacodil com um copo de água.\nJejum absoluto de 8 horas antes do exame.";
-const TEXTO_DO_ULTRASSOM = "Jejum de 6 horas.\nBeba 4 copos de água 1 hora antes e não urine.";
+const TEXTO_DO_ULTRASSOM =
+  "Jejum de 6 horas.\nBeba 4 copos de água 1 hora antes e não urine.";
 
 type Erro = { code?: string; message?: string } | null;
 type Salvo = { versao_id: string; versao: number; texto_sha256: string };
-type Envio = { versao_id: string; procedure_id: string; versao: number; mensagem: string; sha256: string };
+type Envio = {
+  versao_id: string;
+  procedure_id: string;
+  versao: number;
+  mensagem: string;
+  sha256: string;
+};
 
 const ids = new Map<string, string>();
 const clientes = new Map<string, SupabaseClient>();
@@ -90,17 +98,27 @@ function sha256(texto: string): string {
 }
 
 /** A mensagem como o contrato a escreve (secao 1.4), montada aqui. */
-function mensagemDoContrato(procedimento: string, rt: string, texto: string): string {
+function mensagemDoContrato(
+  procedimento: string,
+  rt: string,
+  texto: string,
+): string {
   return `${CABECALHO}${procedimento}\n${LINHA_DO_RT}${rt}\n\n${texto}\n\n${RODAPE}`;
 }
 
-async function rpcOk<T>(nome: string, args: Record<string, unknown> = {}): Promise<T> {
+async function rpcOk<T>(
+  nome: string,
+  args: Record<string, unknown> = {},
+): Promise<T> {
   const { data, error } = await admin.rpc(nome, args);
   expect(error, nome).toBeNull();
   return data as T;
 }
 
-async function inserir(tabela: string, linha: Record<string, unknown>): Promise<string> {
+async function inserir(
+  tabela: string,
+  linha: Record<string, unknown>,
+): Promise<string> {
   const { data } = await admin
     .from(tabela)
     .insert(linha)
@@ -124,10 +142,18 @@ async function criarPessoa(apelido: string, papel: string): Promise<void> {
   ids.set(apelido, data.user.id);
   await admin
     .from("clinic_member")
-    .insert({ clinic_id: clinica, user_id: data.user.id, role: papel, status: "ativo" })
+    .insert({
+      clinic_id: clinica,
+      user_id: data.user.id,
+      role: papel,
+      status: "ativo",
+    })
     .throwOnError();
   const cliente = anonClient();
-  const { error: erroLogin } = await cliente.auth.signInWithPassword({ email, password: SENHA });
+  const { error: erroLogin } = await cliente.auth.signInWithPassword({
+    email,
+    password: SENHA,
+  });
   if (erroLogin) {
     throw new Error(`login ${apelido}: ${erroLogin.message}`);
   }
@@ -145,20 +171,33 @@ async function maiorVersao(procedimento: string): Promise<number> {
   return (data as { versao: number }[])[0]?.versao ?? 0;
 }
 
-async function salvar(apelido: string, procedimento: string, texto: string): Promise<{ data: Salvo; error: Erro }> {
-  const { data, error } = await como(apelido).rpc("salvar_preparo_do_procedimento", {
-    p_procedure_id: procedimento,
-    p_texto: texto,
-    p_versao_lida: await maiorVersao(procedimento),
-  });
+async function salvar(
+  apelido: string,
+  procedimento: string,
+  texto: string,
+): Promise<{ data: Salvo; error: Erro }> {
+  const { data, error } = await como(apelido).rpc(
+    "salvar_preparo_do_procedimento",
+    {
+      p_procedure_id: procedimento,
+      p_texto: texto,
+      p_versao_lida: await maiorVersao(procedimento),
+    },
+  );
   return { data: data as Salvo, error: error as Erro };
 }
 
-async function aprovar(apelido: string, salvo: Salvo): Promise<{ data: unknown; error: Erro }> {
-  const { data, error } = await como(apelido).rpc("aprovar_preparo_do_procedimento", {
-    p_versao_id: salvo.versao_id,
-    p_texto_sha256: salvo.texto_sha256,
-  });
+async function aprovar(
+  apelido: string,
+  salvo: Salvo,
+): Promise<{ data: unknown; error: Erro }> {
+  const { data, error } = await como(apelido).rpc(
+    "aprovar_preparo_do_procedimento",
+    {
+      p_versao_id: salvo.versao_id,
+      p_texto_sha256: salvo.texto_sha256,
+    },
+  );
   return { data, error: error as Erro };
 }
 
@@ -171,11 +210,17 @@ async function emVigor(procedimento: string, texto: string): Promise<Salvo> {
 }
 
 async function lerParaEnvio(versao: string): Promise<Envio | null> {
-  return rpcOk<Envio | null>("ler_preparo_para_envio", { p_clinic_id: clinica, p_versao_id: versao });
+  return rpcOk<Envio | null>("ler_preparo_para_envio", {
+    p_clinic_id: clinica,
+    p_versao_id: versao,
+  });
 }
 
 async function emVigorNoBanco(): Promise<Set<string>> {
-  const lista = await rpcOk<{ versao_id: string }[]>("preparos_em_vigor_da_clinica", { p_clinic_id: clinica });
+  const lista = await rpcOk<{ versao_id: string }[]>(
+    "preparos_em_vigor_da_clinica",
+    { p_clinic_id: clinica },
+  );
   return new Set(lista.map((p) => p.versao_id));
 }
 
@@ -185,7 +230,10 @@ async function emVigorNoBanco(): Promise<Set<string>> {
  * (clinic_member, "membro ve o time"), o nome do procedimento e o hash do
  * texto. Tem de dar o mesmo que preparo_em_vigor, caso a caso.
  */
-async function emVigorPelaSessao(apelido: string, procedimento: string): Promise<string | null> {
+async function emVigorPelaSessao(
+  apelido: string,
+  procedimento: string,
+): Promise<string | null> {
   const sessao = como(apelido);
   const { data: versoes } = await sessao
     .from("preparo_do_procedimento")
@@ -193,13 +241,15 @@ async function emVigorPelaSessao(apelido: string, procedimento: string): Promise
     .eq("procedure_id", procedimento)
     .eq("situacao", "aprovado")
     .throwOnError();
-  const aprovada = (versoes as {
-    id: string;
-    texto: string;
-    texto_sha256: string;
-    nome_do_procedimento: string;
-    rt_id: string | null;
-  }[])[0];
+  const aprovada = (
+    versoes as {
+      id: string;
+      texto: string;
+      texto_sha256: string;
+      nome_do_procedimento: string;
+      rt_id: string | null;
+    }[]
+  )[0];
   if (!aprovada) {
     return null;
   }
@@ -224,7 +274,12 @@ async function emVigorPelaSessao(apelido: string, procedimento: string): Promise
   if ((vinculo as { status: string } | null)?.status !== "ativo") {
     return null;
   }
-  const { data: proc } = await sessao.from("procedure").select("name").eq("id", procedimento).single().throwOnError();
+  const { data: proc } = await sessao
+    .from("procedure")
+    .select("name")
+    .eq("id", procedimento)
+    .single()
+    .throwOnError();
   if ((proc as { name: string }).name !== aprovada.nome_do_procedimento) {
     return null;
   }
@@ -236,14 +291,20 @@ async function paridade(rotulo: string): Promise<void> {
   const noBanco = await emVigorNoBanco();
   for (const procedimento of [colonoscopia, ultrassom, endoscopia]) {
     const pelaSessao = await emVigorPelaSessao("recepcao", procedimento);
-    const doBanco = await rpcOk<{ versao_id: string } | null>("preparo_em_vigor_do_procedimento", {
-      p_clinic_id: clinica,
-      p_procedure_id: procedimento,
-    });
-    expect(pelaSessao, `${rotulo}: a regra da tela contra o banco`).toBe(doBanco?.versao_id ?? null);
-    expect(pelaSessao === null ? false : noBanco.has(pelaSessao), `${rotulo}: e a lista do catalogo`).toBe(
-      pelaSessao !== null,
+    const doBanco = await rpcOk<{ versao_id: string } | null>(
+      "preparo_em_vigor_do_procedimento",
+      {
+        p_clinic_id: clinica,
+        p_procedure_id: procedimento,
+      },
     );
+    expect(pelaSessao, `${rotulo}: a regra da tela contra o banco`).toBe(
+      doBanco?.versao_id ?? null,
+    );
+    expect(
+      pelaSessao === null ? false : noBanco.has(pelaSessao),
+      `${rotulo}: e a lista do catalogo`,
+    ).toBe(pelaSessao !== null);
   }
 }
 
@@ -263,7 +324,12 @@ async function conversaNaIa(): Promise<string> {
     awaiting_reply: false,
     whatsapp_account_id: numero,
   });
-  const { data: chave } = await admin.from("contact").select("phone_key").eq("id", contato).single().throwOnError();
+  const { data: chave } = await admin
+    .from("contact")
+    .select("phone_key")
+    .eq("id", contato)
+    .single()
+    .throwOnError();
   await admin
     .from("ia_janela_da_conversa")
     .insert({
@@ -376,7 +442,11 @@ beforeAll(async () => {
     p_modo: "numero_inteiro",
     p_motivo: "teste de integracao da AG7",
   });
-  await rpcOk("definir_numero_da_ia", { p_clinic_id: clinica, p_whatsapp_account_id: numero, p_ativo: true });
+  await rpcOk("definir_numero_da_ia", {
+    p_clinic_id: clinica,
+    p_whatsapp_account_id: numero,
+    p_ativo: true,
+  });
   await inserir("ai_agent_config", {
     clinic_id: clinica,
     version: 1,
@@ -386,9 +456,21 @@ beforeAll(async () => {
     exige_nascimento: false,
     exige_cpf: false,
   });
-  colonoscopia = await inserir("procedure", { clinic_id: clinica, name: "Colonoscopia", active: true });
-  ultrassom = await inserir("procedure", { clinic_id: clinica, name: "Ultrassom de abdome", active: true });
-  endoscopia = await inserir("procedure", { clinic_id: clinica, name: "Endoscopia", active: true });
+  colonoscopia = await inserir("procedure", {
+    clinic_id: clinica,
+    name: "Colonoscopia",
+    active: true,
+  });
+  ultrassom = await inserir("procedure", {
+    clinic_id: clinica,
+    name: "Ultrassom de abdome",
+    active: true,
+  });
+  endoscopia = await inserir("procedure", {
+    clinic_id: clinica,
+    name: "Endoscopia",
+    active: true,
+  });
   await criarPessoa("admin", "admin");
   await criarPessoa("gestor", "gestor");
   await criarPessoa("recepcao", "recepcao");
@@ -407,7 +489,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const job of jobs) {
-    await admin.from("job_queue").update({ status: "concluido", locked_by: null, locked_at: null }).eq("id", job);
+    await admin
+      .from("job_queue")
+      .update({ status: "concluido", locked_by: null, locked_at: null })
+      .eq("id", job);
   }
   if (clinica) {
     const { error } = await admin.from("clinic").delete().eq("id", clinica);
@@ -420,15 +505,30 @@ afterAll(async () => {
 
 describe("o ciclo pelas RPCs e a mensagem do banco", () => {
   it("salvar e aprovar: a mensagem e o literal do contrato, o hash e o dela, a trilha so com ids e o codigo", async () => {
-    const { data: salvo, error } = await salvar("admin", colonoscopia, TEXTO_DA_COLONOSCOPIA);
+    const { data: salvo, error } = await salvar(
+      "admin",
+      colonoscopia,
+      TEXTO_DA_COLONOSCOPIA,
+    );
     expect(error).toBeNull();
-    expect(salvo).toMatchObject({ versao: 1, texto_sha256: sha256(TEXTO_DA_COLONOSCOPIA) });
+    expect(salvo).toMatchObject({
+      versao: 1,
+      texto_sha256: sha256(TEXTO_DA_COLONOSCOPIA),
+    });
     // Aguardando: nada sai.
     expect(await lerParaEnvio(salvo.versao_id)).toBeNull();
     const { data: aprovado, error: erroAprovar } = await aprovar("rt", salvo);
     expect(erroAprovar).toBeNull();
-    expect(aprovado).toMatchObject({ versao_id: salvo.versao_id, versao: 1, texto_sha256: salvo.texto_sha256 });
-    const esperada = mensagemDoContrato("Colonoscopia", "Dra. Ana Souza (CRM-CE 12345)", TEXTO_DA_COLONOSCOPIA);
+    expect(aprovado).toMatchObject({
+      versao_id: salvo.versao_id,
+      versao: 1,
+      texto_sha256: salvo.texto_sha256,
+    });
+    const esperada = mensagemDoContrato(
+      "Colonoscopia",
+      "Dra. Ana Souza (CRM-CE 12345)",
+      TEXTO_DA_COLONOSCOPIA,
+    );
     expect(await lerParaEnvio(salvo.versao_id)).toEqual({
       versao_id: salvo.versao_id,
       procedure_id: colonoscopia,
@@ -442,10 +542,24 @@ describe("o ciclo pelas RPCs e a mensagem do banco", () => {
       .eq("entity_id", salvo.versao_id)
       .order("id")
       .throwOnError();
-    const detalhes = { procedure_id: colonoscopia, versao: 1, codigo: salvo.texto_sha256.slice(0, 8) };
+    const detalhes = {
+      procedure_id: colonoscopia,
+      versao: 1,
+      codigo: salvo.texto_sha256.slice(0, 8),
+    };
     expect(trilha).toEqual([
-      { action: "escreveu_preparo", user_id: idDe("admin"), entity: "preparo_do_procedimento", detalhes },
-      { action: "aprovou_preparo", user_id: idDe("rt"), entity: "preparo_do_procedimento", detalhes },
+      {
+        action: "escreveu_preparo",
+        user_id: idDe("admin"),
+        entity: "preparo_do_procedimento",
+        detalhes,
+      },
+      {
+        action: "aprovou_preparo",
+        user_id: idDe("rt"),
+        entity: "preparo_do_procedimento",
+        detalhes,
+      },
     ]);
     // O mesmo texto da aprovada em vigor nao entra.
     const igual = await salvar("gestor", colonoscopia, TEXTO_DA_COLONOSCOPIA);
@@ -456,10 +570,13 @@ describe("o ciclo pelas RPCs e a mensagem do banco", () => {
 
   it("suspender tira de vigor; o mesmo texto entra de novo e o RT aprova de novo", async () => {
     const salvo = await emVigor(ultrassom, TEXTO_DO_ULTRASSOM);
-    const { data, error } = await como("gestor").rpc("suspender_preparo_do_procedimento", {
-      p_procedure_id: ultrassom,
-      p_comentario: "Revisar a quantidade de água.",
-    });
+    const { data, error } = await como("gestor").rpc(
+      "suspender_preparo_do_procedimento",
+      {
+        p_procedure_id: ultrassom,
+        p_comentario: "Revisar a quantidade de água.",
+      },
+    );
     expect(error).toBeNull();
     expect(data).toEqual({ versao_id: salvo.versao_id });
     expect(await lerParaEnvio(salvo.versao_id)).toBeNull();
@@ -467,15 +584,27 @@ describe("o ciclo pelas RPCs e a mensagem do banco", () => {
     const novo = await emVigor(ultrassom, TEXTO_DO_ULTRASSOM);
     expect(novo.versao).toBe(2);
     expect((await lerParaEnvio(novo.versao_id))?.mensagem).toBe(
-      mensagemDoContrato("Ultrassom de abdome", "Dra. Ana Souza (CRM-CE 12345)", TEXTO_DO_ULTRASSOM),
+      mensagemDoContrato(
+        "Ultrassom de abdome",
+        "Dra. Ana Souza (CRM-CE 12345)",
+        TEXTO_DO_ULTRASSOM,
+      ),
     );
     await paridade("aprovada de novo");
   });
 
   it("renomear o procedimento tira a aprovacao (nome_mudou para o texto que esperava)", async () => {
     const salvo = await emVigor(endoscopia, "Jejum de 8 horas.");
-    const { data: novo } = await salvar("admin", endoscopia, "Jejum de 10 horas.");
-    await admin.from("procedure").update({ name: "Endoscopia digestiva" }).eq("id", endoscopia).throwOnError();
+    const { data: novo } = await salvar(
+      "admin",
+      endoscopia,
+      "Jejum de 10 horas.",
+    );
+    await admin
+      .from("procedure")
+      .update({ name: "Endoscopia digestiva" })
+      .eq("id", endoscopia)
+      .throwOnError();
     expect(await lerParaEnvio(salvo.versao_id)).toBeNull();
     await paridade("renomeado");
     const { error } = await aprovar("rt", novo);
@@ -483,25 +612,48 @@ describe("o ciclo pelas RPCs e a mensagem do banco", () => {
     expect(error?.message).toBe("nome_mudou");
     // O texto salvo de novo com o nome novo e aprovado volta a valer.
     const deNovo = await emVigor(endoscopia, "Jejum de 10 horas.");
-    expect((await lerParaEnvio(deNovo.versao_id))?.mensagem).toContain(`${CABECALHO}Endoscopia digestiva\n`);
+    expect((await lerParaEnvio(deNovo.versao_id))?.mensagem).toContain(
+      `${CABECALHO}Endoscopia digestiva\n`,
+    );
     await paridade("com o nome novo");
   });
 
   it("as leituras do servidor: em vigor sem o texto, os textos de toda versao, o texto da regua", async () => {
-    const lista = await rpcOk<Record<string, unknown>[]>("preparos_em_vigor_da_clinica", { p_clinic_id: clinica });
+    const lista = await rpcOk<Record<string, unknown>[]>(
+      "preparos_em_vigor_da_clinica",
+      { p_clinic_id: clinica },
+    );
     expect(lista.length).toBe(3);
     for (const item of lista) {
-      expect(Object.keys(item).sort()).toEqual(["aprovado_em", "procedure_id", "rt_nome", "texto_sha256", "versao", "versao_id"]);
+      expect(Object.keys(item).sort()).toEqual([
+        "aprovado_em",
+        "procedure_id",
+        "rt_nome",
+        "texto_sha256",
+        "versao",
+        "versao_id",
+      ]);
       expect(item.rt_nome).toBe("Dra. Ana Souza");
     }
-    const textos = await rpcOk<string[]>("textos_de_preparo_da_clinica", { p_clinic_id: clinica });
+    const textos = await rpcOk<string[]>("textos_de_preparo_da_clinica", {
+      p_clinic_id: clinica,
+    });
     expect(new Set(textos)).toEqual(
-      new Set([TEXTO_DA_COLONOSCOPIA, TEXTO_DO_ULTRASSOM, "Jejum de 8 horas.", "Jejum de 10 horas."]),
+      new Set([
+        TEXTO_DA_COLONOSCOPIA,
+        TEXTO_DO_ULTRASSOM,
+        "Jejum de 8 horas.",
+        "Jejum de 10 horas.",
+      ]),
     );
-    const daRegua = await rpcOk<{ versao_id: string; texto: string; texto_sha256: string } | null>(
-      "preparo_em_vigor_do_procedimento",
-      { p_clinic_id: clinica, p_procedure_id: colonoscopia },
-    );
+    const daRegua = await rpcOk<{
+      versao_id: string;
+      texto: string;
+      texto_sha256: string;
+    } | null>("preparo_em_vigor_do_procedimento", {
+      p_clinic_id: clinica,
+      p_procedure_id: colonoscopia,
+    });
     expect(daRegua?.texto).toBe(TEXTO_DA_COLONOSCOPIA);
     expect(sha256(daRegua!.texto)).toBe(daRegua!.texto_sha256);
   });
@@ -535,25 +687,61 @@ describe("o gatilho de message: a mensagem do preparo", () => {
       .eq("job_id", job)
       .single()
       .throwOnError();
-    expect(linha).toEqual({ author: "sistema", direction: "saida", content_type: "texto", body: mensagem, author_user_id: null });
+    expect(linha).toEqual({
+      author: "sistema",
+      direction: "saida",
+      content_type: "texto",
+      body: mensagem,
+      author_user_id: null,
+    });
     const { data: decisao } = await admin
       .from("ai_decision_log")
       .select("desfecho, preparo_versao_id, texto_sha256, aprovado")
       .eq("job_id", job)
       .single()
       .throwOnError();
-    expect(decisao).toEqual({ desfecho: "enviou_preparo", preparo_versao_id: versao, texto_sha256: sha256(mensagem), aprovado: null });
+    expect(decisao).toEqual({
+      desfecho: "enviou_preparo",
+      preparo_versao_id: versao,
+      texto_sha256: sha256(mensagem),
+      aprovado: null,
+    });
     await rpcOk("concluir_job", { p_id: job, p_worker: WORKER });
   });
 
   it("o conteudo diferente da versao em vigor: CZIA3", async () => {
     const divergente = "CZIA3:frase_divergente";
-    expect(await caso(conversa, versao, mensagem, mensagem.slice(0, -1)), "um a menos").toBe(divergente);
-    expect(await caso(conversa, versao, mensagem, `${mensagem}.`), "um a mais").toBe(divergente);
-    expect(await caso(conversa, versao, mensagem.slice(0, -1), mensagem.slice(0, -1)), "um a menos, decidido").toBe(divergente);
+    expect(
+      await caso(conversa, versao, mensagem, mensagem.slice(0, -1)),
+      "um a menos",
+    ).toBe(divergente);
+    expect(
+      await caso(conversa, versao, mensagem, `${mensagem}.`),
+      "um a mais",
+    ).toBe(divergente);
+    expect(
+      await caso(
+        conversa,
+        versao,
+        mensagem.slice(0, -1),
+        mensagem.slice(0, -1),
+      ),
+      "um a menos, decidido",
+    ).toBe(divergente);
     const acrescimo = `${mensagem} Pode tomar café preto.`;
-    expect(await caso(conversa, versao, acrescimo, acrescimo), "com acrescimo, decidido").toBe(divergente);
-    expect(await caso(conversa, versao, TEXTO_DA_COLONOSCOPIA, TEXTO_DA_COLONOSCOPIA), "so o texto").toBe(divergente);
+    expect(
+      await caso(conversa, versao, acrescimo, acrescimo),
+      "com acrescimo, decidido",
+    ).toBe(divergente);
+    expect(
+      await caso(
+        conversa,
+        versao,
+        TEXTO_DA_COLONOSCOPIA,
+        TEXTO_DA_COLONOSCOPIA,
+      ),
+      "so o texto",
+    ).toBe(divergente);
     // Outro procedimento: a decisao do ultrassom com a mensagem da colonoscopia.
     const { data: doUltrassom } = await admin
       .from("preparo_do_procedimento")
@@ -562,7 +750,15 @@ describe("o gatilho de message: a mensagem do preparo", () => {
       .eq("situacao", "aprovado")
       .single()
       .throwOnError();
-    expect(await caso(conversa, (doUltrassom as { id: string }).id, mensagem, mensagem), "outro procedimento").toBe(divergente);
+    expect(
+      await caso(
+        conversa,
+        (doUltrassom as { id: string }).id,
+        mensagem,
+        mensagem,
+      ),
+      "outro procedimento",
+    ).toBe(divergente);
     // Outra versao: a suspensa do ultrassom (a 1).
     const { data: suspensa } = await admin
       .from("preparo_do_procedimento")
@@ -571,8 +767,20 @@ describe("o gatilho de message: a mensagem do preparo", () => {
       .eq("situacao", "suspenso")
       .single()
       .throwOnError();
-    const daSuspensa = mensagemDoContrato("Ultrassom de abdome", "Dra. Ana Souza (CRM-CE 12345)", TEXTO_DO_ULTRASSOM);
-    expect(await caso(conversa, (suspensa as { id: string }).id, daSuspensa, daSuspensa), "a suspensa").toBe(divergente);
+    const daSuspensa = mensagemDoContrato(
+      "Ultrassom de abdome",
+      "Dra. Ana Souza (CRM-CE 12345)",
+      TEXTO_DO_ULTRASSOM,
+    );
+    expect(
+      await caso(
+        conversa,
+        (suspensa as { id: string }).id,
+        daSuspensa,
+        daSuspensa,
+      ),
+      "a suspensa",
+    ).toBe(divergente);
   });
 
   it("a decisao: de outro job, sem a versao, com outro hash, sem decisao: CZIA3", async () => {
@@ -580,21 +788,39 @@ describe("o gatilho de message: a mensagem do preparo", () => {
     const outro = await jobEmExecucao(conversa);
     await decidirPreparo(outro, conversa, versao, mensagem);
     const job = await jobEmExecucao(conversa);
-    expect(await enviar(conversa, job, mensagem), "de outro job").toMatchObject({ code: "CZIA3" });
+    expect(await enviar(conversa, job, mensagem), "de outro job").toMatchObject(
+      { code: "CZIA3" },
+    );
     await decidirPreparo(job, conversa, null, mensagem, "respondeu");
-    expect(await enviar(conversa, job, mensagem), "sem a versao (respondeu, aprovada)").toMatchObject({ code: "CZIA3" });
+    expect(
+      await enviar(conversa, job, mensagem),
+      "sem a versao (respondeu, aprovada)",
+    ).toMatchObject({ code: "CZIA3" });
     await rpcOk("concluir_job", { p_id: outro, p_worker: WORKER });
     await rpcOk("concluir_job", { p_id: job, p_worker: WORKER });
-    expect(await caso(conversa, versao, "Outro corpo.", mensagem), "outro hash").toBe(divergente);
-    expect(await caso(conversa, null, mensagem, mensagem), "sem decisao").toBe(divergente);
+    expect(
+      await caso(conversa, versao, "Outro corpo.", mensagem),
+      "outro hash",
+    ).toBe(divergente);
+    expect(await caso(conversa, null, mensagem, mensagem), "sem decisao").toBe(
+      divergente,
+    );
   });
 
   it("quem e a forma: o autor ia da CZIA1; o autor humano, a nota e a midia, CZIA3", async () => {
-    expect(await caso(conversa, versao, mensagem, mensagem, { author: "ia" })).toBe("CZIA1:ia_sem_aprovacao");
-    expect(await caso(conversa, versao, mensagem, mensagem, { author_user_id: idDe("admin") })).toBe(
-      "CZIA3:frase_divergente",
-    );
-    expect(await caso(conversa, versao, mensagem, mensagem, { is_internal_note: true })).toBe("CZIA3:frase_divergente");
+    expect(
+      await caso(conversa, versao, mensagem, mensagem, { author: "ia" }),
+    ).toBe("CZIA1:ia_sem_aprovacao");
+    expect(
+      await caso(conversa, versao, mensagem, mensagem, {
+        author_user_id: idDe("admin"),
+      }),
+    ).toBe("CZIA3:frase_divergente");
+    expect(
+      await caso(conversa, versao, mensagem, mensagem, {
+        is_internal_note: true,
+      }),
+    ).toBe("CZIA3:frase_divergente");
   });
 
   it("a liberacao: a conversa com a equipe e a janela trocada dao CZIA2", async () => {
@@ -606,7 +832,10 @@ describe("o gatilho de message: a mensagem do preparo", () => {
       .update({ status: "em_atendimento", assignee_user_id: idDe("recepcao") })
       .eq("id", comAEquipe)
       .throwOnError();
-    expect(await enviar(comAEquipe, job, mensagem)).toMatchObject({ code: "CZIA2", message: "ia_nao_liberada" });
+    expect(await enviar(comAEquipe, job, mensagem)).toMatchObject({
+      code: "CZIA2",
+      message: "ia_nao_liberada",
+    });
     await rpcOk("concluir_job", { p_id: job, p_worker: WORKER });
     const janelaTrocada = await conversaNaIa();
     const job2 = await jobEmExecucao(janelaTrocada);
@@ -616,32 +845,54 @@ describe("o gatilho de message: a mensagem do preparo", () => {
       .update({ desde: new Date(Date.now() + 60_000).toISOString() })
       .eq("conversation_id", janelaTrocada)
       .throwOnError();
-    expect(await enviar(janelaTrocada, job2, mensagem)).toMatchObject({ code: "CZIA2", message: "ia_nao_liberada" });
+    expect(await enviar(janelaTrocada, job2, mensagem)).toMatchObject({
+      code: "CZIA2",
+      message: "ia_nao_liberada",
+    });
     await rpcOk("concluir_job", { p_id: job2, p_worker: WORKER });
   });
 
   it("o RT encerrado tira de vigor (CZIA3); o RT trocado tambem, ate aprovar de novo", async () => {
-    const { error } = await como("admin").rpc("encerrar_responsavel_tecnico", { p_clinic_id: clinica });
-    expect(error).toBeNull();
-    expect(await caso(conversa, versao, mensagem, mensagem)).toBe("CZIA3:frase_divergente");
-    await paridade("sem RT");
-    const { error: erroDefinir } = await como("admin").rpc("definir_responsavel_tecnico", {
+    const { error } = await como("admin").rpc("encerrar_responsavel_tecnico", {
       p_clinic_id: clinica,
-      p_user_id: idDe("rt2"),
-      p_nome: "Dr. Bruno Lima",
-      p_conselho: "CRO",
-      p_numero: "4321",
-      p_uf: "SP",
     });
+    expect(error).toBeNull();
+    expect(await caso(conversa, versao, mensagem, mensagem)).toBe(
+      "CZIA3:frase_divergente",
+    );
+    await paridade("sem RT");
+    const { error: erroDefinir } = await como("admin").rpc(
+      "definir_responsavel_tecnico",
+      {
+        p_clinic_id: clinica,
+        p_user_id: idDe("rt2"),
+        p_nome: "Dr. Bruno Lima",
+        p_conselho: "CRO",
+        p_numero: "4321",
+        p_uf: "SP",
+      },
+    );
     expect(erroDefinir).toBeNull();
-    expect(await caso(conversa, versao, mensagem, mensagem)).toBe("CZIA3:frase_divergente");
+    expect(await caso(conversa, versao, mensagem, mensagem)).toBe(
+      "CZIA3:frase_divergente",
+    );
     await paridade("RT trocado");
     // O RT novo (Somente leitura) aprova de novo o mesmo texto.
-    const { data: salvo, error: erroSalvar } = await salvar("rt2", colonoscopia, TEXTO_DA_COLONOSCOPIA);
+    const { data: salvo, error: erroSalvar } = await salvar(
+      "rt2",
+      colonoscopia,
+      TEXTO_DA_COLONOSCOPIA,
+    );
     expect(erroSalvar).toBeNull();
     expect((await aprovar("rt2", salvo)).error).toBeNull();
     const nova = (await lerParaEnvio(salvo.versao_id))!.mensagem;
-    expect(nova).toBe(mensagemDoContrato("Colonoscopia", "Dr. Bruno Lima (CRO-SP 4321)", TEXTO_DA_COLONOSCOPIA));
+    expect(nova).toBe(
+      mensagemDoContrato(
+        "Colonoscopia",
+        "Dr. Bruno Lima (CRO-SP 4321)",
+        TEXTO_DA_COLONOSCOPIA,
+      ),
+    );
     expect(await caso(conversa, salvo.versao_id, nova, nova)).toBe("ok");
     await paridade("aprovado pelo RT novo");
   });
@@ -652,9 +903,17 @@ describe("os CHECKs novos pelo servidor", () => {
     const conversa = await conversaNaIa();
     const base = { clinic_id: clinica, conversation_id: conversa };
     const versao = crypto.randomUUID();
-    const semVersao = await admin.from("ai_decision_log").insert({ ...base, desfecho: "enviou_preparo", texto_sha256: sha256("x") });
+    const semVersao = await admin
+      .from("ai_decision_log")
+      .insert({
+        ...base,
+        desfecho: "enviou_preparo",
+        texto_sha256: sha256("x"),
+      });
     expect(semVersao.error?.code).toBe("23514");
-    const semDesfecho = await admin.from("ai_decision_log").insert({ ...base, preparo_versao_id: versao });
+    const semDesfecho = await admin
+      .from("ai_decision_log")
+      .insert({ ...base, preparo_versao_id: versao });
     expect(semDesfecho.error?.code).toBe("23514");
     const aprovada = await admin.from("ai_decision_log").insert({
       ...base,
@@ -695,7 +954,9 @@ describe("a copia do texto antigo (so leitura)", () => {
   it("toda versao texto_antigo e o prep_instructions normalizado do procedimento, na versao 1", async () => {
     const { data } = await admin
       .from("preparo_do_procedimento")
-      .select("texto, versao, escrito_por, nome_do_procedimento, procedure:procedure_id ( name, prep_instructions )")
+      .select(
+        "texto, versao, escrito_por, nome_do_procedimento, procedure:procedure_id ( name, prep_instructions )",
+      )
       .eq("origem", "texto_antigo")
       .throwOnError();
     for (const v of data as unknown as {

@@ -145,12 +145,13 @@
 -- segue.
 --
 -- TRAVAS EM USO (sem 40P01; o contrato, secao 1.7). Ordem global: o
--- procedimento (FOR NO KEY UPDATE, nas RPCs: como salvar_requisitos_do_procedimento,
--- serializa as RPCs e o rename do procedimento sem segurar a FK de quem grava
--- algo que aponta para ele), a versao aguardando, a versao aprovada, o RT
--- (FOR SHARE). O gatilho de message trava so a versao e o RT
--- (FOR SHARE), nunca o procedimento (senao fecharia ciclo com aprovar, que
--- trava o procedimento e depois a aprovada). Suspender: o procedimento,
+-- procedimento (FOR NO KEY UPDATE, nas RPCs, como em
+-- salvar_requisitos_do_procedimento: serializa as RPCs e o rename do
+-- procedimento sem segurar a FK de quem grava algo que aponta para ele), a
+-- versao aguardando, a versao aprovada, o RT (FOR SHARE). O gatilho de
+-- message trava so a versao e o RT (FOR SHARE), nunca o procedimento (senao
+-- fecharia ciclo com aprovar, que trava o procedimento e depois a
+-- aprovada). Suspender: o procedimento,
 -- depois a aprovada. Salvar: o procedimento, depois a aguardando. Devolver e
 -- descartar: o procedimento, depois a versao. Definir e encerrar o RT: so a
 -- linha aberta do RT. Nenhum caminho trava o RT e depois a versao, nem a

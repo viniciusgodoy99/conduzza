@@ -174,7 +174,10 @@ async function preparoDoCenario(
   texto: string,
   aprovar: boolean,
 ): Promise<void> {
-  const sessao = await sessaoDoRt(cenario.clinicId, cenario.clinicId.slice(0, 8));
+  const sessao = await sessaoDoRt(
+    cenario.clinicId,
+    cenario.clinicId.slice(0, 8),
+  );
   const procedureId = await procedimentoDoCenario(cenario.clinicId);
   // A copia do texto antigo so acontece na migration: este procedimento
   // nasceu depois dela, sem versao.

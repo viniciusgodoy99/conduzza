@@ -77,13 +77,19 @@ function sha256(texto: string): string {
   return createHash("sha256").update(texto, "utf8").digest("hex");
 }
 
-async function rpcOk<T>(nome: string, args: Record<string, unknown> = {}): Promise<T> {
+async function rpcOk<T>(
+  nome: string,
+  args: Record<string, unknown> = {},
+): Promise<T> {
   const { data, error } = await admin.rpc(nome, args);
   expect(error, nome).toBeNull();
   return data as T;
 }
 
-async function inserir(tabela: string, linha: Record<string, unknown>): Promise<string> {
+async function inserir(
+  tabela: string,
+  linha: Record<string, unknown>,
+): Promise<string> {
   const { data } = await admin
     .from(tabela)
     .insert(linha)
@@ -107,10 +113,18 @@ async function criarPessoa(apelido: string, papel: string): Promise<void> {
   usuarios.set(apelido, data.user.id);
   await admin
     .from("clinic_member")
-    .insert({ clinic_id: clinica, user_id: data.user.id, role: papel, status: "ativo" })
+    .insert({
+      clinic_id: clinica,
+      user_id: data.user.id,
+      role: papel,
+      status: "ativo",
+    })
     .throwOnError();
   const cliente = anonClient();
-  const { error: erroLogin } = await cliente.auth.signInWithPassword({ email, password: SENHA });
+  const { error: erroLogin } = await cliente.auth.signInWithPassword({
+    email,
+    password: SENHA,
+  });
   if (erroLogin) {
     throw new Error(`login ${apelido}: ${erroLogin.message}`);
   }
@@ -125,7 +139,11 @@ function semCicloNemRepeticao(...respostas: unknown[]): void {
   }
 }
 
-async function definirRt(apelido: string, quem: string, nome: string): Promise<Erro> {
+async function definirRt(
+  apelido: string,
+  quem: string,
+  nome: string,
+): Promise<Erro> {
   const { error } = await como(apelido).rpc("definir_responsavel_tecnico", {
     p_clinic_id: clinica,
     p_user_id: pessoa(quem),
@@ -139,10 +157,19 @@ async function definirRt(apelido: string, quem: string, nome: string): Promise<E
 
 async function procedimentoNovo(): Promise<string> {
   procedimentos += 1;
-  return inserir("procedure", { clinic_id: clinica, name: `Exame ${procedimentos}`, active: true });
+  return inserir("procedure", {
+    clinic_id: clinica,
+    name: `Exame ${procedimentos}`,
+    active: true,
+  });
 }
 
-async function salvar(apelido: string, procedimento: string, texto: string, lida: number) {
+async function salvar(
+  apelido: string,
+  procedimento: string,
+  texto: string,
+  lida: number,
+) {
   return como(apelido).rpc("salvar_preparo_do_procedimento", {
     p_procedure_id: procedimento,
     p_texto: texto,
@@ -158,13 +185,20 @@ async function aprovar(apelido: string, salvo: Salvo) {
 }
 
 async function suspender(apelido: string, procedimento: string) {
-  return como(apelido).rpc("suspender_preparo_do_procedimento", { p_procedure_id: procedimento });
+  return como(apelido).rpc("suspender_preparo_do_procedimento", {
+    p_procedure_id: procedimento,
+  });
 }
 
 /** Um procedimento novo com a versao 1 aprovada pelo RT de agora. */
 async function aprovadoNovo(): Promise<{ procedimento: string; salvo: Salvo }> {
   const procedimento = await procedimentoNovo();
-  const { data, error } = await salvar("admin", procedimento, `Jejum de ${procedimentos} horas.`, 0);
+  const { data, error } = await salvar(
+    "admin",
+    procedimento,
+    `Jejum de ${procedimentos} horas.`,
+    0,
+  );
   expect(error).toBeNull();
   const salvo = data as Salvo;
   expect((await aprovar("rt", salvo)).error).toBeNull();
@@ -182,14 +216,18 @@ async function situacao(versao: string): Promise<string> {
 }
 
 async function emVigor(versao: string): Promise<boolean> {
-  return (await rpcOk<{ mensagem: string } | null>("ler_preparo_para_envio", {
-    p_clinic_id: clinica,
-    p_versao_id: versao,
-  })) !== null;
+  return (
+    (await rpcOk<{ mensagem: string } | null>("ler_preparo_para_envio", {
+      p_clinic_id: clinica,
+      p_versao_id: versao,
+    })) !== null
+  );
 }
 
 /** A conversa na IA com a janela, o job em execucao e a decisao do preparo da versao. */
-async function cenaDoEnvio(versao: string): Promise<{ conversa: string; job: string; mensagem: string }> {
+async function cenaDoEnvio(
+  versao: string,
+): Promise<{ conversa: string; job: string; mensagem: string }> {
   telefones += 1;
   const contato = await inserir("contact", {
     clinic_id: clinica,
@@ -204,7 +242,12 @@ async function cenaDoEnvio(versao: string): Promise<{ conversa: string; job: str
     awaiting_reply: false,
     whatsapp_account_id: numero,
   });
-  const { data: chave } = await admin.from("contact").select("phone_key").eq("id", contato).single().throwOnError();
+  const { data: chave } = await admin
+    .from("contact")
+    .select("phone_key")
+    .eq("id", contato)
+    .single()
+    .throwOnError();
   await admin
     .from("ia_janela_da_conversa")
     .insert({
@@ -228,7 +271,10 @@ async function cenaDoEnvio(versao: string): Promise<{ conversa: string; job: str
     max_attempts: 3,
   });
   jobs.push(job);
-  const lido = await rpcOk<{ mensagem: string }>("ler_preparo_para_envio", { p_clinic_id: clinica, p_versao_id: versao });
+  const lido = await rpcOk<{ mensagem: string }>("ler_preparo_para_envio", {
+    p_clinic_id: clinica,
+    p_versao_id: versao,
+  });
   await admin
     .from("ai_decision_log")
     .insert({
@@ -244,7 +290,11 @@ async function cenaDoEnvio(versao: string): Promise<{ conversa: string; job: str
   return { conversa, job, mensagem: lido.mensagem };
 }
 
-async function enviar(cena: { conversa: string; job: string; mensagem: string }) {
+async function enviar(cena: {
+  conversa: string;
+  job: string;
+  mensagem: string;
+}) {
   return admin.from("message").insert({
     clinic_id: clinica,
     conversation_id: cena.conversa,
@@ -286,7 +336,11 @@ beforeAll(async () => {
     p_modo: "numero_inteiro",
     p_motivo: "teste de concorrencia da AG7",
   });
-  await rpcOk("definir_numero_da_ia", { p_clinic_id: clinica, p_whatsapp_account_id: numero, p_ativo: true });
+  await rpcOk("definir_numero_da_ia", {
+    p_clinic_id: clinica,
+    p_whatsapp_account_id: numero,
+    p_ativo: true,
+  });
   await inserir("ai_agent_config", {
     clinic_id: clinica,
     version: 1,
@@ -306,7 +360,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const job of jobs) {
-    await admin.from("job_queue").update({ status: "concluido", locked_by: null, locked_at: null }).eq("id", job);
+    await admin
+      .from("job_queue")
+      .update({ status: "concluido", locked_by: null, locked_at: null })
+      .eq("id", job);
   }
   if (clinica) {
     await admin.from("clinic").delete().eq("id", clinica);
@@ -321,7 +378,10 @@ describe("P1, o envio contra a suspensao", () => {
     for (let i = 0; i < RODADAS; i += 1) {
       const { procedimento, salvo } = await aprovadoNovo();
       const cena = await cenaDoEnvio(salvo.versao_id);
-      const [e, s] = await Promise.all([enviar(cena), suspender("gestor", procedimento)]);
+      const [e, s] = await Promise.all([
+        enviar(cena),
+        suspender("gestor", procedimento),
+      ]);
       semCicloNemRepeticao(e.error, s.error);
       expect(s.error).toBeNull();
       expect(await situacao(salvo.versao_id)).toBe("suspenso");
@@ -341,13 +401,27 @@ describe("P2, duas aprovacoes da mesma versao", () => {
   it("uma aprova, a outra recebe nao_aguarda_aprovacao; uma aprovada so", async () => {
     for (let i = 0; i < RODADAS; i += 1) {
       const procedimento = await procedimentoNovo();
-      const { data } = await salvar("admin", procedimento, "Jejum de 4 horas.", 0);
+      const { data } = await salvar(
+        "admin",
+        procedimento,
+        "Jejum de 4 horas.",
+        0,
+      );
       const salvo = data as Salvo;
-      const [a, b] = await Promise.all([aprovar("rt", salvo), aprovar("rt", salvo)]);
+      const [a, b] = await Promise.all([
+        aprovar("rt", salvo),
+        aprovar("rt", salvo),
+      ]);
       semCicloNemRepeticao(a.error, b.error);
-      const erros = [a.error, b.error].filter(Boolean) as { code: string; message: string }[];
+      const erros = [a.error, b.error].filter(Boolean) as {
+        code: string;
+        message: string;
+      }[];
       expect(erros).toHaveLength(1);
-      expect(erros[0]).toMatchObject({ code: "P0001", message: "nao_aguarda_aprovacao" });
+      expect(erros[0]).toMatchObject({
+        code: "P0001",
+        message: "nao_aguarda_aprovacao",
+      });
       const { count } = await admin
         .from("preparo_do_procedimento")
         .select("id", { count: "exact", head: true })
@@ -363,11 +437,18 @@ describe("P3, a aprovacao contra o fim do RT", () => {
   it("ou aprovou e saiu de vigor, ou recebeu 42501; nunca em vigor sem RT", async () => {
     for (let i = 0; i < RODADAS; i += 1) {
       const procedimento = await procedimentoNovo();
-      const { data } = await salvar("admin", procedimento, "Jejum de 5 horas.", 0);
+      const { data } = await salvar(
+        "admin",
+        procedimento,
+        "Jejum de 5 horas.",
+        0,
+      );
       const salvo = data as Salvo;
       const [a, f] = await Promise.all([
         aprovar("rt", salvo),
-        como("admin").rpc("encerrar_responsavel_tecnico", { p_clinic_id: clinica }),
+        como("admin").rpc("encerrar_responsavel_tecnico", {
+          p_clinic_id: clinica,
+        }),
       ]);
       semCicloNemRepeticao(a.error, f.error);
       expect(f.error).toBeNull();
@@ -392,7 +473,10 @@ describe("P4, salvar duas vezes com a mesma versao lida", () => {
         salvar("gestor", procedimento, "Jejum de 3 horas.", 0),
       ]);
       semCicloNemRepeticao(a.error, b.error);
-      const erros = [a.error, b.error].filter(Boolean) as { code: string; message: string }[];
+      const erros = [a.error, b.error].filter(Boolean) as {
+        code: string;
+        message: string;
+      }[];
       expect(erros).toHaveLength(1);
       expect(erros[0]).toMatchObject({ code: "P0001", message: "texto_mudou" });
       const { count } = await admin
@@ -411,7 +495,10 @@ describe("P6, o envio contra a troca do RT", () => {
       const { salvo } = await aprovadoNovo();
       const cena = await cenaDoEnvio(salvo.versao_id);
       const outro = i % 2 === 0 ? "rt2" : "rt";
-      const [e, d] = await Promise.all([enviar(cena), definirRt("admin", outro, `Dr. Troca ${i}`)]);
+      const [e, d] = await Promise.all([
+        enviar(cena),
+        definirRt("admin", outro, `Dr. Troca ${i}`),
+      ]);
       semCicloNemRepeticao(e.error, d);
       expect(d).toBeNull();
       if (e.error) {
@@ -437,7 +524,10 @@ describe("P7, definir o RT duas vezes", () => {
       ]);
       semCicloNemRepeticao(a, b);
       for (const erro of [a, b].filter(Boolean)) {
-        expect(erro).toMatchObject({ code: "P0001", message: "outra_definicao" });
+        expect(erro).toMatchObject({
+          code: "P0001",
+          message: "outra_definicao",
+        });
       }
       expect([a, b].filter((e) => e === null).length).toBeGreaterThanOrEqual(1);
       const { count } = await admin
@@ -456,9 +546,17 @@ describe("P8, aprovar contra suspender", () => {
   it("uma aprovada no maximo; a suspensao pega a aprovada de quando chegou", async () => {
     for (let i = 0; i < RODADAS; i += 1) {
       const { procedimento, salvo: primeira } = await aprovadoNovo();
-      const { data } = await salvar("admin", procedimento, "Jejum de 12 horas.", 1);
+      const { data } = await salvar(
+        "admin",
+        procedimento,
+        "Jejum de 12 horas.",
+        1,
+      );
       const segunda = data as Salvo;
-      const [a, s] = await Promise.all([aprovar("rt", segunda), suspender("gestor", procedimento)]);
+      const [a, s] = await Promise.all([
+        aprovar("rt", segunda),
+        suspender("gestor", procedimento),
+      ]);
       semCicloNemRepeticao(a.error, s.error);
       expect(a.error).toBeNull();
       expect(s.error).toBeNull();
