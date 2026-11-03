@@ -169,7 +169,7 @@ export function modeloPedePreparo(modelo: string | null): boolean {
 const PALAVRA_DO_PREPARO =
   /\b(?:preparo|preparos|preparacao|orientacao|orientacoes|instrucao|instrucoes)\b/;
 // Os parenteses, colchetes e aspas que ficam vazios quando o campo sai.
-const PAR_VAZIO = /\(\s*\)|\[\s*\]|"\s*"|“\s*”/g;
+const PAR_VAZIO = /\(\s*\)|\[\s*\]|"\s*"|\u201c\s*\u201d/g;
 
 function semAcentoEMinusculo(texto: string): string {
   return texto.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
