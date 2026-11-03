@@ -17,6 +17,9 @@ import {
   AUTOR_DA_NOTA_DA_PASSAGEM,
   ehNotaDaPassagemDaIa,
 } from "@/lib/agente/nota-da-passagem";
+// [AG7 preparo] início
+import { ehMensagemDoPreparo } from "@/lib/domain/preparo";
+// [AG7 preparo] fim
 import type { MessageItem, QuotedMessage } from "@/lib/queries/conversations";
 import { cn } from "@/lib/utils";
 
@@ -89,6 +92,14 @@ export function autorDaCitacao(
   if (ehAvisoAutomaticoDaIa(mensagem)) {
     return AUTOR_DO_AVISO_AUTOMATICO;
   }
+  // [AG7 preparo] início
+  // A orientacao de preparo aprovada pelo responsavel tecnico (AG7), que o
+  // sistema envia pelo job da IA: a mesma assinatura da bolha. A mensagem
+  // automatica da regua continua "Sistema".
+  if (ehMensagemDoPreparo(mensagem)) {
+    return "Assistente";
+  }
+  // [AG7 preparo] fim
   return "Sistema";
 }
 
