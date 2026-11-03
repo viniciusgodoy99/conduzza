@@ -120,9 +120,10 @@
 --     42501 (suspender) -> (trava o procedimento e a aprovada) ->
 --     sem_preparo_aprovado -> {versao_id}.
 --   definir o RT: 22004 -> nome_invalido -> conselho_invalido ->
---     numero_invalido -> uf_invalida -> 42501 (RT) -> 42501 (RT) de novo se
---     a pessoa escolhida e super admin (TELA-9) ->
---     responsavel_nao_e_membro_ativo -> (trava a linha aberta) ->
+--     numero_invalido -> uf_invalida -> 42501 (RT) ->
+--     responsavel_e_da_equipe_conduzza (P0001: a pessoa escolhida e super
+--     admin, TELA-9; nao o 42501, que diria a quem pode definir que ele nao
+--     pode) -> responsavel_nao_e_membro_ativo -> (trava a linha aberta) ->
 --     outra_definicao (a linha aberta nasceu depois do comeco desta
 --     transacao: outra definicao ganhou a corrida) -> (23505:
 --     outra_definicao) -> o id.
@@ -1607,9 +1608,13 @@ begin
     raise exception using errcode = '42501', message = c_frase_rt;
   end if;
   -- O super admin nunca e o RT (D-71: aprovar e ato clinico; TELA-9), nem com
-  -- vinculo ativo: nem se definindo, nem escolhido pelo administrador.
+  -- vinculo ativo: nem se definindo, nem escolhido pelo administrador. P0001
+  -- com o codigo proprio, e nao o 42501: quem chegou aqui PODE definir o RT
+  -- (o administrador nao le product_admin e nao sabe que a conta antiga e da
+  -- equipe Conduzza); o 42501 diria a ele que nao pode, e a tela pede outra
+  -- pessoa.
   if exists (select 1 from public.product_admin pa where pa.user_id = p_user_id) then
-    raise exception using errcode = '42501', message = c_frase_rt;
+    raise exception using errcode = 'P0001', message = 'responsavel_e_da_equipe_conduzza';
   end if;
   if not exists (
     select 1 from public.clinic_member m
@@ -1657,7 +1662,7 @@ grant execute on function public.definir_responsavel_tecnico(uuid, uuid, text, t
   to authenticated;
 
 comment on function public.definir_responsavel_tecnico(uuid, uuid, text, text, text, text) is
-  'Configuracoes (authenticated). AG7: define o RT da clinica (D-70): encerra a designacao aberta (ate, encerrado_por) e cria a nova (desde, definido_por = auth.uid()), na mesma transacao. As aprovacoes do anterior param de valer na hora (D-73). Na ordem: 22004 parametro_nulo; 22023 nome_invalido (preparo_nome_valido: 1 a 120, aparado, sem controle, sem invisivel e sem marca de direcao), conselho_invalido (CRM, CRO, CRBM, CRF, COREN, CREFITO, CRN, CRP, CRFa, CREF), numero_invalido (1 a 20 de letras, digitos, ponto, barra e hifen) e uf_invalida (as 27); 42501 "Só o administrador da clínica define o responsável técnico." (so o administrador pleno, sem a marca de Implementador, ou o super admin); 42501 com a mesma frase se a pessoa escolhida e super admin (product_admin; nem ele mesmo, nem com vinculo ativo: D-71, TELA-9); P0001 responsavel_nao_e_membro_ativo (a pessoa sem clinic_member ativo na clinica, de qualquer papel); a trava da linha aberta (FOR UPDATE); P0001 outra_definicao se a linha aberta nasceu depois do comeco desta transacao (outra definicao ganhou a corrida; BANCO-6); o 23505 vira P0001 outra_definicao. Trilha definiu_responsavel_tecnico {user_id}. Devolve o id da designacao nova. Nunca 40001 nem 40P01.';
+  'Configuracoes (authenticated). AG7: define o RT da clinica (D-70): encerra a designacao aberta (ate, encerrado_por) e cria a nova (desde, definido_por = auth.uid()), na mesma transacao. As aprovacoes do anterior param de valer na hora (D-73). Na ordem: 22004 parametro_nulo; 22023 nome_invalido (preparo_nome_valido: 1 a 120, aparado, sem controle, sem invisivel e sem marca de direcao), conselho_invalido (CRM, CRO, CRBM, CRF, COREN, CREFITO, CRN, CRP, CRFa, CREF), numero_invalido (1 a 20 de letras, digitos, ponto, barra e hifen) e uf_invalida (as 27); 42501 "Só o administrador da clínica define o responsável técnico." (so o administrador pleno, sem a marca de Implementador, ou o super admin); P0001 responsavel_e_da_equipe_conduzza se a pessoa escolhida e super admin (product_admin; nem ele mesmo, nem com vinculo ativo: D-71, TELA-9; o codigo proprio, e nao o 42501, porque quem chegou aqui pode definir o RT); P0001 responsavel_nao_e_membro_ativo (a pessoa sem clinic_member ativo na clinica, de qualquer papel); a trava da linha aberta (FOR UPDATE); P0001 outra_definicao se a linha aberta nasceu depois do comeco desta transacao (outra definicao ganhou a corrida; BANCO-6); o 23505 vira P0001 outra_definicao. Trilha definiu_responsavel_tecnico {user_id}. Devolve o id da designacao nova. Nunca 40001 nem 40P01.';
 
 -- Encerrar o RT da clinica (a clinica fica sem RT: nada sai).
 create function public.encerrar_responsavel_tecnico(p_clinic_id uuid)
