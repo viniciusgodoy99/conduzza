@@ -355,3 +355,103 @@ describe("carregarCatalogoDoAgente com o Cadastro da AG2", () => {
     ).toBe(false);
   });
 });
+
+// [AG7 preparo] início
+// AG7: o catalogo le o preparo em vigor (so ids, o hash, o nome do RT e a
+// data) e os textos de preparo da clinica (so no servidor), pela service
+// role e com o clinic_id explicito. As listas do banco recusam a clinica nula
+// com 22004 (parametro_nulo, divergencia 5 da frente B), e qualquer erro
+// derruba o catalogo inteiro: nunca uma lista vazia no lugar (falha fechada).
+describe("carregarCatalogoDoAgente com o preparo (AG7)", () => {
+  const SHA = "a".repeat(64);
+  const VERSAO = "e7e70000-0000-4000-8000-000000000001";
+  const linhaDoPreparo = (procedimento: string) => ({
+    procedure_id: procedimento,
+    versao_id: VERSAO,
+    versao: 2,
+    texto_sha256: SHA,
+    rt_nome: "Dra. Ana Souza",
+    aprovado_em: "2026-10-27T13:00:00+00:00",
+  });
+
+  it("os preparos em vigor so dos procedimentos ativos do catalogo, sem o texto; os textos ficam no servidor", async () => {
+    const banco = bancoDoCadastro();
+    banco.rpc("preparos_em_vigor_da_clinica", () => ({
+      data: [
+        linhaDoPreparo(PROC.consulta),
+        // Peeling: inativo (fica para a regua das consultas que existem).
+        linhaDoPreparo(PROC_AG2.peeling),
+      ],
+      error: null,
+    }));
+    banco.rpc("textos_de_preparo_da_clinica", () => ({
+      data: ["Venha em jejum de 8 horas.", "Texto antigo."],
+      error: null,
+    }));
+    const catalogo = await carregarCatalogoDoAgente(banco.cliente(), CLINICA);
+    expect([...(catalogo.preparosEmVigor?.keys() ?? [])]).toEqual([
+      PROC.consulta,
+    ]);
+    expect(catalogo.preparosEmVigor?.get(PROC.consulta)).toEqual({
+      versaoId: VERSAO,
+      versao: 2,
+      textoSha256: SHA,
+      rtNome: "Dra. Ana Souza",
+      aprovadoEm: "2026-10-27T13:00:00+00:00",
+    });
+    expect(catalogo.textosDePreparo).toEqual([
+      "Venha em jejum de 8 horas.",
+      "Texto antigo.",
+    ]);
+    // Nem o prep_instructions e lido.
+    for (const leitura of banco.leituras.filter(
+      (l) => l.tabela === "procedure",
+    )) {
+      expect(leitura.colunas).not.toContain("prep_instructions");
+    }
+  });
+
+  it.each(["preparos_em_vigor_da_clinica", "textos_de_preparo_da_clinica"])(
+    "%s com erro (o 22004 da clinica nula, ou qualquer outro): o catalogo inteiro cai, nunca uma lista vazia",
+    async (nome) => {
+      const banco = bancoDoCadastro();
+      banco.rpc(nome, () => ({ data: null, error: { code: "22004" } }));
+      await expect(
+        carregarCatalogoDoAgente(banco.cliente(), CLINICA),
+      ).rejects.toThrow("leitura do agente falhou");
+    },
+  );
+
+  it.each([
+    ["preparos_em_vigor_da_clinica", null],
+    ["preparos_em_vigor_da_clinica", { lista: [] }],
+    ["textos_de_preparo_da_clinica", null],
+    ["textos_de_preparo_da_clinica", ["texto", 3]],
+  ])("%s fora do formato (%j): o catalogo cai", async (nome, data) => {
+    const banco = bancoDoCadastro();
+    banco.rpc(nome, () => ({ data, error: null }));
+    await expect(
+      carregarCatalogoDoAgente(banco.cliente(), CLINICA),
+    ).rejects.toThrow("leitura do agente falhou");
+  });
+
+  it("a linha de preparo fora do formato fica de fora, e o log so com a contagem", async () => {
+    const banco = bancoDoCadastro();
+    banco.rpc("preparos_em_vigor_da_clinica", () => ({
+      data: [{ ...linhaDoPreparo(PROC.consulta), texto_sha256: "jejum" }],
+      error: null,
+    }));
+    const catalogo = await carregarCatalogoDoAgente(banco.cliente(), CLINICA);
+    expect(catalogo.preparosEmVigor?.size).toBe(0);
+    const aviso = saida.find((l) =>
+      l.includes('"evento":"agente_preparo_descartado"'),
+    );
+    expect(JSON.parse(aviso ?? "{}")).toMatchObject({
+      clinic_id: CLINICA,
+      count: 1,
+    });
+    expect(saida.join("")).not.toContain("jejum");
+  });
+});
+// [AG7 preparo] fim
+
