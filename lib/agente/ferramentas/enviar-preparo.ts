@@ -78,6 +78,8 @@ export const MOTIVOS_DO_ENVIO_DO_PREPARO = [
   "entrada_invalida",
   "procedimento_nao_encontrado",
   "vai_sozinha",
+  // Revisao da AG7 (CFM-7): a pessoa nao disse qual e o procedimento.
+  "procedimento_nao_confirmado",
 ] as const;
 export type MotivoDoEnvioDoPreparo =
   (typeof MOTIVOS_DO_ENVIO_DO_PREPARO)[number];
@@ -128,6 +130,20 @@ function dataNaClinica(instante: string, fuso: string): string | null {
   }
   return null;
 }
+
+/**
+ * Revisao da AG7 (CFM-7): o passo da trilha quando o procedimento que o
+ * modelo escolheu nao e o que a pessoa pediu (nem o da consulta dela): nada
+ * sai, e o modelo pergunta qual e.
+ */
+export const PASSO_DO_PROCEDIMENTO_NAO_CONFIRMADO =
+  "Pediu a orientação de preparo sem dizer de qual procedimento: perguntar antes de enviar.";
+
+/** A saida da ferramenta quando o procedimento nao foi confirmado. */
+export const SAIDA_DO_PROCEDIMENTO_NAO_CONFIRMADO = JSON.stringify({
+  ok: false,
+  motivo: "procedimento_nao_confirmado",
+});
 
 function resultado(
   motivo: MotivoDoEnvioDoPreparo,
@@ -212,6 +228,115 @@ export function decidirEnvioDoPreparo(
       contexto.fuso ?? FUSO_PADRAO,
     ),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Revisao da AG7 (CFM-7): o procedimento que a pessoa pediu
+// ---------------------------------------------------------------------------
+
+// As palavras que nao identificam um procedimento.
+const PALAVRAS_VAZIAS: ReadonlySet<string> = new Set([
+  "com",
+  "sem",
+  "para",
+  "pra",
+  "pro",
+  "por",
+  "das",
+  "dos",
+  "nos",
+  "nas",
+  "uma",
+  "uns",
+  "umas",
+  "the",
+]);
+
+/** Minusculas, sem acento, so letras e numeros, as palavras do texto. */
+function palavrasDe(texto: string): string[] {
+  return texto
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((palavra) => palavra !== "");
+}
+
+/** As palavras do nome que identificam o procedimento (3 letras ou mais). */
+function palavrasDoNome(nome: string): string[] {
+  return [
+    ...new Set(
+      palavrasDe(nome).filter(
+        (palavra) => palavra.length >= 3 && !PALAVRAS_VAZIAS.has(palavra),
+      ),
+    ),
+  ];
+}
+
+/**
+ * A palavra do nome aparece no texto da pessoa? Igual, ou o comeco de uma
+ * com o outro, com 5 letras ou mais ("colono" e "colonoscopias" valem
+ * "colonoscopia").
+ */
+function citada(palavra: string, doTexto: ReadonlySet<string>): boolean {
+  for (const dita of doTexto) {
+    if (
+      dita === palavra ||
+      (dita.length >= 5 && palavra.startsWith(dita)) ||
+      (palavra.length >= 5 && dita.startsWith(palavra))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Revisao da AG7 (CFM-7): o que os textos da pessoa dizem do procedimento
+ * escolhido pelo modelo. Cada procedimento do catalogo (do indice e so com a
+ * equipe) tem a nota: quantas palavras do nome a pessoa disse e a fracao do
+ * nome.
+ *  - "nenhum": a pessoa nao citou procedimento nenhum ("me manda o
+ *    preparo");
+ *  - "confirmado": o escolhido tem a maior nota, SOZINHO;
+ *  - "outro": a pessoa citou, mas o escolhido nao e o unico melhor (outro
+ *    procedimento, ou o empate de "ultrassom de abdome" entre "Ultrassom de
+ *    abdome total" e "Ultrassom de abdome superior").
+ * PURA.
+ */
+export function citacaoDoProcedimento(
+  catalogo: Pick<
+    CatalogoDoAgente,
+    "procedimentos" | "procedimentosSoComAEquipe"
+  >,
+  procedimentoId: string,
+  textos: readonly string[],
+): "nenhum" | "confirmado" | "outro" {
+  const doTexto = new Set(textos.flatMap(palavrasDe));
+  const nota = (nome: string): [number, number] => {
+    const palavras = palavrasDoNome(nome);
+    const ditas = palavras.filter((p) => citada(p, doTexto)).length;
+    return [ditas, palavras.length === 0 ? 0 : ditas / palavras.length];
+  };
+  const notas = [
+    ...catalogo.procedimentos,
+    ...(catalogo.procedimentosSoComAEquipe ?? []),
+  ].map((p) => ({ id: p.id, nota: nota(p.nome) }));
+  if (notas.every(({ nota: [ditas] }) => ditas === 0)) {
+    return "nenhum";
+  }
+  const escolhido = notas.find((n) => n.id === procedimentoId);
+  if (escolhido === undefined || escolhido.nota[0] === 0) {
+    return "outro";
+  }
+  const [ditas, fracao] = escolhido.nota;
+  const unico = notas.every(
+    ({ id, nota: [ditasDoOutro, fracaoDoOutro] }) =>
+      id === procedimentoId ||
+      ditasDoOutro < ditas ||
+      (ditasDoOutro === ditas && fracaoDoOutro < fracao),
+  );
+  return unico ? "confirmado" : "outro";
 }
 
 // ---------------------------------------------------------------------------

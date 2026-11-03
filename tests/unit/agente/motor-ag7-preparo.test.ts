@@ -15,10 +15,12 @@ import type {
   PreparoEmVigor,
 } from "@/lib/agente/ferramentas/buscar-procedimento";
 import {
+  citacaoDoProcedimento,
   decidirEnvioDoPreparo,
   FERRAMENTA_ENVIAR_PREPARO,
   NOME_DO_ENVIO_DO_PREPARO,
   PASSO_DO_PREPARO_FORA_DE_VIGOR,
+  PASSO_DO_PROCEDIMENTO_NAO_CONFIRMADO,
   preparosEmVigorDaLeitura,
   textosDePreparoDaLeitura,
 } from "@/lib/agente/ferramentas/enviar-preparo";
@@ -544,9 +546,17 @@ describe("a leitura do catalogo", () => {
 
 describe("o turno com enviar_preparo", () => {
   it("com texto em vigor: o turno termina com o preparo, sem filtro, sem verificador e sem texto do modelo", async () => {
-    const { r, create, corpos } = await turno([
-      ferramenta("enviar_preparo", { procedimento: P_EXAME }),
-    ]);
+    // Revisao da AG7 (CFM-7): o pedido sem o nome ("exame" e gatilho do
+    // portao) vale pelo procedimento da marcacao da conversa (o estado).
+    const { r, create, corpos } = await turno(
+      [ferramenta("enviar_preparo", { procedimento: P_EXAME })],
+      {
+        atendimento: {
+          estado: { ...estadoVazio(), procedure_id: PROC.exame },
+          dados: dadosVazios(),
+        },
+      },
+    );
     expect(r.tipo).toBe("preparo");
     expect(r.desfecho).toEqual({
       tipo: "enviou_preparo",
@@ -706,6 +716,163 @@ describe("revisao da AG7 (CFM-6): o pedido do preparo junto de uma situacao da p
   });
 });
 
+describe("revisao da AG7 (CFM-7): o procedimento escolhido tem de ser o que a pessoa pediu", () => {
+  const PROC_DOS_TESTES = [
+    { codigo: "p1", id: "a1", nome: "Ultrassom de abdome total" },
+    { codigo: "p2", id: "a2", nome: "Ultrassom de abdome superior" },
+    { codigo: "p3", id: "a3", nome: "Colonoscopia" },
+    { codigo: "p4", id: "a4", nome: "Consulta" },
+  ];
+  const catalogo = { procedimentos: PROC_DOS_TESTES };
+
+  it("citacaoDoProcedimento: o nome inteiro, o comeco da palavra, o empate e o outro", () => {
+    expect(
+      citacaoDoProcedimento(catalogo, "a3", [
+        "qual o preparo da colonoscopia?",
+      ]),
+    ).toBe("confirmado");
+    expect(citacaoDoProcedimento(catalogo, "a3", ["preparo da colono"])).toBe(
+      "confirmado",
+    );
+    expect(
+      citacaoDoProcedimento(catalogo, "a1", [
+        "qual o preparo do ultrassom de abdome total?",
+      ]),
+    ).toBe("confirmado");
+    // O empate: o modelo nao escolhe por conta propria.
+    for (const id of ["a1", "a2"]) {
+      expect(
+        citacaoDoProcedimento(catalogo, id, [
+          "qual o preparo do ultrassom de abdome?",
+        ]),
+      ).toBe("outro");
+    }
+    // A pessoa citou outro.
+    expect(
+      citacaoDoProcedimento(catalogo, "a4", [
+        "qual o preparo da colonoscopia?",
+      ]),
+    ).toBe("outro");
+    // Nada citado.
+    expect(
+      citacaoDoProcedimento(catalogo, "a3", ["me manda o preparo, por favor"]),
+    ).toBe("nenhum");
+    expect(citacaoDoProcedimento(catalogo, "a3", [])).toBe("nenhum");
+  });
+
+  const comPendente = (texto: string) => ({
+    mensagens: [
+      paciente("Oi"),
+      {
+        autor: "assistente" as const,
+        autoria: "ia" as const,
+        texto: "Olá! Como posso ajudar?",
+      },
+      paciente(texto),
+    ],
+  });
+
+  it("sem o nome, sem a marcacao e sem consulta: nada sai, e o modelo pergunta", async () => {
+    const { r, corpos } = await turno(
+      [
+        ferramenta("enviar_preparo", { procedimento: P_CONSULTA }),
+        final("Para qual procedimento você quer a orientação de preparo?"),
+      ],
+      comPendente("Me manda a orientação de preparo, por favor"),
+    );
+    expect(saidas(corpos[1])).toEqual([
+      { ok: false, motivo: "procedimento_nao_confirmado" },
+    ]);
+    expect(r.tipo).toBe("resposta");
+    expect(r.trilha.map((p) => p.texto)).toContain(
+      PASSO_DO_PROCEDIMENTO_NAO_CONFIRMADO,
+    );
+    // A trilha nao diz que escolheu uma versao.
+    expect(r.trilha.map((p) => p.texto).join(" ")).not.toContain("versão");
+  });
+
+  it("a pessoa citou outro procedimento: nada sai", async () => {
+    const { r, corpos } = await turno(
+      [
+        ferramenta("enviar_preparo", { procedimento: P_CONSULTA }),
+        final("De qual procedimento você quer a orientação de preparo?"),
+      ],
+      comPendente("qual o preparo do botox?"),
+    );
+    expect(saidas(corpos[1])).toEqual([
+      { ok: false, motivo: "procedimento_nao_confirmado" },
+    ]);
+    expect(r.tipo).toBe("resposta");
+  });
+
+  it("o nome dito antes, na conversa: vale (a pendente nao cita nenhum)", async () => {
+    const { r } = await turno(
+      [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
+      {
+        mensagens: [
+          paciente("Quero marcar uma consulta"),
+          {
+            autor: "assistente",
+            autoria: "ia",
+            texto: "Claro! Tenho horário amanhã às 10h. Pode ser?",
+          },
+          paciente("Antes, me manda o preparo, por favor"),
+        ],
+      },
+    );
+    expect(r.tipo).toBe("preparo");
+  });
+
+  it("a consulta da pessoa: o unico procedimento com orientacao em vigor entre as consultas futuras dela vale; dois, nao", async () => {
+    const vinculoDe = (id: string) => {
+      const achado = CATALOGO.vinculos.find((v) => v.procedimentoId === id);
+      if (!achado?.id) {
+        throw new Error("sem vinculo");
+      }
+      return achado.id;
+    };
+    const consulta = (serviceLinkId: string) => ({
+      id: randomUUID(),
+      inicio: "2026-10-28T13:00:00.000Z",
+      fim: "2026-10-28T13:30:00.000Z",
+      status: "agendado",
+      aprovacao: null,
+      encaixe: false,
+      serviceLinkId,
+      profissionalId: randomUUID(),
+      unidadeId: null,
+      remarcacaoDe: null,
+      temRemarcacaoPendente: false,
+    });
+    const comConsultas = (servicos: string[]) => ({
+      ...comPendente("Me manda a orientação de preparo, por favor"),
+      agenda: {
+        ...portaDaAgendaDoSimulador(banco.cliente(), {
+          clinicId: CLINICA,
+          agora: () => AGORA,
+        }),
+        lerConsultasDoContato: async () => ({
+          consultas: servicos.map(consulta),
+          haMais: false,
+        }),
+      },
+    });
+    const uma = await turno(
+      [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
+      comConsultas([vinculoDe(PROC.consulta)]),
+    );
+    expect(uma.r.tipo).toBe("preparo");
+    const duas = await turno(
+      [
+        ferramenta("enviar_preparo", { procedimento: P_CONSULTA }),
+        final("Para qual procedimento você quer a orientação de preparo?"),
+      ],
+      comConsultas([vinculoDe(PROC.consulta), vinculoDe(PROC.exame)]),
+    );
+    expect(duas.r.tipo).toBe("resposta");
+  });
+});
+
 describe("enviar_preparo so vale sozinha no turno", () => {
   it("com outra chamada na mesma rodada: vai_sozinha, e a outra roda", async () => {
     const { r, corpos } = await turno([
@@ -773,10 +940,23 @@ describe("enviar_preparo so vale sozinha no turno", () => {
   });
 
   it("a chamada de novo, depois de um pedido incompleto, ainda vale (nada rodou)", async () => {
-    const { r, corpos } = await turno([
-      ferramenta("enviar_preparo", { procedimento: "" }),
-      ferramenta("enviar_preparo", { procedimento: P_EXAME }),
-    ]);
+    const { r, corpos } = await turno(
+      [
+        ferramenta("enviar_preparo", { procedimento: "" }),
+        ferramenta("enviar_preparo", { procedimento: P_CONSULTA }),
+      ],
+      {
+        mensagens: [
+          paciente("Oi"),
+          {
+            autor: "assistente",
+            autoria: "ia",
+            texto: "Olá! Como posso ajudar?",
+          },
+          paciente("Me manda a orientação de preparo da consulta, por favor"),
+        ],
+      },
+    );
     expect(saidas(corpos[1])).toEqual([
       { ok: false, motivo: "entrada_invalida" },
     ]);
@@ -1473,7 +1653,7 @@ describe("o simulador com o preparo", () => {
       [
         {
           autor: "paciente",
-          texto: "Me manda a orientação de preparo, por favor",
+          texto: "Me manda a orientação de preparo da consulta, por favor",
         },
       ],
       [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
@@ -1503,7 +1683,12 @@ describe("o simulador com o preparo", () => {
     );
     const { r } = await simular(
       b,
-      [{ autor: "paciente", texto: "Me manda a orientação de preparo" }],
+      [
+        {
+          autor: "paciente",
+          texto: "Me manda a orientação de preparo da consulta",
+        },
+      ],
       [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
     );
     expect(r.ok).toBe(true);
@@ -1532,7 +1717,7 @@ describe("o simulador com o preparo", () => {
       [
         {
           autor: "paciente",
-          texto: "Me manda a orientação de preparo, por favor",
+          texto: "Me manda a orientação de preparo da consulta, por favor",
         },
       ],
       [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],

@@ -190,8 +190,11 @@ import {
 } from "@/lib/domain/preparo";
 import { versaoDaPoliticaDoClassificador } from "@/lib/integrations/llm/classificador-de-entrada";
 import {
+  citacaoDoProcedimento,
   decidirEnvioDoPreparo,
   NOME_DO_ENVIO_DO_PREPARO,
+  PASSO_DO_PROCEDIMENTO_NAO_CONFIRMADO,
+  SAIDA_DO_PROCEDIMENTO_NAO_CONFIRMADO,
 } from "./ferramentas/enviar-preparo";
 // [AG7 preparo] fim
 import {
@@ -1434,11 +1437,12 @@ export function entradaDoPortao(m: MensagemDaConversa): MensagemDeEntrada {
 
 // [AG7 preparo] início
 /**
- * Revisao da AG7 (CFM-6): os textos das pendentes como chegaram (o texto
- * original, a transcricao, a legenda), para a conferencia da situacao da
- * pessoa no pedido do preparo. Local: nunca vai a OpenAI nem para log.
+ * Revisao da AG7 (CFM-6 e CFM-7): os textos das mensagens da pessoa como
+ * chegaram (o texto original, a transcricao, a legenda), para a conferencia
+ * da situacao da pessoa e do procedimento pedido no envio do preparo. Local:
+ * nunca vai a OpenAI nem para log.
  */
-function textosOriginaisDasPendentes(
+function textosOriginaisDoPaciente(
   pendentes: readonly MensagemDaConversa[],
 ): string[] {
   return pendentes.flatMap((m) => {
@@ -2925,6 +2929,62 @@ async function turnoDoAgente(
       versaoId: string;
       versao: number;
     } | null = null;
+    /**
+     * Revisao da AG7 (CFM-7): o procedimento escolhido pelo modelo e o que a
+     * pessoa pediu? Na ordem: o que as pendentes citam (decide quando citam
+     * algum); senao, o que as mensagens da pessoa na conversa citam; senao,
+     * o procedimento da marcacao da conversa (o estado); senao, o unico com
+     * orientacao em vigor entre as consultas futuras dela. Nunca lanca: a
+     * leitura que falha nao confirma (o modelo pergunta).
+     */
+    const procedimentoConfirmado = async (
+      procedimentoId: string,
+    ): Promise<boolean> => {
+      for (const textos of [
+        textosOriginaisDoPaciente(pendentesDoTurno()),
+        textosOriginaisDoPaciente(
+          mensagensDoTurno.filter((m) => m.autor === "paciente"),
+        ),
+      ]) {
+        const citado = citacaoDoProcedimento(
+          entrada.catalogo,
+          procedimentoId,
+          textos,
+        );
+        if (citado !== "nenhum") {
+          return citado === "confirmado";
+        }
+      }
+      if (entrada.atendimento?.estado.procedure_id === procedimentoId) {
+        return true;
+      }
+      const lerConsultas = entrada.agenda?.lerConsultasDoContato;
+      if (lerConsultas === undefined) {
+        return false;
+      }
+      try {
+        const { consultas } = await lerConsultas();
+        const vinculos = [
+          ...entrada.catalogo.vinculos,
+          ...(entrada.catalogo.vinculosDaEquipe ?? []),
+        ];
+        const comPreparo = new Set(
+          consultas.flatMap((consulta) => {
+            const vinculo = vinculos.find(
+              (v) => v.id === consulta.serviceLinkId,
+            );
+            return vinculo !== undefined &&
+              entrada.catalogo.preparosEmVigor?.has(vinculo.procedimentoId) ===
+                true
+              ? [vinculo.procedimentoId]
+              : [];
+          }),
+        );
+        return comPreparo.size === 1 && comPreparo.has(procedimentoId);
+      } catch {
+        return false;
+      }
+    };
     // [AG7 preparo] fim
 
     rodadas: for (let rodada = 1; rodada <= maximoDeRodadas; rodada += 1) {
@@ -3131,30 +3191,45 @@ async function turnoDoAgente(
             },
           );
           ferramentasUsadas.push(NOME_DO_ENVIO_DO_PREPARO);
-          trilha.push({ tipo: "cadastro", texto: envio.passo });
-          // Revisao da AG7 (CFM-6): o pedido que vem junto de uma situacao
-          // da pessoa (sintoma, doenca, remedio, o que comeu, outra pessoa,
-          // a idade) passa para a equipe antes do envio. Deterministico, nas
-          // pendentes como chegaram (o portao de entrada nao muda, D-81).
-          if (
-            envio.tipo === "enviar" &&
-            situacaoPessoalNoPedidoDoPreparo(
-              textosOriginaisDasPendentes(pendentesDoTurno()),
-              nomesDoCatalogo(entrada.catalogo),
-            )
-          ) {
-            trilha.push({
-              tipo: "cadastro",
-              texto: PASSO_DO_PEDIDO_COM_SITUACAO_PESSOAL,
-            });
-            return escalar(
-              "assunto_clinico",
-              "ferramenta",
-              null,
-              ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.assunto_clinico,
-            );
-          }
           if (envio.tipo === "enviar") {
+            // Revisao da AG7 (CFM-6): o pedido que vem junto de uma
+            // situacao da pessoa (sintoma, doenca, remedio, o que comeu,
+            // outra pessoa, a idade) passa para a equipe antes do envio.
+            // Deterministico, nas pendentes como chegaram (o portao de
+            // entrada nao muda, D-81).
+            if (
+              situacaoPessoalNoPedidoDoPreparo(
+                textosOriginaisDoPaciente(pendentesDoTurno()),
+                nomesDoCatalogo(entrada.catalogo),
+              )
+            ) {
+              trilha.push({
+                tipo: "cadastro",
+                texto: PASSO_DO_PEDIDO_COM_SITUACAO_PESSOAL,
+              });
+              return escalar(
+                "assunto_clinico",
+                "ferramenta",
+                null,
+                ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.assunto_clinico,
+              );
+            }
+            // Revisao da AG7 (CFM-7): o procedimento escolhido tem de ser o
+            // que a pessoa pediu, o da marcacao da conversa ou o da
+            // consulta dela; senao, nada sai e o modelo pergunta qual e.
+            if (!(await procedimentoConfirmado(envio.procedimentoId))) {
+              trilha.push({
+                tipo: "cadastro",
+                texto: PASSO_DO_PROCEDIMENTO_NAO_CONFIRMADO,
+              });
+              historico.push({
+                type: "function_call_output",
+                call_id: chamada.call_id,
+                output: SAIDA_DO_PROCEDIMENTO_NAO_CONFIRMADO,
+              });
+              continue;
+            }
+            trilha.push({ tipo: "cadastro", texto: envio.passo });
             preparoEscolhido = {
               procedimentoId: envio.procedimentoId,
               versaoId: envio.versaoId,
@@ -3162,6 +3237,7 @@ async function turnoDoAgente(
             };
             break rodadas;
           }
+          trilha.push({ tipo: "cadastro", texto: envio.passo });
           if (envio.tipo === "passar") {
             return escalar(
               envio.motivo,
