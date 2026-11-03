@@ -12,6 +12,7 @@ import {
   ClockPlus,
   Hourglass,
   LifeBuoy,
+  ShieldBan,
   OctagonAlert,
   ScanText,
   SendHorizonal,
@@ -216,6 +217,16 @@ describe("mapas novos de estado", () => {
       tone: "neutral",
       icon: CircleDashed,
     });
+    // Revisao curta da AG7 (CURTA-5): o texto aprovado que as regras de hoje
+    // nao deixam sair, com o icone do bloqueio de conformidade, em alerta.
+    expect(m.aprovada_sem_envio).toMatchObject({
+      label: "Aprovada, sem envio",
+      tone: "alert",
+      icon: ShieldBan,
+    });
+    for (const definicao of TODOS.filter((d) => d.icon === ShieldBan)) {
+      expect(definicao.tone).toBe("alert");
+    }
     // Os donos travados por teste nunca entram (contrato 3.3, STATUS).
     const icones = Object.values(m).map((d) => d.icon);
     for (const proibido of [

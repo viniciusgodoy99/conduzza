@@ -1073,6 +1073,14 @@ export type SituacaoDoPreparoNaTela =
   | "suspenso"
   | "sem_orientacao";
 
+/**
+ * O chip da secao: as situacoes do banco e, revisao curta da AG7 (CURTA-5),
+ * "aprovada_sem_envio", a versao aprovada cujo texto as regras de hoje
+ * recusam (o servidor confere; o envio nao a deixa sair).
+ */
+export type SituacaoDoChipDoPreparo =
+  SituacaoDoPreparoNaTela | "aprovada_sem_envio";
+
 /** As situacoes de quem ja foi aprovado um dia (a linha do envio). */
 const JA_APROVADAS: ReadonlySet<SituacaoDoPreparo> = new Set([
   "aprovado",

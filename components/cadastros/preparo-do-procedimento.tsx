@@ -1,6 +1,6 @@
 "use client";
 
-import { CircleAlert, History, PenLine } from "lucide-react";
+import { CircleAlert, History, PenLine, ShieldBan } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
@@ -54,7 +54,7 @@ import { PREPARO_DO_PROCEDIMENTO_STATUS } from "@/lib/design/status";
 import {
   codigoDoTexto,
   LIMITE_DO_TEXTO_DO_PREPARO,
-  type SituacaoDoPreparoNaTela,
+  type SituacaoDoChipDoPreparo,
 } from "@/lib/domain/preparo";
 import {
   situacaoDoProcedimento,
@@ -114,6 +114,13 @@ export type PreparoDaAba = {
   podeDefinirRt: boolean;
   /** Le de novo as versoes e o RT (depois de cada acao). */
   recarregar: () => void;
+  /**
+   * Revisao curta da AG7 (CURTA-5): as versoes aprovadas e suspensas cujo
+   * texto as regras de hoje recusam (o id da versao para a frase da
+   * recusa), conferidas no servidor (recusasDosPreparosAction). Ausente
+   * (carregando ou erro da conferencia): nada a mostrar.
+   */
+  recusas?: Readonly<Record<string, string>>;
 };
 
 const HREF_DA_EQUIPE = "/configuracoes?aba=equipe";
@@ -263,7 +270,7 @@ export function ConfirmarDescarteDoRascunho({
 export function ChipDoPreparo({
   situacao,
 }: {
-  situacao: SituacaoDoPreparoNaTela;
+  situacao: SituacaoDoChipDoPreparo;
 }) {
   return (
     <StatusChip
@@ -833,6 +840,15 @@ export function SecaoDoPreparo({
   // O ultimo texto aprovado (em vigor, parado ou suspenso): a diferenca do
   // dialogo do RT compara com ele, e sem o texto dele lido o dialogo nao abre.
   const ultimoAprovado = aprovada ?? suspensa;
+  // Revisao curta (CURTA-5): o texto aprovado (ou suspenso) que as regras de
+  // hoje recusam nao sai, nem aprovado de novo: o chip diz "Aprovada, sem
+  // envio", o bloco diz o motivo e o que fazer (escrever de novo e pedir
+  // nova aprovacao), e o "Aprovar de novo" fica travado com a dica.
+  const recusaDe = (versao: VersaoDoPreparo | null): string | null =>
+    versao === null ? null : (preparo.recusas?.[versao.id] ?? null);
+  const recusaDaAprovada = recusaDe(aprovada);
+  const situacaoNoChip: SituacaoDoChipDoPreparo =
+    recusaDaAprovada !== null ? "aprovada_sem_envio" : situacao;
 
   // O editor parte do texto mais util: o que espera o RT, o que ele devolveu
   // (para corrigir o que o comentario pede), o aprovado ou o suspenso. Ele
@@ -1018,7 +1034,17 @@ export function SecaoDoPreparo({
   const blocoDaAprovada = (versao: VersaoDoPreparo, titulo: string) => (
     <div className="grid gap-2" data-parte="bloco-em-vigor">
       <h4 className="text-[13px] font-semibold text-text-strong">{titulo}</h4>
-      {motivo && versao === aprovada ? (
+      {recusaDe(versao) !== null ? (
+        <p
+          data-parte="recusa-das-regras"
+          className="flex items-start gap-1.5 text-[13px] text-alert-text"
+        >
+          <ShieldBan aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+          <span>
+            {T.recusadaPelasRegras} {recusaDe(versao)} {T.escrevaDeNovo}
+          </span>
+        </p>
+      ) : motivo && versao === aprovada ? (
         <p className="text-[13px] text-text-secondary">{motivo}</p>
       ) : null}
       {versao === suspensa && versao.encerradoEm ? (
@@ -1046,8 +1072,10 @@ export function SecaoDoPreparo({
         ) : null}
         {baseDoAprovarDeNovo !== null && versao === baseDoAprovarDeNovo ? (
           <BotaoProtegido
-            podeEditar={podeAprovar}
-            dica={dicaDeAprovar}
+            podeEditar={podeAprovar && recusaDe(versao) === null}
+            dica={
+              recusaDe(versao) === null ? dicaDeAprovar : T.dicaDoTextoRecusado
+            }
             variant="default"
             onClick={() =>
               abrirAprovacao("aprovar_de_novo", baseDoAprovarDeNovo)
@@ -1155,7 +1183,9 @@ export function SecaoDoPreparo({
       {aprovada
         ? blocoDaAprovada(
             aprovada,
-            situacao === "aprovada" ? T.emVigor : T.aprovadaParada,
+            situacao === "aprovada" && recusaDaAprovada === null
+              ? T.emVigor
+              : T.aprovadaParada,
           )
         : null}
       {suspensa ? blocoDaAprovada(suspensa, T.suspensa) : null}
@@ -1282,6 +1312,6 @@ export function SecaoDoPreparo({
         </DialogContent>
       </Dialog>
     </>,
-    <ChipDoPreparo situacao={situacao} />,
+    <ChipDoPreparo situacao={situacaoNoChip} />,
   );
 }

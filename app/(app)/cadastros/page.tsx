@@ -23,6 +23,9 @@ import { createClient } from "@/lib/supabase/server";
 
 import { redirecionamentoDeAbaQueSaiu } from "./abas";
 import { CadastrosClient } from "./cadastros-client";
+// [AG7 preparo] Revisao curta (CURTA-5): o texto aprovado que as regras de
+// hoje recusam.
+import { recusasDasVersoesAprovadas } from "./recusas-do-preparo";
 
 // Tela 8, Cadastros (tarefa 2.2): as cinco abas do catalogo clinico (lista
 // e motivo em ./abas). Escrita so de administrador e gestor; recepcao e
@@ -80,6 +83,13 @@ export default async function CadastrosPage({
   // Implementador nao) e a equipe Conduzza, como a RPC.
   const podeDefinirRt =
     ehAdminPleno(active.role, active.implementador) || context.isProductAdmin;
+  // Revisao curta (CURTA-5): as versoes aprovadas e suspensas lidas com o
+  // texto (as que a secao mostra) que as regras de hoje recusam. A secao
+  // mostra "Aprovada, sem envio" com o motivo; sem a leitura, o navegador
+  // confere (recusasDosPreparosAction).
+  const recusasDoPreparo = preparo
+    ? recusasDasVersoesAprovadas(preparo.versoes)
+    : null;
   // [AG7 preparo] fim
 
   return (
@@ -103,6 +113,7 @@ export default async function CadastrosPage({
         timezone={active.timezone}
         // [AG7 preparo] início
         preparoInicial={preparo}
+        recusasIniciais={recusasDoPreparo}
         superAdmin={context.isProductAdmin}
         podeDefinirRt={podeDefinirRt}
         // [AG7 preparo] fim

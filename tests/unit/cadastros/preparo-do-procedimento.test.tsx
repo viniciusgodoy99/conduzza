@@ -237,13 +237,15 @@ function semEntidades(html: string): string {
     .replace(/&amp;/g, "&");
 }
 
-describe("os cinco chips nas 3 camadas", () => {
+describe("os seis chips nas 3 camadas", () => {
   it.each([
     ["aprovada", "Aprovada pelo RT", "success"],
     ["aguardando", "Aguardando o RT", "warning"],
     ["precisa_de_nova_aprovacao", "Precisa de nova aprovação", "warning"],
     ["suspenso", "Envio suspenso", "neutral"],
     ["sem_orientacao", "Sem orientação", "neutral"],
+    // Revisao curta da AG7 (CURTA-5).
+    ["aprovada_sem_envio", "Aprovada, sem envio", "alert"],
   ] as const)("%s: ícone, rótulo e cor", (situacao, rotulo, tom) => {
     const html = renderToStaticMarkup(<ChipDoPreparo situacao={situacao} />);
     expect(html).toContain("<svg");
@@ -1463,6 +1465,106 @@ describe("texto de interface", () => {
     expect(botoes.length).toBeGreaterThan(3);
     for (const b of botoes) {
       expect(b).toMatch(/h-10|hit-40|size-10/);
+    }
+  });
+});
+
+// Revisao curta da AG7 (CURTA-5): o texto aprovado que as regras de hoje
+// recusam (conferido no servidor, recusasDosPreparosAction) nao sai, e a
+// secao dizia "Aprovada". Agora: o chip "Aprovada, sem envio" nas 3 camadas,
+// o bloco com o motivo e o que fazer, e o "Aprovar de novo" travado com a
+// dica.
+describe("revisao curta da AG7 (CURTA-5): aprovada, sem envio", () => {
+  const FRASE =
+    "No trecho “Resultado garantido”, tire a promessa de resultado.";
+
+  function comRecusa(
+    lidos: PreparosDaClinica,
+    recusas: Record<string, string>,
+    souRt = false,
+  ) {
+    return semEntidades(
+      renderToStaticMarkup(
+        <SecaoDoPreparo
+          procedimento={COLONOSCOPIA}
+          preparo={preparo(
+            { tipo: "pronto", dados: { ...lidos, souRt } },
+            { recusas },
+          )}
+          podeEditarCadastros={false}
+          timezone={FUSO}
+        />,
+      ),
+    );
+  }
+
+  it("em vigor no banco e recusado hoje: o chip, o titulo, o motivo e o que fazer", () => {
+    const html = comRecusa(dados(), { v1: FRASE });
+    expect(html).toContain("Aprovada, sem envio");
+    expect(html).toContain(`var(--alert-text)`);
+    expect(html).not.toContain("Aprovada pelo RT");
+    expect(html).not.toContain(T.emVigor);
+    expect(html).toContain(T.aprovadaParada);
+    expect(html).toContain('data-parte="recusa-das-regras"');
+    expect(html).toContain(
+      `${T.recusadaPelasRegras} ${FRASE} ${T.escrevaDeNovo}`,
+    );
+    // O texto continua na tela, e escrever um novo continua a mao.
+    expect(html).toContain("Tome 2 comprimidos de bisacodil às 18h");
+    expect(botao(html, T.escreverNovo)).not.toBeNull();
+    expect(html).not.toContain(TRAVESSAO);
+  });
+
+  it("a aprovacao parou de valer e o texto e recusado: o Aprovar de novo do RT fica travado com a dica", () => {
+    const lidos = dados({
+      versoes: [versao({ rtId: "rt-antigo" })],
+      responsaveis: [RT_ANTIGO, RT_ANA],
+    });
+    const semRecusa = comRecusa(lidos, {}, true);
+    expect(botao(semRecusa, T.aprovarDeNovo)).toEqual({ dica: null });
+    const html = comRecusa(lidos, { v1: FRASE }, true);
+    expect(html).toContain("Aprovada, sem envio");
+    expect(botao(html, T.aprovarDeNovo)).toEqual({
+      dica: T.dicaDoTextoRecusado,
+    });
+    // O motivo da troca do RT da lugar a recusa (aprovar de novo nao resolve).
+    expect(html).not.toContain(T.rtMudou);
+  });
+
+  it("o suspenso recusado: o chip continua Envio suspenso, e o Aprovar de novo fica travado", () => {
+    const suspensa = versao({
+      situacao: "suspenso",
+      encerradoEm: "2026-10-29T12:00:00Z",
+      encerradoPor: "user-gestor",
+    });
+    const html = comRecusa(dados({ versoes: [suspensa] }), { v1: FRASE }, true);
+    expect(html).toContain("Envio suspenso");
+    expect(html).not.toContain("Aprovada, sem envio");
+    expect(html).toContain('data-parte="recusa-das-regras"');
+    expect(botao(html, T.aprovarDeNovo)).toEqual({
+      dica: T.dicaDoTextoRecusado,
+    });
+  });
+
+  it("sem a conferencia (carregando ou erro) ou sem recusa: como antes", () => {
+    for (const html of [
+      semEntidades(secao()),
+      comRecusa(dados(), {}),
+      comRecusa(dados(), { "outra-versao": FRASE }),
+    ]) {
+      expect(html).toContain("Aprovada pelo RT");
+      expect(html).toContain(T.emVigor);
+      expect(html).not.toContain('data-parte="recusa-das-regras"');
+    }
+  });
+
+  it("os textos novos sem travessao", () => {
+    for (const texto of [
+      T.recusadaPelasRegras,
+      T.escrevaDeNovo,
+      T.dicaDoTextoRecusado,
+    ]) {
+      expect(texto).not.toContain(TRAVESSAO);
     }
   });
 });

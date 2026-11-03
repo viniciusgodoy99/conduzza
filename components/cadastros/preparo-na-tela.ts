@@ -73,6 +73,14 @@ export const TEXTOS_DO_PREPARO = {
   /** O texto antigo copiado pela migration (D-83), que ninguem escreveu agora. */
   aguardandoTextoAntigo: "Texto do cadastro aguardando o RT",
   aprovadaParada: "Aprovada, sem envio",
+  // Revisao curta (CURTA-5): o texto aprovado que as regras de hoje nao
+  // deixam sair. O que fazer: escrever de novo e pedir nova aprovacao.
+  recusadaPelasRegras:
+    "As regras de hoje não deixam este texto sair, e ele não está sendo enviado.",
+  escrevaDeNovo:
+    "Escreva um texto novo, sem isso, para o responsável técnico aprovar.",
+  dicaDoTextoRecusado:
+    "As regras de hoje não deixam este texto sair. Escreva um texto novo para o responsável técnico aprovar.",
   suspensa: "Envio suspenso",
   enquantoComVigor:
     "Enquanto o RT não aprova, o texto em vigor continua sendo enviado.",
