@@ -24,6 +24,9 @@ import { BancoFalso } from "../whatsapp/banco-falso";
 //     codigo das RPCs;
 //   - a pagina: o RT lido junto do lote, o selo so no RT, as pessoas ativas
 //     para o formulario e a leitura tolerante;
+//   - a equipe Conduzza nunca se define RT (revisao das telas, TELA-9): a
+//     conta dela desabilitada no formulario, com a frase, e a action recusa;
+//   - a falha do Encerrar diz "encerrar", nao "salvar" (TELA-12);
 //   - nenhum travessao (nem meia-risca) nos textos.
 // Renderizacao estatica: o Dialog do Radix vira marcacao que so aparece
 // aberta, e a dica de permissao vira um atributo conferivel. Banco, sessao e
@@ -128,6 +131,9 @@ const CAIO = "c0000000-0000-4000-8000-00000000000c";
 const FRASE_DO_RT =
   "Só o administrador da clínica define o responsável técnico.";
 const NAO_SALVOU = "Não foi possível salvar agora. Tente de novo.";
+const NAO_ENCERROU = "Não foi possível encerrar agora. Tente de novo.";
+const EQUIPE_CONDUZZA_NAO_E_RT =
+  "A equipe Conduzza não pode ser o responsável técnico da clínica.";
 
 function texto(html: string): string {
   return html
@@ -322,6 +328,7 @@ function formulario(
     <FormularioDoResponsavelTecnico
       atual={props.atual ?? null}
       pessoas={props.pessoas ?? PESSOAS}
+      contaDaEquipeConduzza={props.contaDaEquipeConduzza}
       valoresIniciais={props.valoresIniciais}
       aoDefinir={() => undefined}
       aoVoltar={() => undefined}
@@ -391,6 +398,18 @@ describe("definir e trocar", () => {
     expect(avisoDaTroca("Dra. Ana Souza", "Bia Lima")).toBe(
       "As orientações aprovadas por Dra. Ana Souza deixam de ser enviadas até Bia Lima aprovar de novo.",
     );
+  });
+
+  it("a conta da equipe Conduzza na lista: a frase logo abaixo do campo (TELA-9)", () => {
+    expect(T.equipeConduzzaNaoERt).toBe(EQUIPE_CONDUZZA_NAO_E_RT);
+    const html = formulario({ contaDaEquipeConduzza: EU });
+    expect(html).toContain('data-parte="equipe-conduzza-nao-e-rt"');
+    expect(texto(html)).toContain(EQUIPE_CONDUZZA_NAO_E_RT);
+    // Sem a conta da equipe na lista (ou sem ser da equipe), nada.
+    expect(formulario({ contaDaEquipeConduzza: CAIO })).not.toContain(
+      EQUIPE_CONDUZZA_NAO_E_RT,
+    );
+    expect(formulario()).not.toContain(EQUIPE_CONDUZZA_NAO_E_RT);
   });
 
   it("o botão diz Definindo... enquanto grava", () => {
@@ -795,6 +814,28 @@ describe("as actions: a guarda na action", () => {
     const resultado = await definirResponsavelTecnicoAction(ENTRADA);
     expect(resultado).toEqual({ ok: false, error: T.dica });
   });
+
+  it("a equipe Conduzza não se define RT: a recusa antes do banco (TELA-9)", async () => {
+    estado.sessao = sessao({ superAdmin: true });
+    await expect(
+      definirResponsavelTecnicoAction(entrada({ userId: EU })),
+    ).resolves.toEqual({ ok: false, error: EQUIPE_CONDUZZA_NAO_E_RT });
+    expect(rpc.chamadas).toEqual([]);
+    // Ela continua definindo outra pessoa.
+    await expect(definirResponsavelTecnicoAction(ENTRADA)).resolves.toEqual({
+      ok: true,
+    });
+    expect(rpc.chamadas.map((c) => c.nome)).toEqual([
+      "definir_responsavel_tecnico",
+    ]);
+  });
+
+  it("o administrador pleno que não é da equipe Conduzza se define RT", async () => {
+    estado.sessao = sessao();
+    await expect(
+      definirResponsavelTecnicoAction(entrada({ userId: EU })),
+    ).resolves.toEqual({ ok: true });
+  });
 });
 
 describe("as actions: o Zod e a clínica da sessão", () => {
@@ -1055,13 +1096,18 @@ describe("as actions: a tradução dos códigos", () => {
         ok: false,
         error: NAO_SALVOU,
       });
+      // A falha do Encerrar diz encerrar (TELA-12).
       await expect(encerrarResponsavelTecnicoAction()).resolves.toEqual({
         ok: false,
-        error: NAO_SALVOU,
+        error: NAO_ENCERROU,
       });
       expect(estado.revalidados).toEqual([]);
     },
   );
+
+  it("o cartão diz encerrar quando a action nem responde (TELA-12)", () => {
+    expect(T.naoEncerrou).toBe(NAO_ENCERROU);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1278,6 +1324,14 @@ describe("a página: o RT junto do lote, o selo e quem define", () => {
     designacao({ user_id: ANA });
     const props = await tela();
     expect(props.responsavelTecnico.podeDefinir).toBe(pode);
+  });
+
+  it("a conta da equipe Conduzza vai ao cartão só quando a sessão é da equipe (TELA-9)", async () => {
+    designacao({ user_id: ANA });
+    estado.sessao = sessao({ superAdmin: true });
+    expect((await tela()).responsavelTecnico.contaDaEquipeConduzza).toBe(EU);
+    estado.sessao = sessao();
+    expect((await tela()).responsavelTecnico.contaDaEquipeConduzza).toBeNull();
   });
 });
 

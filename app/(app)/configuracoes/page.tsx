@@ -574,6 +574,8 @@ export default async function ConfiguracoesPage({
           dados: dadosDoResponsavelTecnico,
           podeDefinir: podeDefinirRt,
           timezone: active.timezone,
+          // A conta da equipe Conduzza nunca e o RT (TELA-9).
+          contaDaEquipeConduzza: context.isProductAdmin ? context.userId : null,
         }}
         // [AG7 preparo] fim
         clinica={

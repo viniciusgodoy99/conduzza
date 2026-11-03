@@ -19,7 +19,11 @@ import { createClient } from "@/lib/supabase/server";
 // a equipe Conduzza (super admin). Na duvida da marca (a leitura falhou), o
 // administrador pode ser um Implementador: recusa com a mesma frase do
 // banco. A clinica e SEMPRE a ativa da sessao, nunca uma vinda do cliente (o
-// Zod estrito recusa qualquer chave a mais).
+// Zod estrito recusa qualquer chave a mais). A equipe Conduzza define o RT,
+// mas nunca se define RT (D-71; revisao das telas, TELA-9): aprovar e ato
+// clinico da clinica. A RPC recusa tambem, inclusive quando outra pessoa
+// escolhe uma conta da equipe Conduzza (a sessao nao le essa marca de
+// outra conta).
 //
 // O Zod confere os formatos que o banco confere (nome de 1 a 120 pontos de
 // codigo, aparado e sem controle; conselho e UF das listas dos CHECKs;
@@ -49,6 +53,10 @@ const FRASE_DO_RT =
   "Só o administrador da clínica define o responsável técnico.";
 const SESSAO_EXPIRADA = "Sessão expirada. Entre de novo.";
 const NAO_SALVOU = "Não foi possível salvar agora. Tente de novo.";
+const NAO_ENCERROU = "Não foi possível encerrar agora. Tente de novo.";
+// A equipe Conduzza nao se define RT (TELA-9).
+const TEXTO_DA_EQUIPE_CONDUZZA =
+  "A equipe Conduzza não pode ser o responsável técnico da clínica.";
 
 // Por campo (o Zod daqui e o 22023 da RPC dizem a mesma coisa).
 const TEXTO_DA_PESSOA = "Escolha a pessoa da equipe.";
@@ -124,8 +132,11 @@ const definirSchema = z.strictObject({
 
 type ErroDoBanco = { code?: string; message?: string } | null;
 
-/** O SQLSTATE e o codigo da RPC em frase de recepcao. */
-function traduzir(error: NonNullable<ErroDoBanco>): string {
+/**
+ * O SQLSTATE e o codigo da RPC em frase de recepcao. Sem traducao, a frase
+ * de sempre da acao (salvar ou encerrar; TELA-12).
+ */
+function traduzir(error: NonNullable<ErroDoBanco>, naoDeu: string): string {
   // 42501: a frase da RPC, que as duas so mandam com FRASE_DO_RT. Um 42501
   // com outra mensagem (o grant que faltou, em ingles) vira a mesma frase:
   // o texto tecnico do Postgres nunca chega a tela.
@@ -133,12 +144,12 @@ function traduzir(error: NonNullable<ErroDoBanco>): string {
     return FRASE_DO_RT;
   }
   if (error.code === "P0001") {
-    return RECUSAS_DE_NEGOCIO.get(error.message ?? "") ?? NAO_SALVOU;
+    return RECUSAS_DE_NEGOCIO.get(error.message ?? "") ?? naoDeu;
   }
   if (error.code === "22023") {
-    return ENTRADAS_INVALIDAS.get(error.message ?? "") ?? NAO_SALVOU;
+    return ENTRADAS_INVALIDAS.get(error.message ?? "") ?? naoDeu;
   }
-  return NAO_SALVOU;
+  return naoDeu;
 }
 
 /**
@@ -160,10 +171,11 @@ function revalidarTelas(): void {
 
 /**
  * Sessao com clinica ativa e quem define o RT: o administrador pleno ou a
- * equipe Conduzza. Devolve a clinica ATIVA (a unica que vai para a RPC).
+ * equipe Conduzza. Devolve a clinica ATIVA (a unica que vai para a RPC) e,
+ * para a equipe Conduzza, a conta dela (que nunca e escolhida como RT).
  */
 async function exigirQuemDefine(): Promise<
-  { clinicId: string } | { error: string }
+  { clinicId: string; contaDaEquipeConduzza: string | null } | { error: string }
 > {
   const context = await getSessionContext();
   if (!context?.active) {
@@ -171,7 +183,7 @@ async function exigirQuemDefine(): Promise<
   }
   const { clinicId, role, implementador } = context.active;
   if (context.isProductAdmin === true) {
-    return { clinicId };
+    return { clinicId, contaDaEquipeConduzza: context.userId };
   }
   // A marca de Implementador nao foi lida: o administrador pode ser um
   // Implementador, que o banco recusa (user_e_admin_pleno).
@@ -181,7 +193,7 @@ async function exigirQuemDefine(): Promise<
   if (!ehAdminPleno(role, implementador === true)) {
     return { error: FRASE_DO_RT };
   }
-  return { clinicId };
+  return { clinicId, contaDaEquipeConduzza: null };
 }
 
 /**
@@ -209,6 +221,9 @@ export async function definirResponsavelTecnicoAction(
     };
   }
   const { userId, nome, conselho, numero, uf } = lido.data;
+  if (userId === quem.contaDaEquipeConduzza) {
+    return { ok: false, error: TEXTO_DA_EQUIPE_CONDUZZA };
+  }
 
   const supabase = await createClient();
   const { error } = await supabase.rpc("definir_responsavel_tecnico", {
@@ -223,7 +238,7 @@ export async function definirResponsavelTecnicoAction(
     if (mudouEnquantoAberta(error)) {
       revalidatePath("/configuracoes");
     }
-    return { ok: false, error: traduzir(error) };
+    return { ok: false, error: traduzir(error, NAO_SALVOU) };
   }
   revalidarTelas();
   return { ok: true };
@@ -246,7 +261,7 @@ export async function encerrarResponsavelTecnicoAction(): Promise<ResultadoDoRes
     if (mudouEnquantoAberta(error)) {
       revalidatePath("/configuracoes");
     }
-    return { ok: false, error: traduzir(error) };
+    return { ok: false, error: traduzir(error, NAO_ENCERROU) };
   }
   revalidarTelas();
   return { ok: true };
