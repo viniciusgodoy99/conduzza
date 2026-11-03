@@ -235,6 +235,10 @@ export type QuotedMessage = {
   deleted_at: string | null;
   /** enviada direto pelo WhatsApp da clinica (ver MessageItem.pelo_celular) */
   pelo_celular?: boolean;
+  // [AG7 preparo] início
+  /** o job da fila que enviou (ver MessageItem.job_id) */
+  job_id?: string | null;
+  // [AG7 preparo] fim
 };
 
 export type MessageItem = {
@@ -288,6 +292,16 @@ export type MessageItem = {
    * sempre.
    */
   pelo_celular?: boolean;
+  // [AG7 preparo] início
+  /**
+   * O job da fila que enviou a mensagem (nulo: nenhum). A orientacao de
+   * preparo sai sempre pelo job da IA: o corpo no formato do preparo SEM job
+   * nao e o preparo e nao ganha a linha "Texto aprovado pelo responsavel
+   * tecnico" (ehMensagemDoPreparo; revisao das telas, TELA-13). Opcional so
+   * para os testes que montam mensagem na mao; o select traz sempre.
+   */
+  job_id?: string | null;
+  // [AG7 preparo] fim
   /**
    * A citada, embutida na mesma consulta.
    *
@@ -735,14 +749,16 @@ export async function contarConversasResolvidas(
   return count ?? 0;
 }
 
+// [AG7 preparo] O job_id vai no fio e na citada (TELA-13): sem job, o corpo no
+// formato da orientacao de preparo nao e o preparo (ehMensagemDoPreparo).
 const MESSAGE_SELECT =
-  "id, conversation_id, direction, author, author_user_id, content_type, body, media_url, media_filename, media_mimetype, transcript, is_internal_note, delivery_status, error_code, created_at, deleted_at, deleted_by, deleted_source, deleted_escopo, reply_to_message_id, reply_to_wa_message_id, pelo_celular, " +
+  "id, conversation_id, direction, author, author_user_id, content_type, body, media_url, media_filename, media_mimetype, transcript, is_internal_note, delivery_status, error_code, created_at, deleted_at, deleted_by, deleted_source, deleted_escopo, reply_to_message_id, reply_to_wa_message_id, pelo_celular, job_id, " +
   // Auto-juncao: a citada e outra linha da MESMA tabela. O apelido aponta para
   // a COLUNA, nao para o nome da chave estrangeira: numa relacao de uma tabela
   // com ela mesma, o nome da chave nao diz qual ponta seguir, e o PostgREST
   // devolve a lista das mensagens que citam esta, que e o contrario do que a
   // bolha precisa. Conferido contra o banco em 02/09/2026.
-  "reply_to:reply_to_message_id(id, author, author_user_id, content_type, body, is_internal_note, deleted_at, pelo_celular)";
+  "reply_to:reply_to_message_id(id, author, author_user_id, content_type, body, is_internal_note, deleted_at, pelo_celular, job_id)";
 // SEM embed de mensagem_agendada, de proposito (achado 16 da revisao): uma
 // tabela que falte ou um embed recusado pelo PostgREST derrubaria o fio de
 // todas as conversas. A autoria da agendada vem de fetchAgendadasDoFio.

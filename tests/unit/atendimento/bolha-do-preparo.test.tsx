@@ -44,7 +44,8 @@ import type { MessageItem, QuotedMessage } from "@/lib/queries/conversations";
 // de apoio da pele e sem icone (o ScanText e so da leitura da midia). A
 // citacao dela tambem diz "Assistente". A frase fixa, a nota da passagem e o
 // texto da equipe continuam como hoje: so o corpo no formato inteiro, do
-// sistema, vira preparo. Nada aqui chama rede.
+// sistema, vira preparo. O fio traz o job_id (revisao das telas, TELA-13): o
+// corpo no formato do preparo sem job nao e o preparo. Nada aqui chama rede.
 
 // A meia-risca (U+2013) e o travessao (U+2014), montados pelo codigo para
 // que nenhum dos dois apareca neste arquivo.
@@ -77,6 +78,9 @@ const SEM_RODAPE = `${CABECALHO_DO_PREPARO}Colonoscopia\n${LINHA_DO_RT}Dra. Ana 
 
 const RAIZ = path.resolve(__dirname, "../../..");
 
+/** O job da IA que enviou o preparo (ficticio). */
+const JOB_DA_IA = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+
 /** Os arquivos do Atendimento com bloco da AG7. */
 const ARQUIVOS_DA_AG7 = [
   "components/atendimento/thread.tsx",
@@ -107,6 +111,7 @@ function mensagem(campos: Partial<MessageItem> = {}): MessageItem {
     reply_to_wa_message_id: null,
     reply_to: null,
     pelo_celular: false,
+    job_id: JOB_DA_IA,
     ...campos,
   };
 }
@@ -121,6 +126,7 @@ function citada(campos: Partial<QuotedMessage> = {}): QuotedMessage {
     is_internal_note: false,
     deleted_at: null,
     pelo_celular: false,
+    job_id: JOB_DA_IA,
     ...campos,
   };
 }
@@ -436,6 +442,30 @@ describe("AG7: o que não é o preparo continua como hoje", () => {
       ).toBe(false);
       expect(autorDaBolha(mensagem(campos), NOMES)).toBeNull();
     }
+  });
+});
+
+describe("AG7: o corpo no formato do preparo sem job não é o preparo (TELA-13)", () => {
+  it("sem job: nem Assistente, nem a linha do texto aprovado, nem na citação", () => {
+    const semJob = mensagem({ job_id: null });
+    expect(ehMensagemDoPreparo(semJob)).toBe(false);
+    expect(autorDaBolha(semJob, NOMES)).toBeNull();
+    const html = bolha(semJob);
+    expect(html).not.toContain(LINHA_DO_PREPARO_APROVADO);
+    expect(html).not.toContain("data-preparo");
+    expect(autorDaCitacao(citada({ job_id: null }), "Maria", NOMES)).toBe(
+      "Sistema",
+    );
+  });
+
+  it("o fio e a citada trazem o job_id do banco", () => {
+    const fonte = readFileSync(
+      path.join(RAIZ, "lib/queries/conversations.ts"),
+      "utf8",
+    );
+    const select = /const MESSAGE_SELECT =([\s\S]*?);\n/.exec(fonte)?.[1] ?? "";
+    expect(select).toMatch(/pelo_celular, job_id, /);
+    expect(select).toMatch(/reply_to:reply_to_message_id\([^)]*\bjob_id\)/);
   });
 });
 

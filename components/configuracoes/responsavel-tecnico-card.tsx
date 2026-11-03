@@ -60,7 +60,8 @@ import { CONSELHOS, UFS, ehConselho, ehUf } from "@/lib/domain/preparo";
 // definem, trocam e encerram. O gestor e o Implementador veem as acoes
 // visiveis e desabilitadas, com a frase do banco como dica. A guarda de
 // verdade e a da action (app/(app)/configuracoes/responsavel-tecnico-actions)
-// e a da RPC (42501).
+// e a da RPC (42501). A equipe Conduzza nunca e o RT (D-71; TELA-9): a conta
+// dela aparece no formulario desabilitada, com a frase, e a action recusa.
 //
 // Estados: vazio (sem RT), definido, sem acesso ativo (o vinculo do RT nao
 // esta ativo: o aviso em atencao, CircleAlert, nunca so cor), erro (a leitura
@@ -109,6 +110,10 @@ export const TEXTOS_DO_RESPONSAVEL_TECNICO = {
   trocado: "Responsável técnico trocado.",
   encerrado: "Responsável técnico encerrado.",
   naoSalvou: "Não foi possível salvar agora. Tente de novo.",
+  naoEncerrou: "Não foi possível encerrar agora. Tente de novo.",
+  /** A conta da equipe Conduzza no formulario (TELA-9): o mesmo da action. */
+  equipeConduzzaNaoERt:
+    "A equipe Conduzza não pode ser o responsável técnico da clínica.",
   erroDaPessoa: "Escolha a pessoa da equipe.",
   erroDoNomeVazio: "Escreva o nome como está no conselho.",
   erroDoNomeLongo: "Use até 120 caracteres no nome.",
@@ -156,6 +161,12 @@ export type ResponsavelTecnicoCardProps = {
   podeDefinir: boolean;
   /** o fuso da clinica (a data do "desde") */
   timezone: string;
+  /**
+   * A conta da sessao quando ela e da equipe Conduzza (super admin), que
+   * nunca e o RT (TELA-9): no formulario, desabilitada com a frase. Ausente
+   * ou nula: nenhuma.
+   */
+  contaDaEquipeConduzza?: string | null;
 };
 
 /** dd/mm/aaaa no fuso da clinica; nulo se a data nao for legivel. */
@@ -266,6 +277,7 @@ const VALORES_VAZIOS: ValoresDoResponsavelTecnico = {
 export function FormularioDoResponsavelTecnico({
   atual,
   pessoas,
+  contaDaEquipeConduzza = null,
   valoresIniciais,
   aoMudarEnvio,
   aoDefinir,
@@ -274,6 +286,8 @@ export function FormularioDoResponsavelTecnico({
   /** o nome do RT de agora; nulo quando a clinica nao tem RT */
   atual: string | null;
   pessoas: readonly PessoaDaEquipe[];
+  /** a conta da equipe Conduzza, que nunca e o RT (TELA-9) */
+  contaDaEquipeConduzza?: string | null;
   valoresIniciais?: Partial<ValoresDoResponsavelTecnico>;
   /** o dialogo nao fecha enquanto grava */
   aoMudarEnvio?: (enviando: boolean) => void;
@@ -289,9 +303,16 @@ export function FormularioDoResponsavelTecnico({
   const escolhida = form.watch("userId");
   const novo =
     pessoas.find((pessoa) => pessoa.userId === escolhida)?.nome ?? null;
+  const comAEquipeConduzza =
+    contaDaEquipeConduzza !== null &&
+    pessoas.some((pessoa) => pessoa.userId === contaDaEquipeConduzza);
 
   const enviar = async (valores: ValoresDoResponsavelTecnico) => {
     setErro(null);
+    if (valores.userId === contaDaEquipeConduzza) {
+      setErro(T.equipeConduzzaNaoERt);
+      return;
+    }
     aoMudarEnvio?.(true);
     const resultado = await definirResponsavelTecnicoAction({
       userId: valores.userId,
@@ -346,7 +367,13 @@ export function FormularioDoResponsavelTecnico({
                 </FormControl>
                 <SelectContent>
                   {pessoas.map((pessoa) => (
-                    <SelectItem key={pessoa.userId} value={pessoa.userId}>
+                    <SelectItem
+                      key={pessoa.userId}
+                      value={pessoa.userId}
+                      // A equipe Conduzza nunca e o RT (TELA-9): visivel e
+                      // desabilitada, com a frase logo abaixo do campo.
+                      disabled={pessoa.userId === contaDaEquipeConduzza}
+                    >
                       {pessoa.email
                         ? `${pessoa.nome} (${pessoa.email})`
                         : pessoa.nome}
@@ -354,6 +381,14 @@ export function FormularioDoResponsavelTecnico({
                   ))}
                 </SelectContent>
               </Select>
+              {comAEquipeConduzza ? (
+                <p
+                  data-parte="equipe-conduzza-nao-e-rt"
+                  className="text-[13px] text-text-secondary"
+                >
+                  {T.equipeConduzzaNaoERt}
+                </p>
+              ) : null}
               <FormMessage className="text-[13px]" />
             </FormItem>
           )}
@@ -510,11 +545,13 @@ export function DialogoDoResponsavelTecnico({
   aberto,
   atual,
   pessoas,
+  contaDaEquipeConduzza = null,
   aoFechar,
 }: {
   aberto: boolean;
   atual: string | null;
   pessoas: readonly PessoaDaEquipe[];
+  contaDaEquipeConduzza?: string | null;
   aoFechar: () => void;
 }) {
   const [enviando, setEnviando] = useState(false);
@@ -544,6 +581,7 @@ export function DialogoDoResponsavelTecnico({
           <FormularioDoResponsavelTecnico
             atual={atual}
             pessoas={pessoas}
+            contaDaEquipeConduzza={contaDaEquipeConduzza}
             aoMudarEnvio={setEnviando}
             aoDefinir={aoFechar}
             aoVoltar={fechar}
@@ -611,6 +649,7 @@ export function ResponsavelTecnicoCard({
   dados,
   podeDefinir,
   timezone,
+  contaDaEquipeConduzza = null,
 }: ResponsavelTecnicoCardProps) {
   const [dialogo, setDialogo] = useState<"definir" | "encerrar" | null>(null);
   const [erroDoEncerrar, setErroDoEncerrar] = useState<string | null>(null);
@@ -629,7 +668,7 @@ export function ResponsavelTecnicoCard({
         () => null,
       );
       if (!resultado) {
-        setErroDoEncerrar(T.naoSalvou);
+        setErroDoEncerrar(T.naoEncerrou);
         return;
       }
       if (!resultado.ok) {
@@ -701,6 +740,7 @@ export function ResponsavelTecnicoCard({
             aberto={dialogo === "definir"}
             atual={rt?.nome ?? null}
             pessoas={dados.pessoas}
+            contaDaEquipeConduzza={contaDaEquipeConduzza}
             aoFechar={() => setDialogo(null)}
           />
           {rt !== null ? (

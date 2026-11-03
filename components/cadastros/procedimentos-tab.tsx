@@ -32,10 +32,14 @@ import { ListaDeConvenios } from "@/components/cadastros/lista-de-convenios";
 import {
   AvisoDoNomeDoProcedimento,
   AvisoSemRt,
+  avisoDoNomeDoPreparo,
+  ConfirmarDescarteDoRascunho,
   FaixaDoRt,
+  resumoDoPreparo,
   SecaoDoPreparo,
   type PreparoDaAba,
 } from "@/components/cadastros/preparo-do-procedimento";
+import { TEXTOS_DO_PREPARO } from "@/components/cadastros/preparo-na-tela";
 // [AG7 preparo] fim
 import {
   nomeDoConvenioDoRequisito,
@@ -115,11 +119,7 @@ import type {
   Profissional,
 } from "@/lib/queries/catalogo";
 // [AG7 preparo] início
-import {
-  procedimentosAguardandoORt,
-  situacaoDoProcedimento,
-  temRtVigente,
-} from "@/lib/queries/preparo";
+import { procedimentosEsperandoORt, temRtVigente } from "@/lib/queries/preparo";
 // [AG7 preparo] fim
 import { cn } from "@/lib/utils";
 import {
@@ -1386,6 +1386,16 @@ export function ProcedimentosTab({
   const [nomeNaAbertura, setNomeNaAbertura] = useState<string | null>(null);
   // A faixa do RT filtra a tabela pelos que esperam a aprovacao dele.
   const [soAguardandoORt, setSoAguardandoORt] = useState(false);
+  // Ha texto da orientacao de preparo digitado e nao enviado para o RT (a
+  // secao avisa): o Salvar e o fechar do modal pedem confirmacao antes de
+  // descartar (revisao das telas, TELA-4).
+  const [rascunhoDoPreparo, setRascunhoDoPreparo] = useState(false);
+  // A confirmacao do descarte e o que vem depois dela (o "depois" fica ao
+  // fechar, para o texto nao trocar durante a saida do dialogo).
+  const [descarteDoRascunho, setDescarteDoRascunho] = useState<{
+    aberto: boolean;
+    depois: "fechar" | "salvar";
+  }>({ aberto: false, depois: "fechar" });
   // [AG7 preparo] fim
 
   const nomes = useMemo<NomesDoCatalogo>(() => {
@@ -1476,6 +1486,8 @@ export function ProcedimentosTab({
     setSomenteLeitura(leitura);
     // [AG7 preparo] início
     setNomeNaAbertura(procedimento?.name ?? null);
+    setRascunhoDoPreparo(false);
+    setDescarteDoRascunho({ aberto: false, depois: "fechar" });
     // [AG7 preparo] fim
     const gravados = procedimento
       ? requisitosDoProcedimento(cadastroDoAgente, procedimento.id)
@@ -1724,10 +1736,12 @@ export function ProcedimentosTab({
   // [AG7 preparo] início
   const dadosDoPreparo =
     preparo.estado.tipo === "pronto" ? preparo.estado.dados : null;
-  // So o RT ve a faixa (e o filtro) do que espera a aprovacao dele.
+  // So o RT ve a faixa (e o filtro) do que espera a aprovacao dele: o texto
+  // aguardando e a aprovacao que parou de valer (TELA-7). A equipe Conduzza
+  // nunca aprova (TELA-9), entao nao ve a faixa.
   const aguardandoORt =
-    dadosDoPreparo && dadosDoPreparo.souRt
-      ? procedimentosAguardandoORt(dadosDoPreparo)
+    dadosDoPreparo && dadosDoPreparo.souRt && !preparo.superAdmin
+      ? procedimentosEsperandoORt(dadosDoPreparo, catalogo.procedimentos)
       : [];
   const filtrandoORt = soAguardandoORt && aguardandoORt.length > 0;
   const procedimentosDaTabela = filtrandoORt
@@ -1743,17 +1757,27 @@ export function ProcedimentosTab({
         nome: procedimentoGravado?.name ?? nomeNaAbertura ?? form.name.trim(),
       }
     : null;
-  // Renomear com orientacao em vigor tira a aprovacao: o aviso sob o Nome.
-  const avisaONome =
+  // Renomear tira a aprovacao do texto em vigor e obriga a enviar de novo o
+  // texto que espera o RT (a aprovacao prende o nome; TELA-6): o aviso sob o
+  // Nome, antes do Salvar e antes de o RT ler o texto inteiro.
+  const resumoNaAbertura =
     !somenteLeitura &&
     form.id !== undefined &&
     nomeNaAbertura !== null &&
     form.name.trim() !== nomeNaAbertura &&
-    dadosDoPreparo !== null &&
-    situacaoDoProcedimento(dadosDoPreparo, {
-      id: form.id,
-      name: nomeNaAbertura,
-    }) === "aprovada";
+    dadosDoPreparo !== null
+      ? resumoDoPreparo(dadosDoPreparo, { id: form.id, nome: nomeNaAbertura })
+      : null;
+  const avisoDoNome =
+    resumoNaAbertura === null
+      ? null
+      : avisoDoNomeDoPreparo({
+          emVigor: resumoNaAbertura.situacao === "aprovada",
+          aguardando:
+            resumoNaAbertura.aguardando !== null &&
+            resumoNaAbertura.aguardando.nomeDoProcedimento === nomeNaAbertura,
+        });
+  const avisaONome = avisoDoNome !== null;
   // [AG7 preparo] fim
 
   const colunas: ColumnDef<Procedimento>[] = [
@@ -1873,7 +1897,45 @@ export function ProcedimentosTab({
     },
   ];
 
-  const fechar = () => setAberto(false);
+  // [AG7 preparo] início: com texto do preparo digitado e nao enviado, o
+  // fechar (Cancelar, o X, o Esc e o clique fora) pede confirmacao (TELA-4).
+  const fechar = () => {
+    if (rascunhoDoPreparo) {
+      setDescarteDoRascunho({ aberto: true, depois: "fechar" });
+      return;
+    }
+    setAberto(false);
+  };
+  const mudarAberto = (abrirModal: boolean) => {
+    if (abrirModal) {
+      setAberto(true);
+      return;
+    }
+    fechar();
+  };
+  // O Salvar grava o procedimento e fecha o modal: o texto do preparo nao
+  // enviado se perderia, entao ele pergunta antes.
+  const pedirSalvar = () => {
+    if (rascunhoDoPreparo) {
+      setDescarteDoRascunho({ aberto: true, depois: "salvar" });
+      return;
+    }
+    void salvar();
+  };
+  const continuarEditando = () =>
+    setDescarteDoRascunho((atual) => ({ ...atual, aberto: false }));
+  // "Salvar sem o texto" grava o procedimento (o texto some quando o modal
+  // fecha); "Descartar e fechar" fecha.
+  const descartarRascunho = () => {
+    continuarEditando();
+    if (descarteDoRascunho.depois === "salvar") {
+      void salvar();
+      return;
+    }
+    setRascunhoDoPreparo(false);
+    setAberto(false);
+  };
+  // [AG7 preparo] fim
 
   return (
     <div className="grid gap-3">
@@ -1924,7 +1986,8 @@ export function ProcedimentosTab({
 
       <PainelDeCadastro
         aberto={aberto}
-        aoMudarAberto={setAberto}
+        // [AG7 preparo] o fechar confere o rascunho do preparo (TELA-4)
+        aoMudarAberto={mudarAberto}
         // Largo: a secao "Quem faz e convenios" tem uma linha por
         // profissional, com os convenios e as excecoes de cada um.
         larga
@@ -1963,7 +2026,8 @@ export function ProcedimentosTab({
               {aviso ? null : (
                 <Button
                   id={ID_DO_SALVAR}
-                  onClick={() => void salvar()}
+                  // [AG7 preparo] o Salvar confere o rascunho do preparo
+                  onClick={pedirSalvar}
                   disabled={salvando}
                 >
                   {salvando ? "Salvando..." : "Salvar"}
@@ -2055,6 +2119,7 @@ export function ProcedimentosTab({
             preparo={preparo}
             podeEditarCadastros={podeEditar}
             timezone={timezone}
+            aoMudarRascunho={setRascunhoDoPreparo}
           />
         ) : null}
         {/* [AG7 preparo] fim */}
@@ -2073,8 +2138,11 @@ export function ProcedimentosTab({
               // [AG7 preparo] fim
             />
             {/* [AG7 preparo] início */}
-            {avisaONome ? (
-              <AvisoDoNomeDoProcedimento id={ID_DO_AVISO_DO_NOME} />
+            {avisoDoNome !== null ? (
+              <AvisoDoNomeDoProcedimento
+                id={ID_DO_AVISO_DO_NOME}
+                texto={avisoDoNome}
+              />
             ) : null}
             {/* [AG7 preparo] fim */}
           </div>
@@ -2190,12 +2258,31 @@ export function ProcedimentosTab({
                 preparo={preparo}
                 podeEditarCadastros={podeEditar}
                 timezone={timezone}
+                aoMudarRascunho={setRascunhoDoPreparo}
               />
               {/* [AG7 preparo] fim */}
             </>
           )}
         </div>
       </PainelDeCadastro>
+      {/* [AG7 preparo] início: o texto do preparo nao enviado nunca some
+          calado no Salvar nem no fechar do modal (TELA-4) */}
+      <ConfirmarDescarteDoRascunho
+        aberto={descarteDoRascunho.aberto}
+        corpo={
+          descarteDoRascunho.depois === "salvar"
+            ? TEXTOS_DO_PREPARO.rascunhoAoSalvar
+            : TEXTOS_DO_PREPARO.rascunhoAoFechar
+        }
+        rotuloDescartar={
+          descarteDoRascunho.depois === "salvar"
+            ? TEXTOS_DO_PREPARO.salvarSemOTexto
+            : TEXTOS_DO_PREPARO.descartarEFechar
+        }
+        aoContinuar={continuarEditando}
+        aoDescartar={descartarRascunho}
+      />
+      {/* [AG7 preparo] fim */}
     </div>
   );
 }

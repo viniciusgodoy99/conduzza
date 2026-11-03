@@ -5,15 +5,18 @@ import { z } from "zod";
 
 import {
   erroDeSempre,
+  FRASE_DA_EQUIPE_CONDUZZA,
   FRASES_SEM_PERMISSAO,
   frasesDasRecusas,
+  frasesDoTexto,
+  prepararTextoDoPreparo,
   problemaNoTextoDoPreparo,
+  TEXTOS_DO_PREPARO as T,
   traduzirErroDoPreparo,
   type RecusaDoPreparo,
 } from "@/components/cadastros/preparo-na-tela";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { problemasDoTextoDoPreparo } from "@/lib/domain/conformidade/preparo-aprovado";
-import { normalizarTextoDoPreparo } from "@/lib/domain/preparo";
 import { canEdit, type Role } from "@/lib/domain/permissions";
 import { createClient } from "@/lib/supabase/server";
 
@@ -26,12 +29,16 @@ import { createClient } from "@/lib/supabase/server";
 // frases 42501 do contrato):
 //  - escrever, descartar e suspender: administrador ou gestor ativo, a
 //    equipe Conduzza (super admin) ou o RT vigente;
-//  - aprovar, aprovar de novo e devolver: SO o RT vigente (nem o super
-//    admin: aprovar e ato clinico, D-71).
+//  - aprovar, aprovar de novo e devolver: SO o RT vigente, e nunca a equipe
+//    Conduzza (super admin), nem quando ela e o RT designado: aprovar e ato
+//    clinico (D-71; revisao das telas, TELA-9).
 // Toda entrada passa por Zod; o cliente e o de SESSAO (RLS); a clinica e
 // sempre a ativa, e o procedimento ou a versao de outra clinica nao chega a
-// RPC. A trilha (audit_log, so ids e o codigo do texto) e gravada pelas
-// RPCs. O texto do preparo nao e dado de paciente, mas nada daqui e logado.
+// RPC. O texto passa pelas regras de hoje (problemasDoTextoDoPreparo) ao
+// escrever E ao aprovar (CFM-2): o texto antigo copiado pela migration e o
+// salvo por chamada direta da API so chegam ao RT por aqui. A trilha
+// (audit_log, so ids e o codigo do texto) e gravada pelas RPCs. O texto do
+// preparo nao e dado de paciente, mas nada daqui e logado.
 
 /** O Salvar: a versao nova, aguardando o RT (nula quando so a resposta veio fora do formato). */
 export type ResultadoDoSalvarPreparo =
@@ -43,9 +50,14 @@ export type ResultadoDoSalvarPreparo =
 
 export type ResultadoDoPreparo = { ok: true } | RecusaDoPreparo;
 
-/** Os avisos do texto (remedio, dose, jejum...) para o dialogo do RT. */
+/**
+ * Os avisos do texto (remedio, dose, jejum...) para o dialogo do RT e, quando
+ * as regras de hoje recusam o texto, a frase que diz o que tirar (o dialogo
+ * mostra e nao deixa aprovar; CFM-2).
+ */
 export type ResultadoDosAvisos =
-  { ok: true; avisos: string[] } | { ok: false; error: string };
+  | { ok: true; avisos: string[]; recusa: string | null }
+  | { ok: false; error: string };
 
 const SESSAO_EXPIRADA = "Sessão expirada. Entre de novo.";
 const ENTRADA_INVALIDA = "Confira o texto da orientação de preparo.";
@@ -100,6 +112,30 @@ function semPermissao(frase: string): RecusaDoPreparo {
   return { ok: false, error: frase, code: "sem_permissao" };
 }
 
+/**
+ * Aprovar, aprovar de novo e devolver: so o RT vigente, e nunca a equipe
+ * Conduzza, nem quando ela e o RT designado (D-71; TELA-9). A RPC recusa de
+ * novo. Null: pode.
+ */
+async function recusaDeQuemAprova(
+  sessao: Sessao,
+): Promise<RecusaDoPreparo | null> {
+  if (sessao.superAdmin) {
+    return semPermissao(FRASE_DA_EQUIPE_CONDUZZA);
+  }
+  return (await souRtVigente(sessao))
+    ? null
+    : semPermissao(FRASES_SEM_PERMISSAO.aprovar);
+}
+
+function versaoNaoEncontrada(): RecusaDoPreparo {
+  return {
+    ok: false,
+    error: VERSAO_NAO_ENCONTRADA,
+    code: "versao_inexistente",
+  };
+}
+
 /** O procedimento existe na clinica ATIVA? */
 async function procedimentoDaClinica(
   sessao: Sessao,
@@ -115,6 +151,27 @@ async function procedimentoDaClinica(
     return "erro";
   }
   return data ? "sim" : "nao";
+}
+
+/** O nome GRAVADO do procedimento da clinica ATIVA (o que a mensagem leva). */
+async function nomeDoProcedimento(
+  sessao: Sessao,
+  procedureId: string,
+): Promise<{ nome: string } | "nao" | "erro"> {
+  const { data, error } = await sessao.supabase
+    .from("procedure")
+    .select("id, name")
+    .eq("clinic_id", sessao.clinicId)
+    .eq("id", procedureId)
+    .maybeSingle();
+  if (error) {
+    return "erro";
+  }
+  if (!data) {
+    return "nao";
+  }
+  const nome = (data as { name?: unknown }).name;
+  return typeof nome === "string" ? { nome } : "erro";
 }
 
 type VersaoLida = {
@@ -176,23 +233,51 @@ const respostaDoSalvarSchema = z.object({
 });
 
 /**
- * O texto que vai para a RPC: normalizado como o banco guarda (CR para LF,
- * NFC e o trim()), conferido pelo espelho do CHECK e pelas regras do filtro
- * (problemasDoTextoDoPreparo): promessa, oferta casada, antes e depois,
- * preco e link sao recusados AQUI, antes do banco; remedio, dose e jejum
- * passam (D-80) e viram o aviso do dialogo do RT.
+ * As recusas de hoje no texto (problemasDoTextoDoPreparo: promessa, oferta
+ * casada, antes e depois, preco e link) em frase que diz o que tirar e ONDE
+ * (TELA-8): cada categoria recusada aponta a primeira frase do texto em que
+ * ela aparece, conferida frase a frase. A categoria que so o texto inteiro
+ * acusa fica com a frase sem trecho. Null: o texto passa (remedio, dose e
+ * jejum so avisam, D-80).
+ */
+function recusaDoTexto(texto: string): string | null {
+  const { recusas } = problemasDoTextoDoPreparo(texto);
+  if (recusas.length === 0) {
+    return null;
+  }
+  const semTrecho = new Set<string>(recusas);
+  const trechos: Record<string, string> = {};
+  for (const frase of frasesDoTexto(texto)) {
+    if (semTrecho.size === 0) {
+      break;
+    }
+    for (const categoria of problemasDoTextoDoPreparo(frase).recusas) {
+      if (semTrecho.delete(categoria)) {
+        trechos[categoria] = frase;
+      }
+    }
+  }
+  return frasesDasRecusas(recusas, trechos);
+}
+
+/**
+ * O texto que vai para a RPC: preparado como o banco guarda (a tabulacao
+ * vira espaco; CR para LF, NFC e o trim()), conferido pelo espelho do CHECK
+ * e pelas regras do filtro: promessa, oferta casada, antes e depois, preco
+ * e link sao recusados AQUI, antes do banco; remedio, dose e jejum passam
+ * (D-80) e viram o aviso do dialogo do RT.
  */
 function textoParaSalvar(
   bruto: string,
-): { ok: true; texto: string } | { ok: false; error: string } {
+): { ok: true; texto: string } | RecusaDoPreparo {
   const problema = problemaNoTextoDoPreparo(bruto);
   if (problema) {
     return { ok: false, error: problema };
   }
-  const texto = normalizarTextoDoPreparo(bruto);
-  const recusa = frasesDasRecusas(problemasDoTextoDoPreparo(texto).recusas);
+  const texto = prepararTextoDoPreparo(bruto);
+  const recusa = recusaDoTexto(texto);
   if (recusa) {
-    return { ok: false, error: recusa };
+    return { ok: false, error: recusa, code: "texto_recusado" };
   }
   return { ok: true, texto };
 }
@@ -295,7 +380,10 @@ const aprovarSchema = z.object({ versaoId: uuid, textoSha256: sha256 });
 /**
  * O RT aprova a versao aguardando que ele leu (o hash dela): a aprovada de
  * agora vira substituida, na RPC. Quem chega depois (outra aprovacao, o
- * descarte, um texto novo) recebe nao_aguarda_aprovacao.
+ * descarte, um texto novo) recebe nao_aguarda_aprovacao. Antes da RPC, o
+ * texto passa de novo pelas regras de hoje (CFM-2): o texto antigo copiado
+ * pela migration (D-83) e o salvo por chamada direta da RPC nunca passaram
+ * pela conferencia do Salvar, e com recusa nada e aprovado.
  */
 export async function aprovarPreparoAction(
   input: unknown,
@@ -308,15 +396,30 @@ export async function aprovarPreparoAction(
   if (!lido.success) {
     return { ok: false, error: erroDeSempre("aprovar") };
   }
-  if (!(await souRtVigente(sessao))) {
-    return semPermissao(FRASES_SEM_PERMISSAO.aprovar);
+  const recusaDoPapel = await recusaDeQuemAprova(sessao);
+  if (recusaDoPapel) {
+    return recusaDoPapel;
   }
   const versao = await versaoDaClinica(sessao, lido.data.versaoId);
   if (versao === "erro") {
     return { ok: false, error: erroDeSempre("aprovar") };
   }
   if (versao === null) {
-    return { ok: false, error: VERSAO_NAO_ENCONTRADA };
+    return versaoNaoEncontrada();
+  }
+  if (versao.texto_sha256 !== lido.data.textoSha256) {
+    return traduzirErroDoPreparo("aprovar", {
+      code: "P0001",
+      message: "texto_mudou",
+    });
+  }
+  const recusa = recusaDoTexto(versao.texto);
+  if (recusa) {
+    return {
+      ok: false,
+      error: `${T.naoPodeSerAprovado} ${recusa}`,
+      code: "texto_recusado",
+    };
   }
   const { error } = await sessao.supabase.rpc(
     "aprovar_preparo_do_procedimento",
@@ -331,9 +434,12 @@ export async function aprovarPreparoAction(
 
 const aprovarDeNovoSchema = z.object({
   procedureId: uuid,
+  /** A maior versao lida quando o dialogo abriu (nunca a relida depois). */
   versaoLida,
   /** O hash do texto que o RT leu no dialogo (o da ultima aprovada). */
   textoSha256: sha256,
+  /** O nome do procedimento que a previa mostrou (o cabecalho da mensagem). */
+  nomeLido: z.string().min(1).max(500),
 });
 
 const SITUACOES_JA_APROVADAS: ReadonlySet<string> = new Set([
@@ -347,8 +453,13 @@ const SITUACOES_JA_APROVADAS: ReadonlySet<string> = new Set([
  * sem acesso, nome do procedimento mudado, envio suspenso) e o RT aprova o
  * MESMO texto de novo, numa acao so: salva o texto da ultima versao que ja
  * foi aprovada como versao nova (a RPC aceita o texto igual ao da aprovada
- * quando ela nao vale mais) e aprova. O texto passa de novo pelas regras de
- * hoje. Se o texto do banco nao for o que o RT leu (o hash), nada e gravado.
+ * quando ela nao vale mais) e aprova. Nada e gravado quando:
+ *  - ha texto novo esperando o RT (TELA-1): salvar o texto antigo
+ *    descartaria o novo, que o RT aprova pelo "Revisar e aprovar";
+ *  - o texto do banco nao e o que o RT leu (o hash) ou o nome do
+ *    procedimento nao e o da previa (TELA-11);
+ *  - as regras de hoje recusam o texto (CFM-2).
+ * A versao nova so e aprovada se o hash dela for o do texto lido.
  */
 export async function aprovarDeNovoAction(
   input: unknown,
@@ -361,8 +472,16 @@ export async function aprovarDeNovoAction(
   if (!lido.success) {
     return { ok: false, error: erroDeSempre("aprovar") };
   }
-  if (!(await souRtVigente(sessao))) {
-    return semPermissao(FRASES_SEM_PERMISSAO.aprovar);
+  const recusaDoPapel = await recusaDeQuemAprova(sessao);
+  if (recusaDoPapel) {
+    return recusaDoPapel;
+  }
+  const procedimento = await nomeDoProcedimento(sessao, lido.data.procedureId);
+  if (procedimento === "erro") {
+    return { ok: false, error: erroDeSempre("aprovar") };
+  }
+  if (procedimento === "nao") {
+    return { ok: false, error: PROCEDIMENTO_NAO_ENCONTRADO };
   }
   const { data, error } = await sessao.supabase
     .from("preparo_do_procedimento")
@@ -377,22 +496,35 @@ export async function aprovarDeNovoAction(
   if (!versoes.success) {
     return { ok: false, error: erroDeSempre("aprovar") };
   }
+  if (versoes.data.some((v) => v.situacao === "aguardando_rt")) {
+    return {
+      ok: false,
+      error: T.textoNovoAguardando,
+      code: "texto_novo_aguardando",
+    };
+  }
   const base = versoes.data
     .filter((v) => SITUACOES_JA_APROVADAS.has(v.situacao))
     .sort((a, b) => b.versao - a.versao)[0];
   if (!base) {
-    return { ok: false, error: VERSAO_NAO_ENCONTRADA };
+    return versaoNaoEncontrada();
   }
   if (base.texto_sha256 !== lido.data.textoSha256) {
-    return {
-      ok: false,
-      error: "O texto mudou enquanto você lia. Feche e abra de novo.",
-      code: "texto_mudou",
-    };
+    return traduzirErroDoPreparo("aprovar", {
+      code: "P0001",
+      message: "texto_mudou",
+    });
+  }
+  if (procedimento.nome !== lido.data.nomeLido) {
+    return { ok: false, error: T.nomeMudouAoLer, code: "nome_mudou" };
   }
   const texto = textoParaSalvar(base.texto);
   if (!texto.ok) {
-    return texto;
+    return {
+      ok: false,
+      error: `${T.naoPodeSerAprovado} ${texto.error}`,
+      code: "texto_recusado",
+    };
   }
   const salvo = await salvarNoBanco(
     sessao,
@@ -404,12 +536,14 @@ export async function aprovarDeNovoAction(
     return salvo;
   }
   revalidar();
-  if (salvo.versao === null) {
-    // Gravou, mas a resposta veio fora do formato: o texto espera o RT, e a
-    // tela recarrega para ele aprovar pelo "Revisar e aprovar".
+  if (salvo.versao === null || salvo.versao.textoSha256 !== base.texto_sha256) {
+    // Gravou, mas a resposta veio fora do formato ou a versao nova nao e o
+    // texto lido: nada e aprovado, e o texto espera o RT, que o aprova (ou
+    // nao) pelo "Revisar e aprovar", lendo de novo.
     return {
       ok: false,
-      error: `${erroDeSempre("aprovar")} O texto ficou aguardando o RT.`,
+      error: T.ficouAguardandoSemAprovar,
+      code: "ficou_aguardando",
     };
   }
   const aprovado = await sessao.supabase.rpc(
@@ -421,10 +555,17 @@ export async function aprovarDeNovoAction(
   );
   if (aprovado.error) {
     const recusa = traduzirErroDoPreparo("aprovar", aprovado.error);
-    return {
-      ...recusa,
-      error: `${recusa.error} O texto ficou aguardando o RT.`,
-    };
+    return recusa.code === undefined
+      ? {
+          ok: false,
+          error: T.ficouAguardandoSemAprovar,
+          code: "ficou_aguardando",
+        }
+      : {
+          ok: false,
+          error: `${recusa.error} ${T.ficouAguardando}`,
+          code: recusa.code,
+        };
   }
   return { ok: true };
 }
@@ -446,8 +587,9 @@ export async function devolverPreparoAction(
   if (!lido.success) {
     return { ok: false, error: COMENTARIO_INVALIDO };
   }
-  if (!(await souRtVigente(sessao))) {
-    return semPermissao(FRASES_SEM_PERMISSAO.aprovar);
+  const recusaDoPapel = await recusaDeQuemAprova(sessao);
+  if (recusaDoPapel) {
+    return recusaDoPapel;
   }
   const comentario = comentarioValido(lido.data.comentario);
   if (comentario === null) {
@@ -458,7 +600,7 @@ export async function devolverPreparoAction(
     return { ok: false, error: erroDeSempre("devolver") };
   }
   if (versao === null) {
-    return { ok: false, error: VERSAO_NAO_ENCONTRADA };
+    return versaoNaoEncontrada();
   }
   const { error } = await sessao.supabase.rpc(
     "devolver_preparo_do_procedimento",
@@ -497,7 +639,7 @@ export async function descartarPreparoAction(
     return { ok: false, error: erroDeSempre("descartar") };
   }
   if (versao === null) {
-    return { ok: false, error: VERSAO_NAO_ENCONTRADA };
+    return versaoNaoEncontrada();
   }
   const { error } = await sessao.supabase.rpc(
     "descartar_preparo_do_procedimento",
@@ -574,8 +716,10 @@ const avisosSchema = z.object({ versaoId: uuid });
 /**
  * O que o texto da versao cita de remedio, dose, jejum, triagem ou
  * diagnostico (problemasDoTextoDoPreparo, no servidor): o dialogo de
- * aprovacao mostra o aviso do desenho 5.2 quando a lista nao e vazia.
- * Qualquer membro ativo le a versao (a mesma policy da tela).
+ * aprovacao mostra o aviso do desenho 5.2 quando a lista nao e vazia. Com
+ * recusa das regras de hoje (CFM-2), a frase que diz o que tirar: o dialogo
+ * mostra e nao deixa aprovar (a action de aprovar confere de novo). Qualquer
+ * membro ativo le a versao (a mesma policy da tela); nada e gravado.
  */
 export async function avisosDoPreparoAction(
   input: unknown,
@@ -598,5 +742,6 @@ export async function avisosDoPreparoAction(
   return {
     ok: true,
     avisos: [...problemasDoTextoDoPreparo(versao.texto).avisos],
+    recusa: recusaDoTexto(versao.texto),
   };
 }

@@ -24,6 +24,11 @@ import { fetchProfileNames } from "@/lib/queries/profiles";
 // conferencia do hash recalculado e do banco (preparo_em_vigor); a tela usa
 // situacaoDoPreparoNaTela (lib/domain/preparo.ts), com a paridade testada
 // na integracao.
+//
+// O texto (ate 3.500 caracteres) so e lido das versoes que a tela mostra
+// (revisao das telas, TELA-14): cada Salvar cria uma versao, e ler o texto de
+// todas a cada carga e a cada volta do foco pesava sem servir a ninguem. A
+// lista "Ver versoes" e a Tela 6 nao mostram texto.
 
 export type ResponsavelTecnico = {
   id: string;
@@ -43,7 +48,12 @@ export type VersaoDoPreparo = {
   procedureId: string;
   versao: number;
   situacao: SituacaoDoPreparo;
-  texto: string;
+  /**
+   * O texto, so nas versoes que a secao mostra (a mais nova aprovada,
+   * aguardando, suspensa e devolvida de cada procedimento; ver
+   * versoesComTextoNaTela). null: o texto desta versao nao foi lido.
+   */
+  texto: string | null;
   textoSha256: string;
   nomeDoProcedimento: string;
   origem: OrigemDoPreparo;
@@ -106,8 +116,10 @@ function ehSituacao(valor: unknown): valor is SituacaoDoPreparo {
 
 const COLUNAS_DO_RT = "id, user_id, nome, conselho, numero, uf, desde, ate";
 
+// Sem o texto: ele vem numa leitura propria, so das versoes que a tela
+// mostra (lerTextosDasVersoes).
 const COLUNAS_DA_VERSAO =
-  "id, procedure_id, versao, situacao, texto, texto_sha256, nome_do_procedimento, origem, escrito_por, escrito_em, aprovado_por, aprovado_em, rt_id, encerrado_por, encerrado_em, comentario";
+  "id, procedure_id, versao, situacao, texto_sha256, nome_do_procedimento, origem, escrito_por, escrito_em, aprovado_por, aprovado_em, rt_id, encerrado_por, encerrado_em, comentario";
 
 function lerResponsavel(r: Linha): ResponsavelTecnico | null {
   if (
@@ -139,7 +151,6 @@ function lerVersao(v: Linha): VersaoDoPreparo | null {
     typeof v.procedure_id !== "string" ||
     typeof v.versao !== "number" ||
     !ehSituacao(v.situacao) ||
-    typeof v.texto !== "string" ||
     typeof v.texto_sha256 !== "string" ||
     typeof v.nome_do_procedimento !== "string" ||
     typeof v.escrito_em !== "string"
@@ -151,7 +162,7 @@ function lerVersao(v: Linha): VersaoDoPreparo | null {
     procedureId: v.procedure_id,
     versao: v.versao,
     situacao: v.situacao,
-    texto: v.texto,
+    texto: textoOuNulo(v.texto),
     textoSha256: v.texto_sha256,
     nomeDoProcedimento: v.nome_do_procedimento,
     origem: v.origem === "texto_antigo" ? "texto_antigo" : "cadastro",
@@ -204,12 +215,87 @@ export async function fetchResponsavelTecnicoAberto(
   return data ? lerResponsavel(data as Linha) : null;
 }
 
+/** As situacoes cujo texto a secao mostra (a mais nova de cada uma). */
+const SITUACOES_COM_TEXTO_NA_TELA: ReadonlySet<SituacaoDoPreparo> = new Set([
+  "aprovado",
+  "aguardando_rt",
+  "suspenso",
+  "devolvido",
+]);
+
+/**
+ * Os ids das versoes cujo texto a secao mostra: de cada procedimento, a mais
+ * nova aprovada, aguardando o RT, suspensa e devolvida (o bloco em vigor ou
+ * parado, o bloco aguardando, o suspenso, o ponto de partida do editor, o
+ * dialogo do RT e o "Aprovar de novo"). E um pouco mais do que a secao usa
+ * (resumoDoPreparo), nunca menos.
+ */
+export function versoesComTextoNaTela(
+  versoes: readonly Pick<
+    VersaoDoPreparo,
+    "id" | "procedureId" | "versao" | "situacao"
+  >[],
+): string[] {
+  const maisNova = new Map<string, { id: string; versao: number }>();
+  for (const v of versoes) {
+    if (!SITUACOES_COM_TEXTO_NA_TELA.has(v.situacao)) {
+      continue;
+    }
+    const chave = `${v.procedureId}:${v.situacao}`;
+    const atual = maisNova.get(chave);
+    if (!atual || v.versao > atual.versao) {
+      maisNova.set(chave, { id: v.id, versao: v.versao });
+    }
+  }
+  return [...maisNova.values()].map((v) => v.id);
+}
+
+/** Ids por consulta: o filtro in.(...) vai na URL. */
+const LOTE_DOS_TEXTOS = 100;
+
+/**
+ * O texto das versoes pedidas, por id (as versoes sao imutaveis: o texto de
+ * um id nunca muda). Erro LANCA, como o resto da leitura da secao.
+ */
+async function lerTextosDasVersoes(
+  supabase: SupabaseClient,
+  clinicId: string,
+  ids: readonly string[],
+): Promise<Map<string, string>> {
+  const lotes: string[][] = [];
+  for (let inicio = 0; inicio < ids.length; inicio += LOTE_DOS_TEXTOS) {
+    lotes.push(ids.slice(inicio, inicio + LOTE_DOS_TEXTOS));
+  }
+  const respostas = await Promise.all(
+    lotes.map((lote) =>
+      supabase
+        .from("preparo_do_procedimento")
+        .select("id, texto")
+        .eq("clinic_id", clinicId)
+        .in("id", lote),
+    ),
+  );
+  const textos = new Map<string, string>();
+  for (const { data, error } of respostas) {
+    if (error) {
+      throw new Error(error.message);
+    }
+    for (const linha of (data ?? []) as Linha[]) {
+      if (typeof linha.id === "string" && typeof linha.texto === "string") {
+        textos.set(linha.id, linha.texto);
+      }
+    }
+  }
+  return textos;
+}
+
 /**
  * Tudo o que a secao "Orientacao de preparo" de Cadastros mostra: as versoes
- * de todos os procedimentos, as designacoes de RT, se o RT aberto tem acesso
- * e se a sessao e o RT vigente. Erro numa leitura LANCA: a secao mostra o
- * erro com "Tentar de novo" (nunca um "sem orientacao" que nao conferiu).
- * So os nomes sao tolerantes: sem eles, a tela diz "uma pessoa da equipe".
+ * de todos os procedimentos (o texto so das que a secao mostra), as
+ * designacoes de RT, se o RT aberto tem acesso e se a sessao e o RT vigente.
+ * Erro numa leitura LANCA: a secao mostra o erro com "Tentar de novo" (nunca
+ * um "sem orientacao" que nao conferiu). So os nomes sao tolerantes: sem
+ * eles, a tela diz "uma pessoa da equipe".
  */
 export async function fetchPreparosDaClinica(
   supabase: SupabaseClient,
@@ -234,9 +320,18 @@ export async function fetchPreparosDaClinica(
       throw new Error(resultado.error.message);
     }
   }
-  const lidas = ((versoes.data ?? []) as Linha[])
+  const semTexto = ((versoes.data ?? []) as Linha[])
     .map(lerVersao)
     .filter((v): v is VersaoDoPreparo => v !== null);
+  const textos = await lerTextosDasVersoes(
+    supabase,
+    clinicId,
+    versoesComTextoNaTela(semTexto),
+  );
+  const lidas = semTexto.map((v) => ({
+    ...v,
+    texto: textos.get(v.id) ?? null,
+  }));
   const designacoes = ((responsaveis.data ?? []) as Linha[])
     .map(lerResponsavel)
     .filter((r): r is ResponsavelTecnico => r !== null);
@@ -323,15 +418,27 @@ export function situacaoDoProcedimento(
   });
 }
 
-/** Quantos procedimentos tem um texto esperando o RT (a faixa do RT). */
-export function procedimentosAguardandoORt(dados: PreparosDaClinica): string[] {
-  return [
-    ...new Set(
-      dados.versoes
-        .filter((v) => v.situacao === "aguardando_rt")
-        .map((v) => v.procedureId),
-    ),
-  ];
+/**
+ * Os procedimentos cuja orientacao espera o RT (a faixa e o filtro do RT):
+ * um texto aguardando a aprovacao, ou a aprovacao que parou de valer ("Precisa
+ * de nova aprovacao": RT trocado ou nome mudado, D-73). Depois da troca do
+ * RT, e por aqui que o RT novo acha o que parou (revisao das telas, TELA-7).
+ * O envio suspenso fica de fora: suspender e uma decisao, e voltar a enviar
+ * tambem.
+ */
+export function procedimentosEsperandoORt(
+  dados: PreparosDaClinica,
+  procedimentos: readonly { id: string; name: string }[],
+): string[] {
+  return procedimentos
+    .filter(
+      (p) =>
+        situacaoDoProcedimento(dados, p) === "precisa_de_nova_aprovacao" ||
+        dados.versoes.some(
+          (v) => v.procedureId === p.id && v.situacao === "aguardando_rt",
+        ),
+    )
+    .map((p) => p.id);
 }
 
 /**
@@ -355,8 +462,8 @@ export function algumPreparoEmVigor(
 
 /**
  * Para a Tela 6 (a nota "Nenhum procedimento tem orientacao aprovada pelo
- * responsavel tecnico"): le so as versoes aprovadas, o RT aberto, o vinculo
- * dele e os procedimentos ativos. Vale para todo papel que abre a Tela 6 (a
+ * responsavel tecnico"): le so as versoes aprovadas (sem o texto, TELA-14),
+ * o RT aberto, o vinculo dele e os procedimentos ativos. Vale para todo papel que abre a Tela 6 (a
  * recepcao inclusive). Erro LANCA: quem chama decide (a pagina nao mostra a
  * nota quando nao conferiu).
  */

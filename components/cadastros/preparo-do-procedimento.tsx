@@ -2,7 +2,7 @@
 
 import { CircleAlert, History, PenLine } from "lucide-react";
 import Link from "next/link";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -22,10 +22,13 @@ import {
   dataEHoraNoFuso,
   dataNoFuso,
   devolvidoPeloRt,
+  erroDeSempre,
   escritoPor,
   faixaDoRt,
+  FRASE_DA_EQUIPE_CONDUZZA,
   FRASES_SEM_PERMISSAO,
   PESSOA_SEM_NOME,
+  prepararTextoDoPreparo,
   problemaNoTextoDoPreparo,
   registroDoRt,
   ROTULO_DA_SITUACAO,
@@ -51,7 +54,6 @@ import { PREPARO_DO_PROCEDIMENTO_STATUS } from "@/lib/design/status";
 import {
   codigoDoTexto,
   LIMITE_DO_TEXTO_DO_PREPARO,
-  normalizarTextoDoPreparo,
   type SituacaoDoPreparoNaTela,
 } from "@/lib/domain/preparo";
 import {
@@ -78,9 +80,22 @@ import { cn } from "@/lib/utils";
 // cada acao (desenho 5.6; D-71):
 //  - escrever, descartar e suspender: administrador, gestor, a equipe
 //    Conduzza (super admin) e o RT vigente;
-//  - aprovar, aprovar de novo e devolver: SO o RT vigente.
+//  - aprovar, aprovar de novo e devolver: SO o RT vigente, e nunca a equipe
+//    Conduzza, nem quando ela e o RT designado (TELA-9).
 // Sem permissao, a acao fica visivel e desabilitada, com a frase 42501 do
 // banco como dica (nunca escondida). A action e a RPC conferem de novo.
+//
+// O que a pessoa le e o que vai para o banco (revisao das telas):
+//  - o editor guarda a maior versao lida quando abriu (TELA-3): se outra
+//    pessoa salvou no meio, o banco recusa, o texto digitado fica e o texto
+//    novo aparece acima antes do proximo envio;
+//  - o texto digitado e nao enviado nunca se perde em silencio (TELA-4): o
+//    Cancelar do editor pede confirmacao, e o modal do procedimento sabe
+//    (aoMudarRascunho) para o Salvar e o fechar pedirem tambem;
+//  - descartar o texto que espera o RT pede confirmacao (TELA-5);
+//  - o texto aguardando escrito com o nome antigo do procedimento diz isso
+//    antes de o RT ler, e "Enviar de novo com o nome novo" o salva de novo
+//    (TELA-6).
 
 export type EstadoDosPreparos =
   | { tipo: "carregando" }
@@ -157,8 +172,32 @@ export function FaixaDoRt({
   );
 }
 
+/**
+ * O aviso sob o campo Nome quando ele muda (TELA-6): o texto em vigor perde
+ * a aprovacao, e o texto que espera o RT precisa ser enviado de novo (a
+ * aprovacao prende o nome). null: renomear nao mexe em nenhuma orientacao.
+ */
+export function avisoDoNomeDoPreparo(e: {
+  emVigor: boolean;
+  aguardando: boolean;
+}): string | null {
+  if (e.emVigor && e.aguardando) {
+    return `${T.avisoDoNome} ${T.avisoDoNomeAguardando}`;
+  }
+  if (e.emVigor) {
+    return T.avisoDoNome;
+  }
+  return e.aguardando ? T.avisoDoNomeAguardando : null;
+}
+
 /** Sob o campo Nome: renomear tira a aprovacao (aria-describedby). */
-export function AvisoDoNomeDoProcedimento({ id }: { id: string }) {
+export function AvisoDoNomeDoProcedimento({
+  id,
+  texto = T.avisoDoNome,
+}: {
+  id: string;
+  texto?: string;
+}) {
   return (
     <p
       id={id}
@@ -166,8 +205,53 @@ export function AvisoDoNomeDoProcedimento({ id }: { id: string }) {
       className="flex items-start gap-1.5 text-xs text-warning-text"
     >
       <CircleAlert aria-hidden className="mt-px size-3.5 shrink-0" />
-      <span>{T.avisoDoNome}</span>
+      <span>{texto}</span>
     </p>
+  );
+}
+
+/**
+ * A confirmacao antes de descartar o texto digitado e nao enviado para o RT
+ * (TELA-4): o Cancelar do editor e, no modal do procedimento, o Salvar e o
+ * fechar. "Continuar editando" e o lado seguro (fechar a confirmacao tambem).
+ */
+export function ConfirmarDescarteDoRascunho({
+  aberto,
+  corpo,
+  rotuloDescartar,
+  aoContinuar,
+  aoDescartar,
+}: {
+  aberto: boolean;
+  corpo: string;
+  rotuloDescartar: string;
+  aoContinuar: () => void;
+  aoDescartar: () => void;
+}) {
+  return (
+    <Dialog
+      open={aberto}
+      onOpenChange={(abrir) => {
+        if (!abrir) {
+          aoContinuar();
+        }
+      }}
+    >
+      <DialogContent className="sm:max-w-[480px]">
+        <DialogHeader>
+          <DialogTitle>{T.rascunhoTitulo}</DialogTitle>
+          <DialogDescription>{corpo}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" className="h-10" onClick={aoContinuar}>
+            {T.continuarEditando}
+          </Button>
+          <Button variant="destructive" className="h-10" onClick={aoDescartar}>
+            {rotuloDescartar}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -189,8 +273,33 @@ export function ChipDoPreparo({
   );
 }
 
-/** O texto como o paciente le, com as quebras preservadas. */
-function TextoDoPreparo({ texto }: { texto: string }) {
+/**
+ * O texto como o paciente le, com as quebras preservadas. Sem o texto lido
+ * (null), o erro com "Tentar de novo": nunca um bloco vazio que pareca um
+ * texto em branco.
+ */
+function TextoDoPreparo({
+  texto,
+  aoTentarDeNovo,
+}: {
+  texto: string | null;
+  aoTentarDeNovo: () => void;
+}) {
+  if (texto === null) {
+    return (
+      <Aviso
+        tom="alert"
+        role="alert"
+        acao={
+          <Button variant="outline" className="h-10" onClick={aoTentarDeNovo}>
+            {T.tentarDeNovo}
+          </Button>
+        }
+      >
+        {T.textoIndisponivel}
+      </Aviso>
+    );
+  }
   return (
     <div className="rounded-xl border border-border bg-surface-subtle px-3.5 py-3 text-[13.5px] leading-[1.45] break-words whitespace-pre-wrap text-foreground">
       {texto}
@@ -362,6 +471,7 @@ export function EditorDoPreparo({
   aoMudar,
   enviando,
   erro,
+  aviso = null,
   aoEnviar,
   aoCancelar,
 }: {
@@ -370,10 +480,12 @@ export function EditorDoPreparo({
   aoMudar: (texto: string) => void;
   enviando: boolean;
   erro: string | null;
+  /** Outra pessoa salvou no meio: o texto novo esta acima (TELA-3). */
+  aviso?: string | null;
   aoEnviar: () => void;
   aoCancelar: () => void;
 }) {
-  const tamanho = Array.from(normalizarTextoDoPreparo(texto)).length;
+  const tamanho = Array.from(prepararTextoDoPreparo(texto)).length;
   const passou = tamanho > LIMITE_DO_TEXTO_DO_PREPARO;
   return (
     <div className="grid gap-1.5" data-parte="editor-do-preparo">
@@ -399,6 +511,11 @@ export function EditorDoPreparo({
         aria-describedby={`${id}-contador`}
         aria-invalid={erro !== null || passou}
       />
+      {aviso ? (
+        <Aviso tom="warning" role="status">
+          {aviso}
+        </Aviso>
+      ) : null}
       {erro ? (
         <Aviso tom="alert" role="alert">
           {erro}
@@ -430,12 +547,169 @@ const RECUSAS_QUE_RECARREGAM: ReadonlySet<string> = new Set([
   "outra_aprovacao",
   "sem_preparo_aprovado",
   "sem_permissao",
+  "versao_inexistente",
 ]);
 
 function recarregaDepois(
   resultado: ResultadoDoPreparo | ResultadoDoSalvarPreparo,
 ): boolean {
   return !resultado.ok && RECUSAS_QUE_RECARREGAM.has(resultado.code ?? "");
+}
+
+/** O editor aberto: o texto, o ponto de partida e a versao lida ao abrir. */
+type EditorAberto = {
+  texto: string;
+  /** O texto com que o editor abriu: o rascunho e o que mudou dele. */
+  inicial: string;
+  /**
+   * A maior versao do procedimento quando o editor abriu (o p_versao_lida;
+   * TELA-3). Depois do aviso de que outra pessoa salvou, a do envio que deu
+   * texto_mudou.
+   */
+  versaoLida: number;
+  /** Outra pessoa salvou no meio: o proximo envio usa a versao que a tela mostra. */
+  conflito: boolean;
+};
+
+/**
+ * A versao lida que vai no envio do editor (TELA-3): a da abertura do
+ * editor, nunca a relida em segundo plano; depois do aviso de que outra
+ * pessoa salvou, a que a tela mostra agora (o texto novo esta acima).
+ */
+export function versaoLidaDoEnvio(
+  editor: Pick<EditorAberto, "versaoLida" | "conflito">,
+  versaoLidaNaTela: number,
+): number {
+  return editor.conflito ? versaoLidaNaTela : editor.versaoLida;
+}
+
+/**
+ * O pedido do dialogo do RT com o que ele le AGORA (TELA-1, TELA-2 e
+ * TELA-11): o texto, a maior versao lida, o RT e o nome da previa, e o
+ * ultimo texto aprovado para a diferenca. null sem o texto lido (o da versao
+ * ou o da diferenca) ou sem RT aberto: o dialogo nao abre.
+ */
+export function montarPedidoDeAprovacao(e: {
+  modo: PedidoDeAprovacao["modo"];
+  versao: VersaoDoPreparo;
+  resumo: Pick<
+    ReturnType<typeof resumoDoPreparo>,
+    "aprovada" | "suspensa" | "situacao" | "versaoLida"
+  >;
+  rtAberto: ResponsavelTecnico | null;
+  procedimento: { nome: string };
+}): PedidoDeAprovacao | null {
+  const { modo, versao, resumo } = e;
+  const ultimoAprovado = resumo.aprovada ?? resumo.suspensa;
+  const textoDoUltimo = ultimoAprovado?.texto ?? null;
+  if (
+    versao.texto === null ||
+    e.rtAberto === null ||
+    (modo === "aprovar" && ultimoAprovado !== null && textoDoUltimo === null)
+  ) {
+    return null;
+  }
+  return {
+    modo,
+    versao,
+    texto: versao.texto,
+    versaoLida: resumo.versaoLida,
+    rt: e.rtAberto,
+    procedimento: e.procedimento.nome,
+    comparacao:
+      modo === "aprovar" && ultimoAprovado !== null && textoDoUltimo !== null
+        ? {
+            texto: textoDoUltimo,
+            emVigor:
+              resumo.situacao === "aprovada" &&
+              ultimoAprovado === resumo.aprovada,
+          }
+        : null,
+  };
+}
+
+/**
+ * A confirmacao do descarte do texto que espera o RT (TELA-5): grava na
+ * hora e o texto sai da tela. Para o RT, lembra que o Devolver pede a
+ * mudanca sem descartar.
+ */
+export function ConfirmarDescarteDoTextoNovo({
+  versao,
+  doRt,
+  descartando,
+  aoVoltar,
+  aoDescartar,
+}: {
+  /** null: fechada. */
+  versao: Pick<VersaoDoPreparo, "origem"> | null;
+  doRt: boolean;
+  descartando: boolean;
+  aoVoltar: () => void;
+  aoDescartar: () => void;
+}) {
+  return (
+    <Dialog
+      open={versao !== null}
+      onOpenChange={(aberto) => {
+        if (!aberto && !descartando) {
+          aoVoltar();
+        }
+      }}
+    >
+      <DialogContent className="sm:max-w-[480px]">
+        <DialogHeader>
+          <DialogTitle>
+            {versao?.origem === "texto_antigo"
+              ? T.descartarTituloTextoAntigo
+              : T.descartarTitulo}
+          </DialogTitle>
+          <DialogDescription>
+            {doRt ? T.descartarCorpoDoRt : T.descartarCorpo}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button
+            variant="ghost"
+            className="h-10"
+            onClick={aoVoltar}
+            disabled={descartando}
+          >
+            {T.voltar}
+          </Button>
+          <Button
+            variant="destructive"
+            className="h-10"
+            onClick={aoDescartar}
+            disabled={descartando}
+          >
+            {descartando ? T.descartando : T.descartarConfirmar}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Ha texto digitado e nao enviado (o rascunho que nao pode sumir calado)? */
+export function editorComRascunho(
+  editor: Pick<EditorAberto, "texto" | "inicial"> | null,
+): boolean {
+  return (
+    editor !== null &&
+    prepararTextoDoPreparo(editor.texto) !==
+      prepararTextoDoPreparo(editor.inicial)
+  );
+}
+
+/** Avisa quem chamou do rascunho agora e, ao desmontar, que nada ficou. */
+function useAvisarRascunho(
+  temRascunho: boolean,
+  avisar: ((temRascunho: boolean) => void) | undefined,
+): void {
+  useEffect(() => {
+    avisar?.(temRascunho);
+  }, [temRascunho, avisar]);
+  useEffect(() => () => avisar?.(false), [avisar]);
 }
 
 // ---------------------------------------------------------------------------
@@ -447,6 +721,7 @@ export function SecaoDoPreparo({
   preparo,
   podeEditarCadastros,
   timezone,
+  aoMudarRascunho,
 }: {
   /** O procedimento GRAVADO (o nome do banco); null no procedimento novo. */
   procedimento: { id: string; nome: string } | null;
@@ -454,19 +729,30 @@ export function SecaoDoPreparo({
   /** Administrador ou gestor (canEdit de Cadastros). */
   podeEditarCadastros: boolean;
   timezone: string;
+  /**
+   * Avisa o modal do procedimento quando ha texto digitado e nao enviado
+   * para o RT (TELA-4): o Salvar e o fechar do modal pedem confirmacao
+   * antes de descartar. Precisa ser estavel (um setState serve).
+   */
+  aoMudarRascunho?: (temRascunho: boolean) => void;
 }) {
   const id = useId();
   const idDoTitulo = `${id}-titulo`;
-  const [escrevendo, setEscrevendo] = useState(false);
-  const [texto, setTexto] = useState("");
+  const [editor, setEditor] = useState<EditorAberto | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [erroDoEditor, setErroDoEditor] = useState<string | null>(null);
+  const [cancelandoEditor, setCancelandoEditor] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [pedido, setPedido] = useState<PedidoDeAprovacao | null>(null);
   const [confirmandoSuspensao, setConfirmandoSuspensao] = useState(false);
   const [suspendendo, setSuspendendo] = useState(false);
+  const [descarte, setDescarte] = useState<VersaoDoPreparo | null>(null);
   const [descartando, setDescartando] = useState(false);
+  const [reenviando, setReenviando] = useState(false);
   const [verVersoes, setVerVersoes] = useState(false);
+
+  const temRascunho = editorComRascunho(editor);
+  useAvisarRascunho(temRascunho, aoMudarRascunho);
 
   const cabecalho = (
     <div className="grid gap-1">
@@ -528,53 +814,115 @@ export function SecaoDoPreparo({
     resumo;
   const rtVigente = temRtVigente(dados);
   const podeEscrever = podeEditarCadastros || preparo.superAdmin || dados.souRt;
-  const podeAprovar = dados.souRt;
-  const ocupado = enviando || suspendendo || descartando;
+  // A equipe Conduzza nunca aprova, nem quando e o RT designado (TELA-9).
+  const podeAprovar = dados.souRt && !preparo.superAdmin;
+  const dicaDeAprovar = preparo.superAdmin
+    ? FRASE_DA_EQUIPE_CONDUZZA
+    : FRASES_SEM_PERMISSAO.aprovar;
+  const ocupado = enviando || suspendendo || descartando || reenviando;
+  // O ultimo texto aprovado (em vigor, parado ou suspenso): a diferenca do
+  // dialogo do RT compara com ele, e sem o texto dele lido o dialogo nao abre.
+  const ultimoAprovado = aprovada ?? suspensa;
 
   // O editor parte do texto mais util: o que espera o RT, o que ele devolveu
-  // (para corrigir o que o comentario pede), o aprovado ou o suspenso.
+  // (para corrigir o que o comentario pede), o aprovado ou o suspenso. Ele
+  // guarda a versao lida AGORA (TELA-3): a releitura dos dados nao a muda.
   const abrirEditor = () => {
-    setTexto(
-      aguardando?.texto ??
-        devolvida?.texto ??
-        aprovada?.texto ??
-        suspensa?.texto ??
-        "",
-    );
+    const base = aguardando ?? devolvida ?? aprovada ?? suspensa;
+    const inicial = base?.texto ?? "";
+    setEditor({
+      texto: inicial,
+      inicial,
+      versaoLida: resumo.versaoLida,
+      conflito: false,
+    });
     setErroDoEditor(null);
     setErro(null);
-    setEscrevendo(true);
+  };
+
+  const fecharEditor = () => {
+    setEditor(null);
+    setErroDoEditor(null);
+    setCancelandoEditor(false);
+  };
+
+  const cancelarEditor = () => {
+    if (temRascunho) {
+      setCancelandoEditor(true);
+      return;
+    }
+    fecharEditor();
   };
 
   const enviarTexto = async () => {
-    const problema = problemaNoTextoDoPreparo(texto);
+    if (editor === null) {
+      return;
+    }
+    const problema = problemaNoTextoDoPreparo(editor.texto);
     if (problema) {
       setErroDoEditor(problema);
       return;
     }
+    const versaoLida = versaoLidaDoEnvio(editor, resumo.versaoLida);
     setEnviando(true);
     setErroDoEditor(null);
     let resultado: ResultadoDoSalvarPreparo;
     try {
       resultado = await salvarPreparoAction({
         procedureId: procedimento.id,
-        texto,
-        versaoLida: resumo.versaoLida,
+        texto: editor.texto,
+        versaoLida,
       });
     } catch {
-      resultado = {
-        ok: false,
-        error: "Não foi possível salvar agora. Tente de novo.",
-      };
+      resultado = { ok: false, error: erroDeSempre("salvar") };
     }
     setEnviando(false);
     if (resultado.ok) {
       toast.success(T.enviado);
-      setEscrevendo(false);
+      fecharEditor();
+      preparo.recarregar();
+      return;
+    }
+    if (resultado.code === "texto_mudou") {
+      // Outra pessoa salvou no meio: o texto digitado fica, a secao rele, e
+      // o texto novo aparece acima antes do proximo envio.
+      setEditor((atual) =>
+        atual === null ? null : { ...atual, versaoLida, conflito: true },
+      );
       preparo.recarregar();
       return;
     }
     setErroDoEditor(resultado.error);
+    if (recarregaDepois(resultado)) {
+      preparo.recarregar();
+    }
+  };
+
+  // TELA-6: o mesmo texto que espera o RT, salvo de novo com o nome de agora
+  // (a versao nova toma o lugar dela e o RT pode aprovar).
+  const reenviar = async (versao: VersaoDoPreparo) => {
+    if (versao.texto === null) {
+      return;
+    }
+    setReenviando(true);
+    setErro(null);
+    let resultado: ResultadoDoSalvarPreparo;
+    try {
+      resultado = await salvarPreparoAction({
+        procedureId: procedimento.id,
+        texto: versao.texto,
+        versaoLida: resumo.versaoLida,
+      });
+    } catch {
+      resultado = { ok: false, error: erroDeSempre("salvar") };
+    }
+    setReenviando(false);
+    if (resultado.ok) {
+      toast.success(T.enviado);
+      preparo.recarregar();
+      return;
+    }
+    setErro(resultado.error);
     if (recarregaDepois(resultado)) {
       preparo.recarregar();
     }
@@ -587,12 +935,10 @@ export function SecaoDoPreparo({
     try {
       resultado = await descartarPreparoAction({ versaoId: versao.id });
     } catch {
-      resultado = {
-        ok: false,
-        error: "Não foi possível descartar agora. Tente de novo.",
-      };
+      resultado = { ok: false, error: erroDeSempre("descartar") };
     }
     setDescartando(false);
+    setDescarte(null);
     if (resultado.ok) {
       toast.success(T.descartado);
       preparo.recarregar();
@@ -613,10 +959,7 @@ export function SecaoDoPreparo({
         procedureId: procedimento.id,
       });
     } catch {
-      resultado = {
-        ok: false,
-        error: "Não foi possível suspender agora. Tente de novo.",
-      };
+      resultado = { ok: false, error: erroDeSempre("suspender") };
     }
     setSuspendendo(false);
     setConfirmandoSuspensao(false);
@@ -631,8 +974,26 @@ export function SecaoDoPreparo({
     }
   };
 
+  // O dialogo do RT guarda o que ele le AGORA (montarPedidoDeAprovacao).
+  const abrirAprovacao = (
+    modo: PedidoDeAprovacao["modo"],
+    versao: VersaoDoPreparo,
+  ) => {
+    const novo = montarPedidoDeAprovacao({
+      modo,
+      versao,
+      resumo,
+      rtAberto: dados.rtAberto,
+      procedimento,
+    });
+    if (novo !== null) {
+      setPedido(novo);
+    }
+  };
+
   // "Aprovar de novo" so sem texto novo esperando: salvar de novo o texto
-  // antigo descartaria o novo (a RPC troca a aguardando pela versao nova).
+  // antigo descartaria o novo (a RPC troca a aguardando pela versao nova; a
+  // action tambem recusa, TELA-1).
   const baseDoAprovarDeNovo =
     aguardando === null
       ? situacao === "precisa_de_nova_aprovacao"
@@ -655,7 +1016,10 @@ export function SecaoDoPreparo({
           {suspensoDesde(dataNoFuso(versao.encerradoEm, timezone))}
         </p>
       ) : null}
-      <TextoDoPreparo texto={versao.texto} />
+      <TextoDoPreparo
+        texto={versao.texto}
+        aoTentarDeNovo={preparo.recarregar}
+      />
       <p className="text-xs text-text-secondary">
         {linhaDaAprovacao(dados, versao, timezone)}
       </p>
@@ -673,15 +1037,12 @@ export function SecaoDoPreparo({
         {baseDoAprovarDeNovo !== null && versao === baseDoAprovarDeNovo ? (
           <BotaoProtegido
             podeEditar={podeAprovar}
-            dica={FRASES_SEM_PERMISSAO.aprovar}
+            dica={dicaDeAprovar}
             variant="default"
             onClick={() =>
-              setPedido({
-                modo: "aprovar_de_novo",
-                versao: baseDoAprovarDeNovo,
-              })
+              abrirAprovacao("aprovar_de_novo", baseDoAprovarDeNovo)
             }
-            disabled={ocupado}
+            disabled={ocupado || baseDoAprovarDeNovo.texto === null}
           >
             {T.aprovarDeNovo}
           </BotaoProtegido>
@@ -689,6 +1050,84 @@ export function SecaoDoPreparo({
       </div>
     </div>
   );
+
+  const blocoDoAguardando = (versao: VersaoDoPreparo) => {
+    const textoAntigoDoCadastro = versao.origem === "texto_antigo";
+    // A aprovacao prende o nome da versao (nome_mudou): escrito com o nome
+    // antigo, o texto precisa ser enviado de novo antes de o RT aprovar.
+    const nomeMudou = versao.nomeDoProcedimento !== procedimento.nome;
+    const semTextoLido =
+      versao.texto === null ||
+      (ultimoAprovado !== null && ultimoAprovado.texto === null);
+    return (
+      <div className="grid gap-2" data-parte="bloco-aguardando">
+        <h4 className="text-[13px] font-semibold text-text-strong">
+          {textoAntigoDoCadastro ? T.aguardandoTextoAntigo : T.aguardando}
+        </h4>
+        {nomeMudou ? (
+          <p
+            data-parte="nome-mudou-no-aguardando"
+            className="flex items-start gap-1.5 text-[13px] text-warning-text"
+          >
+            <CircleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+            <span>{T.nomeMudouNoAguardando}</span>
+          </p>
+        ) : null}
+        <TextoDoPreparo
+          texto={versao.texto}
+          aoTentarDeNovo={preparo.recarregar}
+        />
+        <p className="text-xs text-text-secondary">
+          {linhaDaAutoria(dados, versao, timezone)}{" "}
+          {situacao === "aprovada" ? T.enquantoComVigor : T.enquantoSemVigor}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {nomeMudou ? (
+            <BotaoProtegido
+              podeEditar={podeEscrever}
+              dica={FRASES_SEM_PERMISSAO.escrever}
+              variant="default"
+              onClick={() => void reenviar(versao)}
+              disabled={ocupado || versao.texto === null}
+            >
+              {reenviando ? T.enviando : T.enviarDeNovo}
+            </BotaoProtegido>
+          ) : null}
+          <BotaoProtegido
+            podeEditar={podeAprovar && !nomeMudou}
+            dica={podeAprovar ? T.dicaDoNomeMudou : dicaDeAprovar}
+            variant={nomeMudou ? "outline" : "default"}
+            onClick={() => abrirAprovacao("aprovar", versao)}
+            disabled={ocupado || semTextoLido}
+          >
+            {T.revisar}
+          </BotaoProtegido>
+          <BotaoProtegido
+            podeEditar={podeEscrever}
+            dica={FRASES_SEM_PERMISSAO.descartar}
+            variant="ghost"
+            onClick={() => setDescarte(versao)}
+            disabled={ocupado}
+          >
+            {descartando
+              ? T.descartando
+              : textoAntigoDoCadastro
+                ? T.descartarTextoAntigo
+                : T.descartar}
+          </BotaoProtegido>
+        </div>
+      </div>
+    );
+  };
+
+  // Outra pessoa salvou enquanto o editor estava aberto (TELA-3): diz onde
+  // esta o texto novo e, se ele espera o RT, que o envio toma o lugar dele.
+  const avisoDoEditor =
+    editor !== null && editor.conflito
+      ? aguardando !== null && aguardando.versao > editor.versaoLida
+        ? T.outraPessoaSalvouAguardando
+        : T.outraPessoaSalvou
+      : null;
 
   return moldura(
     <>
@@ -711,40 +1150,9 @@ export function SecaoDoPreparo({
         : null}
       {suspensa ? blocoDaAprovada(suspensa, T.suspensa) : null}
 
-      {aguardando ? (
-        <div className="grid gap-2" data-parte="bloco-aguardando">
-          <h4 className="text-[13px] font-semibold text-text-strong">
-            {T.aguardando}
-          </h4>
-          <TextoDoPreparo texto={aguardando.texto} />
-          <p className="text-xs text-text-secondary">
-            {linhaDaAutoria(dados, aguardando, timezone)}{" "}
-            {situacao === "aprovada" ? T.enquantoComVigor : T.enquantoSemVigor}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <BotaoProtegido
-              podeEditar={podeAprovar}
-              dica={FRASES_SEM_PERMISSAO.aprovar}
-              variant="default"
-              onClick={() => setPedido({ modo: "aprovar", versao: aguardando })}
-              disabled={ocupado}
-            >
-              {T.revisar}
-            </BotaoProtegido>
-            <BotaoProtegido
-              podeEditar={podeEscrever}
-              dica={FRASES_SEM_PERMISSAO.descartar}
-              variant="ghost"
-              onClick={() => void descartar(aguardando)}
-              disabled={ocupado}
-            >
-              {descartando ? T.descartando : T.descartar}
-            </BotaoProtegido>
-          </div>
-        </div>
-      ) : null}
+      {aguardando ? blocoDoAguardando(aguardando) : null}
 
-      {versoes.length === 0 && !escrevendo ? (
+      {versoes.length === 0 && editor === null ? (
         <p className="text-[13px] text-text-secondary">{T.semOrientacao}</p>
       ) : null}
 
@@ -754,21 +1162,21 @@ export function SecaoDoPreparo({
         </Aviso>
       ) : null}
 
-      {escrevendo ? (
+      {editor !== null ? (
         <EditorDoPreparo
           id={id}
-          texto={texto}
+          texto={editor.texto}
           aoMudar={(novo) => {
-            setTexto(novo);
+            setEditor((atual) =>
+              atual === null ? null : { ...atual, texto: novo },
+            );
             setErroDoEditor(null);
           }}
           enviando={enviando}
           erro={erroDoEditor}
+          aviso={avisoDoEditor}
           aoEnviar={() => void enviarTexto()}
-          aoCancelar={() => {
-            setEscrevendo(false);
-            setErroDoEditor(null);
-          }}
+          aoCancelar={cancelarEditor}
         />
       ) : (
         <div className="flex flex-wrap gap-2">
@@ -799,18 +1207,36 @@ export function SecaoDoPreparo({
         <ListaDeVersoes dados={dados} versoes={versoes} timezone={timezone} />
       ) : null}
 
-      {dados.rtAberto && podeAprovar ? (
-        <AprovarPreparoDialog
-          pedido={pedido}
-          aoFechar={() => setPedido(null)}
-          procedureId={procedimento.id}
-          procedimento={procedimento.nome}
-          rt={dados.rtAberto}
-          textoEmVigor={aprovada?.texto ?? null}
-          versaoLida={resumo.versaoLida}
-          aoConcluir={preparo.recarregar}
-        />
-      ) : null}
+      {/* Montado enquanto houver pedido, mesmo que a sessao deixe de ser o
+          RT: o dialogo diz isso e trava, ate a pessoa fechar (TELA-2). */}
+      <AprovarPreparoDialog
+        pedido={pedido}
+        aoFechar={() => setPedido(null)}
+        procedureId={procedimento.id}
+        souRt={podeAprovar}
+        rtDeAgora={dados.rtAberto}
+        aoConcluir={preparo.recarregar}
+      />
+
+      <ConfirmarDescarteDoRascunho
+        aberto={cancelandoEditor}
+        corpo={T.rascunhoAoCancelar}
+        rotuloDescartar={T.descartarOTexto}
+        aoContinuar={() => setCancelandoEditor(false)}
+        aoDescartar={fecharEditor}
+      />
+
+      <ConfirmarDescarteDoTextoNovo
+        versao={descarte}
+        doRt={podeAprovar}
+        descartando={descartando}
+        aoVoltar={() => setDescarte(null)}
+        aoDescartar={() => {
+          if (descarte !== null) {
+            void descartar(descarte);
+          }
+        }}
+      />
 
       <Dialog
         open={confirmandoSuspensao}
