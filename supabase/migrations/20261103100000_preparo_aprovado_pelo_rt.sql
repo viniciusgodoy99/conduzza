@@ -1569,6 +1569,7 @@ as $function$
 declare
   c_frase_rt constant text := 'Só o administrador da clínica define o responsável técnico.';
   v_aberto uuid;
+  v_desde_do_aberto timestamptz;
   v_id uuid;
   v_quando timestamptz := now();
 begin
@@ -1607,11 +1608,17 @@ begin
     raise exception using errcode = 'P0001', message = 'responsavel_nao_e_membro_ativo';
   end if;
   -- A trava: so a linha aberta do RT.
-  select r.id into v_aberto
+  select r.id, r.desde into v_aberto, v_desde_do_aberto
     from public.responsavel_tecnico r
    where r.clinic_id = p_clinic_id
      and r.ate is null
      for update;
+  -- A linha aberta nasceu depois do comeco desta transacao (now() e o do
+  -- comeco): outra definicao ganhou a corrida, e encerra-la com ate antes do
+  -- desde dela daria 23514 (BANCO-6).
+  if v_aberto is not null and v_desde_do_aberto > v_quando then
+    raise exception using errcode = 'P0001', message = 'outra_definicao';
+  end if;
   begin
     if v_aberto is not null then
       update public.responsavel_tecnico
@@ -1658,13 +1665,18 @@ begin
     raise exception using errcode = '42501', message = c_frase_rt;
   end if;
   -- A trava: so a linha aberta do RT.
-  select r.id, r.user_id into v_aberto
+  select r.id, r.user_id, r.desde into v_aberto
     from public.responsavel_tecnico r
    where r.clinic_id = p_clinic_id
      and r.ate is null
      for update;
   if v_aberto.id is null then
     raise exception using errcode = 'P0001', message = 'sem_responsavel_tecnico';
+  end if;
+  -- A linha aberta nasceu depois do comeco desta transacao: e um RT que quem
+  -- clicou nunca viu (BANCO-6). Nada muda.
+  if v_aberto.desde > now() then
+    raise exception using errcode = 'P0001', message = 'outra_definicao';
   end if;
   update public.responsavel_tecnico
      set ate = now(),
@@ -1682,7 +1694,7 @@ grant execute on function public.encerrar_responsavel_tecnico(uuid)
   to authenticated;
 
 comment on function public.encerrar_responsavel_tecnico(uuid) is
-  'Configuracoes (authenticated). AG7: encerra a designacao aberta do RT (ate, encerrado_por = auth.uid()); a clinica fica sem RT e nenhuma orientacao de preparo sai ate definir outro e ele aprovar de novo (D-73). Na ordem: 22004 parametro_nulo; 42501 "Só o administrador da clínica define o responsável técnico." (so o administrador pleno ou o super admin); a trava da linha aberta (FOR UPDATE); P0001 sem_responsavel_tecnico. Trilha encerrou_responsavel_tecnico {user_id}. Nunca 40001 nem 40P01.';
+  'Configuracoes (authenticated). AG7: encerra a designacao aberta do RT (ate, encerrado_por = auth.uid()); a clinica fica sem RT e nenhuma orientacao de preparo sai ate definir outro e ele aprovar de novo (D-73). Na ordem: 22004 parametro_nulo; 42501 "Só o administrador da clínica define o responsável técnico." (so o administrador pleno ou o super admin); a trava da linha aberta (FOR UPDATE); P0001 sem_responsavel_tecnico; P0001 outra_definicao se a linha aberta nasceu depois do comeco desta transacao (um RT que quem clicou nunca viu; BANCO-6). Trilha encerrou_responsavel_tecnico {user_id}. Nunca 40001 nem 40P01.';
 
 -- ---------------------------------------------------------------------------
 -- 9) mensagem_ia_exige_aprovacao: o ramo do preparo
