@@ -86,6 +86,12 @@ export const TEXTOS_DO_PREPARO = {
   escrever: "Escrever orientação",
   escreverNovo: "Escrever texto novo",
   campo: "Texto da orientação de preparo",
+  // A ajuda do editor (fechamento entre as frentes da AG7): o que e recusado
+  // antes de chegar ao RT e o que so vira aviso para ele conferir (D-80).
+  ajudaDoEditorRecusa:
+    "Não pode ter link, arroba, valor ou condição de pagamento, promessa de resultado, brinde ou oferta de outro procedimento, nem antes e depois de pacientes.",
+  ajudaDoEditorAviso:
+    "Pode ter remédio, dose e jejum: antes de aprovar, o responsável técnico vê um aviso para conferir.",
   enviarParaORt: "Enviar para o RT aprovar",
   enviando: "Enviando...",
   cancelar: "Cancelar",

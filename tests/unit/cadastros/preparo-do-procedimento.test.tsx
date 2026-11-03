@@ -595,7 +595,46 @@ describe("o editor do texto", () => {
     expect(html).toContain(T.campo);
     expect(html).toContain(`${Array.from(TEXTO_NOVO).length} de 3.500`);
     expect(html).toContain(T.enviarParaORt);
-    expect(html).toContain('aria-describedby="ed-contador"');
+    expect(html).toContain('aria-describedby="ed-contador ed-ajuda"');
+  });
+
+  it("a ajuda do editor: o que é recusado e o que só avisa o RT, ligada ao campo e sem travessão", () => {
+    const html = semEntidades(
+      renderToStaticMarkup(
+        <EditorDoPreparo
+          id="ed"
+          texto=""
+          aoMudar={() => undefined}
+          enviando={false}
+          erro={null}
+          aoEnviar={() => undefined}
+          aoCancelar={() => undefined}
+        />,
+      ),
+    );
+    const ajuda =
+      /<div id="ed-ajuda" data-parte="ajuda-do-editor"[^>]*>([\s\S]*?)<\/div>/.exec(
+        html,
+      )?.[1] ?? "";
+    expect(ajuda).toContain(T.ajudaDoEditorRecusa);
+    expect(ajuda).toContain(T.ajudaDoEditorAviso);
+    // O que e recusado (as recusas das regras de hoje e do banco) e o que so
+    // avisa (D-80), nas palavras da recepcao.
+    for (const recusa of [
+      "link",
+      "arroba",
+      "valor ou condição de pagamento",
+      "promessa de resultado",
+      "brinde ou oferta de outro procedimento",
+      "antes e depois",
+    ]) {
+      expect(T.ajudaDoEditorRecusa).toContain(recusa);
+    }
+    expect(T.ajudaDoEditorAviso).toContain("remédio, dose e jejum");
+    expect(T.ajudaDoEditorAviso).toContain("aviso");
+    for (const frase of [T.ajudaDoEditorRecusa, T.ajudaDoEditorAviso]) {
+      expect(frase).not.toMatch(/[\u2013\u2014]/);
+    }
   });
 
   it("Enviando... enquanto grava, e o erro da action em português", () => {

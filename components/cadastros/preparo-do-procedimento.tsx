@@ -508,9 +508,19 @@ export function EditorDoPreparo({
         onChange={(e) => aoMudar(e.target.value)}
         rows={8}
         disabled={enviando}
-        aria-describedby={`${id}-contador`}
+        aria-describedby={`${id}-contador ${id}-ajuda`}
         aria-invalid={erro !== null || passou}
       />
+      {/* O que e recusado antes de chegar ao RT e o que so vira aviso para
+          ele conferir (D-80), sem travessao, na linguagem da recepcao. */}
+      <div
+        id={`${id}-ajuda`}
+        data-parte="ajuda-do-editor"
+        className="grid gap-0.5 text-xs text-text-secondary"
+      >
+        <p>{T.ajudaDoEditorRecusa}</p>
+        <p>{T.ajudaDoEditorAviso}</p>
+      </div>
       {aviso ? (
         <Aviso tom="warning" role="status">
           {aviso}
