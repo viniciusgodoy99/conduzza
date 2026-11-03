@@ -7,6 +7,7 @@ import {
   erroDeSempre,
   FRASE_DA_EQUIPE_CONDUZZA,
   FRASES_SEM_PERMISSAO,
+  fraseDoNomeComInvisivel,
   frasesDoConteudoRecusado,
   prepararTextoDoPreparo,
   problemaNoTextoDoPreparo,
@@ -274,7 +275,20 @@ function recusaDoBanco(
   acao: AcaoDoPreparo,
   erro: ErroDaRpc,
   texto: string,
+  // Revisao curta da AG7 (CURTA-6): o nome do procedimento lido antes da
+  // RPC, para o nome_do_procedimento_invalido dizer o que tirar.
+  nomeDoProcedimento?: string,
 ): RecusaDoPreparo {
+  if (
+    erro.code === "22023" &&
+    erro.message === "nome_do_procedimento_invalido" &&
+    nomeDoProcedimento !== undefined
+  ) {
+    const frase = fraseDoNomeComInvisivel(nomeDoProcedimento, "procedimento");
+    if (frase !== null) {
+      return { ok: false, error: frase };
+    }
+  }
   if (
     erro.message === "texto_recusado" &&
     (erro.code === "22023" || erro.code === "P0001")
@@ -316,6 +330,7 @@ async function salvarNoBanco(
   procedureId: string,
   texto: string,
   versaoLidaNaTela: number,
+  nomeDoProcedimento: string,
 ): Promise<ResultadoDoSalvarPreparo> {
   const { data, error } = await sessao.supabase.rpc(
     "salvar_preparo_do_procedimento",
@@ -326,7 +341,7 @@ async function salvarNoBanco(
     },
   );
   if (error) {
-    return recusaDoBanco("salvar", error, texto);
+    return recusaDoBanco("salvar", error, texto, nomeDoProcedimento);
   }
   const resposta = respostaDoSalvarSchema.safeParse(data);
   return {
@@ -375,11 +390,8 @@ export async function salvarPreparoAction(
   if (!texto.ok) {
     return texto;
   }
-  const procedimento = await procedimentoDaClinica(
-    sessao,
-    lido.data.procedureId,
-  );
-  if (procedimento !== "sim") {
+  const procedimento = await nomeDoProcedimento(sessao, lido.data.procedureId);
+  if (procedimento === "erro" || procedimento === "nao") {
     return {
       ok: false,
       error:
@@ -388,11 +400,23 @@ export async function salvarPreparoAction(
           : PROCEDIMENTO_NAO_ENCONTRADO,
     };
   }
+  // Revisao curta da AG7 (CURTA-6): o nome com caractere invisivel ou marca
+  // de direcao (colado de outro lugar) vai no cabecalho da mensagem, e o
+  // banco o recusa (nome_do_procedimento_invalido). A frase diz o que tirar,
+  // antes da RPC.
+  const nomeComInvisivel = fraseDoNomeComInvisivel(
+    procedimento.nome,
+    "procedimento",
+  );
+  if (nomeComInvisivel !== null) {
+    return { ok: false, error: nomeComInvisivel };
+  }
   const resultado = await salvarNoBanco(
     sessao,
     lido.data.procedureId,
     texto.texto,
     lido.data.versaoLida,
+    procedimento.nome,
   );
   if (resultado.ok) {
     revalidar();
@@ -560,6 +584,7 @@ export async function aprovarDeNovoAction(
     lido.data.procedureId,
     texto.texto,
     lido.data.versaoLida,
+    procedimento.nome,
   );
   if (!salvo.ok) {
     // O banco recusou o conteudo no salvar: nada gravado, e a frase e a do

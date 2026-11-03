@@ -1058,3 +1058,61 @@ describe("revisao curta da AG7 (CURTA-5): o texto aprovado que as regras de hoje
     });
   });
 });
+
+// Revisao curta da AG7 (CURTA-6): o nome do procedimento com invisivel ou
+// marca de direcao (colado de outro lugar) passa no Cadastros, e o banco o
+// recusa no salvar do preparo (22023 nome_do_procedimento_invalido) com a
+// frase que nao dizia o que tirar.
+describe("revisao curta da AG7 (CURTA-6): o nome do procedimento com caractere invisível", () => {
+  const FRASE =
+    "Tire o caractere invisível do nome do procedimento, logo depois de “Colonoscopia”: apague e escreva de novo esse pedaço do nome, salve o procedimento e envie o texto de novo.";
+
+  function nomeComInvisivel() {
+    const procedimento = estado.tabelas.procedure?.find((p) => p.id === PROC);
+    if (procedimento) {
+      procedimento.name = "Colonoscopia\u200e";
+    }
+  }
+
+  it("o salvar diz o que tirar, antes da RPC", async () => {
+    nomeComInvisivel();
+    expect(await salvarPreparoAction(SALVAR)).toEqual({
+      ok: false,
+      error: FRASE,
+    });
+    expect(escritas()).toEqual([]);
+  });
+
+  it("o nome_do_procedimento_invalido do banco no aprovar de novo vira a mesma frase", async () => {
+    nomeComInvisivel();
+    papel("profissional", { rt: true });
+    const v2 = estado.tabelas.preparo_do_procedimento?.find((v) => v.id === V2);
+    if (v2) {
+      v2.situacao = "descartado";
+    }
+    estado.respostas.salvar_preparo_do_procedimento = {
+      data: null,
+      error: { code: "22023", message: "nome_do_procedimento_invalido" },
+    };
+    expect(
+      await aprovarDeNovoAction({
+        procedureId: PROC,
+        versaoLida: 2,
+        textoSha256: SHA_V1,
+        nomeLido: "Colonoscopia\u200e",
+      }),
+    ).toEqual({ ok: false, error: FRASE });
+  });
+
+  it("o nome sem invisivel que o banco recusa continua com a frase de sempre", async () => {
+    estado.respostas.salvar_preparo_do_procedimento = {
+      data: null,
+      error: { code: "22023", message: "nome_do_procedimento_invalido" },
+    };
+    expect(await salvarPreparoAction(SALVAR)).toEqual({
+      ok: false,
+      error:
+        "Confira o nome do procedimento antes de escrever a orientação de preparo.",
+    });
+  });
+});

@@ -351,6 +351,58 @@ export function problemaDeFormatoDoTextoDoPreparo(
 }
 
 // ---------------------------------------------------------------------------
+// O nome do procedimento e do RT (espelho de preparo_nome_valido; revisao
+// curta da AG7, CURTA-6)
+// ---------------------------------------------------------------------------
+
+/** O tamanho do nome que vai no cabecalho da mensagem (o CHECK do banco). */
+export const LIMITE_DO_NOME_DO_PREPARO = 120;
+
+// O controle (C0, DEL e C1) que preparo_nome_valido recusa no nome.
+const CONTROLE_NO_NOME = /[\u0000-\u001f\u007f-\u009f]/;
+
+// Os invisiveis e as marcas e isolamentos de direcao que preparo_nome_valido
+// recusa no nome (os do texto e os que o filtro tambem recusa): reordenariam
+// a linha que o paciente le.
+const INVISIVEL_NO_NOME =
+  /[\u00ad\u034f\u061c\u115f\u1160\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\u2800\u3164\ufeff\uffa0\u{e0000}-\u{e007f}]/u;
+
+/**
+ * Espelho de preparo_nome_valido (migration 20261103100000): o nome do
+ * procedimento ou do RT, que vai no cabecalho da mensagem ao paciente, de 1 a
+ * 120 caracteres (pontos de codigo), aparado pelos 25 brancos, sem controle e
+ * sem invisivel nem marca ou isolamento de direcao. O Cadastros e o
+ * formulario do RT nao conferiam os invisiveis, e o banco recusava sem dizer
+ * o que (CURTA-6).
+ */
+export function nomeDoPreparoValido(nome: string): boolean {
+  if (typeof nome !== "string") {
+    return false;
+  }
+  const tamanho = Array.from(nome).length;
+  return (
+    tamanho >= 1 &&
+    tamanho <= LIMITE_DO_NOME_DO_PREPARO &&
+    aparar(nome) === nome &&
+    !CONTROLE_NO_NOME.test(nome) &&
+    !INVISIVEL_NO_NOME.test(nome)
+  );
+}
+
+/**
+ * O primeiro invisivel ou marca de direcao do nome que preparo_nome_valido
+ * recusa, pela posicao (indice UTF-16): a tela diz o que tirar e onde. null:
+ * nenhum.
+ */
+export function invisivelNoNome(nome: string): { posicao: number } | null {
+  if (typeof nome !== "string") {
+    return null;
+  }
+  const achado = INVISIVEL_NO_NOME.exec(nome);
+  return achado === null ? null : { posicao: achado.index };
+}
+
+// ---------------------------------------------------------------------------
 // O conteudo que o banco recusa sozinho (espelho de preparo_texto_recusado)
 // ---------------------------------------------------------------------------
 
