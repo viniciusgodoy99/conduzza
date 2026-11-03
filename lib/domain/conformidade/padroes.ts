@@ -250,6 +250,55 @@ export const MEDICAMENTOS = [
   "gabapentin",
 ] as const;
 
+// [AG7 preparo] início
+/**
+ * Revisao da AG7 (CFM-4): os agentes do preparo intestinal (colonoscopia) e
+ * os laxantes comuns no Brasil, pelo principio ativo e pela marca, no mesmo
+ * formato de MEDICAMENTOS (prefixo). SO NA SAIDA (o remedio que o modelo
+ * escreve, e o lexico compacto da saida): o portao de entrada nao muda
+ * (D-81), e a duvida do paciente sobre o remedio do preparo continua com o
+ * classificador e com a conferencia do pedido do preparo (CFM-6). Sem eles,
+ * "Toma o bisacodil as 18h" passava na camada deterministica e so o
+ * verificador barrava. Nomes pedidos na revisao da AG7 (a pendencia da lista
+ * oficial da Anvisa, acima, continua do dono).
+ */
+export const MEDICAMENTOS_DO_PREPARO = [
+  "bisacodil",
+  "dulcolax",
+  "bisalax",
+  "lacto purga",
+  "lactopurga",
+  "humectol",
+  "manitol",
+  "picossulfato",
+  "picosulfato",
+  "picoprep",
+  "pico prep",
+  "picolax",
+  "guttalax",
+  "macrogol",
+  "polietilenoglicol",
+  "muvinlax",
+  "muvilax",
+  "forlax",
+  "lactulos",
+  "lactulona",
+  "duphalac",
+  "sene\\b",
+  "senosideo",
+  "tamarine",
+  "naturetti",
+  "agiolax",
+  "fosfato de sodio",
+  "phosfoenema",
+  "fleet\\b",
+  "supositori",
+  "nujol",
+  "oleo mineral",
+  "oleo de ricino",
+] as const;
+// [AG7 preparo] fim
+
 /** Classes e palavras genericas de remedio (pt, en, es). */
 const REMEDIO_GENERICO = [
   "remedi",
@@ -1067,7 +1116,29 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
       "\\bbexiga (?:cheia|vazia)\\b|\\b(?:nao|sem) urin(?:e|ar)\\b",
       "\\blavagem intestinal\\b|\\benemas?\\b|\\bclister\\b",
       "\\b(?:beba|beber|bebe|tome|tomar|toma|ingira|ingerir)\\b (?:\\w+ ){0,3}?(?:\\d+(?:[.,]\\d+)?|meio|meia|um|uma|dois|duas|tres|quatro|cinco|seis) ?(?:litros?|l)\\b",
+      // Revisao da AG7 (CFM-4): a giria e o jeito curto de falar o preparo.
+      // A barriga vazia; o "nada de" comer; o xixi negado, segurado ou
+      // antes; a comida leve ou liquida; o "so" caldo, sopa, gelatina ou
+      // cha; o "sem" e o "corta" ou "tira" de um alimento; a quantidade de
+      // copos (dois ou mais: "tome um copo de agua enquanto espera" e
+      // recepcao, o controle AG7-C).
+      "\\bbarriga (?:vazia|vaziinha)\\b",
+      "\\bnada de (?:comida|comidas|comer|beber|bebida|bebidas|alimento|alimentos|liquido|liquidos|agua|folhas?|fibras?|sementes?|cascas?|verduras?|frutas?|graos?|leite|carnes?)\\b",
+      "\\b(?:nao|sem|nem) (?:\\w+ )?xixi\\b|\\bsegur(?:e|a|ar|em|ando) (?:o |seu |teu )?xixi\\b|\\bxixi\\b (?:\\w+ ){0,2}?antes\\b",
+      "\\b(?:alimentacao|alimentacoes|refeicao|refeicoes|comida|comidas|algo|coisa|coisas) (?:bem |mais |bem mais )?(?:leves?|levinh\\w*|liquid\\w*|pastos\\w*)\\b",
+      "\\b(?:so|apenas|somente)\\b (?:\\w+ )?(?:caldos?|caldinhos?|sopas?|sopinhas?|gelatinas?|chas?|agua de coco|liquidos?)\\b",
+      "\\bsem (?:\\w+ )?(?:verduras?|frutas?|folhas?|sementes?|cascas?|fibras?|graos?|legumes|feijao|carnes?|leite|laticinios)\\b",
+      "\\b(?:corta|corte|cortar|tira|tire|tirar|retire|retirar)\\b (?:\\w+ ){0,2}?(?:fibras?|carnes?|verduras?|frutas?|folhas?|sementes?|cascas?|graos?|feijao|saladas?|leite|laticinios|gordur\\w*|frituras?|doces?|acucar|cafe|alcool)\\b",
+      "\\b(?:\\d+|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez)\\b (?:\\w+ )?copos (?:de )?(?:agua|liquido|liquidos|suco|sucos|cha|chas)\\b",
     ].join("|"),
+  ),
+  p(
+    "orientacao_clinica",
+    "cuidado_antes_do_procedimento",
+    // Revisao da AG7 (CFM-4): o cuidado com a pele antes do procedimento
+    // dito curto ("Nao faca depilacao nem use acidos 7 dias antes"), so com
+    // o verbo de quem faz ("nao fazemos depilacao a laser" e catalogo).
+    "\\b(?:nao|nem|sem|evite|evitar)\\b (?:\\w+ )?(?:faca|faz|fazer|fizer|use|usa|usar|passe|passa|passar|aplique|aplica|aplicar)\\b (?:\\w+ ){0,2}?(?:depilac\\w*|esfolia\\w*|acidos?\\b|retinoi\\w*|clareador\\w*|bronzea\\w*|autobronzead\\w*)",
   ),
   p(
     "orientacao_clinica",
@@ -1128,6 +1199,12 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
 
   // ---- medicamento ---------------------------------------------------------
   p("medicamento", "remedio_citado", `\\b${alternativas(MEDICAMENTOS)}`),
+  // [AG7 preparo] Revisao da AG7 (CFM-4): o remedio do preparo (so a saida).
+  p(
+    "medicamento",
+    "remedio_do_preparo",
+    `\\b${alternativas(MEDICAMENTOS_DO_PREPARO)}`,
+  ),
   p("medicamento", "classe_de_remedio", `\\b${alternativas(REMEDIO_GENERICO)}`),
   p(
     "medicamento",
@@ -1156,12 +1233,14 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
     "quantidade_com_unidade",
     // "Unidades" so com o produto ("50 unidades de toxina") ou na regiao
     // (unidades_na_regiao): "temos 2 unidades" sao filiais.
-    "\\b\\d[\\d.,o]*\\s?(?:m\\W{0,2}g|mcg|ug|m\\W{0,2}l|g|u\\W{0,2}i|ui|u|un|gotas?|gotinhas?|pingos?|comprimidos?|capsulas?|cps?|caps|saches?|colher(?:es)?|colheradas?|doses?|ampolas?|jatos?|borrifadas?|puffs?|miligramas?|mililitros?|microgramas?|gramas?|seringas?|frascos?)\\b|\\b\\d[\\d.,o]*\\s?unidades? (?:de |do |da )?(?:botox|toxina|dysport|xeomin|botulift|produto|acido|preenchimento)",
+    "\\b\\d[\\d.,o]*\\s?(?:m\\W{0,2}g|mcg|ug|m\\W{0,2}l|g|u\\W{0,2}i|ui|u|un|gotas?|gotinhas?|pingos?|comprimidos?|compr|capsulas?|cps?|caps|saches?|colher(?:es)?|colheradas?|doses?|ampolas?|jatos?|borrifadas?|puffs?|miligramas?|mililitros?|microgramas?|gramas?|seringas?|frascos?)\\b|\\b\\d[\\d.,o]*\\s?unidades? (?:de |do |da )?(?:botox|toxina|dysport|xeomin|botulift|produto|acido|preenchimento)",
   ),
   p(
     "dosagem",
     "quantidade_por_extenso",
-    "\\b(?:um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|meio|meia|vinte|trinta|quarenta|cinquenta|cem|duzentos|quinhentos|mil)\\b (?:\\w+ )?(?:gotas?|gotinhas?|pingos?|comprimidos?|capsulas?|colher(?:es)?|colheradas?|doses?|ampolas?|miligramas?|mililitros?|mg|ml|saches?|jatos?|borrifadas?)\\b|\\bquinhentinh|\\bmeio grama\\b",
+    // [AG7 preparo] Revisao da AG7 (CFM-4): a abreviacao "compr." ("toma
+    // dois compr. as 18h").
+    "\\b(?:um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|meio|meia|vinte|trinta|quarenta|cinquenta|cem|duzentos|quinhentos|mil)\\b (?:\\w+ )?(?:gotas?|gotinhas?|pingos?|comprimidos?|compr|capsulas?|colher(?:es)?|colheradas?|doses?|ampolas?|miligramas?|mililitros?|mg|ml|saches?|jatos?|borrifadas?)\\b|\\bquinhentinh|\\bmeio grama\\b",
   ),
   p(
     "dosagem",
@@ -1670,7 +1749,8 @@ const FORA_DO_COMPACTO = new Set(["voltaren", "melhoral"]);
  */
 function medicamentosParaOCompacto(): TermoCompacto[] {
   const termos = new Set<string>();
-  for (const termo of MEDICAMENTOS) {
+  // [AG7 preparo] E os remedios do preparo (so a saida, CFM-4).
+  for (const termo of [...MEDICAMENTOS, ...MEDICAMENTOS_DO_PREPARO]) {
     if (/[^a-z ]/.test(termo)) {
       continue;
     }

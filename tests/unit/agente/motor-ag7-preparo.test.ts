@@ -762,8 +762,10 @@ describe("o modelo continua barrado ao escrever preparo", () => {
         uso: { ...USO_LIDO },
       };
     });
+    // Revisao da AG7 (CFM-4): "so caldos" ja barra nas regras; a parafrase
+    // que so o verificador pega e outra.
     const { r } = await turno([
-      final("No dia anterior, prefira só caldos e gelatina."),
+      final("Na véspera, capriche nos caldos e na gelatina."),
     ]);
     expect(verificador).toHaveBeenCalledTimes(1);
     expect(r.desfecho).toMatchObject({ tipo: "bloqueou", camada: "modelo" });
