@@ -797,31 +797,23 @@ function agulhasDe(textos: readonly string[]): readonly Agulha[] {
 /** A frase do texto da clinica que conta como trecho (normalizada). */
 export const TAMANHO_MINIMO_DO_TRECHO = 25;
 
-/**
- * Minusculas, sem acento (NFKD sem as marcas), o que nao e letra nem numero
- * vira espaco, espaco unico. Os dois lados passam por aqui.
- */
-function normalizarParaOTrecho(texto: string): string {
-  return soLetrasENumeros(semAcentoEMinusculo(texto));
-}
-
-/** A primeira metade da normalizacao: NFKD sem as marcas, minusculas. */
+/** A normalizacao dos dois lados: NFKD sem as marcas, minusculas. */
 function semAcentoEMinusculo(texto: string): string {
   return texto.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
 }
 
-/** A segunda: o que nao e letra nem numero vira espaco, espaco unico. */
-function soLetrasENumeros(texto: string): string {
-  return texto.replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-}
+// A palavra: o que sobra entre o que nao e letra nem numero. Os dois lados
+// viram a lista das palavras (o mesmo que trocar o resto por um espaco so e
+// aparar as pontas).
+const PALAVRA = /[\p{L}\p{N}]+/gu;
 
 // O fim de frase: ponto, exclamacao, interrogacao, ponto e virgula ou dois
 // pontos seguidos de branco (ou no fim), e a quebra de linha. "0,9" e
 // "18:00" nao quebram.
-const FIM_DE_FRASE = /[.!?;:\u2026]+(?=\s|$)|[\r\n\u2028\u2029]+/u;
+const FIM_DE_FRASE = /[.!?;:\u2026]+(?=\s|$)|[\r\n\u2028\u2029]+/gu;
 // Revisao da AG7 (CFM-8): o fim de frase e a virgula seguida de branco ("0,9"
 // nao quebra).
-const FIM_DE_FRASE_OU_ORACAO = /[.!?;:,\u2026]+(?=\s|$)|[\r\n\u2028\u2029]+/u;
+const FIM_DE_FRASE_OU_ORACAO = /[.!?;:,\u2026]+(?=\s|$)|[\r\n\u2028\u2029]+/gu;
 
 /**
  * Revisao da AG7 (CFM-8): quantas palavras seguidas de um texto da clinica
@@ -836,10 +828,28 @@ const FIM_DE_FRASE_OU_ORACAO = /[.!?;:,\u2026]+(?=\s|$)|[\r\n\u2028\u2029]+/u;
  */
 export const PALAVRAS_DA_JANELA_DO_TRECHO = 10;
 
-/** O texto da clinica normalizado: as frases que contam e as palavras. */
+/**
+ * O texto da clinica normalizado, em palavras. Revisao curta da AG7
+ * (CURTA-2): as frases e as oracoes viram intervalos de palavras
+ * ([inicio, fim)), e nao textos montados, e a busca compara palavra com
+ * palavra: cada texto da lista do turno e preparado numa passada so (no
+ * teto, um quarto do tempo de antes). O resultado e o mesmo de antes
+ * (tests/unit/conformidade/preparo-desempenho.test.ts compara com a forma
+ * antiga).
+ */
 type FormasDoTexto = {
-  readonly trechos: readonly string[];
+  /** As palavras do texto (minusculas, sem acento), na ordem. */
   readonly palavras: readonly string[];
+  /**
+   * Os pontos de codigo das palavras antes de cada uma (o tamanho de um
+   * trecho e a diferenca, mais os espacos entre as palavras).
+   */
+  readonly acumulado: readonly number[];
+  /**
+   * As frases e as oracoes entre virgulas com TAMANHO_MINIMO_DO_TRECHO
+   * caracteres ou mais, e o texto inteiro, como [inicio, fim) nas palavras.
+   */
+  readonly trechos: readonly (readonly [number, number])[];
 };
 
 // As formas de cada texto, por lista (a do catalogo do turno), sem segurar a
@@ -848,6 +858,42 @@ const FORMAS_DA_LISTA = new WeakMap<
   readonly string[],
   Map<string, FormasDoTexto>
 >();
+
+/** Pontos de codigo da palavra (a letra fora do plano basico conta um). */
+function pontosDeCodigo(palavra: string): number {
+  let pontos = 0;
+  for (let i = 0; i < palavra.length; i += 1) {
+    const unidade = palavra.charCodeAt(i);
+    // A primeira metade do par conta; a segunda, nao.
+    if (unidade < 0xdc00 || unidade > 0xdfff) {
+      pontos += 1;
+    }
+  }
+  return pontos;
+}
+
+/** O tamanho do trecho [inicio, fim) com um espaco entre as palavras. */
+function tamanhoDoTrecho(
+  acumulado: readonly number[],
+  inicio: number,
+  fim: number,
+): number {
+  return (acumulado[fim] ?? 0) - (acumulado[inicio] ?? 0) + (fim - inicio - 1);
+}
+
+/** As palavras de um texto (minusculas, sem acento) e onde cada uma comeca. */
+function palavrasDe(minusculo: string): {
+  palavras: string[];
+  inicios: number[];
+} {
+  const palavras: string[] = [];
+  const inicios: number[] = [];
+  for (const achado of minusculo.matchAll(PALAVRA)) {
+    palavras.push(achado[0]);
+    inicios.push(achado.index);
+  }
+  return { palavras, inicios };
+}
 
 /** As frases de um texto da clinica que contam como trecho, normalizadas. */
 function formasDoTexto(texto: string, lista: readonly string[]): FormasDoTexto {
@@ -863,20 +909,82 @@ function formasDoTexto(texto: string, lista: readonly string[]): FormasDoTexto {
   // A NFKD uma vez so (o texto chega a 4.000 caracteres e a lista a 1.000
   // textos): a pontuacao continua ate o corte das frases e das oracoes.
   const minusculo = semAcentoEMinusculo(texto);
-  const inteiro = soLetrasENumeros(minusculo);
-  const formas: FormasDoTexto = {
-    trechos: [
-      ...minusculo.split(FIM_DE_FRASE).map(soLetrasENumeros),
-      // Revisao da AG7 (CFM-8): a oracao entre virgulas tambem conta.
-      ...minusculo.split(FIM_DE_FRASE_OU_ORACAO).map(soLetrasENumeros),
-      // O texto inteiro tambem conta: um texto so de frases curtas copiado
-      // por inteiro.
-      inteiro,
-    ].filter((trecho) => Array.from(trecho).length >= TAMANHO_MINIMO_DO_TRECHO),
-    palavras: inteiro === "" ? [] : inteiro.split(" "),
+  const { palavras, inicios } = palavrasDe(minusculo);
+  const acumulado = [0];
+  for (const palavra of palavras) {
+    acumulado.push(
+      (acumulado[acumulado.length - 1] ?? 0) + pontosDeCodigo(palavra),
+    );
+  }
+  const trechos: (readonly [number, number])[] = [];
+  const somar = (inicio: number, fim: number) => {
+    if (
+      fim > inicio &&
+      tamanhoDoTrecho(acumulado, inicio, fim) >= TAMANHO_MINIMO_DO_TRECHO
+    ) {
+      trechos.push([inicio, fim]);
+    }
   };
+  // As frases e (revisao da AG7, CFM-8) as oracoes entre virgulas: as
+  // palavras entre um corte e o seguinte. O corte nunca cai dentro de uma
+  // palavra (so tem pontuacao e quebra de linha).
+  for (const corte of [FIM_DE_FRASE, FIM_DE_FRASE_OU_ORACAO]) {
+    let comeco = 0;
+    let proxima = 0;
+    for (const achado of minusculo.matchAll(corte)) {
+      while (
+        proxima < inicios.length &&
+        (inicios[proxima] ?? 0) < achado.index
+      ) {
+        proxima += 1;
+      }
+      somar(comeco, proxima);
+      comeco = proxima;
+    }
+    somar(comeco, palavras.length);
+  }
+  // O texto inteiro tambem conta: um texto so de frases curtas copiado por
+  // inteiro.
+  somar(0, palavras.length);
+  const formas: FormasDoTexto = { palavras, acumulado, trechos };
   daLista.set(texto, formas);
   return formas;
+}
+
+/** As palavras da resposta e as posicoes de cada uma. */
+type PalavrasDaResposta = {
+  readonly palavras: readonly string[];
+  readonly posicoes: ReadonlyMap<string, readonly number[]>;
+};
+
+/** As palavras [inicio, fim) do texto aparecem seguidas na resposta? */
+function seguidasNaResposta(
+  palavras: readonly string[],
+  inicio: number,
+  fim: number,
+  resposta: PalavrasDaResposta,
+): boolean {
+  const posicoes = resposta.posicoes.get(palavras[inicio] ?? "");
+  if (posicoes === undefined) {
+    return false;
+  }
+  const quantas = fim - inicio;
+  for (const posicao of posicoes) {
+    if (posicao + quantas > resposta.palavras.length) {
+      return false;
+    }
+    let iguais = 1;
+    while (
+      iguais < quantas &&
+      resposta.palavras[posicao + iguais] === palavras[inicio + iguais]
+    ) {
+      iguais += 1;
+    }
+    if (iguais === quantas) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -903,37 +1011,39 @@ export function trechoDePreparoNaResposta(
   if (typeof rascunho !== "string" || !Array.isArray(textos)) {
     return false;
   }
-  const normalizada = normalizarParaOTrecho(rascunho);
-  if (normalizada === "") {
+  const { palavras: daResposta } = palavrasDe(semAcentoEMinusculo(rascunho));
+  if (daResposta.length === 0) {
     return false;
   }
-  const resposta = ` ${normalizada} `;
-  const palavrasDaResposta = new Set(normalizada.split(" "));
+  const posicoes = new Map<string, number[]>();
+  daResposta.forEach((palavra, posicao) => {
+    const ja = posicoes.get(palavra);
+    if (ja === undefined) {
+      posicoes.set(palavra, [posicao]);
+    } else {
+      ja.push(posicao);
+    }
+  });
+  const resposta: PalavrasDaResposta = { palavras: daResposta, posicoes };
   for (const texto of textos) {
     if (typeof texto !== "string") {
       continue;
     }
-    const { trechos, palavras } = formasDoTexto(texto, textos);
-    for (const trecho of trechos) {
-      if (resposta.includes(` ${trecho} `)) {
+    const { palavras, acumulado, trechos } = formasDoTexto(texto, textos);
+    for (const [inicio, fim] of trechos) {
+      if (seguidasNaResposta(palavras, inicio, fim, resposta)) {
         return true;
       }
     }
     for (
-      let i = 0;
-      i + PALAVRAS_DA_JANELA_DO_TRECHO <= palavras.length;
-      i += 1
+      let inicio = 0;
+      inicio + PALAVRAS_DA_JANELA_DO_TRECHO <= palavras.length;
+      inicio += 1
     ) {
-      // So monta a janela que comeca numa palavra que a resposta tem.
-      if (!palavrasDaResposta.has(palavras[i] ?? "")) {
-        continue;
-      }
-      const janela = palavras
-        .slice(i, i + PALAVRAS_DA_JANELA_DO_TRECHO)
-        .join(" ");
+      const fim = inicio + PALAVRAS_DA_JANELA_DO_TRECHO;
       if (
-        Array.from(janela).length >= TAMANHO_MINIMO_DO_TRECHO &&
-        resposta.includes(` ${janela} `)
+        tamanhoDoTrecho(acumulado, inicio, fim) >= TAMANHO_MINIMO_DO_TRECHO &&
+        seguidasNaResposta(palavras, inicio, fim, resposta)
       ) {
         return true;
       }
