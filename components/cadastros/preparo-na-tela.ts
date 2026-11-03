@@ -258,7 +258,11 @@ export function frasesDasRecusas(recusas: readonly string[]): string | null {
   }
   const frases = [
     ...new Set(
-      recusas.map((r) => FRASE_DA_RECUSA[r] ?? FRASE_DA_RECUSA_SEM_NOME),
+      recusas.map((r) =>
+        Object.hasOwn(FRASE_DA_RECUSA, r)
+          ? (FRASE_DA_RECUSA[r] ?? FRASE_DA_RECUSA_SEM_NOME)
+          : FRASE_DA_RECUSA_SEM_NOME,
+      ),
     ),
   ];
   return frases.join(" ");
@@ -356,7 +360,11 @@ export function traduzirErroDoPreparo(
       code: "texto_mudou",
     };
   }
-  const frase = FRASE_DO_CODIGO[mensagem];
+  // O codigo vem do banco: so a chave propria do mapa conta (nunca o
+  // prototipo, como "constructor").
+  const frase = Object.hasOwn(FRASE_DO_CODIGO, mensagem)
+    ? FRASE_DO_CODIGO[mensagem]
+    : undefined;
   if (frase !== undefined && (erro.code === "P0001" || erro.code === "22023")) {
     return CODIGOS_DA_TELA.has(mensagem)
       ? { ok: false, error: frase, code: mensagem as CodigoDaRecusa }

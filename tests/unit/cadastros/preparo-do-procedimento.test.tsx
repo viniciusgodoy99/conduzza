@@ -685,6 +685,21 @@ describe("os erros do banco em frase de recepção (contrato 4.6)", () => {
     expect(traduzirErroDoPreparo(acao, { code, message }).error).toBe(frase);
   });
 
+  it("um código que é nome do protótipo (constructor) cai na frase de sempre", () => {
+    expect(
+      traduzirErroDoPreparo("salvar", {
+        code: "P0001",
+        message: "constructor",
+      }),
+    ).toEqual({
+      ok: false,
+      error: "Não foi possível salvar agora. Tente de novo.",
+    });
+    expect(frasesDasRecusas(["toString"])).toBe(
+      "Confira o texto da orientação de preparo.",
+    );
+  });
+
   it("o 42501 mostra a frase da RPC como veio", () => {
     expect(
       traduzirErroDoPreparo("salvar", {
