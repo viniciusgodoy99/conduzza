@@ -97,7 +97,23 @@ export type MembroEquipe = {
   ativo: boolean;
   /** cadastro de profissional da agenda (so vale para o papel Profissional) */
   professionalId: string | null;
+  // [AG7 preparo] início
+  /**
+   * A designacao aberta de responsavel tecnico da clinica e desta pessoa (o
+   * selo "Responsável técnico" na linha). Ausente: nao e.
+   */
+  responsavelTecnico?: boolean;
+  // [AG7 preparo] fim
 };
+
+// [AG7 preparo] início
+/**
+ * O selo do responsavel tecnico na linha da equipe (AG7, desenho 5.3): um
+ * rotulo, nao um status, entao sem icone (nenhum dono novo na tabela de
+ * icones reservados) e com o fundo neutro do par validado de contraste.
+ */
+export const SELO_DO_RESPONSAVEL_TECNICO = "Responsável técnico";
+// [AG7 preparo] fim
 
 /** Quantas mensagens agendadas a pessoa do dialogo assina. */
 export type ContagemDeAgendadas =
@@ -610,6 +626,13 @@ export function ListaEquipe({
               {ehProfissional && !membro.professionalId ? (
                 <StatusChip size="sm" definition={SEM_VINCULO} />
               ) : null}
+              {/* [AG7 preparo] início */}
+              {membro.responsavelTecnico ? (
+                <span className="inline-flex h-5 items-center rounded-full bg-neutral-bg px-[7px] text-[11px] font-semibold tracking-[-0.005em] whitespace-nowrap text-neutral-text">
+                  {SELO_DO_RESPONSAVEL_TECNICO}
+                </span>
+              ) : null}
+              {/* [AG7 preparo] fim */}
 
               <span className="flex flex-wrap items-center gap-2">
                 {motivoPapel ? (
