@@ -47,6 +47,8 @@ create table unit (
 );
 ```
 
+**Super admin numa conta só para o painel (03/11/2026, migration `20261103110000_super_admin_sem_clinica.sql`, escrita e ensaiada no Postgres local, NÃO aplicada):** `product_admin` e `clinic_member` não convivem para a mesma conta daqui para frente (gatilhos com `CZSA1` e `CZSA2`), e a tabela `equipe_conduzza` marca a equipe Conduzza no painel sem poder de super admin. Seção 35.
+
 **Conta suspensa (onda 1, 20/10/2026, migration `20261021100000_painel_geral.sql`, aplicada em 20/10/2026):** a suspensão mora numa tabela própria, `clinica_suspensa` (nenhuma coluna nova em `clinic`), e entra nas três funções de acesso das policies (`user_active_clinic_ids`, `user_has_role` e `user_can_write`). Seção 22.
 
 **Implementador (onda 5, 21/10/2026, migration `20261025110000_implementador.sql`, aplicada em 22/10/2026):** o papel não entra no CHECK de `clinic_member.role`. O Implementador é um vínculo `admin` com uma linha na tabela nova `membro_implementador` (nenhuma coluna nova em `clinic_member`); as três funções de acesso não mudam. Seção 26.
@@ -2729,7 +2731,7 @@ RLS ligada; `revoke all` de `anon` e `authenticated` e `grant select (clinic_id,
 
 ### 22.8 Códigos de erro, travas, ensaio, provas, ordem de publicação, rollback e pontos abertos
 
-**Códigos:** 42501 (quem não é da equipe Conduzza; `clinica_esta_suspensa` pela sessão), 22004 (argumento nulo), 22023 (`motivo_invalido`, `estado_invalido`, `teto_invalido`, `respostas_invalidas`), P0001 (`clinica_ja_suspensa`, `clinica_nao_suspensa`, `clinica_de_teste`, `clinica_suspensa`, `sem_liberacao`), P0002 (clínica que não existe), 23514 (os CHECKs) e 55P03 (`lock_timeout`). A tela traduz cada chave (`app/(app)/painel-geral/actions.ts`). 40001 e 40P01 nunca são levantados. Nenhum erro, trilha ou log leva conteúdo de mensagem, nome ou telefone de paciente: o motivo é texto da equipe Conduzza.
+**Códigos:** 42501 (quem não é da equipe Conduzza; `clinica_esta_suspensa` pela sessão), 22004 (argumento nulo), 22023 (`motivo_invalido`, `estado_invalido`, `teto_invalido`, `respostas_invalidas`), P0001 (`clinica_ja_suspensa`, `clinica_nao_suspensa`, `clinica_de_teste`, `clinica_suspensa`, `sem_liberacao`), P0002 (clínica que não existe), 23514 (os CHECKs) e 55P03 (`lock_timeout`). A tela traduz cada chave (`app/(admin)/painel-geral/actions.ts`). 40001 e 40P01 nunca são levantados. Nenhum erro, trilha ou log leva conteúdo de mensagem, nome ou telefone de paciente: o motivo é texto da equipe Conduzza.
 
 **Travas da migration:** `lock_timeout` de 3 s. As duas FKs novas para `clinic` seguram SHARE ROW EXCLUSIVE em `clinic` até o commit (a escrita em `clinic`, que é rara, espera; a leitura não); as outras tabelas são novas. Se cair por 55P03, nada fica gravado: tentar de novo minutos depois, em horário calmo.
 
@@ -2766,7 +2768,7 @@ Fica: a trilha (suspender, reativar, agente e teto), os jobs cancelados (`vencid
 - **A agendada cancelada pela reativação** fecha com o rótulo genérico de falha no envio (`motivo_da_agendada`); um rótulo "Conta suspensa" para ela exige mudar o banco.
 - **Conversão da Meta numa suspensão longa:** o job segue depois da reativação, mas descarta o evento que já saiu da janela de 7 dias da Meta (regra que já existia).
 - **Automações de fluxo durante a suspensão:** `planejar_automacoes_de_fluxo` e `executar_automacoes_de_fluxo` (12.8) não olham a suspensão e não foram tocadas: as ações que não enviam mensagem (mover etapa, etiquetar, criar atividade, nota interna) continuam rodando; o follow-up e a conversão da Meta que nascem de um movimento ficam segurados pelo claim. Se devem parar também, é migration nova (decisão do dono). **A migration B da onda 4** (`20261024110000`, aplicada em 22/10/2026; seção 25) fecha isso, pela regra do contrato dela: na clínica suspensa, o planejador registra a execução já pulada (`clinica_suspensa`) e o executor fecha a pendente do mesmo jeito; nada roda na suspensão nem atrasado na volta.
-- **Super admin sem clínica ativa** não chega ao painel (`docs/03`, 15.1).
+- **Super admin sem clínica ativa** não chega ao painel (`docs/03`, 15.1). **Resolvido em 03/11/2026** pela área própria do super admin (`docs/03`, 15.6; banco na seção 35).
 
 ---
 
@@ -2893,7 +2895,7 @@ Funções trocadas (md5 do `prosrc` de antes; `create or replace`, segurança, `
 - **P0001:** `requisitos_pendentes` (com as chaves no hint), `requisito_ja_revogado`, `sem_liberacao`, `clinica_suspensa`, `clinica_em_producao` e `clinica_de_teste` (M3).
 - **22023:** `chave_invalida`, `evidencia_invalida`, `requisito_por_clinica`, `motivo_invalido` e `estado_invalido`.
 - **42501:** quem não tem o papel; o `numero_inteiro` fora da produção ("Esta clínica não está em produção.", pelo gatilho). **22004** (argumento nulo), **P0002** (o que não existe) e **55P03** (`lock_timeout`).
-- A tela traduz cada chave para texto de recepção (`app/(app)/agente/whatsapp-actions.ts`, `app/(app)/painel-geral/actions.ts` e `app/(app)/agenda/actions.ts`). 40001 e 40P01 nunca são levantados.
+- A tela traduz cada chave para texto de recepção (`app/(app)/agente/whatsapp-actions.ts`, `app/(admin)/painel-geral/actions.ts` e `app/(app)/agenda/actions.ts`). 40001 e 40P01 nunca são levantados.
 
 ### 23.6 Ensaios, provas e testes
 
@@ -3589,7 +3591,7 @@ A tela traduz `agente_mudou` para "O agente desta clínica mudou desde que a pá
 
 ### 27.5 Códigos, travas, ensaio, provas, ordem de publicação, rollback e pontos abertos
 
-**Códigos:** 42501 (as três; anon sem EXECUTE), 22004, 22023 (`estado_invalido`, `mudanca_invalida` e, de `definir_agente_da_clinica`, `motivo_invalido`), P0002, P0001 (`agente_mudou` e os de `definir_agente_da_clinica`: `clinica_de_teste`, `clinica_suspensa`, `requisitos_pendentes`) e 55P03 (`lock_timeout`). A tela traduz cada chave (`app/(app)/painel-geral/actions.ts`). Nenhum erro, trilha ou log leva dado de paciente; as duas de leitura não gravam nada.
+**Códigos:** 42501 (as três; anon sem EXECUTE), 22004, 22023 (`estado_invalido`, `mudanca_invalida` e, de `definir_agente_da_clinica`, `motivo_invalido`), P0002, P0001 (`agente_mudou` e os de `definir_agente_da_clinica`: `clinica_de_teste`, `clinica_suspensa`, `requisitos_pendentes`) e 55P03 (`lock_timeout`). A tela traduz cada chave (`app/(admin)/painel-geral/actions.ts`). Nenhum erro, trilha ou log leva dado de paciente; as duas de leitura não gravam nada.
 
 **Travas da migration:** só catálogo (CREATE FUNCTION, REVOKE, GRANT e COMMENT), com `lock_timeout` de 3 s; nenhuma tabela é tocada.
 
@@ -3664,7 +3666,7 @@ A mesma assinatura, o mesmo retorno, STABLE, SECURITY DEFINER, `search_path` vaz
 - **`escrever_nota_da_clinica(p_clinic_id uuid, p_texto text) returns uuid`** (volátil): devolve o id da nota. O texto perde os espaços, tabulações e quebras de linha das pontas (`btrim`, em tempo linear) e precisa ficar com 1 a 2.000 caracteres e algum que não seja espaço (22023 `texto_invalido`, com a dica "A nota tem de 1 a 2000 caracteres."); 22004 com a clínica ou o texto nulos; P0002 com a clínica que não existe. Clínica suspensa ou `e_de_teste`: escreve (a nota é da equipe Conduzza). Autor = `auth.uid()`. Trilha: `escreveu_nota_interna`, entity `nota_interna_da_clinica`, `entity_id` = a nota, sem `detalhes` (nunca o texto).
 - **`excluir_nota_da_clinica(p_nota_id uuid) returns void`** (volátil): trava a linha da nota (FOR UPDATE) antes de conferir o autor. Pela sessão, só quem escreveu exclui (42501 com a mensagem `nota_de_outra_pessoa` e a dica "Só quem escreveu a nota pode excluir."); a service role e o SQL editor excluem qualquer uma (decisão do banco). 22004 com a nota nula; P0002 com a nota que não existe ou já foi excluída. Trilha: `excluiu_nota_interna`, `entity_id` = a nota, `detalhes` só com `escrita_em` (quando a nota foi escrita), nunca o texto.
 
-A guarda das três é a de `painel_geral_das_clinicas`, **antes de ler qualquer coisa**: super admin, service role e SQL editor; 42501 para os outros (anon também não tem EXECUTE). A tela traduz cada código (`app/(app)/painel-geral/actions.ts`, ações `escreverNotaDaClinicaAction` e `excluirNotaDaClinicaAction`, com Zod estrito e a guarda da equipe Conduzza antes do banco): `texto_invalido` vira "Escreva a nota com 1 a 2.000 caracteres.", o 42501 do excluir vira "Só quem escreveu a nota pode excluir." e o P0002 do excluir vira "Esta nota não existe mais. Recarregue a página.". O texto da nota nunca vai para log.
+A guarda das três é a de `painel_geral_das_clinicas`, **antes de ler qualquer coisa**: super admin, service role e SQL editor; 42501 para os outros (anon também não tem EXECUTE). A tela traduz cada código (`app/(admin)/painel-geral/actions.ts`, ações `escreverNotaDaClinicaAction` e `excluirNotaDaClinicaAction`, com Zod estrito e a guarda da equipe Conduzza antes do banco): `texto_invalido` vira "Escreva a nota com 1 a 2.000 caracteres.", o 42501 do excluir vira "Só quem escreveu a nota pode excluir." e o P0002 do excluir vira "Esta nota não existe mais. Recarregue a página.". O texto da nota nunca vai para log.
 
 ### 28.4 `historico_da_clinica_no_painel(p_clinic_id uuid, p_limite integer default 100) returns jsonb`
 
@@ -3683,7 +3685,7 @@ Cada policy soma-se às permissivas que já existem com AND, sem mudar nenhuma, 
 
 ### 28.6 Exportar e ordenar a lista (nada novo no banco)
 
-- **Exportar** (`app/(app)/painel-geral/exportar/route.ts`, Route Handler POST com JSON, com o trabalho em `exportar-painel.ts` ao lado, no molde da exportação dos leads): a rota confere a sessão e a equipe Conduzza; valida o corpo (Zod estrito: os filtros e a ordem da tela); lê a lista de novo **pela sessão** (`painel_cs_das_clinicas`, que recusa quem não é da equipe Conduzza), com os mesmos filtros e a mesma ordem da tela; sem clínica, responde 204 e não grava nada; monta o CSV e grava **uma** linha em `audit_log` antes de devolver o arquivo: `clinic_id` nulo, `user_id` = quem exportou, `action` `exportou`, `entity` `painel_geral`, `entity_id` nulo e `detalhes` `{quantidade, filtros: {uso, conta, agente, saude, com_busca}, ordem: {coluna, sentido}}` (dos filtros, só os que fogem do padrão, com os valores de lista; da busca, só a marca de que havia uma, nunca o texto, que pode ser nome ou e-mail da equipe de uma clínica). Sem a trilha gravada, o arquivo não sai (503). A linha passa pela policy de insert que já existe ("membro ativo registra a propria acao na trilha": `user_id = auth.uid()` e, com `clinic_id` nulo, só `is_product_admin()`); o ensaio prova que só o super admin grava, com o próprio `user_id`. O log da rota leva só o usuário, a contagem, o passo que falhou e a duração. O arquivo só tem contagens de paciente.
+- **Exportar** (`app/(admin)/painel-geral/exportar/route.ts`, Route Handler POST com JSON, com o trabalho em `exportar-painel.ts` ao lado, no molde da exportação dos leads): a rota confere a sessão e a equipe Conduzza; valida o corpo (Zod estrito: os filtros e a ordem da tela); lê a lista de novo **pela sessão** (`painel_cs_das_clinicas`, que recusa quem não é da equipe Conduzza), com os mesmos filtros e a mesma ordem da tela; sem clínica, responde 204 e não grava nada; monta o CSV e grava **uma** linha em `audit_log` antes de devolver o arquivo: `clinic_id` nulo, `user_id` = quem exportou, `action` `exportou`, `entity` `painel_geral`, `entity_id` nulo e `detalhes` `{quantidade, filtros: {uso, conta, agente, saude, com_busca}, ordem: {coluna, sentido}}` (dos filtros, só os que fogem do padrão, com os valores de lista; da busca, só a marca de que havia uma, nunca o texto, que pode ser nome ou e-mail da equipe de uma clínica). Sem a trilha gravada, o arquivo não sai (503). A linha passa pela policy de insert que já existe ("membro ativo registra a propria acao na trilha": `user_id = auth.uid()` e, com `clinic_id` nulo, só `is_product_admin()`); o ensaio prova que só o super admin grava, com o próprio `user_id`. O log da rota leva só o usuário, a contagem, o passo que falhou e a duração. O arquivo só tem contagens de paciente.
 - **Ordenar** é da tela: toda coluna ordenável (último acesso, saúde, IA no mês, leads, conversas e implantação) já vem em cada linha.
 
 ### 28.7 Códigos, travas, ensaio, provas, ordem de publicação, rollback e pontos abertos
@@ -4314,3 +4316,58 @@ Ao cancelar, grava a trilha (`cancelado_paciente`, `changed_by` `ia`, sem usuár
 - **Os tipos foram escritos à mão** (a seção 4 do CLAUDE.md pede gerados): conferidos em 30/10/2026 contra os gerados da produção (`supabase gen types`, depois da `20261028100000` aplicada) pelo `canon-tipos.cjs`: tudo o que a AG4 criou bate; sobram só as 19 diferenças antigas (funções que o código não usa e o `contact.phone_key` no Insert e no Update), as mesmas da publicação da AG3.
 - **As provas de banco** (acima) só rodam depois de aplicar. **Rodaram na produção** em 28/10/2026 e, depois do ajuste da preparação dos testes, em 30/10/2026 (acima, "Na produção").
 - **A rodada paga D34** com as versões novas, antes de qualquer paciente.
+
+---
+
+## 35. O super admin numa conta só para o painel (03/11/2026, migration `20261103110000_super_admin_sem_clinica.sql`; escrita na branch `super-admin-separado` e ensaiada só no Postgres local; **NÃO aplicada**)
+
+**Decisão do dono de 03/11/2026, "Conta própria só para o painel":** o super admin usa um e-mail só para isso; esse e-mail não é membro de clínica nenhuma e cai direto no Painel geral, numa área separada da clínica (`docs/03`, 15.6); para trabalhar numa clínica, a pessoa usa a conta normal. Produção em 03/11/2026 (`q.js`, só leitura): 2 linhas em `product_admin`, as duas com vínculo ativo de administrador (o dono na teste123 e na Salud Care; o Victor na Conduzza Teste); 6 clínicas reais, 8 vínculos ativos, nenhum pendente nem inativo; nenhuma policy dá ao super admin leitura de dado de paciente (as 15 tabelas com `clinic_id` que ele lê de propósito são de produto ou de configuração, 35.4). Operação (criar a conta do painel e limpar as antigas): `supabase/operacao/super-admin-separado.md`.
+
+### 35.1 A trava
+
+Dois gatilhos `BEFORE ... FOR EACH ROW`, funções `plpgsql`, `security definer` (dono `postgres`: leem `product_admin` e `clinic_member` de qualquer conta, e não só o que a RLS de quem grava mostra; o administrador que convida não lê `product_admin`), `search_path` vazio, EXECUTE só para `postgres` e `service_role`. SQLSTATE próprio (nunca 40001 nem 40P01: o PostgREST repete esses sem limite); o PostgREST devolve 400 com o código no corpo.
+
+| Gatilho | Onde e quando | Recusa |
+|---|---|---|
+| `impedir_vinculo_de_super_admin` | `clinic_member`, `before insert or update of status, user_id` | `CZSA1` "Esta conta é da equipe Conduzza e não entra em clínica." quando a conta está em `product_admin` e a linha é **nova** (qualquer situação: o super admin não ganha linha em clínica nenhuma), **muda de pessoa** ou **passa a valer** (a situação muda para `ativo` ou `pendente`: a reativação, a liberação do pedido) |
+| `impedir_super_admin_com_vinculo` | `product_admin`, `before insert or update of user_id` | `CZSA2` "Esta conta participa de uma clínica e não vira super admin." quando a conta tem **qualquer** linha em `clinic_member` (ativa, pendente ou com o acesso tirado) |
+
+- **O que já existe fica tolerado até a limpeza:** os gatilhos só olham o que entra ou muda. As duas contas antigas continuam super admin e membros ativos; podem trocar de papel, perder o acesso (ativo para inativo) e sair da clínica, mas não voltam (inativo para ativo), não passam a pendente e não entram em outra clínica. O `UPDATE` da mesma pessoa que não passa a valer sai antes da trava consultiva (não espera ninguém).
+- **A corrida:** os dois gatilhos pegam a mesma trava consultiva por conta, até o fim da transação (`pg_advisory_xact_lock(hashtextextended('super_admin_sem_clinica:' || user_id, 0))`), **antes** de olhar a outra tabela. Um vínculo e um `product_admin` da mesma conta, em duas transações ao mesmo tempo, nunca passam os dois: a segunda espera o commit da primeira e, no READ COMMITTED (o padrão do PostgREST e do Auth), lê a linha dela e recusa. Contas diferentes não se esperam. Provado no Postgres local com duas sessões (35.6); sem a trava, as duas passavam.
+- **Os fluxos de hoje:** o cadastro (`handle_new_user`) só cria vínculo de conta nova, que ainda não é super admin; o convite e `entrar_como_implementador` passam pelo gatilho (o convite do e-mail de um super admin é recusado, e a tela mostra o texto genérico, `docs/03`, 15.6). A conta criada pela API de administração sem `tipo` no metadado nasce sem vínculo.
+
+### 35.2 `equipe_conduzza`
+
+```sql
+create table public.equipe_conduzza (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  entrou_em timestamptz not null default now(),
+  marcado_por uuid  -- quem marcou (o super admin da operação); nulo pelo SQL editor
+);
+```
+
+No nível do produto, como `product_admin` (sem `clinic_id`). Marca a pessoa como **equipe Conduzza no Painel geral, sem poder de super admin**: `is_product_admin()` não lê esta tabela, nem policy nenhuma. RLS ligada; a única policy é a leitura do super admin (`for select to authenticated using (is_product_admin())`); `revoke all` de `anon` e `revoke insert, update, delete, truncate, references, trigger` de `authenticated`: escrita só pela service role (a operação). A linha sai junto com a conta (cascata).
+
+### 35.3 As quatro funções do painel
+
+`painel_cs_das_clinicas`, `equipe_da_clinica_no_painel`, `notas_da_clinica_no_painel` e `historico_da_clinica_no_painel` marcam como equipe Conduzza quem está em `product_admin` **ou** em `equipe_conduzza`. `create or replace` a partir do corpo **aplicado** (md5(prosrc) de 03/11/2026: `7cbaafea...`, `a2577fc8...`, `85b8464c...` e `c50f2ca3...`, conferidos no ponto de partida da própria migration, que falha inteira com P0001 `corpo_do_painel_mudou` se um deles mudou), trocando **só** o `left join` de `product_admin` por um `left join` na união das duas tabelas (`union`: quem está nas duas aparece uma vez, e a linha do vínculo nunca dobra). O formato de saída, a guarda, a assinatura, os padrões, STABLE, SECURITY DEFINER, `search_path` vazio, o dono, os grants e os comentários não mudam; com `equipe_conduzza` vazia, a saída é a de antes (provado no ensaio para toda clínica). Quando as contas antigas deixarem de ser super admin e forem marcadas, o uso delas nas clínicas continua contando marcado ("(equipe Conduzza)" e "Inclui N da equipe Conduzza"), e não como uso do cliente.
+
+`publicar_agente` também lê `product_admin` direto (o super admin publica o agente de qualquer clínica): é autorização, não marca, e **não muda** (a marca não dá poder).
+
+### 35.4 O super admin sem vínculo e o dado de paciente
+
+Nenhuma policy dá ao super admin leitura de dado de paciente: as funções das policies (`user_active_clinic_ids`, `user_has_role`, `user_can_write`) dependem do vínculo, e as tabelas com `clinic_id` que ele lê de propósito (uma policy de leitura com `is_product_admin()`) são 15, todas de produto ou de configuração: `ai_agent_config`, `audit_log` (só ids e ações), `clinic_branding`, `clinic_member`, `clinica_suspensa`, `ia_clinica_habilitada`, `ia_contato_liberado` (os telefones da equipe), `ia_liberacao`, `ia_numero_liberado`, `ia_requisito_da_producao`, `ia_uso`, `knowledge_item`, `membro_implementador`, `nota_interna_da_clinica` e `unit`. O ensaio confere essa lista e, em todas as outras 67 tabelas com `clinic_id` e RLS, zero linhas para o super admin sem vínculo (ou nem o privilégio de ler), com o administrador da clínica lendo o paciente fictício dela.
+
+### 35.5 Locks, ordem de publicação e rollback
+
+- **Locks** (`lock_timeout` de 3 s): `CREATE TRIGGER` pega SHARE ROW EXCLUSIVE em `clinic_member` e em `product_admin`, e a FK da tabela nova, em `auth.users`, até o commit (segura convite, cadastro e o login que grava o último acesso; não a leitura). Milissegundos. Nenhum ALTER TABLE em tabela existente.
+- **Ordem:** livre. O código da área do super admin funciona com e sem a migration. Ao aplicar, nada muda para ninguém (`equipe_conduzza` vazia, as contas antigas toleradas).
+- **Rollback** (`supabase/operacao/rollback/20261103110000-corpos-anteriores.sql`, numa transação, no SQL editor): as quatro funções de volta aos corpos de 03/11/2026 (md5 conferidos no fim); saem os dois gatilhos, as funções deles e `equipe_conduzza` (as marcas se perdem: guardar antes, `supabase/operacao/super-admin-separado.md`).
+- **Tipos:** o código não lê `equipe_conduzza` pelos tipos gerados (o script da operação usa o cliente sem tipos). Depois de aplicar, gerar os tipos de novo (`supabase gen types`) para a tabela nova entrar em `lib/supabase/database.types.ts`.
+
+### 35.6 Ensaio e provas
+
+- **Postgres local** (03/11/2026, `~/.claude/plans/super-admin/banco/`, Postgres 18 do Homebrew na porta 55620; a produção é 17.6): o modelo com as 123 migrations até a `20261028100000`, o corpo de produção que divergia (`falhar_job`) e o estado da produção (as 6 clínicas reais com os ids de verdade, a equipe em contas sintéticas, os 2 super admins com vínculo ativo) **bate com a produção** de 03/11/2026 (`q.js`, só leitura: 336 funções por md5 e 2.873 linhas de catálogo, com grants, comentários, policies e gatilhos). Resultado (`final.txt`): o gerador confere que a migration e o rollback do repositório são os do corpo de produção com só a troca do `left join`; a cópia no ensaio é igual byte a byte; **`ENSAIO OK`** (os 12 passos: catálogo; nada mais muda; a saída igual com a tabela vazia; a trava nos dois sentidos, pela service role, pela sessão do administrador e pela RPC do Implementador, com a mensagem exata; a conta antiga tolerada; a trava consultiva com a mesma chave; a RLS de `equipe_conduzza` e a marca sem poder; a marca no painel sem dobrar, inclusive com a conta nas duas tabelas e na limpeza simulada; o super admin sem vínculo sem dado de paciente em 67 tabelas; a guarda das quatro funções; os md5; o rollback); **paridade do rollback** (catálogo de 2.873 linhas e dados iguais depois de migration e rollback; a migration muda 20 linhas); **a corrida** com duas sessões (B espera 2 s o commit de A e recusa, nos dois sentidos; **sem as travas consultivas, a corrida quebra a invariante**: a prova pega); **o ponto de partida** (com um corpo mudado, a migration falha inteira sem deixar nada; sem o bloco, aplicaria: a prova pega); **28 de 28 sabotagens** pegas por assert antes do md5, e as 5 do corpo das funções pegas também só pelos asserts de comportamento.
+- **Ensaio na produção:** `~/.claude/plans/super-admin/ensaio-20261103110000.sql` (o mesmo ensaio, uma transação desfeita no fim; rodar com `executar.js` ou no SQL editor, sem sessão, em horário calmo: os passos seguram escrita em `clinic_member`, `product_admin` e `auth.users` por segundos, e o passo 12, o rollback, a leitura de `clinic_member` até o ROLLBACK). **Não rodou.**
+- **Provas de banco** (rodam **depois** de aplicar): `tests/rls/super-admin-sem-clinica.test.ts` e `tests/integration/super-admin-sem-clinica.test.ts`; as partes com super admin sintético só com `RLS_COM_SUPER_ADMIN=1` e `INTEGRACAO_COM_SUPER_ADMIN=1`. O bloco opt-in de `tests/integration/painel-cs.test.ts` que vinculava um super admin a uma clínica saiu (o banco passa a recusar); a prova equivalente, com `equipe_conduzza`, está no teste novo.
+
