@@ -482,12 +482,10 @@ async function limpar(
     // A marca PRIMEIRO, depois a saida de product_admin: o painel nunca
     // mostra o uso da conta antiga como uso do cliente.
     if (!antiga.marcada) {
-      const { error } = await admin
-        .from("equipe_conduzza")
-        .insert({
-          user_id: antiga.conta.userId,
-          marcado_por: nova.conta.userId,
-        });
+      const { error } = await admin.from("equipe_conduzza").insert({
+        user_id: antiga.conta.userId,
+        marcado_por: nova.conta.userId,
+      });
       if (error && error.code !== "23505") {
         throw new Error(
           `marcar ${antiga.conta.email}: ${error.message}. Nada mais foi feito com esta conta.`,
