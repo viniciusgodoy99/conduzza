@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { fetchEnviosDoPreparo } from "@/lib/queries/conversations";
+
+import { criarNumeroDeTeste } from "./numeros";
 import { adminClient, anonClient } from "./stack";
 
 // O preparo aprovado pelo RT (AG7, parte de banco: migration
@@ -21,6 +24,13 @@ import { adminClient, anonClient } from "./stack";
 // - as funcoes do servidor e as internas recusadas para a sessao e para
 //   anon; user_e_responsavel_tecnico certo para cada um;
 // - a coluna nova ai_decision_log.preparo_versao_id lida pela sessao;
+// - o fechamento entre as frentes (03/11/2026): a decisao 'enviou_preparo'
+//   que o Atendimento le para confirmar a bolha do preparo (TELA-13 e
+//   CFM-10a; fetchEnviosDoPreparo, pela sessao) tem a RLS da mensagem: o
+//   membro ativo le, o profissional so na conversa atribuida a ele, o
+//   pendente e a outra clinica nada; e o administrador que escolhe uma conta
+//   da equipe Conduzza como RT recebe P0001 responsavel_e_da_equipe_conduzza
+//   (e nao o 42501, que diria a ele que nao define o RT);
 // - a rodada de correcao do banco (03/11/2026):
 //   - o conteudo que o banco recusa sozinho (CFM-2): o link, o valor em
 //     reais e o arroba dao 22023 texto_recusado para todo papel, antes da
@@ -34,10 +44,11 @@ import { adminClient, anonClient } from "./stack";
 //   cadastro-para-o-agente.test.ts: cria um usuario sintetico com
 //   product_admin NO BANCO DE PRODUCAO; sai no afterAll): le as duas
 //   clinicas, escreve, descarta, suspende e define o RT, e NAO aprova; nunca
-//   e escolhido como RT, nem por ele mesmo (TELA-9); e a conta antiga (com
-//   vinculo, designada RT antes de virar super admin) nao aprova nem devolve
-//   (sem a trava do super admin do main; com ela, o caso nao se cria pela API
-//   e fica so no ensaio, passo 9b).
+//   e escolhido como RT, nem por ele mesmo (TELA-9: P0001
+//   responsavel_e_da_equipe_conduzza); e a conta antiga (com vinculo,
+//   designada RT antes de virar super admin) nao aprova nem devolve (sem a
+//   trava do super admin do main; com ela, o caso nao se cria mais, e o
+//   ensaio prova a recusa dela, CZSA2, sem desligar gatilho nenhum).
 // Toda negacao tem o caso positivo ao lado (anti falso positivo), e a
 // service role confere que nada mudou.
 //
@@ -69,6 +80,8 @@ const FRASE_DESCARTAR =
 const FRASE_SUSPENDER =
   "Somente administradores, gestores ou o responsável técnico suspendem o envio da orientação de preparo.";
 const FRASE_RT = "Só o administrador da clínica define o responsável técnico.";
+/** A pessoa escolhida como RT e da equipe Conduzza (P0001; o fechamento entre as frentes). */
+const EQUIPE_CONDUZZA = "responsavel_e_da_equipe_conduzza";
 
 const COM_SUPER_ADMIN = process.env.RLS_COM_SUPER_ADMIN === "1";
 
@@ -875,6 +888,85 @@ describe("ai_decision_log.preparo_versao_id", () => {
   });
 });
 
+describe("a decisao do envio do preparo que o Atendimento le (TELA-13 e CFM-10a)", () => {
+  it("a RLS da mensagem: o membro ativo le, o profissional so na conversa dele, o pendente e a outra clinica nada", async () => {
+    const numero = (
+      await criarNumeroDeTeste(admin, clinicaA, { nome: "Recepção" })
+    ).id;
+    const contato = await inserir("contact", {
+      clinic_id: clinicaA,
+      phone_e164: `+55849${String(Date.now() % 1_000_000).padStart(6, "0")}001`,
+      name: "Contato sintético",
+      kind: "lead",
+    });
+    // Uma conversa com o profissional da A e outra sem ninguem.
+    const doProfissional = await inserir("conversation", {
+      clinic_id: clinicaA,
+      contact_id: contato,
+      status: "em_atendimento",
+      assignee_user_id: idDe("profissional-a"),
+      awaiting_reply: false,
+      whatsapp_account_id: numero,
+    });
+    const semNinguem = await inserir("conversation", {
+      clinic_id: clinicaA,
+      contact_id: contato,
+      status: "resolvida",
+      awaiting_reply: false,
+      whatsapp_account_id: numero,
+    });
+    const jobs = new Map<string, string>();
+    for (const [conversa, rotulo] of [
+      [doProfissional, "do-profissional"],
+      [semNinguem, "sem-ninguem"],
+    ] as const) {
+      const job = crypto.randomUUID();
+      jobs.set(rotulo, job);
+      await admin
+        .from("ai_decision_log")
+        .insert({
+          clinic_id: clinicaA,
+          conversation_id: conversa,
+          job_id: job,
+          desfecho: "enviou_preparo",
+          preparo_versao_id: crypto.randomUUID(),
+          texto_sha256: "a".repeat(64),
+          tool_used: "enviar_preparo",
+        })
+        .throwOnError();
+    }
+    const todos = [...jobs.values()];
+    const lidos = async (apelido: string, clinica = clinicaA) =>
+      [...(await fetchEnviosDoPreparo(como(apelido), clinica, todos))].sort();
+    // O membro ativo que le a mensagem le a decisao (a mesma policy).
+    for (const apelido of ["admin-a", "gestor-a", "recepcao-a", "leitura-a"]) {
+      expect(await lidos(apelido), apelido).toEqual([...todos].sort());
+    }
+    // O profissional: so a da conversa atribuida a ele.
+    expect(await lidos("profissional-a")).toEqual([
+      jobs.get("do-profissional"),
+    ]);
+    // O pendente e a outra clinica: nada (nem pedindo pela clinica A).
+    expect(await lidos("pendente-a")).toEqual([]);
+    expect(await lidos("admin-b")).toEqual([]);
+    expect(await lidos("admin-b", clinicaB)).toEqual([]);
+    // A decisao de outro desfecho nao conta.
+    const outro = crypto.randomUUID();
+    await admin
+      .from("ai_decision_log")
+      .insert({
+        clinic_id: clinicaA,
+        conversation_id: semNinguem,
+        job_id: outro,
+        desfecho: "escalou",
+      })
+      .throwOnError();
+    expect([
+      ...(await fetchEnviosDoPreparo(como("admin-a"), clinicaA, [outro])),
+    ]).toEqual([]);
+  });
+});
+
 describe("a clinica de conta suspensa (BANCO-1)", () => {
   it("o RT recebe 42501 em salvar, aprovar, devolver, descartar e suspender; reativada, aprova", async () => {
     const salvo = await salvarOk("admin-b", procedimento("pB"), texto(60));
@@ -1004,9 +1096,14 @@ describe.skipIf(!COM_SUPER_ADMIN)("o super admin (opt-in)", () => {
     const sessao = sessaoDoSuper!;
     for (const quem of [sessao, como("admin-b")]) {
       const erro = await definirRt(quem, clinicaB, superAdmin);
-      expect(erro?.code).toBe(PERMISSAO_NEGADA);
-      expect(erro?.message).toBe(FRASE_RT);
+      expect(erro?.code).toBe("P0001");
+      expect(erro?.message).toBe(EQUIPE_CONDUZZA);
     }
+    // Quem nao define o RT recebe o 42501 antes: nao descobre quem e da
+    // equipe Conduzza.
+    const doGestor = await definirRt(como("gestor-a"), clinicaA, superAdmin);
+    expect(doGestor?.code).toBe(PERMISSAO_NEGADA);
+    expect(doGestor?.message).toBe(FRASE_RT);
     const { data } = await sessao.rpc("user_e_responsavel_tecnico", {
       p_clinic_id: clinicaB,
     });
@@ -1024,8 +1121,9 @@ describe.skipIf(!COM_SUPER_ADMIN)("o super admin (opt-in)", () => {
       .insert({ user_id: idDe("legado-b") });
     if (erroSuper) {
       // A trava do super admin do main (20261103110000) ja aplicada: a conta
-      // com vinculo nao vira super admin pela API. O caso fica so no ensaio
-      // (passo 9b), que desliga o gatilho dela na transacao desfeita.
+      // com vinculo nao vira super admin, e o caso nao se cria mais (o
+      // ensaio, passo 9b, prova a recusa nas duas ordens, sem desligar
+      // gatilho nenhum; as contas antigas da producao seguem toleradas).
       expect(erroSuper.code).toBe("CZSA2");
       expect(
         await definirRt(como("admin-b"), clinicaB, idDe("rt-b")),
@@ -1049,8 +1147,8 @@ describe.skipIf(!COM_SUPER_ADMIN)("o super admin (opt-in)", () => {
       // Nem escolhido de novo: pelo administrador, nem por ele mesmo.
       for (const quem of [como("admin-b"), como("legado-b")]) {
         const erroDefinir = await definirRt(quem, clinicaB, idDe("legado-b"));
-        expect(erroDefinir?.code).toBe(PERMISSAO_NEGADA);
-        expect(erroDefinir?.message).toBe(FRASE_RT);
+        expect(erroDefinir?.code).toBe("P0001");
+        expect(erroDefinir?.message).toBe(EQUIPE_CONDUZZA);
       }
       expect(await situacao(salvo.versao_id)).toBe("aguardando_rt");
     } finally {

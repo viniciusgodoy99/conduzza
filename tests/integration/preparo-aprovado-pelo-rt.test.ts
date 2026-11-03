@@ -7,6 +7,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { carregarCatalogoDoAgente } from "@/lib/agente/contexto";
 import type { ClienteDoAgente } from "@/lib/agente/laco";
 import {
+  ehMensagemDoPreparo,
+  normalizarTextoDoPreparo,
   situacaoDoPreparoNaTela,
   type SituacaoDoPreparo,
   type VersaoNaTela,
@@ -18,6 +20,13 @@ import {
   resetFakeProvider,
 } from "@/lib/integrations/whatsapp/fake";
 import { executarPassagemDaIa } from "@/lib/jobs/motor-ia";
+// [AG7 preparo] fim
+// [AG7 preparo] início (o fechamento entre as frentes)
+import {
+  fetchEnviosDoPreparo,
+  jobsQuePodemSerDoPreparo,
+  type MessageItem,
+} from "@/lib/queries/conversations";
 // [AG7 preparo] fim
 
 import { criarNumeroDeTeste } from "../rls/numeros";
@@ -52,7 +61,14 @@ import { adminClient, anonClient } from "../rls/stack";
 //   as versoes, a linha aberta do RT, o vinculo dele e o nome do
 //   procedimento) igual a preparo_em_vigor, em cada caso;
 // - a copia do texto antigo, so leitura: toda versao texto_antigo e o
-//   prep_instructions normalizado do procedimento dela.
+//   prep_instructions normalizado do procedimento dela, com as trocas de
+//   normalizarTextoDoPreparo (a tabulacao vira espaco; o fechamento entre as
+//   frentes), e o hash e o do texto;
+// - o fechamento entre as frentes (TELA-13 e CFM-10a): o Atendimento so
+//   confirma a bolha do preparo pela decisao 'enviou_preparo' do job
+//   (fetchEnviosDoPreparo, pela sessao); o passo de regua no mesmo formato
+//   passa no gatilho com o job da regua e fica como mensagem comum; quem nao
+//   le a mensagem (o profissional sem a conversa) tambem nao le a decisao.
 // [AG7 preparo] (frente M) A paridade da tela e situacaoDoPreparoNaTela
 // (lib/domain/preparo.ts) contra preparo_em_vigor, e o turno de ponta a
 // ponta pelo motor da IA, com o LLM falso, esta no fim deste arquivo. A
@@ -377,10 +393,13 @@ async function conversaNaIa(): Promise<string> {
 }
 
 /** Um job da IA em execucao da conversa (concluido no fim de cada caso). */
-async function jobEmExecucao(conversa: string): Promise<string> {
+async function jobEmExecucao(
+  conversa: string,
+  kind: "responder_com_ia" | "executar_passo_de_regua" = "responder_com_ia",
+): Promise<string> {
   const job = await inserir("job_queue", {
     clinic_id: clinica,
-    kind: "responder_com_ia",
+    kind,
     whatsapp_account_id: numero,
     payload: { conversation_id: conversa },
     status: "executando",
@@ -819,6 +838,61 @@ describe("o gatilho de message: a mensagem do preparo", () => {
     await rpcOk("concluir_job", { p_id: job, p_worker: WORKER });
   });
 
+  it("o Atendimento so confirma o preparo pela decisao do job: o passo de regua no mesmo formato fica comum (TELA-13 e CFM-10a)", async () => {
+    const daIa = await jobEmExecucao(conversa);
+    await decidirPreparo(daIa, conversa, versao, mensagem);
+    expect(await enviar(conversa, daIa, mensagem)).toBeNull();
+    await rpcOk("concluir_job", { p_id: daIa, p_worker: WORKER });
+    // O passo de regua escrito no formato exato: o gatilho deixa passar (o
+    // job da regua), sem decisao nenhuma.
+    const daRegua = await jobEmExecucao(conversa, "executar_passo_de_regua");
+    expect(await enviar(conversa, daRegua, mensagem)).toBeNull();
+    await rpcOk("concluir_job", { p_id: daRegua, p_worker: WORKER });
+
+    // O fio pela sessao de quem le a conversa: as duas no formato do preparo.
+    const { data } = await como("recepcao")
+      .from("message")
+      .select(
+        "id, conversation_id, direction, author, author_user_id, content_type, body, media_url, is_internal_note, pelo_celular, job_id, created_at, deleted_at",
+      )
+      .in("job_id", [daIa, daRegua])
+      .throwOnError();
+    const linhas = (data ?? []).map((linha) => ({
+      ...(linha as object),
+      reply_to: null,
+    })) as unknown as MessageItem[];
+    expect(linhas).toHaveLength(2);
+    expect(jobsQuePodemSerDoPreparo(linhas).sort()).toEqual(
+      [daIa, daRegua].sort(),
+    );
+    // A confirmacao: so o job da IA tem a decisao 'enviou_preparo'.
+    const envios = await fetchEnviosDoPreparo(como("recepcao"), clinica, [
+      daIa,
+      daRegua,
+    ]);
+    expect([...envios]).toEqual([daIa]);
+    const preparo = linhas.filter((m) => ehMensagemDoPreparo(m, envios));
+    expect(preparo.map((m) => m.job_id)).toEqual([daIa]);
+    // O Somente leitura e o gestor tambem leem a decisao (a mesma RLS da
+    // mensagem); o profissional sem a conversa nao le nem a mensagem nem a
+    // decisao.
+    for (const apelido of ["gestor", "rt2"]) {
+      expect(
+        [...(await fetchEnviosDoPreparo(como(apelido), clinica, [daIa]))],
+        apelido,
+      ).toEqual([daIa]);
+    }
+    const { data: doProfissional } = await como("rt")
+      .from("message")
+      .select("id")
+      .in("job_id", [daIa, daRegua])
+      .throwOnError();
+    expect(doProfissional).toEqual([]);
+    expect((await fetchEnviosDoPreparo(como("rt"), clinica, [daIa])).size).toBe(
+      0,
+    );
+  });
+
   it("o conteudo diferente da versao em vigor: CZIA3", async () => {
     const divergente = "CZIA3:frase_divergente";
     expect(
@@ -1063,23 +1137,25 @@ describe("a copia do texto antigo (so leitura)", () => {
     const { data } = await admin
       .from("preparo_do_procedimento")
       .select(
-        "texto, versao, escrito_por, nome_do_procedimento, procedure:procedure_id ( name, prep_instructions )",
+        "texto, texto_sha256, versao, escrito_por, nome_do_procedimento, procedure:procedure_id ( name, prep_instructions )",
       )
       .eq("origem", "texto_antigo")
       .throwOnError();
     for (const v of data as unknown as {
       texto: string;
+      texto_sha256: string;
       versao: number;
       escrito_por: string | null;
       nome_do_procedimento: string;
       procedure: { name: string; prep_instructions: string | null };
     }[]) {
-      const normalizado = (v.procedure.prep_instructions ?? "")
-        .replace(/\r\n/g, "\n")
-        .replace(/\r/g, "\n")
-        .normalize("NFC")
-        .trim();
+      // A normalizacao da tela (a mesma da copia: a tabulacao vira espaco),
+      // e o hash e o do texto (o que a tela guardaria com o mesmo texto).
+      const normalizado = normalizarTextoDoPreparo(
+        v.procedure.prep_instructions ?? "",
+      );
       expect(v.texto).toBe(normalizado);
+      expect(v.texto_sha256).toBe(sha256(normalizado));
       expect(v.versao).toBe(1);
       expect(v.escrito_por).toBeNull();
     }
