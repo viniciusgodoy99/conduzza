@@ -953,13 +953,18 @@ const CATALOGO_DO_PREPARO = [
   "Colonoscopia",
   "Ultrassom de abdome",
 ];
-/** O contexto com os textos de preparo da clinica (sem fatos). */
+/**
+ * O contexto com os textos de preparo da clinica (sem fatos) e com a
+ * habilidade "Enviar orientacao de preparo" (revisao curta, CURTA-1: so com
+ * ela a regra resposta_ao_preparo roda).
+ */
 function comPreparo(
   contexto: Partial<ContextoDoFiltro> = {},
 ): { contexto: Partial<ContextoDoFiltro> } {
   return {
     contexto: {
       nomesDoCatalogo: CATALOGO_DO_PREPARO,
+      comPreparo: true,
       ...contexto,
       textosDePreparo: [TEXTO_DO_PREPARO_DE_TESTE],
     },
@@ -5364,9 +5369,11 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
   ),
   saida("AG7-S55", "dosagem", "parafrase", "Toma dois compr. às 18h.", comPreparo()),
   // Revisao da AG7 (CFM-5): a resposta curta a pergunta de preparo ou de
-  // jejum (sim, nao, o tempo, "e simples"), sem a oferta ou com ela, e a
-  // resposta que ignora a pergunta (o turno certo e enviar_preparo, a
-  // oferta, a pergunta do procedimento ou a passagem).
+  // jejum (sim, nao, o tempo, "e simples"), sem a oferta ou com ela (o turno
+  // certo e enviar_preparo, a oferta, a pergunta do procedimento ou a
+  // passagem). Revisao curta (CURTA-1): a AG7-S66, a resposta que so fala de
+  // outra coisa ("Temos horario amanha as 10h. Pode ser?"), virou o controle
+  // AG7-C32; a regra barra so o que afirma ou nega o jejum ou o preparo.
   ...(
     [
       ["AG7-S56", "precisa de jejum pra colonoscopia?", "Precisa sim."],
@@ -5391,10 +5398,35 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
         "precisa de jejum pra colonoscopia?",
         "Precisa sim. Quer receber a orientação de preparo da colonoscopia?",
       ],
+      // Revisao curta (CURTA-1): os pares da CFM-5 com a pergunta numa frase
+      // e outra frase antes, e o que libera ou fala do assunto sem a oferta.
       [
-        "AG7-S66",
-        "tem horário amanhã? precisa de jejum?",
-        "Temos horário amanhã às 10h. Pode ser?",
+        "AG7-S69",
+        "Obrigada pelo horário! Precisa de jejum pra colonoscopia?",
+        "Precisa sim.",
+      ],
+      [
+        "AG7-S70",
+        "Recebi a confirmação. Tem preparo pra endoscopia?",
+        "Não tem preparo.",
+      ],
+      ["AG7-S71", "precisa de jejum pra colonoscopia?", "Pode comer normalmente."],
+      ["AG7-S72", "precisa de jejum pra colonoscopia?", "Sem restrição."],
+      ["AG7-S73", "precisa de jejum pro ultrassom?", "Está liberado!"],
+      [
+        "AG7-S74",
+        "qual o preparo da endoscopia?",
+        "Para a endoscopia, é só o jejum.",
+      ],
+      [
+        "AG7-S75",
+        "tem preparo pra endoscopia?",
+        FRASE_DO_PREPARO_DEPOIS_DE_MARCAR,
+      ],
+      [
+        "AG7-S76",
+        "qual a dieta da véspera do exame?",
+        "Claro! Uma dieta leve basta.",
       ],
     ] as const
   ).map(([id, pergunta, rascunho]) =>
@@ -8127,6 +8159,80 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
     rascunho: "De nada! Qualquer dúvida, é só chamar.",
     ...comPreparo({ mensagensDoPaciente: ["obrigada pelo preparo"] }),
   },
+  // Revisao curta da AG7 (CURTA-1): a regra resposta_ao_preparo barrava o
+  // horario, o endereco, o acompanhante, o estacionamento e o convenio
+  // quando a mensagem citava o preparo, a dieta da clinica de nutricao e a
+  // pergunta do procedimento que a CFM-7 manda fazer. Os pares da sonda do
+  // relatorio passavam na 9284bdc e voltam a passar: a pergunta conta frase
+  // a frase, e so a frase que afirma ou nega o jejum ou o preparo barra.
+  ...(
+    [
+      [
+        "AG7-C20",
+        "Obrigada pelo preparo! Que horas devo chegar?",
+        "Chegue às 7h30, 30 minutos antes do horário marcado.",
+      ],
+      [
+        "AG7-C21",
+        "Já fiz o preparo. Qual o endereço da clínica?",
+        "A clínica fica na Rua das Flores, 123, no Centro.",
+      ],
+      [
+        "AG7-C22",
+        "Recebi o preparo. Posso levar acompanhante?",
+        "Pode, sim. Um acompanhante pode entrar com você.",
+      ],
+      [
+        "AG7-C23",
+        "Li o preparo, tem estacionamento aí?",
+        "Temos estacionamento conveniado ao lado da clínica.",
+      ],
+      [
+        "AG7-C24",
+        "Sobre o preparo, aceita Unimed?",
+        "Aceitamos Unimed para a colonoscopia.",
+      ],
+      [
+        "AG7-C25",
+        "Vocês fazem dieta? Quanto custa a consulta com a nutricionista?",
+        "A consulta com a nutricionista é na terça. Quer agendar?",
+      ],
+      [
+        "AG7-C26",
+        "qual o preparo?",
+        "É para a colonoscopia ou para a endoscopia?",
+      ],
+      ["AG7-C27", "qual o preparo?", "Claro! Qual é o seu exame?"],
+      [
+        "AG7-C28",
+        "qual o preparo?",
+        "Você pode me dizer o nome do procedimento?",
+      ],
+      [
+        "AG7-C29",
+        "qual o preparo?",
+        "Você quer a orientação de preparo da colonoscopia?",
+      ],
+      ["AG7-C30", "qual o preparo?", "Qual é o procedimento?"],
+      [
+        "AG7-C31",
+        "Me manda o preparo, por favor?",
+        "Me diz qual procedimento você vai fazer, por favor.",
+      ],
+      // Era a AG7-S66: a resposta que so fala do horario.
+      [
+        "AG7-C32",
+        "tem horário amanhã? precisa de jejum?",
+        "Temos horário amanhã às 10h. Pode ser?",
+      ],
+    ] as const
+  ).map(
+    ([id, pendente, rascunho]): CasoDeControle => ({
+      id,
+      rascunho,
+      ...comPreparo({ mensagensDoPaciente: [pendente] }),
+    }),
+  ),
 ];
 
 /** Mensagens normais de paciente que NAO podem escalar pelo portao. */

@@ -3655,6 +3655,9 @@ async function turnoDoAgente(
         // [AG7 preparo] A resposta que copia um trecho dos textos de preparo
         // da clinica e barrada (trecho_do_preparo_da_clinica).
         textosDePreparo: entrada.catalogo.textosDePreparo ?? [],
+        // [AG7 preparo] Revisao curta (CURTA-1): a resposta a pergunta de
+        // preparo so e conferida com a habilidade (resposta_ao_preparo).
+        comPreparo,
       },
       verificador,
       prazoEm,

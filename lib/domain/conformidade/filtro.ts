@@ -249,7 +249,12 @@ function contextoValido(contexto: unknown): contexto is ContextoDoFiltro {
     // vem.
     (!("textosDePreparo" in c) ||
       c.textosDePreparo === undefined ||
-      textosDePreparoValidos(c.textosDePreparo))
+      textosDePreparoValidos(c.textosDePreparo)) &&
+    // Revisao curta da AG7 (CURTA-1): a habilidade do preparo, opcional, e
+    // so verdadeiro ou falso quando vem.
+    (!("comPreparo" in c) ||
+      c.comPreparo === undefined ||
+      typeof c.comPreparo === "boolean")
     // [AG7 preparo] fim
   );
 }

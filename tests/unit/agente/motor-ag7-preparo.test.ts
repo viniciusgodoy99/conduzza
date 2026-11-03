@@ -1010,6 +1010,44 @@ describe("o modelo continua barrado ao escrever preparo", () => {
     },
   );
 
+  // Revisao curta da AG7 (CURTA-1): a regra so roda com a habilidade, e so
+  // barra a frase que afirma ou nega o jejum ou o preparo.
+  const pergunta = (texto: string): MensagemDaConversa[] => [
+    paciente("Oi"),
+    {
+      autor: "assistente",
+      autoria: "ia",
+      texto: "Olá! Como posso ajudar?",
+    },
+    paciente(texto),
+  ];
+
+  it("revisao curta da AG7 (CURTA-1): sem a habilidade, a resposta curta nao para na regra (o verificador julga)", async () => {
+    const { r } = await turno([final("Precisa sim.")], {
+      config: configComPreparo(false),
+      mensagens: pergunta("precisa de jejum pra colonoscopia?"),
+    });
+    expect(verificador).toHaveBeenCalledTimes(1);
+    expect(r.tipo).toBe("resposta");
+  });
+
+  it.each([
+    [
+      "Li o preparo, tem estacionamento aí?",
+      "Temos estacionamento conveniado ao lado da clínica.",
+    ],
+    ["qual o preparo?", "É para a colonoscopia ou para a endoscopia?"],
+  ])(
+    "revisao curta da AG7 (CURTA-1): com a habilidade, %j / %j passa pela regra",
+    async (texto, resposta) => {
+      const { r } = await turno([final(resposta)], {
+        mensagens: pergunta(texto),
+      });
+      expect(verificador).toHaveBeenCalledTimes(1);
+      expect(r.tipo).toBe("resposta");
+    },
+  );
+
   it("parafraseado (so o verificador pega): passa pelo verificador e e barrado", async () => {
     verificador.mockImplementation(async (pedido) => {
       pedidosAoVerificador.push(pedido);
