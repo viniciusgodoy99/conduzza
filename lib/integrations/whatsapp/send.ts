@@ -1358,12 +1358,22 @@ export async function enviarPreparoAprovadoDaIa(
   admin: SupabaseClient,
   input: EnvioDaIaInput & { preparo: PreparoAprovado },
 ): Promise<SendTextResult> {
-  const mensagem: string = input.preparo.mensagem;
-  const sha256: string = input.preparo.sha256;
+  // Le o preparo e confere o hash AGORA, a cada vez: a mensagem so vale se
+  // o sha256 do UTF-8 dela e o que o banco calculou.
+  const conferida = (): string | null => {
+    const mensagem: unknown = input.preparo?.mensagem;
+    const sha256: unknown = input.preparo?.sha256;
+    return typeof mensagem === "string" &&
+      typeof sha256 === "string" &&
+      sha256DoTexto(mensagem) === sha256
+      ? mensagem
+      : null;
+  };
+  const mensagem = conferida();
   if (
     typeof input.jobId !== "string" ||
     input.jobId === "" ||
-    sha256DoTexto(mensagem) !== sha256
+    mensagem === null
   ) {
     return recusaDoPreparoDivergente();
   }
@@ -1384,9 +1394,11 @@ export async function enviarPreparoAprovadoDaIa(
     {
       bodyRegistrado: mensagem,
       enviar: async (provider, ref, to, extra) => {
-        // A segunda conferencia, logo antes do provedor: diferente, nada
-        // sai (a linha fica 'falhou' com conteudo_divergente).
-        if (sha256DoTexto(mensagem) !== sha256) {
+        // A segunda conferencia, logo antes do provedor, com o que vai a
+        // ele: diferente da gravada ou fora do hash, nada sai (a linha fica
+        // 'falhou' com conteudo_divergente).
+        const agora = conferida();
+        if (agora === null || agora !== mensagem) {
           return {
             ok: false,
             errorCode: "conteudo_divergente",
@@ -1394,7 +1406,7 @@ export async function enviarPreparoAprovadoDaIa(
               "A orientação de preparo não confere com o texto aprovado. Nada foi enviado.",
           };
         }
-        return provider.sendText(ref, to, mensagem, extra);
+        return provider.sendText(ref, to, agora, extra);
       },
     },
     { tipo: "resposta", jobId: input.jobId, workerId: input.workerId },
