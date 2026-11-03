@@ -1056,7 +1056,8 @@ comment on function public.preparos_em_vigor_da_clinica(uuid) is
   'So o servidor (service_role; o catalogo do agente). AG7: a lista [{procedure_id, versao_id, versao, texto_sha256, rt_nome, aprovado_em}] das versoes em vigor da clinica (preparo_em_vigor; o procedimento inativo entra: quem monta o catalogo filtra os ativos), SEM o texto, em ordem de procedure_id; sem nenhuma, []. Clinica nula: 22004 parametro_nulo.';
 
 -- Os textos da clinica que o filtro e o historico escondem (nunca vao ao
--- modelo).
+-- modelo): so o que pode ter chegado a paciente (BANCO-3: a lista so cresce
+-- com a aprovacao do RT, e nao com cada Salvar).
 create function public.textos_de_preparo_da_clinica(p_clinic_id uuid)
 returns text[]
 language plpgsql
@@ -1074,10 +1075,16 @@ begin
   return coalesce((
     select array_agg(t.texto order by t.texto collate "C")
       from (
-        -- O texto de toda versao, de qualquer situacao.
+        -- A versao que ja valeu (aprovado_em nao nulo: aprovado, substituido
+        -- ou suspenso, pelo CHECK preparo_do_procedimento_aprovacao_coerente;
+        -- a IA e a regua so mandam a em vigor) e a copia do texto antigo, de
+        -- qualquer situacao (a regua de antes da AG7 ja o mandou, opcao A).
+        -- Aguardando, devolvida e descartada de origem cadastro nunca sairam
+        -- do sistema e nao entram (o teto do filtro).
         select v.texto
           from public.preparo_do_procedimento v
          where v.clinic_id = p_clinic_id
+           and (v.aprovado_em is not null or v.origem = 'texto_antigo')
         union
         -- O que a regua mandou antes da AG7 (opcao A) e a copia deixou de
         -- fora, aparado como o trim() do JavaScript.
@@ -1097,7 +1104,7 @@ grant execute on function public.textos_de_preparo_da_clinica(uuid)
   to service_role;
 
 comment on function public.textos_de_preparo_da_clinica(uuid) is
-  'So o servidor (service_role; o catalogo do agente, para o filtro, regra trecho_do_preparo_da_clinica, e para o historico que vai ao modelo). AG7: o texto de TODA versao de preparo_do_procedimento da clinica, de qualquer situacao, mais o prep_instructions nao vazio de todo procedimento da clinica (o que a regua mandou antes da AG7; aparado pela regra do trim() do JavaScript, sem outra mudanca), sem repetidos, em ordem binaria (collate C); sem nenhum, {}. Nunca vai ao modelo. Clinica nula: 22004 parametro_nulo.';
+  'So o servidor (service_role; o catalogo do agente, para o filtro, regra trecho_do_preparo_da_clinica, e para o historico que vai ao modelo). AG7: o texto das versoes de preparo_do_procedimento da clinica que ja valeram (aprovado_em nao nulo: aprovado, substituido ou suspenso) e de toda copia do texto antigo (origem texto_antigo, de qualquer situacao), mais o prep_instructions nao vazio de todo procedimento da clinica (o que a regua mandou antes da AG7; aparado pela regra do trim() do JavaScript, sem outra mudanca), sem repetidos, em ordem binaria (collate C); sem nenhum, {}. A versao de cadastro que nunca valeu (aguardando, devolvida, descartada) fica fora: nunca saiu do sistema, e so a aprovacao do RT faz a lista crescer (o teto do filtro). Nunca vai ao modelo. Clinica nula: 22004 parametro_nulo.';
 
 -- O texto em vigor do procedimento (a regua).
 create function public.preparo_em_vigor_do_procedimento(p_clinic_id uuid, p_procedure_id uuid)
