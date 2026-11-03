@@ -383,7 +383,7 @@ describe("decidirEnvioDoPreparo (pura)", () => {
       procedimentoId: PROC.exame,
       versaoId: VERSAO.exame,
       versao: 3,
-      passo: `Pediu a orientação de preparo de Exame: enviada a versão 3 (código ${codigoDoTexto(SHA_DO_TEXTO)}), aprovada por Dra. Ana Souza em 27/10/2026.`,
+      passo: `Pediu a orientação de preparo de Exame: escolhida a versão 3 (código ${codigoDoTexto(SHA_DO_TEXTO)}), aprovada por Dra. Ana Souza em 27/10/2026.`,
     });
     // A data no fuso da clinica: 23:00 de 27/10 em Fortaleza e 28/10 em UTC.
     const tarde = decidirEnvioDoPreparo(
@@ -581,7 +581,7 @@ describe("o turno com enviar_preparo", () => {
     expect(ferramentaDoTurno(r)).toBe("enviar_preparo");
     expect(r.trilha).toContainEqual({
       tipo: "cadastro",
-      texto: `Pediu a orientação de preparo de Exame: enviada a versão 3 (código ${codigoDoTexto(SHA_DO_TEXTO)}), aprovada por Dra. Ana Souza em 27/10/2026.`,
+      texto: `Pediu a orientação de preparo de Exame: escolhida a versão 3 (código ${codigoDoTexto(SHA_DO_TEXTO)}), aprovada por Dra. Ana Souza em 27/10/2026.`,
     });
     // O classificador rodou a variante com o preparo, e a versao e a dela.
     expect(classificador).toHaveBeenCalledWith(
@@ -1409,6 +1409,16 @@ describe("o estado do atendimento no turno do preparo", () => {
     });
     expect(r2.tipo).toBe("preparo");
     expect(r2.notaParaAEquipe ?? null).toBeNull();
+    // Revisao da AG7 (MOTOR-7): a nota para quando o preparo nao sai, pelo
+    // motivo da passagem (o executor so a usa nesse caso).
+    if (r2.tipo === "preparo") {
+      expect(r2.notasSeOPreparoNaoSair?.assunto_clinico).toEqual(
+        expect.any(String),
+      );
+      expect(r2.notasSeOPreparoNaoSair?.conformidade).toEqual(
+        expect.any(String),
+      );
+    }
     expect(cenario.estado).toMatchObject({
       etapa: "informacao",
       pedido_pendente: null,
@@ -1573,7 +1583,7 @@ describe("o simulador com o preparo", () => {
     ]);
     expect(b.escritas).toEqual([]);
     expect(r.trilha.map((p) => p.texto)).toContain(
-      `Pediu a orientação de preparo de Consulta: enviada a versão 1 (código ${codigoDoTexto(SHA_DO_TEXTO)}), aprovada por Dra. Ana Souza em 19/10/2026.`,
+      `Pediu a orientação de preparo de Consulta: escolhida a versão 1 (código ${codigoDoTexto(SHA_DO_TEXTO)}), aprovada por Dra. Ana Souza em 19/10/2026.`,
     );
 
     // A rodada seguinte: a fala do assistente (o preparo, assinado) volta,

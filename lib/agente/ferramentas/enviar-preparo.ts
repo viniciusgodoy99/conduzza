@@ -156,7 +156,12 @@ function resultado(
   };
 }
 
-/** O passo do envio (sem dado de paciente; o nome e o codigo do Cadastro). */
+/**
+ * O passo do envio (sem dado de paciente; o nome e o codigo do Cadastro).
+ * Revisao da AG7 (MOTOR-7): diz a versao ESCOLHIDA, nao a enviada: o envio
+ * acontece depois (o executor le a mensagem do banco, confere e manda), e
+ * quando ele nao acontece o passo seguinte da trilha diz por que.
+ */
 function passoDoEnvio(
   procedimento: string,
   preparo: PreparoEmVigor,
@@ -164,7 +169,7 @@ function passoDoEnvio(
 ): string {
   const codigo = codigoDoTexto(preparo.textoSha256);
   const data = dataNaClinica(preparo.aprovadoEm, fuso);
-  return `Pediu a orientação de preparo de ${procedimento}: enviada a versão ${preparo.versao}${codigo === "" ? "" : ` (código ${codigo})`}, aprovada por ${preparo.rtNome}${data === null ? "" : ` em ${data}`}.`;
+  return `Pediu a orientação de preparo de ${procedimento}: escolhida a versão ${preparo.versao}${codigo === "" ? "" : ` (código ${codigo})`}, aprovada por ${preparo.rtNome}${data === null ? "" : ` em ${data}`}.`;
 }
 
 /**

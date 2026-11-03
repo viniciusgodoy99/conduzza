@@ -871,10 +871,20 @@ export async function simularTurno(
   }
 
   // AG3: a nota que a equipe receberia na passagem (sem dado do paciente).
-  if (resultado.notaParaAEquipe) {
+  // [AG7 preparo] MOTOR-7: tambem quando o preparo escolhido nao sai (fora
+  // de vigor ou com recusa), como no WhatsApp.
+  const notaDaPassagem =
+    resultado.tipo === "preparo"
+      ? tipo === "frase_fixa"
+        ? passosDoPreparo.some((p) => p.tipo === "bloqueio")
+          ? (resultado.notasSeOPreparoNaoSair?.conformidade ?? null)
+          : (resultado.notasSeOPreparoNaoSair?.assunto_clinico ?? null)
+        : null
+      : (resultado.notaParaAEquipe ?? null);
+  if (notaDaPassagem) {
     trilha.push({
       tipo: "equipe",
-      texto: `${TEXTOS_DO_SIMULADOR.notaParaAEquipe} ${resultado.notaParaAEquipe.replace(/\n+/g, " ")}`,
+      texto: `${TEXTOS_DO_SIMULADOR.notaParaAEquipe} ${notaDaPassagem.replace(/\n+/g, " ")}`,
     });
   }
 

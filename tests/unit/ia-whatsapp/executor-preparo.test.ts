@@ -95,7 +95,7 @@ const USO = {
 const PASSO = {
   tipo: "cadastro" as const,
   texto:
-    "Pediu a orientação de preparo de Colonoscopia: enviada a versão 3 (código ABCD 1234), aprovada por Dra. Ana Souza em 27/10/2026.",
+    "Pediu a orientação de preparo de Colonoscopia: escolhida a versão 3 (código ABCD 1234), aprovada por Dra. Ana Souza em 27/10/2026.",
 };
 
 function preparo(): ResultadoDoTurno {
@@ -521,6 +521,54 @@ describe("o turno do preparo", () => {
       expect(JSON.stringify(decisoes())).not.toContain(texto.slice(0, 30));
     },
   );
+
+  it("revisao da AG7 (MOTOR-7): o preparo que nao sai passa com a nota da AG3 do motivo da passagem", async () => {
+    const notas = {
+      assunto_clinico: "Nota da passagem: assunto clínico.",
+      conformidade: "Nota da passagem: conformidade.",
+    };
+    turno.mockImplementation(async () => ({
+      ...preparo(),
+      notasSeOPreparoNaoSair: notas,
+    }));
+    const notasGravadas = () =>
+      banco
+        .linhas("message")
+        .filter((m) => m.is_internal_note === true)
+        .map((m) => m.body);
+
+    // Fora de vigor: a nota do assunto clinico.
+    lido = null;
+    expect(await rodar()).toEqual({ ok: true });
+    expect(passagens).toEqual(["assunto_clinico"]);
+    expect(notasGravadas()).toEqual([notas.assunto_clinico]);
+
+    // Com recusa: a da conformidade.
+    montar();
+    turno.mockImplementation(async () => ({
+      ...preparo(),
+      notasSeOPreparoNaoSair: notas,
+    }));
+    lido = lidoDoBanco(
+      mensagemDoPreparo({
+        procedimento: "Colonoscopia",
+        rt: RT_DE_TESTE,
+        texto: "Venha sem maquiagem. Resultado garantido!",
+      }),
+    );
+    expect(await rodar()).toEqual({ ok: true });
+    expect(passagens).toEqual(["conformidade"]);
+    expect(notasGravadas()).toEqual([notas.conformidade]);
+
+    // Enviado: nenhuma nota.
+    montar();
+    turno.mockImplementation(async () => ({
+      ...preparo(),
+      notasSeOPreparoNaoSair: notas,
+    }));
+    expect(await rodar()).toEqual({ ok: true });
+    expect(notasGravadas()).toEqual([]);
+  });
 
   it("erro da leitura: o job tenta de novo, nada decidido nem enviado", async () => {
     banco.rpc("ler_preparo_para_envio", () => ({

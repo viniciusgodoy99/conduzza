@@ -2001,7 +2001,14 @@ async function decidirEEnviarOPreparo(
       saida: "frase",
       decisionId,
     });
-    return passarEAvisar(c, destino, "conformidade");
+    // MOTOR-7: a nota da AG3 da passagem, como em toda passagem do turno.
+    return passarEAvisar(
+      c,
+      destino,
+      "conformidade",
+      false,
+      resultado.notasSeOPreparoNaoSair?.conformidade ?? null,
+    );
   }
   if (leitura.tipo === "fora_de_vigor") {
     const decisionId = await gravarDecisao(c.admin, {
@@ -2035,7 +2042,16 @@ async function decidirEEnviarOPreparo(
       saida: "frase",
       decisionId,
     });
-    return passarEAvisar(c, destino, "assunto_clinico");
+    // Revisao da AG7 (MOTOR-7): a nota da AG3 da passagem (procedimento,
+    // profissional, reserva, lista de espera), como na passagem pela
+    // ferramenta.
+    return passarEAvisar(
+      c,
+      destino,
+      "assunto_clinico",
+      false,
+      resultado.notasSeOPreparoNaoSair?.assunto_clinico ?? null,
+    );
   }
   const preparo = leitura.preparo;
   const decisionId = await gravarDecisao(c.admin, {

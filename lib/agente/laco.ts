@@ -650,6 +650,16 @@ export type ResultadoDoTurno =
       preparo: { procedimentoId: string; versaoId: string; versao: number };
       resposta: null;
       rascunhoBloqueado: null;
+      /**
+       * Revisao da AG7 (MOTOR-7): a nota interna da AG3 (procedimento,
+       * profissional, reserva, lista de espera) para quando o preparo NAO
+       * sai e o executor passa a conversa: pelo motivo da passagem (fora de
+       * vigor: assunto_clinico; o texto com recusa: conformidade). No envio
+       * ela nao e usada. Ausente: o turno sem estado.
+       */
+      notasSeOPreparoNaoSair?: Readonly<
+        Record<"assunto_clinico" | "conformidade", string | null>
+      >;
     });
 // [AG7 preparo] fim
 
@@ -1954,9 +1964,13 @@ export async function executarTurnoDoAgente(
       // [AG6b mídia] O job antigo (D-A) so conclui: nada passa.
       resultado.jobAntigo === true;
     const passou = resultado.tipo === "frase_fixa" && !semEnvio;
+    // [AG7 preparo] MOTOR-7: o preparo escolhido pode nao sair (fora de
+    // vigor ou com recusa na hora do envio); o executor passa a conversa com
+    // a nota de sempre.
+    const preparoEscolhido = resultado.tipo === "preparo";
     // AG5: a lista de espera desta conversa mora fora do estado; na passagem
     // antes do preparo (o portao), le so para a nota (nunca lanca).
-    if (passou) {
+    if (passou || preparoEscolhido) {
       await agendaDoTurno.lerParaANota();
     }
     const atendimento = agendaDoTurno.fechar({
@@ -1969,6 +1983,19 @@ export async function executarTurnoDoAgente(
       notaParaAEquipe: passou
         ? agendaDoTurno.nota(motivoParaANota(resultado.desfecho))
         : null,
+      // [AG7 preparo] MOTOR-7
+      ...(preparoEscolhido
+        ? {
+            notasSeOPreparoNaoSair: {
+              assunto_clinico: agendaDoTurno.nota(
+                ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.assunto_clinico,
+              ),
+              conformidade: agendaDoTurno.nota(
+                ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.conformidade,
+              ),
+            },
+          }
+        : {}),
     };
   } catch {
     // O fechamento nunca deveria lancar. Se lancar, o resultado volta SEM o
