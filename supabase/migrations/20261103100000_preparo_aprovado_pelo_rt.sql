@@ -151,18 +151,24 @@
 -- bloco, so pede travas que ja tem (ou mais fracas, ou das tabelas novas) e
 -- nunca espera; o lock_timeout de 3 s fica de rede. As funcoes que leem
 -- tabela sao plpgsql (o corpo nao e validado contra as tabelas no CREATE);
--- a unica sql e preparo_texto_valido, que nao le tabela. As policies novas
--- so chamam funcoes. ZERO trava em message, conversation, contact,
+-- as tres sql (preparo_texto_valido, preparo_texto_recusado e
+-- preparo_nome_valido) nao leem tabela. As policies novas so chamam
+-- funcoes. ZERO trava em message, conversation, contact,
 -- job_queue, audit_log, clinic_member, professional, ai_agent_config,
 -- ia_atendimento, slot_hold e waitlist. A copia do texto antigo (passo 10)
 -- pega, pelas FKs da tabela nova, FOR KEY SHARE nas linhas de procedure e de
 -- clinic dos procedimentos copiados (na producao, uma de cada): com as duas
--- tabelas ja em SHARE ROW EXCLUSIVE, so esperaria um SELECT ... FOR UPDATE
--- delas, que nenhuma funcao de hoje faz; e o lock_timeout de 3 s falharia a
--- migration inteira, sem gravar. Nesse tempo (milissegundos): o turno da IA
--- espera para gravar a decisao e o turno; a gravacao de dados da clinica e
--- do Cadastro de procedimentos espera. A LEITURA de clinic e de procedure
--- segue.
+-- tabelas ja em SHARE ROW EXCLUSIVE, so esperaria quem segura FOR UPDATE
+-- nessas linhas, como claim_jobs_por_clinica (clinic, a cada 20 s, pelo
+-- motor) e sincronizar_vinculos_do_procedimento (procedure, no Salvar do
+-- procedimento). As duas sao RPCs avulsas, nao pedem as tabelas do bloco 0
+-- e terminam em milissegundos: espera curta, sem ciclo, com o lock_timeout
+-- de 3 s de rede (passou dele, a migration inteira falha sem gravar). Nesse
+-- tempo (milissegundos): o turno da IA espera para gravar a decisao e o
+-- turno; a gravacao de dados da clinica e do Cadastro de procedimentos
+-- espera. A LEITURA de clinic e de procedure segue; a de ai_decision_log e
+-- de ai_turno NAO (ACCESS EXCLUSIVE segura tambem o SELECT): abrir uma
+-- conversa no Atendimento (que le ai_decision_log) espera ate o commit.
 --
 -- TRAVAS EM USO (sem 40P01; o contrato, secao 1.7). Ordem global: o
 -- procedimento (FOR NO KEY UPDATE, nas RPCs, como em
