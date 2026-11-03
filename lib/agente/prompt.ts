@@ -96,7 +96,9 @@ import {
   FRASE_DO_PREPARO_DEPOIS_DE_MARCAR,
   LINHA_DO_RT,
   RODAPE_DO_PREPARO,
+  SUBSTITUTO_DA_FALA_SEM_A_MASCARA,
   SUBSTITUTO_DO_TEXTO_DO_PREPARO,
+  substitutoDaFalaNoFormatoDoPreparo,
   substitutoDaMensagemDoPreparo,
 } from "@/lib/domain/preparo";
 import { FERRAMENTA_ENVIAR_PREPARO } from "./ferramentas/enviar-preparo";
@@ -146,6 +148,7 @@ export const SECAO_DA_ORIENTACAO_DE_PREPARO = `Orientação de preparo (só com 
 - Chame enviar_preparo sozinha: nunca junto de outra ferramenta nem depois de outra ferramenta na mesma resposta. Se a pessoa pediu outra coisa junto (o valor, um horário), responda essa parte e pergunte se ela quer receber a orientação de preparo, por exemplo "Quer receber a orientação de preparo da colonoscopia?"; se ela disser que quer, chame enviar_preparo na resposta seguinte. Se enviar_preparo disser "vai_sozinha", faça isso.
 - Depois de uma marcação, o sistema avisa quando o procedimento tem orientação de preparo aprovada; se a pessoa pedir para receber, chame enviar_preparo.
 - Se enviar_preparo disser "procedimento_nao_encontrado", pergunte qual é o procedimento; se ele não estiver no bloco <procedimentos>, passe para a equipe com o motivo "agente_pediu".
+- Se enviar_preparo disser "procedimento_nao_confirmado", a pessoa ainda não disse de qual procedimento é a orientação: pergunte qual é, pelo nome, e só chame enviar_preparo de novo depois da resposta dela. Nunca escolha o procedimento por conta própria.
 - A dúvida sobre o preparo aplicada à pessoa (um remédio que ela toma, uma doença, gravidez, se pode comer ou beber algo, o que fazer se esqueceu ou não conseguiu seguir), a dúvida sobre o texto que ela recebeu e os cuidados depois do procedimento vão para a equipe com o motivo "assunto_clinico".
 - Nunca diga que a orientação de preparo foi enviada, que segue abaixo ou que está a seguir: quem manda é o sistema, quando você chama enviar_preparo.`;
 // [AG7 preparo] fim
@@ -602,6 +605,11 @@ export const FONTES_DA_VERSAO_DO_PROMPT = {
     SUBSTITUTO_DO_TEXTO_DO_PREPARO,
     substitutoDaMensagemDoPreparo("{}"),
     substitutoDaMensagemDoPreparo(""),
+    // Revisao da AG7 (CFM-1 e CFM-10): a fala no formato que nao e a do
+    // sistema e a fala sem a mascara refeita.
+    substitutoDaFalaNoFormatoDoPreparo("{}"),
+    substitutoDaFalaNoFormatoDoPreparo(""),
+    SUBSTITUTO_DA_FALA_SEM_A_MASCARA,
   ],
   // [AG7 preparo] fim
   respostasFechadas: [

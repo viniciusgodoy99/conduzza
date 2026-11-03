@@ -14,7 +14,9 @@
 // Cada regra aqui espelha o banco:
 //  - normalizarTextoDoPreparo: a mesma ordem da copia do texto antigo (CR
 //    vira LF, NFC e o trim() do JavaScript, os 25 brancos de
-//    cadastro_texto_valido);
+//    cadastro_texto_valido); revisao da AG7 (TELA-8): a tabulacao vira
+//    espaco aqui (a copia nao a troca: o texto antigo com tabulacao fica de
+//    fora dela, como antes);
 //  - textoDoPreparoValido: o CHECK preparo_texto_valido;
 //  - mensagemDoPreparo: a funcao mensagem_do_preparo, byte a byte;
 //  - CONSELHOS, UFS e SITUACOES_DO_PREPARO: os CHECKs das duas tabelas.
@@ -141,6 +143,31 @@ export function substitutoDaMensagemDoPreparo(procedimento: string): string {
     : `Mensagem do sistema: a orientação de preparo de ${nome}, aprovada pela clínica, foi enviada aqui.`;
 }
 
+/**
+ * Revisao da AG7 (CFM-10): o que o modelo le no lugar de uma fala da clinica
+ * NO FORMATO da mensagem do preparo (o cabecalho ou o rodape fixos) que nao e
+ * a do sistema: a da equipe, a da IA, a de autoria desconhecida. Nunca diz
+ * "aprovada" (ninguem conferiu que o RT aprovou aquele texto) e nunca deixa
+ * o texto ir ao modelo.
+ */
+export function substitutoDaFalaNoFormatoDoPreparo(
+  procedimento: string,
+): string {
+  const nome = procedimento.trim();
+  return nome === ""
+    ? "Mensagem da clínica: uma orientação de preparo foi enviada aqui."
+    : `Mensagem da clínica: uma orientação de preparo de ${nome} foi enviada aqui.`;
+}
+
+/**
+ * Revisao da AG7 (CFM-1): o que o modelo le no lugar de uma fala da clinica
+ * que tinha texto de preparo quando o laco nao recebeu o nome do contato para
+ * refazer a mascara (quem montou o historico esqueceu: falha fechada, nem o
+ * preparo nem o nome vao ao modelo).
+ */
+export const SUBSTITUTO_DA_FALA_SEM_A_MASCARA =
+  "(a clínica mandou uma mensagem que não aparece aqui)";
+
 // ---------------------------------------------------------------------------
 // O texto: normalizacao e validade (espelho de preparo_texto_valido)
 // ---------------------------------------------------------------------------
@@ -170,13 +197,22 @@ function aparar(texto: string): string {
 }
 
 /**
- * O texto como o banco guarda: "\r\n" e "\r" viram "\n", depois NFC, depois
- * o trim() do JavaScript (a ordem da copia do texto antigo, secao 1.6 do
- * contrato da AG7). A tela e a Server Action normalizam ANTES de mandar.
+ * O texto como o banco guarda: "\r\n" e "\r" viram "\n", a tabulacao vira
+ * espaco, depois NFC, depois o trim() do JavaScript (a ordem da copia do
+ * texto antigo, secao 1.6 do contrato da AG7). A tela e a Server Action
+ * normalizam ANTES de mandar. Revisao da AG7 (TELA-8): a tabulacao vira
+ * espaco como o CR vira LF (a lista numerada colada do Word, "1.\tJejum",
+ * caia em "caracteres invisiveis" sem a pessoa achar o que tirar); o banco
+ * continua recusando a tabulacao crua, e a copia do texto antigo nao a troca
+ * (o texto antigo com tabulacao fica de fora da copia, como antes).
  */
 export function normalizarTextoDoPreparo(texto: string): string {
   return aparar(
-    texto.replace(/\r\n/g, "\n").replace(/\r/g, "\n").normalize("NFC"),
+    texto
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .replace(/\t/g, " ")
+      .normalize("NFC"),
   );
 }
 
@@ -210,6 +246,107 @@ export function textoDoPreparoValido(texto: string): boolean {
     !texto.includes("{{") &&
     !texto.includes("}}")
   );
+}
+
+/**
+ * Revisao da AG7 (TELA-8): o que torna o texto invalido (o mesmo
+ * preparo_texto_valido), com o que a pessoa precisa para achar e tirar:
+ *  - vazio, longo (com o tamanho) e chaves ("{{" ou "}}", com a linha);
+ *  - tabulacao (a linha; normalizarTextoDoPreparo ja a troca por espaco);
+ *  - emoji_com_juncao: o emoji que leva o U+200D (o "juntador" de emoji,
+ *    como em profissional de saude), com o emoji e a linha;
+ *  - invisivel: o caractere invisivel (U+200B e outros), com a linha e o
+ *    codigo;
+ *  - controle: outro caractere de controle, com a linha e o codigo;
+ *  - fora_do_padrao: o texto que nao passou por normalizarTextoDoPreparo
+ *    (fora da NFC, branco nas pontas, "\r").
+ * null: o texto e valido. Recebe o texto JA normalizado (o que vai ao banco).
+ */
+export type ProblemaDeFormatoDoPreparo =
+  | { causa: "vazio" }
+  | { causa: "longo"; tamanho: number }
+  | { causa: "chaves"; linha: number }
+  | { causa: "tabulacao"; linha: number }
+  | { causa: "emoji_com_juncao"; linha: number; emoji: string }
+  | { causa: "invisivel"; linha: number; codigo: string }
+  | { causa: "controle"; linha: number; codigo: string }
+  | { causa: "fora_do_padrao" };
+
+/** "U+200B" de um ponto de codigo. */
+function codigoDoCaractere(caractere: string): string {
+  return `U+${(caractere.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}`;
+}
+
+/** A linha (de 1 para cima) da posicao no texto. */
+function linhaDe(texto: string, posicao: number): number {
+  let linha = 1;
+  for (let i = 0; i < posicao; i += 1) {
+    if (texto.charCodeAt(i) === 0x0a) {
+      linha += 1;
+    }
+  }
+  return linha;
+}
+
+/** O emoji inteiro (o agrupamento que a pessoa ve) em volta da posicao. */
+function emojiEmVolta(texto: string, posicao: number): string {
+  if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
+    const segmentador = new Intl.Segmenter("pt-BR", {
+      granularity: "grapheme",
+    });
+    for (const { segment, index } of segmentador.segment(texto)) {
+      if (posicao >= index && posicao < index + segment.length) {
+        return segment;
+      }
+    }
+  }
+  return texto.slice(Math.max(0, posicao - 2), posicao + 3);
+}
+
+export function problemaDeFormatoDoTextoDoPreparo(
+  texto: string,
+): ProblemaDeFormatoDoPreparo | null {
+  if (typeof texto !== "string" || texto.trim() === "") {
+    return { causa: "vazio" };
+  }
+  const tamanho = Array.from(texto).length;
+  if (tamanho > LIMITE_DO_TEXTO_DO_PREPARO) {
+    return { causa: "longo", tamanho };
+  }
+  const chaves = [texto.indexOf("{{"), texto.indexOf("}}")].filter(
+    (i) => i >= 0,
+  );
+  if (chaves.length > 0) {
+    return { causa: "chaves", linha: linhaDe(texto, Math.min(...chaves)) };
+  }
+  for (let i = 0; i < texto.length; i += 1) {
+    const caractere = texto.charAt(i);
+    if (caractere === "\t") {
+      return { causa: "tabulacao", linha: linhaDe(texto, i) };
+    }
+    if (caractere === "\u200d") {
+      return {
+        causa: "emoji_com_juncao",
+        linha: linhaDe(texto, i),
+        emoji: emojiEmVolta(texto, i),
+      };
+    }
+    if (INVISIVEL_NO_TEXTO.test(caractere)) {
+      return {
+        causa: "invisivel",
+        linha: linhaDe(texto, i),
+        codigo: codigoDoCaractere(caractere),
+      };
+    }
+    if (caractere !== "\n" && CONTROLE_NO_TEXTO.test(caractere)) {
+      return {
+        causa: "controle",
+        linha: linhaDe(texto, i),
+        codigo: codigoDoCaractere(caractere),
+      };
+    }
+  }
+  return textoDoPreparoValido(texto) ? null : { causa: "fora_do_padrao" };
 }
 
 // ---------------------------------------------------------------------------
@@ -388,53 +525,134 @@ function regexDoTexto(texto: string): RegExp {
  * marcador nunca e lido de novo. Texto sem letra nem numero e ignorado
  * (trocar todo branco do historico estragaria a conversa). E defesa em
  * profundidade: o modelo nunca ve o preparo, nem quando a regua o mandou.
+ *
+ * Revisao da AG7 (CFM-9), o limite: a troca e por igualdade com os textos da
+ * lista. Daqui para a frente nao ha buraco: a regua so manda a versao em
+ * vigor, a versao e imutavel (preparo_nao_muda) e nao se apaga (a FK do
+ * procedimento nao tem cascade), e a lista traz toda versao que ja valeu e o
+ * texto antigo (BANCO-3). O prep_instructions editado ANTES da AG7, porem,
+ * sobrescreveu o texto que a regua ja tinha mandado: esse texto velho nao
+ * esta em lugar nenhum do banco, e o toque antigo com ele vai ao modelo como
+ * esta (na producao de 03/11/2026, so um texto de 9 caracteres). O filtro
+ * na saida continua barrando o preparo que o modelo escrever.
  */
 export function semOPreparo(texto: string, textos: readonly string[]): string {
   if (typeof texto !== "string" || texto === "") {
     return texto;
   }
+  const nfc = texto.normalize("NFC");
+  const trechos = trechosDoPreparo(nfc, textos);
+  if (trechos.length === 0) {
+    return trechos === SEM_AGULHA ? texto : nfc;
+  }
+  let saida = "";
+  let ultimo = 0;
+  for (const { inicio, fim } of trechos) {
+    saida += nfc.slice(ultimo, inicio) + SUBSTITUTO_DO_TEXTO_DO_PREPARO;
+    ultimo = fim;
+  }
+  return saida + nfc.slice(ultimo);
+}
+
+/** Um trecho do texto, em indices de unidade UTF-16 ([inicio, fim)). */
+export type TrechoDoPreparo = { inicio: number; fim: number };
+
+// A lista vazia de quando nao ha agulha nenhuma (semOPreparo devolve o texto
+// como veio, sem a NFC, como sempre).
+const SEM_AGULHA: readonly TrechoDoPreparo[] = Object.freeze([]);
+
+/**
+ * Os trechos de `texto` (JA em NFC) iguais a um texto de preparo da clinica,
+ * em ordem e sem sobrepor: a mesma busca de semOPreparo (o texto mais longo
+ * primeiro, os brancos como \s+, as pontas sem cortar palavra, o trecho ja
+ * trocado nunca lido de novo). Revisao da AG7 (CFM-1): o laco troca estes
+ * trechos no corpo como saiu e refaz a mascara do nome so no resto.
+ */
+export function trechosDoPreparo(
+  texto: string,
+  textos: readonly string[],
+): readonly TrechoDoPreparo[] {
+  const agulhas = agulhasDe(textos);
+  if (agulhas.length === 0 || typeof texto !== "string" || texto === "") {
+    return SEM_AGULHA;
+  }
+  let livres: TrechoDoPreparo[] = [{ inicio: 0, fim: texto.length }];
+  const tomados: TrechoDoPreparo[] = [];
+  for (const agulha of agulhas) {
+    // A sonda: toda ocorrencia do texto da clinica tem as palavras mais
+    // longas dele, iguais. Sem elas no texto, a regex nem e montada.
+    if (!agulha.sondas.every((sonda) => texto.includes(sonda))) {
+      continue;
+    }
+    agulha.regex ??= regexDoTexto(agulha.texto);
+    const regex = agulha.regex;
+    const restantes: TrechoDoPreparo[] = [];
+    for (const livre of livres) {
+      const pedaco = texto.slice(livre.inicio, livre.fim);
+      let ultimo = 0;
+      for (const achado of pedaco.matchAll(regex)) {
+        const inicio = achado.index ?? 0;
+        restantes.push({
+          inicio: livre.inicio + ultimo,
+          fim: livre.inicio + inicio,
+        });
+        tomados.push({
+          inicio: livre.inicio + inicio,
+          fim: livre.inicio + inicio + achado[0].length,
+        });
+        ultimo = inicio + achado[0].length;
+      }
+      restantes.push({ inicio: livre.inicio + ultimo, fim: livre.fim });
+    }
+    livres = restantes;
+  }
+  return tomados.sort((a, b) => a.inicio - b.inicio);
+}
+
+/**
+ * Um texto de preparo pronto para a busca: o texto (NFC, aparado), as sondas
+ * (as duas palavras mais longas) e a regex, montada so na primeira vez que a
+ * sonda passa.
+ */
+type Agulha = {
+  readonly texto: string;
+  readonly sondas: readonly string[];
+  regex: RegExp | null;
+};
+
+// As agulhas de cada lista de textos (a do catalogo do turno, a mesma para
+// toda mensagem do historico), sem segurar a lista depois do turno. Revisao
+// da AG7 (teto de 1.000 textos): montar as regex de todos os textos para
+// cada mensagem levava um minuto no teto.
+const AGULHAS_DA_LISTA = new WeakMap<readonly string[], readonly Agulha[]>();
+
+/** As agulhas da lista: sem repetir, com letra ou numero, a mais longa antes. */
+function agulhasDe(textos: readonly string[]): readonly Agulha[] {
+  if (!Array.isArray(textos)) {
+    return [];
+  }
+  const pronta = AGULHAS_DA_LISTA.get(textos);
+  if (pronta !== undefined) {
+    return pronta;
+  }
   const agulhas = [
     ...new Set(
-      (Array.isArray(textos) ? textos : [])
+      textos
         .filter((t): t is string => typeof t === "string")
         .map((t) => t.normalize("NFC").trim())
         .filter((t) => /[\p{L}\p{N}]/u.test(t)),
     ),
-  ].sort((a, b) => b.length - a.length);
-  if (agulhas.length === 0) {
-    return texto;
-  }
-  type Parte = { marcador: boolean; texto: string };
-  let partes: Parte[] = [{ marcador: false, texto: texto.normalize("NFC") }];
-  for (const agulha of agulhas) {
-    const regex = regexDoTexto(agulha);
-    partes = partes.flatMap((parte): Parte[] => {
-      if (parte.marcador) {
-        return [parte];
-      }
-      const novas: Parte[] = [];
-      let ultimo = 0;
-      for (const achado of parte.texto.matchAll(regex)) {
-        const inicio = achado.index ?? 0;
-        novas.push({
-          marcador: false,
-          texto: parte.texto.slice(ultimo, inicio),
-        });
-        novas.push({ marcador: true, texto: "" });
-        ultimo = inicio + achado[0].length;
-      }
-      if (novas.length === 0) {
-        return [parte];
-      }
-      novas.push({ marcador: false, texto: parte.texto.slice(ultimo) });
-      return novas;
-    });
-  }
-  return partes
-    .map((parte) =>
-      parte.marcador ? SUBSTITUTO_DO_TEXTO_DO_PREPARO : parte.texto,
-    )
-    .join("");
+  ]
+    .sort((a, b) => b.length - a.length)
+    .map((texto): Agulha => ({
+      texto,
+      sondas: [...new Set(texto.split(/\s+/u).filter((p) => p !== ""))]
+        .sort((a, b) => b.length - a.length)
+        .slice(0, 2),
+      regex: null,
+    }));
+  AGULHAS_DA_LISTA.set(textos, agulhas);
+  return agulhas;
 }
 
 // ---------------------------------------------------------------------------
@@ -449,41 +667,99 @@ export const TAMANHO_MINIMO_DO_TRECHO = 25;
  * vira espaco, espaco unico. Os dois lados passam por aqui.
  */
 function normalizarParaOTrecho(texto: string): string {
-  return texto
-    .normalize("NFKD")
-    .replace(/\p{M}/gu, "")
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim();
+  return soLetrasENumeros(semAcentoEMinusculo(texto));
+}
+
+/** A primeira metade da normalizacao: NFKD sem as marcas, minusculas. */
+function semAcentoEMinusculo(texto: string): string {
+  return texto.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
+/** A segunda: o que nao e letra nem numero vira espaco, espaco unico. */
+function soLetrasENumeros(texto: string): string {
+  return texto.replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
 // O fim de frase: ponto, exclamacao, interrogacao, ponto e virgula ou dois
 // pontos seguidos de branco (ou no fim), e a quebra de linha. "0,9" e
 // "18:00" nao quebram.
 const FIM_DE_FRASE = /[.!?;:\u2026]+(?=\s|$)|[\r\n\u2028\u2029]+/u;
+// Revisao da AG7 (CFM-8): o fim de frase e a virgula seguida de branco ("0,9"
+// nao quebra).
+const FIM_DE_FRASE_OU_ORACAO = /[.!?;:,\u2026]+(?=\s|$)|[\r\n\u2028\u2029]+/u;
+
+/**
+ * Revisao da AG7 (CFM-8): quantas palavras seguidas de um texto da clinica
+ * contam como trecho mesmo fora da frase e da oracao inteiras (a copia longa
+ * com uma palavra trocada no fim). A oracao entre virgulas ja pega "Venha
+ * com um acompanhante maior de idade porque vai receber sedacao" (sem o
+ * "voce") e "Tome com um gole de agua as 6h do dia do exame" (meia frase).
+ * Dez, e nao seis ou sete: a janela curta barrava o requisito de sempre
+ * ("documento com foto e a carteirinha do convenio") quando a clinica o pos
+ * no texto do preparo (0 falsos positivos em 494 frases de recepcao e
+ * controles com dez; 2 com sete).
+ */
+export const PALAVRAS_DA_JANELA_DO_TRECHO = 10;
+
+/** O texto da clinica normalizado: as frases que contam e as palavras. */
+type FormasDoTexto = {
+  readonly trechos: readonly string[];
+  readonly palavras: readonly string[];
+};
+
+// As formas de cada texto, por lista (a do catalogo do turno), sem segurar a
+// lista depois do turno.
+const FORMAS_DA_LISTA = new WeakMap<
+  readonly string[],
+  Map<string, FormasDoTexto>
+>();
 
 /** As frases de um texto da clinica que contam como trecho, normalizadas. */
-function trechosDoTexto(texto: string): string[] {
-  const trechos = [
-    ...texto.split(FIM_DE_FRASE).map(normalizarParaOTrecho),
-    // O texto inteiro tambem conta: um texto so de frases curtas copiado
-    // por inteiro.
-    normalizarParaOTrecho(texto),
-  ];
-  return trechos.filter(
-    (trecho) => Array.from(trecho).length >= TAMANHO_MINIMO_DO_TRECHO,
-  );
+function formasDoTexto(texto: string, lista: readonly string[]): FormasDoTexto {
+  let daLista = FORMAS_DA_LISTA.get(lista);
+  if (daLista === undefined) {
+    daLista = new Map();
+    FORMAS_DA_LISTA.set(lista, daLista);
+  }
+  const pronta = daLista.get(texto);
+  if (pronta !== undefined) {
+    return pronta;
+  }
+  // A NFKD uma vez so (o texto chega a 4.000 caracteres e a lista a 1.000
+  // textos): a pontuacao continua ate o corte das frases e das oracoes.
+  const minusculo = semAcentoEMinusculo(texto);
+  const inteiro = soLetrasENumeros(minusculo);
+  const formas: FormasDoTexto = {
+    trechos: [
+      ...minusculo.split(FIM_DE_FRASE).map(soLetrasENumeros),
+      // Revisao da AG7 (CFM-8): a oracao entre virgulas tambem conta.
+      ...minusculo.split(FIM_DE_FRASE_OU_ORACAO).map(soLetrasENumeros),
+      // O texto inteiro tambem conta: um texto so de frases curtas copiado
+      // por inteiro.
+      inteiro,
+    ].filter((trecho) => Array.from(trecho).length >= TAMANHO_MINIMO_DO_TRECHO),
+    palavras: inteiro === "" ? [] : inteiro.split(" "),
+  };
+  daLista.set(texto, formas);
+  return formas;
 }
 
 /**
  * A resposta do modelo copia um trecho de um texto de preparo da clinica?
  * Os dois lados normalizados (minusculas, sem acento, sem pontuacao, espaco
- * unico); conta a frase do texto com TAMANHO_MINIMO_DO_TRECHO caracteres ou
- * mais (ou o texto inteiro) que aparece inteira na resposta, sem cortar
- * palavra. A frase curta comum ("Jejum de 8 horas.") e a resposta que so
- * fala do mesmo assunto com outras palavras nao contam: elas ficam para os
- * padroes de padroes.ts e para o verificador. Regra da camada
- * deterministica (trecho_do_preparo_da_clinica, filtro-deterministico.ts).
+ * unico); conta, sem cortar palavra:
+ *  - a frase do texto com TAMANHO_MINIMO_DO_TRECHO caracteres ou mais (ou o
+ *    texto inteiro) que aparece inteira na resposta;
+ *  - revisao da AG7 (CFM-8): a oracao entre virgulas com
+ *    TAMANHO_MINIMO_DO_TRECHO caracteres ou mais, inteira (a frase com uma
+ *    palavra a menos depois da virgula, a meia frase), e
+ *    PALAVRAS_DA_JANELA_DO_TRECHO palavras seguidas do texto (com
+ *    TAMANHO_MINIMO_DO_TRECHO caracteres ou mais) que aparecem seguidas na
+ *    resposta.
+ * A frase curta comum ("Jejum de 8 horas.") e a resposta que so fala do
+ * mesmo assunto com outras palavras nao contam: elas ficam para os padroes
+ * de padroes.ts e para o verificador. Regra da camada deterministica
+ * (trecho_do_preparo_da_clinica, filtro-deterministico.ts).
  */
 export function trechoDePreparoNaResposta(
   rascunho: string,
@@ -492,16 +768,38 @@ export function trechoDePreparoNaResposta(
   if (typeof rascunho !== "string" || !Array.isArray(textos)) {
     return false;
   }
-  const resposta = ` ${normalizarParaOTrecho(rascunho)} `;
-  if (resposta.trim() === "") {
+  const normalizada = normalizarParaOTrecho(rascunho);
+  if (normalizada === "") {
     return false;
   }
+  const resposta = ` ${normalizada} `;
+  const palavrasDaResposta = new Set(normalizada.split(" "));
   for (const texto of textos) {
     if (typeof texto !== "string") {
       continue;
     }
-    for (const trecho of trechosDoTexto(texto)) {
+    const { trechos, palavras } = formasDoTexto(texto, textos);
+    for (const trecho of trechos) {
       if (resposta.includes(` ${trecho} `)) {
+        return true;
+      }
+    }
+    for (
+      let i = 0;
+      i + PALAVRAS_DA_JANELA_DO_TRECHO <= palavras.length;
+      i += 1
+    ) {
+      // So monta a janela que comeca numa palavra que a resposta tem.
+      if (!palavrasDaResposta.has(palavras[i] ?? "")) {
+        continue;
+      }
+      const janela = palavras
+        .slice(i, i + PALAVRAS_DA_JANELA_DO_TRECHO)
+        .join(" ");
+      if (
+        Array.from(janela).length >= TAMANHO_MINIMO_DO_TRECHO &&
+        resposta.includes(` ${janela} `)
+      ) {
         return true;
       }
     }

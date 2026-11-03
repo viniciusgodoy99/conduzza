@@ -30,7 +30,11 @@ import {
 } from "@/lib/domain/conformidade/filtro";
 import {
   FONTES_DAS_REGRAS_EM_CODIGO,
+  perguntaDePreparo,
+  REGRA_DA_RESPOSTA_AO_PREPARO,
+  REGRA_DO_PEDIDO_COM_SITUACAO_PESSOAL,
   REGRA_DO_TRECHO_DO_PREPARO,
+  situacaoPessoalNoPedidoDoPreparo,
 } from "@/lib/domain/conformidade/filtro-deterministico";
 import { PADROES_DE_SAIDA } from "@/lib/domain/conformidade/padroes";
 import type { Verificador } from "@/lib/domain/conformidade/veredicto";
@@ -1198,7 +1202,7 @@ describe("AG7: o preparo escrito pelo modelo e o trecho do texto da clinica", ()
       ["numero na lista", [TEXTO_DO_PREPARO_DE_TESTE, 1]],
       ["texto vazio", [""]],
       ["nulo na lista", [null]],
-      ["textos demais", Array.from({ length: 201 }, (_, i) => `texto ${i}`)],
+      ["textos demais", Array.from({ length: 1001 }, (_, i) => `texto ${i}`)],
       ["texto longo demais", ["a".repeat(4001)]],
     ])(
       "%s: bloqueia como falha, sem chamar o verificador",
@@ -1225,10 +1229,11 @@ describe("AG7: o preparo escrito pelo modelo e o trecho do texto da clinica", ()
       },
     );
 
-    it("no limite (200 textos de 4.000 caracteres) e sem a lista, aprova", async () => {
-      expect(MAXIMO_DE_TEXTOS_DE_PREPARO).toBe(200);
+    it("no limite (1.000 textos de 4.000 caracteres) e sem a lista, aprova", async () => {
+      // Revisao da AG7 (MOTOR-2 e BANCO-3): o teto subiu de 200 para 1.000.
+      expect(MAXIMO_DE_TEXTOS_DE_PREPARO).toBe(1000);
       expect(MAXIMO_DO_TEXTO_DE_PREPARO_NO_FILTRO).toBe(4000);
-      const noLimite = Array.from({ length: 200 }, (_, i) =>
+      const noLimite = Array.from({ length: 1000 }, (_, i) =>
         `${i} ${"a".repeat(3990)}`.slice(0, 4000),
       );
       for (const contexto of [
@@ -1244,6 +1249,190 @@ describe("AG7: o preparo escrito pelo modelo e o trecho do texto da clinica", ()
         expect(decisao.aprovado).toBe(true);
       }
     });
+  });
+});
+// [AG7 preparo] fim
+
+// [AG7 preparo] início
+describe("revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum", () => {
+  const RESPOSTA = {
+    categoria: "orientacao_clinica",
+    regra: REGRA_DA_RESPOSTA_AO_PREPARO,
+  };
+  const com = (mensagensDoPaciente: string[]) => ({
+    ...CONTEXTO_PADRAO,
+    nomesDoCatalogo: [...CONTEXTO_PADRAO.nomesDoCatalogo, "Glicemia de jejum"],
+    mensagensDoPaciente,
+  });
+
+  it("a pergunta: o assunto (preparo, jejum, dieta, laxante, comer antes) com pergunta ou pedido", () => {
+    for (const pergunta of [
+      "precisa de jejum pra colonoscopia?",
+      "tem preparo?",
+      "qual o preparo da endoscopia",
+      "me manda a orientação de preparo",
+      "jejum de quantas horas",
+      "posso comer antes do exame?",
+      "tem que tomar laxante?",
+    ]) {
+      expect(perguntaDePreparo([pergunta], []), pergunta).toBe(true);
+    }
+    for (const naoE of [
+      "obrigada pelo preparo",
+      "recebi o preparo, valeu",
+      "quanto custa a glicemia de jejum?",
+      "o exame de glicose em jejum é amanhã?",
+      "vocês atendem aos sábados?",
+    ]) {
+      expect(perguntaDePreparo([naoE], []), naoE).toBe(false);
+    }
+    // O nome do catalogo com jejum (mascarado) nao e pergunta de jejum.
+    expect(
+      perguntaDePreparo(
+        ["quanto custa a Glicemia de jejum?"],
+        ["Glicemia de jejum"],
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    "Precisa sim.",
+    "Sim, 8 horas.",
+    "Não precisa.",
+    "Pro ultrassom de abdome, não.",
+    "Tem sim, é simples.",
+    "Claro! Só uma dieta levinha na véspera.",
+    "Sim, quer receber a orientação de preparo?",
+    "Precisa sim. Posso te enviar a orientação de preparo?",
+    "Temos horário amanhã às 10h. Pode ser?",
+    "De 8 horas. Quer receber a orientação de preparo?",
+  ])("barra %j depois de 'precisa de jejum pra colonoscopia?'", (rascunho) => {
+    expect(
+      avaliarRegras(rascunho, com(["precisa de jejum pra colonoscopia?"]))
+        .achados,
+    ).toContainEqual(RESPOSTA);
+  });
+
+  it.each([
+    "Quer receber a orientação de preparo da colonoscopia?",
+    "Para qual procedimento você quer a orientação de preparo?",
+    "Claro! Qual exame você vai fazer?",
+    "Se quiser, posso te enviar a orientação de preparo aprovada pela clínica.",
+    "Temos horário amanhã às 10h com a Dra. Ana. Pode ser? Quer receber a orientação de preparo da colonoscopia?",
+  ])(
+    "passa %j depois da pergunta (a oferta, a pergunta do procedimento)",
+    (rascunho) => {
+      expect(
+        avaliarRegras(rascunho, com(["precisa de jejum pra colonoscopia?"]))
+          .achados,
+      ).not.toContainEqual(RESPOSTA);
+    },
+  );
+
+  it("sem a pergunta, a regra nao roda (a resposta de sempre passa)", () => {
+    expect(
+      avaliarRegras(
+        "Atendemos de segunda a sexta.",
+        com(["vocês atendem aos sábados?"]),
+      ).achados,
+    ).toEqual([]);
+    expect(
+      avaliarRegras(
+        "A Glicemia de jejum custa R$ 250,00.",
+        com(["quanto custa a glicemia de jejum?"]),
+      ).achados,
+    ).toEqual([]);
+  });
+
+  it("com os fatos: a F2 colada pelo sistema conta como a forma permitida, e os textos colados saem antes", () => {
+    const F2 = FRASE_DO_PREPARO_DEPOIS_DE_MARCAR;
+    const comAF2 = {
+      ...com(["quero marcar colonoscopia amanhã, precisa de jejum?"]),
+      fatos: { ...fatosVazios(2026), textosColados: [F2] },
+    };
+    expect(
+      avaliarRegras(`Pronto, ficou pedida para amanhã.\n\n${F2}`, comAF2)
+        .achados,
+    ).not.toContainEqual(RESPOSTA);
+    // A F2 escrita pelo modelo (sem estar nos colados) nao conta.
+    const semColar = {
+      ...com(["quero marcar colonoscopia amanhã, precisa de jejum?"]),
+      fatos: fatosVazios(2026),
+    };
+    expect(
+      avaliarRegras(`Pronto, ficou pedida para amanhã.\n\n${F2}`, semColar)
+        .achados,
+    ).toContainEqual(RESPOSTA);
+    // A resposta curta junto da F2 colada continua barrada.
+    expect(
+      avaliarRegras(`Precisa sim.\n\n${F2}`, comAF2).achados,
+    ).toContainEqual(RESPOSTA);
+  });
+
+  it("a regra esta nas fontes da versao das regras, e a versao mudou", () => {
+    expect(
+      FONTES_DAS_REGRAS_EM_CODIGO.some((fonte) =>
+        fonte.startsWith(`${REGRA_DA_RESPOSTA_AO_PREPARO}: `),
+      ),
+    ).toBe(true);
+    // A versao da AG7 antes da revisao (as regras novas: CFM-4, CFM-5,
+    // CFM-6 e CFM-8).
+    expect(versaoDasRegras()).toMatch(/^regras-[0-9a-f]{12}$/);
+    expect(versaoDasRegras()).not.toBe("regras-a8b2cba1b603");
+  });
+});
+// [AG7 preparo] fim
+
+// [AG7 preparo] início
+describe("revisao da AG7 (CFM-6): a situacao da pessoa no pedido do preparo", () => {
+  const CATALOGO = ["Colonoscopia", "Ultrassom de abdome", "Consulta"];
+
+  it.each([
+    "to com intestino preso, qual o preparo da colonoscopia?",
+    "comi um pão agora, ainda dá pra fazer a colonoscopia amanhã?",
+    "posso mascar chiclete no jejum?",
+    "qual o preparo da colonoscopia pra minha mãe que tem 80 anos?",
+    "sou diabética, me manda o preparo",
+    "tomo remédio de pressão, qual o preparo?",
+    "esqueci de tomar o laxante ontem, e agora?",
+    "estou com diarreia, ainda faço o preparo?",
+    "tenho alergia a manitol, qual o preparo?",
+    "estou grávida, qual o preparo da colonoscopia?",
+  ])("%j: situacao da pessoa", (texto) => {
+    expect(situacaoPessoalNoPedidoDoPreparo([texto], CATALOGO)).toBe(true);
+  });
+
+  it.each([
+    "Me manda a orientação de preparo, por favor",
+    "qual o preparo da colonoscopia?",
+    "tenho colonoscopia amanhã, qual o preparo?",
+    "tenho exame amanhã, qual o preparo?",
+    "tô com exame marcado amanhã, me manda o preparo",
+    "tô com consulta marcada amanhã, me manda o preparo",
+    "Pode me mandar a orientação de preparo de novo, por favor?",
+    "precisa de jejum pra colonoscopia?",
+    "tenho que fazer jejum?",
+    "estou com uma dúvida: qual o preparo?",
+    "quero marcar colonoscopia amanhã, precisa de jejum?",
+  ])("%j: o pedido de sempre", (texto) => {
+    expect(situacaoPessoalNoPedidoDoPreparo([texto], CATALOGO)).toBe(false);
+  });
+
+  it("qualquer pendente conta (a situacao numa, o pedido na outra)", () => {
+    expect(
+      situacaoPessoalNoPedidoDoPreparo(
+        ["qual o preparo da colonoscopia?", "to com intestino preso"],
+        CATALOGO,
+      ),
+    ).toBe(true);
+  });
+
+  it("a regra esta nas fontes da versao das regras", () => {
+    expect(
+      FONTES_DAS_REGRAS_EM_CODIGO.some((fonte) =>
+        fonte.startsWith(`${REGRA_DO_PEDIDO_COM_SITUACAO_PESSOAL}: `),
+      ),
+    ).toBe(true);
   });
 });
 // [AG7 preparo] fim

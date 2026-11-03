@@ -95,7 +95,7 @@ const USO = {
 const PASSO = {
   tipo: "cadastro" as const,
   texto:
-    "Pediu a orientação de preparo de Colonoscopia: enviada a versão 3 (código ABCD 1234), aprovada por Dra. Ana Souza em 27/10/2026.",
+    "Pediu a orientação de preparo de Colonoscopia: escolhida a versão 3 (código ABCD 1234), aprovada por Dra. Ana Souza em 27/10/2026.",
 };
 
 function preparo(): ResultadoDoTurno {
@@ -451,6 +451,125 @@ describe("o turno do preparo", () => {
     },
   );
 
+  it.each([
+    [
+      "promessa de resultado (o texto antigo copiado e aprovado)",
+      "Venha sem maquiagem. Resultado garantido, você vai sair renovada!",
+      "promessa_resultado",
+    ],
+    [
+      "oferta casada",
+      "Venha em jejum de 8 horas. Na compra do exame, o retorno sai de brinde.",
+      "oferta_casada",
+    ],
+    [
+      "preco (desconto)",
+      "Venha em jejum de 8 horas. Aproveite e faça também a limpeza de pele com 20% de desconto.",
+      "preco_nao_verificado",
+    ],
+    [
+      "link",
+      "Jejum de 8 horas. Veja o vídeo em https://exemplo.com/preparo antes do exame.",
+      "formato_invalido",
+    ],
+  ])(
+    "revisao da AG7 (CFM-2): o texto aprovado com %s nunca sai; o bloqueio da conformidade e a frase, sem o texto em log",
+    async (_n, texto, categoria) => {
+      lido = lidoDoBanco(
+        mensagemDoPreparo({
+          procedimento: "Colonoscopia",
+          rt: RT_DE_TESTE,
+          texto,
+        }),
+      );
+      expect(await rodar()).toEqual({ ok: true });
+      expect(enviarPreparo).not.toHaveBeenCalled();
+      expect(decisoes()).toHaveLength(1);
+      expect(decisoes()[0]).toMatchObject({
+        desfecho: "bloqueou",
+        compliance_blocked: true,
+        compliance_rule: categoria,
+        camada: "regra",
+        escalation_reason: "conformidade",
+        texto_sha256: null,
+        tool_used: "enviar_preparo",
+      });
+      const trilha = (
+        decisoes()[0]?.context_read as { trilha: { texto: string }[] }
+      ).trilha.map((p) => p.texto);
+      expect(trilha[0]).toBe(PASSO.texto);
+      expect(trilha[1]).toMatch(
+        /^A orientação de preparo aprovada tem o que nunca vai ao paciente \(.+\): nada foi enviado\.$/,
+      );
+      expect(trilha[2]).toBe(
+        "Passou para a equipe: a resposta não passou na conformidade",
+      );
+      expect(passagens).toEqual(["conformidade"]);
+      expect(enviarFrase).toHaveBeenCalledTimes(1);
+      expect(turnoGravado()).toMatchObject({
+        estado: "passou_para_equipe",
+        saida: "frase",
+        texto: null,
+      });
+      // O motivo no log, so as categorias (o texto nunca).
+      const tudo = logs.join("");
+      expect(tudo).toContain("ia_preparo_recusado");
+      expect(tudo).toContain(categoria);
+      for (const trecho of texto.split(". ")) {
+        expect(tudo).not.toContain(trecho);
+      }
+      expect(JSON.stringify(decisoes())).not.toContain(texto.slice(0, 30));
+    },
+  );
+
+  it("revisao da AG7 (MOTOR-7): o preparo que nao sai passa com a nota da AG3 do motivo da passagem", async () => {
+    const notas = {
+      assunto_clinico: "Nota da passagem: assunto clínico.",
+      conformidade: "Nota da passagem: conformidade.",
+    };
+    turno.mockImplementation(async () => ({
+      ...preparo(),
+      notasSeOPreparoNaoSair: notas,
+    }));
+    const notasGravadas = () =>
+      banco
+        .linhas("message")
+        .filter((m) => m.is_internal_note === true)
+        .map((m) => m.body);
+
+    // Fora de vigor: a nota do assunto clinico.
+    lido = null;
+    expect(await rodar()).toEqual({ ok: true });
+    expect(passagens).toEqual(["assunto_clinico"]);
+    expect(notasGravadas()).toEqual([notas.assunto_clinico]);
+
+    // Com recusa: a da conformidade.
+    montar();
+    turno.mockImplementation(async () => ({
+      ...preparo(),
+      notasSeOPreparoNaoSair: notas,
+    }));
+    lido = lidoDoBanco(
+      mensagemDoPreparo({
+        procedimento: "Colonoscopia",
+        rt: RT_DE_TESTE,
+        texto: "Venha sem maquiagem. Resultado garantido!",
+      }),
+    );
+    expect(await rodar()).toEqual({ ok: true });
+    expect(passagens).toEqual(["conformidade"]);
+    expect(notasGravadas()).toEqual([notas.conformidade]);
+
+    // Enviado: nenhuma nota.
+    montar();
+    turno.mockImplementation(async () => ({
+      ...preparo(),
+      notasSeOPreparoNaoSair: notas,
+    }));
+    expect(await rodar()).toEqual({ ok: true });
+    expect(notasGravadas()).toEqual([]);
+  });
+
   it("erro da leitura: o job tenta de novo, nada decidido nem enviado", async () => {
     banco.rpc("ler_preparo_para_envio", () => ({
       data: null,
@@ -600,6 +719,22 @@ describe("a retomada do turno decidido com o preparo", () => {
   ])("%s: passa sem frase, nada sai", async (_n, mudar) => {
     decidido();
     mudar();
+    expect(await rodar()).toEqual({ ok: true });
+    expect(enviarPreparo).not.toHaveBeenCalled();
+    expect(enviarFrase).not.toHaveBeenCalled();
+    expect(passagens).toEqual(["falha_tecnica"]);
+    expect(turnoGravado()).toMatchObject({ estado: "passou_para_equipe" });
+  });
+
+  it("revisao da AG7 (CFM-2): a mesma mensagem da decisao (o mesmo hash), mas o texto tem recusa: passa sem frase, nada sai", async () => {
+    const comRecusa = mensagemDoPreparo({
+      procedimento: "Colonoscopia",
+      rt: RT_DE_TESTE,
+      texto: "Venha sem maquiagem. Resultado garantido!",
+    });
+    decidido({ texto_sha256: sha256DoTexto(comRecusa) });
+    turnoGravado()!.texto_sha256 = sha256DoTexto(comRecusa);
+    lido = lidoDoBanco(comRecusa);
     expect(await rodar()).toEqual({ ok: true });
     expect(enviarPreparo).not.toHaveBeenCalled();
     expect(enviarFrase).not.toHaveBeenCalled();

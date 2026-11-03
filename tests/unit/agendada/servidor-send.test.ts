@@ -182,6 +182,8 @@ describe("linha reaproveitada no retry (F15)", () => {
   function bancoDoRetry(opcoes: {
     slot: Record<string, unknown>;
     erroNaMarca?: boolean;
+    /** O corpo gravado na linha da tentativa anterior. */
+    corpo?: string;
   }) {
     const marcas = { updatesAntesDoSlot: -1 };
     const b = bancoFalso({
@@ -223,6 +225,7 @@ describe("linha reaproveitada no retry (F15)", () => {
               id: "linha-do-job",
               delivery_status: "falhou",
               error_code: "leitura_falhou",
+              ...(opcoes.corpo === undefined ? {} : { body: opcoes.corpo }),
             },
             error: null,
           };
@@ -282,6 +285,34 @@ describe("linha reaproveitada no retry (F15)", () => {
     expect(final).toMatchObject({ delivery_status: "enviada" });
     expect(inserts(b)).toEqual([]);
     expect(fakeSentMessages()).toHaveLength(1);
+  });
+
+  it("revisao da AG7 (MOTOR-5): o corpo mudou entre as tentativas (a regua re-renderiza): a linha passa a registrar o corpo que sai", async () => {
+    const { b } = bancoDoRetry({
+      slot: { estado: "reservado", espera_ms: 0 },
+      corpo: "Oi! Amanhã você tem Colonoscopia.\nVenha em jejum de 8 horas.",
+    });
+    const novo = "Oi! Amanhã você tem Colonoscopia.";
+    const resultado = await enviar(b, { jobId: "job-1", body: novo });
+    expect(resultado).toEqual({ ok: true, messageId: "linha-do-job" });
+    const [marca] = b.updatesEm("message") as Record<string, unknown>[];
+    expect(marca).toEqual({
+      delivery_status: "enviando",
+      error_code: null,
+      body: novo,
+    });
+    expect(fakeSentMessages().map((m) => m.body)).toEqual([novo]);
+  });
+
+  it("revisao da AG7 (MOTOR-5): o mesmo corpo: a marca de sempre, sem reescrever", async () => {
+    const corpo = "Bom dia! Passando para lembrar do retorno.";
+    const { b } = bancoDoRetry({
+      slot: { estado: "reservado", espera_ms: 0 },
+      corpo,
+    });
+    await enviar(b, { jobId: "job-1", body: corpo });
+    const [marca] = b.updatesEm("message") as Record<string, unknown>[];
+    expect(marca).toEqual({ delivery_status: "enviando", error_code: null });
   });
 
   it("a marca 'enviando' falhou: nada sai (a linha 'falhou' faria o retry repetir)", async () => {

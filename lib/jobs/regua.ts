@@ -17,6 +17,7 @@ import {
 import { renderizarModelo } from "@/lib/domain/modelo-mensagem";
 // [AG7 preparo]
 import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
+import { problemasDoTextoDoPreparo } from "@/lib/domain/conformidade/preparo-aprovado";
 import {
   CORPO_DO_MENU_APOS_MIDIA,
   MENU_CONFIRMACAO,
@@ -654,6 +655,32 @@ const UUID_DO_PREPARO =
 const SHA256_DO_PREPARO = /^[0-9a-f]{64}$/;
 
 /**
+ * Revisao da AG7 (BANCO-4): os codigos da funcao que nao existe no banco
+ * (42883 do Postgres; PGRST202, a funcao fora do cache do PostgREST).
+ */
+const FUNCAO_AUSENTE: ReadonlySet<string> = new Set(["42883", "PGRST202"]);
+
+/**
+ * Revisao da AG7 (MOTOR-4): o modelo sem as linhas que pedem {{preparo}},
+ * para o toque SEM texto em vigor. A linha inteira sai, nao so o campo
+ * ("Siga o preparo abaixo: {{preparo}}" nunca vira "Siga o preparo
+ * abaixo:"), e a linha logo antes que so apresenta o preparo (termina em
+ * dois pontos) sai junto ("Siga o preparo abaixo:" e, na linha seguinte,
+ * "{{preparo}}"). Com o texto em vigor, o modelo fica como esta.
+ */
+export function modeloSemALinhaDoPreparo(modelo: string): string {
+  const linhas = modelo.split("\n");
+  const sai = linhas.map((linha) => modeloPedePreparo(linha));
+  for (let i = 1; i < linhas.length; i += 1) {
+    const anterior = linhas[i - 1] ?? "";
+    if (sai[i] && !sai[i - 1] && /:\s*$/.test(anterior)) {
+      sai[i - 1] = true;
+    }
+  }
+  return linhas.filter((_linha, i) => !sai[i]).join("\n");
+}
+
+/**
  * AG7 (D-74): o modelo do passo usa {{preparo}}? A mesma leitura do
  * renderizador (lib/domain/modelo-mensagem.ts): {{chave}} com a chave
  * aparada.
@@ -692,7 +719,21 @@ async function preparoDoToque(
     p_procedure_id: e.procedureId,
   });
   if (error) {
-    throw new ErroComCodigoDeJob(`preparo_ilegivel: ${codigoDoErro(error)}`);
+    const codigo = codigoDoErro(error);
+    // Revisao da AG7 (BANCO-4): a funcao que nao existe (o rollback da
+    // migration com este codigo ainda no ar: 42883 do Postgres, PGRST202 do
+    // PostgREST) e "sem texto em vigor": a linha do {{preparo}} some e o
+    // resto da confirmacao sai, em vez de o job tentar ate acabar. Nada do
+    // texto antigo (prep_instructions) e lido. O log so com ids e o codigo.
+    if (FUNCAO_AUSENTE.has(codigo)) {
+      log.warn("regua_preparo_sem_funcao", {
+        clinic_id: e.clinicId,
+        job_id: e.jobId,
+        error_code: codigo,
+      });
+      return null;
+    }
+    throw new ErroComCodigoDeJob(`preparo_ilegivel: ${codigo}`);
   }
   if (data === null || data === undefined) {
     return null;
@@ -716,6 +757,21 @@ async function preparoDoToque(
       clinic_id: e.clinicId,
       job_id: e.jobId,
       status: formatoOk ? "hash" : "formato",
+    });
+    return null;
+  }
+  // Revisao da AG7 (CFM-2): o texto em vigor com o que nunca vai ao
+  // paciente, nem aprovado pelo RT (promessa, oferta casada, antes e depois,
+  // preco, link: as recusas de problemasDoTextoDoPreparo). O banco so
+  // confere o formato; o texto que chegou aguardando o RT por outro caminho
+  // e foi aprovado nunca sai. A linha some (falha fechada) e o log leva so
+  // as categorias.
+  const { recusas } = problemasDoTextoDoPreparo(lido.texto as string);
+  if (recusas.length > 0) {
+    log.warn("regua_preparo_recusado", {
+      clinic_id: e.clinicId,
+      job_id: e.jobId,
+      kind: recusas.join(","),
     });
     return null;
   }
@@ -1112,7 +1168,11 @@ export async function executarPassoDeRegua(
   const renderizar = (preparo: string | null) =>
     modelo && modelo.trim()
       ? renderizarModelo(
-          modelo,
+          // [AG7 preparo] MOTOR-4: sem texto em vigor, a linha inteira que
+          // pedia {{preparo}} sai (e a que so o apresentava).
+          preparo === null && modeloPedePreparo(modelo)
+            ? modeloSemALinhaDoPreparo(modelo)
+            : modelo,
           consulta
             ? valoresDoModelo(run, consulta, timezone, preparo)
             : valoresDeFollowup(run),

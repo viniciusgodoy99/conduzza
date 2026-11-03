@@ -15,10 +15,12 @@ import type {
   PreparoEmVigor,
 } from "@/lib/agente/ferramentas/buscar-procedimento";
 import {
+  citacaoDoProcedimento,
   decidirEnvioDoPreparo,
   FERRAMENTA_ENVIAR_PREPARO,
   NOME_DO_ENVIO_DO_PREPARO,
   PASSO_DO_PREPARO_FORA_DE_VIGOR,
+  PASSO_DO_PROCEDIMENTO_NAO_CONFIRMADO,
   preparosEmVigorDaLeitura,
   textosDePreparoDaLeitura,
 } from "@/lib/agente/ferramentas/enviar-preparo";
@@ -26,6 +28,7 @@ import { mascararNome } from "@/lib/agente/historico";
 import {
   comporResposta,
   executarTurnoDoAgente,
+  PASSO_DO_PEDIDO_COM_SITUACAO_PESSOAL,
   type ClienteDoAgente,
   type EntradaDoTurno,
   type MensagemDaConversa,
@@ -39,7 +42,10 @@ import {
 } from "@/lib/domain/agente/config";
 import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
 import { LIMITE_DO_RASCUNHO } from "@/lib/domain/conformidade/filtro-deterministico";
-import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
+import {
+  FRASE_DE_ESCALONAMENTO,
+  FRASE_DO_ASSISTENTE_VIRTUAL,
+} from "@/lib/domain/conformidade/frase-fixa";
 import type {
   EntradaDoVerificador,
   ResultadoDoVerificador,
@@ -377,7 +383,7 @@ describe("decidirEnvioDoPreparo (pura)", () => {
       procedimentoId: PROC.exame,
       versaoId: VERSAO.exame,
       versao: 3,
-      passo: `Pediu a orientação de preparo de Exame: enviada a versão 3 (código ${codigoDoTexto(SHA_DO_TEXTO)}), aprovada por Dra. Ana Souza em 27/10/2026.`,
+      passo: `Pediu a orientação de preparo de Exame: escolhida a versão 3 (código ${codigoDoTexto(SHA_DO_TEXTO)}), aprovada por Dra. Ana Souza em 27/10/2026.`,
     });
     // A data no fuso da clinica: 23:00 de 27/10 em Fortaleza e 28/10 em UTC.
     const tarde = decidirEnvioDoPreparo(
@@ -540,9 +546,17 @@ describe("a leitura do catalogo", () => {
 
 describe("o turno com enviar_preparo", () => {
   it("com texto em vigor: o turno termina com o preparo, sem filtro, sem verificador e sem texto do modelo", async () => {
-    const { r, create, corpos } = await turno([
-      ferramenta("enviar_preparo", { procedimento: P_EXAME }),
-    ]);
+    // Revisao da AG7 (CFM-7): o pedido sem o nome ("exame" e gatilho do
+    // portao) vale pelo procedimento da marcacao da conversa (o estado).
+    const { r, create, corpos } = await turno(
+      [ferramenta("enviar_preparo", { procedimento: P_EXAME })],
+      {
+        atendimento: {
+          estado: { ...estadoVazio(), procedure_id: PROC.exame },
+          dados: dadosVazios(),
+        },
+      },
+    );
     expect(r.tipo).toBe("preparo");
     expect(r.desfecho).toEqual({
       tipo: "enviou_preparo",
@@ -567,7 +581,7 @@ describe("o turno com enviar_preparo", () => {
     expect(ferramentaDoTurno(r)).toBe("enviar_preparo");
     expect(r.trilha).toContainEqual({
       tipo: "cadastro",
-      texto: `Pediu a orientação de preparo de Exame: enviada a versão 3 (código ${codigoDoTexto(SHA_DO_TEXTO)}), aprovada por Dra. Ana Souza em 27/10/2026.`,
+      texto: `Pediu a orientação de preparo de Exame: escolhida a versão 3 (código ${codigoDoTexto(SHA_DO_TEXTO)}), aprovada por Dra. Ana Souza em 27/10/2026.`,
     });
     // O classificador rodou a variante com o preparo, e a versao e a dela.
     expect(classificador).toHaveBeenCalledWith(
@@ -650,6 +664,215 @@ describe("o turno com enviar_preparo", () => {
   });
 });
 
+describe("revisao da AG7 (CFM-6): o pedido do preparo junto de uma situacao da pessoa passa para a equipe antes do envio", () => {
+  const comPendente = (texto: string) => ({
+    mensagens: [
+      paciente("Oi"),
+      {
+        autor: "assistente" as const,
+        autoria: "ia" as const,
+        texto: "Olá! Como posso ajudar?",
+      },
+      paciente(texto),
+    ],
+  });
+
+  // As quatro do relatorio: passam no portao de entrada (D-81), e o modelo
+  // escolhe enviar.
+  it.each([
+    "to com intestino preso, qual o preparo da colonoscopia?",
+    "comi um pão agora, ainda dá pra fazer a colonoscopia amanhã?",
+    "posso mascar chiclete no jejum?",
+    "qual o preparo da colonoscopia pra minha mãe que tem 80 anos?",
+  ])("%j: assunto_clinico pela ferramenta, nada sai", async (pedido) => {
+    const { r } = await turno(
+      [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
+      comPendente(pedido),
+    );
+    expect(r.tipo).toBe("frase_fixa");
+    expect(r.desfecho).toEqual({
+      tipo: "escalou",
+      motivo: "assunto_clinico",
+      gatilho: null,
+      origem: "ferramenta",
+    });
+    expect(r.trilha.map((p) => p.texto)).toContain(
+      PASSO_DO_PEDIDO_COM_SITUACAO_PESSOAL,
+    );
+    expect(verificador).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "Me manda a orientação de preparo da consulta, por favor",
+    "tenho consulta amanhã, qual o preparo?",
+    "tô com consulta marcada amanhã, me manda o preparo",
+    "tenho que fazer jejum pra consulta?",
+  ])("%j: o pedido de sempre, o preparo sai", async (pedido) => {
+    const { r } = await turno(
+      [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
+      comPendente(pedido),
+    );
+    expect(r.tipo).toBe("preparo");
+  });
+});
+
+describe("revisao da AG7 (CFM-7): o procedimento escolhido tem de ser o que a pessoa pediu", () => {
+  const PROC_DOS_TESTES = [
+    { codigo: "p1", id: "a1", nome: "Ultrassom de abdome total" },
+    { codigo: "p2", id: "a2", nome: "Ultrassom de abdome superior" },
+    { codigo: "p3", id: "a3", nome: "Colonoscopia" },
+    { codigo: "p4", id: "a4", nome: "Consulta" },
+  ];
+  const catalogo = { procedimentos: PROC_DOS_TESTES };
+
+  it("citacaoDoProcedimento: o nome inteiro, o comeco da palavra, o empate e o outro", () => {
+    expect(
+      citacaoDoProcedimento(catalogo, "a3", [
+        "qual o preparo da colonoscopia?",
+      ]),
+    ).toBe("confirmado");
+    expect(citacaoDoProcedimento(catalogo, "a3", ["preparo da colono"])).toBe(
+      "confirmado",
+    );
+    expect(
+      citacaoDoProcedimento(catalogo, "a1", [
+        "qual o preparo do ultrassom de abdome total?",
+      ]),
+    ).toBe("confirmado");
+    // O empate: o modelo nao escolhe por conta propria.
+    for (const id of ["a1", "a2"]) {
+      expect(
+        citacaoDoProcedimento(catalogo, id, [
+          "qual o preparo do ultrassom de abdome?",
+        ]),
+      ).toBe("outro");
+    }
+    // A pessoa citou outro.
+    expect(
+      citacaoDoProcedimento(catalogo, "a4", [
+        "qual o preparo da colonoscopia?",
+      ]),
+    ).toBe("outro");
+    // Nada citado.
+    expect(
+      citacaoDoProcedimento(catalogo, "a3", ["me manda o preparo, por favor"]),
+    ).toBe("nenhum");
+    expect(citacaoDoProcedimento(catalogo, "a3", [])).toBe("nenhum");
+  });
+
+  const comPendente = (texto: string) => ({
+    mensagens: [
+      paciente("Oi"),
+      {
+        autor: "assistente" as const,
+        autoria: "ia" as const,
+        texto: "Olá! Como posso ajudar?",
+      },
+      paciente(texto),
+    ],
+  });
+
+  it("sem o nome, sem a marcacao e sem consulta: nada sai, e o modelo pergunta", async () => {
+    const { r, corpos } = await turno(
+      [
+        ferramenta("enviar_preparo", { procedimento: P_CONSULTA }),
+        final("Para qual procedimento você quer a orientação de preparo?"),
+      ],
+      comPendente("Me manda a orientação de preparo, por favor"),
+    );
+    expect(saidas(corpos[1])).toEqual([
+      { ok: false, motivo: "procedimento_nao_confirmado" },
+    ]);
+    expect(r.tipo).toBe("resposta");
+    expect(r.trilha.map((p) => p.texto)).toContain(
+      PASSO_DO_PROCEDIMENTO_NAO_CONFIRMADO,
+    );
+    // A trilha nao diz que escolheu uma versao.
+    expect(r.trilha.map((p) => p.texto).join(" ")).not.toContain("versão");
+  });
+
+  it("a pessoa citou outro procedimento: nada sai", async () => {
+    const { r, corpos } = await turno(
+      [
+        ferramenta("enviar_preparo", { procedimento: P_CONSULTA }),
+        final("De qual procedimento você quer a orientação de preparo?"),
+      ],
+      comPendente("qual o preparo do botox?"),
+    );
+    expect(saidas(corpos[1])).toEqual([
+      { ok: false, motivo: "procedimento_nao_confirmado" },
+    ]);
+    expect(r.tipo).toBe("resposta");
+  });
+
+  it("o nome dito antes, na conversa: vale (a pendente nao cita nenhum)", async () => {
+    const { r } = await turno(
+      [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
+      {
+        mensagens: [
+          paciente("Quero marcar uma consulta"),
+          {
+            autor: "assistente",
+            autoria: "ia",
+            texto: "Claro! Tenho horário amanhã às 10h. Pode ser?",
+          },
+          paciente("Antes, me manda o preparo, por favor"),
+        ],
+      },
+    );
+    expect(r.tipo).toBe("preparo");
+  });
+
+  it("a consulta da pessoa: o unico procedimento com orientacao em vigor entre as consultas futuras dela vale; dois, nao", async () => {
+    const vinculoDe = (id: string) => {
+      const achado = CATALOGO.vinculos.find((v) => v.procedimentoId === id);
+      if (!achado?.id) {
+        throw new Error("sem vinculo");
+      }
+      return achado.id;
+    };
+    const consulta = (serviceLinkId: string) => ({
+      id: randomUUID(),
+      inicio: "2026-10-28T13:00:00.000Z",
+      fim: "2026-10-28T13:30:00.000Z",
+      status: "agendado",
+      aprovacao: null,
+      encaixe: false,
+      serviceLinkId,
+      profissionalId: randomUUID(),
+      unidadeId: null,
+      remarcacaoDe: null,
+      temRemarcacaoPendente: false,
+    });
+    const comConsultas = (servicos: string[]) => ({
+      ...comPendente("Me manda a orientação de preparo, por favor"),
+      agenda: {
+        ...portaDaAgendaDoSimulador(banco.cliente(), {
+          clinicId: CLINICA,
+          agora: () => AGORA,
+        }),
+        lerConsultasDoContato: async () => ({
+          consultas: servicos.map(consulta),
+          haMais: false,
+        }),
+      },
+    });
+    const uma = await turno(
+      [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
+      comConsultas([vinculoDe(PROC.consulta)]),
+    );
+    expect(uma.r.tipo).toBe("preparo");
+    const duas = await turno(
+      [
+        ferramenta("enviar_preparo", { procedimento: P_CONSULTA }),
+        final("Para qual procedimento você quer a orientação de preparo?"),
+      ],
+      comConsultas([vinculoDe(PROC.consulta), vinculoDe(PROC.exame)]),
+    );
+    expect(duas.r.tipo).toBe("resposta");
+  });
+});
+
 describe("enviar_preparo so vale sozinha no turno", () => {
   it("com outra chamada na mesma rodada: vai_sozinha, e a outra roda", async () => {
     const { r, corpos } = await turno([
@@ -717,10 +940,23 @@ describe("enviar_preparo so vale sozinha no turno", () => {
   });
 
   it("a chamada de novo, depois de um pedido incompleto, ainda vale (nada rodou)", async () => {
-    const { r, corpos } = await turno([
-      ferramenta("enviar_preparo", { procedimento: "" }),
-      ferramenta("enviar_preparo", { procedimento: P_EXAME }),
-    ]);
+    const { r, corpos } = await turno(
+      [
+        ferramenta("enviar_preparo", { procedimento: "" }),
+        ferramenta("enviar_preparo", { procedimento: P_CONSULTA }),
+      ],
+      {
+        mensagens: [
+          paciente("Oi"),
+          {
+            autor: "assistente",
+            autoria: "ia",
+            texto: "Olá! Como posso ajudar?",
+          },
+          paciente("Me manda a orientação de preparo da consulta, por favor"),
+        ],
+      },
+    );
     expect(saidas(corpos[1])).toEqual([
       { ok: false, motivo: "entrada_invalida" },
     ]);
@@ -745,6 +981,35 @@ describe("o modelo continua barrado ao escrever preparo", () => {
     expect(verificador).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "Precisa sim.",
+    "Não precisa.",
+    "Sim, 8 horas.",
+    "Tem sim, é simples.",
+  ])(
+    "revisao da AG7 (CFM-5): a resposta curta %j a pergunta de jejum barra na regra, sem o verificador",
+    async (resposta) => {
+      const { r } = await turno([final(resposta)], {
+        mensagens: [
+          paciente("Oi"),
+          {
+            autor: "assistente",
+            autoria: "ia",
+            texto: "Olá! Como posso ajudar?",
+          },
+          paciente("precisa de jejum pra colonoscopia?"),
+        ],
+      });
+      expect(r.tipo).toBe("frase_fixa");
+      expect(r.desfecho).toMatchObject({
+        tipo: "bloqueou",
+        categoria: "orientacao_clinica",
+        camada: "regra",
+      });
+      expect(verificador).not.toHaveBeenCalled();
+    },
+  );
+
   it("parafraseado (so o verificador pega): passa pelo verificador e e barrado", async () => {
     verificador.mockImplementation(async (pedido) => {
       pedidosAoVerificador.push(pedido);
@@ -759,9 +1024,23 @@ describe("o modelo continua barrado ao escrever preparo", () => {
         uso: { ...USO_LIDO },
       };
     });
-    const { r } = await turno([
-      final("No dia anterior, prefira só caldos e gelatina."),
-    ]);
+    // Revisao da AG7 (CFM-4): "so caldos" ja barra nas regras; a parafrase
+    // que so o verificador pega e outra. E a pendente nao pede o preparo
+    // (depois do pedido, a resposta sem a oferta ja barra na regra, CFM-5).
+    const { r } = await turno(
+      [final("Na véspera, capriche nos caldos e na gelatina.")],
+      {
+        mensagens: [
+          paciente("Oi"),
+          {
+            autor: "assistente",
+            autoria: "ia",
+            texto: "Olá! Como posso ajudar?",
+          },
+          paciente("Vocês atendem aos sábados?"),
+        ],
+      },
+    );
     expect(verificador).toHaveBeenCalledTimes(1);
     expect(r.desfecho).toMatchObject({ tipo: "bloqueou", camada: "modelo" });
   });
@@ -814,25 +1093,46 @@ describe("nenhum texto de preparo da clinica sai do servidor", () => {
 
   it("o cabecalho mascarado pelo nome do contato: o rodape ainda reconhece a mensagem", async () => {
     // A contato chamada "De Souza": a mascara troca o "de" do cabecalho.
-    const mascarada = mascararNome(
-      mensagemDoPreparo({
-        procedimento: "Exame",
-        rt: RT_DE_TESTE,
-        texto: TEXTO_DO_PREPARO_DE_TESTE,
-      }),
-      "De Souza",
-    );
+    const mensagem = mensagemDoPreparo({
+      procedimento: "Exame",
+      rt: RT_DE_TESTE,
+      texto: TEXTO_DO_PREPARO_DE_TESTE,
+    });
+    const mascarada = mascararNome(mensagem, "De Souza");
     expect(mascarada.startsWith("Orientação de preparo")).toBe(false);
-    const { corpos } = await turno([final("Posso ajudar em algo mais?")], {
+    // Sem o corpo como saiu (quem montou a mensagem a mao): o rodape
+    // reconhece, e o substituto nao diz "aprovada" (a mascara desmontou o
+    // formato inteiro, que so a mensagem do sistema tem; CFM-10).
+    const semOriginal = await turno([final("Posso ajudar em algo mais?")], {
       mensagens: [
         paciente("Qual o preparo?"),
         { autor: "assistente", autoria: "sistema", texto: mascarada },
         paciente("Obrigada"),
       ],
     });
-    semTextoDaClinica("corpos", corpos);
-    expect(JSON.stringify(corpos[0]?.input)).toContain(
-      "Mensagem do sistema: a orientação de preparo, aprovada pela clínica, foi enviada aqui.",
+    semTextoDaClinica("corpos", semOriginal.corpos);
+    expect(JSON.stringify(semOriginal.corpos[0]?.input)).toContain(
+      "Mensagem da clínica: uma orientação de preparo foi enviada aqui.",
+    );
+    // Com o corpo como saiu (o historico do WhatsApp, CFM-1): a troca vem
+    // antes da mascara, e o substituto do sistema volta inteiro (texto fixo:
+    // a mascara nao mexe nele).
+    const comOriginal = await turno([final("Posso ajudar em algo mais?")], {
+      nomeDoContato: "De Souza",
+      mensagens: [
+        paciente("Qual o preparo?"),
+        {
+          autor: "assistente",
+          autoria: "sistema",
+          texto: mascarada,
+          textoOriginalDaClinica: mensagem,
+        },
+        paciente("Obrigada"),
+      ],
+    });
+    semTextoDaClinica("corpos", comOriginal.corpos);
+    expect(JSON.stringify(comOriginal.corpos[0]?.input)).toContain(
+      "Mensagem do sistema: a orientação de preparo de Exame, aprovada pela clínica, foi enviada aqui.",
     );
   });
 });
@@ -1022,6 +1322,46 @@ describe("a F2 depois de marcar", () => {
     expect(ultimo?.resumoDosFatos).toContain(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR);
   });
 
+  it("revisao da AG7 (MOTOR-3): a F2 que o modelo escreve sozinho (sem marcar) nao vai ao verificador como colada pelo sistema", async () => {
+    const pedidos: EntradaDoVerificador[] = [];
+    verificador.mockImplementation(async (pedido) => {
+      pedidos.push(pedido);
+      return {
+        tipo: "veredicto",
+        veredicto: { aprovado: true, violacoes: [], confianca: "alta" },
+        modelo: "gpt-6-luna",
+        uso: { ...USO_LIDO },
+      };
+    });
+    await turno(
+      [
+        final(
+          `Atendemos de segunda a sexta. ${FRASE_DO_PREPARO_DEPOIS_DE_MARCAR}`,
+        ),
+      ],
+      {
+        mensagens: [
+          paciente("Oi"),
+          {
+            autor: "assistente",
+            autoria: "ia",
+            texto: "Olá! Como posso ajudar?",
+          },
+          paciente("Vocês atendem aos sábados?"),
+        ],
+      },
+    );
+    const ultimo = pedidos.at(-1);
+    expect(ultimo?.rascunho).toContain(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR);
+    // A secao dos textos colados nao a lista (so o rascunho a tem).
+    expect(ultimo?.resumoDosFatos).toContain(
+      "Textos fixos da clínica colados pelo sistema nesta resposta",
+    );
+    expect(ultimo?.resumoDosFatos ?? "").not.toContain(
+      FRASE_DO_PREPARO_DEPOIS_DE_MARCAR,
+    );
+  });
+
   it("sem texto em vigor do procedimento marcado, ou com a habilidade desligada: sem a F2", async () => {
     const semTexto = await marcar({
       catalogo: {
@@ -1109,6 +1449,16 @@ describe("o estado do atendimento no turno do preparo", () => {
     });
     expect(r2.tipo).toBe("preparo");
     expect(r2.notaParaAEquipe ?? null).toBeNull();
+    // Revisao da AG7 (MOTOR-7): a nota para quando o preparo nao sai, pelo
+    // motivo da passagem (o executor so a usa nesse caso).
+    if (r2.tipo === "preparo") {
+      expect(r2.notasSeOPreparoNaoSair?.assunto_clinico).toEqual(
+        expect.any(String),
+      );
+      expect(r2.notasSeOPreparoNaoSair?.conformidade).toEqual(
+        expect.any(String),
+      );
+    }
     expect(cenario.estado).toMatchObject({
       etapa: "informacao",
       pedido_pendente: null,
@@ -1273,7 +1623,7 @@ describe("o simulador com o preparo", () => {
     ]);
     expect(b.escritas).toEqual([]);
     expect(r.trilha.map((p) => p.texto)).toContain(
-      `Pediu a orientação de preparo de Consulta: enviada a versão 1 (código ${codigoDoTexto(SHA_DO_TEXTO)}), aprovada por Dra. Ana Souza em 19/10/2026.`,
+      `Pediu a orientação de preparo de Consulta: escolhida a versão 1 (código ${codigoDoTexto(SHA_DO_TEXTO)}), aprovada por Dra. Ana Souza em 19/10/2026.`,
     );
 
     // A rodada seguinte: a fala do assistente (o preparo, assinado) volta,
@@ -1295,6 +1645,57 @@ describe("o simulador com o preparo", () => {
     );
   });
 
+  it("revisao da AG7 (MOTOR-6): a resposta depois do preparo leva o aviso de assistente virtual, como no WhatsApp (a mensagem do preparo e do sistema)", async () => {
+    const b = bancoDoSimulador(MENSAGEM);
+    const pedido = "Me manda a orientação de preparo da consulta, por favor";
+    const { r } = await simular(
+      b,
+      [{ autor: "paciente", texto: pedido }],
+      [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
+    );
+    if (!r.ok) {
+      throw new Error("o primeiro turno falhou");
+    }
+    const seguinte = await simular(
+      b,
+      [
+        { autor: "paciente", texto: pedido },
+        { autor: "assistente", texto: r.resposta, assinatura: r.assinatura },
+        { autor: "paciente", texto: "Obrigada! Vocês atendem aos sábados?" },
+      ],
+      [final("Atendemos de segunda a sexta.")],
+      r.estado,
+    );
+    expect(seguinte.r.ok).toBe(true);
+    if (!seguinte.r.ok) {
+      return;
+    }
+    expect(seguinte.r.resposta).toBe(
+      `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\nAtendemos de segunda a sexta.`,
+    );
+    // Com uma resposta da IA antes, o aviso nao repete.
+    const terceira = await simular(
+      b,
+      [
+        { autor: "paciente", texto: pedido },
+        { autor: "assistente", texto: r.resposta, assinatura: r.assinatura },
+        { autor: "paciente", texto: "Obrigada! Vocês atendem aos sábados?" },
+        {
+          autor: "assistente",
+          texto: seguinte.r.resposta,
+          assinatura: seguinte.r.assinatura,
+        },
+        { autor: "paciente", texto: "E aos domingos?" },
+      ],
+      [final("Aos domingos não atendemos.")],
+      seguinte.r.estado,
+    );
+    expect(terceira.r.ok).toBe(true);
+    if (terceira.r.ok) {
+      expect(terceira.r.resposta).toBe("Aos domingos não atendemos.");
+    }
+  });
+
   it("fora de vigor na hora: a passagem (a frase), como num turno de verdade", async () => {
     const b = bancoDoSimulador(null);
     const { r } = await simular(
@@ -1302,7 +1703,7 @@ describe("o simulador com o preparo", () => {
       [
         {
           autor: "paciente",
-          texto: "Me manda a orientação de preparo, por favor",
+          texto: "Me manda a orientação de preparo da consulta, por favor",
         },
       ],
       [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
@@ -1321,6 +1722,40 @@ describe("o simulador com o preparo", () => {
     );
   });
 
+  it("revisao da AG7 (CFM-2): o texto aprovado com recusa nao aparece; o bloqueio e a frase, como no WhatsApp", async () => {
+    const b = bancoDoSimulador(
+      mensagemDoPreparo({
+        procedimento: "Consulta",
+        rt: RT_DE_TESTE,
+        texto:
+          "Venha sem maquiagem. Resultado garantido, você vai sair renovada!",
+      }),
+    );
+    const { r } = await simular(
+      b,
+      [
+        {
+          autor: "paciente",
+          texto: "Me manda a orientação de preparo da consulta",
+        },
+      ],
+      [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) {
+      return;
+    }
+    expect(r.tipo).toBe("frase_fixa");
+    expect(r.resposta).toBe(FRASE_DE_ESCALONAMENTO);
+    expect(r.trilha.map((p) => p.texto)).toEqual(
+      expect.arrayContaining([
+        "A orientação de preparo aprovada tem o que nunca vai ao paciente (promessa de resultado): nada foi enviado.",
+        "Passou para a equipe: a resposta não passou na conformidade",
+      ]),
+    );
+    expect(JSON.stringify(r)).not.toContain("Resultado garantido");
+  });
+
   it("a leitura que falha: o simulador avisa, sem inventar", async () => {
     const b = bancoDoSimulador(MENSAGEM);
     b.rpc("ler_preparo_para_envio", () => ({
@@ -1332,7 +1767,7 @@ describe("o simulador com o preparo", () => {
       [
         {
           autor: "paciente",
-          texto: "Me manda a orientação de preparo, por favor",
+          texto: "Me manda a orientação de preparo da consulta, por favor",
         },
       ],
       [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],

@@ -138,7 +138,11 @@ import {
   filtrarSaida,
   type DecisaoDoFiltro,
 } from "@/lib/domain/conformidade/filtro";
-import { LIMITE_DO_RASCUNHO } from "@/lib/domain/conformidade/filtro-deterministico";
+import {
+  LIMITE_DO_RASCUNHO,
+  // [AG7 preparo] A situacao da pessoa no pedido do preparo (CFM-6).
+  situacaoPessoalNoPedidoDoPreparo,
+} from "@/lib/domain/conformidade/filtro-deterministico";
 import {
   FRASE_DE_ESCALONAMENTO,
   FRASE_DO_ASSISTENTE_VIRTUAL,
@@ -174,15 +178,23 @@ import {
 import {
   CABECALHO_DO_PREPARO,
   FRASE_DO_PREPARO_DEPOIS_DE_MARCAR,
+  partesDaMensagemDoPreparo,
   procedimentoDaMensagemDoPreparo,
   RODAPE_DO_PREPARO,
   semOPreparo,
+  SUBSTITUTO_DA_FALA_SEM_A_MASCARA,
+  SUBSTITUTO_DO_TEXTO_DO_PREPARO,
+  substitutoDaFalaNoFormatoDoPreparo,
   substitutoDaMensagemDoPreparo,
+  trechosDoPreparo,
 } from "@/lib/domain/preparo";
 import { versaoDaPoliticaDoClassificador } from "@/lib/integrations/llm/classificador-de-entrada";
 import {
+  citacaoDoProcedimento,
   decidirEnvioDoPreparo,
   NOME_DO_ENVIO_DO_PREPARO,
+  PASSO_DO_PROCEDIMENTO_NAO_CONFIRMADO,
+  SAIDA_DO_PROCEDIMENTO_NAO_CONFIRMADO,
 } from "./ferramentas/enviar-preparo";
 // [AG7 preparo] fim
 import {
@@ -244,7 +256,14 @@ import {
   usoEstimadoDoVerificador,
 } from "./gasto";
 import { anoNaClinica, montarFatosDoTurno, type SaidaParaOsFatos } from "./fatos";
-import { semAMarcaDoNome } from "./marca-do-nome";
+// [AG7 preparo] A mascara refeita depois da troca (CFM-1).
+import {
+  MARCA_DO_NOME,
+  mascararNome,
+  semAMarcaDoNome,
+  trechosDoNome,
+  type TrechoDoTexto,
+} from "./marca-do-nome";
 import { prometePassagemParaAEquipe } from "./passagem-prometida";
 import {
   agoraNaClinica,
@@ -409,6 +428,17 @@ export type MensagemDaConversa = {
    * portao le `texto`.
    */
   textoOriginal?: string | null;
+  // [AG7 preparo] início
+  /**
+   * Revisao da AG7 (CFM-1 e MOTOR-1): a fala da clinica de texto como saiu,
+   * SEM a mascara do nome (so no historico do WhatsApp). So o laco le
+   * (falaDaClinicaParaOModelo): troca nela o texto do preparo pelo marcador
+   * e so DEPOIS refaz a mascara com o nome do contato. Nunca vai a OpenAI
+   * nem para log. Ausente (o simulador, que nao mascara): a troca e no
+   * `texto`.
+   */
+  textoOriginalDaClinica?: string | null;
+  // [AG7 preparo] fim
   // [AG6 urgência] início
   /**
    * A legenda que o contato escreveu na midia (message.body da imagem, do
@@ -620,6 +650,16 @@ export type ResultadoDoTurno =
       preparo: { procedimentoId: string; versaoId: string; versao: number };
       resposta: null;
       rascunhoBloqueado: null;
+      /**
+       * Revisao da AG7 (MOTOR-7): a nota interna da AG3 (procedimento,
+       * profissional, reserva, lista de espera) para quando o preparo NAO
+       * sai e o executor passa a conversa: pelo motivo da passagem (fora de
+       * vigor: assunto_clinico; o texto com recusa: conformidade). No envio
+       * ela nao e usada. Ausente: o turno sem estado.
+       */
+      notasSeOPreparoNaoSair?: Readonly<
+        Record<"assunto_clinico" | "conformidade", string | null>
+      >;
     });
 // [AG7 preparo] fim
 
@@ -641,6 +681,16 @@ export type EntradaDoTurno = {
   classificador: ClassificadorDeEntrada;
   /** contact.birth_date (AAAA-MM-DD), quando houver contato. */
   dataDeNascimento?: string | null;
+  // [AG7 preparo] início
+  /**
+   * Revisao da AG7 (CFM-1): contact.name, so no WhatsApp, o MESMO que o
+   * historico usou na mascara. Refaz a mascara do nome na fala da clinica
+   * DEPOIS de trocar o texto do preparo pelo marcador. Nunca vai a modelo nem
+   * a log. Ausente com fala da clinica que tinha preparo: a fala inteira vira
+   * SUBSTITUTO_DA_FALA_SEM_A_MASCARA (falha fechada).
+   */
+  nomeDoContato?: string | null;
+  // [AG7 preparo] fim
   /** Hoje no fuso da clinica (AAAA-MM-DD), para a data acima. */
   hojeNaClinica?: string | null;
   /** Antes de cada rodada do agente; false para o turno (teto, interruptor). */
@@ -745,6 +795,21 @@ const ROTULO_DO_BLOQUEIO: Readonly<Record<CategoriaDeConformidade, string>> = {
 export function rotuloDoBloqueio(categoria: CategoriaDeConformidade): string {
   return ROTULO_DO_BLOQUEIO[categoria];
 }
+
+// [AG7 preparo] início
+/**
+ * Revisao da AG7 (CFM-2): o passo da trilha quando o texto aprovado do
+ * preparo tem o que nunca vai ao paciente (as recusas de
+ * problemasDoTextoDoPreparo, reconferidas no envio). So os rotulos das
+ * categorias, nunca o texto.
+ */
+export function passoDoPreparoRecusado(
+  recusas: readonly CategoriaDeConformidade[],
+): string {
+  const rotulos = [...new Set(recusas.map(rotuloDoBloqueio))].join(", ");
+  return `A orientação de preparo aprovada tem o que nunca vai ao paciente (${rotulos}): nada foi enviado.`;
+}
+// [AG7 preparo] fim
 
 /** O motivo de escalonamento de cada gatilho do portao de entrada. */
 const MOTIVO_DO_GATILHO: Readonly<
@@ -1072,6 +1137,12 @@ export type OpcoesDoTextoParaOsModelos = {
    * cabecalho ou pelo rodape fixos) vira o substituto.
    */
   textosDePreparo?: readonly string[];
+  /**
+   * Revisao da AG7 (CFM-1): o nome do contato (EntradaDoTurno.nomeDoContato)
+   * para refazer a mascara depois da troca. undefined: nao veio (falha
+   * fechada na fala que tinha preparo); null: o contato sem nome.
+   */
+  nomeDoContato?: string | null;
   // [AG7 preparo] fim
 };
 
@@ -1123,30 +1194,154 @@ export function textoParaOsModelos(
 const FIM_DA_MENSAGEM_DO_PREPARO = `\n\n${RODAPE_DO_PREPARO}`;
 
 /**
- * AG7 (contrato, secao 0, item 9): a fala da clinica como o modelo a le. A
- * mensagem do preparo (a do sistema; no simulador, a da IA) vira o
- * substituto "Mensagem do sistema: a orientação de preparo de ..., aprovada
- * pela clínica, foi enviada aqui.": pelo cabecalho fixo ou, quando a mascara
- * do nome do contato mexeu numa palavra do cabecalho, pelo rodape fixo (sem
- * o nome do procedimento). Fora disso, todo trecho igual a um texto de
- * preparo da clinica (o que a regua mandou no toque) vira o marcador. Nunca
- * lanca. O modelo nunca le o texto do preparo, nem quando a regua o mandou.
+ * AG7 (contrato, secao 0, item 9): a fala da clinica como o modelo a le.
+ *  - A mensagem do preparo do SISTEMA (autoria 'sistema', no formato inteiro:
+ *    cabecalho, linha do RT, texto e rodape) vira o substituto "Mensagem do
+ *    sistema: a orientação de preparo de ..., aprovada pela clínica, foi
+ *    enviada aqui.". Revisao da AG7 (CFM-10): so ela diz "aprovada".
+ *  - Qualquer outra fala que comeca pelo cabecalho fixo ou termina no rodape
+ *    fixo (a da equipe, a da IA, a de autoria desconhecida, a do sistema fora
+ *    do formato) vira o substituto sem "aprovada"
+ *    (substitutoDaFalaNoFormatoDoPreparo): o modelo nao le o texto e nao
+ *    recebe uma aprovacao que ninguem conferiu.
+ *  - Fora disso, todo trecho igual a um texto de preparo da clinica (o que a
+ *    regua mandou no toque, o texto antigo) vira o marcador.
+ * Recebe o texto SEM a mascara do nome quando ha (falaDaClinicaParaOModelo):
+ * a troca vem antes da mascara (CFM-1). Nunca lanca. O modelo nunca le o
+ * texto do preparo, nem quando a regua o mandou.
  */
 export function falaDaClinicaSemOPreparo(
   texto: string,
   textosDePreparo: readonly string[],
+  autoria: AutoriaDaClinica | null = null,
 ): string {
+  return (
+    substitutoDaFalaInteira(texto, autoria) ??
+    (textosDePreparo.length === 0
+      ? texto
+      : semOPreparo(texto, textosDePreparo))
+  );
+}
+
+/**
+ * A fala inteira que o modelo nunca le, ou null: a mensagem do preparo do
+ * sistema (o substituto "aprovada") e qualquer outra fala no formato (o
+ * cabecalho ou o rodape fixos; o substituto sem "aprovada").
+ */
+function substitutoDaFalaInteira(
+  texto: string,
+  autoria: AutoriaDaClinica | null,
+): string | null {
+  const partes = partesDaMensagemDoPreparo(texto);
+  if (partes !== null && autoria === "sistema") {
+    return substitutoDaMensagemDoPreparo(partes.procedimento);
+  }
   if (texto.startsWith(CABECALHO_DO_PREPARO)) {
-    return substitutoDaMensagemDoPreparo(
+    return substitutoDaFalaNoFormatoDoPreparo(
       procedimentoDaMensagemDoPreparo(texto) ?? "",
     );
   }
   if (texto.endsWith(FIM_DA_MENSAGEM_DO_PREPARO)) {
-    return substitutoDaMensagemDoPreparo("");
+    return substitutoDaFalaNoFormatoDoPreparo("");
   }
-  return textosDePreparo.length === 0
-    ? texto
-    : semOPreparo(texto, textosDePreparo);
+  return null;
+}
+
+/**
+ * O texto com os trechos do preparo trocados pelo marcador e os do nome do
+ * contato pela marca, os dois achados no MESMO texto (o corpo como saiu): o
+ * preparo vence onde os dois se cruzam, e o resto do nome que sobra fora
+ * dele continua mascarado. O marcador nunca e mascarado.
+ */
+function trocarOPreparoEONome(
+  texto: string,
+  doPreparo: readonly TrechoDoTexto[],
+  doNome: readonly TrechoDoTexto[],
+): string {
+  // Quem cobre cada posicao: o trecho do preparo (p) ou do nome (n), com o
+  // indice dele; o preparo por cima.
+  const dono: (string | null)[] = new Array<string | null>(texto.length).fill(
+    null,
+  );
+  doNome.forEach(({ inicio, fim }, i) => {
+    for (let k = inicio; k < fim; k += 1) {
+      dono[k] = `n${i}`;
+    }
+  });
+  doPreparo.forEach(({ inicio, fim }, i) => {
+    for (let k = inicio; k < fim; k += 1) {
+      dono[k] = `p${i}`;
+    }
+  });
+  let saida = "";
+  let k = 0;
+  while (k < texto.length) {
+    const atual = dono[k] ?? null;
+    let fim = k + 1;
+    while (fim < texto.length && (dono[fim] ?? null) === atual) {
+      fim += 1;
+    }
+    saida +=
+      atual === null
+        ? texto.slice(k, fim)
+        : atual.startsWith("p")
+          ? SUBSTITUTO_DO_TEXTO_DO_PREPARO
+          : MARCA_DO_NOME;
+    k = fim;
+  }
+  return saida;
+}
+
+/**
+ * Revisao da AG7 (CFM-1 e MOTOR-1): o texto da fala da clinica que vai ao
+ * modelo, com a troca do preparo ANTES da mascara do nome do contato.
+ *  - Com o corpo como saiu (textoOriginalDaClinica, o historico do
+ *    WhatsApp): a fala inteira no formato do preparo vira o substituto; os
+ *    trechos dos textos de preparo da clinica sao achados no corpo como saiu
+ *    (em NFC) e viram o marcador, e o nome do contato e mascarado so no
+ *    resto, nas mesmas posicoes de sempre. Sem trecho nenhum, o `texto` de
+ *    sempre (a mascara do historico). Sem o nome (quem chamou nao o passou),
+ *    a fala com preparo inteira vira SUBSTITUTO_DA_FALA_SEM_A_MASCARA: nem o
+ *    preparo nem o nome vao ao modelo.
+ *  - Sem o corpo como saiu (o simulador, que nao mascara; quem montou a
+ *    mensagem a mao): a troca e no `texto`, procurando tambem cada texto de
+ *    preparo com a mascara do nome aplicada (casa sem depender dela).
+ */
+export function falaDaClinicaParaOModelo(
+  mensagem: MensagemDaConversa,
+  opcoes: OpcoesDoTextoParaOsModelos = {},
+): string {
+  const textos = opcoes.textosDePreparo ?? [];
+  const autoria = mensagem.autoria ?? null;
+  const mascarado = mensagem.texto ?? "";
+  const original = mensagem.textoOriginalDaClinica;
+  if (typeof original === "string") {
+    const inteira = substitutoDaFalaInteira(original, autoria);
+    if (inteira !== null) {
+      return inteira;
+    }
+    const nfc = original.normalize("NFC");
+    const doPreparo = trechosDoPreparo(nfc, textos);
+    if (doPreparo.length === 0) {
+      return mascarado;
+    }
+    if (opcoes.nomeDoContato === undefined) {
+      return SUBSTITUTO_DA_FALA_SEM_A_MASCARA;
+    }
+    return trocarOPreparoEONome(
+      nfc,
+      doPreparo,
+      trechosDoNome(nfc, opcoes.nomeDoContato),
+    );
+  }
+  const nome = opcoes.nomeDoContato ?? null;
+  return falaDaClinicaSemOPreparo(
+    mascarado,
+    nome === null
+      ? textos
+      : [...textos, ...textos.map((texto) => mascararNome(texto, nome))],
+    autoria,
+  );
 }
 // [AG7 preparo] fim
 
@@ -1166,16 +1361,11 @@ export function mensagemParaOModelo(
   }
   // [AG7 preparo] início
   // AG7: a fala da clinica sem o preparo, ANTES da minimizacao e do corte (a
-  // fala do paciente fica como esta).
+  // fala do paciente fica como esta). Revisao da AG7 (CFM-1): a troca e no
+  // corpo como saiu, antes da mascara do nome.
   const daClinica =
     mensagem.autor === "assistente"
-      ? {
-          ...mensagem,
-          texto: falaDaClinicaSemOPreparo(
-            mensagem.texto,
-            opcoes.textosDePreparo ?? [],
-          ),
-        }
+      ? { ...mensagem, texto: falaDaClinicaParaOModelo(mensagem, opcoes) }
       : mensagem;
   // [AG7 preparo] fim
   // [AG6b mídia] o corpo (era o retorno direto), para a marca e a descricao.
@@ -1254,6 +1444,29 @@ export function entradaDoPortao(m: MensagemDaConversa): MensagemDeEntrada {
     legenda: m.legendaOriginal ?? null,
   };
 }
+
+// [AG7 preparo] início
+/**
+ * Revisao da AG7 (CFM-6 e CFM-7): os textos das mensagens da pessoa como
+ * chegaram (o texto original, a transcricao, a legenda), para a conferencia
+ * da situacao da pessoa e do procedimento pedido no envio do preparo. Local:
+ * nunca vai a OpenAI nem para log.
+ */
+function textosOriginaisDoPaciente(
+  pendentes: readonly MensagemDaConversa[],
+): string[] {
+  return pendentes.flatMap((m) => {
+    const lida = entradaDoPortao(m);
+    return [lida.texto, lida.legenda ?? null].filter(
+      (texto): texto is string => typeof texto === "string" && texto !== "",
+    );
+  });
+}
+
+/** O passo da trilha do pedido do preparo com a situacao da pessoa. */
+export const PASSO_DO_PEDIDO_COM_SITUACAO_PESSOAL =
+  "O pedido da orientação de preparo veio junto de uma situação da pessoa: passa para a equipe, sem enviar.";
+// [AG7 preparo] fim
 
 /**
  * AG6b: o arquivo a ler (ou ja lido, ainda midia) visto pela legenda
@@ -1403,7 +1616,12 @@ export function custoMaximoDoTurno(entrada: {
   // "[numero]"): a conta usa o mais longo dos dois.
   const maisLongo = <T,>(a: T, b: T): T =>
     JSON.stringify(a).length >= JSON.stringify(b).length ? a : b;
-  const escondido: OpcoesDoTextoParaOsModelos = { esconderCodigos: true };
+  // [AG7 preparo] A conta nao vai a OpenAI: o nome nulo deixa a fala da
+  // clinica com o tamanho da troca (sem o substituto da falha fechada).
+  const escondido: OpcoesDoTextoParaOsModelos = {
+    esconderCodigos: true,
+    nomeDoContato: null,
+  };
   // [AG6b mídia] início
   // As midias que vao aos modelos contam como texto (o pior caso).
   const itensDaLeitura = itensDoCatalogo(entrada.catalogo);
@@ -1425,7 +1643,8 @@ export function custoMaximoDoTurno(entrada: {
     }),
     // [AG6b mídia] mensagensDaConta (era entrada.mensagens).
     input: maisLongo(
-      historicoParaOModelo(mensagensDaConta),
+      // [AG7 preparo] (era sem opcoes)
+      historicoParaOModelo(mensagensDaConta, { nomeDoContato: null }),
       historicoParaOModelo(mensagensDaConta, escondido),
     ),
     tools: ferramentasDaChamada(entrada.config),
@@ -1745,9 +1964,13 @@ export async function executarTurnoDoAgente(
       // [AG6b mídia] O job antigo (D-A) so conclui: nada passa.
       resultado.jobAntigo === true;
     const passou = resultado.tipo === "frase_fixa" && !semEnvio;
+    // [AG7 preparo] MOTOR-7: o preparo escolhido pode nao sair (fora de
+    // vigor ou com recusa na hora do envio); o executor passa a conversa com
+    // a nota de sempre.
+    const preparoEscolhido = resultado.tipo === "preparo";
     // AG5: a lista de espera desta conversa mora fora do estado; na passagem
     // antes do preparo (o portao), le so para a nota (nunca lanca).
-    if (passou) {
+    if (passou || preparoEscolhido) {
       await agendaDoTurno.lerParaANota();
     }
     const atendimento = agendaDoTurno.fechar({
@@ -1760,6 +1983,19 @@ export async function executarTurnoDoAgente(
       notaParaAEquipe: passou
         ? agendaDoTurno.nota(motivoParaANota(resultado.desfecho))
         : null,
+      // [AG7 preparo] MOTOR-7
+      ...(preparoEscolhido
+        ? {
+            notasSeOPreparoNaoSair: {
+              assunto_clinico: agendaDoTurno.nota(
+                ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.assunto_clinico,
+              ),
+              conformidade: agendaDoTurno.nota(
+                ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.conformidade,
+              ),
+            },
+          }
+        : {}),
     };
   } catch {
     // O fechamento nunca deveria lancar. Se lancar, o resultado volta SEM o
@@ -2557,6 +2793,11 @@ async function turnoDoAgente(
       }),
       // [AG7 preparo] O historico que vai ao modelo sem os textos de preparo.
       textosDePreparo: entrada.catalogo.textosDePreparo ?? [],
+      // [AG7 preparo] A mascara refeita depois da troca (CFM-1). Ausente
+      // quando quem chamou nao o passou (falha fechada na fala com preparo).
+      ...(entrada.nomeDoContato === undefined
+        ? {}
+        : { nomeDoContato: entrada.nomeDoContato }),
     };
     // [AG6b mídia] As transcricoes e as legendas (mascaradas) vao ao
     // classificador e ao verificador; a midia sem leitura, como texto vazio.
@@ -2715,6 +2956,62 @@ async function turnoDoAgente(
       versaoId: string;
       versao: number;
     } | null = null;
+    /**
+     * Revisao da AG7 (CFM-7): o procedimento escolhido pelo modelo e o que a
+     * pessoa pediu? Na ordem: o que as pendentes citam (decide quando citam
+     * algum); senao, o que as mensagens da pessoa na conversa citam; senao,
+     * o procedimento da marcacao da conversa (o estado); senao, o unico com
+     * orientacao em vigor entre as consultas futuras dela. Nunca lanca: a
+     * leitura que falha nao confirma (o modelo pergunta).
+     */
+    const procedimentoConfirmado = async (
+      procedimentoId: string,
+    ): Promise<boolean> => {
+      for (const textos of [
+        textosOriginaisDoPaciente(pendentesDoTurno()),
+        textosOriginaisDoPaciente(
+          mensagensDoTurno.filter((m) => m.autor === "paciente"),
+        ),
+      ]) {
+        const citado = citacaoDoProcedimento(
+          entrada.catalogo,
+          procedimentoId,
+          textos,
+        );
+        if (citado !== "nenhum") {
+          return citado === "confirmado";
+        }
+      }
+      if (entrada.atendimento?.estado.procedure_id === procedimentoId) {
+        return true;
+      }
+      const lerConsultas = entrada.agenda?.lerConsultasDoContato;
+      if (lerConsultas === undefined) {
+        return false;
+      }
+      try {
+        const { consultas } = await lerConsultas();
+        const vinculos = [
+          ...entrada.catalogo.vinculos,
+          ...(entrada.catalogo.vinculosDaEquipe ?? []),
+        ];
+        const comPreparo = new Set(
+          consultas.flatMap((consulta) => {
+            const vinculo = vinculos.find(
+              (v) => v.id === consulta.serviceLinkId,
+            );
+            return vinculo !== undefined &&
+              entrada.catalogo.preparosEmVigor?.has(vinculo.procedimentoId) ===
+                true
+              ? [vinculo.procedimentoId]
+              : [];
+          }),
+        );
+        return comPreparo.size === 1 && comPreparo.has(procedimentoId);
+      } catch {
+        return false;
+      }
+    };
     // [AG7 preparo] fim
 
     rodadas: for (let rodada = 1; rodada <= maximoDeRodadas; rodada += 1) {
@@ -2921,8 +3218,45 @@ async function turnoDoAgente(
             },
           );
           ferramentasUsadas.push(NOME_DO_ENVIO_DO_PREPARO);
-          trilha.push({ tipo: "cadastro", texto: envio.passo });
           if (envio.tipo === "enviar") {
+            // Revisao da AG7 (CFM-6): o pedido que vem junto de uma
+            // situacao da pessoa (sintoma, doenca, remedio, o que comeu,
+            // outra pessoa, a idade) passa para a equipe antes do envio.
+            // Deterministico, nas pendentes como chegaram (o portao de
+            // entrada nao muda, D-81).
+            if (
+              situacaoPessoalNoPedidoDoPreparo(
+                textosOriginaisDoPaciente(pendentesDoTurno()),
+                nomesDoCatalogo(entrada.catalogo),
+              )
+            ) {
+              trilha.push({
+                tipo: "cadastro",
+                texto: PASSO_DO_PEDIDO_COM_SITUACAO_PESSOAL,
+              });
+              return escalar(
+                "assunto_clinico",
+                "ferramenta",
+                null,
+                ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.assunto_clinico,
+              );
+            }
+            // Revisao da AG7 (CFM-7): o procedimento escolhido tem de ser o
+            // que a pessoa pediu, o da marcacao da conversa ou o da
+            // consulta dela; senao, nada sai e o modelo pergunta qual e.
+            if (!(await procedimentoConfirmado(envio.procedimentoId))) {
+              trilha.push({
+                tipo: "cadastro",
+                texto: PASSO_DO_PROCEDIMENTO_NAO_CONFIRMADO,
+              });
+              historico.push({
+                type: "function_call_output",
+                call_id: chamada.call_id,
+                output: SAIDA_DO_PROCEDIMENTO_NAO_CONFIRMADO,
+              });
+              continue;
+            }
+            trilha.push({ tipo: "cadastro", texto: envio.passo });
             preparoEscolhido = {
               procedimentoId: envio.procedimentoId,
               versaoId: envio.versaoId,
@@ -2930,6 +3264,7 @@ async function turnoDoAgente(
             };
             break rodadas;
           }
+          trilha.push({ tipo: "cadastro", texto: envio.passo });
           if (envio.tipo === "passar") {
             return escalar(
               envio.motivo,
@@ -3113,6 +3448,11 @@ async function turnoDoAgente(
     // Revisao 2 da AG2: as respostas da base que o modelo disse ter usado,
     // para o resumo dos fatos que vai ao verificador.
     const respostasDaBase: string[] = [];
+    // [AG7 preparo] Revisao da AG7 (MOTOR-3): o turno colou a F2 (a
+    // marcacao de um procedimento com texto em vigor). So ela entra nos
+    // textos colados dos fatos; a F2 que o modelo escreveu sozinho e
+    // afirmacao dele, e o verificador a julga como tal.
+    let comAF2 = false;
 
     if (fraseDaAgenda !== null) {
       // AG4: a frase fixa da agenda, com a saudacao e o aviso colados como
@@ -3234,7 +3574,7 @@ async function turnoDoAgente(
       // orientacao de preparo em vigor, com a habilidade ligada: o sistema
       // cola a F2 depois da resposta, e ela passa pelo filtro inteiro.
       const marcado = agendaDoTurno.procedimentoMarcadoNoTurno();
-      const comAF2 =
+      comAF2 =
         marcado !== null &&
         permitidas.has(NOME_DO_ENVIO_DO_PREPARO) &&
         entrada.catalogo.preparosEmVigor?.has(marcado) === true;
@@ -3272,10 +3612,12 @@ async function turnoDoAgente(
         // [AG6b mídia] Os pedidos lidos na conversa (so os nomes do
         // Cadastro), para o resumo dos fatos do verificador.
         pedidos: pedidosDoTurno(mensagensDoTurno, entrada.catalogo),
-        // [AG7 preparo] A F2, so quando o turno a colou no rascunho.
-        fraseDoPreparo: rascunho.includes(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR)
-          ? FRASE_DO_PREPARO_DEPOIS_DE_MARCAR
-          : null,
+        // [AG7 preparo] A F2, so quando o turno a colou no rascunho (MOTOR-3:
+        // nunca a que o modelo escreveu sozinho).
+        fraseDoPreparo:
+          comAF2 && rascunho.includes(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR)
+            ? FRASE_DO_PREPARO_DEPOIS_DE_MARCAR
+            : null,
       });
     } catch {
       log.warn("ia_agente_fatos_falharam", {

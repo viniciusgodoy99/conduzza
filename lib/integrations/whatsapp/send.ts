@@ -833,6 +833,10 @@ async function enviarPeloCanal(
   // (envio_incerto: a agendada fechava como nao confirmada sem ter saido).
   let messageId: string | null = null;
   let reaproveitada = false;
+  // [AG7 preparo] Revisao da AG7 (MOTOR-5): o corpo da linha reaproveitada,
+  // para gravar o corpo de AGORA quando ele mudou (a regua re-renderiza a
+  // cada tentativa).
+  let corpoDaLinha: string | null = null;
   if (input.jobId) {
     const { data: existente } = await supabase
       .from("message")
@@ -870,6 +874,7 @@ async function enviarPeloCanal(
       }
       messageId = existente.id as string;
       reaproveitada = true;
+      corpoDaLinha = typeof existente.body === "string" ? existente.body : null;
     }
   }
 
@@ -1082,9 +1087,23 @@ async function enviarPeloCanal(
   // marca, nada sai: uma linha 'falhou' (codigo retentavel) com o envio
   // feito faria o retry mandar de novo.
   if (reaproveitada) {
+    // Revisao da AG7 (MOTOR-5): sem a guarda da IA (a regua, a agendada), o
+    // retry re-renderiza o corpo (o texto do preparo em vigor AGORA, a
+    // suspensao do RT no meio) e o provedor manda o corpo de agora; a linha
+    // passa a registrar exatamente o que saiu. Com a guarda da IA, o corpo
+    // ja e o mesmo (conteudo_divergente, acima). O gatilho de update de
+    // message so olha o job responder_com_ia.
     const { error: erroDaMarca } = await supabase
       .from("message")
-      .update({ delivery_status: "enviando", error_code: null })
+      .update(
+        corpoDaLinha !== null && corpoDaLinha !== despacho.bodyRegistrado
+          ? {
+              delivery_status: "enviando",
+              error_code: null,
+              body: despacho.bodyRegistrado,
+            }
+          : { delivery_status: "enviando", error_code: null },
+      )
       .eq("id", messageId);
     if (erroDaMarca) {
       return {

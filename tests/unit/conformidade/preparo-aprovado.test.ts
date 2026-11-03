@@ -7,6 +7,7 @@ import { fatosVazios } from "@/lib/domain/conformidade/fatos-do-turno";
 import { filtrarSaida, sha256DoTexto } from "@/lib/domain/conformidade/filtro";
 import {
   aprovarParaEnvio,
+  conferirParaEnvio,
   LIMITE_DA_MENSAGEM_DO_PREPARO,
   problemasDoTextoDoPreparo,
   TAMANHO_MINIMO_DO_TRECHO,
@@ -18,7 +19,12 @@ import type { Verificador } from "@/lib/domain/conformidade/veredicto";
 import {
   CABECALHO_DO_PREPARO,
   mensagemDoPreparo,
+  normalizarTextoDoPreparo,
+  PALAVRAS_DA_JANELA_DO_TRECHO,
+  problemaDeFormatoDoTextoDoPreparo,
   RODAPE_DO_PREPARO,
+  textoDoPreparoValido,
+  type ResponsavelTecnicoDaMensagem,
   trechoDePreparoNaResposta as trechoDoModuloPuro,
 } from "@/lib/domain/preparo";
 import {
@@ -150,8 +156,76 @@ describe("PreparoAprovado: a marca so sai de aprovarParaEnvio", () => {
     expect(fonte).not.toMatch(/export function marcar/);
     expect(fonte).not.toMatch(/<PreparoAprovado>/);
     expect(fonte).not.toMatch(/\bas\s+TextoAprovado\b|<TextoAprovado>/);
-    // So aprovarParaEnvio chama a conversao.
+    // So conferirParaEnvio chama a conversao (aprovarParaEnvio a usa).
     expect(fonte.match(/\bmarcar\(/g)).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Revisao da AG7 (CFM-2): a conferencia do envio reconfere as recusas
+// ---------------------------------------------------------------------------
+
+describe("conferirParaEnvio: o texto aprovado com recusa nunca vira PreparoAprovado", () => {
+  function comTexto(
+    texto: string,
+    rt: ResponsavelTecnicoDaMensagem = RT_DE_TESTE,
+  ) {
+    return lido(mensagemDoPreparo({ procedimento: "Colonoscopia", rt, texto }));
+  }
+
+  it.each([
+    [
+      "Venha sem maquiagem. Resultado garantido, você vai sair renovada!",
+      ["promessa_resultado"],
+    ],
+    [
+      "Jejum de 8 horas. Na compra do exame, o retorno sai de brinde.",
+      ["oferta_casada"],
+    ],
+    [
+      "Venha em jejum de 8 horas. Aproveite e faça também a limpeza de pele com 20% de desconto.",
+      ["preco_nao_verificado"],
+    ],
+    [
+      "Jejum de 8 horas. Veja o vídeo em https://exemplo.com/preparo.",
+      ["formato_invalido"],
+    ],
+    ["Veja as fotos de antes e depois das nossas pacientes.", ["antes_depois"]],
+  ])(
+    "%j: recusado %j, com os ids; aprovarParaEnvio da nulo",
+    (texto, recusas) => {
+      const leitura = comTexto(texto);
+      expect(conferirParaEnvio(leitura)).toEqual({
+        tipo: "recusado",
+        recusas,
+        versaoId: VERSAO_ID,
+        procedureId: PROCEDURE_ID,
+      });
+      expect(aprovarParaEnvio(leitura)).toBeNull();
+    },
+  );
+
+  it("o remedio, a dose e o jejum so avisam (D-80): o texto de teste sai", () => {
+    const conferido = conferirParaEnvio(LIDO);
+    expect(conferido.tipo).toBe("pronto");
+    expect(
+      problemasDoTextoDoPreparo(TEXTO_DO_PREPARO_DE_TESTE).avisos,
+    ).not.toEqual([]);
+  });
+
+  it("so o texto aprovado e conferido: o cabecalho e a linha do RT (o nome do cadastro) nao", () => {
+    const comNomeDeRisco = comTexto("Jejum de 8 horas antes do exame.", {
+      ...RT_DE_TESTE,
+      nome: "Dra. Ana Garantia",
+    });
+    expect(conferirParaEnvio(comNomeDeRisco).tipo).toBe("pronto");
+  });
+
+  it("fora do formato continua fora do formato (antes das recusas)", () => {
+    expect(conferirParaEnvio({ ...LIDO, sha256: "0".repeat(64) })).toEqual({
+      tipo: "fora_do_formato",
+    });
+    expect(conferirParaEnvio(null)).toEqual({ tipo: "fora_do_formato" });
   });
 });
 
@@ -338,8 +412,8 @@ describe("trechoDePreparoNaResposta: a IA copiando o texto da clinica", () => {
       "Venha com um acompanhante.",
       "Para a colonoscopia, venha com acompanhante e traga o pedido médico.",
       "Para qual procedimento você quer a orientação de preparo?",
-      // A frase cortada no meio da palavra nao e a frase.
-      "Venha com um acompanhante maior de idade, porque você vai receber sedaçãozinha.",
+      // A frase cortada no meio da palavra nao e a frase (nem a oracao).
+      "Venha com um acompanhante maior de idadezinha, porque você vai receber sedaçãozinha.",
       "",
       "   ",
     ]) {
@@ -348,6 +422,31 @@ describe("trechoDePreparoNaResposta: a IA copiando o texto da clinica", () => {
     expect(trechoDePreparoNaResposta(FRASE_DO_PREPARO_SO_DO_TRECHO, [])).toBe(
       false,
     );
+  });
+
+  it("revisao da AG7 (CFM-8): a oracao entre virgulas e a copia longa (dez palavras) tambem contam", () => {
+    for (const rascunho of [
+      // A frase sem o "voce" (a oracao antes da virgula, inteira).
+      "Venha com um acompanhante maior de idade porque vai receber sedação.",
+      // Meia frase (a oracao depois da virgula).
+      "Tome com um gole de água às 6h do dia do exame.",
+      "Venha com um acompanhante maior de idade, porque você vai receber sedaçãozinha.",
+      // Dez palavras seguidas do texto, com a frase trocada no fim.
+      "Às 18h da véspera, tome 2 comprimidos de bisacodil 5 mg com um copo de suco.",
+    ]) {
+      expect(trechoDePreparoNaResposta(rascunho, TEXTOS), rascunho).toBe(true);
+    }
+    expect(PALAVRAS_DA_JANELA_DO_TRECHO).toBe(10);
+    // O requisito de sempre, quando a clinica o pos no texto do preparo, nao
+    // conta por pedaco de oito palavras (so a frase ou a oracao inteiras).
+    expect(
+      trechoDePreparoNaResposta(
+        "Para a Consulta, leve um documento com foto e a carteirinha do convênio.",
+        [
+          "Chegue 30 minutos antes do horário marcado e traga documento com foto e a carteirinha do convênio.",
+        ],
+      ),
+    ).toBe(false);
   });
 
   it("a frase conta com 25 caracteres normalizados, nao com 24", () => {
@@ -407,19 +506,25 @@ describe("problemasDoTextoDoPreparo: o texto que a clinica escreve", () => {
     expect(problemasDoTextoDoPreparo(TEXTO_DO_PREPARO_DE_TESTE)).toEqual({
       recusas: [],
       avisos: ["orientacao_clinica", "medicamento", "dosagem"],
+      trechosDasRecusas: [],
     });
     expect(problemasDoTextoDoPreparo("Jejum de 8 horas.")).toEqual({
       recusas: [],
       avisos: ["orientacao_clinica"],
+      trechosDasRecusas: [],
     });
     expect(
       problemasDoTextoDoPreparo(
         "Cuidados antes do exame: evite sol e não use maquiagem.",
       ),
-    ).toEqual({ recusas: [], avisos: ["orientacao_clinica"] });
+    ).toEqual({
+      recusas: [],
+      avisos: ["orientacao_clinica"],
+      trechosDasRecusas: [],
+    });
     expect(
       problemasDoTextoDoPreparo("Pacientes diabéticos: tragam o glicosímetro."),
-    ).toEqual({ recusas: [], avisos: ["diagnostico"] });
+    ).toEqual({ recusas: [], avisos: ["diagnostico"], trechosDasRecusas: [] });
   });
 
   it("o preparo realista passa: instrucoes, percentual, litros, telefone e tamanho nao recusam", () => {
@@ -561,5 +666,110 @@ describe("so a mensagem do sistema leva remedio, dose e jejum", () => {
     expect(preparo?.mensagem).toBe(MENSAGEM_DO_PREPARO_DE_TESTE);
     expect(preparo?.mensagem).toContain("bisacodil");
     expect(preparo?.mensagem).toContain("Jejum de 8 horas");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Revisao da AG7 (TELA-8): a recusa diz o que tirar
+// ---------------------------------------------------------------------------
+
+describe("revisao da AG7 (TELA-8): as recusas dizem o que tirar", () => {
+  it("cada recusa traz a frase do texto que a dispara, como a clinica escreveu", () => {
+    expect(
+      problemasDoTextoDoPreparo(
+        "Jejum de 8 horas.\nResultado garantido, você vai sair renovada!\nVeja o vídeo em https://exemplo.com/preparo.",
+      ),
+    ).toEqual({
+      recusas: ["promessa_resultado", "formato_invalido"],
+      avisos: ["orientacao_clinica"],
+      trechosDasRecusas: [
+        {
+          categoria: "promessa_resultado",
+          trecho: "Resultado garantido, você vai sair renovada!",
+        },
+        {
+          categoria: "formato_invalido",
+          trecho: "Veja o vídeo em https://exemplo.com/preparo.",
+        },
+      ],
+    });
+    expect(
+      problemasDoTextoDoPreparo(
+        "Venha em jejum. A limpeza de pele custa R$ 300,00.",
+      ).trechosDasRecusas,
+    ).toEqual([
+      {
+        categoria: "preco_nao_verificado",
+        trecho: "A limpeza de pele custa R$ 300,00.",
+      },
+    ]);
+  });
+
+  it.each([
+    "Para garantir a qualidade das imagens, faça jejum de 8 horas.",
+    "O preparo adequado garante a qualidade do exame.",
+    "Siga o preparo para garantir a nitidez da imagem.",
+    "Garantimos a precisão do laudo com o preparo certo.",
+  ])("%j: a qualidade do exame nao e promessa de resultado", (texto) => {
+    expect(problemasDoTextoDoPreparo(texto).recusas).toEqual([]);
+  });
+
+  it.each([
+    "Resultado garantido.",
+    "Garantimos a qualidade do exame e um resultado perfeito.",
+    "Garantia de pele renovada.",
+    "Para garantir a qualidade do procedimento, venha sem maquiagem.",
+  ])("%j: a promessa continua recusada", (texto) => {
+    expect(problemasDoTextoDoPreparo(texto).recusas).toContain(
+      "promessa_resultado",
+    );
+  });
+});
+
+describe("revisao da AG7 (TELA-8): o formato invalido diz a causa", () => {
+  it("a tabulacao da lista colada do Word vira espaco na normalizacao (e o texto vale)", () => {
+    const colado = "1.\tJejum de 8 horas.\n2.\tVenha com acompanhante.";
+    expect(problemaDeFormatoDoTextoDoPreparo(colado)).toEqual({
+      causa: "tabulacao",
+      linha: 1,
+    });
+    const normalizado = normalizarTextoDoPreparo(colado);
+    expect(normalizado).toBe(
+      "1. Jejum de 8 horas.\n2. Venha com acompanhante.",
+    );
+    expect(problemaDeFormatoDoTextoDoPreparo(normalizado)).toBeNull();
+    expect(textoDoPreparoValido(normalizado)).toBe(true);
+  });
+
+  it("o emoji com juncao diz o emoji e a linha, e o invisivel diz o codigo", () => {
+    const profissional = "\u{1f469}\u200d\u2695\ufe0f";
+    expect(
+      problemaDeFormatoDoTextoDoPreparo(
+        `Jejum de 8 horas.\nA ${profissional} explica no dia.`,
+      ),
+    ).toEqual({ causa: "emoji_com_juncao", linha: 2, emoji: profissional });
+    expect(problemaDeFormatoDoTextoDoPreparo("Jejum\u200bde 8 horas.")).toEqual(
+      { causa: "invisivel", linha: 1, codigo: "U+200B" },
+    );
+    expect(
+      problemaDeFormatoDoTextoDoPreparo("Jejum de 8 horas.\n\u0007Fim."),
+    ).toEqual({ causa: "controle", linha: 2, codigo: "U+0007" });
+  });
+
+  it("vazio, longo, chaves e o texto fora do padrao", () => {
+    expect(problemaDeFormatoDoTextoDoPreparo("   ")).toEqual({
+      causa: "vazio",
+    });
+    expect(problemaDeFormatoDoTextoDoPreparo("a".repeat(3501))).toEqual({
+      causa: "longo",
+      tamanho: 3501,
+    });
+    expect(
+      problemaDeFormatoDoTextoDoPreparo("Jejum.\nTraga {{nome}}."),
+    ).toEqual({ causa: "chaves", linha: 2 });
+    expect(problemaDeFormatoDoTextoDoPreparo(" Jejum.")).toEqual({
+      causa: "fora_do_padrao",
+    });
+    expect(problemaDeFormatoDoTextoDoPreparo("Jejum de 8 horas.")).toBeNull();
   });
 });

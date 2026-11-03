@@ -62,12 +62,15 @@ import { carregarCatalogoDoAgente, carregarConfigDoRascunho } from "./contexto";
 import { ROTULO_DO_MOTIVO_DE_ESCALONAMENTO } from "@/lib/domain/agente/config";
 import { lerPreparoParaEnvio } from "./contexto";
 import { PASSO_DO_PREPARO_FORA_DE_VIGOR } from "./ferramentas/enviar-preparo";
+import { partesDaMensagemDoPreparo } from "@/lib/domain/preparo";
 // [AG7 preparo] fim
 import { acertarGasto, reservarGasto } from "./gasto";
 import {
   atendimentoParaEstimativa,
   custoMaximoDoTurno,
   executarTurnoDoAgente,
+  // [AG7 preparo] O passo do texto aprovado com recusa (CFM-2).
+  passoDoPreparoRecusado,
   type ClienteDoAgente,
   type MensagemDaConversa,
   type PassoDoTurno,
@@ -567,11 +570,26 @@ export async function simularTurno(
   }
   // Revisao da AG4 (achado 1): no simulador, toda fala do assistente e da
   // IA (o historico e assinado), a autoria que a pergunta do cancelamento e
-  // da remarcacao confere.
+  // da remarcacao confere. [AG7 preparo] Revisao da AG7 (CFM-10 e MOTOR-6):
+  // menos a mensagem do preparo (no formato inteiro), que e do SISTEMA, como
+  // no WhatsApp: o historico assinado garante que o servidor a mostrou, e a
+  // resposta do modelo nesse formato nunca passa no filtro (AG7-S13). Assim o
+  // modelo le o mesmo substituto e a resposta seguinte leva o aviso de
+  // assistente virtual, como no WhatsApp.
   const mensagens: MensagemDaConversa[] = falas.map((fala) =>
     fala.autor === "assistente"
-      ? { autor: fala.autor, autoria: "ia", texto: fala.texto }
+      ? {
+          autor: fala.autor,
+          autoria:
+            partesDaMensagemDoPreparo(fala.texto) !== null ? "sistema" : "ia",
+          texto: fala.texto,
+        }
       : { autor: fala.autor, texto: fala.texto },
+  );
+  // [AG7 preparo] A primeira resposta da IA: nenhuma fala da IA (a mensagem
+  // do preparo e do sistema), a mesma regra do executor (MOTOR-6).
+  const primeiraRespostaDaIa = !mensagens.some(
+    (m) => m.autor === "assistente" && m.autoria === "ia",
   );
 
   // AG3: o estado do atendimento simulado, ligado a ultima resposta.
@@ -742,6 +760,8 @@ export async function simularTurno(
     classificador,
     contato,
     foraDoAssuntoNaJanela: foraDoAssuntoNoSimulador(falas),
+    // [AG7 preparo] MOTOR-6: o aviso de assistente virtual como no WhatsApp.
+    primeiraRespostaDaIa,
     conferirTrava: () => iaPodeSimular(admin, clinicId),
     agenda: portaDaAgendaDoSimulador(admin, {
       clinicId,
@@ -775,9 +795,9 @@ export async function simularTurno(
   let tipo: "resposta" | "frase_fixa" | "preparo";
   const passosDoPreparo: PassoDoTurno[] = [];
   if (resultado.tipo === "preparo") {
-    let preparo: Awaited<ReturnType<typeof lerPreparoParaEnvio>>;
+    let leitura: Awaited<ReturnType<typeof lerPreparoParaEnvio>>;
     try {
-      preparo = await lerPreparoParaEnvio(admin, {
+      leitura = await lerPreparoParaEnvio(admin, {
         clinicId,
         versaoId: resultado.preparo.versaoId,
         procedimentoId: resultado.preparo.procedimentoId,
@@ -787,7 +807,19 @@ export async function simularTurno(
       log.warn("ia_simulador_sem_preparo", { clinic_id: clinicId });
       return { ok: false, error: TEXTOS_DO_SIMULADOR.naoCarregouOPreparo };
     }
-    if (preparo === null) {
+    if (leitura.tipo === "recusado") {
+      // Revisao da AG7 (CFM-2): o texto aprovado com recusa nao sai, como no
+      // WhatsApp (o bloqueio da conformidade e a frase).
+      resposta = FRASE_DE_ESCALONAMENTO;
+      tipo = "frase_fixa";
+      passosDoPreparo.push(
+        { tipo: "bloqueio", texto: passoDoPreparoRecusado(leitura.recusas) },
+        {
+          tipo: "equipe",
+          texto: `Passou para a equipe: ${ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.conformidade}`,
+        },
+      );
+    } else if (leitura.tipo === "fora_de_vigor") {
       resposta = FRASE_DE_ESCALONAMENTO;
       tipo = "frase_fixa";
       passosDoPreparo.push(
@@ -798,7 +830,7 @@ export async function simularTurno(
         },
       );
     } else {
-      resposta = preparo.mensagem;
+      resposta = leitura.preparo.mensagem;
       tipo = "preparo";
     }
   } else {
@@ -839,10 +871,20 @@ export async function simularTurno(
   }
 
   // AG3: a nota que a equipe receberia na passagem (sem dado do paciente).
-  if (resultado.notaParaAEquipe) {
+  // [AG7 preparo] MOTOR-7: tambem quando o preparo escolhido nao sai (fora
+  // de vigor ou com recusa), como no WhatsApp.
+  const notaDaPassagem =
+    resultado.tipo === "preparo"
+      ? tipo === "frase_fixa"
+        ? passosDoPreparo.some((p) => p.tipo === "bloqueio")
+          ? (resultado.notasSeOPreparoNaoSair?.conformidade ?? null)
+          : (resultado.notasSeOPreparoNaoSair?.assunto_clinico ?? null)
+        : null
+      : (resultado.notaParaAEquipe ?? null);
+  if (notaDaPassagem) {
     trilha.push({
       tipo: "equipe",
-      texto: `${TEXTOS_DO_SIMULADOR.notaParaAEquipe} ${resultado.notaParaAEquipe.replace(/\n+/g, " ")}`,
+      texto: `${TEXTOS_DO_SIMULADOR.notaParaAEquipe} ${notaDaPassagem.replace(/\n+/g, " ")}`,
     });
   }
 
