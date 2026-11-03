@@ -11,14 +11,6 @@ import {
   TEXTO_DA_CONFORMIDADE,
 } from "@/lib/domain/agente/config";
 
-// [AG7 preparo] início
-// A habilidade "Enviar orientação de preparo" e uma chave livre a mais, que
-// chega com o CFG da frente M (HABILIDADES_DO_AGENTE). A conta vale antes e
-// depois do merge: 8 de hoje, mais 1 quando ela estiver na lista.
-const CHAVES_LIVRES =
-  8 + (HABILIDADES_DO_AGENTE.some((h) => h.chave === "enviar_preparo") ? 1 : 0);
-// [AG7 preparo] fim
-
 import {
   configDeTeste,
   dadosDeTeste,
@@ -27,6 +19,19 @@ import {
   VERSAO_1,
   VERSAO_2,
 } from "./tela-fixtures";
+
+// [AG7 preparo] início
+// A habilidade "Enviar orientação de preparo" e uma chave livre a mais, que
+// chega com o CFG da frente M (HABILIDADES_DO_AGENTE). A conta vale antes e
+// depois do merge: 8 de hoje, mais 1 quando ela estiver na lista.
+const CHAVES_LIVRES =
+  8 +
+  ((HABILIDADES_DO_AGENTE.map((h) => h.chave) as readonly string[]).includes(
+    "enviar_preparo",
+  )
+    ? 1
+    : 0);
+// [AG7 preparo] fim
 
 // Painel da Tela 6 (Agente de IA) renderizado no servidor: as abas, o rodape
 // de publicacao, o unico lime, a recepcao desabilitada com dica, a aba das
