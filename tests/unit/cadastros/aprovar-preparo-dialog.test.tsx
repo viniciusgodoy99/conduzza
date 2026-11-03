@@ -7,6 +7,12 @@ import { describe, expect, it, vi } from "vitest";
 // DOM): o corpo sem estado (ConteudoDoAprovarPreparo) recebe cada etapa por
 // prop; o dialogo inteiro e conferido na abertura. A gravacao esta em
 // preparo-actions.test.ts; o banco, em tests/rls e tests/integration.
+// Da revisao das telas (03/11/2026): o pedido guarda o que o RT leu na
+// abertura (TELA-1 e TELA-11), as recusas de quem chegou depois travam a
+// decisao, o RT que deixou de ser ve o aviso no proprio dialogo (TELA-2), o
+// "aprovar de novo" e sempre o mesmo texto e o titulo da diferenca diz se o
+// texto comparado esta em vigor (TELA-12), e a recusa das regras de hoje
+// aparece antes de aprovar (CFM-2).
 
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ children }: { children: ReactNode }) => (
@@ -33,7 +39,10 @@ vi.mock("@/app/(app)/cadastros/preparo-actions", () => ({
 
 const {
   AprovarPreparoDialog,
+  bloqueioDoRt,
+  CODIGOS_QUE_TRAVAM,
   ConteudoDoAprovarPreparo,
+  entradaDoAprovarDeNovo,
   erroDoDialogo,
   linhasQueMudaram,
   mostraAvisoDeRemedio,
@@ -42,9 +51,11 @@ const {
   TEXTOS_DO_PREPARO: T,
   aprovarTitulo,
   diferencaDasLinhas,
+  FRASE_DA_EQUIPE_CONDUZZA,
   FRASES_SEM_PERMISSAO,
 } = await import("@/components/cadastros/preparo-na-tela");
 
+import type { PedidoDeAprovacao } from "@/components/cadastros/aprovar-preparo-dialog";
 import { mensagemDoPreparo } from "@/lib/domain/preparo";
 import type {
   ResponsavelTecnico,
@@ -88,6 +99,34 @@ const AGUARDANDO: VersaoDoPreparo = {
   encerradoEm: null,
   comentario: null,
 };
+
+const PEDIDO: PedidoDeAprovacao = {
+  modo: "aprovar",
+  versao: AGUARDANDO,
+  texto: NOVO,
+  versaoLida: 2,
+  rt: RT,
+  procedimento: "Colonoscopia",
+  comparacao: { texto: EM_VIGOR, emVigor: true },
+};
+
+function dialogo(
+  props: Partial<Parameters<typeof AprovarPreparoDialog>[0]> = {},
+): string {
+  return semEntidades(
+    renderToStaticMarkup(
+      <AprovarPreparoDialog
+        pedido={PEDIDO}
+        aoFechar={() => undefined}
+        procedureId={PROC}
+        souRt
+        rtDeAgora={RT}
+        aoConcluir={() => undefined}
+        {...props}
+      />,
+    ),
+  );
+}
 
 function semEntidades(html: string): string {
   return html
@@ -139,20 +178,7 @@ describe("como o paciente recebe", () => {
   });
 
   it("o diálogo inteiro monta a mensagem do RT vigente, como o banco monta", () => {
-    const html = semEntidades(
-      renderToStaticMarkup(
-        <AprovarPreparoDialog
-          pedido={{ modo: "aprovar", versao: AGUARDANDO }}
-          aoFechar={() => undefined}
-          procedureId={PROC}
-          procedimento="Colonoscopia"
-          rt={RT}
-          textoEmVigor={EM_VIGOR}
-          versaoLida={2}
-          aoConcluir={() => undefined}
-        />,
-      ),
-    );
+    const html = dialogo();
     expect(html).toContain(aprovarTitulo("Colonoscopia"));
     expect(html).toContain("Aprovar orientação de preparo de Colonoscopia");
     expect(html).toContain(
@@ -161,6 +187,37 @@ describe("como o paciente recebe", () => {
     // Na abertura, o texto ainda e conferido no servidor.
     expect(html).toContain(T.conferindo);
     expect(html).toContain(T.devolver);
+    expect(html).not.toContain(T.naoEMaisORt);
+  });
+
+  it("mostra o que foi lido na abertura: o texto, o RT e o nome guardados no pedido (TELA-1 e TELA-11)", () => {
+    const RT_NOVO: ResponsavelTecnico = {
+      ...RT,
+      id: "rt-novo",
+      nome: "Dr. Caio",
+    };
+    const html = dialogo({
+      pedido: {
+        ...PEDIDO,
+        modo: "aprovar_de_novo",
+        versao: { ...AGUARDANDO, texto: "relido depois" },
+        procedimento: "Colonoscopia total",
+      },
+      rtDeAgora: RT_NOVO,
+    });
+    expect(html).toContain(aprovarTitulo("Colonoscopia total"));
+    expect(html).toContain(
+      mensagemDoPreparo({
+        procedimento: "Colonoscopia total",
+        rt: RT,
+        texto: NOVO,
+      }),
+    );
+    expect(html).not.toContain("relido depois");
+    expect(html).not.toContain("Dr. Caio");
+    // O RT mudou com o dialogo aberto: o aviso e a decisao travada.
+    expect(html).toContain(T.rtMudouAoLer);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Aprovar<\/button>/);
   });
 
   it("fechado, não desenha nada", () => {
@@ -170,14 +227,49 @@ describe("como o paciente recebe", () => {
           pedido={null}
           aoFechar={() => undefined}
           procedureId={PROC}
-          procedimento="Colonoscopia"
-          rt={RT}
-          textoEmVigor={null}
-          versaoLida={0}
+          souRt
+          rtDeAgora={RT}
           aoConcluir={() => undefined}
         />,
       ),
     ).toBe("");
+  });
+});
+
+describe("o que vai para a action (TELA-1 e TELA-11)", () => {
+  it("o aprovar de novo manda a versão lida, o hash e o nome da abertura", () => {
+    expect(
+      entradaDoAprovarDeNovo(
+        { ...PEDIDO, versaoLida: 1, procedimento: "Colono" },
+        PROC,
+      ),
+    ).toEqual({
+      procedureId: PROC,
+      versaoLida: 1,
+      textoSha256: AGUARDANDO.textoSha256,
+      nomeLido: "Colono",
+    });
+  });
+});
+
+describe("o RT que deixou de ser, com o diálogo aberto (TELA-2)", () => {
+  it("a releitura diz que a sessão não é mais o RT: o diálogo continua aberto, avisa e trava", () => {
+    const html = dialogo({ souRt: false, rtDeAgora: null });
+    expect(html).toContain(T.naoEMaisORt);
+    expect(html).toContain('role="alert"');
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Aprovar<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Devolver<\/button>/);
+    // So o Cancelar fica: fechar e sempre possivel.
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Cancelar<\/button>/);
+  });
+
+  it("o bloqueio: não é mais o RT, o RT mudou, ou nenhum", () => {
+    expect(bloqueioDoRt(PEDIDO, false, RT)).toBe(T.naoEMaisORt);
+    expect(bloqueioDoRt(PEDIDO, true, { id: "outra-designacao" })).toBe(
+      T.rtMudouAoLer,
+    );
+    expect(bloqueioDoRt(PEDIDO, true, null)).toBe(T.rtMudouAoLer);
+    expect(bloqueioDoRt(PEDIDO, true, RT)).toBeNull();
   });
 });
 
@@ -215,6 +307,32 @@ describe("o que mudou desde o texto em vigor", () => {
   it("o mesmo texto (aprovar de novo): diz que é o mesmo", () => {
     expect(conteudo({ mudancas: [] })).toContain(T.mesmoTexto);
     expect(conteudo({ modo: "aprovar_de_novo" })).toContain(T.mesmoTexto);
+  });
+
+  it("aprovar de novo o texto suspenso (sem texto em vigor): é o mesmo texto, nunca um texto inteiro novo (TELA-12)", () => {
+    const html = conteudo({
+      modo: "aprovar_de_novo",
+      mudancas: null,
+      emVigor: false,
+    });
+    expect(html).toContain(T.mesmoTexto);
+    expect(html).not.toContain(T.semTextoEmVigor);
+  });
+
+  it("comparando com a aprovada que parou de valer: o título diz último texto aprovado (TELA-12)", () => {
+    const parada = conteudo({ emVigor: false });
+    expect(parada).toContain(T.oQueMudouDesdeOUltimo);
+    expect(parada).not.toContain(T.oQueMudou);
+    expect(conteudo()).toContain(T.oQueMudou);
+    // O dialogo inteiro: a comparacao parada vem do pedido.
+    expect(
+      dialogo({
+        pedido: { ...PEDIDO, comparacao: { texto: EM_VIGOR, emVigor: false } },
+      }),
+    ).toContain(T.oQueMudouDesdeOUltimo);
+    expect(
+      dialogo({ pedido: { ...PEDIDO, modo: "aprovar_de_novo" } }),
+    ).toContain(T.oQueMudouDesdeOUltimo);
   });
 
   it("a diferença linha a linha preserva a ordem do texto", () => {
@@ -256,6 +374,59 @@ describe("o aviso de remédio, dose ou jejum (D-80)", () => {
     expect(html).not.toContain(T.avisoRemedio);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Aprovar<\/button>/);
     expect(mostraAvisoDeRemedio("carregando")).toBe(false);
+  });
+});
+
+describe("a recusa das regras de hoje, antes de aprovar (CFM-2)", () => {
+  const RECUSA =
+    "No trecho “Resultado garantido.”, tire a promessa de resultado (palavras como garantir, 100%, sem dor ou definitivo): a orientação de preparo não pode prometer resultado (Resolução CFM 2.336/2023).";
+
+  it("o alerta diz que o texto não pode ser aprovado e o que tirar; Aprovar e a caixa travam, Devolver não", () => {
+    const html = conteudo({ recusa: RECUSA });
+    expect(html).toContain(T.naoPodeSerAprovado);
+    expect(html).toContain(RECUSA);
+    expect(html).toContain('data-tom="alert"');
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Aprovar<\/button>/);
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Devolver<\/button>/);
+    expect(html).toMatch(/role="checkbox"[^>]*disabled=""/);
+  });
+
+  it("sem recusa, Aprovar fica liberado", () => {
+    expect(conteudo({ recusa: null, marcado: true })).not.toMatch(
+      /<button[^>]*disabled=""[^>]*>Aprovar<\/button>/,
+    );
+  });
+});
+
+describe("as recusas de quem chegou depois travam a decisão (TELA-1)", () => {
+  it("travado: Aprovar, Devolver e a caixa desabilitados; o Cancelar continua", () => {
+    const html = conteudo({
+      travado: true,
+      erro: "O texto mudou enquanto você lia. Feche e abra de novo.",
+    });
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Aprovar<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Devolver<\/button>/);
+    expect(html).toMatch(/role="checkbox"[^>]*disabled=""/);
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>Cancelar<\/button>/);
+    expect(html).toContain("Feche e abra de novo.");
+  });
+
+  it("os códigos que travam: o texto, o nome, a aprovação ou o RT mudaram, e o aprovar de novo que ficou aguardando", () => {
+    for (const codigo of [
+      "texto_mudou",
+      "texto_igual_ao_em_vigor",
+      "nao_aguarda_aprovacao",
+      "nome_mudou",
+      "outra_aprovacao",
+      "sem_permissao",
+      "versao_inexistente",
+      "texto_novo_aguardando",
+      "ficou_aguardando",
+    ]) {
+      expect(CODIGOS_QUE_TRAVAM.has(codigo)).toBe(true);
+    }
+    // A recusa do texto trava so o Aprovar (o RT ainda pode devolver).
+    expect(CODIGOS_QUE_TRAVAM.has("texto_recusado")).toBe(false);
   });
 });
 
@@ -333,6 +504,16 @@ describe("os erros do diálogo", () => {
     ).toBe("Você não é mais o responsável técnico desta clínica.");
   });
 
+  it("a equipe Conduzza recebe a frase dela, nunca o não é mais o RT (TELA-9)", () => {
+    expect(
+      erroDoDialogo({
+        ok: false,
+        error: FRASE_DA_EQUIPE_CONDUZZA,
+        code: "sem_permissao",
+      }),
+    ).toBe(FRASE_DA_EQUIPE_CONDUZZA);
+  });
+
   it("os outros erros como a action traduziu", () => {
     expect(
       erroDoDialogo({
@@ -351,6 +532,8 @@ describe("texto de interface", () => {
       conteudo({ avisos: ["medicamento"] }),
       conteudo({ etapa: "devolvendo" }),
       conteudo({ modo: "aprovar_de_novo", mudancas: null }),
+      conteudo({ recusa: "Tire o link.", travado: true }),
+      dialogo({ souRt: false }),
       ...Object.values(T),
     ].join("\n");
     expect(tudo).not.toContain(TRAVESSAO);

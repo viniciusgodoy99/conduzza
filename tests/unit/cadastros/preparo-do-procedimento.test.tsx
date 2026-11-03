@@ -7,7 +7,10 @@ import { describe, expect, it, vi } from "vitest";
 // Renderizacao estatica (o vitest roda em node, sem DOM): o Dialog do Radix
 // vira marcacao sempre aberta, a dica de permissao vira um atributo
 // conferivel (data-dica) e as actions sao dubladas (a gravacao esta em
-// preparo-actions.test.ts; o banco, em tests/rls e tests/integration).
+// preparo-actions.test.ts; o banco, em tests/rls e tests/integration). O que
+// depende de clique e conferido pelas pecas puras que a secao usa
+// (montarPedidoDeAprovacao, versaoLidaDoEnvio, editorComRascunho) e pelos
+// dialogos de confirmacao, que recebem o estado por prop.
 
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ open, children }: { open?: boolean; children: ReactNode }) =>
@@ -56,19 +59,26 @@ vi.mock("@/app/(app)/cadastros/preparo-actions", () => ({
 const {
   AvisoDoNomeDoProcedimento,
   AvisoSemRt,
+  avisoDoNomeDoPreparo,
   ChipDoPreparo,
+  ConfirmarDescarteDoRascunho,
+  ConfirmarDescarteDoTextoNovo,
   EditorDoPreparo,
+  editorComRascunho,
   FaixaDoRt,
   ListaDeVersoes,
+  montarPedidoDeAprovacao,
   SecaoDoPreparo,
   linhaDaAprovacao,
   motivoDaNovaAprovacao,
   resumoDoPreparo,
+  versaoLidaDoEnvio,
 } = await import("@/components/cadastros/preparo-do-procedimento");
 const { ProcedimentosTab } =
   await import("@/components/cadastros/procedimentos-tab");
 const {
   citarTrecho,
+  FRASE_DA_EQUIPE_CONDUZZA,
   FRASES_SEM_PERMISSAO,
   TEXTOS_DO_PREPARO: T,
   contadorDoTexto,
@@ -87,6 +97,8 @@ import { CADASTRO_VAZIO_PARA_O_AGENTE } from "@/lib/queries/cadastro-para-o-agen
 import type { Catalogo, Procedimento } from "@/lib/queries/catalogo";
 import {
   PREPAROS_VAZIOS,
+  procedimentosEsperandoORt,
+  versoesComTextoNaTela,
   type PreparosDaClinica,
   type ResponsavelTecnico,
   type VersaoDoPreparo,
@@ -511,13 +523,47 @@ describe("matriz de papéis (desenho 5.6; D-71)", () => {
     });
   });
 
-  it("a equipe Conduzza (super admin) escreve, mas nunca aprova", () => {
+  it.each([
+    ["que não é o RT", false],
+    ["designada RT (conta antiga com vínculo)", true],
+  ] as const)(
+    "a equipe Conduzza %s escreve, mas nunca aprova: a ação visível e desabilitada, com a dica dela (TELA-9)",
+    (_quem, souRt) => {
+      const html = semEntidades(
+        renderToStaticMarkup(
+          <SecaoDoPreparo
+            procedimento={COLONOSCOPIA}
+            preparo={preparo(
+              { tipo: "pronto", dados: { ...comAguardando, souRt } },
+              { superAdmin: true },
+            )}
+            podeEditarCadastros={false}
+            timezone={FUSO}
+          />,
+        ),
+      );
+      expect(botao(html, T.escreverNovo)).toEqual({ dica: null });
+      expect(botao(html, T.descartar)).toEqual({ dica: null });
+      expect(botao(html, T.revisar)).toEqual({
+        dica: FRASE_DA_EQUIPE_CONDUZZA,
+      });
+    },
+  );
+
+  it("a equipe Conduzza designada RT também não tem o Aprovar de novo (TELA-9)", () => {
     const html = semEntidades(
       renderToStaticMarkup(
         <SecaoDoPreparo
           procedimento={COLONOSCOPIA}
           preparo={preparo(
-            { tipo: "pronto", dados: comAguardando },
+            {
+              tipo: "pronto",
+              dados: dados({
+                versoes: [versao({ rtId: "rt-antigo" })],
+                responsaveis: [RT_ANTIGO, RT_ANA],
+                souRt: true,
+              }),
+            },
             { superAdmin: true },
           )}
           podeEditarCadastros={false}
@@ -525,9 +571,8 @@ describe("matriz de papéis (desenho 5.6; D-71)", () => {
         />,
       ),
     );
-    expect(botao(html, T.escreverNovo)).toEqual({ dica: null });
-    expect(botao(html, T.revisar)).toEqual({
-      dica: FRASES_SEM_PERMISSAO.aprovar,
+    expect(botao(html, T.aprovarDeNovo)).toEqual({
+      dica: FRASE_DA_EQUIPE_CONDUZZA,
     });
   });
 });
@@ -938,6 +983,71 @@ describe("o topo da aba Procedimentos", () => {
     expect(deOutro).not.toContain("esperando sua aprovação");
   });
 
+  it("a faixa conta também a aprovação que parou de valer, depois da troca do RT (TELA-7)", () => {
+    const outro = procedimento({ id: OUTRO, name: "Endoscopia" });
+    const lidos = dados({
+      versoes: [
+        versao({ rtId: "rt-antigo" }),
+        versao({
+          id: "v9",
+          procedureId: OUTRO,
+          rtId: "rt-antigo",
+          nomeDoProcedimento: "Endoscopia",
+        }),
+      ],
+      responsaveis: [RT_ANTIGO, RT_ANA],
+      souRt: true,
+    });
+    expect(
+      procedimentosEsperandoORt(lidos, [
+        { id: PROC, name: "Colonoscopia" },
+        { id: OUTRO, name: "Endoscopia" },
+      ]),
+    ).toEqual([PROC, OUTRO]);
+    const html = semEntidades(
+      renderToStaticMarkup(
+        <ProcedimentosTab
+          catalogo={catalogo({ procedimentos: [procedimento(), outro] })}
+          matriz={{ atendimentos: [], coberturas: [] }}
+          cadastroDoAgente={CADASTRO_VAZIO_PARA_O_AGENTE}
+          podeEditar
+          dica="Somente administradores e gestores alteram os cadastros"
+          aoMudar={() => undefined}
+          timezone={FUSO}
+          preparo={preparo({ tipo: "pronto", dados: lidos })}
+        />,
+      ),
+    );
+    expect(html).toContain(
+      "Há 2 orientações de preparo esperando sua aprovação.",
+    );
+    expect(html).toContain(T.filtrarAguardando);
+  });
+
+  it("a faixa não conta o envio suspenso nem o que está em vigor", () => {
+    const lidos = dados({
+      versoes: [
+        versao(),
+        versao({ id: "v9", procedureId: OUTRO, situacao: "suspenso" }),
+      ],
+      souRt: true,
+    });
+    expect(
+      procedimentosEsperandoORt(lidos, [
+        { id: PROC, name: "Colonoscopia" },
+        { id: OUTRO, name: "Endoscopia" },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("a equipe Conduzza designada RT não vê a faixa: ela nunca aprova (TELA-9)", () => {
+    const lidos = dados({ versoes: [versao(), AGUARDANDO], souRt: true });
+    const html = aba(
+      preparo({ tipo: "pronto", dados: lidos }, { superAdmin: true }),
+    );
+    expect(html).not.toContain("esperando sua aprovação");
+  });
+
   it("o plural da faixa", () => {
     const html = renderToStaticMarkup(
       <FaixaDoRt quantos={3} filtrando aoAlternar={() => undefined} />,
@@ -977,6 +1087,321 @@ describe("o aviso do nome do procedimento", () => {
     expect(html).toContain('id="aviso"');
     expect(html).toContain("<svg");
     expect(html).toContain("text-warning-text");
+  });
+});
+
+describe("o texto aguardando escrito com o nome antigo (TELA-6)", () => {
+  const comNomeAntigo = dados({
+    versoes: [versao(), { ...AGUARDANDO, nomeDoProcedimento: "Colono" }],
+    souRt: true,
+  });
+
+  it("o bloco diz que o nome mudou antes de o RT ler, e o Revisar e aprovar fica desabilitado com a dica", () => {
+    const html = semEntidades(
+      secao({ dados: comNomeAntigo, podeEditarCadastros: false }),
+    );
+    expect(html).toContain(T.nomeMudouNoAguardando);
+    expect(html).toContain('data-parte="nome-mudou-no-aguardando"');
+    expect(botao(html, T.revisar)).toEqual({ dica: T.dicaDoNomeMudou });
+    // O RT tambem escreve (D-71): ele mesmo envia de novo.
+    expect(botao(html, T.enviarDeNovo)).toEqual({ dica: null });
+  });
+
+  it("quem não escreve vê o Enviar de novo desabilitado, com a frase do banco", () => {
+    const html = semEntidades(
+      secao({
+        dados: { ...comNomeAntigo, souRt: false },
+        podeEditarCadastros: false,
+      }),
+    );
+    expect(botao(html, T.enviarDeNovo)).toEqual({
+      dica: FRASES_SEM_PERMISSAO.escrever,
+    });
+    expect(botao(html, T.revisar)).toEqual({
+      dica: FRASES_SEM_PERMISSAO.aprovar,
+    });
+  });
+
+  it("com o nome de agora, nada disso aparece", () => {
+    const html = semEntidades(
+      secao({ dados: dados({ versoes: [versao(), AGUARDANDO], souRt: true }) }),
+    );
+    expect(html).not.toContain(T.nomeMudouNoAguardando);
+    expect(html).not.toContain(T.enviarDeNovo);
+    expect(botao(html, T.revisar)).toEqual({ dica: null });
+  });
+
+  it("o aviso sob o Nome: o texto em vigor, o texto que espera o RT, os dois ou nenhum", () => {
+    expect(avisoDoNomeDoPreparo({ emVigor: true, aguardando: false })).toBe(
+      T.avisoDoNome,
+    );
+    expect(avisoDoNomeDoPreparo({ emVigor: false, aguardando: true })).toBe(
+      T.avisoDoNomeAguardando,
+    );
+    expect(avisoDoNomeDoPreparo({ emVigor: true, aguardando: true })).toBe(
+      `${T.avisoDoNome} ${T.avisoDoNomeAguardando}`,
+    );
+    expect(avisoDoNomeDoPreparo({ emVigor: false, aguardando: false })).toBe(
+      null,
+    );
+    const html = semEntidades(
+      renderToStaticMarkup(
+        <AvisoDoNomeDoProcedimento
+          id="aviso"
+          texto={T.avisoDoNomeAguardando}
+        />,
+      ),
+    );
+    expect(html).toContain(T.avisoDoNomeAguardando);
+  });
+});
+
+describe("o texto antigo copiado do cadastro (TELA-12)", () => {
+  it("o título e o botão dizem que é o texto do cadastro, não um texto novo", () => {
+    const html = semEntidades(
+      secao({
+        dados: dados({
+          versoes: [
+            {
+              ...AGUARDANDO,
+              versao: 1,
+              origem: "texto_antigo",
+              escritoPor: null,
+            },
+          ],
+        }),
+        podeEditarCadastros: true,
+      }),
+    );
+    expect(html).toContain(T.aguardandoTextoAntigo);
+    expect(html).not.toContain(`>${T.aguardando}<`);
+    expect(botao(html, T.descartarTextoAntigo)).toEqual({ dica: null });
+    expect(html).not.toContain(`>${T.descartar}<`);
+  });
+});
+
+describe("as confirmações antes de perder texto (TELA-4 e TELA-5)", () => {
+  it("descartar o texto novo pede confirmação, com Voltar e Descartar texto", () => {
+    const html = semEntidades(
+      renderToStaticMarkup(
+        <ConfirmarDescarteDoTextoNovo
+          versao={AGUARDANDO}
+          doRt={false}
+          descartando={false}
+          aoVoltar={() => undefined}
+          aoDescartar={() => undefined}
+        />,
+      ),
+    );
+    expect(html).toContain(T.descartarTitulo);
+    expect(html).toContain(T.descartarCorpo);
+    expect(html).toContain(T.voltar);
+    expect(html).toContain(T.descartarConfirmar);
+    expect(html).toMatch(/<button[^>]*>Descartar texto<\/button>/);
+  });
+
+  it("para o RT, lembra o Devolver; o texto antigo tem o título próprio; Descartando... trava os dois botões", () => {
+    const doRt = semEntidades(
+      renderToStaticMarkup(
+        <ConfirmarDescarteDoTextoNovo
+          versao={{ origem: "texto_antigo" }}
+          doRt
+          descartando
+          aoVoltar={() => undefined}
+          aoDescartar={() => undefined}
+        />,
+      ),
+    );
+    expect(doRt).toContain(T.descartarTituloTextoAntigo);
+    expect(doRt).toContain(T.descartarCorpoDoRt);
+    expect(doRt).toMatch(
+      /<button[^>]*disabled=""[^>]*>Descartando\.\.\.<\/button>/,
+    );
+    expect(doRt).toMatch(/<button[^>]*disabled=""[^>]*>Voltar<\/button>/);
+    // Fechada: nada.
+    expect(
+      renderToStaticMarkup(
+        <ConfirmarDescarteDoTextoNovo
+          versao={null}
+          doRt
+          descartando={false}
+          aoVoltar={() => undefined}
+          aoDescartar={() => undefined}
+        />,
+      ),
+    ).toBe("");
+  });
+
+  it("o texto digitado e não enviado pede confirmação no Cancelar, no fechar e no Salvar do procedimento", () => {
+    for (const [corpo, rotulo] of [
+      [T.rascunhoAoCancelar, T.descartarOTexto],
+      [T.rascunhoAoFechar, T.descartarEFechar],
+      [T.rascunhoAoSalvar, T.salvarSemOTexto],
+    ] as const) {
+      const html = semEntidades(
+        renderToStaticMarkup(
+          <ConfirmarDescarteDoRascunho
+            aberto
+            corpo={corpo}
+            rotuloDescartar={rotulo}
+            aoContinuar={() => undefined}
+            aoDescartar={() => undefined}
+          />,
+        ),
+      );
+      expect(html).toContain(T.rascunhoTitulo);
+      expect(html).toContain(corpo);
+      expect(html).toContain(T.continuarEditando);
+      expect(html).toContain(rotulo);
+    }
+  });
+
+  it("rascunho é só o texto que mudou desde a abertura do editor", () => {
+    expect(editorComRascunho(null)).toBe(false);
+    expect(editorComRascunho({ texto: "Jejum.", inicial: "Jejum." })).toBe(
+      false,
+    );
+    // So branco nas pontas ou CRLF nao e mudanca: o banco guardaria igual.
+    expect(editorComRascunho({ texto: " Jejum.\r\n", inicial: "Jejum." })).toBe(
+      false,
+    );
+    expect(
+      editorComRascunho({ texto: "Jejum de 8 horas.", inicial: "Jejum." }),
+    ).toBe(true);
+    expect(editorComRascunho({ texto: "Jejum.", inicial: "" })).toBe(true);
+  });
+});
+
+describe("o que a pessoa leu é o que vai para o banco (TELA-1, TELA-3 e TELA-11)", () => {
+  it("o editor manda a versão lida na abertura, nunca a relida; depois do aviso de conflito, a que a tela mostra", () => {
+    expect(versaoLidaDoEnvio({ versaoLida: 2, conflito: false }, 3)).toBe(2);
+    expect(versaoLidaDoEnvio({ versaoLida: 2, conflito: true }, 3)).toBe(3);
+  });
+
+  it("o aviso de que outra pessoa salvou fica no editor, junto do texto digitado", () => {
+    const html = semEntidades(
+      renderToStaticMarkup(
+        <EditorDoPreparo
+          id="ed"
+          texto="Meu texto ainda não enviado."
+          aoMudar={() => undefined}
+          enviando={false}
+          erro={null}
+          aviso={T.outraPessoaSalvouAguardando}
+          aoEnviar={() => undefined}
+          aoCancelar={() => undefined}
+        />,
+      ),
+    );
+    expect(html).toContain("Meu texto ainda não enviado.");
+    expect(html).toContain(T.outraPessoaSalvouAguardando);
+    expect(html).toContain('data-tom="warning"');
+  });
+
+  it("o pedido do diálogo guarda a versão lida, o RT, o nome e o texto da diferença da abertura", () => {
+    const lidos = dados({ versoes: [versao(), AGUARDANDO], souRt: true });
+    const resumo = resumoDoPreparo(lidos, COLONOSCOPIA);
+    expect(
+      montarPedidoDeAprovacao({
+        modo: "aprovar",
+        versao: AGUARDANDO,
+        resumo,
+        rtAberto: RT_ANA,
+        procedimento: COLONOSCOPIA,
+      }),
+    ).toEqual({
+      modo: "aprovar",
+      versao: AGUARDANDO,
+      texto: TEXTO_NOVO,
+      versaoLida: 2,
+      rt: RT_ANA,
+      procedimento: "Colonoscopia",
+      comparacao: { texto: TEXTO_EM_VIGOR, emVigor: true },
+    });
+  });
+
+  it("a aprovada que parou de valer entra na diferença como último texto aprovado; o aprovar de novo não compara", () => {
+    const lidos = dados({
+      versoes: [versao({ rtId: "rt-antigo" }), AGUARDANDO],
+      responsaveis: [RT_ANTIGO, RT_ANA],
+      souRt: true,
+    });
+    const resumo = resumoDoPreparo(lidos, COLONOSCOPIA);
+    expect(
+      montarPedidoDeAprovacao({
+        modo: "aprovar",
+        versao: AGUARDANDO,
+        resumo,
+        rtAberto: RT_ANA,
+        procedimento: COLONOSCOPIA,
+      })?.comparacao,
+    ).toEqual({ texto: TEXTO_EM_VIGOR, emVigor: false });
+    const suspensa = versao({ situacao: "suspenso" });
+    const deNovo = montarPedidoDeAprovacao({
+      modo: "aprovar_de_novo",
+      versao: suspensa,
+      resumo: resumoDoPreparo(dados({ versoes: [suspensa] }), COLONOSCOPIA),
+      rtAberto: RT_ANA,
+      procedimento: COLONOSCOPIA,
+    });
+    expect(deNovo?.comparacao).toBeNull();
+    expect(deNovo?.texto).toBe(TEXTO_EM_VIGOR);
+  });
+
+  it("sem o texto lido ou sem RT, o diálogo não abre", () => {
+    const lidos = dados({ versoes: [versao(), AGUARDANDO] });
+    const resumo = resumoDoPreparo(lidos, COLONOSCOPIA);
+    const entrada = {
+      modo: "aprovar" as const,
+      versao: AGUARDANDO,
+      resumo,
+      rtAberto: RT_ANA,
+      procedimento: COLONOSCOPIA,
+    };
+    expect(
+      montarPedidoDeAprovacao({
+        ...entrada,
+        versao: { ...AGUARDANDO, texto: null },
+      }),
+    ).toBeNull();
+    expect(montarPedidoDeAprovacao({ ...entrada, rtAberto: null })).toBeNull();
+    expect(
+      montarPedidoDeAprovacao({
+        ...entrada,
+        resumo: { ...resumo, aprovada: versao({ texto: null }) },
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("o texto só das versões que a seção mostra (TELA-14)", () => {
+  it("de cada procedimento, a mais nova aprovada, aguardando, suspensa e devolvida", () => {
+    const ids = versoesComTextoNaTela([
+      { id: "a1", procedureId: PROC, versao: 1, situacao: "substituido" },
+      { id: "a2", procedureId: PROC, versao: 2, situacao: "aprovado" },
+      { id: "a3", procedureId: PROC, versao: 3, situacao: "descartado" },
+      { id: "a4", procedureId: PROC, versao: 4, situacao: "devolvido" },
+      { id: "a5", procedureId: PROC, versao: 5, situacao: "devolvido" },
+      { id: "a6", procedureId: PROC, versao: 6, situacao: "aguardando_rt" },
+      { id: "b1", procedureId: OUTRO, versao: 1, situacao: "suspenso" },
+    ]);
+    expect([...ids].sort()).toEqual(["a2", "a5", "a6", "b1"]);
+  });
+
+  it("o texto que não chegou: o erro com Tentar de novo, nunca um bloco em branco, e o Revisar desabilitado", () => {
+    const html = semEntidades(
+      secao({
+        dados: dados({
+          versoes: [versao(), { ...AGUARDANDO, texto: null }],
+          souRt: true,
+        }),
+      }),
+    );
+    expect(html).toContain(T.textoIndisponivel);
+    expect(html).toContain(T.tentarDeNovo);
+    expect(html).toMatch(
+      /<button[^>]*disabled=""[^>]*>Revisar e aprovar<\/button>/,
+    );
   });
 });
 
