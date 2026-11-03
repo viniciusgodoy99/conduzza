@@ -189,6 +189,30 @@ describe("normalizarTextoDoPreparo (a ordem da copia do texto antigo)", () => {
       textoDoPreparoValido(normalizarTextoDoPreparo(`  ${TEXTO}\r\n`)),
     ).toBe(true);
   });
+
+  it("a tabulacao vira espaco, antes da NFC, e a lista colada do Word fica valida", () => {
+    const colada = "1.\tJejum de 8 horas.\r\n2.\tTraga o pedido.\t";
+    expect(normalizarTextoDoPreparo(colada)).toBe(
+      "1. Jejum de 8 horas.\n2. Traga o pedido.",
+    );
+    expect(textoDoPreparoValido(normalizarTextoDoPreparo(colada))).toBe(true);
+  });
+
+  it("a copia do texto antigo na migration faz as mesmas trocas, na mesma ordem (D-83: o texto e o hash iguais)", () => {
+    const migration = readFileSync(
+      join(
+        process.cwd(),
+        "supabase/migrations/20261103100000_preparo_aprovado_pelo_rt.sql",
+      ),
+      "utf-8",
+    );
+    const copia = migration.slice(migration.indexOf("do $copia$"));
+    // CR LF, depois CR, depois a tabulacao, depois a NFC, depois as pontas
+    // com os 25 brancos: a ordem de normalizarTextoDoPreparo.
+    expect(copia).toMatch(
+      /btrim\(normalize\(replace\(replace\(replace\(p\.prep_instructions, E'\\r\\n', E'\\n'\), E'\\r', E'\\n'\), E'\\t', ' '\), nfc\),\s+c_brancos\) as texto/,
+    );
+  });
 });
 
 describe("textoDoPreparoValido (espelho do CHECK preparo_texto_valido)", () => {

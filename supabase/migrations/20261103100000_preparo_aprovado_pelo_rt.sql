@@ -66,9 +66,11 @@
 --      do ramo `ia` valem (CZIA2 ia_nao_liberada), e o corpo e EXATAMENTE a
 --      mensagem remontada da versao em vigor (CZIA3 frase_divergente). A
 --      forma da linha e a frase seguem com o efeito de hoje.
---   8. A copia do texto antigo (D-83): cada prep_instructions que cabe na
---      regra e passa nas recusas de preparo_texto_recusado vira a versao 1,
---      aguardando o RT, origem texto_antigo; o resto fica so em
+--   8. A copia do texto antigo (D-83): cada prep_instructions, normalizado
+--      como a tela normaliza (normalizarTextoDoPreparo: CR LF e CR viram LF,
+--      a tabulacao vira espaco, NFC e as pontas), que cabe na regra e passa
+--      nas recusas de preparo_texto_recusado vira a versao 1, aguardando o
+--      RT, origem texto_antigo; o resto fica so em
 --      prep_instructions (e entra nos textos que o filtro e o historico
 --      escondem). NOTICE so com as contagens (copiados, fora da regra e
 --      recusados), nunca o texto.
@@ -1935,8 +1937,11 @@ comment on function public.mensagem_ia_exige_aprovacao() is
 -- ---------------------------------------------------------------------------
 -- 10) A copia do texto antigo (D-83)
 -- ---------------------------------------------------------------------------
--- Cada procedure com prep_instructions: CR LF e CR viram LF, depois NFC,
--- depois o trim() do JavaScript (a ordem de normalizarTextoDoPreparo). Entra
+-- Cada procedure com prep_instructions: CR LF e CR viram LF, a tabulacao
+-- vira espaco, depois NFC, depois o trim() do JavaScript (a ordem e as trocas
+-- de normalizarTextoDoPreparo, lib/domain/preparo.ts: o texto e o hash da
+-- copia sao os que a tela guardaria com o mesmo texto colado; a lista
+-- numerada do Word, "1.<tab>Jejum", entra, e nao fica de fora). Entra
 -- como versao 1, aguardando o RT, origem texto_antigo, escrito_por nulo e o
 -- nome de agora, so se o normalizado nao e vazio, cabe na regra do texto, o
 -- nome cabe na regra do nome (preparo_nome_valido) e o texto passa nas
@@ -1956,7 +1961,8 @@ declare
 begin
   with antigos as (
     select p.id, p.clinic_id, p.name,
-           btrim(normalize(replace(replace(p.prep_instructions, E'\r\n', E'\n'), E'\r', E'\n'), nfc), c_brancos) as texto
+           btrim(normalize(replace(replace(replace(p.prep_instructions, E'\r\n', E'\n'), E'\r', E'\n'), E'\t', ' '), nfc),
+                 c_brancos) as texto
       from public.procedure p
      where p.prep_instructions is not null
   ), avaliados as (

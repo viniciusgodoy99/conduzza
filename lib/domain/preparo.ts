@@ -12,11 +12,11 @@
 // (os padroes de padroes.ts e trechoDePreparoNaResposta, abaixo).
 //
 // Cada regra aqui espelha o banco:
-//  - normalizarTextoDoPreparo: a mesma ordem da copia do texto antigo (CR
-//    vira LF, NFC e o trim() do JavaScript, os 25 brancos de
-//    cadastro_texto_valido); revisao da AG7 (TELA-8): a tabulacao vira
-//    espaco aqui (a copia nao a troca: o texto antigo com tabulacao fica de
-//    fora dela, como antes);
+//  - normalizarTextoDoPreparo: a mesma ordem e as mesmas trocas da copia do
+//    texto antigo (CR vira LF, a tabulacao vira espaco, NFC e o trim() do
+//    JavaScript, os 25 brancos de cadastro_texto_valido); revisao da AG7
+//    (TELA-8): a tabulacao vira espaco aqui e na copia, para o texto e o hash
+//    serem os mesmos (a paridade do harness confere);
 //  - textoDoPreparoValido: o CHECK preparo_texto_valido;
 //  - mensagemDoPreparo: a funcao mensagem_do_preparo, byte a byte;
 //  - CONSELHOS, UFS e SITUACOES_DO_PREPARO: os CHECKs das duas tabelas.
@@ -203,8 +203,9 @@ function aparar(texto: string): string {
  * normalizam ANTES de mandar. Revisao da AG7 (TELA-8): a tabulacao vira
  * espaco como o CR vira LF (a lista numerada colada do Word, "1.\tJejum",
  * caia em "caracteres invisiveis" sem a pessoa achar o que tirar); o banco
- * continua recusando a tabulacao crua, e a copia do texto antigo nao a troca
- * (o texto antigo com tabulacao fica de fora da copia, como antes).
+ * continua recusando a tabulacao crua, e a copia do texto antigo (migration
+ * 20261103100000, passo 10) faz as mesmas trocas, na mesma ordem: o texto e o
+ * hash da copia sao os que a tela guardaria.
  */
 export function normalizarTextoDoPreparo(texto: string): string {
   return aparar(
