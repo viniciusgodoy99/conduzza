@@ -3,13 +3,22 @@ import { redirect } from "next/navigation";
 import { AvisoCelular } from "@/components/shared/aviso-celular";
 import { PageHeader } from "@/components/shared/page-header";
 import { getSessionContext } from "@/lib/auth/active-clinic";
-import { canEdit, permissionHint } from "@/lib/domain/permissions";
+import {
+  canEdit,
+  // [AG7 preparo] início
+  ehAdminPleno,
+  // [AG7 preparo] fim
+  permissionHint,
+} from "@/lib/domain/permissions";
 import {
   fetchCatalogo,
   fetchMatrizDeConvenios,
   fetchUsoDosPacotes,
 } from "@/lib/queries/catalogo";
 import { fetchCadastroParaOAgente } from "@/lib/queries/cadastro-para-o-agente";
+// [AG7 preparo] início
+import { fetchPreparosDaClinica } from "@/lib/queries/preparo";
+// [AG7 preparo] fim
 import { createClient } from "@/lib/supabase/server";
 
 import { redirecionamentoDeAbaQueSaiu } from "./abas";
@@ -49,17 +58,29 @@ export default async function CadastrosPage({
   // agente (AG1: endereco e horario da unidade, idade e grade do
   // profissional, "O que o paciente precisa") tambem nao tem .catch, pelo
   // mesmo motivo.
-  const [catalogo, matriz, cadastroDoAgente, usoDosPacotes] = await Promise.all(
-    [
+  // [AG7 preparo] A orientacao de preparo (versoes e RT) tambem e tolerante:
+  // ela nunca entra num Salvar do procedimento (cada acao dela grava com a
+  // versao lida, e a RPC recusa a aba parada com texto_mudou). Falhando
+  // aqui, a secao mostra o erro e tenta de novo no navegador.
+  const [catalogo, matriz, cadastroDoAgente, usoDosPacotes, preparo] =
+    await Promise.all([
       fetchCatalogo(supabase, active.clinicId),
       fetchMatrizDeConvenios(supabase, active.clinicId),
       fetchCadastroParaOAgente(supabase, active.clinicId),
       fetchUsoDosPacotes(supabase, active.clinicId).catch(() => null),
-    ],
-  );
+      // [AG7 preparo] início
+      fetchPreparosDaClinica(supabase, active.clinicId).catch(() => null),
+      // [AG7 preparo] fim
+    ]);
 
   const podeEditar = canEdit(active.role, "cadastros");
   const dica = permissionHint(active.role, "cadastros");
+  // [AG7 preparo] início
+  // Quem define o RT (o link do aviso sem RT): o administrador pleno (o
+  // Implementador nao) e a equipe Conduzza, como a RPC.
+  const podeDefinirRt =
+    ehAdminPleno(active.role, active.implementador) || context.isProductAdmin;
+  // [AG7 preparo] fim
 
   return (
     <div className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
@@ -80,6 +101,11 @@ export default async function CadastrosPage({
         podeEditar={podeEditar}
         dica={dica ?? "Seu perfil não altera os cadastros"}
         timezone={active.timezone}
+        // [AG7 preparo] início
+        preparoInicial={preparo}
+        superAdmin={context.isProductAdmin}
+        podeDefinirRt={podeDefinirRt}
+        // [AG7 preparo] fim
       />
     </div>
   );

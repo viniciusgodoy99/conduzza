@@ -28,6 +28,15 @@ import {
   VazioDaAba,
 } from "@/components/cadastros/comum";
 import { ListaDeConvenios } from "@/components/cadastros/lista-de-convenios";
+// [AG7 preparo] início
+import {
+  AvisoDoNomeDoProcedimento,
+  AvisoSemRt,
+  FaixaDoRt,
+  SecaoDoPreparo,
+  type PreparoDaAba,
+} from "@/components/cadastros/preparo-do-procedimento";
+// [AG7 preparo] fim
 import {
   nomeDoConvenioDoRequisito,
   requisitosParaEdicao,
@@ -105,6 +114,13 @@ import type {
   Procedimento,
   Profissional,
 } from "@/lib/queries/catalogo";
+// [AG7 preparo] início
+import {
+  procedimentosAguardandoORt,
+  situacaoDoProcedimento,
+  temRtVigente,
+} from "@/lib/queries/preparo";
+// [AG7 preparo] fim
 import { cn } from "@/lib/utils";
 import {
   centavosParaReais,
@@ -134,7 +150,10 @@ type FormProcedimento = {
   default_duration_min: string;
   preco_reais: string;
   requires_evaluation: boolean;
-  prep_instructions: string;
+  // [AG7 preparo] início
+  // prep_instructions saiu do formulario: a orientacao de preparo e a secao
+  // propria (SecaoDoPreparo), com versoes aprovadas pelo RT.
+  // [AG7 preparo] fim
   bookable_by_ai: boolean;
   /** "A IA pode informar o preco e o que o procedimento exige" (AG1) */
   ia_pode_informar: boolean;
@@ -147,7 +166,6 @@ const FORM_VAZIO: FormProcedimento = {
   default_duration_min: "40",
   preco_reais: "",
   requires_evaluation: false,
-  prep_instructions: "",
   bookable_by_ai: true,
   ia_pode_informar: true,
   active: true,
@@ -198,6 +216,9 @@ const idDoRemover = (professionalId: string) => `qf-${professionalId}-remover`;
 // Alvos de foco do aviso de consultas (D4): o proprio aviso, quando ele
 // entra no lugar do Salvar, e o Salvar do rodape, quando o aviso sai.
 const ID_DO_AVISO = "proc-aviso-de-consultas";
+// [AG7 preparo] início
+const ID_DO_AVISO_DO_NOME = "proc-nome-aviso-do-preparo";
+// [AG7 preparo] fim
 const ID_DO_SALVAR = "proc-salvar";
 
 const MODOS_DE_PRECO: { valor: ModoPreco; rotulo: string }[] = [
@@ -323,7 +344,10 @@ export type CamposDoProcedimento = {
   default_duration_min: number;
   base_price_cents: number | null;
   requires_evaluation: boolean;
-  prep_instructions: string | null;
+  // [AG7 preparo] início
+  // Sem prep_instructions: ausente, a action nao mexe na coluna (que fica
+  // sem uso ate a limpeza depois da AG8, D-83).
+  // [AG7 preparo] fim
   bookable_by_ai: boolean;
   /** AG1. Ausente: a action nao mexe na coluna. */
   ia_pode_informar?: boolean;
@@ -1288,6 +1312,16 @@ function CobremSomenteLeitura({
   );
 }
 
+// [AG7 preparo] início
+/** Sem o preparo de Cadastros (um chamador antigo): a secao espera. */
+const PREPARO_ESPERANDO: PreparoDaAba = {
+  estado: { tipo: "carregando" },
+  superAdmin: false,
+  podeDefinirRt: false,
+  recarregar: () => undefined,
+};
+// [AG7 preparo] fim
+
 export function ProcedimentosTab({
   catalogo,
   matriz,
@@ -1296,7 +1330,15 @@ export function ProcedimentosTab({
   dica,
   aoMudar,
   timezone,
-}: TabProps) {
+  // [AG7 preparo] início
+  preparo = PREPARO_ESPERANDO,
+  // [AG7 preparo] fim
+}: TabProps & {
+  // [AG7 preparo] início
+  /** A orientacao de preparo (AG7): as versoes, o RT e quem pode o que. */
+  preparo?: PreparoDaAba;
+  // [AG7 preparo] fim
+}) {
   const [aberto, setAberto] = useState(false);
   const [form, setForm] = useState<FormProcedimento>(FORM_VAZIO);
   // "Quem faz e convenios" do procedimento aberto (vinculos de tres pontas).
@@ -1338,6 +1380,13 @@ export function ProcedimentosTab({
   const [requisitosNaAbertura, setRequisitosNaAbertura] = useState<
     RequisitoDoProcedimento[]
   >([]);
+  // [AG7 preparo] início
+  // O nome gravado quando o modal abriu (nulo no novo): renomear o
+  // procedimento com orientacao em vigor tira a aprovacao (o aviso do nome).
+  const [nomeNaAbertura, setNomeNaAbertura] = useState<string | null>(null);
+  // A faixa do RT filtra a tabela pelos que esperam a aprovacao dele.
+  const [soAguardandoORt, setSoAguardandoORt] = useState(false);
+  // [AG7 preparo] fim
 
   const nomes = useMemo<NomesDoCatalogo>(() => {
     const profissionais = new Map(catalogo.profissionais.map((p) => [p.id, p]));
@@ -1425,6 +1474,9 @@ export function ProcedimentosTab({
     setAviso(null);
     focoDeVolta.esquecer();
     setSomenteLeitura(leitura);
+    // [AG7 preparo] início
+    setNomeNaAbertura(procedimento?.name ?? null);
+    // [AG7 preparo] fim
     const gravados = procedimento
       ? requisitosDoProcedimento(cadastroDoAgente, procedimento.id)
       : [];
@@ -1439,7 +1491,6 @@ export function ProcedimentosTab({
             default_duration_min: String(procedimento.default_duration_min),
             preco_reais: centavosParaReais(procedimento.base_price_cents),
             requires_evaluation: procedimento.requires_evaluation,
-            prep_instructions: procedimento.prep_instructions ?? "",
             bookable_by_ai: procedimento.bookable_by_ai,
             ia_pode_informar:
               cadastroDoProcedimento(cadastroDoAgente, procedimento.id)
@@ -1566,7 +1617,6 @@ export function ProcedimentosTab({
           default_duration_min: duracao,
           base_price_cents: centavos,
           requires_evaluation: form.requires_evaluation,
-          prep_instructions: form.prep_instructions.trim() || null,
           bookable_by_ai: form.bookable_by_ai,
           ia_pode_informar: form.ia_pode_informar,
           active: form.active,
@@ -1670,6 +1720,41 @@ export function ProcedimentosTab({
     setAberto(false);
     aoMudar();
   };
+
+  // [AG7 preparo] início
+  const dadosDoPreparo =
+    preparo.estado.tipo === "pronto" ? preparo.estado.dados : null;
+  // So o RT ve a faixa (e o filtro) do que espera a aprovacao dele.
+  const aguardandoORt =
+    dadosDoPreparo && dadosDoPreparo.souRt
+      ? procedimentosAguardandoORt(dadosDoPreparo)
+      : [];
+  const filtrandoORt = soAguardandoORt && aguardandoORt.length > 0;
+  const procedimentosDaTabela = filtrandoORt
+    ? catalogo.procedimentos.filter((p) => aguardandoORt.includes(p.id))
+    : catalogo.procedimentos;
+  const procedimentoGravado = form.id
+    ? (catalogo.procedimentos.find((p) => p.id === form.id) ?? null)
+    : null;
+  // O procedimento da secao: o nome GRAVADO (o banco compara com ele).
+  const procedimentoDoPreparo = form.id
+    ? {
+        id: form.id,
+        nome: procedimentoGravado?.name ?? nomeNaAbertura ?? form.name.trim(),
+      }
+    : null;
+  // Renomear com orientacao em vigor tira a aprovacao: o aviso sob o Nome.
+  const avisaONome =
+    !somenteLeitura &&
+    form.id !== undefined &&
+    nomeNaAbertura !== null &&
+    form.name.trim() !== nomeNaAbertura &&
+    dadosDoPreparo !== null &&
+    situacaoDoProcedimento(dadosDoPreparo, {
+      id: form.id,
+      name: nomeNaAbertura,
+    }) === "aprovada";
+  // [AG7 preparo] fim
 
   const colunas: ColumnDef<Procedimento>[] = [
     {
@@ -1792,6 +1877,20 @@ export function ProcedimentosTab({
 
   return (
     <div className="grid gap-3">
+      {/* [AG7 preparo] início */}
+      {dadosDoPreparo !== null &&
+      catalogo.procedimentos.length > 0 &&
+      !temRtVigente(dadosDoPreparo) ? (
+        <AvisoSemRt podeDefinirRt={preparo.podeDefinirRt} />
+      ) : null}
+      {aguardandoORt.length > 0 ? (
+        <FaixaDoRt
+          quantos={aguardandoORt.length}
+          filtrando={filtrandoORt}
+          aoAlternar={() => setSoAguardandoORt((atual) => !atual)}
+        />
+      ) : null}
+      {/* [AG7 preparo] fim */}
       <div className="flex justify-end">
         <BotaoProtegido
           podeEditar={podeEditar}
@@ -1815,7 +1914,12 @@ export function ProcedimentosTab({
           dica={dica}
         />
       ) : (
-        <DataTable columns={colunas} data={catalogo.procedimentos} />
+        <DataTable
+          columns={colunas}
+          // [AG7 preparo] início: o filtro da faixa do RT
+          data={procedimentosDaTabela}
+          // [AG7 preparo] fim
+        />
       )}
 
       <PainelDeCadastro
@@ -1873,10 +1977,6 @@ export function ProcedimentosTab({
           <DetalheSomenteLeitura
             itens={[
               { rotulo: "Descrição", valor: form.description },
-              {
-                rotulo: "Orientação de preparo enviada ao paciente",
-                valor: form.prep_instructions,
-              },
               {
                 rotulo: "Duração padrão",
                 valor: (
@@ -1947,6 +2047,17 @@ export function ProcedimentosTab({
             ]}
           />
         ) : null}
+        {/* [AG7 preparo] início: no modo leitura, a secao inteira (o RT de
+            papel profissional ou leitura revisa, aprova e escreve aqui) */}
+        {somenteLeitura ? (
+          <SecaoDoPreparo
+            procedimento={procedimentoDoPreparo}
+            preparo={preparo}
+            podeEditarCadastros={podeEditar}
+            timezone={timezone}
+          />
+        ) : null}
+        {/* [AG7 preparo] fim */}
         {/* O formulario fica fora da arvore visivel no modo leitura
             (atributo hidden, que o preflight do Tailwind forca). */}
         <div className="grid gap-4" hidden={somenteLeitura}>
@@ -1957,7 +2068,15 @@ export function ProcedimentosTab({
               value={form.name}
               maxLength={120}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
+              // [AG7 preparo] início
+              aria-describedby={avisaONome ? ID_DO_AVISO_DO_NOME : undefined}
+              // [AG7 preparo] fim
             />
+            {/* [AG7 preparo] início */}
+            {avisaONome ? (
+              <AvisoDoNomeDoProcedimento id={ID_DO_AVISO_DO_NOME} />
+            ) : null}
+            {/* [AG7 preparo] fim */}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="proc-descricao">Descrição</Label>
@@ -2010,20 +2129,9 @@ export function ProcedimentosTab({
               setForm({ ...form, requires_evaluation: marcado })
             }
           />
-          <div className="grid gap-1.5">
-            <Label htmlFor="proc-preparo">
-              Orientação de preparo enviada ao paciente
-            </Label>
-            <Textarea
-              id="proc-preparo"
-              value={form.prep_instructions}
-              onChange={(e) =>
-                setForm({ ...form, prep_instructions: e.target.value })
-              }
-              maxLength={4000}
-              rows={3}
-            />
-          </div>
+          {/* [AG7 preparo] início: o campo de texto livre saiu; a
+              orientacao de preparo e a secao propria, la embaixo */}
+          {/* [AG7 preparo] fim */}
           <CampoDeMarcar
             id="proc-ia"
             rotulo="IA pode agendar"
@@ -2076,6 +2184,14 @@ export function ProcedimentosTab({
                 convenios={catalogo.convenios}
                 novaChave={novaChaveDoRequisito}
               />
+              {/* [AG7 preparo] início */}
+              <SecaoDoPreparo
+                procedimento={procedimentoDoPreparo}
+                preparo={preparo}
+                podeEditarCadastros={podeEditar}
+                timezone={timezone}
+              />
+              {/* [AG7 preparo] fim */}
             </>
           )}
         </div>

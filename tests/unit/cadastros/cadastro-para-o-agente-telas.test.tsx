@@ -45,6 +45,17 @@ vi.mock("@/app/(app)/cadastros/actions", () => ({
   salvarProfissionalAction: vi.fn(),
   salvarJornadaAction: vi.fn(),
 }));
+// [AG7 preparo] início: a aba importa as actions do preparo (servidor)
+vi.mock("@/app/(app)/cadastros/preparo-actions", () => ({
+  salvarPreparoAction: vi.fn(),
+  aprovarPreparoAction: vi.fn(),
+  aprovarDeNovoAction: vi.fn(),
+  devolverPreparoAction: vi.fn(),
+  descartarPreparoAction: vi.fn(),
+  suspenderPreparoAction: vi.fn(),
+  avisosDoPreparoAction: vi.fn(),
+}));
+// [AG7 preparo] fim
 
 const {
   UnidadesTab,
@@ -267,10 +278,15 @@ describe("aba Unidades", () => {
     expect(TEXTOS_DA_UNIDADE.estacionamentoAjuda).not.toMatch(/[\u2013\u2014]/);
 
     // A validacao de verdade (a mesma do servidor e a do formulario).
-    const exemplo = TEXTOS_DA_UNIDADE.estacionamentoExemplo.replace(/^Ex\.: /, "");
+    const exemplo = TEXTOS_DA_UNIDADE.estacionamentoExemplo.replace(
+      /^Ex\.: /,
+      "",
+    );
     expect(problemaNosTextosDaUnidade({ estacionamento: exemplo })).toBeNull();
     const form = formDaUnidade(SEDE, CADASTRO_DA_SEDE.unidades[0] ?? null);
-    expect(problemaDoFormDaUnidade({ ...form, estacionamento: exemplo })).toBeNull();
+    expect(
+      problemaDoFormDaUnidade({ ...form, estacionamento: exemplo }),
+    ).toBeNull();
     for (const barrado of [
       "Estacionamento gratuito para pacientes, no subsolo.",
       "Estacionamento sem custo para pacientes, no subsolo.",

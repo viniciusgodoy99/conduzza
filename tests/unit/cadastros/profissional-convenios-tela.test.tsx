@@ -76,7 +76,7 @@ const NOMES = nomesDoResumo({
       default_duration_min: 40,
       base_price_cents: 40000,
       requires_evaluation: false,
-      prep_instructions: null,
+      // [AG7 preparo] sem prep_instructions (saiu de Procedimento)
       resource_id: null,
       bookable_by_ai: true,
       active: true,
@@ -88,7 +88,7 @@ const NOMES = nomesDoResumo({
       default_duration_min: 60,
       base_price_cents: 50000,
       requires_evaluation: false,
-      prep_instructions: null,
+      // [AG7 preparo] sem prep_instructions (saiu de Procedimento)
       resource_id: null,
       bookable_by_ai: true,
       active: true,
