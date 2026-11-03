@@ -138,7 +138,11 @@ import {
   filtrarSaida,
   type DecisaoDoFiltro,
 } from "@/lib/domain/conformidade/filtro";
-import { LIMITE_DO_RASCUNHO } from "@/lib/domain/conformidade/filtro-deterministico";
+import {
+  LIMITE_DO_RASCUNHO,
+  // [AG7 preparo] A situacao da pessoa no pedido do preparo (CFM-6).
+  situacaoPessoalNoPedidoDoPreparo,
+} from "@/lib/domain/conformidade/filtro-deterministico";
 import {
   FRASE_DE_ESCALONAMENTO,
   FRASE_DO_ASSISTENTE_VIRTUAL,
@@ -1427,6 +1431,28 @@ export function entradaDoPortao(m: MensagemDaConversa): MensagemDeEntrada {
     legenda: m.legendaOriginal ?? null,
   };
 }
+
+// [AG7 preparo] início
+/**
+ * Revisao da AG7 (CFM-6): os textos das pendentes como chegaram (o texto
+ * original, a transcricao, a legenda), para a conferencia da situacao da
+ * pessoa no pedido do preparo. Local: nunca vai a OpenAI nem para log.
+ */
+function textosOriginaisDasPendentes(
+  pendentes: readonly MensagemDaConversa[],
+): string[] {
+  return pendentes.flatMap((m) => {
+    const lida = entradaDoPortao(m);
+    return [lida.texto, lida.legenda ?? null].filter(
+      (texto): texto is string => typeof texto === "string" && texto !== "",
+    );
+  });
+}
+
+/** O passo da trilha do pedido do preparo com a situacao da pessoa. */
+export const PASSO_DO_PEDIDO_COM_SITUACAO_PESSOAL =
+  "O pedido da orientação de preparo veio junto de uma situação da pessoa: passa para a equipe, sem enviar.";
+// [AG7 preparo] fim
 
 /**
  * AG6b: o arquivo a ler (ou ja lido, ainda midia) visto pela legenda
@@ -3106,6 +3132,28 @@ async function turnoDoAgente(
           );
           ferramentasUsadas.push(NOME_DO_ENVIO_DO_PREPARO);
           trilha.push({ tipo: "cadastro", texto: envio.passo });
+          // Revisao da AG7 (CFM-6): o pedido que vem junto de uma situacao
+          // da pessoa (sintoma, doenca, remedio, o que comeu, outra pessoa,
+          // a idade) passa para a equipe antes do envio. Deterministico, nas
+          // pendentes como chegaram (o portao de entrada nao muda, D-81).
+          if (
+            envio.tipo === "enviar" &&
+            situacaoPessoalNoPedidoDoPreparo(
+              textosOriginaisDasPendentes(pendentesDoTurno()),
+              nomesDoCatalogo(entrada.catalogo),
+            )
+          ) {
+            trilha.push({
+              tipo: "cadastro",
+              texto: PASSO_DO_PEDIDO_COM_SITUACAO_PESSOAL,
+            });
+            return escalar(
+              "assunto_clinico",
+              "ferramenta",
+              null,
+              ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.assunto_clinico,
+            );
+          }
           if (envio.tipo === "enviar") {
             preparoEscolhido = {
               procedimentoId: envio.procedimentoId,

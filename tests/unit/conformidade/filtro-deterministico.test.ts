@@ -32,7 +32,9 @@ import {
   FONTES_DAS_REGRAS_EM_CODIGO,
   perguntaDePreparo,
   REGRA_DA_RESPOSTA_AO_PREPARO,
+  REGRA_DO_PEDIDO_COM_SITUACAO_PESSOAL,
   REGRA_DO_TRECHO_DO_PREPARO,
+  situacaoPessoalNoPedidoDoPreparo,
 } from "@/lib/domain/conformidade/filtro-deterministico";
 import { PADROES_DE_SAIDA } from "@/lib/domain/conformidade/padroes";
 import type { Verificador } from "@/lib/domain/conformidade/veredicto";
@@ -1370,6 +1372,60 @@ describe("revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum",
     expect(
       FONTES_DAS_REGRAS_EM_CODIGO.some((fonte) =>
         fonte.startsWith(`${REGRA_DA_RESPOSTA_AO_PREPARO}: `),
+      ),
+    ).toBe(true);
+  });
+});
+// [AG7 preparo] fim
+
+// [AG7 preparo] início
+describe("revisao da AG7 (CFM-6): a situacao da pessoa no pedido do preparo", () => {
+  const CATALOGO = ["Colonoscopia", "Ultrassom de abdome", "Consulta"];
+
+  it.each([
+    "to com intestino preso, qual o preparo da colonoscopia?",
+    "comi um pão agora, ainda dá pra fazer a colonoscopia amanhã?",
+    "posso mascar chiclete no jejum?",
+    "qual o preparo da colonoscopia pra minha mãe que tem 80 anos?",
+    "sou diabética, me manda o preparo",
+    "tomo remédio de pressão, qual o preparo?",
+    "esqueci de tomar o laxante ontem, e agora?",
+    "estou com diarreia, ainda faço o preparo?",
+    "tenho alergia a manitol, qual o preparo?",
+    "estou grávida, qual o preparo da colonoscopia?",
+  ])("%j: situacao da pessoa", (texto) => {
+    expect(situacaoPessoalNoPedidoDoPreparo([texto], CATALOGO)).toBe(true);
+  });
+
+  it.each([
+    "Me manda a orientação de preparo, por favor",
+    "qual o preparo da colonoscopia?",
+    "tenho colonoscopia amanhã, qual o preparo?",
+    "tenho exame amanhã, qual o preparo?",
+    "tô com exame marcado amanhã, me manda o preparo",
+    "tô com consulta marcada amanhã, me manda o preparo",
+    "Pode me mandar a orientação de preparo de novo, por favor?",
+    "precisa de jejum pra colonoscopia?",
+    "tenho que fazer jejum?",
+    "estou com uma dúvida: qual o preparo?",
+    "quero marcar colonoscopia amanhã, precisa de jejum?",
+  ])("%j: o pedido de sempre", (texto) => {
+    expect(situacaoPessoalNoPedidoDoPreparo([texto], CATALOGO)).toBe(false);
+  });
+
+  it("qualquer pendente conta (a situacao numa, o pedido na outra)", () => {
+    expect(
+      situacaoPessoalNoPedidoDoPreparo(
+        ["qual o preparo da colonoscopia?", "to com intestino preso"],
+        CATALOGO,
+      ),
+    ).toBe(true);
+  });
+
+  it("a regra esta nas fontes da versao das regras", () => {
+    expect(
+      FONTES_DAS_REGRAS_EM_CODIGO.some((fonte) =>
+        fonte.startsWith(`${REGRA_DO_PEDIDO_COM_SITUACAO_PESSOAL}: `),
       ),
     ).toBe(true);
   });

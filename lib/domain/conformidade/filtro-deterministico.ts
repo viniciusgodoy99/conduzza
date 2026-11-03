@@ -497,6 +497,58 @@ export function perguntaDePreparo(
   });
 }
 
+/**
+ * Revisao da AG7 (CFM-6): o pedido do preparo que vem junto de uma situacao
+ * da pessoa (um sintoma, uma doenca, um remedio que toma, o que comeu ou
+ * esqueceu, a permissao para comer ou beber, outra pessoa, a idade) passa
+ * para a equipe ANTES do envio (lib/agente/laco.ts, o ramo enviar_preparo).
+ * O protocolo generico, com dose, em resposta a um sintoma funciona como
+ * resposta clinica. O portao de entrada nao muda (D-81): a conferencia e so
+ * do envio do preparo, deterministica, nas pendentes do turno (o texto como
+ * chegou), com os nomes do catalogo mascarados ("tenho Colonoscopia amanha"
+ * e o pedido de sempre).
+ */
+export const REGRA_DO_PEDIDO_COM_SITUACAO_PESSOAL =
+  "pedido_do_preparo_com_situacao_pessoal";
+
+// O que nao e situacao da pessoa depois de "to com" e "tenho": o
+// procedimento do catalogo (mascarado), o exame, a consulta, o horario, a
+// duvida e o "tenho que".
+const NAO_E_SITUACAO =
+  "(?:(?:um|uma|o|a|os|as|meu|minha|meus|minhas) )?(?:\\u00a7|(?:exames?|consultas?|procedimentos?|horarios?|agendamentos?|retornos?|pedidos?|guias?|encaminhamentos?|duvidas?|uma pergunta|pressa|tempo|horario marcado)\\b)";
+const SITUACAO_PESSOAL = [
+  // O estado ou o sintoma ("to com intestino preso", "estou com diarreia").
+  `\\b(?:to|tou|estou|ando|fiquei|tava|estava|estive) com\\b(?! ${NAO_E_SITUACAO})`,
+  `\\btenho\\b(?! (?:que|q|de)\\b)(?! ${NAO_E_SITUACAO})`,
+  "\\b(?:sinto|senti|sentindo|sofro|sofri)\\b",
+  "\\b(?:intestino preso|prisao de ventre|constipad\\w*|constipacao|diarreia|enjoo|enjoad[oa]|nausea|vomit\\w*|dor|dores|febre|sangr\\w*|colica|azia|gases|inchad[oa]|inchaco|alergi\\w*|tontura|desmai\\w*|fraqueza|tosse|gripe|gripad[oa]|resfriad[oa]|infeccao|menstruad[oa]|menstruacao|hemorroida)\\b",
+  // A condicao ("sou diabetica", "pressao alta", "gravida").
+  "\\b(?:diabet\\w*|hipertens\\w*|pressao alta|pressao baixa|cardiac\\w*|marca-?passo|insuficiencia|renal|figado|tireoide|epilep\\w*|convuls\\w*|anemi\\w*|gravida|gestante|gravidez|amamenta\\w*|lactante|operad[oa]|cirurgia|transplant\\w*)\\b",
+  // O remedio que toma, o que comeu, bebeu ou esqueceu.
+  "\\b(?:tomo|tomei|tomando|uso|usei|usando|comi|bebi|fumo|fumei|mastiguei|masco|mascando|esqueci|esquecer|vomitei|nao consegui|nao consigo|nao vou conseguir)\\b",
+  // A permissao aplicada a pessoa ("posso mascar chiclete no jejum?").
+  "\\b(?:posso|pode|devo|deve|da pra|da para|consigo)\\b (?:\\w+ ){0,3}?(?:comer|beber|tomar|mascar|chupar|fumar|usar|mastigar|ingerir|almocar|jantar|lanchar|dirigir|trabalhar|malhar|treinar)\\b",
+  // Outra pessoa e a idade ("pra minha mae que tem 80 anos").
+  "\\b(?:minha|meu) (?:mae|pai|filh[oa]s?|marido|esposa|esposo|mulher|avo|vo|vovo|tia|tio|irma|irmao|sogra|sogro|namorad[oa]|bebe|crianca|net[oa]|parente)\\b",
+  "\\b\\d{1,3} ?anos\\b",
+].join("|");
+const REGEX_DA_SITUACAO_PESSOAL = new RegExp(SITUACAO_PESSOAL);
+
+/**
+ * Revisao da AG7 (CFM-6): alguma pendente do paciente (o texto como chegou)
+ * traz uma situacao da pessoa junto do pedido do preparo?
+ */
+export function situacaoPessoalNoPedidoDoPreparo(
+  textos: readonly string[],
+  nomesDoCatalogo: readonly string[],
+): boolean {
+  return textos.some((texto) =>
+    REGEX_DA_SITUACAO_PESSOAL.test(
+      mascararNomes(normalizarBase(texto), nomesDoCatalogo),
+    ),
+  );
+}
+
 /** As frases do rascunho (base), com o sinal de que terminam em pergunta. */
 function frasesDoRascunho(
   texto: string,
@@ -577,6 +629,9 @@ export const FONTES_DAS_REGRAS_EM_CODIGO: readonly string[] = [
   `com os fatos, acima de ${LIMITE_DO_RASCUNHO} caracteres: so formato_invalido/longo, sem ler o resto`,
   // [AG7 preparo] início
   `${REGRA_DO_TRECHO_DO_PREPARO}: com os textos de preparo da clinica, a frase de ${TAMANHO_MINIMO_DO_TRECHO} caracteres ou mais de um deles (ou o texto inteiro) que aparece inteira no rascunho, os dois lados em minusculas, sem acento, sem pontuacao e com espaco unico (orientacao_clinica)`,
+  // Revisao da AG7 (CFM-6): a situacao da pessoa no pedido do preparo (a
+  // conferencia do envio, no laco).
+  `${REGRA_DO_PEDIDO_COM_SITUACAO_PESSOAL}: nas pendentes do turno do envio do preparo (o texto como chegou, os nomes do catalogo mascarados), ${SITUACAO_PESSOAL} passa para a equipe (assunto_clinico) antes do envio`,
   // Revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum.
   `${REGRA_DA_RESPOSTA_AO_PREPARO}: com a pergunta (${ASSUNTO_DO_PREPARO} e ${PERGUNTA_OU_PEDIDO}, sem ${EXAME_DE_JEJUM}) nas mensagens do paciente, o rascunho sem os textos colados so passa com a F2 colada, a oferta (${OFERTA_DO_PREPARO}) ou a pergunta do procedimento (${PERGUNTA_DO_PROCEDIMENTO}), e sem frase afirmativa que responda (${RESPOSTA_NA_FRASE}) nem pergunta que comeca respondendo (${PERGUNTA_QUE_RESPONDE}) (orientacao_clinica)`,
   // [AG7 preparo] fim

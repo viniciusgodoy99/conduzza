@@ -26,6 +26,7 @@ import { mascararNome } from "@/lib/agente/historico";
 import {
   comporResposta,
   executarTurnoDoAgente,
+  PASSO_DO_PEDIDO_COM_SITUACAO_PESSOAL,
   type ClienteDoAgente,
   type EntradaDoTurno,
   type MensagemDaConversa,
@@ -650,6 +651,58 @@ describe("o turno com enviar_preparo", () => {
     });
     expect(classificador.mock.calls[0]?.[0]).not.toHaveProperty("comPreparo");
     expect(r.versaoDoClassificador).toBe(VERSAO_DA_POLITICA_DO_CLASSIFICADOR);
+  });
+});
+
+describe("revisao da AG7 (CFM-6): o pedido do preparo junto de uma situacao da pessoa passa para a equipe antes do envio", () => {
+  const comPendente = (texto: string) => ({
+    mensagens: [
+      paciente("Oi"),
+      {
+        autor: "assistente" as const,
+        autoria: "ia" as const,
+        texto: "Olá! Como posso ajudar?",
+      },
+      paciente(texto),
+    ],
+  });
+
+  // As quatro do relatorio: passam no portao de entrada (D-81), e o modelo
+  // escolhe enviar.
+  it.each([
+    "to com intestino preso, qual o preparo da colonoscopia?",
+    "comi um pão agora, ainda dá pra fazer a colonoscopia amanhã?",
+    "posso mascar chiclete no jejum?",
+    "qual o preparo da colonoscopia pra minha mãe que tem 80 anos?",
+  ])("%j: assunto_clinico pela ferramenta, nada sai", async (pedido) => {
+    const { r } = await turno(
+      [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
+      comPendente(pedido),
+    );
+    expect(r.tipo).toBe("frase_fixa");
+    expect(r.desfecho).toEqual({
+      tipo: "escalou",
+      motivo: "assunto_clinico",
+      gatilho: null,
+      origem: "ferramenta",
+    });
+    expect(r.trilha.map((p) => p.texto)).toContain(
+      PASSO_DO_PEDIDO_COM_SITUACAO_PESSOAL,
+    );
+    expect(verificador).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "Me manda a orientação de preparo da consulta, por favor",
+    "tenho consulta amanhã, qual o preparo?",
+    "tô com consulta marcada amanhã, me manda o preparo",
+    "tenho que fazer jejum pra consulta?",
+  ])("%j: o pedido de sempre, o preparo sai", async (pedido) => {
+    const { r } = await turno(
+      [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
+      comPendente(pedido),
+    );
+    expect(r.tipo).toBe("preparo");
   });
 });
 
