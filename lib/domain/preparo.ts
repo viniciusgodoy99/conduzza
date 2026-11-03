@@ -525,6 +525,16 @@ function regexDoTexto(texto: string): RegExp {
  * marcador nunca e lido de novo. Texto sem letra nem numero e ignorado
  * (trocar todo branco do historico estragaria a conversa). E defesa em
  * profundidade: o modelo nunca ve o preparo, nem quando a regua o mandou.
+ *
+ * Revisao da AG7 (CFM-9), o limite: a troca e por igualdade com os textos da
+ * lista. Daqui para a frente nao ha buraco: a regua so manda a versao em
+ * vigor, a versao e imutavel (preparo_nao_muda) e nao se apaga (a FK do
+ * procedimento nao tem cascade), e a lista traz toda versao que ja valeu e o
+ * texto antigo (BANCO-3). O prep_instructions editado ANTES da AG7, porem,
+ * sobrescreveu o texto que a regua ja tinha mandado: esse texto velho nao
+ * esta em lugar nenhum do banco, e o toque antigo com ele vai ao modelo como
+ * esta (na producao de 03/11/2026, so um texto de 9 caracteres). O filtro
+ * na saida continua barrando o preparo que o modelo escrever.
  */
 export function semOPreparo(texto: string, textos: readonly string[]): string {
   if (typeof texto !== "string" || texto === "") {
