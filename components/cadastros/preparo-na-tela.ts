@@ -6,6 +6,7 @@ import {
   LIMITE_DO_TEXTO_DO_PREPARO,
   normalizarTextoDoPreparo,
   textoDoPreparoValido,
+  type ConteudoRecusadoPeloBanco,
   type SituacaoDoPreparo,
 } from "@/lib/domain/preparo";
 
@@ -183,6 +184,11 @@ export const TEXTOS_DO_PREPARO = {
   ficouAguardandoSemAprovar:
     "Não foi possível aprovar agora. O texto ficou aguardando o RT: feche e use Revisar e aprovar.",
   naoPodeSerAprovado: "Este texto não pode ser aprovado.",
+  // O banco recusou o conteudo (texto_recusado) e o espelho dele
+  // (conteudoRecusadoPeloBanco) nao achou o que: as quatro coisas que ele
+  // recusa.
+  textoRecusadoPeloBanco:
+    "Tire o link, o arroba, o valor em reais e os caracteres invisíveis do texto: a orientação de preparo não pode ter nenhum deles.",
 } as const;
 
 export function aprovarTitulo(procedimento: string): string {
@@ -340,13 +346,22 @@ const FRASE_DO_INVISIVEL =
 export function fraseDoCaractereRecusado(texto: string): string {
   const emoji = EMOJI_COM_JUNCAO.exec(texto);
   if (emoji) {
-    return `Tire o emoji ${emoji[0]}: ele leva um caractere invisível, que não pode ir na orientação de preparo.`;
+    return fraseDoEmoji(emoji[0]);
   }
   const achado = CARACTERE_RECUSADO.exec(texto);
   if (!achado) {
     return FRASE_DO_INVISIVEL;
   }
-  const antes = texto.slice(0, achado.index);
+  return fraseDaLinhaDoCaractere(texto, achado.index);
+}
+
+function fraseDoEmoji(emoji: string): string {
+  return `Tire o emoji ${emoji}: ele leva um caractere invisível, que não pode ir na orientação de preparo.`;
+}
+
+/** A linha e as palavras logo antes da posicao (o invisivel nao aparece). */
+function fraseDaLinhaDoCaractere(texto: string, posicao: number): string {
+  const antes = texto.slice(0, posicao);
   const linha = antes.split("\n").length;
   const palavras = antes
     .slice(antes.lastIndexOf("\n") + 1)
@@ -357,6 +372,62 @@ export function fraseDoCaractereRecusado(texto: string): string {
   return palavras === ""
     ? `Tire o caractere invisível do começo da linha ${linha}: apague e escreva de novo o começo dessa linha.`
     : `Tire o caractere invisível da linha ${linha}, logo depois de ${citarTrecho(palavras)}: apague e escreva de novo esse pedaço.`;
+}
+
+/**
+ * O emoji (o agrupamento que a pessoa ve) que leva o caractere da posicao,
+ * ou null: o emoji de tecla ("1" com o seletor de variacao e a moldura) e
+ * um so desenho na tela, e a pessoa acha o emoji, nao o invisivel.
+ */
+function emojiDaPosicao(texto: string, posicao: number): string | null {
+  if (typeof Intl === "undefined" || !("Segmenter" in Intl)) {
+    return null;
+  }
+  const segmentador = new Intl.Segmenter("pt-BR", { granularity: "grapheme" });
+  for (const { segment, index } of segmentador.segment(texto)) {
+    if (posicao >= index && posicao < index + segment.length) {
+      return Array.from(segment).length > 1 &&
+        /\p{Extended_Pictographic}|⃣/u.test(segment)
+        ? segment
+        : null;
+    }
+  }
+  return null;
+}
+
+/**
+ * O conteudo que o banco recusa (preparo_texto_recusado, pelo espelho
+ * conteudoRecusadoPeloBanco) em frase de recepcao, dizendo o que tirar e
+ * onde: o link, o valor em reais e o arroba pelo trecho; o invisivel pela
+ * linha e pelas palavras de antes (ou pelo emoji que o leva). Null: nada.
+ */
+const FRASE_DO_CONTEUDO_RECUSADO = {
+  link: "tire o link (o endereço de site, como www ou .com.br): o paciente recebe só o texto.",
+  valor_em_reais:
+    "tire o valor em reais: o preço não vai na orientação de preparo.",
+  arroba: "tire o arroba (como @clinica): o paciente recebe só o texto.",
+} as const;
+
+export function frasesDoConteudoRecusado(
+  texto: string,
+  itens: readonly ConteudoRecusadoPeloBanco[],
+): string | null {
+  if (itens.length === 0) {
+    return null;
+  }
+  const frases = itens.map((item) => {
+    if (item.causa === "invisivel") {
+      const emoji = emojiDaPosicao(texto, item.posicao);
+      return emoji
+        ? fraseDoEmoji(emoji)
+        : fraseDaLinhaDoCaractere(texto, item.posicao);
+    }
+    const base = FRASE_DO_CONTEUDO_RECUSADO[item.causa];
+    return item.trecho
+      ? `No trecho ${citarTrecho(item.trecho)}, ${base}`
+      : base.charAt(0).toLocaleUpperCase("pt-BR") + base.slice(1);
+  });
+  return [...new Set(frases)].join(" ");
 }
 
 /**
@@ -451,8 +522,9 @@ export type AcaoDoPreparo =
  * de quem chegou depois (a tela recarrega o que mostra) e os da propria
  * action: "texto_novo_aguardando" (o "Aprovar de novo" com texto novo
  * esperando o RT), "ficou_aguardando" (o "Aprovar de novo" salvou e nao
- * aprovou), "texto_recusado" (as regras de hoje recusam o texto) e
- * "versao_inexistente" (a versao sumiu ou e de outra clinica).
+ * aprovou), "texto_recusado" (as regras de hoje recusam o texto, ou o banco
+ * recusou o conteudo: o codigo texto_recusado das RPCs de salvar e de
+ * aprovar) e "versao_inexistente" (a versao sumiu ou e de outra clinica).
  */
 export type CodigoDaRecusa =
   | "sem_permissao"
@@ -496,6 +568,8 @@ const FRASE_DO_CODIGO: Record<string, string> = {
   procedimento_inexistente: "Procedimento não encontrado.",
   versao_inexistente: "Este texto não foi encontrado. Feche e abra de novo.",
   texto_invalido: "Confira o texto da orientação de preparo.",
+  // Sem o texto na mao (a action troca pela frase com o trecho antes daqui).
+  texto_recusado: TEXTOS_DO_PREPARO.textoRecusadoPeloBanco,
   nome_do_procedimento_invalido:
     "Confira o nome do procedimento antes de escrever a orientação de preparo.",
   comentario_invalido: "Escreva o que precisa mudar, em até 300 caracteres.",
@@ -509,6 +583,7 @@ const CODIGOS_DA_TELA: ReadonlySet<string> = new Set([
   "outra_aprovacao",
   "sem_preparo_aprovado",
   "versao_inexistente",
+  "texto_recusado",
 ]);
 
 /** A frase 42501 de cada acao: a que a RPC dela manda. */

@@ -8,16 +8,18 @@ import {
   FRASE_DA_EQUIPE_CONDUZZA,
   FRASES_SEM_PERMISSAO,
   frasesDasRecusas,
-  frasesDoTexto,
+  frasesDoConteudoRecusado,
   prepararTextoDoPreparo,
   problemaNoTextoDoPreparo,
   TEXTOS_DO_PREPARO as T,
   traduzirErroDoPreparo,
+  type AcaoDoPreparo,
   type RecusaDoPreparo,
 } from "@/components/cadastros/preparo-na-tela";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { problemasDoTextoDoPreparo } from "@/lib/domain/conformidade/preparo-aprovado";
 import { canEdit, type Role } from "@/lib/domain/permissions";
+import { conteudoRecusadoPeloBanco } from "@/lib/domain/preparo";
 import { createClient } from "@/lib/supabase/server";
 
 // Server Actions da orientacao de preparo do procedimento (AG7; Cadastros,
@@ -235,29 +237,67 @@ const respostaDoSalvarSchema = z.object({
 /**
  * As recusas de hoje no texto (problemasDoTextoDoPreparo: promessa, oferta
  * casada, antes e depois, preco e link) em frase que diz o que tirar e ONDE
- * (TELA-8): cada categoria recusada aponta a primeira frase do texto em que
- * ela aparece, conferida frase a frase. A categoria que so o texto inteiro
- * acusa fica com a frase sem trecho. Null: o texto passa (remedio, dose e
- * jejum so avisam, D-80).
+ * (TELA-8): cada categoria recusada aponta a primeira frase do texto que a
+ * dispara sozinha (trechosDasRecusas, calculado no servidor). A categoria
+ * que so o texto inteiro acusa fica com a frase sem trecho. Null: o texto
+ * passa (remedio, dose e jejum so avisam, D-80).
  */
 function recusaDoTexto(texto: string): string | null {
-  const { recusas } = problemasDoTextoDoPreparo(texto);
+  const { recusas, trechosDasRecusas } = problemasDoTextoDoPreparo(texto);
   if (recusas.length === 0) {
     return null;
   }
-  const semTrecho = new Set<string>(recusas);
   const trechos: Record<string, string> = {};
-  for (const frase of frasesDoTexto(texto)) {
-    if (semTrecho.size === 0) {
-      break;
-    }
-    for (const categoria of problemasDoTextoDoPreparo(frase).recusas) {
-      if (semTrecho.delete(categoria)) {
-        trechos[categoria] = frase;
-      }
+  for (const { categoria, trecho } of trechosDasRecusas) {
+    if (trecho !== null && !Object.hasOwn(trechos, categoria)) {
+      trechos[categoria] = trecho;
     }
   }
   return frasesDasRecusas(recusas, trechos);
+}
+
+/**
+ * O texto que o BANCO recusou (texto_recusado: 22023 no salvar, P0001 no
+ * aprovar; preparo_texto_recusado: o link, o valor em reais, o arroba ou o
+ * invisivel que o filtro recusa), dito em frase que diz o que tirar, a
+ * partir do texto que foi ao banco. As regras de hoje ja recusaram antes
+ * tudo o que acharam (textoParaSalvar e o aprovar), entao chegar aqui e uma
+ * divergencia: quem explica e o espelho da funcao do banco
+ * (conteudoRecusadoPeloBanco), com o trecho ou a linha; sem achar, as quatro
+ * coisas que o banco recusa. Nunca "Nao foi possivel...": a pessoa precisa
+ * saber o que tirar.
+ */
+function fraseDoTextoRecusado(texto: string): string {
+  return (
+    frasesDoConteudoRecusado(texto, conteudoRecusadoPeloBanco(texto)) ??
+    T.textoRecusadoPeloBanco
+  );
+}
+
+type ErroDaRpc = { code?: string | null; message?: string | null };
+
+/**
+ * A recusa da RPC em frase de recepcao: o texto_recusado com o que tirar
+ * (o aprovar com "Este texto nao pode ser aprovado." antes, como a recusa
+ * das regras de hoje); o resto, traduzirErroDoPreparo.
+ */
+function recusaDoBanco(
+  acao: AcaoDoPreparo,
+  erro: ErroDaRpc,
+  texto: string,
+): RecusaDoPreparo {
+  if (
+    erro.message === "texto_recusado" &&
+    (erro.code === "22023" || erro.code === "P0001")
+  ) {
+    const frase = fraseDoTextoRecusado(texto);
+    return {
+      ok: false,
+      error: acao === "aprovar" ? `${T.naoPodeSerAprovado} ${frase}` : frase,
+      code: "texto_recusado",
+    };
+  }
+  return traduzirErroDoPreparo(acao, erro);
 }
 
 /**
@@ -297,7 +337,7 @@ async function salvarNoBanco(
     },
   );
   if (error) {
-    return traduzirErroDoPreparo("salvar", error);
+    return recusaDoBanco("salvar", error, texto);
   }
   const resposta = respostaDoSalvarSchema.safeParse(data);
   return {
@@ -426,7 +466,7 @@ export async function aprovarPreparoAction(
     { p_versao_id: lido.data.versaoId, p_texto_sha256: lido.data.textoSha256 },
   );
   if (error) {
-    return traduzirErroDoPreparo("aprovar", error);
+    return recusaDoBanco("aprovar", error, versao.texto);
   }
   revalidar();
   return { ok: true };
@@ -533,7 +573,11 @@ export async function aprovarDeNovoAction(
     lido.data.versaoLida,
   );
   if (!salvo.ok) {
-    return salvo;
+    // O banco recusou o conteudo no salvar: nada gravado, e a frase e a do
+    // aprovar (a pessoa esta aprovando).
+    return salvo.code === "texto_recusado"
+      ? { ...salvo, error: `${T.naoPodeSerAprovado} ${salvo.error}` }
+      : salvo;
   }
   revalidar();
   if (salvo.versao === null || salvo.versao.textoSha256 !== base.texto_sha256) {
@@ -554,7 +598,7 @@ export async function aprovarDeNovoAction(
     },
   );
   if (aprovado.error) {
-    const recusa = traduzirErroDoPreparo("aprovar", aprovado.error);
+    const recusa = recusaDoBanco("aprovar", aprovado.error, texto.texto);
     return recusa.code === undefined
       ? {
           ok: false,

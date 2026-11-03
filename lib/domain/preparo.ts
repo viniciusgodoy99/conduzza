@@ -351,6 +351,99 @@ export function problemaDeFormatoDoTextoDoPreparo(
 }
 
 // ---------------------------------------------------------------------------
+// O conteudo que o banco recusa sozinho (espelho de preparo_texto_recusado)
+// ---------------------------------------------------------------------------
+
+/**
+ * O que preparo_texto_recusado (migration 20261103100000, CFM-2) recusa, com
+ * o lugar: o link, o valor em reais e o arroba com a frase do texto (como a
+ * clinica escreveu, aparada) que dispara sozinha (null quando so o texto
+ * inteiro dispara), e o invisivel com a posicao (indice UTF-16) do primeiro.
+ * Fechamento entre as frentes da AG7: o salvar (22023) e o aprovar (P0001)
+ * respondem so o codigo texto_recusado, e a action diz o que tirar a partir
+ * do texto que mandou. As regras da tela (problemasDoTextoDoPreparo) recusam
+ * antes tudo isso e mais; este espelho e o que sobra quando o banco recusa e
+ * as regras nao (uma divergencia), e a paridade do harness confere que ele
+ * diz o mesmo que a funcao do banco num corpus.
+ */
+export type ConteudoRecusadoPeloBanco =
+  | { causa: "link" | "valor_em_reais" | "arroba"; trecho: string | null }
+  | { causa: "invisivel"; posicao: number };
+
+// O \m e o \M do Postgres (comeco e fim de palavra; a palavra e letra, digito
+// decimal ou sublinhado, como o u_isalnum do ICU da producao).
+const COMECO_DE_PALAVRA = "(?<![\\p{L}\\p{Nd}_])(?=[\\p{L}\\p{Nd}_])";
+const FIM_DE_PALAVRA = "(?<=[\\p{L}\\p{Nd}_])(?![\\p{L}\\p{Nd}_])";
+// O [[:space:]] do ICU (u_isspace): os separadores e os brancos de controle.
+const ESPACO_DO_BANCO =
+  "\\p{Zs}\\t\\n\\v\\f\\r\\u001c-\\u001f\\u0085\\u2028\\u2029";
+
+const LINK_DO_BANCO = new RegExp(
+  `://|${COMECO_DE_PALAVRA}https?${FIM_DE_PALAVRA}|${COMECO_DE_PALAVRA}www\\.|` +
+    `${COMECO_DE_PALAVRA}[a-z0-9-]{2,}\\.(?:com|net|org|br|io|ly|me|gl|co|app|link|site|info|xyz|online|store|shop|page|to|cc|ai|gg|tk|ml)(?:\\.[a-z]{2})?${FIM_DE_PALAVRA}`,
+  "u",
+);
+const VALOR_DO_BANCO = new RegExp(
+  `${COMECO_DE_PALAVRA}r\\$ ?[0-9]|${COMECO_DE_PALAVRA}[0-9]+(?:[.,][0-9]+)* reais${FIM_DE_PALAVRA}`,
+  "u",
+);
+const ARROBA_DO_BANCO = new RegExp(
+  `(?:^|[${ESPACO_DO_BANCO}(){}"',;:!?/*<>=|])@[a-z0-9_.]{2,}|${COMECO_DE_PALAVRA}arroba${FIM_DE_PALAVRA}`,
+  "u",
+);
+// No texto como veio: os invisiveis que o filtro recusa e o CHECK nao, e o
+// seletor de variacao colado numa letra ou digito (o "1" do emoji de tecla).
+const INVISIVEL_DO_BANCO =
+  /[͏؜ᅟᅠ᠎⁦-⁩⠀ㅤﾠ\u{e0000}-\u{e007f}]|(?<=[0-9A-Za-z])[︀-️]/u;
+
+/** A visao base do banco: NFKD, minusculas e sem os acentos U+0300 a U+036F. */
+function baseDoBanco(texto: string): string {
+  return texto.normalize("NFKD").toLowerCase().replace(/[̀-ͯ]/g, "");
+}
+
+/** As frases do texto, como escritas e aparadas (o corte das recusas da tela). */
+function frasesParaORecorte(texto: string): string[] {
+  return texto
+    .split(/(?<=[.!?;:])\s+|\n+/u)
+    .map((frase) => frase.trim())
+    .filter((frase) => /[\p{L}\p{N}]/u.test(frase));
+}
+
+export function conteudoRecusadoPeloBanco(
+  texto: string,
+): ConteudoRecusadoPeloBanco[] {
+  if (typeof texto !== "string" || texto === "") {
+    return [];
+  }
+  const base = baseDoBanco(texto);
+  const achados: ConteudoRecusadoPeloBanco[] = [];
+  const causas = [
+    ["link", LINK_DO_BANCO],
+    ["valor_em_reais", VALOR_DO_BANCO],
+    ["arroba", ARROBA_DO_BANCO],
+  ] as const;
+  for (const [causa, regex] of causas) {
+    if (regex.test(base)) {
+      const trecho =
+        frasesParaORecorte(texto).find((frase) =>
+          regex.test(baseDoBanco(frase)),
+        ) ?? null;
+      achados.push({ causa, trecho });
+    }
+  }
+  const invisivel = INVISIVEL_DO_BANCO.exec(texto);
+  if (invisivel) {
+    achados.push({ causa: "invisivel", posicao: invisivel.index });
+  }
+  return achados;
+}
+
+/** O espelho de preparo_texto_recusado: o banco recusa este texto? */
+export function textoRecusadoPeloBanco(texto: string): boolean {
+  return conteudoRecusadoPeloBanco(texto).length > 0;
+}
+
+// ---------------------------------------------------------------------------
 // A mensagem do sistema (espelho de mensagem_do_preparo)
 // ---------------------------------------------------------------------------
 

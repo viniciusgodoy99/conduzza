@@ -10,6 +10,7 @@ import {
   CABECALHO_DO_PREPARO,
   codigoDoTexto,
   CONSELHOS,
+  conteudoRecusadoPeloBanco,
   ehConselho,
   ehMensagemDoPreparo,
   ehUf,
@@ -27,6 +28,7 @@ import {
   SUBSTITUTO_DO_TEXTO_DO_PREPARO,
   substitutoDaMensagemDoPreparo,
   textoDoPreparoValido,
+  textoRecusadoPeloBanco,
   UFS,
   type VersaoNaTela,
 } from "@/lib/domain/preparo";
@@ -432,6 +434,78 @@ describe("ehMensagemDoPreparo (a bolha do Atendimento)", () => {
         JSON.stringify(desvio),
       ).toBe(false);
     }
+  });
+});
+
+describe("conteudoRecusadoPeloBanco (o espelho de preparo_texto_recusado)", () => {
+  it("o texto de preparo comum passa", () => {
+    for (const texto of [
+      TEXTO,
+      "Jejum absoluto de 8 horas antes do exame.",
+      "Beba 1 litro de manitol a 10% gelado.",
+      "Traga o pedido médico e um documento com foto.",
+      "Escreva para contato@clinica",
+      "Leve 2 garrafas de 1,5 litro.",
+      "50reais",
+      "Jejum \u2764\ufe0f.",
+    ]) {
+      expect(conteudoRecusadoPeloBanco(texto), texto).toEqual([]);
+      expect(textoRecusadoPeloBanco(texto), texto).toBe(false);
+    }
+  });
+
+  it("o link, o valor em reais e o arroba, com a frase que dispara sozinha", () => {
+    expect(
+      conteudoRecusadoPeloBanco(
+        "Jejum de 8 horas.\nVeja o vídeo em clinica.com.br. Traga R$ 50,00 para o estacionamento.",
+      ),
+    ).toEqual([
+      { causa: "link", trecho: "Veja o vídeo em clinica.com.br." },
+      {
+        causa: "valor_em_reais",
+        trecho: "Traga R$ 50,00 para o estacionamento.",
+      },
+    ]);
+    expect(
+      conteudoRecusadoPeloBanco("Siga @clinica.ensaio para mais dicas."),
+    ).toEqual([
+      { causa: "arroba", trecho: "Siga @clinica.ensaio para mais dicas." },
+    ]);
+    expect(conteudoRecusadoPeloBanco("Pague 50 reais na recepção.")).toEqual([
+      { causa: "valor_em_reais", trecho: "Pague 50 reais na recepção." },
+    ]);
+    // A palavra "arroba" tambem (o banco nao separa o peso do arroba).
+    expect(conteudoRecusadoPeloBanco("Uma arroba de peso.")).toEqual([
+      { causa: "arroba", trecho: "Uma arroba de peso." },
+    ]);
+    for (const texto of [
+      "Veja https://bit.ly/abc",
+      "Acesse www.clinica.com.br",
+      "Abra ://preparo",
+      "Veja em http, no site.",
+      "ＷＷＷ．site",
+    ]) {
+      expect(
+        conteudoRecusadoPeloBanco(texto).map((c) => c.causa),
+        texto,
+      ).toContain("link");
+    }
+  });
+
+  it("o invisivel que o filtro recusa e o CHECK nao, com a posicao do primeiro", () => {
+    expect(conteudoRecusadoPeloBanco("Jejum de \u20668 horas\u2069.")).toEqual([
+      { causa: "invisivel", posicao: 9 },
+    ]);
+    // O seletor de variacao colado no digito (o emoji de tecla).
+    expect(conteudoRecusadoPeloBanco("Tome 1\ufe0f\u20e3 comprimido.")).toEqual(
+      [{ causa: "invisivel", posicao: 6 }],
+    );
+    expect(textoRecusadoPeloBanco("Je\u{e0041}jum.")).toBe(true);
+  });
+
+  it("vazio ou fora do tipo: nada", () => {
+    expect(conteudoRecusadoPeloBanco("")).toEqual([]);
+    expect(conteudoRecusadoPeloBanco(null as unknown as string)).toEqual([]);
   });
 });
 

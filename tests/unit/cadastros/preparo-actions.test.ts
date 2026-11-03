@@ -24,7 +24,11 @@ import {
 //   - o "aprovar de novo" sem gravar nada quando ha texto novo esperando o
 //     RT (TELA-1), quando o texto do banco nao e o que o RT leu, quando o
 //     nome do procedimento nao e o da previa (TELA-11) ou quando as regras
-//     recusam o texto; e sem aprovar a versao nova que nao e o texto lido.
+//     recusam o texto; e sem aprovar a versao nova que nao e o texto lido;
+//   - o fechamento entre as frentes: o texto_recusado do banco (22023 no
+//     salvar, P0001 no aprovar) vira a frase que diz o que tirar (as regras
+//     de hoje; senao, o espelho da funcao do banco, com o trecho; senao, as
+//     quatro coisas que o banco recusa), nunca "Nao foi possivel...".
 // O comportamento do banco (as RPCs, as travas, a trilha) esta em
 // tests/rls/preparo-aprovado-pelo-rt.test.ts e tests/integration.
 
@@ -44,6 +48,26 @@ const SHA_ANTIGO = "d".repeat(64);
 
 type Linha = Record<string, unknown>;
 type Erro = { code: string; message: string };
+
+// As regras de hoje (problemasDoTextoDoPreparo) de verdade, salvo quando o
+// teste simula a divergencia: o banco recusou o que elas deixaram passar.
+const regras = vi.hoisted(() => ({ semRecusas: false }));
+vi.mock(
+  "@/lib/domain/conformidade/preparo-aprovado",
+  async (importOriginal) => {
+    const real =
+      await importOriginal<
+        typeof import("@/lib/domain/conformidade/preparo-aprovado")
+      >();
+    return {
+      ...real,
+      problemasDoTextoDoPreparo: (texto: string) =>
+        regras.semRecusas
+          ? { recusas: [], avisos: [], trechosDasRecusas: [] }
+          : real.problemasDoTextoDoPreparo(texto),
+    };
+  },
+);
 
 const estado = {
   tabelas: {} as Record<string, Linha[]>,
@@ -139,6 +163,7 @@ function escritas(): string[] {
 }
 
 beforeEach(() => {
+  regras.semRecusas = false;
   sessao.active = {
     clinicId: CLINICA,
     clinicName: "Clínica A",
@@ -385,6 +410,68 @@ describe("escrever (salvarPreparoAction)", () => {
     });
   });
 
+  it("o banco recusa o conteúdo (22023 texto_recusado): a frase diz o que tirar, nunca o erro de sempre", async () => {
+    // Uma divergencia: as regras de hoje deixaram passar, o banco recusou.
+    regras.semRecusas = true;
+    estado.respostas.salvar_preparo_do_procedimento = {
+      data: null,
+      error: { code: "22023", message: "texto_recusado" },
+    };
+    // O espelho da funcao do banco acha o link e a frase em que ele esta.
+    expect(
+      await salvarPreparoAction({
+        ...SALVAR,
+        texto: "Jejum de 8 horas.\nVeja o vídeo em clinica.com.br.",
+      }),
+    ).toEqual({
+      ok: false,
+      error:
+        "No trecho “Veja o vídeo em clinica.com.br.”, tire o link (o endereço de site, como www ou .com.br): o paciente recebe só o texto.",
+      code: "texto_recusado",
+    });
+    // O invisivel: a linha e as palavras de antes.
+    expect(
+      await salvarPreparoAction({
+        ...SALVAR,
+        texto: "Jejum de 8 horas.\nTraga o pedido\u2066 médico.",
+      }),
+    ).toEqual({
+      ok: false,
+      error:
+        "Tire o caractere invisível da linha 2, logo depois de “Traga o pedido”: apague e escreva de novo esse pedaço.",
+      code: "texto_recusado",
+    });
+    // Nem as regras nem o espelho acham: as quatro coisas que o banco recusa.
+    expect(await salvarPreparoAction(SALVAR)).toEqual({
+      ok: false,
+      error: T.textoRecusadoPeloBanco,
+      code: "texto_recusado",
+    });
+    for (const chamada of estado.rpcs) {
+      expect(chamada.nome).not.toBe("aprovar_preparo_do_procedimento");
+    }
+  });
+
+  it("o banco recusa o arroba e o emoji de tecla: o trecho e o emoji, cada um uma vez", async () => {
+    regras.semRecusas = true;
+    estado.respostas.salvar_preparo_do_procedimento = {
+      data: null,
+      error: { code: "22023", message: "texto_recusado" },
+    };
+    expect(
+      await salvarPreparoAction({
+        ...SALVAR,
+        texto:
+          "Siga @clinica.ensaio para mais dicas.\nTome 1\ufe0f\u20e3 comprimido.",
+      }),
+    ).toEqual({
+      ok: false,
+      error:
+        "No trecho “Siga @clinica.ensaio para mais dicas.”, tire o arroba (como @clinica): o paciente recebe só o texto. Tire o emoji 1\ufe0f\u20e3: ele leva um caractere invisível, que não pode ir na orientação de preparo.",
+      code: "texto_recusado",
+    });
+  });
+
   it("o 42501 técnico do Postgres nunca chega à tela (TELA-10)", async () => {
     estado.respostas.salvar_preparo_do_procedimento = {
       data: null,
@@ -517,6 +604,35 @@ describe("aprovar e devolver (só o RT vigente)", () => {
     expect(escritas()).toEqual([]);
   });
 
+  it("o banco recusa o conteúdo ao aprovar (P0001 texto_recusado): não aprovado, e a frase diz o que tirar", async () => {
+    regras.semRecusas = true;
+    estado.tabelas.preparo_do_procedimento?.push({
+      id: V_ANTIGO,
+      clinic_id: CLINICA,
+      procedure_id: PROC,
+      versao: 3,
+      situacao: "aguardando_rt",
+      texto: "Jejum de 8 horas. Traga R$ 50,00 para o estacionamento.",
+      texto_sha256: SHA_ANTIGO,
+    });
+    estado.respostas.aprovar_preparo_do_procedimento = {
+      data: null,
+      error: { code: "P0001", message: "texto_recusado" },
+    };
+    papel("leitura", { rt: true });
+    expect(
+      await aprovarPreparoAction({
+        versaoId: V_ANTIGO,
+        textoSha256: SHA_ANTIGO,
+      }),
+    ).toEqual({
+      ok: false,
+      error:
+        "Este texto não pode ser aprovado. No trecho “Traga R$ 50,00 para o estacionamento.”, tire o valor em reais: o preço não vai na orientação de preparo.",
+      code: "texto_recusado",
+    });
+  });
+
   it("quem chegou depois: nao_aguarda_aprovacao e o 42501 do RT que mudou", async () => {
     papel("admin", { rt: true });
     estado.respostas.aprovar_preparo_do_procedimento = {
@@ -630,6 +746,22 @@ describe("aprovar de novo", () => {
         args: { p_versao_id: NOVA, p_texto_sha256: SHA_V1 },
       },
     ]);
+  });
+
+  it("o banco recusa o conteúdo no salvar do aprovar de novo: nada aprovado, e a frase é a do aprovar", async () => {
+    semAguardando();
+    regras.semRecusas = true;
+    estado.respostas.salvar_preparo_do_procedimento = {
+      data: null,
+      error: { code: "22023", message: "texto_recusado" },
+    };
+    papel("leitura", { rt: true });
+    expect(await aprovarDeNovoAction(DE_NOVO)).toEqual({
+      ok: false,
+      error: `${T.naoPodeSerAprovado} ${T.textoRecusadoPeloBanco}`,
+      code: "texto_recusado",
+    });
+    expect(escritas()).toEqual(["salvar_preparo_do_procedimento"]);
   });
 
   it("o texto do banco não é o que o RT leu: nada é gravado", async () => {
