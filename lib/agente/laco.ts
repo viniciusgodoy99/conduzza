@@ -779,6 +779,21 @@ export function rotuloDoBloqueio(categoria: CategoriaDeConformidade): string {
   return ROTULO_DO_BLOQUEIO[categoria];
 }
 
+// [AG7 preparo] início
+/**
+ * Revisao da AG7 (CFM-2): o passo da trilha quando o texto aprovado do
+ * preparo tem o que nunca vai ao paciente (as recusas de
+ * problemasDoTextoDoPreparo, reconferidas no envio). So os rotulos das
+ * categorias, nunca o texto.
+ */
+export function passoDoPreparoRecusado(
+  recusas: readonly CategoriaDeConformidade[],
+): string {
+  const rotulos = [...new Set(recusas.map(rotuloDoBloqueio))].join(", ");
+  return `A orientação de preparo aprovada tem o que nunca vai ao paciente (${rotulos}): nada foi enviado.`;
+}
+// [AG7 preparo] fim
+
 /** O motivo de escalonamento de cada gatilho do portao de entrada. */
 const MOTIVO_DO_GATILHO: Readonly<
   Record<GatilhoDeEntrada, MotivoDeEscalonamento>

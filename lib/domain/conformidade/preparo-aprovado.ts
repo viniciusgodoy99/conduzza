@@ -71,20 +71,55 @@ function marcar(preparo: PreparoSemMarca): PreparoAprovado {
 }
 
 /**
+ * O que a conferencia do envio decide (conferirParaEnvio):
+ *  - pronto: o PreparoAprovado, congelado;
+ *  - fora_do_formato: a leitura nao confere (campo, hash, tamanho, formato
+ *    da mensagem); nada sai;
+ *  - recusado: revisao da AG7 (CFM-2) o texto aprovado tem o que NUNCA pode
+ *    ir ao paciente, nem aprovado pelo RT (promessa, oferta casada, antes e
+ *    depois, preco, link: as recusas de problemasDoTextoDoPreparo). Nada
+ *    sai; quem chama grava o motivo (as categorias, nunca o texto).
+ */
+export type ConferenciaDoEnvio =
+  | { tipo: "pronto"; preparo: PreparoAprovado }
+  | { tipo: "fora_do_formato" }
+  | {
+      tipo: "recusado";
+      recusas: readonly CategoriaDeConformidade[];
+      versaoId: string;
+      procedureId: string;
+    };
+
+/**
  * A leitura de ler_preparo_para_envio ({versao_id, procedure_id, versao,
  * mensagem, sha256}) conferida, ou null (quem chama passa a conversa para a
- * equipe; nada sai). Recebe unknown de proposito: confere cada campo.
+ * equipe; nada sai). Recebe unknown de proposito: confere cada campo. A
+ * mesma conferencia de conferirParaEnvio, sem dizer o motivo.
+ */
+export function aprovarParaEnvio(lido: unknown): PreparoAprovado | null {
+  const conferido = conferirParaEnvio(lido);
+  return conferido.tipo === "pronto" ? conferido.preparo : null;
+}
+
+/**
+ * A conferencia da leitura de ler_preparo_para_envio, com o motivo:
  *  - versao_id e procedure_id sao uuid; versao e inteiro de 1 para cima;
  *  - sha256 tem 64 hexadecimais e e o sha256 do UTF-8 da mensagem (o mesmo
  *    calculo do banco, sha256DoTexto);
  *  - a mensagem tem de 1 a 4.096 caracteres e o formato da mensagem do
  *    preparo: comeca pelo cabecalho, tem a linha do RT, o texto e termina no
- *    rodape (partesDaMensagemDoPreparo).
+ *    rodape (partesDaMensagemDoPreparo);
+ *  - revisao da AG7 (CFM-2): o TEXTO aprovado (o miolo da mensagem) nao tem
+ *    recusa de problemasDoTextoDoPreparo. O banco so confere o formato; o
+ *    texto que chegou aguardando o RT por outro caminho (a copia do texto
+ *    antigo, a RPC chamada direto) e foi aprovado nunca sai com promessa,
+ *    oferta casada, antes e depois, preco ou link. Falha fechada.
  * O PreparoAprovado sai congelado.
  */
-export function aprovarParaEnvio(lido: unknown): PreparoAprovado | null {
+export function conferirParaEnvio(lido: unknown): ConferenciaDoEnvio {
+  const foraDoFormato: ConferenciaDoEnvio = { tipo: "fora_do_formato" };
   if (typeof lido !== "object" || lido === null || Array.isArray(lido)) {
-    return null;
+    return foraDoFormato;
   }
   const campos = lido as Record<string, unknown>;
   const versaoId = campos.versao_id;
@@ -104,19 +139,27 @@ export function aprovarParaEnvio(lido: unknown): PreparoAprovado | null {
     !SHA256_HEX.test(sha256) ||
     typeof mensagem !== "string"
   ) {
-    return null;
+    return foraDoFormato;
   }
   const tamanho = Array.from(mensagem).length;
   if (tamanho < 1 || tamanho > LIMITE_DA_MENSAGEM_DO_PREPARO) {
-    return null;
+    return foraDoFormato;
   }
-  if (partesDaMensagemDoPreparo(mensagem) === null) {
-    return null;
+  const partes = partesDaMensagemDoPreparo(mensagem);
+  if (partes === null) {
+    return foraDoFormato;
   }
   if (sha256DoTexto(mensagem) !== sha256) {
-    return null;
+    return foraDoFormato;
   }
-  return marcar({ mensagem, sha256, versaoId, procedureId, versao });
+  const { recusas } = problemasDoTextoDoPreparo(partes.texto);
+  if (recusas.length > 0) {
+    return { tipo: "recusado", recusas, versaoId, procedureId };
+  }
+  return {
+    tipo: "pronto",
+    preparo: marcar({ mensagem, sha256, versaoId, procedureId, versao }),
+  };
 }
 
 // ---------------------------------------------------------------------------

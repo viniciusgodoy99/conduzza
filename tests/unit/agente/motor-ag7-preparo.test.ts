@@ -1396,6 +1396,34 @@ describe("o simulador com o preparo", () => {
     );
   });
 
+  it("revisao da AG7 (CFM-2): o texto aprovado com recusa nao aparece; o bloqueio e a frase, como no WhatsApp", async () => {
+    const b = bancoDoSimulador(
+      mensagemDoPreparo({
+        procedimento: "Consulta",
+        rt: RT_DE_TESTE,
+        texto: "Venha sem maquiagem. Resultado garantido, você vai sair renovada!",
+      }),
+    );
+    const { r } = await simular(
+      b,
+      [{ autor: "paciente", texto: "Me manda a orientação de preparo" }],
+      [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) {
+      return;
+    }
+    expect(r.tipo).toBe("frase_fixa");
+    expect(r.resposta).toBe(FRASE_DE_ESCALONAMENTO);
+    expect(r.trilha.map((p) => p.texto)).toEqual(
+      expect.arrayContaining([
+        "A orientação de preparo aprovada tem o que nunca vai ao paciente (promessa de resultado): nada foi enviado.",
+        "Passou para a equipe: a resposta não passou na conformidade",
+      ]),
+    );
+    expect(JSON.stringify(r)).not.toContain("Resultado garantido");
+  });
+
   it("a leitura que falha: o simulador avisa, sem inventar", async () => {
     const b = bancoDoSimulador(MENSAGEM);
     b.rpc("ler_preparo_para_envio", () => ({

@@ -126,6 +126,7 @@ import { log } from "@/lib/log";
 import { lerPreparoParaEnvio } from "@/lib/agente/contexto";
 import { PASSO_DO_PREPARO_FORA_DE_VIGOR } from "@/lib/agente/ferramentas/enviar-preparo";
 import { lerDecisaoDoPreparo } from "@/lib/agente/whatsapp";
+import { passoDoPreparoRecusado } from "@/lib/agente/laco";
 import type { PreparoAprovado } from "@/lib/domain/conformidade/preparo-aprovado";
 import { enviarPreparoAprovadoDaIa } from "@/lib/integrations/whatsapp/send";
 // [AG7 preparo] fim
@@ -1939,7 +1940,7 @@ async function decidirEEnviarOPreparo(
   resultado: Extract<ResultadoDoTurno, { tipo: "preparo" }>,
   latenciaMs: number,
 ): Promise<ResultadoDeJob> {
-  const preparo = await lerOuFalhar(() =>
+  const leitura = await lerOuFalhar(() =>
     lerPreparoParaEnvio(c.admin, {
       clinicId: c.clinicId,
       versaoId: resultado.preparo.versaoId,
@@ -1958,7 +1959,51 @@ async function decidirEEnviarOPreparo(
     ferramentasUsadas: resultado.ferramentasUsadas ?? [],
     versaoDoClassificador: resultado.versaoDoClassificador,
   };
-  if (preparo === null) {
+  // Revisao da AG7 (CFM-2): o texto aprovado com recusa (promessa, oferta
+  // casada, antes e depois, preco, link) nunca sai. A decisao e um bloqueio
+  // da conformidade (camada regra, a primeira categoria), com o passo so
+  // com os rotulos; a passagem e a frase. Nada do texto em log nem na
+  // decisao.
+  if (leitura.tipo === "recusado") {
+    const [categoria = "orientacao_clinica"] = leitura.recusas;
+    const decisionId = await gravarDecisao(c.admin, {
+      ...comum,
+      desfecho: {
+        tipo: "bloqueou",
+        categoria,
+        camada: "regra",
+        motivoDaFalha: null,
+      },
+      textoSha256: null,
+      trilha: [
+        ...resultado.trilha,
+        { tipo: "bloqueio", texto: passoDoPreparoRecusado(leitura.recusas) },
+        {
+          tipo: "equipe",
+          texto: `Passou para a equipe: ${ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.conformidade}`,
+        },
+      ],
+    });
+    log.warn("ia_preparo_recusado", {
+      ...idsDoLog(c),
+      kind: leitura.recusas.join(","),
+    });
+    log.info("ia_turno_decidido", {
+      ...idsDoLog(c),
+      status: "bloqueou",
+      kind: categoria,
+      duration_ms: latenciaMs,
+      count: resultado.uso.length,
+    });
+    await salvarTurno(c.admin, {
+      ...turno,
+      estado: "decidido",
+      saida: "frase",
+      decisionId,
+    });
+    return passarEAvisar(c, destino, "conformidade");
+  }
+  if (leitura.tipo === "fora_de_vigor") {
     const decisionId = await gravarDecisao(c.admin, {
       ...comum,
       desfecho: {
@@ -1992,6 +2037,7 @@ async function decidirEEnviarOPreparo(
     });
     return passarEAvisar(c, destino, "assunto_clinico");
   }
+  const preparo = leitura.preparo;
   const decisionId = await gravarDecisao(c.admin, {
     ...comum,
     desfecho: resultado.desfecho,
@@ -2959,7 +3005,9 @@ async function retomarOPreparo(
           decisionId: turno.decisionId,
           jobId: c.job.id,
         });
-  const preparo =
+  // Revisao da AG7 (CFM-2): a leitura reconfere tambem as recusas do texto
+  // (recusado e fora de vigor nao saem).
+  const leitura =
     decisao === null
       ? null
       : await lerOuFalhar(() =>
@@ -2968,6 +3016,7 @@ async function retomarOPreparo(
             versaoId: decisao.versaoId,
           }),
         );
+  const preparo = leitura?.tipo === "pronto" ? leitura.preparo : null;
   if (
     decisao === null ||
     preparo === null ||

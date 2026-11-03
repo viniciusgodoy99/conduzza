@@ -69,6 +69,8 @@ import {
   atendimentoParaEstimativa,
   custoMaximoDoTurno,
   executarTurnoDoAgente,
+  // [AG7 preparo] O passo do texto aprovado com recusa (CFM-2).
+  passoDoPreparoRecusado,
   type ClienteDoAgente,
   type MensagemDaConversa,
   type PassoDoTurno,
@@ -793,9 +795,9 @@ export async function simularTurno(
   let tipo: "resposta" | "frase_fixa" | "preparo";
   const passosDoPreparo: PassoDoTurno[] = [];
   if (resultado.tipo === "preparo") {
-    let preparo: Awaited<ReturnType<typeof lerPreparoParaEnvio>>;
+    let leitura: Awaited<ReturnType<typeof lerPreparoParaEnvio>>;
     try {
-      preparo = await lerPreparoParaEnvio(admin, {
+      leitura = await lerPreparoParaEnvio(admin, {
         clinicId,
         versaoId: resultado.preparo.versaoId,
         procedimentoId: resultado.preparo.procedimentoId,
@@ -805,7 +807,19 @@ export async function simularTurno(
       log.warn("ia_simulador_sem_preparo", { clinic_id: clinicId });
       return { ok: false, error: TEXTOS_DO_SIMULADOR.naoCarregouOPreparo };
     }
-    if (preparo === null) {
+    if (leitura.tipo === "recusado") {
+      // Revisao da AG7 (CFM-2): o texto aprovado com recusa nao sai, como no
+      // WhatsApp (o bloqueio da conformidade e a frase).
+      resposta = FRASE_DE_ESCALONAMENTO;
+      tipo = "frase_fixa";
+      passosDoPreparo.push(
+        { tipo: "bloqueio", texto: passoDoPreparoRecusado(leitura.recusas) },
+        {
+          tipo: "equipe",
+          texto: `Passou para a equipe: ${ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.conformidade}`,
+        },
+      );
+    } else if (leitura.tipo === "fora_de_vigor") {
       resposta = FRASE_DE_ESCALONAMENTO;
       tipo = "frase_fixa";
       passosDoPreparo.push(
@@ -816,7 +830,7 @@ export async function simularTurno(
         },
       );
     } else {
-      resposta = preparo.mensagem;
+      resposta = leitura.preparo.mensagem;
       tipo = "preparo";
     }
   } else {

@@ -7,6 +7,7 @@ import { fatosVazios } from "@/lib/domain/conformidade/fatos-do-turno";
 import { filtrarSaida, sha256DoTexto } from "@/lib/domain/conformidade/filtro";
 import {
   aprovarParaEnvio,
+  conferirParaEnvio,
   LIMITE_DA_MENSAGEM_DO_PREPARO,
   problemasDoTextoDoPreparo,
   TAMANHO_MINIMO_DO_TRECHO,
@@ -150,8 +151,73 @@ describe("PreparoAprovado: a marca so sai de aprovarParaEnvio", () => {
     expect(fonte).not.toMatch(/export function marcar/);
     expect(fonte).not.toMatch(/<PreparoAprovado>/);
     expect(fonte).not.toMatch(/\bas\s+TextoAprovado\b|<TextoAprovado>/);
-    // So aprovarParaEnvio chama a conversao.
+    // So conferirParaEnvio chama a conversao (aprovarParaEnvio a usa).
     expect(fonte.match(/\bmarcar\(/g)).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Revisao da AG7 (CFM-2): a conferencia do envio reconfere as recusas
+// ---------------------------------------------------------------------------
+
+describe("conferirParaEnvio: o texto aprovado com recusa nunca vira PreparoAprovado", () => {
+  function comTexto(texto: string, rt = RT_DE_TESTE) {
+    return lido(mensagemDoPreparo({ procedimento: "Colonoscopia", rt, texto }));
+  }
+
+  it.each([
+    [
+      "Venha sem maquiagem. Resultado garantido, você vai sair renovada!",
+      ["promessa_resultado"],
+    ],
+    [
+      "Jejum de 8 horas. Na compra do exame, o retorno sai de brinde.",
+      ["oferta_casada"],
+    ],
+    [
+      "Venha em jejum de 8 horas. Aproveite e faça também a limpeza de pele com 20% de desconto.",
+      ["preco_nao_verificado"],
+    ],
+    [
+      "Jejum de 8 horas. Veja o vídeo em https://exemplo.com/preparo.",
+      ["formato_invalido"],
+    ],
+    ["Veja as fotos de antes e depois das nossas pacientes.", ["antes_depois"]],
+  ])(
+    "%j: recusado %j, com os ids; aprovarParaEnvio da nulo",
+    (texto, recusas) => {
+      const leitura = comTexto(texto);
+      expect(conferirParaEnvio(leitura)).toEqual({
+        tipo: "recusado",
+        recusas,
+        versaoId: VERSAO_ID,
+        procedureId: PROCEDURE_ID,
+      });
+      expect(aprovarParaEnvio(leitura)).toBeNull();
+    },
+  );
+
+  it("o remedio, a dose e o jejum so avisam (D-80): o texto de teste sai", () => {
+    const conferido = conferirParaEnvio(LIDO);
+    expect(conferido.tipo).toBe("pronto");
+    expect(
+      problemasDoTextoDoPreparo(TEXTO_DO_PREPARO_DE_TESTE).avisos,
+    ).not.toEqual([]);
+  });
+
+  it("so o texto aprovado e conferido: o cabecalho e a linha do RT (o nome do cadastro) nao", () => {
+    const comNomeDeRisco = comTexto("Jejum de 8 horas antes do exame.", {
+      ...RT_DE_TESTE,
+      nome: "Dra. Ana Garantia",
+    });
+    expect(conferirParaEnvio(comNomeDeRisco).tipo).toBe("pronto");
+  });
+
+  it("fora do formato continua fora do formato (antes das recusas)", () => {
+    expect(conferirParaEnvio({ ...LIDO, sha256: "0".repeat(64) })).toEqual({
+      tipo: "fora_do_formato",
+    });
+    expect(conferirParaEnvio(null)).toEqual({ tipo: "fora_do_formato" });
   });
 });
 

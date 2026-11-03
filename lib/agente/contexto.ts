@@ -23,8 +23,9 @@ import {
   MAXIMO_DE_TEXTOS_DE_PREPARO,
   MAXIMO_DO_TEXTO_DE_PREPARO_NO_FILTRO,
 } from "@/lib/domain/conformidade/filtro";
+import type { CategoriaDeConformidade } from "@/lib/domain/conformidade/categorias";
 import {
-  aprovarParaEnvio,
+  conferirParaEnvio,
   type PreparoAprovado,
 } from "@/lib/domain/conformidade/preparo-aprovado";
 import {
@@ -688,12 +689,26 @@ function comOsPreparos(
 }
 
 /**
+ * AG7: o que a leitura do envio decide (lerPreparoParaEnvio):
+ *  - pronto: a mensagem do banco conferida (PreparoAprovado);
+ *  - fora_de_vigor: a versao nao esta em vigor, a habilidade nao esta na
+ *    ultima versao publicada (fora do simulador), a leitura veio fora do
+ *    formato ou e de outra versao ou outro procedimento;
+ *  - recusado: revisao da AG7 (CFM-2) o texto aprovado tem recusa de
+ *    problemasDoTextoDoPreparo (promessa, oferta casada, antes e depois,
+ *    preco, link). So as categorias, nunca o texto.
+ * Nos dois ultimos, nada sai.
+ */
+export type LeituraDoPreparoParaEnvio =
+  | { tipo: "pronto"; preparo: PreparoAprovado }
+  | { tipo: "fora_de_vigor" }
+  | { tipo: "recusado"; recusas: readonly CategoriaDeConformidade[] };
+
+/**
  * AG7: a mensagem do preparo pronta para o envio (ler_preparo_para_envio,
- * service role), conferida por aprovarParaEnvio, ou null: a versao nao esta
- * em vigor, a habilidade nao esta na ultima versao publicada (fora do
- * simulador), a leitura veio fora do formato ou e de outra versao ou outro
- * procedimento. Erro da leitura LANCA (quem chama decide: o executor tenta
- * de novo, o simulador avisa).
+ * service role), conferida por conferirParaEnvio (o hash, o formato e,
+ * revisao da AG7, as recusas do texto). Erro da leitura LANCA (quem chama
+ * decide: o executor tenta de novo, o simulador avisa).
  */
 export async function lerPreparoParaEnvio(
   admin: Cliente,
@@ -705,7 +720,7 @@ export async function lerPreparoParaEnvio(
     /** O simulador testa o rascunho: a habilidade nao e conferida. */
     simulador?: boolean;
   },
-): Promise<PreparoAprovado | null> {
+): Promise<LeituraDoPreparoParaEnvio> {
   let lido: { data: unknown; error: unknown };
   try {
     lido = await admin.rpc("ler_preparo_para_envio", {
@@ -719,16 +734,27 @@ export async function lerPreparoParaEnvio(
   if (lido.error) {
     throw new Error("leitura do agente falhou");
   }
-  const preparo = aprovarParaEnvio(lido.data);
-  if (
-    preparo === null ||
-    preparo.versaoId !== entrada.versaoId ||
-    (entrada.procedimentoId !== undefined &&
-      preparo.procedureId !== entrada.procedimentoId)
-  ) {
-    return null;
+  const conferido = conferirParaEnvio(lido.data);
+  if (conferido.tipo === "fora_do_formato") {
+    return { tipo: "fora_de_vigor" };
   }
-  return preparo;
+  const ids =
+    conferido.tipo === "pronto"
+      ? {
+          versaoId: conferido.preparo.versaoId,
+          procedureId: conferido.preparo.procedureId,
+        }
+      : { versaoId: conferido.versaoId, procedureId: conferido.procedureId };
+  if (
+    ids.versaoId !== entrada.versaoId ||
+    (entrada.procedimentoId !== undefined &&
+      ids.procedureId !== entrada.procedimentoId)
+  ) {
+    return { tipo: "fora_de_vigor" };
+  }
+  return conferido.tipo === "pronto"
+    ? { tipo: "pronto", preparo: conferido.preparo }
+    : { tipo: "recusado", recusas: conferido.recusas };
 }
 // [AG7 preparo] fim
 
