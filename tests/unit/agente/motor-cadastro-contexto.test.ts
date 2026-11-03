@@ -82,6 +82,12 @@ function bancoDoCadastro(): AgendaEmMemoria {
     "professional_insurance",
     ...daClinica(linhas.conveniosDosProfissionais ?? []),
   );
+  // [AG7 preparo] início
+  // As RPCs do preparo (a service role, com o clinic_id explicito): sem
+  // orientacao em vigor e sem texto de preparo.
+  banco.rpc("preparos_em_vigor_da_clinica", () => ({ data: [], error: null }));
+  banco.rpc("textos_de_preparo_da_clinica", () => ({ data: [], error: null }));
+  // [AG7 preparo] fim
   // A outra clinica: nada dela pode aparecer.
   banco.inserir(
     "unit",
@@ -131,6 +137,15 @@ describe("carregarCatalogoDoAgente com o Cadastro da AG2", () => {
       expect(leitura.colunas, leitura.tabela).not.toBe("");
     }
     expect(banco.escritas).toEqual([]);
+    // [AG7 preparo] início
+    // AG7: as duas RPCs do preparo, so com o clinic_id explicito.
+    expect(banco.chamadasDe("preparos_em_vigor_da_clinica")).toEqual([
+      { p_clinic_id: CLINICA },
+    ]);
+    expect(banco.chamadasDe("textos_de_preparo_da_clinica")).toEqual([
+      { p_clinic_id: CLINICA },
+    ]);
+    // [AG7 preparo] fim
     const tabelas = new Set(banco.leituras.map((l) => l.tabela));
     for (const tabela of [
       "unit",

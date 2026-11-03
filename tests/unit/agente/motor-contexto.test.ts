@@ -109,6 +109,16 @@ function bancoFalso(tabelas: Record<string, Linha[]>, rpc?: unknown) {
     from,
     rpc: async (nome: string, args: unknown) => {
       rpcs.push({ nome, args });
+      // [AG7 preparo] início
+      // As RPCs do preparo do catalogo: nenhuma orientacao em vigor e nenhum
+      // texto de preparo (o banco devolve [] e {}, nunca nulo).
+      if (
+        nome === "preparos_em_vigor_da_clinica" ||
+        nome === "textos_de_preparo_da_clinica"
+      ) {
+        return { data: [], error: null };
+      }
+      // [AG7 preparo] fim
       return { data: rpc ?? null, error: null };
     },
   } as unknown as SupabaseClient;

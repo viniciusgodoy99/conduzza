@@ -18,6 +18,20 @@ import {
   type CatalogoDoAgente,
   type LinhasDoCatalogo,
 } from "./ferramentas/buscar-procedimento";
+// [AG7 preparo] início
+import {
+  MAXIMO_DE_TEXTOS_DE_PREPARO,
+  MAXIMO_DO_TEXTO_DE_PREPARO_NO_FILTRO,
+} from "@/lib/domain/conformidade/filtro";
+import {
+  aprovarParaEnvio,
+  type PreparoAprovado,
+} from "@/lib/domain/conformidade/preparo-aprovado";
+import {
+  preparosEmVigorDaLeitura,
+  textosDePreparoDaLeitura,
+} from "./ferramentas/enviar-preparo";
+// [AG7 preparo] fim
 
 // Carregadores do motor do agente de IA (E2). Rodam com o cliente de SERVICE
 // ROLE (o motor nao tem sessao, e so ele le a coluna instrucoes), entao o
@@ -402,8 +416,12 @@ const IDS_POR_LOTE = 100;
  * (lib/agente/ferramentas/cadastro-do-agente.ts), sempre com o clinic_id
  * explicito e colunas explicitas, nada de paciente:
  *  - TODOS os procedimentos ativos (com "IA pode agendar" ou nao), com
- *    ia_pode_informar e requires_evaluation (nunca prep_instructions: D-4,
- *    opcao A);
+ *    ia_pode_informar e requires_evaluation. [AG7 preparo] prep_instructions
+ *    nem e lido: desde a AG7 o preparo vem so por ids e hash
+ *    (preparos_em_vigor_da_clinica, a versao aprovada pelo responsavel
+ *    tecnico, sem o texto), e os textos de preparo da clinica
+ *    (textos_de_preparo_da_clinica) ficam no servidor e NUNCA vao ao modelo:
+ *    so servem ao filtro (o trecho copiado) e ao historico (o marcador);
  *  - a idade atendida do profissional;
  *  - as unidades ativas, sem cep, phone, link_do_mapa e address;
  *  - a jornada so com o profissional e a unidade (nunca a hora);
@@ -439,6 +457,9 @@ export async function carregarCatalogoDoAgente(
     jornadas,
     requisitos,
     conveniosDosProfissionais,
+    // [AG7 preparo]
+    preparosLidos,
+    textosLidos,
   ] = await Promise.all([
     todasAsPaginas<LinhasDoCatalogo["procedimentos"][number]>((de, ate) =>
       admin
@@ -544,6 +565,13 @@ export async function carregarCatalogoDoAgente(
         .order("id", { ascending: true })
         .range(de, ate),
     ),
+    // [AG7 preparo] início
+    // As orientacoes de preparo em vigor (so ids, o hash e o que a trilha
+    // diz) e os textos de preparo da clinica (so no servidor), pela service
+    // role e com o clinic_id explicito. Erro lanca (nunca pela metade).
+    rpcDoCatalogo(admin, "preparos_em_vigor_da_clinica", clinicId),
+    rpcDoCatalogo(admin, "textos_de_preparo_da_clinica", clinicId),
+    // [AG7 preparo] fim
   ]);
   const vinculosDaEquipe = await carregarVinculosDaEquipe(admin, clinicId, {
     procedimentos,
@@ -582,8 +610,127 @@ export async function carregarCatalogoDoAgente(
       count: textos,
     });
   }
-  return catalogo;
+  // [AG7 preparo] início
+  return comOsPreparos(catalogo, clinicId, preparosLidos, textosLidos);
+  // [AG7 preparo] fim
 }
+
+// [AG7 preparo] início
+/**
+ * Uma RPC do catalogo (service role), com o clinic_id explicito. Qualquer
+ * erro (do banco ou do cliente) vira o mesmo erro sem mensagem do banco.
+ */
+async function rpcDoCatalogo(
+  admin: Cliente,
+  nome: "preparos_em_vigor_da_clinica" | "textos_de_preparo_da_clinica",
+  clinicId: string,
+): Promise<unknown> {
+  let lido: { data: unknown; error: unknown };
+  try {
+    lido = await admin.rpc(nome, { p_clinic_id: clinicId });
+  } catch {
+    throw new Error("leitura do agente falhou");
+  }
+  if (lido.error) {
+    throw new Error("leitura do agente falhou");
+  }
+  return lido.data;
+}
+
+/**
+ * AG7: o catalogo com as orientacoes de preparo em vigor (so dos
+ * procedimentos ativos do catalogo) e os textos de preparo da clinica.
+ * Retorno fora do formato lanca (o catalogo nunca sai pela metade). A linha
+ * de preparo fora do formato fica de fora (o pedido passa para a equipe) e
+ * so a contagem vai para o log. Os textos acima do teto do filtro
+ * (MAXIMO_DE_TEXTOS_DE_PREPARO e MAXIMO_DO_TEXTO_DE_PREPARO_NO_FILTRO) nao
+ * sao cortados: o filtro falha fechado em todo turno da clinica, e o log
+ * (so contagens) diz por que.
+ */
+function comOsPreparos(
+  catalogo: CatalogoDoAgente,
+  clinicId: string,
+  preparosLidos: unknown,
+  textosLidos: unknown,
+): CatalogoDoAgente {
+  const ativos = new Set([
+    ...catalogo.procedimentos.map((p) => p.id),
+    ...(catalogo.procedimentosSoComAEquipe ?? []).map((p) => p.id),
+  ]);
+  const preparos = preparosEmVigorDaLeitura(preparosLidos, ativos);
+  const textosDePreparo = textosDePreparoDaLeitura(textosLidos);
+  if (preparos === null || textosDePreparo === null) {
+    throw new Error("leitura do agente falhou");
+  }
+  if (preparos.descartadas > 0) {
+    log.warn("agente_preparo_descartado", {
+      clinic_id: clinicId,
+      count: preparos.descartadas,
+    });
+  }
+  if (
+    textosDePreparo.length > MAXIMO_DE_TEXTOS_DE_PREPARO ||
+    textosDePreparo.some(
+      (texto) =>
+        Array.from(texto).length > MAXIMO_DO_TEXTO_DE_PREPARO_NO_FILTRO,
+    )
+  ) {
+    log.warn("agente_textos_de_preparo_acima_do_teto", {
+      clinic_id: clinicId,
+      count: textosDePreparo.length,
+    });
+  }
+  return {
+    ...catalogo,
+    preparosEmVigor: preparos.preparos,
+    textosDePreparo,
+  };
+}
+
+/**
+ * AG7: a mensagem do preparo pronta para o envio (ler_preparo_para_envio,
+ * service role), conferida por aprovarParaEnvio, ou null: a versao nao esta
+ * em vigor, a habilidade nao esta na ultima versao publicada (fora do
+ * simulador), a leitura veio fora do formato ou e de outra versao ou outro
+ * procedimento. Erro da leitura LANCA (quem chama decide: o executor tenta
+ * de novo, o simulador avisa).
+ */
+export async function lerPreparoParaEnvio(
+  admin: Cliente,
+  entrada: {
+    clinicId: string;
+    versaoId: string;
+    /** O procedimento que o turno escolheu (conferido contra a leitura). */
+    procedimentoId?: string;
+    /** O simulador testa o rascunho: a habilidade nao e conferida. */
+    simulador?: boolean;
+  },
+): Promise<PreparoAprovado | null> {
+  let lido: { data: unknown; error: unknown };
+  try {
+    lido = await admin.rpc("ler_preparo_para_envio", {
+      p_clinic_id: entrada.clinicId,
+      p_versao_id: entrada.versaoId,
+      p_simulador: entrada.simulador === true,
+    });
+  } catch {
+    throw new Error("leitura do agente falhou");
+  }
+  if (lido.error) {
+    throw new Error("leitura do agente falhou");
+  }
+  const preparo = aprovarParaEnvio(lido.data);
+  if (
+    preparo === null ||
+    preparo.versaoId !== entrada.versaoId ||
+    (entrada.procedimentoId !== undefined &&
+      preparo.procedureId !== entrada.procedimentoId)
+  ) {
+    return null;
+  }
+  return preparo;
+}
+// [AG7 preparo] fim
 
 /**
  * AG2 (D-3): os vinculos ATIVOS, com preco e duracao, so dos procedimentos
