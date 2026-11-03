@@ -31,7 +31,15 @@
 --   3. preparo_texto_valido (nova, sql, imutavel): a regra do texto do
 --      preparo (de 1 a 3.500 caracteres, aparado como o trim() do
 --      JavaScript, NFC, sem CR, sem controle alem do LF, sem invisivel, sem
---      chaves duplas).
+--      chaves duplas). preparo_texto_recusado (nova, sql, imutavel): o
+--      conteudo que o banco recusa sozinho, um pedaco do que
+--      problemasDoTextoDoPreparo recusa no TS (CFM-2): link, valor em reais,
+--      arroba e os invisiveis que o filtro recusa e preparo_texto_valido nao
+--      (promessa, oferta casada e antes e depois ficam so no TS). As RPCs de
+--      salvar e de aprovar e a copia do texto antigo a usam.
+--      preparo_nome_valido (nova, sql, imutavel): o nome do procedimento e o
+--      do RT, que vao no cabecalho da mensagem ao paciente (1 a 120,
+--      aparado, sem controle, sem invisivel e sem marca de direcao).
 --   4. responsavel_tecnico (tabela nova): o RT de cada clinica, uma linha por
 --      designacao, com o historico; so as RPCs gravam; o gatilho
 --      responsavel_tecnico_nao_muda (so o encerramento, uma vez).
@@ -42,7 +50,8 @@
 --      texto nunca muda; a maquina de estados; a aprovacao so pelo RT
 --      vigente, com o hash conferido).
 --   6. As funcoes internas (responsavel_tecnico_vigente, preparo_em_vigor,
---      mensagem_do_preparo), a da tela (user_e_responsavel_tecnico), as do
+--      mensagem_do_preparo), a da tela (user_e_responsavel_tecnico: falsa na
+--      clinica de conta suspensa e para o super admin), as do
 --      servidor (ler_preparo_para_envio, preparos_em_vigor_da_clinica,
 --      textos_de_preparo_da_clinica, preparo_em_vigor_do_procedimento) e as
 --      RPCs das telas (salvar, aprovar, devolver, descartar e suspender o
@@ -58,9 +67,11 @@
 --      mensagem remontada da versao em vigor (CZIA3 frase_divergente). A
 --      forma da linha e a frase seguem com o efeito de hoje.
 --   8. A copia do texto antigo (D-83): cada prep_instructions que cabe na
---      regra vira a versao 1, aguardando o RT, origem texto_antigo; o resto
---      fica so em prep_instructions (e entra nos textos que o filtro e o
---      historico escondem). NOTICE so com as contagens.
+--      regra e passa nas recusas de preparo_texto_recusado vira a versao 1,
+--      aguardando o RT, origem texto_antigo; o resto fica so em
+--      prep_instructions (e entra nos textos que o filtro e o historico
+--      escondem). NOTICE so com as contagens (copiados, fora da regra e
+--      recusados), nunca o texto.
 --   Sem mudanca: message (nenhuma coluna, nenhum gatilho novo; so o corpo da
 --   funcao do gatilho), conversation, contact, procedure (prep_instructions
 --   fica onde esta, sem uso, ate a limpeza depois da AG8), job_queue,
@@ -90,15 +101,17 @@
 -- AS RECUSAS das RPCs das telas, na ordem de cada uma (a permissao, 42501,
 -- antes de qualquer trava): 22004 parametro_nulo; 22023 com o codigo da
 -- entrada invalida; 42501 com a frase da tela; P0001 com o codigo de negocio.
---   salvar: 22004 -> texto_invalido -> versao_lida_invalida ->
---     procedimento_inexistente -> 42501 (escrever) -> (trava o procedimento)
---     -> nome_do_procedimento_invalido -> (trava a aguardando) -> texto_mudou
---     -> texto_igual_ao_em_vigor -> {versao_id, versao, texto_sha256}.
+--   salvar: 22004 -> texto_invalido -> texto_recusado -> versao_lida_invalida
+--     -> procedimento_inexistente -> 42501 (escrever) -> (trava o
+--     procedimento) -> nome_do_procedimento_invalido -> (trava a aguardando)
+--     -> texto_mudou -> texto_igual_ao_em_vigor -> {versao_id, versao,
+--     texto_sha256}.
 --   aprovar: 22004 -> sha256_invalido -> versao_inexistente -> 42501
 --     (aprovar) -> (trava o procedimento, a versao, a aprovada e o RT) ->
 --     42501 de novo (o RT mudou) -> nao_aguarda_aprovacao -> texto_mudou ->
---     nome_mudou -> (23505 do indice: outra_aprovacao) -> {versao_id, versao,
---     texto_sha256, aprovado_em}.
+--     nome_mudou -> texto_recusado (P0001: a versao que chegou sem passar
+--     pelo salvar, como uma linha gravada pelo dono) -> (23505 do indice:
+--     outra_aprovacao) -> {versao_id, versao, texto_sha256, aprovado_em}.
 --   devolver: 22004 -> comentario_invalido -> versao_inexistente -> 42501
 --     (aprovar) -> (trava o procedimento e a versao) -> nao_aguarda_aprovacao.
 --   descartar: 22004 -> versao_inexistente -> 42501 (descartar) -> (trava o
@@ -107,17 +120,24 @@
 --     42501 (suspender) -> (trava o procedimento e a aprovada) ->
 --     sem_preparo_aprovado -> {versao_id}.
 --   definir o RT: 22004 -> nome_invalido -> conselho_invalido ->
---     numero_invalido -> uf_invalida -> 42501 (RT) ->
+--     numero_invalido -> uf_invalida -> 42501 (RT) -> 42501 (RT) de novo se
+--     a pessoa escolhida e super admin (TELA-9) ->
 --     responsavel_nao_e_membro_ativo -> (trava a linha aberta) ->
---     (23505: outra_definicao) -> o id.
+--     outra_definicao (a linha aberta nasceu depois do comeco desta
+--     transacao: outra definicao ganhou a corrida) -> (23505:
+--     outra_definicao) -> o id.
 --   encerrar o RT: 22004 -> 42501 (RT) -> (trava a linha aberta) ->
---     sem_responsavel_tecnico.
+--     sem_responsavel_tecnico -> outra_definicao (a linha aberta nasceu
+--     depois do comeco desta transacao).
 -- QUEM PASSA: escrever, descartar e suspender: administrador ou gestor
 -- ativo, o super admin ou o RT vigente (de qualquer papel; o pendente nunca,
 -- porque nao e ativo); aprovar e devolver: so o RT vigente (nem o
 -- administrador, nem o super admin: aprovar e ato clinico, D-71); definir e
 -- encerrar o RT: so o administrador pleno (sem a marca de Implementador) ou
--- o super admin.
+-- o super admin. A sessao so age como RT (user_e_responsavel_tecnico) fora
+-- da clinica de conta suspensa (como user_has_role: a equipe da clinica
+-- suspensa nao escreve nada) e nunca sendo super admin, mesmo com vinculo
+-- ativo e designada antes (D-71); e o super admin nunca e escolhido como RT.
 --
 -- TRAVAS (medidas no Postgres local: pg_locks da transacao depois da
 -- migration). TODAS no comeco, no bloco 0, antes de qualquer mudanca, numa
@@ -131,18 +151,24 @@
 -- bloco, so pede travas que ja tem (ou mais fracas, ou das tabelas novas) e
 -- nunca espera; o lock_timeout de 3 s fica de rede. As funcoes que leem
 -- tabela sao plpgsql (o corpo nao e validado contra as tabelas no CREATE);
--- a unica sql e preparo_texto_valido, que nao le tabela. As policies novas
--- so chamam funcoes. ZERO trava em message, conversation, contact,
+-- as tres sql (preparo_texto_valido, preparo_texto_recusado e
+-- preparo_nome_valido) nao leem tabela. As policies novas so chamam
+-- funcoes. ZERO trava em message, conversation, contact,
 -- job_queue, audit_log, clinic_member, professional, ai_agent_config,
 -- ia_atendimento, slot_hold e waitlist. A copia do texto antigo (passo 10)
 -- pega, pelas FKs da tabela nova, FOR KEY SHARE nas linhas de procedure e de
 -- clinic dos procedimentos copiados (na producao, uma de cada): com as duas
--- tabelas ja em SHARE ROW EXCLUSIVE, so esperaria um SELECT ... FOR UPDATE
--- delas, que nenhuma funcao de hoje faz; e o lock_timeout de 3 s falharia a
--- migration inteira, sem gravar. Nesse tempo (milissegundos): o turno da IA
--- espera para gravar a decisao e o turno; a gravacao de dados da clinica e
--- do Cadastro de procedimentos espera. A LEITURA de clinic e de procedure
--- segue.
+-- tabelas ja em SHARE ROW EXCLUSIVE, so esperaria quem segura FOR UPDATE
+-- nessas linhas, como claim_jobs_por_clinica (clinic, a cada 20 s, pelo
+-- motor) e sincronizar_vinculos_do_procedimento (procedure, no Salvar do
+-- procedimento). As duas sao RPCs avulsas, nao pedem as tabelas do bloco 0
+-- e terminam em milissegundos: espera curta, sem ciclo, com o lock_timeout
+-- de 3 s de rede (passou dele, a migration inteira falha sem gravar). Nesse
+-- tempo (milissegundos): o turno da IA espera para gravar a decisao e o
+-- turno; a gravacao de dados da clinica e do Cadastro de procedimentos
+-- espera. A LEITURA de clinic e de procedure segue; a de ai_decision_log e
+-- de ai_turno NAO (ACCESS EXCLUSIVE segura tambem o SELECT): abrir uma
+-- conversa no Atendimento (que le ai_decision_log) espera ate o commit.
 --
 -- TRAVAS EM USO (sem 40P01; o contrato, secao 1.7). Ordem global: o
 -- procedimento (FOR NO KEY UPDATE, nas RPCs, como em
@@ -181,8 +207,9 @@
 -- pg_get_constraintdef: ai_decision_log_desfecho_valido
 -- c0d83395337e74d559861d5b8fa58801 e ai_turno_saida_valida
 -- 36975878604a6c0dabc28538f3cdf1f8 (os do M1, iguais na producao). Ha 16
--- procedimentos; so 1 tem prep_instructions (9 caracteres, cabe na regra: 1
--- copiado e 0 fora). Nenhum objeto com nome de preparo ou de RT existe.
+-- procedimentos; so 1 tem prep_instructions (9 caracteres, cabe na regra e
+-- passa nas recusas: 1 copiado, 0 fora e 0 recusado). Nenhum objeto com
+-- nome de preparo ou de RT existe.
 -- Nenhuma linha muda de valor.
 --
 -- ORDEM DE PUBLICACAO: a AG5, a AG6a e a AG6b aplicadas e publicadas antes;
@@ -207,19 +234,23 @@
 --
 -- ROLLBACK (manual), ORDEM: PRIMEIRO voltar o codigo da AG7; DEPOIS, numa
 -- transacao, no SQL editor,
--- supabase/operacao/rollback/20261103100000-corpos-anteriores.sql (volta o
--- corpo de mensagem_ia_exige_aprovacao, md5
+-- supabase/operacao/rollback/20261103100000-corpos-anteriores.sql (recusa,
+-- sem desfazer nada, se a IA mandou o preparo ou se a regua mandou um texto
+-- aprovado pelo RT nos ultimos 15 minutos: o sinal do codigo da AG7 no ar;
+-- volta o corpo de mensagem_ia_exige_aprovacao, md5
 -- 1129cfc16036215e538422fba7371a1c, sem comentario; voltam o CHECK do
--- desfecho e o da saida, NOT VALID se ja houver enviou_preparo ou preparo;
--- sai o CHECK ai_decision_log_preparo_coerente; sai a coluna
--- preparo_versao_id, e o grant sai junto; saem as RPCs e as funcoes do
--- servidor). AS DUAS TABELAS FICAM, com os gatilhos, as policies e as
--- funcoes que elas usam (preparo_texto_valido, responsavel_tecnico_vigente e
--- as dos gatilhos): sao a prova de quem aprovou o que. Opcional: copiar o
--- texto em vigor para prep_instructions, para a regua velha mandar o
--- aprovado. Um turno decidido com saida preparo no meio do rollback: o
--- codigo velho le a saida desconhecida como nula e fecha sem_envio; a
--- conversa fica na IA sem resposta ate a proxima mensagem.
+-- desfecho e o da saida de antes, salvo com linha enviou_preparo ou
+-- preparo, quando ficam os da AG7, que so acrescentam o valor; sai o CHECK
+-- ai_decision_log_preparo_coerente; sai a coluna preparo_versao_id, e o
+-- grant sai junto; saem as RPCs, as funcoes do servidor e
+-- preparo_texto_recusado). AS DUAS TABELAS FICAM, com os gatilhos, as
+-- policies e as funcoes que elas usam (preparo_texto_valido,
+-- preparo_nome_valido, responsavel_tecnico_vigente e as dos gatilhos): sao
+-- a prova de quem aprovou o que. Opcional: copiar o texto em vigor para
+-- prep_instructions, para a regua velha mandar o aprovado. Um turno
+-- decidido com saida preparo no meio do rollback: o codigo velho le a saida
+-- desconhecida como nula e fecha sem_envio (o CHECK da AG7 fica e aceita o
+-- fechamento); a conversa fica na IA sem resposta ate a proxima mensagem.
 -- ---------------------------------------------------------------------------
 
 set local lock_timeout = '3s';
@@ -321,10 +352,11 @@ comment on constraint ai_turno_saida_valida on public.ai_turno is
   'A saida decidida do turno: resposta (o texto aprovado pelo filtro), frase (a frase fixa de escalonamento), nenhuma e, na AG7, preparo (a orientacao de preparo aprovada pelo RT, montada pelo banco; o texto do turno fica nulo e o hash e o da mensagem). Nula antes de decidir.';
 
 -- ---------------------------------------------------------------------------
--- 3) preparo_texto_valido: a regra do texto do preparo
+-- 3) preparo_texto_valido, preparo_texto_recusado e preparo_nome_valido: as
+--    regras do texto e do nome
 -- ---------------------------------------------------------------------------
--- Vem antes da tabela (o CHECK a usa). sql e imutavel: nao le tabela.
--- Ninguem da API executa (o CHECK e as RPCs rodam como o dono).
+-- Vem antes das tabelas (os CHECKs as usam). sql e imutaveis: nao leem
+-- tabela. Ninguem da API executa (os CHECKs e as RPCs rodam como o dono).
 
 create function public.preparo_texto_valido(p_texto text)
 returns boolean
@@ -355,7 +387,83 @@ revoke all on function public.preparo_texto_valido(text)
   from public, anon, authenticated, service_role;
 
 comment on function public.preparo_texto_valido(text) is
-  'Interna (AG7; nenhum papel da API executa: o CHECK preparo_do_procedimento_texto_valido e as RPCs rodam como o dono). Verdadeiro so se o texto da orientacao de preparo nao e nulo, tem de 1 a 3.500 caracteres e esta aparado pela regra do trim() do JavaScript (cadastro_texto_valido), esta em NFC, nao tem CR, nao tem caractere de controle alem do LF (o tab tambem fica fora), nao tem invisivel (U+00AD, U+200B a U+200F, U+2028, U+2029, U+202A a U+202E, U+2060 a U+2064, U+FEFF) e nao tem {{ nem }} (a regua as apagaria). Espelho: textoDoPreparoValido em lib/domain/preparo.ts. Pura.';
+  'Interna (AG7; nenhum papel da API executa: o CHECK preparo_do_procedimento_texto_valido e as RPCs rodam como o dono). Verdadeiro so se o texto da orientacao de preparo nao e nulo, tem de 1 a 3.500 caracteres e esta aparado pela regra do trim() do JavaScript (cadastro_texto_valido), esta em NFC, nao tem CR, nao tem caractere de controle alem do LF (o tab tambem fica fora), nao tem invisivel (U+00AD, U+200B a U+200F, U+2028, U+2029, U+202A a U+202E, U+2060 a U+2064, U+FEFF) e nao tem {{ nem }} (a regua as apagaria). Espelho: textoDoPreparoValido em lib/domain/preparo.ts. Pura. O conteudo e outra conferencia: preparo_texto_recusado.';
+
+-- O conteudo que o banco recusa sozinho (CFM-2): um PEDACO do que
+-- problemasDoTextoDoPreparo (lib/domain/conformidade/preparo-aprovado.ts)
+-- recusa no TS, o que da para conferir com seguranca em SQL. Tudo o que
+-- esta funcao recusa o TS tambem recusa (a paridade do harness confere num
+-- corpus): a visao base aqui e mais curta que a do filtro (NFKD, sem os
+-- acentos U+0300 a U+036F, minusculas), e os padroes sao os do filtro ou
+-- mais estreitos. Fica SO no TS: promessa, oferta casada, antes e depois, o
+-- preco por extenso ou sem numero, a moeda estrangeira, o desconto, o link
+-- espacado ou por extenso ("ponto com"), o alfabeto estranho e as marcas
+-- empilhadas. Vem antes da tabela, como preparo_texto_valido; nao le
+-- tabela.
+create function public.preparo_texto_recusado(p_texto text)
+returns boolean
+language sql
+immutable
+parallel safe
+set search_path to ''
+as $function$
+  select coalesce(
+           -- O link: "://", http ou https como palavra, "www." ou um dominio
+           -- (2 ou mais letras, digitos ou hifen, o ponto e uma das
+           -- terminacoes do filtro, com o pais opcional).
+           b.base ~ '(://|\mhttps?\M|\mwww\.|\m[a-z0-9-]{2,}\.(com|net|org|br|io|ly|me|gl|co|app|link|site|info|xyz|online|store|shop|page|to|cc|ai|gg|tk|ml)(\.[a-z]{2})?\M)'
+           -- O valor em reais: "R$" seguido do numero, ou o numero, um
+           -- espaco e "reais" (o "50reais" colado o filtro nao le como
+           -- dinheiro: fica fora, para o banco nunca recusar o que o TS
+           -- aceita).
+           or b.base ~ '(\mr\$ ?[0-9]|\m[0-9]+([.,][0-9]+)* reais\M)'
+           -- O arroba: "@" seguido de 2 ou mais letras, digitos, ponto ou
+           -- sublinhado, no comeco ou depois de branco ou pontuacao (nunca
+           -- o e-mail, que o dominio ja pega), e a palavra "arroba".
+           or b.base ~ '((^|[[:space:](){}"'',;:!?/*<>=|])@[a-z0-9_.]{2,}|\marroba\M)'
+           -- No texto como veio: os invisiveis que o filtro recusa e
+           -- preparo_texto_valido nao (U+034F, U+061C, U+115F, U+1160,
+           -- U+180E, U+2066 a U+2069, U+2800, U+3164, U+FFA0, as etiquetas
+           -- U+E0000 a U+E007F) e o seletor de variacao colado numa letra
+           -- ou digito (o "1" do emoji de tecla).
+           or p_texto ~ '[\u034f\u061c\u115f\u1160\u180e\u2066-\u2069\u2800\u3164\uffa0\U000e0000-\U000e007f]'
+           or p_texto ~ '[0-9A-Za-z][\ufe00-\ufe0f]',
+           false)
+    from (select regexp_replace(lower(normalize(p_texto, nfkd)), '[\u0300-\u036f]', '', 'g') as base) as b
+$function$;
+
+revoke all on function public.preparo_texto_recusado(text)
+  from public, anon, authenticated, service_role;
+
+comment on function public.preparo_texto_recusado(text) is
+  'Interna (AG7, CFM-2; nenhum papel da API executa: as RPCs salvar_preparo_do_procedimento e aprovar_preparo_do_procedimento e a copia do texto antigo rodam como o dono). Verdadeiro se o texto da orientacao de preparo tem link ("://", http ou https, "www." ou dominio com uma das terminacoes do filtro), valor em reais ("R$" com numero ou numero com "reais"), arroba ("@" com 2 ou mais caracteres, fora de e-mail, ou a palavra) ou um invisivel que o filtro recusa e preparo_texto_valido nao. Um pedaco do que problemasDoTextoDoPreparo recusa no TS (tudo o que esta recusa, o TS recusa): promessa, oferta casada, antes e depois e o resto ficam so no TS. Nulo: falso. Pura.';
+
+-- O nome que vai no cabecalho da mensagem ao paciente: o do procedimento
+-- (preparo_do_procedimento.nome_do_procedimento) e o do RT
+-- (responsavel_tecnico.nome). Vem antes das tabelas (os CHECKs a usam).
+create function public.preparo_nome_valido(p_nome text)
+returns boolean
+language sql
+immutable
+parallel safe
+set search_path to ''
+as $function$
+  select p_nome is not null
+     -- De 1 a 120 caracteres, aparado pelos 25 brancos do trim() do
+     -- JavaScript.
+     and public.cadastro_texto_valido(p_nome, 120)
+     -- Nenhum caractere de controle (C0, DEL e C1).
+     and p_nome !~ '[\x00-\x1f\x7f-\x9f]'
+     -- Nenhum invisivel nem marca ou isolamento de direcao (os do texto e os
+     -- que o filtro tambem recusa): reordenariam a linha que o paciente le.
+     and p_nome !~ '[\u00ad\u034f\u061c\u115f\u1160\u180e\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\u2800\u3164\ufeff\uffa0\U000e0000-\U000e007f]'
+$function$;
+
+revoke all on function public.preparo_nome_valido(text)
+  from public, anon, authenticated, service_role;
+
+comment on function public.preparo_nome_valido(text) is
+  'Interna (AG7; nenhum papel da API executa: os CHECKs responsavel_tecnico_nome_valido e preparo_do_procedimento_nome_valido e as RPCs rodam como o dono). Verdadeiro so se o nome (o do procedimento ou o do RT, que vao no cabecalho da mensagem ao paciente) nao e nulo, tem de 1 a 120 caracteres, esta aparado pela regra do trim() do JavaScript (cadastro_texto_valido), nao tem caractere de controle (C0, DEL, C1) e nao tem invisivel nem marca ou isolamento de direcao (U+00AD, U+034F, U+061C, U+115F, U+1160, U+180E, U+200B a U+200F, U+2028, U+2029, U+202A a U+202E, U+2060 a U+2064, U+2066 a U+2069, U+2800, U+3164, U+FEFF, U+FFA0 e U+E0000 a U+E007F). Pura.';
 
 -- ---------------------------------------------------------------------------
 -- 4) responsavel_tecnico: o RT de cada clinica
@@ -380,7 +488,7 @@ create table public.responsavel_tecnico (
   definido_por uuid,
   encerrado_por uuid,
   constraint responsavel_tecnico_nome_valido check (
-    public.cadastro_texto_valido(nome, 120) and nome !~ '[\x00-\x1f\x7f-\x9f]'),
+    public.preparo_nome_valido(nome)),
   constraint responsavel_tecnico_conselho_valido check (
     conselho in ('CRM', 'CRO', 'CRBM', 'CRF', 'COREN', 'CREFITO', 'CRN', 'CRP', 'CRFa', 'CREF')),
   constraint responsavel_tecnico_numero_valido check (
@@ -454,7 +562,7 @@ comment on column public.responsavel_tecnico.clinic_id is
 comment on column public.responsavel_tecnico.user_id is
   'A pessoa com acesso ao sistema que e o RT (qualquer papel, inclusive Somente leitura). Sem FK (nao trava auth.users nem clinic_member): definir_responsavel_tecnico exige clinic_member ativo, e o vigente o confere a cada leitura.';
 comment on column public.responsavel_tecnico.nome is
-  'O nome como esta no conselho (1 a 120, aparado, sem controle). Vai na mensagem do preparo ao paciente.';
+  'O nome como esta no conselho (preparo_nome_valido: 1 a 120, aparado, sem controle, sem invisivel e sem marca de direcao). Vai na mensagem do preparo ao paciente.';
 comment on column public.responsavel_tecnico.conselho is
   'O conselho: CRM, CRO, CRBM, CRF, COREN, CREFITO, CRN, CRP, CRFa ou CREF (D-70, PROPOSTA).';
 comment on column public.responsavel_tecnico.numero is
@@ -514,7 +622,7 @@ create table public.preparo_do_procedimento (
   constraint preparo_do_procedimento_sha_formato check (
     texto_sha256 ~ '^[0-9a-f]{64}$'),
   constraint preparo_do_procedimento_nome_valido check (
-    public.cadastro_texto_valido(nome_do_procedimento, 120) and nome_do_procedimento !~ '[\x00-\x1f\x7f-\x9f]'),
+    public.preparo_nome_valido(nome_do_procedimento)),
   constraint preparo_do_procedimento_comentario_valido check (
     public.cadastro_texto_valido(comentario, 300)),
   constraint preparo_do_procedimento_autoria_coerente check (
@@ -677,7 +785,7 @@ comment on column public.preparo_do_procedimento.texto is
 comment on column public.preparo_do_procedimento.texto_sha256 is
   'O sha256 do texto em UTF-8, hexadecimal minusculo, gravado pelo gatilho de insert. O codigo na tela sao os 8 primeiros.';
 comment on column public.preparo_do_procedimento.nome_do_procedimento is
-  'O nome do procedimento quando a versao nasceu: a aprovacao vale para este nome (renomear o procedimento tira a aprovacao).';
+  'O nome do procedimento quando a versao nasceu (preparo_nome_valido): a aprovacao vale para este nome (renomear o procedimento tira a aprovacao).';
 comment on column public.preparo_do_procedimento.origem is
   'cadastro (escrito na tela) ou texto_antigo (copiado de procedure.prep_instructions pela migration, D-83).';
 comment on column public.preparo_do_procedimento.situacao is
@@ -742,7 +850,7 @@ revoke all on function public.responsavel_tecnico_vigente(uuid)
 comment on function public.responsavel_tecnico_vigente(uuid) is
   'Interna (AG7; nenhum papel da API executa): o id da designacao aberta (ate nulo) de responsavel_tecnico da clinica cujo user_id tem clinic_member da clinica com status ativo; nulo se nao houver. O RT que perde o acesso deixa de ser vigente na hora (falha fechada). Usada pelo gatilho de aprovacao, por preparo_em_vigor e pelas RPCs.';
 
--- A sessao e o RT vigente desta clinica? (as telas)
+-- A sessao e o RT vigente desta clinica? (as telas e as RPCs)
 create function public.user_e_responsavel_tecnico(p_clinic_id uuid)
 returns boolean
 language plpgsql
@@ -752,6 +860,16 @@ set search_path to ''
 as $function$
 begin
   if auth.uid() is null or p_clinic_id is null then
+    return false;
+  end if;
+  -- Conta suspensa: a equipe da clinica nao le nem escreve nada (como
+  -- user_has_role, user_active_clinic_ids e user_can_write; BANCO-1).
+  if exists (select 1 from public.clinica_suspensa s where s.clinic_id = p_clinic_id) then
+    return false;
+  end if;
+  -- O super admin nunca age como RT, nem com vinculo ativo e designado antes
+  -- (D-71: aprovar e ato clinico; TELA-9).
+  if public.is_product_admin() then
     return false;
   end if;
   return exists (
@@ -768,7 +886,7 @@ grant execute on function public.user_e_responsavel_tecnico(uuid)
   to authenticated, service_role;
 
 comment on function public.user_e_responsavel_tecnico(uuid) is
-  'A sessao (auth.uid()) e o RT vigente desta clinica? (AG7; as telas e as RPCs.) Sem sessao ou sem clinica: falso. Nao entra em policy de dado de paciente.';
+  'A sessao (auth.uid()) e o RT vigente desta clinica e pode agir como RT? (AG7; as telas e as RPCs.) Falso sem sessao ou sem clinica, na clinica de conta suspensa (clinica_suspensa: a equipe da clinica nao escreve nada, como em user_has_role) e para o super admin (is_product_admin, mesmo com vinculo ativo e designado antes: D-71). Nao entra em policy de dado de paciente.';
 
 -- A versao esta em vigor? (a definicao do cabecalho)
 create function public.preparo_em_vigor(p_clinic_id uuid, p_versao_id uuid)
@@ -950,7 +1068,8 @@ comment on function public.preparos_em_vigor_da_clinica(uuid) is
   'So o servidor (service_role; o catalogo do agente). AG7: a lista [{procedure_id, versao_id, versao, texto_sha256, rt_nome, aprovado_em}] das versoes em vigor da clinica (preparo_em_vigor; o procedimento inativo entra: quem monta o catalogo filtra os ativos), SEM o texto, em ordem de procedure_id; sem nenhuma, []. Clinica nula: 22004 parametro_nulo.';
 
 -- Os textos da clinica que o filtro e o historico escondem (nunca vao ao
--- modelo).
+-- modelo): so o que pode ter chegado a paciente (BANCO-3: a lista so cresce
+-- com a aprovacao do RT, e nao com cada Salvar).
 create function public.textos_de_preparo_da_clinica(p_clinic_id uuid)
 returns text[]
 language plpgsql
@@ -968,10 +1087,16 @@ begin
   return coalesce((
     select array_agg(t.texto order by t.texto collate "C")
       from (
-        -- O texto de toda versao, de qualquer situacao.
+        -- A versao que ja valeu (aprovado_em nao nulo: aprovado, substituido
+        -- ou suspenso, pelo CHECK preparo_do_procedimento_aprovacao_coerente;
+        -- a IA e a regua so mandam a em vigor) e a copia do texto antigo, de
+        -- qualquer situacao (a regua de antes da AG7 ja o mandou, opcao A).
+        -- Aguardando, devolvida e descartada de origem cadastro nunca sairam
+        -- do sistema e nao entram (o teto do filtro).
         select v.texto
           from public.preparo_do_procedimento v
          where v.clinic_id = p_clinic_id
+           and (v.aprovado_em is not null or v.origem = 'texto_antigo')
         union
         -- O que a regua mandou antes da AG7 (opcao A) e a copia deixou de
         -- fora, aparado como o trim() do JavaScript.
@@ -991,7 +1116,7 @@ grant execute on function public.textos_de_preparo_da_clinica(uuid)
   to service_role;
 
 comment on function public.textos_de_preparo_da_clinica(uuid) is
-  'So o servidor (service_role; o catalogo do agente, para o filtro, regra trecho_do_preparo_da_clinica, e para o historico que vai ao modelo). AG7: o texto de TODA versao de preparo_do_procedimento da clinica, de qualquer situacao, mais o prep_instructions nao vazio de todo procedimento da clinica (o que a regua mandou antes da AG7; aparado pela regra do trim() do JavaScript, sem outra mudanca), sem repetidos, em ordem binaria (collate C); sem nenhum, {}. Nunca vai ao modelo. Clinica nula: 22004 parametro_nulo.';
+  'So o servidor (service_role; o catalogo do agente, para o filtro, regra trecho_do_preparo_da_clinica, e para o historico que vai ao modelo). AG7: o texto das versoes de preparo_do_procedimento da clinica que ja valeram (aprovado_em nao nulo: aprovado, substituido ou suspenso) e de toda copia do texto antigo (origem texto_antigo, de qualquer situacao), mais o prep_instructions nao vazio de todo procedimento da clinica (o que a regua mandou antes da AG7; aparado pela regra do trim() do JavaScript, sem outra mudanca), sem repetidos, em ordem binaria (collate C); sem nenhum, {}. A versao de cadastro que nunca valeu (aguardando, devolvida, descartada) fica fora: nunca saiu do sistema, e so a aprovacao do RT faz a lista crescer (o teto do filtro). Nunca vai ao modelo. Clinica nula: 22004 parametro_nulo.';
 
 -- O texto em vigor do procedimento (a regua).
 create function public.preparo_em_vigor_do_procedimento(p_clinic_id uuid, p_procedure_id uuid)
@@ -1077,6 +1202,11 @@ begin
   if not public.preparo_texto_valido(p_texto) then
     raise exception using errcode = '22023', message = 'texto_invalido';
   end if;
+  -- O conteudo que o banco recusa sozinho (CFM-2): a tela recusa antes, com
+  -- a frase; isto vale para a chamada direta da API.
+  if public.preparo_texto_recusado(p_texto) then
+    raise exception using errcode = '22023', message = 'texto_recusado';
+  end if;
   if p_versao_lida < 0 then
     raise exception using errcode = '22023', message = 'versao_lida_invalida';
   end if;
@@ -1097,7 +1227,7 @@ begin
     from public.procedure p
    where p.id = p_procedure_id
      for no key update;
-  if not (public.cadastro_texto_valido(v_nome, 120) and v_nome !~ '[\x00-\x1f\x7f-\x9f]') then
+  if not public.preparo_nome_valido(v_nome) then
     raise exception using errcode = '22023', message = 'nome_do_procedimento_invalido';
   end if;
   select v.id into v_aguardando
@@ -1149,7 +1279,7 @@ grant execute on function public.salvar_preparo_do_procedimento(uuid, text, inte
   to authenticated;
 
 comment on function public.salvar_preparo_do_procedimento(uuid, text, integer) is
-  'Cadastros (authenticated). AG7: salva um texto novo da orientacao de preparo do procedimento como a versao seguinte (a maior mais 1), aguardando o RT, com nome_do_procedimento = o nome de agora, origem cadastro e escrito_por = auth.uid(); o texto aguardando que houver vira descartado ("Trocado por um texto novo."). Na ordem: 22004 parametro_nulo; 22023 texto_invalido (fora de preparo_texto_valido: o texto chega JA normalizado) e versao_lida_invalida (< 0); P0001 procedimento_inexistente; 42501 "Somente administradores, gestores ou o responsável técnico escrevem a orientação de preparo." (passam: administrador ou gestor ativo, super admin, RT vigente); a trava do procedimento (FOR NO KEY UPDATE); 22023 nome_do_procedimento_invalido (o nome de agora nao cabe na regra); a trava da aguardando (FOR UPDATE); P0001 texto_mudou (p_versao_lida diferente da maior versao; 0 sem versao); P0001 texto_igual_ao_em_vigor (o mesmo texto da aprovada EM VIGOR; fora de vigor, o mesmo texto entra: o "Aprovar de novo"). Trilha escreveu_preparo {procedure_id, versao, codigo}. Devolve {versao_id, versao, texto_sha256}. Nunca 40001 nem 40P01.';
+  'Cadastros (authenticated). AG7: salva um texto novo da orientacao de preparo do procedimento como a versao seguinte (a maior mais 1), aguardando o RT, com nome_do_procedimento = o nome de agora, origem cadastro e escrito_por = auth.uid(); o texto aguardando que houver vira descartado ("Trocado por um texto novo."). Na ordem: 22004 parametro_nulo; 22023 texto_invalido (fora de preparo_texto_valido: o texto chega JA normalizado), texto_recusado (preparo_texto_recusado: link, valor em reais, arroba ou invisivel que o filtro recusa; CFM-2) e versao_lida_invalida (< 0); P0001 procedimento_inexistente; 42501 "Somente administradores, gestores ou o responsável técnico escrevem a orientação de preparo." (passam: administrador ou gestor ativo, super admin, RT vigente fora da clinica suspensa); a trava do procedimento (FOR NO KEY UPDATE); 22023 nome_do_procedimento_invalido (o nome de agora fora de preparo_nome_valido); a trava da aguardando (FOR UPDATE); P0001 texto_mudou (p_versao_lida diferente da maior versao; 0 sem versao); P0001 texto_igual_ao_em_vigor (o mesmo texto da aprovada EM VIGOR; fora de vigor, o mesmo texto entra: o "Aprovar de novo"). Trilha escreveu_preparo {procedure_id, versao, codigo}. Devolve {versao_id, versao, texto_sha256}. Nunca 40001 nem 40P01.';
 
 -- Aprovar: so o RT vigente.
 create function public.aprovar_preparo_do_procedimento(p_versao_id uuid, p_texto_sha256 text)
@@ -1189,7 +1319,7 @@ begin
     from public.procedure p
    where p.id = v_procedimento
      for no key update;
-  select v.situacao, v.versao, v.texto_sha256, v.nome_do_procedimento into v_versao
+  select v.situacao, v.versao, v.texto, v.texto_sha256, v.nome_do_procedimento into v_versao
     from public.preparo_do_procedimento v
    where v.id = p_versao_id
      for update;
@@ -1216,6 +1346,11 @@ begin
   end if;
   if v_versao.nome_do_procedimento is distinct from v_nome then
     raise exception using errcode = 'P0001', message = 'nome_mudou';
+  end if;
+  -- A reconferencia do conteudo (CFM-2): a versao que chegou aguardando sem
+  -- passar pelo salvar (uma linha gravada pelo dono) nao e aprovada.
+  if public.preparo_texto_recusado(v_versao.texto) then
+    raise exception using errcode = 'P0001', message = 'texto_recusado';
   end if;
   begin
     if v_aprovada is not null then
@@ -1249,7 +1384,7 @@ grant execute on function public.aprovar_preparo_do_procedimento(uuid, text)
   to authenticated;
 
 comment on function public.aprovar_preparo_do_procedimento(uuid, text) is
-  'Cadastros (authenticated). AG7: o RT vigente aprova a versao aguardando (D-71). Na ordem: 22004 parametro_nulo; 22023 sha256_invalido (formato); P0001 versao_inexistente; 42501 "Só o responsável técnico da clínica aprova a orientação de preparo." (so o RT vigente; o super admin tambem recebe); as travas (o procedimento FOR NO KEY UPDATE, a versao FOR UPDATE, a aprovada de agora FOR UPDATE, a linha do RT vigente FOR SHARE); 42501 de novo se o RT mudou enquanto esperava; P0001 nao_aguarda_aprovacao; P0001 texto_mudou (p_texto_sha256 diferente do hash da versao); P0001 nome_mudou (o procedimento foi renomeado depois da versao: salvar de novo); a aprovada de agora vira substituido; a versao vira aprovado com aprovado_por = auth.uid(), aprovado_em = now() e rt_id = o vigente; o 23505 do indice vira P0001 outra_aprovacao. Trilha aprovou_preparo {procedure_id, versao, codigo}. Devolve {versao_id, versao, texto_sha256, aprovado_em}. Nunca 40001 nem 40P01.';
+  'Cadastros (authenticated). AG7: o RT vigente aprova a versao aguardando (D-71). Na ordem: 22004 parametro_nulo; 22023 sha256_invalido (formato); P0001 versao_inexistente; 42501 "Só o responsável técnico da clínica aprova a orientação de preparo." (so o RT vigente, pela sessao: user_e_responsavel_tecnico; o super admin tambem recebe, mesmo designado RT, e o RT da clinica de conta suspensa tambem); as travas (o procedimento FOR NO KEY UPDATE, a versao FOR UPDATE, a aprovada de agora FOR UPDATE, a linha do RT vigente FOR SHARE); 42501 de novo se o RT mudou enquanto esperava; P0001 nao_aguarda_aprovacao; P0001 texto_mudou (p_texto_sha256 diferente do hash da versao); P0001 nome_mudou (o procedimento foi renomeado depois da versao: salvar de novo); P0001 texto_recusado (preparo_texto_recusado: a versao que chegou aguardando sem passar pelo salvar; CFM-2); a aprovada de agora vira substituido; a versao vira aprovado com aprovado_por = auth.uid(), aprovado_em = now() e rt_id = o vigente; o 23505 do indice vira P0001 outra_aprovacao. Trilha aprovou_preparo {procedure_id, versao, codigo}. Devolve {versao_id, versao, texto_sha256, aprovado_em}. Nunca 40001 nem 40P01.';
 
 -- Devolver: so o RT vigente, com o comentario.
 create function public.devolver_preparo_do_procedimento(p_versao_id uuid, p_comentario text)
@@ -1309,7 +1444,7 @@ grant execute on function public.devolver_preparo_do_procedimento(uuid, text)
   to authenticated;
 
 comment on function public.devolver_preparo_do_procedimento(uuid, text) is
-  'Cadastros (authenticated). AG7: o RT vigente devolve a versao aguardando, com o comentario. Na ordem: 22004 parametro_nulo (a versao ou o comentario nulo); 22023 comentario_invalido (cadastro_texto_valido(.., 300): 1 a 300, aparado); P0001 versao_inexistente; 42501 "Só o responsável técnico da clínica aprova a orientação de preparo."; as travas (o procedimento, depois a versao); P0001 nao_aguarda_aprovacao; a versao vira devolvido com o comentario. Trilha devolveu_preparo {procedure_id, versao, codigo}. Nunca 40001 nem 40P01.';
+  'Cadastros (authenticated). AG7: o RT vigente devolve a versao aguardando, com o comentario. Na ordem: 22004 parametro_nulo (a versao ou o comentario nulo); 22023 comentario_invalido (cadastro_texto_valido(.., 300): 1 a 300, aparado); P0001 versao_inexistente; 42501 "Só o responsável técnico da clínica aprova a orientação de preparo." (so o RT vigente, pela sessao: nem o super admin, nem o RT da clinica de conta suspensa); as travas (o procedimento, depois a versao); P0001 nao_aguarda_aprovacao; a versao vira devolvido com o comentario. Trilha devolveu_preparo {procedure_id, versao, codigo}. Nunca 40001 nem 40P01.';
 
 -- Descartar o texto que espera o RT.
 create function public.descartar_preparo_do_procedimento(p_versao_id uuid)
@@ -1368,7 +1503,7 @@ grant execute on function public.descartar_preparo_do_procedimento(uuid)
   to authenticated;
 
 comment on function public.descartar_preparo_do_procedimento(uuid) is
-  'Cadastros (authenticated). AG7: descarta a versao aguardando o RT. Na ordem: 22004 parametro_nulo; P0001 versao_inexistente; 42501 "Somente administradores, gestores ou o responsável técnico descartam o texto novo da orientação de preparo." (passam: administrador ou gestor ativo, super admin, RT vigente); as travas (o procedimento, depois a versao); P0001 nao_aguarda_aprovacao; a versao vira descartado. Trilha descartou_preparo {procedure_id, versao, codigo}. Nunca 40001 nem 40P01.';
+  'Cadastros (authenticated). AG7: descarta a versao aguardando o RT. Na ordem: 22004 parametro_nulo; P0001 versao_inexistente; 42501 "Somente administradores, gestores ou o responsável técnico descartam o texto novo da orientação de preparo." (passam: administrador ou gestor ativo, super admin, RT vigente fora da clinica suspensa); as travas (o procedimento, depois a versao); P0001 nao_aguarda_aprovacao; a versao vira descartado. Trilha descartou_preparo {procedure_id, versao, codigo}. Nunca 40001 nem 40P01.';
 
 -- Suspender o envio do texto aprovado (parar e sempre o lado seguro).
 create function public.suspender_preparo_do_procedimento(p_procedure_id uuid, p_comentario text default null)
@@ -1433,7 +1568,7 @@ grant execute on function public.suspender_preparo_do_procedimento(uuid, text)
   to authenticated;
 
 comment on function public.suspender_preparo_do_procedimento(uuid, text) is
-  'Cadastros (authenticated). AG7: suspende o envio da versao aprovada do procedimento (D-72; parar e sempre o lado seguro). Na ordem: 22004 parametro_nulo (o procedimento nulo); 22023 comentario_invalido (o comentario veio e nao cabe em cadastro_texto_valido(.., 300)); P0001 procedimento_inexistente; 42501 "Somente administradores, gestores ou o responsável técnico suspendem o envio da orientação de preparo." (passam: administrador ou gestor ativo, super admin, RT vigente); as travas (o procedimento, depois a aprovada); P0001 sem_preparo_aprovado; a aprovada vira suspenso (com o comentario, se veio). Retomar e aprovar de novo, numa versao nova com o mesmo texto. Trilha suspendeu_preparo {procedure_id, versao, codigo}. Devolve {versao_id}. Nunca 40001 nem 40P01.';
+  'Cadastros (authenticated). AG7: suspende o envio da versao aprovada do procedimento (D-72; parar e sempre o lado seguro). Na ordem: 22004 parametro_nulo (o procedimento nulo); 22023 comentario_invalido (o comentario veio e nao cabe em cadastro_texto_valido(.., 300)); P0001 procedimento_inexistente; 42501 "Somente administradores, gestores ou o responsável técnico suspendem o envio da orientação de preparo." (passam: administrador ou gestor ativo, super admin, RT vigente fora da clinica suspensa); as travas (o procedimento, depois a aprovada); P0001 sem_preparo_aprovado; a aprovada vira suspenso (com o comentario, se veio). Retomar e aprovar de novo, numa versao nova com o mesmo texto. Trilha suspendeu_preparo {procedure_id, versao, codigo}. Devolve {versao_id}. Nunca 40001 nem 40P01.';
 
 -- Definir o RT da clinica (encerra o anterior, se houver).
 create function public.definir_responsavel_tecnico(p_clinic_id uuid, p_user_id uuid, p_nome text,
@@ -1446,6 +1581,7 @@ as $function$
 declare
   c_frase_rt constant text := 'Só o administrador da clínica define o responsável técnico.';
   v_aberto uuid;
+  v_desde_do_aberto timestamptz;
   v_id uuid;
   v_quando timestamptz := now();
 begin
@@ -1454,7 +1590,7 @@ begin
   then
     raise exception using errcode = '22004', message = 'parametro_nulo';
   end if;
-  if not (public.cadastro_texto_valido(p_nome, 120) and p_nome !~ '[\x00-\x1f\x7f-\x9f]') then
+  if not public.preparo_nome_valido(p_nome) then
     raise exception using errcode = '22023', message = 'nome_invalido';
   end if;
   if p_conselho not in ('CRM', 'CRO', 'CRBM', 'CRF', 'COREN', 'CREFITO', 'CRN', 'CRP', 'CRFa', 'CREF') then
@@ -1470,6 +1606,11 @@ begin
   if not (public.user_e_admin_pleno(p_clinic_id) or public.is_product_admin()) then
     raise exception using errcode = '42501', message = c_frase_rt;
   end if;
+  -- O super admin nunca e o RT (D-71: aprovar e ato clinico; TELA-9), nem com
+  -- vinculo ativo: nem se definindo, nem escolhido pelo administrador.
+  if exists (select 1 from public.product_admin pa where pa.user_id = p_user_id) then
+    raise exception using errcode = '42501', message = c_frase_rt;
+  end if;
   if not exists (
     select 1 from public.clinic_member m
      where m.clinic_id = p_clinic_id
@@ -1479,11 +1620,17 @@ begin
     raise exception using errcode = 'P0001', message = 'responsavel_nao_e_membro_ativo';
   end if;
   -- A trava: so a linha aberta do RT.
-  select r.id into v_aberto
+  select r.id, r.desde into v_aberto, v_desde_do_aberto
     from public.responsavel_tecnico r
    where r.clinic_id = p_clinic_id
      and r.ate is null
      for update;
+  -- A linha aberta nasceu depois do comeco desta transacao (now() e o do
+  -- comeco): outra definicao ganhou a corrida, e encerra-la com ate antes do
+  -- desde dela daria 23514 (BANCO-6).
+  if v_aberto is not null and v_desde_do_aberto > v_quando then
+    raise exception using errcode = 'P0001', message = 'outra_definicao';
+  end if;
   begin
     if v_aberto is not null then
       update public.responsavel_tecnico
@@ -1510,7 +1657,7 @@ grant execute on function public.definir_responsavel_tecnico(uuid, uuid, text, t
   to authenticated;
 
 comment on function public.definir_responsavel_tecnico(uuid, uuid, text, text, text, text) is
-  'Configuracoes (authenticated). AG7: define o RT da clinica (D-70): encerra a designacao aberta (ate, encerrado_por) e cria a nova (desde, definido_por = auth.uid()), na mesma transacao. As aprovacoes do anterior param de valer na hora (D-73). Na ordem: 22004 parametro_nulo; 22023 nome_invalido (1 a 120, aparado, sem controle), conselho_invalido (CRM, CRO, CRBM, CRF, COREN, CREFITO, CRN, CRP, CRFa, CREF), numero_invalido (1 a 20 de letras, digitos, ponto, barra e hifen) e uf_invalida (as 27); 42501 "Só o administrador da clínica define o responsável técnico." (so o administrador pleno, sem a marca de Implementador, ou o super admin); P0001 responsavel_nao_e_membro_ativo (a pessoa sem clinic_member ativo na clinica, de qualquer papel); a trava da linha aberta (FOR UPDATE); o 23505 vira P0001 outra_definicao. Trilha definiu_responsavel_tecnico {user_id}. Devolve o id da designacao nova. Nunca 40001 nem 40P01.';
+  'Configuracoes (authenticated). AG7: define o RT da clinica (D-70): encerra a designacao aberta (ate, encerrado_por) e cria a nova (desde, definido_por = auth.uid()), na mesma transacao. As aprovacoes do anterior param de valer na hora (D-73). Na ordem: 22004 parametro_nulo; 22023 nome_invalido (preparo_nome_valido: 1 a 120, aparado, sem controle, sem invisivel e sem marca de direcao), conselho_invalido (CRM, CRO, CRBM, CRF, COREN, CREFITO, CRN, CRP, CRFa, CREF), numero_invalido (1 a 20 de letras, digitos, ponto, barra e hifen) e uf_invalida (as 27); 42501 "Só o administrador da clínica define o responsável técnico." (so o administrador pleno, sem a marca de Implementador, ou o super admin); 42501 com a mesma frase se a pessoa escolhida e super admin (product_admin; nem ele mesmo, nem com vinculo ativo: D-71, TELA-9); P0001 responsavel_nao_e_membro_ativo (a pessoa sem clinic_member ativo na clinica, de qualquer papel); a trava da linha aberta (FOR UPDATE); P0001 outra_definicao se a linha aberta nasceu depois do comeco desta transacao (outra definicao ganhou a corrida; BANCO-6); o 23505 vira P0001 outra_definicao. Trilha definiu_responsavel_tecnico {user_id}. Devolve o id da designacao nova. Nunca 40001 nem 40P01.';
 
 -- Encerrar o RT da clinica (a clinica fica sem RT: nada sai).
 create function public.encerrar_responsavel_tecnico(p_clinic_id uuid)
@@ -1530,13 +1677,18 @@ begin
     raise exception using errcode = '42501', message = c_frase_rt;
   end if;
   -- A trava: so a linha aberta do RT.
-  select r.id, r.user_id into v_aberto
+  select r.id, r.user_id, r.desde into v_aberto
     from public.responsavel_tecnico r
    where r.clinic_id = p_clinic_id
      and r.ate is null
      for update;
   if v_aberto.id is null then
     raise exception using errcode = 'P0001', message = 'sem_responsavel_tecnico';
+  end if;
+  -- A linha aberta nasceu depois do comeco desta transacao: e um RT que quem
+  -- clicou nunca viu (BANCO-6). Nada muda.
+  if v_aberto.desde > now() then
+    raise exception using errcode = 'P0001', message = 'outra_definicao';
   end if;
   update public.responsavel_tecnico
      set ate = now(),
@@ -1554,7 +1706,7 @@ grant execute on function public.encerrar_responsavel_tecnico(uuid)
   to authenticated;
 
 comment on function public.encerrar_responsavel_tecnico(uuid) is
-  'Configuracoes (authenticated). AG7: encerra a designacao aberta do RT (ate, encerrado_por = auth.uid()); a clinica fica sem RT e nenhuma orientacao de preparo sai ate definir outro e ele aprovar de novo (D-73). Na ordem: 22004 parametro_nulo; 42501 "Só o administrador da clínica define o responsável técnico." (so o administrador pleno ou o super admin); a trava da linha aberta (FOR UPDATE); P0001 sem_responsavel_tecnico. Trilha encerrou_responsavel_tecnico {user_id}. Nunca 40001 nem 40P01.';
+  'Configuracoes (authenticated). AG7: encerra a designacao aberta do RT (ate, encerrado_por = auth.uid()); a clinica fica sem RT e nenhuma orientacao de preparo sai ate definir outro e ele aprovar de novo (D-73). Na ordem: 22004 parametro_nulo; 42501 "Só o administrador da clínica define o responsável técnico." (so o administrador pleno ou o super admin); a trava da linha aberta (FOR UPDATE); P0001 sem_responsavel_tecnico; P0001 outra_definicao se a linha aberta nasceu depois do comeco desta transacao (um RT que quem clicou nunca viu; BANCO-6). Trilha encerrou_responsavel_tecnico {user_id}. Nunca 40001 nem 40P01.';
 
 -- ---------------------------------------------------------------------------
 -- 9) mensagem_ia_exige_aprovacao: o ramo do preparo
@@ -1781,10 +1933,13 @@ comment on function public.mensagem_ia_exige_aprovacao() is
 -- Cada procedure com prep_instructions: CR LF e CR viram LF, depois NFC,
 -- depois o trim() do JavaScript (a ordem de normalizarTextoDoPreparo). Entra
 -- como versao 1, aguardando o RT, origem texto_antigo, escrito_por nulo e o
--- nome de agora, so se o normalizado nao e vazio, cabe na regra do texto e o
--- nome cabe na regra do nome. Fora disso, o texto fica so em
--- prep_instructions (e entra nos textos que o filtro e o historico
--- escondem). prep_instructions fica onde esta, sem uso.
+-- nome de agora, so se o normalizado nao e vazio, cabe na regra do texto, o
+-- nome cabe na regra do nome (preparo_nome_valido) e o texto passa nas
+-- recusas de preparo_texto_recusado (CFM-2: o texto antigo nunca passou
+-- pelas recusas da tela, e nao pode chegar ao RT com link, valor em reais,
+-- arroba ou invisivel). Fora disso, o texto fica so em prep_instructions (e
+-- entra nos textos que o filtro e o historico escondem). prep_instructions
+-- fica onde esta, sem uso. O NOTICE so traz as contagens, nunca o texto.
 
 do $copia$
 declare
@@ -1792,6 +1947,7 @@ declare
   c_brancos constant text := E'\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff';
   v_copiados bigint;
   v_fora bigint;
+  v_recusados bigint;
 begin
   with antigos as (
     select p.id, p.clinic_id, p.name,
@@ -1800,9 +1956,8 @@ begin
      where p.prep_instructions is not null
   ), avaliados as (
     select a.id, a.clinic_id, a.name, a.texto,
-           (public.preparo_texto_valido(a.texto)
-            and public.cadastro_texto_valido(a.name, 120)
-            and a.name !~ '[\x00-\x1f\x7f-\x9f]') as cabe
+           (public.preparo_texto_valido(a.texto) and public.preparo_nome_valido(a.name)) as cabe,
+           public.preparo_texto_recusado(a.texto) as recusado
       from antigos a
      where a.texto <> ''
   ), copiados as (
@@ -1811,12 +1966,15 @@ begin
     select a.clinic_id, a.id, 1, a.texto, a.name, 'texto_antigo', 'aguardando_rt', null
       from avaliados a
      where a.cabe
+       and not a.recusado
     returning 1
   )
-  select (select count(*) from copiados), (select count(*) from avaliados a where not a.cabe)
-    into v_copiados, v_fora;
-  raise notice 'Migration 20261103100000: % texto(s) antigo(s) de preparo copiado(s) como versao 1 aguardando o RT; % fora da regra (ficam so em prep_instructions).',
-    v_copiados, v_fora;
+  select (select count(*) from copiados),
+         (select count(*) from avaliados a where not a.cabe),
+         (select count(*) from avaliados a where a.cabe and a.recusado)
+    into v_copiados, v_fora, v_recusados;
+  raise notice 'Migration 20261103100000: % texto(s) antigo(s) de preparo copiado(s) como versao 1 aguardando o RT; % fora da regra e % recusado(s) por link, valor em reais, arroba ou invisivel (ficam so em prep_instructions).',
+    v_copiados, v_fora, v_recusados;
 end;
 $copia$;
 

@@ -6852,6 +6852,8 @@ export type Database = {
         Args: { p_clinic_id: string; p_procedure_id: string }
         Returns: Json
       }
+      preparo_nome_valido: { Args: { p_nome: string }; Returns: boolean }
+      preparo_texto_recusado: { Args: { p_texto: string }; Returns: boolean }
       preparo_texto_valido: { Args: { p_texto: string }; Returns: boolean }
       preparos_em_vigor_da_clinica: {
         Args: { p_clinic_id: string }

@@ -21,10 +21,23 @@ import { adminClient, anonClient } from "./stack";
 // - as funcoes do servidor e as internas recusadas para a sessao e para
 //   anon; user_e_responsavel_tecnico certo para cada um;
 // - a coluna nova ai_decision_log.preparo_versao_id lida pela sessao;
+// - a rodada de correcao do banco (03/11/2026):
+//   - o conteudo que o banco recusa sozinho (CFM-2): o link, o valor em
+//     reais e o arroba dao 22023 texto_recusado para todo papel, antes da
+//     permissao, e nada e gravado;
+//   - o nome do RT com marca de direcao ou invisivel da 22023 nome_invalido
+//     (BANCO-7);
+//   - a clinica de conta suspensa (BANCO-1): o RT, como o resto da equipe,
+//     recebe 42501 em salvar, aprovar, devolver, descartar e suspender;
+//     reativada, aprova;
 // - o super admin, SO com RLS_COM_SUPER_ADMIN=1 (como em
 //   cadastro-para-o-agente.test.ts: cria um usuario sintetico com
 //   product_admin NO BANCO DE PRODUCAO; sai no afterAll): le as duas
-//   clinicas, escreve, descarta, suspende e define o RT, e NAO aprova.
+//   clinicas, escreve, descarta, suspende e define o RT, e NAO aprova; nunca
+//   e escolhido como RT, nem por ele mesmo (TELA-9); e a conta antiga (com
+//   vinculo, designada RT antes de virar super admin) nao aprova nem devolve
+//   (sem a trava do super admin do main; com ela, o caso nao se cria pela API
+//   e fica so no ensaio, passo 9b).
 // Toda negacao tem o caso positivo ao lado (anti falso positivo), e a
 // service role confere que nada mudou.
 //
@@ -526,6 +539,28 @@ describe("salvar e descartar: administrador, gestor e o RT de qualquer papel", (
   });
 });
 
+describe("o conteudo que o banco recusa sozinho (CFM-2)", () => {
+  it("o link, o valor em reais e o arroba: 22023 texto_recusado para todo papel, antes da permissao; nada gravado", async () => {
+    const antes = await maiorVersao(procedimento("pA3"));
+    for (const recusado of [
+      "Veja o preparo em https://bit.ly/abc",
+      "Traga R$ 50,00 para o estacionamento.",
+      "Siga @clinica para mais dicas.",
+    ]) {
+      for (const apelido of ["admin-a", "rt-a", "recepcao-a", "admin-b"]) {
+        const { error } = await salvar(
+          como(apelido),
+          procedimento("pA3"),
+          recusado,
+        );
+        expect(error?.code, `${apelido}: ${recusado}`).toBe("22023");
+        expect(error?.message).toBe("texto_recusado");
+      }
+    }
+    expect(await maiorVersao(procedimento("pA3"))).toBe(antes);
+  });
+});
+
 describe("aprovar e devolver: so o RT vigente", () => {
   it("o administrador, o gestor, o Implementador, a leitura e o RT da B nao aprovam; o RT aprova", async () => {
     const salvo = await salvarOk("admin-a", procedimento("pA4"), texto(10));
@@ -693,6 +728,24 @@ describe("definir e encerrar o RT: so o administrador pleno", () => {
     expect((data as { user_id: string }).user_id).toBe(idDe("rt-a"));
   });
 
+  it("o nome com marca de direcao ou invisivel: 22023 nome_invalido (BANCO-7)", async () => {
+    for (const nome of ["Dra.\u202eAna", "Dra. Ana\u2066", "Dra.\u200bAna"]) {
+      const { error } = await como("admin-a").rpc(
+        "definir_responsavel_tecnico",
+        {
+          p_clinic_id: clinicaA,
+          p_user_id: idDe("rt2-a"),
+          p_nome: nome,
+          p_conselho: "CRM",
+          p_numero: "12345",
+          p_uf: "CE",
+        },
+      );
+      expect(error?.code, JSON.stringify(nome)).toBe("22023");
+      expect(error?.message).toBe("nome_invalido");
+    }
+  });
+
   it("user_e_responsavel_tecnico certo para cada um", async () => {
     for (const apelido of SESSOES) {
       const { data, error } = await como(apelido).rpc(
@@ -822,6 +875,61 @@ describe("ai_decision_log.preparo_versao_id", () => {
   });
 });
 
+describe("a clinica de conta suspensa (BANCO-1)", () => {
+  it("o RT recebe 42501 em salvar, aprovar, devolver, descartar e suspender; reativada, aprova", async () => {
+    const salvo = await salvarOk("admin-b", procedimento("pB"), texto(60));
+    const { error: erroSuspender } = await admin.rpc("suspender_clinica", {
+      p_clinic_id: clinicaB,
+      p_motivo: "Teste de RLS da AG7 (BANCO-1).",
+    });
+    expect(erroSuspender).toBeNull();
+    try {
+      const { data: comoRt } = await como("rt-b").rpc(
+        "user_e_responsavel_tecnico",
+        { p_clinic_id: clinicaB },
+      );
+      expect(comoRt).toBe(false);
+      const { error: erroSalvar } = await salvar(
+        como("rt-b"),
+        procedimento("pB"),
+        texto(61),
+      );
+      expect(erroSalvar?.code).toBe(PERMISSAO_NEGADA);
+      expect(erroSalvar?.message).toBe(FRASE_ESCREVER);
+      const erroAprovar = await aprovar(como("rt-b"), salvo);
+      expect(erroAprovar?.code).toBe(PERMISSAO_NEGADA);
+      expect(erroAprovar?.message).toBe(FRASE_APROVAR);
+      const { error: erroDevolver } = await como("rt-b").rpc(
+        "devolver_preparo_do_procedimento",
+        { p_versao_id: salvo.versao_id, p_comentario: "Falta o jejum." },
+      );
+      expect(erroDevolver?.code).toBe(PERMISSAO_NEGADA);
+      expect(erroDevolver?.message).toBe(FRASE_APROVAR);
+      const { error: erroDescartar } = await como("rt-b").rpc(
+        "descartar_preparo_do_procedimento",
+        { p_versao_id: salvo.versao_id },
+      );
+      expect(erroDescartar?.code).toBe(PERMISSAO_NEGADA);
+      expect(erroDescartar?.message).toBe(FRASE_DESCARTAR);
+      const { error: erroSuspenderPreparo } = await como("rt-b").rpc(
+        "suspender_preparo_do_procedimento",
+        { p_procedure_id: procedimento("pB") },
+      );
+      expect(erroSuspenderPreparo?.code).toBe(PERMISSAO_NEGADA);
+      expect(erroSuspenderPreparo?.message).toBe(FRASE_SUSPENDER);
+      expect(await situacao(salvo.versao_id)).toBe("aguardando_rt");
+    } finally {
+      const { error } = await admin.rpc("reativar_clinica", {
+        p_clinic_id: clinicaB,
+        p_motivo: "Fim do teste de RLS da AG7.",
+      });
+      expect(error, "reativar a B").toBeNull();
+    }
+    // Reativada, o RT aprova (anti falso positivo).
+    expect(await aprovar(como("rt-b"), salvo)).toBeNull();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // O super admin (opt-in: RLS_COM_SUPER_ADMIN=1, cabecalho)
 // ---------------------------------------------------------------------------
@@ -890,6 +998,70 @@ describe.skipIf(!COM_SUPER_ADMIN)("o super admin (opt-in)", () => {
       .delete()
       .eq("clinic_id", clinicaA);
     expect(r3.error?.code).toBe(PERMISSAO_NEGADA);
+  });
+
+  it("nunca e escolhido como RT: nem por ele mesmo, nem pelo administrador da clinica (TELA-9)", async () => {
+    const sessao = sessaoDoSuper!;
+    for (const quem of [sessao, como("admin-b")]) {
+      const erro = await definirRt(quem, clinicaB, superAdmin);
+      expect(erro?.code).toBe(PERMISSAO_NEGADA);
+      expect(erro?.message).toBe(FRASE_RT);
+    }
+    const { data } = await sessao.rpc("user_e_responsavel_tecnico", {
+      p_clinic_id: clinicaB,
+    });
+    expect(data).toBe(false);
+  });
+
+  it("a conta antiga (vinculo ativo, RT antes de virar super admin) nao aprova nem devolve (TELA-9)", async (contexto) => {
+    await criarPessoa("legado-b", clinicaB, "profissional");
+    expect(
+      await definirRt(como("admin-b"), clinicaB, idDe("legado-b")),
+    ).toBeNull();
+    const salvo = await salvarOk("admin-b", procedimento("pB"), texto(50));
+    const { error: erroSuper } = await admin
+      .from("product_admin")
+      .insert({ user_id: idDe("legado-b") });
+    if (erroSuper) {
+      // A trava do super admin do main (20261103110000) ja aplicada: a conta
+      // com vinculo nao vira super admin pela API. O caso fica so no ensaio
+      // (passo 9b), que desliga o gatilho dela na transacao desfeita.
+      expect(erroSuper.code).toBe("CZSA2");
+      expect(
+        await definirRt(como("admin-b"), clinicaB, idDe("rt-b")),
+      ).toBeNull();
+      contexto.skip("a trava do super admin do main recusa a conta antiga");
+    }
+    try {
+      const { data: comoRt } = await como("legado-b").rpc(
+        "user_e_responsavel_tecnico",
+        { p_clinic_id: clinicaB },
+      );
+      expect(comoRt).toBe(false);
+      const erro = await aprovar(como("legado-b"), salvo);
+      expect(erro?.code).toBe(PERMISSAO_NEGADA);
+      expect(erro?.message).toBe(FRASE_APROVAR);
+      const { error: erroDevolver } = await como("legado-b").rpc(
+        "devolver_preparo_do_procedimento",
+        { p_versao_id: salvo.versao_id, p_comentario: "Falta o jejum." },
+      );
+      expect(erroDevolver?.code).toBe(PERMISSAO_NEGADA);
+      // Nem escolhido de novo: pelo administrador, nem por ele mesmo.
+      for (const quem of [como("admin-b"), como("legado-b")]) {
+        const erroDefinir = await definirRt(quem, clinicaB, idDe("legado-b"));
+        expect(erroDefinir?.code).toBe(PERMISSAO_NEGADA);
+        expect(erroDefinir?.message).toBe(FRASE_RT);
+      }
+      expect(await situacao(salvo.versao_id)).toBe("aguardando_rt");
+    } finally {
+      await admin
+        .from("product_admin")
+        .delete()
+        .eq("user_id", idDe("legado-b"));
+      expect(
+        await definirRt(como("admin-b"), clinicaB, idDe("rt-b")),
+      ).toBeNull();
+    }
   });
 
   it("le as duas clinicas, escreve, descarta e suspende; nao aprova", async () => {

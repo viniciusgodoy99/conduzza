@@ -12,6 +12,9 @@
 -- Os CHECKs de antes (md5 de pg_get_constraintdef, sem comentario):
 --   ai_decision_log_desfecho_valido  c0d83395337e74d559861d5b8fa58801
 --   ai_turno_saida_valida            36975878604a6c0dabc28538f3cdf1f8
+-- e os da AG7 (os que ficam com linha de valor novo, passo 6):
+--   ai_decision_log_desfecho_valido  f26a44dbe96858015f0d31e706c4fe65
+--   ai_turno_saida_valida            a5972473c772c7dfa70bdb8001362830
 -- SE A AG5, A AG6a OU A AG6b MUDAREM o corpo antes de aplicar (revisao),
 -- refazer este arquivo com o corpo vigente
 -- (~/.claude/plans/agente-completo/ag7/banco/dev/montar/montar_rollback.py).
@@ -22,38 +25,63 @@
 -- CHECK da saida do turno com preparo (com o comentario); as tabelas
 -- responsavel_tecnico e preparo_do_procedimento (os CHECKs, os indices, os
 -- gatilhos, a RLS, as policies, os grants, os comentarios) e as funcoes
--- delas (preparo_texto_valido, responsavel_tecnico_vigente,
--- responsavel_tecnico_nao_muda, preparo_do_procedimento_ao_inserir e
--- preparo_do_procedimento_nao_muda); as funcoes de leitura e do servidor
--- (user_e_responsavel_tecnico, preparo_em_vigor, mensagem_do_preparo,
--- ler_preparo_para_envio, preparos_em_vigor_da_clinica,
--- textos_de_preparo_da_clinica, preparo_em_vigor_do_procedimento); as RPCs
--- das telas (salvar, aprovar, devolver, descartar e suspender o preparo;
--- definir e encerrar o RT); o corpo novo de mensagem_ia_exige_aprovacao
--- (com um comentario); a copia do texto antigo (as versoes texto_antigo).
+-- delas (preparo_texto_valido, preparo_nome_valido,
+-- responsavel_tecnico_vigente, responsavel_tecnico_nao_muda,
+-- preparo_do_procedimento_ao_inserir e preparo_do_procedimento_nao_muda);
+-- a regra do conteudo das RPCs (preparo_texto_recusado); as funcoes de
+-- leitura e do servidor (user_e_responsavel_tecnico, preparo_em_vigor,
+-- mensagem_do_preparo, ler_preparo_para_envio,
+-- preparos_em_vigor_da_clinica, textos_de_preparo_da_clinica,
+-- preparo_em_vigor_do_procedimento); as RPCs das telas (salvar, aprovar,
+-- devolver, descartar e suspender o preparo; definir e encerrar o RT); o
+-- corpo novo de mensagem_ia_exige_aprovacao (com um comentario); a copia do
+-- texto antigo (as versoes texto_antigo).
 --
--- O QUE ESTE ARQUIVO FAZ: pega as travas (abaixo); confere que nenhuma
--- decisao enviou_preparo e recente (o codigo de antes ja no ar; senao falha,
--- nada desfeito); avisa (NOTICE, so contagens) o que fica; devolve o corpo
--- de antes de mensagem_ia_exige_aprovacao (sem comentario; os grants nao
--- mudaram: CREATE OR REPLACE mantem) ANTES de tirar as funcoes que o corpo
--- novo chama; tira as funcoes do servidor e as RPCs; tira o CHECK
--- ai_decision_log_preparo_coerente e a coluna preparo_versao_id (o grant sai
--- junto); devolve os CHECKs de antes do desfecho e da saida (NOT VALID e,
--- sem linha com valor novo, VALIDATE: com linha enviou_preparo ou preparo,
--- o CHECK de antes fica NOT VALID e a linha fica), sem comentario; confere
--- no fim o corpo, o comentario, os grants, os CHECKs, que as funcoes e a
--- coluna sairam e que as tabelas ficaram (com qualquer diferenca, falha e
--- desfaz tudo). Sem IF EXISTS: com qualquer objeto faltando ou diferente,
--- falha e desfaz tudo.
+-- O QUE ESTE ARQUIVO FAZ: pega as travas (abaixo); confere que o codigo da
+-- AG7 ja saiu do ar (passo 1: nenhum envio do preparo pela IA nem pela
+-- regua nos ultimos 15 minutos; senao falha, nada desfeito); avisa
+-- (NOTICE, so contagens) o que fica; devolve o corpo de antes de
+-- mensagem_ia_exige_aprovacao (sem comentario; os grants nao mudaram:
+-- CREATE OR REPLACE mantem) ANTES de tirar as funcoes que o corpo novo
+-- chama; tira as funcoes do servidor, as RPCs e preparo_texto_recusado;
+-- tira o CHECK ai_decision_log_preparo_coerente e a coluna
+-- preparo_versao_id (o grant sai junto); devolve os CHECKs de antes do
+-- desfecho e da saida (NOT VALID e VALIDATE, sem comentario), salvo com
+-- linha enviou_preparo (ou preparo): ai fica o CHECK da AG7, que so
+-- acrescenta o valor, com um comentario que diz por que ficou (um CHECK de
+-- antes NOT VALID recusaria o UPDATE do codigo de antes que fecha o turno
+-- que sobrou); confere no fim o corpo, o comentario, os grants, os CHECKs,
+-- que as funcoes e a coluna sairam e que as tabelas ficaram (com qualquer
+-- diferenca, falha e desfaz tudo). Sem IF EXISTS: com qualquer objeto
+-- faltando ou diferente, falha e desfaz tudo.
 --
 -- O QUE FICA, DE PROPOSITO (o contrato, secao 1.8): AS DUAS TABELAS, com as
 -- linhas (os RTs e as versoes, a prova de quem aprovou o que), os gatilhos,
--- os CHECKs, os indices, a RLS, as policies e as funcoes que elas usam
--- (preparo_texto_valido, responsavel_tecnico_vigente e as dos tres
--- gatilhos). A trilha (audit_log) fica. ATENCAO: para aplicar a migration
--- de novo depois deste rollback, as tabelas que ficaram precisam sair antes
--- (a migration cria as duas e nao e idempotente).
+-- os CHECKs, os indices, a RLS, as policies e as SEIS funcoes que elas usam
+-- (preparo_texto_valido e preparo_nome_valido, nos CHECKs;
+-- responsavel_tecnico_vigente, no gatilho de aprovacao; e as dos tres
+-- gatilhos). A trilha (audit_log) fica. Com decisao enviou_preparo ou turno
+-- com saida preparo, ficam tambem essas linhas e o CHECK da AG7 do desfecho
+-- ou da saida.
+--
+-- PARA APLICAR A MIGRATION DE NOVO depois deste rollback (ela usa create
+-- function e create table sem or replace e nao e idempotente), numa
+-- transacao, antes:
+--   1. tirar as duas tabelas (drop table public.preparo_do_procedimento e
+--      depois drop table public.responsavel_tecnico, nessa ordem, pela FK)
+--      e as seis funcoes que ficaram (preparo_texto_valido(text),
+--      preparo_nome_valido(text), responsavel_tecnico_vigente(uuid),
+--      responsavel_tecnico_nao_muda(), preparo_do_procedimento_ao_inserir()
+--      e preparo_do_procedimento_nao_muda()), decidido com o dono: as
+--      tabelas sao a prova de quem aprovou o que;
+--   2. apagar a linha 20261103100000 de supabase_migrations.schema_migrations
+--      (nenhum rollback do projeto mexe nela);
+--   3. as decisoes enviou_preparo que ficaram perderam a versao (a coluna
+--      saiu): o CHECK ai_decision_log_preparo_coerente da migration nao
+--      valida com elas. Decidir com o dono antes (apaga-las, ou reaplicar
+--      com esse CHECK so NOT VALID).
+--   Os CHECKs do desfecho e da saida (os de antes ou os da AG7 que ficaram)
+--   a migration troca sozinha (drop e add do mesmo nome).
 --
 -- OPCIONAL, ANTES deste arquivo (numa transacao propria, se o dono quiser
 -- que a regua velha mande o texto aprovado): copiar o texto em vigor para
@@ -65,7 +93,9 @@
 --    where v.procedure_id = p.id
 --      and v.situacao = 'aprovado'
 --      and public.preparo_em_vigor(v.clinic_id, v.id);
--- (preparo_em_vigor sai neste arquivo: rodar o update ANTES.)
+-- (preparo_em_vigor sai neste arquivo: rodar o update ANTES, e so depois de
+-- conferir que o deploy do codigo de antes entrou: com o texto aprovado em
+-- prep_instructions, a trava da regua do passo 1 deixa de ve-lo.)
 --
 -- ORDEM: PRIMEIRO voltar o codigo (o da AG7 chama as RPCs e as funcoes do
 -- servidor, le as duas tabelas, grava a decisao enviou_preparo e a saida
@@ -73,8 +103,23 @@
 -- este arquivo. O codigo de antes da AG7 (o main com a AG6b) funciona antes
 -- e depois deste arquivo. Um turno decidido com saida preparo no meio do
 -- rollback: o codigo de antes le a saida desconhecida como nula e fecha
--- sem_envio; a conversa fica na IA sem resposta ate a proxima mensagem do
--- paciente.
+-- sem_envio (o UPDATE dele nao mexe na saida, e o CHECK da AG7, que fica com
+-- a linha, aceita); a conversa fica na IA sem resposta ate a proxima
+-- mensagem do paciente.
+--
+-- A TRAVA DO CODIGO (passo 1) olha dois sinais dos ultimos 15 minutos (so
+-- contagens, nunca texto): (a) a IA, uma decisao enviou_preparo; (b) a
+-- regua, uma mensagem do sistema de um toque (o job executar_passo_de_regua
+-- da mensagem) cujo passo (cadence_step.fixed_body) tem {{preparo}} e cujo
+-- corpo leva, palavra por palavra, o texto de uma versao da clinica que ja
+-- valeu (aprovado_em nao nulo). A regua da AG7 so manda o texto aprovado; a
+-- de antes manda prep_instructions: o texto aprovado que tambem esta num
+-- prep_instructions da clinica (o texto antigo aprovado como veio) nao
+-- conta, porque as duas reguas mandariam o mesmo corpo (LIMITE: nesse caso
+-- a trava nao ve a regua da AG7). A trava so ve o toque que SAIU com a
+-- linha: a regua da AG7 sem a funcao (depois do rollback) tira a linha e
+-- nao e vista, mas ai o rollback ja passou. Sem toque nem decisao nos 15
+-- minutos, a trava passa: ela prova o que viu, nao que o deploy entrou.
 --
 -- O QUE SE PERDE: o envio do preparo pela IA (a regua de antes volta a
 -- mandar prep_instructions). FICAM: as tabelas e as linhas delas, as
@@ -88,8 +133,12 @@
 -- migration, de proposito); depois falha inteiro com 55P03, nada desfeito:
 -- rodar de novo. Nunca espera trava com outra na mao (nao fecha ciclo, 40P01,
 -- com sessao nenhuma). Ate o commit (milissegundos), o turno da IA espera
--- para gravar a decisao e o turno. Nenhuma trava em message, conversation,
--- clinic, procedure nem nas tabelas que ficam. Horario calmo.
+-- para gravar a decisao e o turno, e a LEITURA das duas tabelas tambem
+-- espera (ACCESS EXCLUSIVE segura o SELECT: abrir uma conversa no
+-- Atendimento espera). Em message, job_queue, cadence_run, cadence_step,
+-- procedure e preparo_do_procedimento, so a leitura do passo 1 (ACCESS
+-- SHARE, que nao barra ninguem); nenhuma trava em conversation, clinic nem
+-- nas tabelas que ficam. Horario calmo.
 --
 -- Rodar inteiro, numa transacao, no SQL editor, em horario calmo.
 
@@ -117,8 +166,10 @@ begin
 end;
 $travas$;
 
--- 1. O codigo de antes ja no ar: nenhuma decisao enviou_preparo nos ultimos
---    15 minutos (um turno do codigo da AG7 ainda podia estar mandando).
+-- 1. O codigo de antes ja no ar (cabecalho, A TRAVA DO CODIGO): nada do
+--    codigo da AG7 mandou o preparo nos ultimos 15 minutos, nem a IA (uma
+--    decisao enviou_preparo) nem a regua (um toque de passo com {{preparo}}
+--    que levou o texto de uma versao que ja valeu, fora de prep_instructions).
 do $codigo$
 begin
   if exists (select 1 from public.ai_decision_log d
@@ -126,6 +177,34 @@ begin
                 and d.created_at > now() - interval '15 minutes') then
     raise exception using errcode = 'object_in_use',
       message = 'Rollback de 20261103100000: houve envio de preparo pela IA nos ultimos 15 minutos. Volte o codigo da AG7 primeiro e rode de novo depois. Nada foi desfeito.';
+  end if;
+  if exists (
+    select 1
+      from public.preparo_do_procedimento v
+      join public.message m
+        on m.clinic_id = v.clinic_id
+       and m.created_at > now() - interval '15 minutes'
+       and m.direction = 'saida'
+       and m.author = 'sistema'
+       and m.job_id is not null
+       and position(v.texto in m.body) > 0
+      join public.job_queue j
+        on j.id = m.job_id
+       and j.kind = 'executar_passo_de_regua'
+      join public.cadence_run r
+        on r.id = case when j.payload ->> 'cadence_run_id' ~ '^[0-9a-fA-F-]{36}$'
+                       then (j.payload ->> 'cadence_run_id')::uuid end
+      join public.cadence_step s
+        on s.id = r.cadence_step_id
+     where v.aprovado_em is not null
+       and s.fixed_body ~ '\{\{\s*preparo\s*\}\}'
+       and not exists (
+         select 1 from public.procedure p
+          where p.clinic_id = v.clinic_id
+            and position(v.texto in coalesce(p.prep_instructions, '')) > 0)
+  ) then
+    raise exception using errcode = 'object_in_use',
+      message = 'Rollback de 20261103100000: a regua mandou uma orientacao de preparo aprovada pelo RT nos ultimos 15 minutos (o codigo da AG7 ainda no ar). Volte o codigo da AG7 primeiro e rode de novo depois. Nada foi desfeito.';
   end if;
 end;
 $codigo$;
@@ -144,7 +223,7 @@ begin
     from public.preparo_do_procedimento v;
   select count(*) into v_decisoes from public.ai_decision_log d where d.desfecho = 'enviou_preparo';
   select count(*) into v_turnos from public.ai_turno t where t.saida = 'preparo';
-  raise notice 'Rollback de 20261103100000: ficam % designacao(oes) de RT e % versao(oes) de preparo (% aprovada(s)); ficam % decisao(oes) enviou_preparo e % turno(s) com saida preparo (com elas, o CHECK de antes volta NOT VALID).',
+  raise notice 'Rollback de 20261103100000: ficam % designacao(oes) de RT e % versao(oes) de preparo (% aprovada(s)); ficam % decisao(oes) enviou_preparo e % turno(s) com saida preparo (com elas, fica o CHECK da AG7).',
     v_rts, v_versoes, v_aprovadas, v_decisoes, v_turnos;
 end;
 $aviso$;
@@ -274,9 +353,11 @@ $function$;
 
 comment on function public.mensagem_ia_exige_aprovacao() is null;
 
--- 4. As RPCs das telas e as funcoes do servidor e de leitura. Ficam as que
---    as tabelas usam (preparo_texto_valido, no CHECK; responsavel_tecnico_vigente,
---    no gatilho de aprovacao; as tres dos gatilhos).
+-- 4. As RPCs das telas, as funcoes do servidor e de leitura e a regra do
+--    conteudo das RPCs (preparo_texto_recusado). Ficam as que as tabelas usam
+--    (preparo_texto_valido e preparo_nome_valido, nos CHECKs;
+--    responsavel_tecnico_vigente, no gatilho de aprovacao; as tres dos
+--    gatilhos).
 drop function public.salvar_preparo_do_procedimento(uuid, text, integer);
 drop function public.aprovar_preparo_do_procedimento(uuid, text);
 drop function public.devolver_preparo_do_procedimento(uuid, text);
@@ -291,6 +372,7 @@ drop function public.preparo_em_vigor_do_procedimento(uuid, uuid);
 drop function public.mensagem_do_preparo(uuid);
 drop function public.preparo_em_vigor(uuid, uuid);
 drop function public.user_e_responsavel_tecnico(uuid);
+drop function public.preparo_texto_recusado(text);
 
 -- 5. ai_decision_log: o CHECK novo e a coluna (o grant da coluna sai junto).
 alter table public.ai_decision_log
@@ -298,34 +380,44 @@ alter table public.ai_decision_log
 alter table public.ai_decision_log
   drop column preparo_versao_id;
 
--- 6. Os CHECKs de antes, sem os valores novos: NOT VALID e, sem linha com
---    valor novo, VALIDATE. Sem comentario, como antes.
-alter table public.ai_decision_log
-  drop constraint ai_decision_log_desfecho_valido;
-alter table public.ai_decision_log
-  add constraint ai_decision_log_desfecho_valido
-    check (desfecho is null or desfecho in ('respondeu', 'escalou', 'bloqueou', 'falhou')) not valid;
-
-alter table public.ai_turno
-  drop constraint ai_turno_saida_valida;
-alter table public.ai_turno
-  add constraint ai_turno_saida_valida
-    check (saida in ('resposta', 'frase', 'nenhuma')) not valid;
-
-do $validar$
+-- 6. Os CHECKs do desfecho e da saida. Sem linha com o valor novo, os de
+--    antes (NOT VALID e VALIDATE, sem comentario, como antes). Com linha
+--    enviou_preparo (ou preparo), fica o da AG7, que so acrescenta o valor:
+--    o codigo de antes nunca grava esse valor, e o UPDATE dele que fecha o
+--    turno que sobrou (sem mexer na saida) passa; um CHECK de antes NOT
+--    VALID recusaria esse UPDATE (vale para toda linha nova ou alterada). O
+--    comentario passa a dizer por que ficou.
+do $checks$
 begin
-  if not exists (select 1 from public.ai_decision_log d where d.desfecho = 'enviou_preparo') then
+  if exists (select 1 from public.ai_decision_log d where d.desfecho = 'enviou_preparo') then
+    comment on constraint ai_decision_log_desfecho_valido on public.ai_decision_log is
+      'O desfecho do turno da IA: respondeu, escalou, bloqueou ou falhou (o M1). Ficou com enviou_preparo no rollback de 20261103100000 porque ha decisoes da AG7 com esse desfecho; o codigo de antes nunca o grava.';
+  else
+    alter table public.ai_decision_log
+      drop constraint ai_decision_log_desfecho_valido;
+    alter table public.ai_decision_log
+      add constraint ai_decision_log_desfecho_valido
+        check (desfecho is null or desfecho in ('respondeu', 'escalou', 'bloqueou', 'falhou')) not valid;
     alter table public.ai_decision_log validate constraint ai_decision_log_desfecho_valido;
   end if;
-  if not exists (select 1 from public.ai_turno t where t.saida = 'preparo') then
+  if exists (select 1 from public.ai_turno t where t.saida = 'preparo') then
+    comment on constraint ai_turno_saida_valida on public.ai_turno is
+      'A saida decidida do turno: resposta, frase ou nenhuma (o M1); nula antes de decidir. Ficou com preparo no rollback de 20261103100000 porque ha turnos da AG7 com essa saida; o codigo de antes nunca a grava.';
+  else
+    alter table public.ai_turno
+      drop constraint ai_turno_saida_valida;
+    alter table public.ai_turno
+      add constraint ai_turno_saida_valida
+        check (saida in ('resposta', 'frase', 'nenhuma')) not valid;
     alter table public.ai_turno validate constraint ai_turno_saida_valida;
   end if;
 end;
-$validar$;
+$checks$;
 
 -- 7. A conferencia: o corpo, o comentario e os grants de antes, os CHECKs
---    de antes (a definicao sem o sufixo NOT VALID, que ele ganha com linha
---    de valor novo), o que saiu e o que ficou.
+--    (sem linha com o valor novo, os de antes, validados e sem comentario;
+--    com linha, os da AG7, validados e com o comentario do passo 6), o que
+--    saiu e o que ficou.
 do $conferencia$
 begin
   if (select md5(p.prosrc) from pg_proc p where p.oid = 'public.mensagem_ia_exige_aprovacao()'::regprocedure)
@@ -348,7 +440,7 @@ begin
                                   'encerrar_responsavel_tecnico', 'ler_preparo_para_envio',
                                   'preparos_em_vigor_da_clinica', 'textos_de_preparo_da_clinica',
                                   'preparo_em_vigor_do_procedimento', 'mensagem_do_preparo', 'preparo_em_vigor',
-                                  'user_e_responsavel_tecnico'))
+                                  'user_e_responsavel_tecnico', 'preparo_texto_recusado'))
      or exists (select 1 from information_schema.columns c
                  where c.table_schema = 'public' and c.table_name = 'ai_decision_log'
                    and c.column_name = 'preparo_versao_id')
@@ -361,6 +453,7 @@ begin
   if to_regclass('public.responsavel_tecnico') is null
      or to_regclass('public.preparo_do_procedimento') is null
      or to_regprocedure('public.preparo_texto_valido(text)') is null
+     or to_regprocedure('public.preparo_nome_valido(text)') is null
      or to_regprocedure('public.responsavel_tecnico_vigente(uuid)') is null
      or to_regprocedure('public.responsavel_tecnico_nao_muda()') is null
      or to_regprocedure('public.preparo_do_procedimento_ao_inserir()') is null
@@ -368,18 +461,29 @@ begin
   then
     raise exception 'ROLLBACK 20261103100000: uma das tabelas ou das funcoes que ficam saiu';
   end if;
+  -- Os CHECKs: validados; sem linha com o valor novo, os de antes (md5 de
+  -- pg_get_constraintdef c0d83395... e 36975878..., sem comentario); com
+  -- linha, os da AG7 (f26a44db... e a5972473..., com comentario).
   if (select count(*) from pg_constraint k
-       where obj_description(k.oid, 'pg_constraint') is null
+       where k.convalidated
          and ((k.conrelid = 'public.ai_decision_log'::regclass
                and k.conname = 'ai_decision_log_desfecho_valido'
-               and md5(regexp_replace(pg_get_constraintdef(k.oid), ' NOT VALID$', '')) = 'c0d83395337e74d559861d5b8fa58801'
-               and k.convalidated = not exists (select 1 from public.ai_decision_log d where d.desfecho = 'enviou_preparo'))
+               and case when exists (select 1 from public.ai_decision_log d where d.desfecho = 'enviou_preparo')
+                        then md5(pg_get_constraintdef(k.oid)) = 'f26a44dbe96858015f0d31e706c4fe65'
+                             and obj_description(k.oid, 'pg_constraint') is not null
+                        else md5(pg_get_constraintdef(k.oid)) = 'c0d83395337e74d559861d5b8fa58801'
+                             and obj_description(k.oid, 'pg_constraint') is null
+                   end)
               or (k.conrelid = 'public.ai_turno'::regclass
                   and k.conname = 'ai_turno_saida_valida'
-                  and md5(regexp_replace(pg_get_constraintdef(k.oid), ' NOT VALID$', '')) = '36975878604a6c0dabc28538f3cdf1f8'
-                  and k.convalidated = not exists (select 1 from public.ai_turno t where t.saida = 'preparo')))) <> 2
+                  and case when exists (select 1 from public.ai_turno t where t.saida = 'preparo')
+                           then md5(pg_get_constraintdef(k.oid)) = 'a5972473c772c7dfa70bdb8001362830'
+                                and obj_description(k.oid, 'pg_constraint') is not null
+                           else md5(pg_get_constraintdef(k.oid)) = '36975878604a6c0dabc28538f3cdf1f8'
+                                and obj_description(k.oid, 'pg_constraint') is null
+                      end))) <> 2
   then
-    raise exception 'ROLLBACK 20261103100000: os CHECKs do desfecho ou da saida nao sao os de antes';
+    raise exception 'ROLLBACK 20261103100000: os CHECKs do desfecho ou da saida nao sao os esperados';
   end if;
 end;
 $conferencia$;
