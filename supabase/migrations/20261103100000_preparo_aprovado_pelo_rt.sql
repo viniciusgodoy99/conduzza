@@ -234,19 +234,23 @@
 --
 -- ROLLBACK (manual), ORDEM: PRIMEIRO voltar o codigo da AG7; DEPOIS, numa
 -- transacao, no SQL editor,
--- supabase/operacao/rollback/20261103100000-corpos-anteriores.sql (volta o
--- corpo de mensagem_ia_exige_aprovacao, md5
+-- supabase/operacao/rollback/20261103100000-corpos-anteriores.sql (recusa,
+-- sem desfazer nada, se a IA mandou o preparo ou se a regua mandou um texto
+-- aprovado pelo RT nos ultimos 15 minutos: o sinal do codigo da AG7 no ar;
+-- volta o corpo de mensagem_ia_exige_aprovacao, md5
 -- 1129cfc16036215e538422fba7371a1c, sem comentario; voltam o CHECK do
--- desfecho e o da saida, NOT VALID se ja houver enviou_preparo ou preparo;
--- sai o CHECK ai_decision_log_preparo_coerente; sai a coluna
--- preparo_versao_id, e o grant sai junto; saem as RPCs e as funcoes do
--- servidor). AS DUAS TABELAS FICAM, com os gatilhos, as policies e as
--- funcoes que elas usam (preparo_texto_valido, responsavel_tecnico_vigente e
--- as dos gatilhos): sao a prova de quem aprovou o que. Opcional: copiar o
--- texto em vigor para prep_instructions, para a regua velha mandar o
--- aprovado. Um turno decidido com saida preparo no meio do rollback: o
--- codigo velho le a saida desconhecida como nula e fecha sem_envio; a
--- conversa fica na IA sem resposta ate a proxima mensagem.
+-- desfecho e o da saida de antes, salvo com linha enviou_preparo ou
+-- preparo, quando ficam os da AG7, que so acrescentam o valor; sai o CHECK
+-- ai_decision_log_preparo_coerente; sai a coluna preparo_versao_id, e o
+-- grant sai junto; saem as RPCs, as funcoes do servidor e
+-- preparo_texto_recusado). AS DUAS TABELAS FICAM, com os gatilhos, as
+-- policies e as funcoes que elas usam (preparo_texto_valido,
+-- preparo_nome_valido, responsavel_tecnico_vigente e as dos gatilhos): sao
+-- a prova de quem aprovou o que. Opcional: copiar o texto em vigor para
+-- prep_instructions, para a regua velha mandar o aprovado. Um turno
+-- decidido com saida preparo no meio do rollback: o codigo velho le a saida
+-- desconhecida como nula e fecha sem_envio (o CHECK da AG7 fica e aceita o
+-- fechamento); a conversa fica na IA sem resposta ate a proxima mensagem.
 -- ---------------------------------------------------------------------------
 
 set local lock_timeout = '3s';
