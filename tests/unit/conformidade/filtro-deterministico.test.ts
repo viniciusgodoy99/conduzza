@@ -1369,12 +1369,16 @@ describe("revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum",
     ).toContainEqual(RESPOSTA);
   });
 
-  it("a regra esta nas fontes da versao das regras", () => {
+  it("a regra esta nas fontes da versao das regras, e a versao mudou", () => {
     expect(
       FONTES_DAS_REGRAS_EM_CODIGO.some((fonte) =>
         fonte.startsWith(`${REGRA_DA_RESPOSTA_AO_PREPARO}: `),
       ),
     ).toBe(true);
+    // A versao da AG7 antes da revisao (as regras novas: CFM-4, CFM-5,
+    // CFM-6 e CFM-8).
+    expect(versaoDasRegras()).toMatch(/^regras-[0-9a-f]{12}$/);
+    expect(versaoDasRegras()).not.toBe("regras-a8b2cba1b603");
   });
 });
 // [AG7 preparo] fim
