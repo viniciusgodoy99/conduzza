@@ -264,13 +264,31 @@ describe("espelhos do E3 com as migrations", () => {
   });
 
   it("o grant de colunas de ai_decision_log é a tabela menos blocked_draft", () => {
-    const grant = M1.match(
-      /grant select \(([\s\S]*?)\) on public\.ai_decision_log to authenticated/,
-    )?.[1];
-    const colunasDoGrant = (grant ?? "")
-      .split(",")
-      .map((c) => c.trim())
-      .filter(Boolean);
+    // [AG7 preparo] início
+    // O grant que vale com todas as migrations aplicadas: o do M1 (que
+    // revoga tudo da sessão e dá as colunas) mais o de toda migration depois
+    // dele (a AG7, 20261103100000, dá o SELECT de preparo_versao_id). Um
+    // "revoke all" de ai_decision_log recomeça a conta.
+    const eventos =
+      /(revoke all on public\.ai_decision_log from anon, authenticated)|grant select \(([\s\S]*?)\) on public\.ai_decision_log to authenticated/g;
+    const colunas = new Set<string>();
+    for (const arquivo of MIGRATIONS) {
+      const sql = readFileSync(`${PASTA_DAS_MIGRATIONS}/${arquivo}`, "utf-8");
+      for (const evento of sql.matchAll(eventos)) {
+        if (evento[1] !== undefined) {
+          colunas.clear();
+          continue;
+        }
+        for (const coluna of (evento[2] ?? "").split(",")) {
+          if (coluna.trim()) {
+            colunas.add(coluna.trim());
+          }
+        }
+      }
+    }
+    const colunasDoGrant = [...colunas];
+    expect(colunasDoGrant).toContain("preparo_versao_id");
+    // [AG7 preparo] fim
     const tipos = readFileSync("lib/supabase/database.types.ts", "utf-8");
     const linha = tipos.match(
       /ai_decision_log: \{\s*Row: \{([\s\S]*?)\n\s*\}/,
