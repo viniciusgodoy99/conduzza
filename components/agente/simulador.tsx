@@ -23,6 +23,9 @@ import {
   LIMITE_DA_MENSAGEM_DO_SIMULADOR,
   TESTAR_COMO,
   TEXTOS_DO_AGENTE as T,
+  // [AG7 preparo] início
+  TEXTOS_DO_PREPARO,
+  // [AG7 preparo] fim
   type CenarioDoSimulador,
   type TestarComo,
 } from "@/components/agente/textos";
@@ -101,6 +104,15 @@ import { cn } from "@/lib/utils";
 // - Quem nao pode usar (recepcao) ve tudo desabilitado, com a dica; quando o
 //   assistente nao pode responder (ambiente, interruptor, teto), o motivo
 //   aparece em texto e o Enviar fica desabilitado.
+// [AG7 preparo] início
+// - AG7 (desenho, secao 5.4): a fala do tipo "preparo" e a orientacao de
+//   preparo que o SISTEMA monta com o texto aprovado pelo responsavel
+//   tecnico (a IA so escolheu o procedimento). Na bolha da IA, como a
+//   resposta, com as quebras de linha, e a marca em texto ("Enviado pelo
+//   sistema: ...") entre a bolha e o "Por que a IA respondeu isso", sem
+//   icone. Nao encerra a conversa: so a frase fixa encerra
+//   (conversaEncerrada).
+// [AG7 preparo] fim
 
 export type EntradaDaSimulacao = {
   mensagens: {
@@ -151,6 +163,17 @@ export function fraseFixaPorBloqueio(
 ): boolean {
   return trilha.some((passo) => passo.tipo === "bloqueio");
 }
+
+// [AG7 preparo] início
+/**
+ * A conversa de teste acabou? So a frase fixa encerra (a IA nao volta
+ * sozinha, como na conversa de verdade). A orientacao de preparo (AG7) e a
+ * resposta propria nao encerram.
+ */
+export function conversaEncerrada(falas: readonly FalaDoSimulador[]): boolean {
+  return falas.some((fala) => fala.tipo === "frase_fixa");
+}
+// [AG7 preparo] fim
 
 /** As falas como a acao recebe: a do assistente leva a assinatura. */
 export function mensagensParaOServidor(
@@ -302,6 +325,18 @@ export function Fala({
         <div className={cn(CASCA_DA_BOLHA, PELES_DA_BOLHA.ia)}>
           <p className="break-words whitespace-pre-wrap">{fala.texto}</p>
         </div>
+        {/* [AG7 preparo] início: a orientacao de preparo veio do sistema,
+            com o texto aprovado pelo responsavel tecnico. A marca em texto,
+            entre a bolha e o "Por que a IA respondeu isso" (sem icone). */}
+        {fala.tipo === "preparo" ? (
+          <p
+            data-marca-do-preparo
+            className="px-1 text-right text-xs text-text-secondary"
+          >
+            {TEXTOS_DO_PREPARO.marcaDoSimulador}
+          </p>
+        ) : null}
+        {/* [AG7 preparo] fim */}
       </div>
       <PorQue id={fala.id} trilha={trilha} />
     </div>
@@ -343,15 +378,18 @@ export function Simulador({
   const [testarComo, setTestarComo] = useState<TestarComo>("nenhum");
   // AG3: o estado do atendimento simulado (assinado pelo servidor), que vai
   // de volta no proximo pedido e some ao reiniciar. Nada e gravado.
-  const [estadoDoAtendimento, setEstadoDoAtendimento] = useState<
-    string | null
-  >(null);
+  const [estadoDoAtendimento, setEstadoDoAtendimento] = useState<string | null>(
+    null,
+  );
   const [erro, setErro] = useState<string | null>(null);
   const [pendente, startTransition] = useTransition();
   const contador = useRef(0);
   const conversa = useRef<HTMLDivElement>(null);
 
-  const encerrada = falas.some((fala) => fala.tipo === "frase_fixa");
+  // [AG7 preparo] início
+  // So a frase fixa encerra; a orientacao de preparo nao.
+  const encerrada = conversaEncerrada(falas);
+  // [AG7 preparo] fim
   const bloqueado = !podeUsar || motivo !== null;
   const podeEnviar =
     !bloqueado && !encerrada && !pendente && texto.trim() !== "";

@@ -53,6 +53,9 @@ import type { EnvioEmVoo } from "@/lib/domain/envios-em-voo";
 import type { AgendadasDoFio } from "@/lib/domain/mensagem-agendada";
 import type { NumeroDaConversa } from "@/lib/domain/numeros-do-inbox";
 import type { Role } from "@/lib/domain/permissions";
+// [AG7 preparo] início
+import { ehMensagemDoPreparo } from "@/lib/domain/preparo";
+// [AG7 preparo] fim
 import { formatarTelefone } from "@/lib/domain/telefone";
 import {
   // [AG6 urgência] início
@@ -143,6 +146,16 @@ export function autorDaBolha(
   if (ehNotaDaPassagemDaIa(message)) {
     return AUTOR_DA_NOTA_DA_PASSAGEM;
   }
+  // [AG7 preparo] início
+  // A orientacao de preparo aprovada pelo responsavel tecnico (AG7), que o
+  // sistema envia palavra por palavra pelo job da IA (author 'sistema', sem
+  // pessoa, fora de nota), assina "Assistente", como a IA. Ela se reconhece
+  // pelo formato inteiro do corpo (cabecalho, linha do RT, texto e rodape;
+  // lib/domain/preparo.ts), como a nota da passagem pelo cabecalho.
+  if (ehMensagemDoPreparo(message)) {
+    return "Assistente";
+  }
+  // [AG7 preparo] fim
   if (message.author === "sistema" && message.is_internal_note) {
     return AUTOR_DA_AUTOMACAO;
   }

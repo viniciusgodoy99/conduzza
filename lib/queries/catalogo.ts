@@ -42,7 +42,10 @@ export type Procedimento = {
   default_duration_min: number;
   base_price_cents: number | null;
   requires_evaluation: boolean;
-  prep_instructions: string | null;
+  // [AG7 preparo] início
+  // Sem prep_instructions: a orientacao de preparo mora em
+  // preparo_do_procedimento (lib/queries/preparo.ts), aprovada pelo RT.
+  // [AG7 preparo] fim
   resource_id: string | null;
   bookable_by_ai: boolean;
   active: boolean;
@@ -295,7 +298,9 @@ export async function fetchCatalogo(
     supabase
       .from("procedure")
       .select(
-        "id, name, description, default_duration_min, base_price_cents, requires_evaluation, prep_instructions, resource_id, bookable_by_ai, active",
+        // [AG7 preparo] início: sem prep_instructions
+        "id, name, description, default_duration_min, base_price_cents, requires_evaluation, resource_id, bookable_by_ai, active",
+        // [AG7 preparo] fim
       )
       .eq("clinic_id", clinicId)
       .order("name"),

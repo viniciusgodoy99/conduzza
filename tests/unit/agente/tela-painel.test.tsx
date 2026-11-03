@@ -5,6 +5,9 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import type { DadosDoPainel } from "@/components/agente/tipos";
 import {
   configPadraoDoAgente,
+  // [AG7 preparo] início
+  HABILIDADES_DO_AGENTE,
+  // [AG7 preparo] fim
   TEXTO_DA_CONFORMIDADE,
 } from "@/lib/domain/agente/config";
 
@@ -16,6 +19,19 @@ import {
   VERSAO_1,
   VERSAO_2,
 } from "./tela-fixtures";
+
+// [AG7 preparo] início
+// A habilidade "Enviar orientação de preparo" e uma chave livre a mais, que
+// chega com o CFG da frente M (HABILIDADES_DO_AGENTE). A conta vale antes e
+// depois do merge: 8 de hoje, mais 1 quando ela estiver na lista.
+const CHAVES_LIVRES =
+  8 +
+  ((HABILIDADES_DO_AGENTE.map((h) => h.chave) as readonly string[]).includes(
+    "enviar_preparo",
+  )
+    ? 1
+    : 0);
+// [AG7 preparo] fim
 
 // Painel da Tela 6 (Agente de IA) renderizado no servidor: as abas, o rodape
 // de publicacao, o unico lime, a recepcao desabilitada com dica, a aba das
@@ -362,9 +378,8 @@ describe("recepção", () => {
     // [AG6b mídia] início
     // AG6b: Entender áudio e Ler imagem e documento (6 + 2).
     // [AG6b mídia] fim
-    // [AG7 preparo] início
-    // AG7: Enviar orientação de preparo (8 + 1).
-    expect(livre).toHaveLength(9);
+    // [AG7 preparo] início: e Enviar orientação de preparo, com a M (8 + 1)
+    expect(livre).toHaveLength(CHAVES_LIVRES);
     // [AG7 preparo] fim
     for (const tag of livre) {
       expect(tag).toContain('disabled=""');
@@ -421,9 +436,8 @@ describe("travas da Conformidade e dos gatilhos (C24)", () => {
     // [AG6b mídia] início
     // AG6b: Entender áudio e Ler imagem e documento (6 + 2).
     // [AG6b mídia] fim
-    // [AG7 preparo] início
-    // AG7: Enviar orientação de preparo (8 + 1).
-    expect(livre).toHaveLength(9);
+    // [AG7 preparo] início: e Enviar orientação de preparo, com a M (8 + 1)
+    expect(livre).toHaveLength(CHAVES_LIVRES);
     // [AG7 preparo] fim
     const preco = livre.find((tag) =>
       tag.includes(

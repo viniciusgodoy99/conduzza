@@ -170,6 +170,23 @@ export const CENARIOS_DO_SIMULADOR = [
       "Fiz o preenchimento ontem e agora estou com falta de ar e a garganta fechando.",
   },
   // [AG6 urgência] fim
+  // [AG7 preparo] início
+  // AG7 (desenho, secao 5.4): a pessoa pede a orientacao de preparo. Com
+  // "Enviar orientação de preparo" ligada no rascunho e um texto aprovado
+  // pelo responsavel tecnico, o simulador mostra a mensagem que o sistema
+  // monta, com a marca de TEXTOS_DO_PREPARO; nada e gravado. Sem o nome do
+  // procedimento (vale para qualquer clinica: o assistente pergunta qual) e
+  // sem "exame" nem "cuidados", que o portao de entrada passa direto para a
+  // equipe (contrato da AG7, secao 0, item 10). A chave tambem entra no enum
+  // CENARIOS de app/(app)/agente/actions.ts (um teste confere os dois).
+  // Antes da lista de espera, que continua a ultima (o teste da AG5
+  // confere).
+  {
+    chave: "preparo",
+    rotulo: "Paciente pedindo o preparo",
+    mensagem: "Oi! Qual é o preparo do meu procedimento?",
+  },
+  // [AG7 preparo] fim
   // AG5 (desenho, secao 6): a IA coloca o paciente na lista de espera. No
   // simulador as duas fases (a pergunta e a entrada) so simulam, e nada e
   // gravado. A chave tambem entra no enum CENARIOS de
@@ -299,6 +316,15 @@ export const TEXTOS_DO_AGENTE = {
   // D-2), e o contato vira paciente ja ali. Nota, nao status.
   listaDeEsperaNaFaseDeTeste:
     "Nesta fase de teste, o SIM à oferta da lista de espera marca a consulta na hora: o contato vira paciente, e um telefone comum deixa de acionar o assistente.",
+  // [AG7 preparo] início
+  // AG7 (desenho, secao 5.4; nota proposta, pendente do dono): quem pede o
+  // preparo costuma ter consulta, e quem ja e paciente so aciona o
+  // assistente pelo telefone da equipe cadastrado pela equipe Conduzza (como
+  // em Confirmar presença); e a mensagem leva o nome e o registro do
+  // responsavel tecnico (o cabecalho da D-77). Nota, nao status.
+  preparoNaFaseDeTeste:
+    "Nesta fase de teste, quem já é paciente só recebe a orientação pelo telefone da equipe cadastrado pela equipe Conduzza. A mensagem sai com o nome e o registro do responsável técnico.",
+  // [AG7 preparo] fim
   habilidadeLigada: (titulo: string) => `${titulo}: ligada no rascunho.`,
   habilidadeDesligada: (titulo: string) => `${titulo}: desligada no rascunho.`,
   // Conhecimento
@@ -605,3 +631,45 @@ export function dicaDaMidiaNoServidor(
   return null;
 }
 // [AG6b mídia] fim
+
+// [AG7 preparo] início
+// AG7 (desenho, secao 5.4; D-80, autorizada pelo dono em 03/11/2026): a
+// habilidade "Enviar orientação de preparo". O titulo e a descricao moram
+// em lib/domain/agente/config.ts (HABILIDADES_DO_AGENTE, como as outras); a
+// nota da fase de teste, em TEXTOS_DO_AGENTE.preparoNaFaseDeTeste. Aqui
+// fica o que a tela decide e escreve fora da configuracao:
+//  - a nota de quando nenhum procedimento ativo tem orientacao aprovada em
+//    vigor (lida na pagina pela sessao, fetchHaPreparoEmVigor, para todo
+//    papel que abre a Tela 6, a recepcao inclusive). E dica escrita, como a
+//    da midia que ainda nao vale: nao trava a chave;
+//  - a marca da fala do simulador que traz a mensagem montada pelo sistema
+//    (a IA so escolheu o procedimento; o texto e o que o responsavel tecnico
+//    aprovou, palavra por palavra). Texto, sem icone.
+
+/** A chave da habilidade em skills (contrato da AG7, CFG). */
+export const HABILIDADE_ENVIAR_PREPARO = "enviar_preparo";
+
+export const TEXTOS_DO_PREPARO = {
+  semTextoAprovado:
+    "Nenhum procedimento tem orientação aprovada pelo responsável técnico. Com a chave ligada, o pedido de preparo passa para a equipe.",
+  marcaDoSimulador:
+    "Enviado pelo sistema: texto aprovado pelo responsável técnico",
+} as const;
+
+/**
+ * A nota de "Enviar orientação de preparo" quando nenhum procedimento ativo
+ * tem orientacao aprovada em vigor, ou nula: as outras habilidades, algum
+ * texto em vigor, ou sem a leitura (`haPreparoEmVigor` nulo ou ausente: a
+ * pagina nao conferiu, e a tela nao inventa a nota). Vale ligada ou
+ * desligada.
+ */
+export function notaDoPreparoSemTextoAprovado(
+  chave: string,
+  haPreparoEmVigor: boolean | null | undefined,
+): string | null {
+  if (chave !== HABILIDADE_ENVIAR_PREPARO) {
+    return null;
+  }
+  return haPreparoEmVigor === false ? TEXTOS_DO_PREPARO.semTextoAprovado : null;
+}
+// [AG7 preparo] fim

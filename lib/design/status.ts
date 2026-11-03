@@ -57,6 +57,9 @@ import { BuildingSlash } from "@/components/shared/icons/building-slash";
 import type { SituacaoDaAtividade } from "@/lib/domain/atividades";
 import type { EstadoDoItemDaAgendada } from "@/lib/domain/mensagem-agendada";
 import { ACCESS_LABELS, type Access } from "@/lib/domain/permissions";
+// [AG7 preparo] início
+import type { SituacaoDoPreparoNaTela } from "@/lib/domain/preparo";
+// [AG7 preparo] fim
 
 // Fonte unica dos status do produto.
 // Regra das 3 camadas: todo estado e comunicado por forma do icone, rotulo em
@@ -534,6 +537,38 @@ export const ATIVIDADE_STATUS: Record<SituacaoDaAtividade, StatusDefinition> = {
   concluida: { label: "Concluída", tone: "success", icon: CircleCheck },
   cancelada: { label: "Cancelada", tone: "neutral", icon: SquareX },
 };
+
+// [AG7 preparo] início
+// A orientacao de preparo do procedimento (Cadastros, modal do Procedimento;
+// AG7, desenho 5.1, contrato 3.3). So icones que ja tem dono, no mesmo
+// sentido e na mesma cor da tabela de reservados abaixo: CircleCheck success
+// (aprovada e em vigor), Hourglass warning (pendencia: o texto espera o RT),
+// CircleAlert warning (atencao: a aprovacao parou de valer porque o RT mudou,
+// perdeu o acesso ou o nome do procedimento mudou), CirclePause neutral (o
+// envio suspenso, como o "Inativo") e CircleDashed neutral (o "nada aqui
+// ainda", como o "Sem token"). A devolucao do RT nao e chip: e a linha com o
+// comentario dele. A diferenca de texto do dialogo de aprovacao ("Entrou" e
+// "Saiu") e conteudo, nao status: rotulo em texto e fundo neutro, sem icone
+// colorido.
+export const PREPARO_DO_PROCEDIMENTO_STATUS: Record<
+  SituacaoDoPreparoNaTela,
+  StatusDefinition
+> = {
+  aprovada: { label: "Aprovada pelo RT", tone: "success", icon: CircleCheck },
+  aguardando: { label: "Aguardando o RT", tone: "warning", icon: Hourglass },
+  precisa_de_nova_aprovacao: {
+    label: "Precisa de nova aprovação",
+    tone: "warning",
+    icon: CircleAlert,
+  },
+  suspenso: { label: "Envio suspenso", tone: "neutral", icon: CirclePause },
+  sem_orientacao: {
+    label: "Sem orientação",
+    tone: "neutral",
+    icon: CircleDashed,
+  },
+};
+// [AG7 preparo] fim
 
 // Estado do item da lista de mensagens agendadas (Atendimento, acima da caixa
 // de escrever; lib/domain/mensagem-agendada.ts, estadoDoItem). Icones da

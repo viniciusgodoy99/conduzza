@@ -566,7 +566,12 @@ const procedimentoSchema = z.object({
   default_duration_min: z.number().int().min(5).max(600),
   base_price_cents: centavosSchema,
   requires_evaluation: z.boolean(),
-  prep_instructions: z.string().trim().max(4000).nullable(),
+  // [AG7 preparo] início
+  // prep_instructions saiu do schema (contrato da AG7, 3.3): a orientacao de
+  // preparo e versionada e aprovada pelo RT (./preparo-actions.ts). O Zod
+  // tira a chave que um cliente antigo ainda mande, e o update nao toca a
+  // coluna, que fica sem uso ate a limpeza depois da AG8 (D-83).
+  // [AG7 preparo] fim
   // Recursos sairam da tela (decisao do dono em 29/09/2026), mas a coluna e
   // a trava do banco ficam: sem o campo no formulario, o update NAO toca
   // procedure.resource_id (a chave ausente fica fora do update), e o

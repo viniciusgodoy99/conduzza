@@ -5,6 +5,10 @@ import {
   // [AG6b mídia] início
   dicaDaMidiaNoServidor,
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  HABILIDADE_ENVIAR_PREPARO,
+  notaDoPreparoSemTextoAprovado,
+  // [AG7 preparo] fim
   TEXTOS_DO_AGENTE as T,
 } from "@/components/agente/textos";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
@@ -87,6 +91,20 @@ import {
 // (aria-describedby, na ordem da tela): o leitor de tela ouve a nota da
 // OpenAI no foco (item 7).
 // [AG6b mídia] fim
+//
+// [AG7 preparo] início
+// AG7 (desenho, secao 5.4; D-80, autorizada pelo dono em 03/11/2026):
+// "Enviar orientação de preparo", desligada por padrao, sem dependencia
+// (titulo e descricao da configuracao, HABILIDADES_DO_AGENTE). Leva a nota
+// da fase de teste (TEXTOS_DO_AGENTE.preparoNaFaseDeTeste), para todos os
+// papeis. Quando a pagina conferiu que nenhum procedimento ativo tem
+// orientacao aprovada pelo responsavel tecnico em vigor (haPreparoEmVigor
+// falso, lido pela sessao para todo papel, a recepcao inclusive), a dica
+// escrita embaixo dela, como a da midia que ainda nao vale: com a chave
+// ligada, o pedido de preparo passa para a equipe. A dica nao trava a chave
+// e entra na descricao dela (aria-describedby), depois da nota e da dica
+// do servidor. Sem a leitura (nulo), sem a dica: a tela nao inventa.
+// [AG7 preparo] fim
 
 /** As habilidades que, nesta fase de teste, levam a nota do telefone. */
 export const HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA: ReadonlySet<string> =
@@ -100,6 +118,11 @@ export function notaDaFaseDeTeste(chave: string): string | null {
   if (chave === "lista_de_espera") {
     return T.listaDeEsperaNaFaseDeTeste;
   }
+  // [AG7 preparo] início
+  if (chave === HABILIDADE_ENVIAR_PREPARO) {
+    return T.preparoNaFaseDeTeste;
+  }
+  // [AG7 preparo] fim
   // [AG6b mídia] início
   // A nota que mora na configuracao (as habilidades de midia); nula nas
   // outras.
@@ -152,6 +175,9 @@ export function AbaHabilidades({
   // [AG6b mídia] início
   midiaNoServidor,
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  haPreparoEmVigor,
+  // [AG7 preparo] fim
 }: {
   habilidades: Record<string, boolean>;
   /** Os limites para marcar consulta do rascunho (Regras e limites). */
@@ -174,6 +200,14 @@ export function AbaHabilidades({
    */
   midiaNoServidor?: MidiaNoServidor | null;
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  /**
+   * Algum procedimento ativo tem orientacao de preparo aprovada em vigor
+   * (calculado na pagina)? Falso: a dica em "Enviar orientação de preparo".
+   * Nulo ou ausente: sem a dica (a tela nao inventa).
+   */
+  haPreparoEmVigor?: boolean | null;
+  // [AG7 preparo] fim
 }) {
   const efetivas = habilidadesComAgenda(habilidades, agenda, prazos);
   return (
@@ -220,6 +254,13 @@ export function AbaHabilidades({
               midiaNoServidor,
             );
             // [AG6b mídia] fim
+            // [AG7 preparo] início
+            const idSemPreparo = `${idRotulo}-sem-preparo`;
+            const semPreparo = notaDoPreparoSemTextoAprovado(
+              habilidade.chave,
+              haPreparoEmVigor,
+            );
+            // [AG7 preparo] fim
             const chave = (
               <Switch
                 checked={ligada}
@@ -228,6 +269,9 @@ export function AbaHabilidades({
                 aria-describedby={descricaoDaChave([
                   nota ? idDaNota : null,
                   semEfeito ? idDoServidor : null,
+                  // [AG7 preparo] início
+                  semPreparo ? idSemPreparo : null,
+                  // [AG7 preparo] fim
                   falta ? idDaAgenda : null,
                 ])}
                 aria-busy={ocupado(habilidade.chave) || undefined}
@@ -269,6 +313,18 @@ export function AbaHabilidades({
                     </span>
                   ) : null}
                   {/* [AG6b mídia] fim */}
+                  {/* [AG7 preparo] início: nenhum procedimento com
+                      orientacao aprovada em vigor (dica escrita, como a do
+                      servidor; a chave continua livre). */}
+                  {semPreparo ? (
+                    <span
+                      id={idSemPreparo}
+                      className="text-xs font-semibold text-text-secondary"
+                    >
+                      {semPreparo}
+                    </span>
+                  ) : null}
+                  {/* [AG7 preparo] fim */}
                   {falta ? (
                     <span
                       id={idDaAgenda}

@@ -49,6 +49,17 @@ export function valoresDeAmostra(nomeDaClinica: string) {
   } as const;
 }
 
+// [AG7 preparo] início
+// AG7 (desenho, secao 5.5): a ajuda do campo {{preparo}}, logo depois dos
+// chips. A amostra continua com o preparo vazio (valoresDeAmostra, e o
+// "Testar envio" tambem): o teste nunca leva texto clinico.
+const CAMPO_DO_PREPARO = "preparo";
+
+/** O que vem depois do `{{preparo}}` na linha da ajuda. */
+export const AJUDA_DO_CAMPO_DO_PREPARO =
+  ": a orientação de preparo aprovada pelo responsável técnico do procedimento. Sem texto aprovado, a linha some.";
+// [AG7 preparo] fim
+
 export function EditorDePasso({
   passo,
   rotulo,
@@ -236,6 +247,17 @@ export function EditorDePasso({
               </button>
             ))}
           </div>
+          {/* [AG7 preparo] início: a ajuda do {{preparo}} (desenho da AG7,
+              secao 5.5), so quando a regua oferece o campo. A regua manda o
+              texto que o responsavel tecnico aprovou no Cadastro; sem texto
+              aprovado em vigor, a linha some do envio. */}
+          {placeholders.includes(CAMPO_DO_PREPARO) ? (
+            <p data-ajuda-do-preparo className="text-xs text-text-secondary">
+              <code className="cz-num text-foreground">{`{{${CAMPO_DO_PREPARO}}}`}</code>
+              {AJUDA_DO_CAMPO_DO_PREPARO}
+            </p>
+          ) : null}
+          {/* [AG7 preparo] fim */}
         </div>
         {/* relative: contem o campo de arquivo (sr-only, absolute) aqui, e
             nao no <main>. */}

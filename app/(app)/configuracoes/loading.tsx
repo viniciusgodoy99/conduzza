@@ -51,6 +51,17 @@ export default function CarregandoConfiguracoes() {
         ))}
       </div>
 
+      {/* [AG7 preparo] início: o cartao "Responsavel tecnico", que vem
+          antes de "Usuarios e permissoes" na aba de equipe */}
+      <div className="overflow-hidden rounded-card border border-border bg-card shadow-sm">
+        <CabecalhoDeCartao largura="w-44" />
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+          <Skeleton className="h-3.5 w-80 max-w-full" />
+          <Skeleton className="h-10 w-48" />
+        </div>
+      </div>
+      {/* [AG7 preparo] fim */}
+
       <div className="overflow-hidden rounded-card border border-border bg-card shadow-sm">
         <CabecalhoDeCartao largura="w-48" />
         <ListSkeleton rows={4} className="p-4" />

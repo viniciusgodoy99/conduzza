@@ -430,7 +430,29 @@ describe("aba WhatsApp (onda 2)", () => {
       "Os números e os telefones do assistente ficam com o administrador e o gestor.",
     );
     expect(visivel).not.toContain("Assistente de IA nesta clínica");
-    expect(anotada.tabelas).toEqual([]);
+    // [AG7 preparo] início
+    // AG7: a recepcao le pela sessao so a orientacao de preparo (a dica de
+    // "Enviar orientação de preparo" vale para todo papel que abre a Tela 6;
+    // tests/unit/agente/tela-preparo.test.tsx). Da aba WhatsApp, continua
+    // sem leitura nenhuma: nem a liberacao, nem os numeros, nem os
+    // telefones.
+    const doPreparo = [
+      "preparo_do_procedimento",
+      "responsavel_tecnico",
+      "procedure",
+      "clinic_member",
+    ];
+    expect(
+      anotada.tabelas.filter((tabela) => !doPreparo.includes(tabela)),
+    ).toEqual([]);
+    for (const daAba of [
+      "ia_liberacao",
+      "whatsapp_account",
+      "ia_contato_liberado",
+    ]) {
+      expect(anotada.tabelas).not.toContain(daAba);
+    }
+    // [AG7 preparo] fim
     expect(anotada.rpcs).toEqual([]);
   });
 
