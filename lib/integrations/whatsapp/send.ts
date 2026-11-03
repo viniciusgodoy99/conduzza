@@ -3,6 +3,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
 import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
 import type { TextoAprovado } from "@/lib/domain/conformidade/texto-aprovado";
+// [AG7 preparo] início
+import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
+import type { PreparoAprovado } from "@/lib/domain/conformidade/preparo-aprovado";
+// [AG7 preparo] fim
 import { canSendDecision } from "@/lib/domain/messaging";
 import { log } from "@/lib/log";
 import { falhaPermiteRetry } from "./falhas-do-envio";
@@ -1320,6 +1324,87 @@ export async function enviarRespostaDaIa(
   }
   return resultado;
 }
+
+// [AG7 preparo] início
+/** AG7: a recusa do envio do preparo cujo hash nao confere (nada sai). */
+function recusaDoPreparoDivergente(): SendTextResult {
+  return {
+    ok: false,
+    reason: "falha_envio",
+    code: "conteudo_divergente",
+    message:
+      "A orientação de preparo não confere com o texto aprovado. Nada foi enviado.",
+  };
+}
+
+/**
+ * AG7 (D-80, autorizada pelo dono em 03/11/2026): a orientacao de preparo
+ * aprovada pelo responsavel tecnico, palavra por palavra (author 'sistema',
+ * no job da IA). So aceita PreparoAprovado (so aprovarParaEnvio produz um, da
+ * leitura de ler_preparo_para_envio conferida por hash) e NUNCA converte para
+ * TextoAprovado: nao e texto da IA e nao passa pelo filtro. Tres travas:
+ *  1. o tipo marcado PreparoAprovado;
+ *  2. sha256DoTexto(mensagem) === sha256 conferido antes de tudo e de novo
+ *     logo antes do provedor (diferente: nada sai, conteudo_divergente);
+ *  3. o gatilho de message (migration 20261103100000), que remonta a
+ *     mensagem da versao em vigor e confere com a decisao 'enviou_preparo'
+ *     do mesmo job e hash (CZIA3 frase_divergente; fora da liberacao, CZIA2).
+ * O resto e o de todo envio da IA: o trilho 1:1 (envioAutomatico false), a
+ * guarda ia_pode_enviar_agora com p_tipo 'resposta' (a conversa tem de estar
+ * na IA) antes do slot e logo antes do provedor, a autorizacao para receber
+ * mensagens e o custo (0 e billable false no uazapi). Ok: ia_marcar_respondida.
+ */
+export async function enviarPreparoAprovadoDaIa(
+  admin: SupabaseClient,
+  input: EnvioDaIaInput & { preparo: PreparoAprovado },
+): Promise<SendTextResult> {
+  const mensagem: string = input.preparo.mensagem;
+  const sha256: string = input.preparo.sha256;
+  if (
+    typeof input.jobId !== "string" ||
+    input.jobId === "" ||
+    sha256DoTexto(mensagem) !== sha256
+  ) {
+    return recusaDoPreparoDivergente();
+  }
+  const resultado = await enviarPeloCanal(
+    admin,
+    {
+      clinicId: input.clinicId,
+      conversationId: input.conversationId,
+      contactId: input.contactId,
+      body: mensagem,
+      authorUserId: null,
+      author: "sistema",
+      envioAutomatico: false,
+      esperaMaximaMs: ESPERA_MAXIMA_DA_IA_MS,
+      jobId: input.jobId,
+      whatsappAccountId: input.whatsappAccountId,
+    },
+    {
+      bodyRegistrado: mensagem,
+      enviar: async (provider, ref, to, extra) => {
+        // A segunda conferencia, logo antes do provedor: diferente, nada
+        // sai (a linha fica 'falhou' com conteudo_divergente).
+        if (sha256DoTexto(mensagem) !== sha256) {
+          return {
+            ok: false,
+            errorCode: "conteudo_divergente",
+            message:
+              "A orientação de preparo não confere com o texto aprovado. Nada foi enviado.",
+          };
+        }
+        return provider.sendText(ref, to, mensagem, extra);
+      },
+    },
+    { tipo: "resposta", jobId: input.jobId, workerId: input.workerId },
+  );
+  if (resultado.ok) {
+    await marcarRespondida(admin, input);
+  }
+  return resultado;
+}
+// [AG7 preparo] fim
 
 /**
  * A frase fixa de escalonamento (author 'sistema'), com o mesmo job_id. O

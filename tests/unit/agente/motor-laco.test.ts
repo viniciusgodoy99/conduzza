@@ -1651,7 +1651,10 @@ describe("onda 2: 'você é um robô?' (P5c)", () => {
     expect(r.resposta).toBe(
       `Olá! Aqui é a Ana, da clínica.\n\n${FRASE_DO_ASSISTENTE_VIRTUAL}`,
     );
-    expect(r.resposta.split(FRASE_DO_ASSISTENTE_VIRTUAL)).toHaveLength(2);
+    // [AG7 preparo] A resposta e nula so no turno do preparo.
+    expect((r.resposta ?? "").split(FRASE_DO_ASSISTENTE_VIRTUAL)).toHaveLength(
+      2,
+    );
     expect(r.ferramentasUsadas).toEqual(["sou_assistente_virtual"]);
     expect(aprovador).toHaveBeenCalledTimes(1);
     expect(r.trilha.map((p) => p.texto)).toContain(PASSO_DO_ASSISTENTE_VIRTUAL);

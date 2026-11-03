@@ -58,6 +58,11 @@ import {
   type EstadoDoAtendimento,
 } from "./atendimento";
 import { carregarCatalogoDoAgente, carregarConfigDoRascunho } from "./contexto";
+// [AG7 preparo] início
+import { ROTULO_DO_MOTIVO_DE_ESCALONAMENTO } from "@/lib/domain/agente/config";
+import { lerPreparoParaEnvio } from "./contexto";
+import { PASSO_DO_PREPARO_FORA_DE_VIGOR } from "./ferramentas/enviar-preparo";
+// [AG7 preparo] fim
 import { acertarGasto, reservarGasto } from "./gasto";
 import {
   atendimentoParaEstimativa,
@@ -122,6 +127,14 @@ import { lerPrecos, type PrecoDoModelo } from "./uso";
 // conferidos pelas regras do banco e o valor nao fica em lugar nenhum. A
 // nota para a equipe, quando o turno passa a conversa, aparece na trilha.
 //
+// [AG7 preparo] AG7 (03/11/2026): a orientacao de preparo no simulador, SEM
+// GRAVAR NADA: o turno que escolhe enviar_preparo mostra a mensagem que o
+// banco monta da versao em vigor (ler_preparo_para_envio com p_simulador,
+// porque o simulador testa o RASCUNHO), conferida por hash
+// (aprovarParaEnvio), com o tipo "preparo"; fora de vigor, a passagem (a
+// frase), como um turno de verdade. Na rodada seguinte o historico assinado
+// traz a mensagem de volta, e o laco a troca pelo substituto antes do modelo.
+//
 // AG5 (27/10/2026): a lista de espera no simulador, SEM GRAVAR NADA: o
 // pedido (a pergunta T-E1) e a entrada simulados ficam na memoria do pacote
 // assinado (portaDaAgendaDoSimulador), conferida na forma como a reserva e
@@ -160,6 +173,9 @@ export const TEXTOS_DO_SIMULADOR = {
     "As instruções da equipe Conduzza ficaram de fora desta resposta: não passam mais nas regras de conformidade. Ajuste na aba Instruções do assistente.",
   // AG3: a nota interna que a equipe receberia na passagem.
   notaParaAEquipe: "No WhatsApp, a equipe receberia esta nota interna:",
+  // [AG7 preparo] A leitura da orientacao de preparo falhou.
+  naoCarregouOPreparo:
+    "Não foi possível carregar a orientação de preparo. Tente de novo.",
 } as const;
 
 /** O passo do super admin sobre as perguntas que ficaram de fora. */
@@ -335,8 +351,13 @@ export async function motivoParaNaoSimular(
 export type ResultadoDoSimulador =
   | {
       ok: true;
+      /**
+       * O texto que a tela mostra. [AG7 preparo] No preparo, a mensagem do
+       * sistema montada pelo banco (o texto aprovado pelo RT).
+       */
       resposta: string;
-      tipo: "resposta" | "frase_fixa";
+      // [AG7 preparo] "preparo": a orientacao de preparo aprovada pelo RT.
+      tipo: "resposta" | "frase_fixa" | "preparo";
       trilha: PassoDoTurno[];
       /**
        * O que o filtro barrou: SO para o super admin (nulo para os outros
@@ -747,6 +768,45 @@ export async function simularTurno(
     precos,
   });
 
+  // [AG7 preparo] início
+  // AG7: a orientacao de preparo escolhida, pela mesma leitura do WhatsApp
+  // (o rascunho: p_simulador). Fora de vigor: a passagem, como no WhatsApp.
+  let resposta: string;
+  let tipo: "resposta" | "frase_fixa" | "preparo";
+  const passosDoPreparo: PassoDoTurno[] = [];
+  if (resultado.tipo === "preparo") {
+    let preparo: Awaited<ReturnType<typeof lerPreparoParaEnvio>>;
+    try {
+      preparo = await lerPreparoParaEnvio(admin, {
+        clinicId,
+        versaoId: resultado.preparo.versaoId,
+        procedimentoId: resultado.preparo.procedimentoId,
+        simulador: true,
+      });
+    } catch {
+      log.warn("ia_simulador_sem_preparo", { clinic_id: clinicId });
+      return { ok: false, error: TEXTOS_DO_SIMULADOR.naoCarregouOPreparo };
+    }
+    if (preparo === null) {
+      resposta = FRASE_DE_ESCALONAMENTO;
+      tipo = "frase_fixa";
+      passosDoPreparo.push(
+        { tipo: "cadastro", texto: PASSO_DO_PREPARO_FORA_DE_VIGOR },
+        {
+          tipo: "equipe",
+          texto: `Passou para a equipe: ${ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.assunto_clinico}`,
+        },
+      );
+    } else {
+      resposta = preparo.mensagem;
+      tipo = "preparo";
+    }
+  } else {
+    resposta = resultado.resposta;
+    tipo = resultado.tipo;
+  }
+  // [AG7 preparo] fim
+
   // O horario de operacao decide no WhatsApp (E3). No simulador so avisa:
   // testar a resposta tem de funcionar a qualquer hora.
   const horario = agenteAtendeAgora(
@@ -755,10 +815,13 @@ export async function simularTurno(
     entrada.fuso,
   );
   const trilha: PassoDoTurno[] = horario.atende
-    ? [...resultado.trilha]
+    ? // [AG7 preparo] com os passos do preparo fora de vigor
+      [...resultado.trilha, ...passosDoPreparo]
     : [
         { tipo: "outro", texto: TEXTOS_DO_SIMULADOR.foraDoHorario },
         ...resultado.trilha,
+        // [AG7 preparo]
+        ...passosDoPreparo,
       ];
   // Texto da configuracao que deixou de passar nas regras: so a equipe
   // Conduzza fica sabendo pela trilha (o log ja registrou, sem texto).
@@ -789,7 +852,7 @@ export async function simularTurno(
     count: resultado.uso.length,
   });
 
-  const resposta: string = resultado.resposta;
+  // [AG7 preparo] a resposta vem de cima (a do turno ou a do preparo)
   const assinatura = assinarResposta({
     chave,
     clinicId,
@@ -804,7 +867,8 @@ export async function simularTurno(
   return {
     ok: true,
     resposta,
-    tipo: resultado.tipo,
+    // [AG7 preparo] (era resultado.tipo)
+    tipo,
     trilha,
     rascunhoBloqueado: superAdmin ? resultado.rascunhoBloqueado : null,
     assinatura,

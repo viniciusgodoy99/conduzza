@@ -32,6 +32,11 @@ import type { UsoDoModelo } from "./uso";
 //  - ai_decision_log: a decisao, gravada ANTES de qualquer envio, NUNCA com
 //    blocked_draft. O rascunho bloqueado vai para ai_rascunho_bloqueado.
 //
+//  - [AG7 preparo] AG7: a saida 'preparo' do turno, a decisao
+//    'enviou_preparo' (com a versao e o hash da mensagem do sistema), a
+//    leitura dela para a retomada (lerDecisaoDoPreparo) e o preparo no teto
+//    de respostas por hora.
+//
 // Log so com ids e codigos.
 
 /** Prazo das travas do banco (o mesmo do simulador). */
@@ -620,7 +625,13 @@ export async function tirarConversaPeloServidor(
 export type EstadoDoTurno =
   "reservado" | "decidido" | "passou_para_equipe" | "enviado" | "sem_envio";
 
-export type SaidaDoTurno = "resposta" | "frase" | "nenhuma";
+export type SaidaDoTurno =
+  | "resposta"
+  | "frase"
+  | "nenhuma"
+  // [AG7 preparo] A orientacao de preparo (o texto do turno fica nulo: a
+  // mensagem e relida do banco na retomada, pela versao da decisao).
+  | "preparo";
 
 export type TurnoDaIa = {
   jobId: string;
@@ -682,7 +693,9 @@ export async function lerTurno(
   const saida =
     linha.saida === "resposta" ||
     linha.saida === "frase" ||
-    linha.saida === "nenhuma"
+    linha.saida === "nenhuma" ||
+    // [AG7 preparo]
+    linha.saida === "preparo"
       ? linha.saida
       : null;
   return {
@@ -715,8 +728,12 @@ export async function salvarTurno(
       reservas_perdidas: turno.reservasPerdidas,
       saida: turno.saida,
       // O texto so vive enquanto o envio esta pendente (retencao, contrato 1.1).
+      // [AG7 preparo] O preparo nunca guarda texto (ai_turno_texto_coerente):
+      // a retomada relê a mensagem do banco pela versao da decisao.
       texto:
-        turno.estado === "enviado" || turno.estado === "sem_envio"
+        turno.estado === "enviado" ||
+        turno.estado === "sem_envio" ||
+        turno.saida === "preparo"
           ? null
           : turno.texto,
       texto_sha256: turno.textoSha256,
@@ -829,6 +846,49 @@ export async function lerDecisaoParaRetomar(
   };
 }
 
+// [AG7 preparo] início
+const UUID_DA_DECISAO =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SHA256_DA_DECISAO = /^[0-9a-f]{64}$/;
+
+/**
+ * AG7 (contrato, secao 0, item 14): a decisao 'enviou_preparo' do job, para
+ * a retomada do envio do preparo: lida de ai_decision_log pelo id, pela
+ * clinica e pelo JOB (nunca de ai_turno). null: nao existe, e de outro job,
+ * nao e o envio do preparo ou veio fora do formato. Lanca
+ * ErroComCodigoDeJob na leitura que falha.
+ */
+export async function lerDecisaoDoPreparo(
+  admin: SupabaseClient,
+  e: { clinicId: string; decisionId: string; jobId: string },
+): Promise<{ versaoId: string; sha256: string } | null> {
+  const { data, error } = await admin
+    .from("ai_decision_log")
+    .select("id, job_id, desfecho, texto_sha256, preparo_versao_id")
+    .eq("clinic_id", e.clinicId)
+    .eq("id", e.decisionId)
+    .eq("job_id", e.jobId)
+    .eq("desfecho", "enviou_preparo")
+    .maybeSingle();
+  if (error) {
+    throw new ErroComCodigoDeJob("leitura_falhou");
+  }
+  const linha = data as Record<string, unknown> | null;
+  if (
+    linha === null ||
+    linha.job_id !== e.jobId ||
+    linha.desfecho !== "enviou_preparo" ||
+    typeof linha.preparo_versao_id !== "string" ||
+    !UUID_DA_DECISAO.test(linha.preparo_versao_id) ||
+    typeof linha.texto_sha256 !== "string" ||
+    !SHA256_DA_DECISAO.test(linha.texto_sha256)
+  ) {
+    return null;
+  }
+  return { versaoId: linha.preparo_versao_id, sha256: linha.texto_sha256 };
+}
+// [AG7 preparo] fim
+
 export type DecisaoParaGravar = {
   clinicId: string;
   conversationId: string;
@@ -847,6 +907,14 @@ export type DecisaoParaGravar = {
    * Ausente: so a trilha diz (decisao sem turno, ou de antes do E4).
    */
   ferramentasUsadas?: readonly string[];
+  // [AG7 preparo] início
+  /**
+   * AG7: a versao da politica do classificador da variante do turno
+   * (ResultadoDoTurno.versaoDoClassificador). Ausente: a de sempre
+   * (VERSAO_DA_POLITICA_DO_CLASSIFICADOR), como na decisao sem turno.
+   */
+  versaoDoClassificador?: string;
+  // [AG7 preparo] fim
 };
 
 /**
@@ -869,6 +937,8 @@ const PESO_DA_FERRAMENTA: readonly string[] = [
   // pergunta (ia_pedido_de_espera), junto do pedido de cancelar.
   "entrar_na_lista_de_espera",
   "confirmar_presenca",
+  // [AG7 preparo] O envio da orientacao de preparo (o sistema manda).
+  "enviar_preparo",
   "reservar_horario",
   // AG3: os dados para marcar gravam (dados_informados_na_marcacao).
   "registrar_dados_do_paciente",
@@ -916,11 +986,14 @@ export function ferramentaDoTurno(d: {
  */
 export function versaoDoFiltroDoTurno(
   regras: string = versaoDasRegras(),
+  // [AG7 preparo] A versao da variante do classificador que rodou (AG7).
+  classificador: string = VERSAO_DA_POLITICA_DO_CLASSIFICADOR,
 ): string {
   return [
     regras,
     versaoDoPortao(),
-    VERSAO_DA_POLITICA_DO_CLASSIFICADOR,
+    // [AG7 preparo] (era VERSAO_DA_POLITICA_DO_CLASSIFICADOR)
+    classificador,
     VERSAO_DA_POLITICA,
   ].join(" ");
 }
@@ -965,6 +1038,8 @@ export function linhaDaDecisao(d: DecisaoParaGravar): Record<string, unknown> {
     versao_prompt: d.versaoDoPrompt,
     versao_filtro: versaoDoFiltroDoTurno(
       d.filtro?.versaoDasRegras ?? versaoDasRegras(),
+      // [AG7 preparo]
+      d.versaoDoClassificador,
     ),
     agente_modelo: agenteModelo,
     verificador_modelo: d.filtro?.verificador?.modelo ?? null,
@@ -1006,6 +1081,17 @@ export function linhaDaDecisao(d: DecisaoParaGravar): Record<string, unknown> {
           : "falha_tecnica",
         motivo_da_falha: desfecho.motivo,
       };
+    // [AG7 preparo] início
+    // AG7: o hash da mensagem do sistema que o banco montou e a versao
+    // (ai_decision_log_preparo_coerente: sem aprovado, sem bloqueio, sem
+    // falha e sem motivo de passagem; o gatilho de message confere os dois).
+    case "enviou_preparo":
+      return {
+        ...comum,
+        texto_sha256: d.textoSha256,
+        preparo_versao_id: desfecho.versaoId,
+      };
+    // [AG7 preparo] fim
   }
 }
 
@@ -1158,10 +1244,13 @@ export async function lerMensagemDoJob(
   author: string;
   deliveryStatus: string | null;
   errorCode: string | null;
+  // [AG7 preparo] O corpo: a linha 'sistema' do job e a frase OU o preparo.
+  body: string | null;
 } | null> {
   const { data, error } = await admin
     .from("message")
-    .select("id, author, delivery_status, error_code")
+    // [AG7 preparo] body (contrato, secao 0, item 19)
+    .select("id, author, delivery_status, error_code, body")
     .eq("clinic_id", clinicId)
     .eq("job_id", jobId)
     .maybeSingle();
@@ -1173,6 +1262,7 @@ export async function lerMensagemDoJob(
     author: string;
     delivery_status: string | null;
     error_code?: string | null;
+    body?: string | null;
   } | null;
   return linha
     ? {
@@ -1180,6 +1270,8 @@ export async function lerMensagemDoJob(
         author: linha.author,
         deliveryStatus: linha.delivery_status,
         errorCode: linha.error_code ?? null,
+        // [AG7 preparo]
+        body: typeof linha.body === "string" ? linha.body : null,
       }
     : null;
 }
@@ -1194,22 +1286,44 @@ export const RECIBOS_DE_ENVIADA: ReadonlySet<string> = new Set([
 /**
  * Quantas respostas da IA a conversa recebeu desde `desdeIso` (o teto por
  * conversa por hora). Lanca ErroComCodigoDeJob na leitura que falha.
+ *
+ * [AG7 preparo] AG7 (contrato, secao 0, item 21): soma tambem as decisoes
+ * 'enviou_preparo' da conversa no mesmo periodo (um pedido repetido nao vira
+ * rajada de textos longos, o que pesaria no risco de banimento do uazapi).
+ * A decisao conta mesmo quando o envio nao saiu: o lado seguro.
  */
 export async function respostasDaIaDesde(
   admin: SupabaseClient,
   e: { clinicId: string; conversationId: string; desdeIso: string },
 ): Promise<number> {
-  const { count, error } = await admin
-    .from("message")
-    .select("id", { count: "exact", head: true })
-    .eq("clinic_id", e.clinicId)
-    .eq("conversation_id", e.conversationId)
-    .eq("author", "ia")
-    .gte("created_at", e.desdeIso);
-  if (error || typeof count !== "number") {
+  const [respostas, preparos] = await Promise.all([
+    admin
+      .from("message")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", e.clinicId)
+      .eq("conversation_id", e.conversationId)
+      .eq("author", "ia")
+      .gte("created_at", e.desdeIso),
+    // [AG7 preparo] início
+    admin
+      .from("ai_decision_log")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", e.clinicId)
+      .eq("conversation_id", e.conversationId)
+      .eq("desfecho", "enviou_preparo")
+      .gte("created_at", e.desdeIso),
+    // [AG7 preparo] fim
+  ]);
+  if (
+    respostas.error ||
+    typeof respostas.count !== "number" ||
+    // [AG7 preparo]
+    preparos.error ||
+    typeof preparos.count !== "number"
+  ) {
     throw new ErroComCodigoDeJob("leitura_falhou");
   }
-  return count;
+  return respostas.count + preparos.count;
 }
 
 /**

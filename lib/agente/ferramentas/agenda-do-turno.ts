@@ -756,6 +756,14 @@ export type AgendaDoTurno = {
   fatosDoEstado: () => SaidaParaOsFatos | null;
   /** AG3: os codigos de resultado das ferramentas deste turno, em ordem. */
   resultados: () => string[];
+  // [AG7 preparo] início
+  /**
+   * AG7 (D-76): o procedimento (procedure.id) da consulta que o agendar deste
+   * turno marcou ("marcado"), para a frase F2. A remarcacao da nulo (a pessoa
+   * ja teve a oferta na marcacao), e o turno sem marcacao tambem.
+   */
+  procedimentoMarcadoNoTurno: () => string | null;
+  // [AG7 preparo] fim
   /** AG3: as falhas seguidas depois deste turno (item 9). */
   falhasDepois: () => number;
   /** AG3: o estado e os dados depois do turno. */
@@ -1241,6 +1249,8 @@ export function criarAgendaDoTurno(entrada: {
     profissional: string | null;
   } | null = null;
   let consultaDoTurno: { dia: string; hora: string } | null = null;
+  // [AG7 preparo] O procedimento que o agendar deste turno marcou (F2).
+  let procedimentoMarcado: string | null = null;
 
   // AG4: remarcar e cancelar.
   /** As consultas do contato lidas neste turno (os codigos c1 a c5). */
@@ -2905,6 +2915,16 @@ export function criarAgendaDoTurno(entrada: {
       return remarcou(resposta, remarcarId);
     }
     resultados.push("marcado");
+    // [AG7 preparo] início
+    // O procedimento do vinculo que o banco marcou (o da reserva); sem ele,
+    // o do pedido no estado.
+    procedimentoMarcado =
+      vinculoDe(
+        resposta.serviceLinkId ?? reserva?.leitura?.serviceLinkId ?? null,
+      )?.procedimentoId ??
+      estado.procedure_id ??
+      null;
+    // [AG7 preparo] fim
     estado.appointment_id = resposta.appointmentId;
     estado.slot_hold_id = null;
     estado.horarios_oferecidos = [];
@@ -4858,6 +4878,8 @@ export function criarAgendaDoTurno(entrada: {
     paraOModelo,
     fatosDoEstado,
     resultados: () => [...resultados],
+    // [AG7 preparo]
+    procedimentoMarcadoNoTurno: () => procedimentoMarcado,
     falhasDepois,
     fechar,
     nota,

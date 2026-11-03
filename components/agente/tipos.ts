@@ -105,7 +105,7 @@ export type FalaDoSimulador = {
   autor: AutorNoSimulador;
   texto: string;
   /** So nas falas do assistente: resposta propria ou a frase fixa. */
-  tipo?: "resposta" | "frase_fixa";
+  tipo?: "resposta" | "frase_fixa" | "preparo";
   /** So nas falas do assistente. */
   trilha?: PassoDaTrilha[];
   /**
@@ -138,7 +138,7 @@ export type ResultadoDaSimulacao =
   | {
       ok: true;
       resposta: string;
-      tipo: "resposta" | "frase_fixa";
+      tipo: "resposta" | "frase_fixa" | "preparo";
       trilha: PassoDaTrilha[];
       /** So para o super admin; nulo para os outros. */
       rascunhoBloqueado: string | null;

@@ -608,7 +608,8 @@ export class CenarioDaAg4 {
       this.mensagens.push({
         autor: "assistente",
         autoria,
-        texto: mascararNome(r.resposta, this.nomeDoContato),
+        // [AG7 preparo] O turno do preparo (resposta nula) nao acontece aqui.
+        texto: mascararNome(r.resposta ?? "", this.nomeDoContato),
       });
       const waMessageId = `wa-${randomUUID()}`;
       const id = this.registrar({

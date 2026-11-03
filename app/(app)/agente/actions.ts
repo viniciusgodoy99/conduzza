@@ -120,7 +120,7 @@ export type ResultadoDaSimulacaoDoAgente =
   | {
       ok: true;
       resposta: string;
-      tipo: "resposta" | "frase_fixa";
+      tipo: "resposta" | "frase_fixa" | "preparo";
       trilha: PassoDoTurno[];
       /** O que o filtro barrou: so para o super admin (nulo para os outros). */
       rascunhoBloqueado: string | null;
