@@ -32,6 +32,11 @@ import { adminClient, anonClient } from "../rls/stack";
 //   CZIA3; a versao sai de vigor com a troca;
 // - P7, definir o RT duas vezes: um aberto so (a segunda recebe
 //   outra_definicao, ou encerra a primeira e abre a dela);
+// - P7b, definir contra encerrar (BANCO-6): nunca o 23514 de ate antes de
+//   desde; a recusa e so outra_definicao (a linha aberta nasceu depois do
+//   comeco da transacao de quem perdeu) ou sem_responsavel_tecnico; no maximo
+//   um aberto. A corrida deterministica (C1 abre a transacao, C2 define e
+//   commita, C1 define ou encerra) e o P10 e o P11 do harness local;
 // - P8, aprovar contra suspender: uma aprovada no maximo, e a suspensao
 //   nunca deixa uma aprovada nova em vigor por engano;
 // - nenhuma chamada devolve 40P01 nem 40001.
@@ -537,6 +542,35 @@ describe("P7, definir o RT duas vezes", () => {
         .is("ate", null)
         .throwOnError();
       expect(count).toBe(1);
+      expect(await definirRt("admin", "rt", "Dra. Ana Souza")).toBeNull();
+    }
+  });
+});
+
+describe("P7b, definir contra encerrar (BANCO-6)", () => {
+  it("nunca 23514; so outra_definicao ou sem_responsavel_tecnico; no maximo um aberto", async () => {
+    for (let i = 0; i < RODADAS; i += 1) {
+      const [definiu, encerrou] = await Promise.all([
+        definirRt("admin", "rt2", "Dr. Bruno Lima"),
+        como("admin2")
+          .rpc("encerrar_responsavel_tecnico", { p_clinic_id: clinica })
+          .then(({ error }) => error as Erro),
+      ]);
+      semCicloNemRepeticao(definiu, encerrou);
+      for (const erro of [definiu, encerrou].filter(Boolean)) {
+        expect(erro?.code).toBe("P0001");
+        expect(["outra_definicao", "sem_responsavel_tecnico"]).toContain(
+          erro?.message,
+        );
+      }
+      const { count } = await admin
+        .from("responsavel_tecnico")
+        .select("id", { count: "exact", head: true })
+        .eq("clinic_id", clinica)
+        .is("ate", null)
+        .throwOnError();
+      expect(count ?? 0).toBeLessThanOrEqual(1);
+      // De volta ao RT de sempre.
       expect(await definirRt("admin", "rt", "Dra. Ana Souza")).toBeNull();
     }
   });

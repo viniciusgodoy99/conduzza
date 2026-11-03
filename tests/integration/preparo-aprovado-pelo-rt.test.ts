@@ -34,7 +34,12 @@ import { adminClient, anonClient } from "../rls/stack";
 //   "Aprovar de novo" depois de suspender, renomear tira a aprovacao, a
 //   trilha so com ids e o codigo do texto;
 // - as leituras do servidor: os preparos em vigor (sem texto), os textos da
-//   clinica (de toda versao) e o texto em vigor do procedimento (a regua);
+//   clinica (so das versoes que ja valeram, as copias do texto antigo e o
+//   prep_instructions: a aguardando, a devolvida e a descartada de cadastro
+//   ficam fora, BANCO-3) e o texto em vigor do procedimento (a regua);
+// - o conteudo que o banco recusa sozinho pela API (CFM-2): o link, o valor
+//   em reais, o arroba e o invisivel do filtro dao 22023 texto_recusado, sem
+//   gravar nada;
 // - o gatilho de message, o ramo novo: a mensagem exata com a decisao
 //   enviou_preparo do job passa (a linha sistema com o corpo exato e a
 //   decisao ligada); um caractere a menos ou a mais, outra versao, outro
@@ -645,7 +650,7 @@ describe("o ciclo pelas RPCs e a mensagem do banco", () => {
     await paridade("com o nome novo");
   });
 
-  it("as leituras do servidor: em vigor sem o texto, os textos de toda versao, o texto da regua", async () => {
+  it("as leituras do servidor: em vigor sem o texto, os textos das versoes que ja valeram, o texto da regua", async () => {
     const lista = await rpcOk<Record<string, unknown>[]>(
       "preparos_em_vigor_da_clinica",
       { p_clinic_id: clinica },
@@ -683,6 +688,84 @@ describe("o ciclo pelas RPCs e a mensagem do banco", () => {
     });
     expect(daRegua?.texto).toBe(TEXTO_DA_COLONOSCOPIA);
     expect(sha256(daRegua!.texto)).toBe(daRegua!.texto_sha256);
+  });
+});
+
+describe("os textos da clinica e o conteudo recusado (BANCO-3 e CFM-2)", () => {
+  it("so as versoes que ja valeram: a aguardando, a devolvida e a descartada ficam fora; a suspensa fica", async () => {
+    const densitometria = await inserir("procedure", {
+      clinic_id: clinica,
+      name: "Densitometria",
+      active: true,
+    });
+    const devolvida = "Traga o pedido medico impresso.";
+    const descartada = "Chegue 40 minutos antes do horario.";
+    const aprovada = "Venha com roupa sem metal.";
+    const aguardando = "Venha com roupa leve, sem metal e sem joias.";
+    // A devolvida: o administrador escreve, o RT devolve.
+    const { data: primeira, error: erro1 } = await salvar(
+      "admin",
+      densitometria,
+      devolvida,
+    );
+    expect(erro1).toBeNull();
+    const { error: erroDevolver } = await como("rt").rpc(
+      "devolver_preparo_do_procedimento",
+      { p_versao_id: primeira.versao_id, p_comentario: "Falta a roupa." },
+    );
+    expect(erroDevolver).toBeNull();
+    // A descartada: o gestor escreve e descarta.
+    const { data: segunda, error: erro2 } = await salvar(
+      "gestor",
+      densitometria,
+      descartada,
+    );
+    expect(erro2).toBeNull();
+    const { error: erroDescartar } = await como("gestor").rpc(
+      "descartar_preparo_do_procedimento",
+      { p_versao_id: segunda.versao_id },
+    );
+    expect(erroDescartar).toBeNull();
+    // A aprovada e, depois, um texto novo aguardando.
+    await emVigor(densitometria, aprovada);
+    expect((await salvar("admin", densitometria, aguardando)).error).toBeNull();
+    const textos = await rpcOk<string[]>("textos_de_preparo_da_clinica", {
+      p_clinic_id: clinica,
+    });
+    expect(textos).toContain(aprovada);
+    for (const fora of [devolvida, descartada, aguardando]) {
+      expect(textos, fora).not.toContain(fora);
+    }
+    // Suspensa, a que ja valeu continua na lista (ela pode ter saido).
+    const { error: erroSuspender } = await como("gestor").rpc(
+      "suspender_preparo_do_procedimento",
+      { p_procedure_id: densitometria },
+    );
+    expect(erroSuspender).toBeNull();
+    expect(
+      await rpcOk<string[]>("textos_de_preparo_da_clinica", {
+        p_clinic_id: clinica,
+      }),
+    ).toContain(aprovada);
+  });
+
+  it("o link, o valor em reais, o arroba e o invisivel do filtro: 22023 texto_recusado, nada gravado", async () => {
+    const antes = await maiorVersao(ultrassom);
+    for (const texto of [
+      "Veja o preparo em https://bit.ly/preparo",
+      "Acesse www.clinica.com.br",
+      "Traga R$ 50,00 para o estacionamento.",
+      "Pague 50 reais na recepcao.",
+      "Siga @clinica para mais dicas.",
+      "Jejum de \u20668 horas\u2069.",
+    ]) {
+      for (const apelido of ["admin", "rt", "recepcao"]) {
+        const { error } = await salvar(apelido, ultrassom, texto);
+        expect(error?.code, `${apelido}: ${texto}`).toBe("22023");
+        expect(error?.message).toBe("texto_recusado");
+      }
+    }
+    expect(await maiorVersao(ultrassom)).toBe(antes);
   });
 });
 
