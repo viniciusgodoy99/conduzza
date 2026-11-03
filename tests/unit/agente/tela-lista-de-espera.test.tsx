@@ -256,8 +256,21 @@ describe("a nota da fase de teste", () => {
     // (a da configuracao, tests/unit/agente/telas-ag6b.test.tsx): 4 + 2. As
     // notas escritas (o span com o id; o id tambem vai na descricao da
     // chave desde a revisao das telas da AG6b).
-    expect(html.match(/<span id="[^"]*-fase-de-teste"/g)).toHaveLength(6);
     // [AG6b mídia] fim
+    // [AG7 preparo] início
+    // AG7: "Enviar orientação de preparo" tambem leva nota
+    // (tests/unit/agente/tela-preparo.test.tsx): 4 + 2 + 1. O cartao sai de
+    // HABILIDADES_DO_AGENTE, da frente M: ate o merge dela, a habilidade nao
+    // esta na lista e a conta continua 4 + 2.
+    const comOPreparo = HABILIDADES_DO_AGENTE.some(
+      (h) => h.chave === ("enviar_preparo" as string),
+    )
+      ? 1
+      : 0;
+    expect(html.match(/<span id="[^"]*-fase-de-teste"/g)).toHaveLength(
+      6 + comOPreparo,
+    );
+    // [AG7 preparo] fim
   });
 
   it("é nota, não status: só texto, sem chip nem cor própria", () => {

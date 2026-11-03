@@ -148,6 +148,11 @@ describe("cenários", () => {
       // [AG6 urgência] início
       "Paciente com sinal de emergência",
       // [AG6 urgência] fim
+      // [AG7 preparo] início
+      // AG7: a pessoa pede a orientacao de preparo (antes da lista de
+      // espera, que continua a ultima).
+      "Paciente pedindo o preparo",
+      // [AG7 preparo] fim
       "Paciente querendo lista de espera",
     ]);
     expect(ehCenario("preco")).toBe(true);

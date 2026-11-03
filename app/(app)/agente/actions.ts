@@ -120,7 +120,12 @@ export type ResultadoDaSimulacaoDoAgente =
   | {
       ok: true;
       resposta: string;
-      tipo: "resposta" | "frase_fixa";
+      // [AG7 preparo] início
+      // No preparo, `resposta` e a mensagem que o sistema monta com o texto
+      // aprovado pelo responsavel tecnico (lib/agente/simulador.ts; contrato
+      // da AG7, 4.6). A tela mostra com a marca e nao encerra a conversa.
+      tipo: "resposta" | "frase_fixa" | "preparo";
+      // [AG7 preparo] fim
       trilha: PassoDoTurno[];
       /** O que o filtro barrou: so para o super admin (nulo para os outros). */
       rascunhoBloqueado: string | null;
@@ -183,6 +188,11 @@ const CENARIOS = [
   // AG6a: o sinal de emergencia (passa para a equipe, marcada como Urgente).
   "urgencia",
   // [AG6 urgência] fim
+  // [AG7 preparo] início
+  // AG7: a pessoa pede a orientacao de preparo (o sistema manda o texto
+  // aprovado pelo responsavel tecnico; no simulador, so mostra).
+  "preparo",
+  // [AG7 preparo] fim
 ] as const;
 
 /** Teto de uma fala no simulador (o portao escala acima de 1.000). */

@@ -1002,9 +1002,7 @@ describe("simulador", () => {
     expect(simularTurno.mock.calls.at(-1)?.[0]).toMatchObject({
       contato: null,
     });
-    expect(await acoes.simularAction({ mensagens, cenario: null })).toEqual(
-      OK,
-    );
+    expect(await acoes.simularAction({ mensagens, cenario: null })).toEqual(OK);
     expect(simularTurno.mock.calls.at(-1)?.[0]).toMatchObject({
       contato: null,
     });
@@ -1039,6 +1037,30 @@ describe("simulador", () => {
       ).toEqual(OK);
     }
   });
+
+  // [AG7 preparo] início
+  // AG7 (contrato 3.3 e 4.6): o cenario "Paciente pedindo o preparo" e o
+  // tipo "preparo" do simulador, em que a resposta e a mensagem que o
+  // sistema monta com o texto aprovado pelo responsavel tecnico. A acao
+  // devolve como veio (a tela mostra com a marca e segue a conversa).
+  it("o cenário do preparo e a fala do preparo passam pela ação como vieram", async () => {
+    const mensagem =
+      "Orientação de preparo para Limpeza de pele\nResponsável técnico da clínica: Dra. Ana Souza (CRM-CE 12345)\n\nVenha com roupa confortável.\n\nSe tiver qualquer dúvida sobre o preparo, responda por aqui que a equipe da clínica te ajuda.";
+    const doPreparo = { ...OK, resposta: mensagem, tipo: "preparo" };
+    simularTurno.mockResolvedValue(doPreparo);
+    expect(CENARIOS_DO_SIMULADOR.map((c) => c.chave)).toContain("preparo");
+    expect(
+      await acoes.simularAction({
+        mensagens: [
+          { autor: "paciente", texto: "Oi! Qual é o preparo?" },
+          { autor: "assistente", texto: mensagem, assinatura: ASSINATURA },
+          { autor: "paciente", texto: "Obrigada!" },
+        ],
+        cenario: "preparo",
+      }),
+    ).toEqual(doPreparo);
+  });
+  // [AG7 preparo] fim
 
   it("recusa entrada fora do formato e conversa que não termina no paciente", async () => {
     const invalidos: unknown[] = [

@@ -82,6 +82,17 @@ export type DadosDoPainel = {
    */
   midiaNoServidor?: MidiaNoServidor;
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  /**
+   * Algum procedimento ativo tem orientacao de preparo aprovada pelo
+   * responsavel tecnico em vigor? Lido na pagina pela sessao
+   * (fetchHaPreparoEmVigor, lib/queries/preparo.ts), para todo papel que
+   * abre a Tela 6. Falso: "Enviar orientação de preparo" diz que o pedido
+   * passa para a equipe. Nulo ou ausente: nao conferiu (a tela nao inventa a
+   * nota).
+   */
+  haPreparoEmVigor?: boolean | null;
+  // [AG7 preparo] fim
 };
 
 /** Quem falou na conversa do simulador. */
@@ -105,7 +116,11 @@ export type FalaDoSimulador = {
   autor: AutorNoSimulador;
   texto: string;
   /** So nas falas do assistente: resposta propria ou a frase fixa. */
-  tipo?: "resposta" | "frase_fixa";
+  // [AG7 preparo] início
+  // Ou a orientacao de preparo: a mensagem que o sistema monta com o texto
+  // aprovado pelo responsavel tecnico (so a frase fixa encerra a conversa).
+  tipo?: "resposta" | "frase_fixa" | "preparo";
+  // [AG7 preparo] fim
   /** So nas falas do assistente. */
   trilha?: PassoDaTrilha[];
   /**
@@ -138,7 +153,11 @@ export type ResultadoDaSimulacao =
   | {
       ok: true;
       resposta: string;
-      tipo: "resposta" | "frase_fixa";
+      // [AG7 preparo] início
+      // No preparo, `resposta` e a mensagem montada pelo sistema (contrato
+      // da AG7, 4.6, ResultadoDoSimulador).
+      tipo: "resposta" | "frase_fixa" | "preparo";
+      // [AG7 preparo] fim
       trilha: PassoDaTrilha[];
       /** So para o super admin; nulo para os outros. */
       rascunhoBloqueado: string | null;
