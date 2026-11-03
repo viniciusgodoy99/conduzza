@@ -19,6 +19,7 @@ import type { Verificador } from "@/lib/domain/conformidade/veredicto";
 import {
   CABECALHO_DO_PREPARO,
   mensagemDoPreparo,
+  PALAVRAS_DA_JANELA_DO_TRECHO,
   RODAPE_DO_PREPARO,
   type ResponsavelTecnicoDaMensagem,
   trechoDePreparoNaResposta as trechoDoModuloPuro,
@@ -408,8 +409,8 @@ describe("trechoDePreparoNaResposta: a IA copiando o texto da clinica", () => {
       "Venha com um acompanhante.",
       "Para a colonoscopia, venha com acompanhante e traga o pedido médico.",
       "Para qual procedimento você quer a orientação de preparo?",
-      // A frase cortada no meio da palavra nao e a frase.
-      "Venha com um acompanhante maior de idade, porque você vai receber sedaçãozinha.",
+      // A frase cortada no meio da palavra nao e a frase (nem a oracao).
+      "Venha com um acompanhante maior de idadezinha, porque você vai receber sedaçãozinha.",
       "",
       "   ",
     ]) {
@@ -418,6 +419,31 @@ describe("trechoDePreparoNaResposta: a IA copiando o texto da clinica", () => {
     expect(trechoDePreparoNaResposta(FRASE_DO_PREPARO_SO_DO_TRECHO, [])).toBe(
       false,
     );
+  });
+
+  it("revisao da AG7 (CFM-8): a oracao entre virgulas e a copia longa (dez palavras) tambem contam", () => {
+    for (const rascunho of [
+      // A frase sem o "voce" (a oracao antes da virgula, inteira).
+      "Venha com um acompanhante maior de idade porque vai receber sedação.",
+      // Meia frase (a oracao depois da virgula).
+      "Tome com um gole de água às 6h do dia do exame.",
+      "Venha com um acompanhante maior de idade, porque você vai receber sedaçãozinha.",
+      // Dez palavras seguidas do texto, com a frase trocada no fim.
+      "Às 18h da véspera, tome 2 comprimidos de bisacodil 5 mg com um copo de suco.",
+    ]) {
+      expect(trechoDePreparoNaResposta(rascunho, TEXTOS), rascunho).toBe(true);
+    }
+    expect(PALAVRAS_DA_JANELA_DO_TRECHO).toBe(10);
+    // O requisito de sempre, quando a clinica o pos no texto do preparo, nao
+    // conta por pedaco de oito palavras (so a frase ou a oracao inteiras).
+    expect(
+      trechoDePreparoNaResposta(
+        "Para a Consulta, leve um documento com foto e a carteirinha do convênio.",
+        [
+          "Chegue 30 minutos antes do horário marcado e traga documento com foto e a carteirinha do convênio.",
+        ],
+      ),
+    ).toBe(false);
   });
 
   it("a frase conta com 25 caracteres normalizados, nao com 24", () => {

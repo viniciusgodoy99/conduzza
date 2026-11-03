@@ -194,8 +194,15 @@ function aprovar(texto: string): TextoAprovado {
 }
 
 // [AG7 preparo] início
-/** Quantos textos de preparo da clinica o filtro aceita num turno. */
-export const MAXIMO_DE_TEXTOS_DE_PREPARO = 200;
+/**
+ * Quantos textos de preparo da clinica o filtro aceita num turno. Revisao da
+ * AG7 (MOTOR-2 e BANCO-3): era 200. O banco passa a devolver so os textos que
+ * ja valeram (aprovados, substituidos e suspensos) e o texto antigo, e o teto
+ * sobe para 1.000; acima dele o filtro continua falhando fechado (o
+ * catalogo loga o erro so com a contagem). No teto, a troca no historico e o
+ * trecho do filtro cabem no turno (o teste de desempenho de preparo.ts).
+ */
+export const MAXIMO_DE_TEXTOS_DE_PREPARO = 1000;
 /**
  * O tamanho de cada um (pontos de codigo): a versao tem ate 3.500 (o CHECK)
  * e o prep_instructions antigo ia ate 4.000 (a Server Action de Cadastros).
@@ -203,7 +210,7 @@ export const MAXIMO_DE_TEXTOS_DE_PREPARO = 200;
 export const MAXIMO_DO_TEXTO_DE_PREPARO_NO_FILTRO = 4000;
 
 /**
- * Os textos de preparo da clinica no formato: uma lista de ate 200 textos
+ * Os textos de preparo da clinica no formato: uma lista de ate 1.000 textos
  * nao vazios, de ate 4.000 caracteres cada. Fora disso, o contexto e
  * invalido e o filtro falha fechado (a regra do trecho nunca vira "sem
  * regra" por um nulo, um numero ou uma lista pela metade).

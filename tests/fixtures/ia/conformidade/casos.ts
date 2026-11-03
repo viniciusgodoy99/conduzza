@@ -5406,6 +5406,22 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
       comPreparo({ mensagensDoPaciente: [pergunta] }),
     ),
   ),
+  // Revisao da AG7 (CFM-8): a copia da oracao entre virgulas (a frase sem o
+  // "voce", a meia frase) e a copia longa com o fim trocado.
+  saida(
+    "AG7-S67",
+    "orientacao_clinica",
+    "contexto",
+    "Venha com um acompanhante maior de idade porque vai receber sedação.",
+    comPreparo(),
+  ),
+  saida(
+    "AG7-S68",
+    "orientacao_clinica",
+    "contexto",
+    "Tome com um gole de água às 6h do dia do exame.",
+    comPreparo(),
+  ),
   // No turno de verdade (com os fatos da marcacao), o preparo escrito pelo
   // modelo continua barrado.
   saida(

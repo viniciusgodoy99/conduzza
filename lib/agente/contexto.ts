@@ -676,7 +676,9 @@ function comOsPreparos(
         Array.from(texto).length > MAXIMO_DO_TEXTO_DE_PREPARO_NO_FILTRO,
     )
   ) {
-    log.warn("agente_textos_de_preparo_acima_do_teto", {
+    // Revisao da AG7 (MOTOR-2): erro, nao aviso: acima do teto toda resposta
+    // da IA da clinica passa para a equipe (falha fechada).
+    log.error("agente_textos_de_preparo_acima_do_teto", {
       clinic_id: clinicId,
       count: textosDePreparo.length,
     });

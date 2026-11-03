@@ -82,6 +82,7 @@ import {
 // preparo-aprovado.ts, que importa este (ciclo de import).
 import {
   FRASE_DO_PREPARO_DEPOIS_DE_MARCAR,
+  PALAVRAS_DA_JANELA_DO_TRECHO,
   TAMANHO_MINIMO_DO_TRECHO,
   trechoDePreparoNaResposta,
 } from "@/lib/domain/preparo";
@@ -628,7 +629,7 @@ export const FONTES_DAS_REGRAS_EM_CODIGO: readonly string[] = [
   // Revisao final de 31/10/2026: a saida cedo do rascunho longo.
   `com os fatos, acima de ${LIMITE_DO_RASCUNHO} caracteres: so formato_invalido/longo, sem ler o resto`,
   // [AG7 preparo] início
-  `${REGRA_DO_TRECHO_DO_PREPARO}: com os textos de preparo da clinica, a frase de ${TAMANHO_MINIMO_DO_TRECHO} caracteres ou mais de um deles (ou o texto inteiro) que aparece inteira no rascunho, os dois lados em minusculas, sem acento, sem pontuacao e com espaco unico (orientacao_clinica)`,
+  `${REGRA_DO_TRECHO_DO_PREPARO}: com os textos de preparo da clinica, a frase de ${TAMANHO_MINIMO_DO_TRECHO} caracteres ou mais de um deles (ou o texto inteiro) que aparece inteira no rascunho, e (revisao da AG7, CFM-8) a oracao entre virgulas de ${TAMANHO_MINIMO_DO_TRECHO} caracteres ou mais, inteira, e ${PALAVRAS_DA_JANELA_DO_TRECHO} palavras seguidas de um deles, com ${TAMANHO_MINIMO_DO_TRECHO} caracteres ou mais, que aparecem seguidas no rascunho, os dois lados em minusculas, sem acento, sem pontuacao e com espaco unico (orientacao_clinica)`,
   // Revisao da AG7 (CFM-6): a situacao da pessoa no pedido do preparo (a
   // conferencia do envio, no laco).
   `${REGRA_DO_PEDIDO_COM_SITUACAO_PESSOAL}: nas pendentes do turno do envio do preparo (o texto como chegou, os nomes do catalogo mascarados), ${SITUACAO_PESSOAL} passa para a equipe (assunto_clinico) antes do envio`,

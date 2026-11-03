@@ -1202,7 +1202,7 @@ describe("AG7: o preparo escrito pelo modelo e o trecho do texto da clinica", ()
       ["numero na lista", [TEXTO_DO_PREPARO_DE_TESTE, 1]],
       ["texto vazio", [""]],
       ["nulo na lista", [null]],
-      ["textos demais", Array.from({ length: 201 }, (_, i) => `texto ${i}`)],
+      ["textos demais", Array.from({ length: 1001 }, (_, i) => `texto ${i}`)],
       ["texto longo demais", ["a".repeat(4001)]],
     ])(
       "%s: bloqueia como falha, sem chamar o verificador",
@@ -1229,10 +1229,11 @@ describe("AG7: o preparo escrito pelo modelo e o trecho do texto da clinica", ()
       },
     );
 
-    it("no limite (200 textos de 4.000 caracteres) e sem a lista, aprova", async () => {
-      expect(MAXIMO_DE_TEXTOS_DE_PREPARO).toBe(200);
+    it("no limite (1.000 textos de 4.000 caracteres) e sem a lista, aprova", async () => {
+      // Revisao da AG7 (MOTOR-2 e BANCO-3): o teto subiu de 200 para 1.000.
+      expect(MAXIMO_DE_TEXTOS_DE_PREPARO).toBe(1000);
       expect(MAXIMO_DO_TEXTO_DE_PREPARO_NO_FILTRO).toBe(4000);
-      const noLimite = Array.from({ length: 200 }, (_, i) =>
+      const noLimite = Array.from({ length: 1000 }, (_, i) =>
         `${i} ${"a".repeat(3990)}`.slice(0, 4000),
       );
       for (const contexto of [
