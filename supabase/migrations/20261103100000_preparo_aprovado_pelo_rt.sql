@@ -225,9 +225,13 @@
 -- acrescentam valores; o gatilho aceita um caso a mais, que o codigo de
 -- antes nunca grava; a regua velha continua mandando prep_instructions
 -- (opcao A); as versoes copiadas ficam invisiveis. O codigo da AG7 antes
--- desta migration (NUNCA): preparo_em_vigor_do_procedimento da PGRST202 e a
--- confirmacao para em todas as clinicas; o catalogo lanca e a IA das
--- clinicas da fase falha fechado; Cadastros nao carrega a secao. Os
+-- desta migration (NUNCA): preparo_em_vigor_do_procedimento da PGRST202,
+-- que a regua (desde a revisao, BANCO-4) le como "sem texto em vigor": a
+-- confirmacao sai sem o {{preparo}} em todas as clinicas (saem o campo e a
+-- frase que so o apresenta; o passo que so tinha o campo nao sai e fica
+-- como falha_envio, motivo sem_preparo_aprovado), e nem o texto antigo
+-- (prep_instructions) sai; o catalogo lanca e a IA das clinicas da fase
+-- falha fechado; Cadastros nao carrega a secao. Os
 -- espelhos (tests/unit/ia-whatsapp/espelhos.test.ts e
 -- tests/unit/agente/ag7-espelhos.test.ts) leem o grant e os CHECKs DESTA
 -- migration. Esta migration nao recria os CHECKs nem as funcoes que os
