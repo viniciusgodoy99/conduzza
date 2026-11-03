@@ -18,6 +18,7 @@ import {
   decidirEnvioDoPreparo,
   FERRAMENTA_ENVIAR_PREPARO,
   NOME_DO_ENVIO_DO_PREPARO,
+  PASSO_DO_PREPARO_FORA_DE_VIGOR,
   preparosEmVigorDaLeitura,
   textosDePreparoDaLeitura,
 } from "@/lib/agente/ferramentas/enviar-preparo";
@@ -30,6 +31,7 @@ import {
   type MensagemDaConversa,
   type ResultadoDoTurno,
 } from "@/lib/agente/laco";
+import { simularTurno } from "@/lib/agente/simulador";
 import { ferramentaDoTurno } from "@/lib/agente/whatsapp";
 import {
   motivoPodeAtribuir,
@@ -68,7 +70,7 @@ import {
   configDaAg4,
   consultasDoContato,
 } from "./ag4-conversa";
-import type { AgendaEmMemoria } from "./agenda-em-memoria";
+import { AgendaEmMemoria, type Linha } from "./agenda-em-memoria";
 import {
   AGORA,
   bancoComJornadas,
@@ -79,7 +81,11 @@ import {
   FUSO,
   PROC,
 } from "./agenda-fixtures";
-import { catalogoDoCadastro, PROC_AG2 } from "./cadastro-fixtures";
+import {
+  catalogoDoCadastro,
+  linhasDoCadastro,
+  PROC_AG2,
+} from "./cadastro-fixtures";
 
 // AG7 (03/11/2026): o turno com enviar_preparo, com o LLM FALSO de roteiro.
 // O modelo so escolhe o procedimento; com versao em vigor, o turno termina
@@ -1119,5 +1125,222 @@ describe("o estado do atendimento no turno do preparo", () => {
     });
     expect(cenario.banco.chamadasDe("cancelar_consulta_pela_ia")).toEqual([]);
     expect(c1.status).toBe("agendado");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// O simulador da Tela 6 (o mesmo carregador, sobre o banco em memoria)
+// ---------------------------------------------------------------------------
+
+describe("o simulador com o preparo", () => {
+  const USUARIO = "0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a";
+  const AMBIENTE = {
+    OPENAI_API_KEY: "sk-teste",
+    VERCEL_ENV: "production",
+    IA_SEGREDO_DO_IDENTIFICADOR: "s".repeat(40),
+  };
+  const PRECOS = [
+    {
+      modelo: "gpt-6-luna",
+      entrada: 100_000,
+      saida: 500_000,
+      cacheLeitura: 10_000,
+      cacheEscrita: 125_000,
+    },
+  ];
+  const MENSAGEM = mensagemDoPreparo({
+    procedimento: "Consulta",
+    rt: RT_DE_TESTE,
+    texto: TEXTO_DO_PREPARO_DE_TESTE,
+  });
+
+  function daClinica<T extends object>(linhas: readonly T[]): Linha[] {
+    return linhas.map((linha, i) => ({
+      id: `linha-${i}`,
+      ...linha,
+      clinic_id: CLINICA,
+    }));
+  }
+
+  /** O Cadastro, o rascunho com a habilidade e as RPCs do preparo. */
+  function bancoDoSimulador(mensagem: string | null): AgendaEmMemoria {
+    const linhas = linhasDoCadastro();
+    const b = new AgendaEmMemoria()
+      .rpc("ia_clinicas_da_fase_controlada", () => ({
+        data: [CLINICA],
+        error: null,
+      }))
+      .rpc("ia_pode_simular", () => ({ data: true, error: null }))
+      .rpc("reservar_gasto_da_ia", () => ({
+        data: "0e0e0e0e-0e0e-4e0e-8e0e-0e0e0e0e0e0e",
+        error: null,
+      }))
+      .rpc("acertar_gasto_da_ia", () => ({ data: null, error: null }))
+      .rpc("preparos_em_vigor_da_clinica", () => ({
+        data: [
+          {
+            procedure_id: PROC.consulta,
+            versao_id: VERSAO.consulta,
+            versao: 1,
+            texto_sha256: SHA_DO_TEXTO,
+            rt_nome: RT_DE_TESTE.nome,
+            aprovado_em: "2026-10-19T13:00:00+00:00",
+          },
+        ],
+        error: null,
+      }))
+      .rpc("textos_de_preparo_da_clinica", () => ({
+        data: [TEXTO_DO_PREPARO_DE_TESTE],
+        error: null,
+      }))
+      .rpc("ler_preparo_para_envio", () => ({
+        data:
+          mensagem === null
+            ? null
+            : {
+                versao_id: VERSAO.consulta,
+                procedure_id: PROC.consulta,
+                versao: 1,
+                mensagem,
+                sha256: sha256DoTexto(mensagem),
+              },
+        error: null,
+      }));
+    b.inserir("procedure", ...daClinica(linhas.procedimentos));
+    b.inserir("service_link", ...daClinica(linhas.vinculos));
+    b.inserir("professional", ...daClinica(linhas.profissionais));
+    b.inserir("insurance", ...daClinica(linhas.convenios));
+    b.inserir("clinic", { id: CLINICA, name: "Clínica Bem Estar" });
+    // O rascunho com a habilidade ligada (o simulador testa o RASCUNHO).
+    b.inserir("ai_agent_config", {
+      id: "cfg-rascunho",
+      clinic_id: CLINICA,
+      version: 2,
+      status: "rascunho",
+      skills: { enviar_preparo: true },
+      updated_at: "2026-10-20T11:00:00.000Z",
+    });
+    return b;
+  }
+
+  async function simular(
+    b: AgendaEmMemoria,
+    mensagens: {
+      autor: "paciente" | "assistente";
+      texto: string;
+      assinatura?: string | null;
+    }[],
+    roteiro: unknown[],
+    estadoDoAtendimento: string | null = null,
+  ) {
+    const { cliente, corpos } = clienteComRoteiro(roteiro);
+    const r = await simularTurno(
+      {
+        admin: b.cliente(),
+        clinicId: CLINICA,
+        userId: USUARIO,
+        fuso: FUSO,
+        mensagens,
+        agoraMs: AGORA,
+        estado: estadoDoAtendimento,
+        env: AMBIENTE,
+      },
+      { cliente, verificador, classificador, precos: PRECOS },
+    );
+    return { r, corpos };
+  }
+
+  it("a mensagem montada pelo banco (o rascunho, p_simulador), com o tipo preparo; nada gravado; na rodada seguinte, o substituto", async () => {
+    const b = bancoDoSimulador(MENSAGEM);
+    const pedido = "Me manda a orientação de preparo da consulta, por favor";
+    const { r } = await simular(
+      b,
+      [{ autor: "paciente", texto: pedido }],
+      [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) {
+      return;
+    }
+    expect(r.tipo).toBe("preparo");
+    expect(r.resposta).toBe(MENSAGEM);
+    expect(b.chamadasDe("ler_preparo_para_envio")).toEqual([
+      {
+        p_clinic_id: CLINICA,
+        p_versao_id: VERSAO.consulta,
+        p_simulador: true,
+      },
+    ]);
+    expect(b.escritas).toEqual([]);
+    expect(r.trilha.map((p) => p.texto)).toContain(
+      `Pediu a orientação de preparo de Consulta: enviada a versão 1 (código ${codigoDoTexto(SHA_DO_TEXTO)}), aprovada por Dra. Ana Souza em 19/10/2026.`,
+    );
+
+    // A rodada seguinte: a fala do assistente (o preparo, assinado) volta,
+    // e o modelo le o substituto, nunca o texto.
+    const seguinte = await simular(
+      b,
+      [
+        { autor: "paciente", texto: pedido },
+        { autor: "assistente", texto: r.resposta, assinatura: r.assinatura },
+        { autor: "paciente", texto: "Obrigada! Vocês atendem aos sábados?" },
+      ],
+      [final("Atendemos de segunda a sexta.")],
+      r.estado,
+    );
+    expect(seguinte.r.ok).toBe(true);
+    semTextoDaClinica("rodada seguinte", seguinte.corpos);
+    expect(JSON.stringify(seguinte.corpos[0]?.input)).toContain(
+      "Mensagem do sistema: a orientação de preparo de Consulta, aprovada pela clínica, foi enviada aqui.",
+    );
+  });
+
+  it("fora de vigor na hora: a passagem (a frase), como num turno de verdade", async () => {
+    const b = bancoDoSimulador(null);
+    const { r } = await simular(
+      b,
+      [
+        {
+          autor: "paciente",
+          texto: "Me manda a orientação de preparo, por favor",
+        },
+      ],
+      [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) {
+      return;
+    }
+    expect(r.tipo).toBe("frase_fixa");
+    expect(r.resposta).toBe(FRASE_DE_ESCALONAMENTO);
+    expect(r.trilha.map((p) => p.texto)).toEqual(
+      expect.arrayContaining([
+        PASSO_DO_PREPARO_FORA_DE_VIGOR,
+        "Passou para a equipe: o assunto é clínico",
+      ]),
+    );
+  });
+
+  it("a leitura que falha: o simulador avisa, sem inventar", async () => {
+    const b = bancoDoSimulador(MENSAGEM);
+    b.rpc("ler_preparo_para_envio", () => ({
+      data: null,
+      error: { code: "57014" },
+    }));
+    const { r } = await simular(
+      b,
+      [
+        {
+          autor: "paciente",
+          texto: "Me manda a orientação de preparo, por favor",
+        },
+      ],
+      [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
+    );
+    expect(r).toEqual({
+      ok: false,
+      error:
+        "Não foi possível carregar a orientação de preparo. Tente de novo.",
+    });
   });
 });
