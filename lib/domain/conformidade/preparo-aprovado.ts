@@ -171,6 +171,20 @@ export type ProblemasDoTextoDoPreparo = {
   recusas: readonly CategoriaDeConformidade[];
   /** O conteudo de um preparo: o RT aprova sabendo (o aviso do dialogo). */
   avisos: readonly CategoriaDeConformidade[];
+  /**
+   * Revisao da AG7 (TELA-8): o que tirar, para a tela dizer. Uma entrada por
+   * recusa, na mesma ordem: a frase do texto (como a clinica escreveu,
+   * aparada) que dispara a recusa sozinha; null quando so o texto inteiro a
+   * dispara. E o texto da clinica, nao dado de paciente: vai a tela, nunca a
+   * log.
+   */
+  trechosDasRecusas: readonly TrechoDaRecusa[];
+};
+
+/** A recusa e a frase do texto que a dispara (ou null). */
+export type TrechoDaRecusa = {
+  categoria: CategoriaDeConformidade;
+  trecho: string | null;
 };
 
 /** Promessa, oferta casada e antes e depois: nunca, em texto nenhum. */
@@ -245,6 +259,29 @@ function recusa(achado: AchadoDaRegra, comDinheiro: boolean): boolean {
 }
 
 /**
+ * Revisao da AG7 (TELA-8): "Para garantir a qualidade do exame" e "o preparo
+ * garante a nitidez das imagens" sao comuns no preparo e nao prometem
+ * resultado do procedimento. So no texto da clinica, o verbo sai antes das
+ * regras (a resposta do modelo continua barrada pelo "garant"); com
+ * resultado, efeito, melhora ou sucesso na mesma frase, fica (e recusa).
+ */
+const GARANTIA_DA_QUALIDADE_DO_EXAME =
+  /\bgarant\p{L}*(?=\s+(?:(?:a|uma|boa|melhor|maior|toda)\s+)?(?:qualidade|nitidez|precis[aã]o)\s+(?:d[oa]s?|n[oa]s?)\s+(?:exames?|imag(?:em|ens)|visualiza[cç](?:[aã]o|[õo]es)|laudos?)\b)(?![^.!?\n]*\b(?:resultados?|efeitos?|melhora|sucesso))/giu;
+
+/** O texto com a garantia da qualidade do exame trocada (so para as regras). */
+function semAGarantiaDoExame(texto: string): string {
+  return texto.replace(GARANTIA_DA_QUALIDADE_DO_EXAME, "preservar");
+}
+
+/** As frases do texto da clinica (como escritas, aparadas), sem as vazias. */
+function frasesDoTextoDaClinica(texto: string): string[] {
+  return texto
+    .split(/(?<=[.!?;:])\s+|\n+/u)
+    .map((frase) => frase.trim())
+    .filter((frase) => /[\p{L}\p{N}]/u.test(frase));
+}
+
+/**
  * Os problemas do texto do preparo que a clinica escreve, pelas regras
  * deterministicas do filtro de saida (avaliarRegras) com o contexto VAZIO
  * (sem preco do turno, sem catalogo, sem mensagem de paciente, sem fatos):
@@ -263,12 +300,39 @@ function recusa(achado: AchadoDaRegra, comDinheiro: boolean): boolean {
 export function problemasDoTextoDoPreparo(
   texto: string,
 ): ProblemasDoTextoDoPreparo {
-  const { achados } = avaliarRegras(texto, {
+  const { recusas, avisos } = classificarOTexto(texto);
+  if (recusas.length === 0) {
+    return { recusas, avisos, trechosDasRecusas: [] };
+  }
+  // A frase que dispara cada recusa sozinha (cada frase avaliada uma vez).
+  const recusasDaFrase = new Map<string, readonly CategoriaDeConformidade[]>();
+  const frases = frasesDoTextoDaClinica(texto);
+  const trechosDasRecusas = recusas.map((categoria): TrechoDaRecusa => {
+    const frase = frases.find((f) => {
+      let daFrase = recusasDaFrase.get(f);
+      if (daFrase === undefined) {
+        daFrase = classificarOTexto(f).recusas;
+        recusasDaFrase.set(f, daFrase);
+      }
+      return daFrase.includes(categoria);
+    });
+    return { categoria, trecho: frase ?? null };
+  });
+  return { recusas, avisos, trechosDasRecusas };
+}
+
+/** As recusas e os avisos de um texto (o texto inteiro ou uma frase). */
+function classificarOTexto(texto: string): {
+  recusas: readonly CategoriaDeConformidade[];
+  avisos: readonly CategoriaDeConformidade[];
+} {
+  const avaliado = semAGarantiaDoExame(texto);
+  const { achados } = avaliarRegras(avaliado, {
     precosDoTurno: [],
     nomesDoCatalogo: [],
     mensagensDoPaciente: [],
   });
-  const comDinheiro = DINHEIRO_ESCRITO.test(normalizarBase(texto));
+  const comDinheiro = DINHEIRO_ESCRITO.test(normalizarBase(avaliado));
   const recusas = new Set<CategoriaDeConformidade>();
   const avisos = new Set<CategoriaDeConformidade>();
   for (const achado of achados) {

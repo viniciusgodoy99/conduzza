@@ -14,7 +14,9 @@
 // Cada regra aqui espelha o banco:
 //  - normalizarTextoDoPreparo: a mesma ordem da copia do texto antigo (CR
 //    vira LF, NFC e o trim() do JavaScript, os 25 brancos de
-//    cadastro_texto_valido);
+//    cadastro_texto_valido); revisao da AG7 (TELA-8): a tabulacao vira
+//    espaco aqui (a copia nao a troca: o texto antigo com tabulacao fica de
+//    fora dela, como antes);
 //  - textoDoPreparoValido: o CHECK preparo_texto_valido;
 //  - mensagemDoPreparo: a funcao mensagem_do_preparo, byte a byte;
 //  - CONSELHOS, UFS e SITUACOES_DO_PREPARO: os CHECKs das duas tabelas.
@@ -195,13 +197,22 @@ function aparar(texto: string): string {
 }
 
 /**
- * O texto como o banco guarda: "\r\n" e "\r" viram "\n", depois NFC, depois
- * o trim() do JavaScript (a ordem da copia do texto antigo, secao 1.6 do
- * contrato da AG7). A tela e a Server Action normalizam ANTES de mandar.
+ * O texto como o banco guarda: "\r\n" e "\r" viram "\n", a tabulacao vira
+ * espaco, depois NFC, depois o trim() do JavaScript (a ordem da copia do
+ * texto antigo, secao 1.6 do contrato da AG7). A tela e a Server Action
+ * normalizam ANTES de mandar. Revisao da AG7 (TELA-8): a tabulacao vira
+ * espaco como o CR vira LF (a lista numerada colada do Word, "1.\tJejum",
+ * caia em "caracteres invisiveis" sem a pessoa achar o que tirar); o banco
+ * continua recusando a tabulacao crua, e a copia do texto antigo nao a troca
+ * (o texto antigo com tabulacao fica de fora da copia, como antes).
  */
 export function normalizarTextoDoPreparo(texto: string): string {
   return aparar(
-    texto.replace(/\r\n/g, "\n").replace(/\r/g, "\n").normalize("NFC"),
+    texto
+      .replace(/\r\n/g, "\n")
+      .replace(/\r/g, "\n")
+      .replace(/\t/g, " ")
+      .normalize("NFC"),
   );
 }
 
@@ -235,6 +246,107 @@ export function textoDoPreparoValido(texto: string): boolean {
     !texto.includes("{{") &&
     !texto.includes("}}")
   );
+}
+
+/**
+ * Revisao da AG7 (TELA-8): o que torna o texto invalido (o mesmo
+ * preparo_texto_valido), com o que a pessoa precisa para achar e tirar:
+ *  - vazio, longo (com o tamanho) e chaves ("{{" ou "}}", com a linha);
+ *  - tabulacao (a linha; normalizarTextoDoPreparo ja a troca por espaco);
+ *  - emoji_com_juncao: o emoji que leva o U+200D (o "juntador" de emoji,
+ *    como em profissional de saude), com o emoji e a linha;
+ *  - invisivel: o caractere invisivel (U+200B e outros), com a linha e o
+ *    codigo;
+ *  - controle: outro caractere de controle, com a linha e o codigo;
+ *  - fora_do_padrao: o texto que nao passou por normalizarTextoDoPreparo
+ *    (fora da NFC, branco nas pontas, "\r").
+ * null: o texto e valido. Recebe o texto JA normalizado (o que vai ao banco).
+ */
+export type ProblemaDeFormatoDoPreparo =
+  | { causa: "vazio" }
+  | { causa: "longo"; tamanho: number }
+  | { causa: "chaves"; linha: number }
+  | { causa: "tabulacao"; linha: number }
+  | { causa: "emoji_com_juncao"; linha: number; emoji: string }
+  | { causa: "invisivel"; linha: number; codigo: string }
+  | { causa: "controle"; linha: number; codigo: string }
+  | { causa: "fora_do_padrao" };
+
+/** "U+200B" de um ponto de codigo. */
+function codigoDoCaractere(caractere: string): string {
+  return `U+${(caractere.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}`;
+}
+
+/** A linha (de 1 para cima) da posicao no texto. */
+function linhaDe(texto: string, posicao: number): number {
+  let linha = 1;
+  for (let i = 0; i < posicao; i += 1) {
+    if (texto.charCodeAt(i) === 0x0a) {
+      linha += 1;
+    }
+  }
+  return linha;
+}
+
+/** O emoji inteiro (o agrupamento que a pessoa ve) em volta da posicao. */
+function emojiEmVolta(texto: string, posicao: number): string {
+  if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
+    const segmentador = new Intl.Segmenter("pt-BR", {
+      granularity: "grapheme",
+    });
+    for (const { segment, index } of segmentador.segment(texto)) {
+      if (posicao >= index && posicao < index + segment.length) {
+        return segment;
+      }
+    }
+  }
+  return texto.slice(Math.max(0, posicao - 2), posicao + 3);
+}
+
+export function problemaDeFormatoDoTextoDoPreparo(
+  texto: string,
+): ProblemaDeFormatoDoPreparo | null {
+  if (typeof texto !== "string" || texto.trim() === "") {
+    return { causa: "vazio" };
+  }
+  const tamanho = Array.from(texto).length;
+  if (tamanho > LIMITE_DO_TEXTO_DO_PREPARO) {
+    return { causa: "longo", tamanho };
+  }
+  const chaves = [texto.indexOf("{{"), texto.indexOf("}}")].filter(
+    (i) => i >= 0,
+  );
+  if (chaves.length > 0) {
+    return { causa: "chaves", linha: linhaDe(texto, Math.min(...chaves)) };
+  }
+  for (let i = 0; i < texto.length; i += 1) {
+    const caractere = texto.charAt(i);
+    if (caractere === "\t") {
+      return { causa: "tabulacao", linha: linhaDe(texto, i) };
+    }
+    if (caractere === "\u200d") {
+      return {
+        causa: "emoji_com_juncao",
+        linha: linhaDe(texto, i),
+        emoji: emojiEmVolta(texto, i),
+      };
+    }
+    if (INVISIVEL_NO_TEXTO.test(caractere)) {
+      return {
+        causa: "invisivel",
+        linha: linhaDe(texto, i),
+        codigo: codigoDoCaractere(caractere),
+      };
+    }
+    if (caractere !== "\n" && CONTROLE_NO_TEXTO.test(caractere)) {
+      return {
+        causa: "controle",
+        linha: linhaDe(texto, i),
+        codigo: codigoDoCaractere(caractere),
+      };
+    }
+  }
+  return textoDoPreparoValido(texto) ? null : { causa: "fora_do_padrao" };
 }
 
 // ---------------------------------------------------------------------------
