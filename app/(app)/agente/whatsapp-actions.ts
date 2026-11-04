@@ -36,7 +36,7 @@ import { createClient } from "@/lib/supabase/server";
 // 20261006120000_ia_liberacao_pela_tela.sql e nas da onda 2 (excluir e o
 // "Usar mesmo assim" do administrador na 20261022110000; a pausa na
 // 20261022120000). O interruptor geral saiu daqui (onda 2, P8): mora no
-// Painel geral (app/(app)/painel-geral/actions.ts).
+// Painel geral (app/(admin)/painel-geral/actions.ts).
 //
 // A AUTORIZACAO VIVE NO BANCO: toda escrita passa pelas RPCs definir_*_da_ia
 // (e excluir_contato_liberado_da_ia), com a sessao. O guarda

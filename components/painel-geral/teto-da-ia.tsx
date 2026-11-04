@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import {
   definirTetoDaIaAction,
   type ResultadoDoPainel,
-} from "@/app/(app)/painel-geral/actions";
+} from "@/app/(admin)/painel-geral/actions";
 import {
   dolaresParaCampo,
   lerRespostasPorHora,
