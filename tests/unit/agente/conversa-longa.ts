@@ -52,7 +52,7 @@ import {
 import { BancoEmMemoria, type Linha } from "../ia-whatsapp/banco-em-memoria";
 import { comOCarimboDoBanco } from "./ag4-contrato";
 import { classificadorLimpo, type Citacao } from "./ag4-conversa";
-import { CenarioDaAg5, configDaAg5, type MarcasDaAg5 } from "./ag5-conversa";
+import { CenarioDaAg5, configDaAg5 } from "./ag5-conversa";
 import {
   EXECUTOR,
   NUMERO,
@@ -240,9 +240,10 @@ export class ConversaLonga {
   readonly turnos: TurnoDaConversa[] = [];
   /** Tudo o que o paciente escreveu (nada disso pode ir para log). */
   readonly falas: string[] = [];
-  /** O que a passagem respondeu e os eventos pedidos ao banco. */
+  /** O que a passagem respondeu. */
   readonly passagens: Record<string, unknown>[] = [];
-  readonly eventosPedidos: string[] = [];
+  /** O que foi ao classificador falso (o texto que sai para a OpenAI). */
+  private readonly aoClassificador: string[] = [];
   /** A autorizacao para receber mensagens. */
   consentimento = true;
   /** A liberacao da IA para este telefone (o interruptor da clinica). */
@@ -254,8 +255,8 @@ export class ConversaLonga {
   /** A transcricao e a leitura falsas, por mensagem. */
   private readonly transcricoes = new Map<string, ResultadoDaTranscricaoNoModelo>();
   private readonly leituras = new Map<string, ResultadoDoLeitor>();
-  /** O turno em que a conversa saiu da IA. */
-  private turnoDaSaida: number | null = null;
+  /** A conversa ja saiu da IA em algum turno. */
+  private saiuDaIa = false;
 
   constructor(
     contexto: ContextoDoTeste,
@@ -264,7 +265,6 @@ export class ConversaLonga {
       config?: ConfigDoAgente;
       /** A clinica com duas unidades: a jornada da Dra. Ana por unidade. */
       duasUnidades?: boolean;
-      marcas?: Partial<MarcasDaAg5>;
     },
   ) {
     const config = e.config ?? configPublicada();
@@ -273,10 +273,7 @@ export class ConversaLonga {
     this.cenario = new CenarioDaAg5({
       catalogo: e.catalogo,
       config,
-      marcas: {
-        ...(e.duasUnidades === true ? { unidadesAtivas: 2 } : {}),
-        ...e.marcas,
-      },
+      marcas: e.duasUnidades === true ? { unidadesAtivas: 2 } : {},
     });
     if (e.duasUnidades === true) {
       for (const faixa of this.cenario.banco.linhas("professional_schedule")) {
@@ -462,10 +459,7 @@ export class ConversaLonga {
       error: null,
     }));
     executor.rpc("acertar_gasto_da_ia", () => ({ data: null, error: null }));
-    executor.rpc("gravar_evento_da_ia", (args) => {
-      this.eventosPedidos.push(String(args.p_motivo));
-      return { data: true, error: null };
-    });
+    executor.rpc("gravar_evento_da_ia", verdadeiro);
     // A guarda do envio: a resposta so com a conversa na IA; a frase so com
     // ela ja na fila, sem responsavel.
     executor.rpc("ia_pode_enviar_agora", (args) => {
@@ -527,7 +521,9 @@ export class ConversaLonga {
         ? {
             data: {
               ...dado,
-              janela_desde: this.janela.desde,
+              janela_desde: this.cenario.banco.linhas(
+                "ia_janela_da_conversa",
+              )[0]?.desde,
               dados: this.dadosLidos(),
             },
             error: null,
@@ -670,11 +666,6 @@ export class ConversaLonga {
   // O que os testes leem
   // -------------------------------------------------------------------------
 
-  private get janela(): { desde: string } {
-    const linha = this.cenario.banco.linhas("ia_janela_da_conversa")[0];
-    return { desde: String(linha?.desde) };
-  }
-
   get conversa(): Linha {
     return this.executor.linhas("conversation")[0]!;
   }
@@ -813,7 +804,7 @@ export class ConversaLonga {
     transcricao: string | null,
     f: Omit<FalaDaConversa, "texto" | "citacao"> = {},
   ): Promise<TurnoDaConversa> {
-    const id = this.midiaNaConversa("audio", null);
+    const id = this.midiaNaConversa("audio");
     this.transcricoes.set(
       id,
       transcricao === null
@@ -836,7 +827,7 @@ export class ConversaLonga {
     leitura: Extract<ResultadoDoLeitor, { tipo: "lido" }>["leitura"],
     f: Omit<FalaDaConversa, "texto" | "citacao"> = {},
   ): Promise<TurnoDaConversa> {
-    const id = this.midiaNaConversa("imagem", null);
+    const id = this.midiaNaConversa("imagem");
     this.leituras.set(id, {
       tipo: "lido",
       leitura,
@@ -852,23 +843,17 @@ export class ConversaLonga {
   }
 
   /** A mensagem do paciente com midia, dois minutos depois da anterior. */
-  private midiaNaConversa(
-    contentType: "audio" | "imagem",
-    legenda: string | null,
-  ): string {
+  private midiaNaConversa(contentType: "audio" | "imagem"): string {
     this.passa(2 * 60_000);
     const id = randomUUID();
-    const ultima = this.cenario.noBanco.at(-1)?.em ?? Number.NEGATIVE_INFINITY;
-    this.cenario.banco.inserir("message", {
-      ...linhaDeMidia({
+    this.cenario.banco.inserir(
+      "message",
+      linhaDeMidia({
         id,
         contentType,
-        body: legenda,
-        criadaEm: new Date(Math.max(this.cenario.agora, ultima + 1)).toISOString(),
+        criadaEm: new Date(this.cenario.agora).toISOString(),
       }),
-      clinic_id: CLINICA,
-      conversation_id: CONVERSA,
-    });
+    );
     return id;
   }
 
@@ -963,10 +948,10 @@ export class ConversaLonga {
       return roteiro.shift();
     });
     let doLaco: ResultadoDoTurno | null = null;
-    const classificador: ClassificadorDeEntrada =
-      f.classificacao === undefined
-        ? classificadorLimpo
-        : async () => f.classificacao as ResultadoDoClassificador;
+    const classificador: ClassificadorDeEntrada = async (e) => {
+      this.aoClassificador.push(...e.mensagens);
+      return f.classificacao ?? classificadorLimpo(e);
+    };
     const deps: DependenciasDoExecutorDaIa = {
       admin: this.admin,
       config: { ligado: true, clinicas: [CLINICA] },
@@ -1020,9 +1005,7 @@ export class ConversaLonga {
       sobrouNoRoteiro: roteiro.length,
       pedidas: ferramentasDoRoteiro(f.roteiro ?? []),
     });
-    if (!estavaFora && turno.statusDaConversa !== "ia_atendendo") {
-      this.turnoDaSaida = turno.indice;
-    }
+    this.saiuDaIa ||= turno.statusDaConversa !== "ia_atendendo";
     return turno;
   }
 
@@ -1146,8 +1129,8 @@ export class ConversaLonga {
         semFrase ? [] : [FRASE_DE_ESCALONAMENTO],
       );
     }
-    // A conversa de saida nao recebe mais nada, em nenhum turno seguinte.
-    if (this.turnoDaSaida !== null) {
+    // A conversa que saiu da IA nao volta sozinha.
+    if (this.saiuDaIa) {
       expect(turno.statusDaConversa, rotulo).not.toBe("ia_atendendo");
     }
 
@@ -1218,6 +1201,7 @@ export class ConversaLonga {
     }
     const tudo = JSON.stringify([
       turno.corpos,
+      this.aoClassificador,
       this.cenario.verificacao.pedidos.map(({ rascunho, mensagensDoPaciente }) => [
         rascunho,
         mensagensDoPaciente,

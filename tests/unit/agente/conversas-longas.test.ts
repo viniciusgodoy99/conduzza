@@ -17,6 +17,7 @@ vi.mock("@/lib/agente/contexto", async () => {
   };
 });
 
+import type { CatalogoDoAgente } from "@/lib/agente/ferramentas/buscar-procedimento";
 import { PASSO_DO_PREPARO_FORA_DE_VIGOR } from "@/lib/agente/ferramentas/enviar-preparo";
 import { PASSO_DA_URGENCIA } from "@/lib/agente/laco";
 import { PREFIXO_DO_AUDIO } from "@/lib/agente/midia";
@@ -38,7 +39,6 @@ import {
   RT_DE_TESTE,
   TEXTO_DO_PREPARO_DE_TESTE,
 } from "../../fixtures/ia/conformidade/casos";
-
 import { C1, consultasDoContato, ferramenta, final } from "./ag4-conversa";
 import {
   busca as buscaDaLimpeza,
@@ -73,13 +73,29 @@ import {
   type TurnoDaConversa,
 } from "./conversa-longa";
 
+// As conversas longas do agente (AG0), com o LLM falso de roteiro: o mesmo
+// paciente em muitas falas, em turnos separados, cruzando as etapas (AG1 a
+// AG7). Cada fala roda o job inteiro (conversa-longa.ts): o executor, o laco, o
+// filtro e o envio de verdade. O ajudante confere em TODO turno o que vale para
+// a conversa inteira: nada depois da passagem, uma mensagem e uma decisao por
+// job, a decisao com o mesmo texto do envio, as ferramentas pedidas, o estado na
+// forma do banco, nunca duas consultas de pe, nada do paciente na decisao, na
+// nota, no log e (o nome, o telefone, o preparo) na OpenAI. Os testes conferem o
+// que muda a cada fala. O it.fails e o defeito achado: ver o comentario dele.
+// Nenhum teste chama a OpenAI, a rede ou o banco. Tudo sintetico.
+
 // Cada conversa roda dezenas de turnos inteiros: com a maquina ocupada, os 5 s
 // padrao viram falso alarme.
 vi.setConfig({ testTimeout: 60_000 });
 
+const UM_MINUTO_MS = 60_000;
 const UM_DIA_MS = 24 * 60 * 60_000;
 const CADASTRO = catalogoDoCadastro();
 const P_CONSULTA = codigoDoProcedimento(CADASTRO, PROC.consulta);
+
+// ---------------------------------------------------------------------------
+// O que as falas repetem: os roteiros do LLM falso e os textos que passam
+// ---------------------------------------------------------------------------
 
 function busca(extra: Record<string, unknown> = {}) {
   return {
@@ -94,36 +110,118 @@ function busca(extra: Record<string, unknown> = {}) {
   };
 }
 
+function registrar(nome: boolean, nascimento: boolean) {
+  return ferramenta("registrar_dados_do_paciente", {
+    nome_completo: nome ? "Fulano da Silva Souza" : null,
+    data_nascimento: nascimento ? "1985-03-12" : null,
+    para_o_titular: true,
+    campos_mascarados: [],
+  });
+}
+const dadosCompletos = () => registrar(true, true);
+const soONome = () => registrar(true, false);
+const soONascimento = () => registrar(false, true);
+const precoDaConsulta = () =>
+  ferramenta("buscar_procedimento", {
+    procedimento: P_CONSULTA,
+    convenio: null,
+  });
+const precoDaLimpeza = () =>
+  ferramenta("buscar_procedimento", { procedimento: P_LIMPEZA, convenio: null });
+const pedirOCancelamento = () => [
+  ferramenta("consultar_minhas_consultas", {}),
+  ferramenta("pedir_cancelamento", { consulta: "c1" }),
+];
+const pedirAListaDaNoite = () =>
+  ferramenta("pedir_lista_de_espera", {
+    periodos: ["noite"],
+    dias: ["segunda", "quarta"],
+  });
+const limpezaComAAna = (periodo: "manha" | "noite") =>
+  ferramenta(
+    "buscar_horario",
+    buscaDaLimpeza({ profissional: R_ANA, periodo }),
+  );
+
+const PRECO_DA_CONSULTA =
+  "A consulta custa R$ 280,00 com o Dr. Bruno Costa e R$ 300,00 com a Dra. Ana Lima, no particular.";
+const PRECO_DA_LIMPEZA =
+  "A Limpeza de pele custa R$ 120,00 no particular, com a Dra. Ana Lima.";
+const ESTACIONAMENTO =
+  "Na unidade Aldeota tem estacionamento no subsolo do prédio.";
+const CERTO = "Claro, é só me dizer.";
+const TCHAU = "Por nada! Qualquer coisa, é só chamar por aqui.";
+
+const OFERTA_DA_TARDE =
+  "Tenho quarta, 21/10 às 14:00 com a Dra. Ana Lima na unidade Centro, ou quinta, 22/10 às 13:00 com o Dr. Bruno Costa. Qual prefere?";
+const RESERVOU_QUARTA =
+  "Reservei quarta, 21/10 às 14:00 com a Dra. Ana Lima, na unidade Centro, por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.";
+const CONFIRMA_QUARTA =
+  "Obrigada! Confirma a Consulta com a Dra. Ana Lima na quarta, 21/10 às 14:00, na unidade Centro, no particular?";
+const MARCOU_QUARTA =
+  "Pronto! Sua Consulta de quarta, 21/10 às 14:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.";
+
+const OFERTA_DA_SEXTA =
+  "Tenho sexta, 30/10 às 14:00 ou às 15:00 com a Dra. Ana Lima, na unidade Centro. Qual prefere?";
+const RESERVOU_SEXTA =
+  "Reservei sexta, 30/10 às 14:00 com a Dra. Ana Lima, na unidade Centro, por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.";
+const CONFIRMA_SEXTA =
+  "Obrigada! Confirma a Consulta com a Dra. Ana Lima na sexta, 30/10 às 14:00, na unidade Centro, no particular?";
+const MARCOU_SEXTA =
+  "Pronto! Sua Consulta de sexta, 30/10 às 14:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe. A confirmação chega por aqui.";
+const HORARIO_DA_SEXTA =
+  "Sua Consulta está marcada para sexta, 30/10 às 14:00, pendente da aprovação da equipe.";
+
+const OFERTA_DA_LIMPEZA =
+  "Tenho quarta, 21/10 às 08:00 ou quinta, 22/10 às 08:00 com a Dra. Ana Lima. Qual prefere?";
+const RESERVOU_LIMPEZA =
+  "Reservei quinta, 22/10 às 08:00 com a Dra. Ana Lima por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.";
+const CONFIRMA_LIMPEZA =
+  "Obrigada! Confirma a Limpeza de pele com a Dra. Ana Lima na quinta, 22/10 às 08:00, no particular?";
+const MARCOU_LIMPEZA =
+  "Pronto! Sua Limpeza de pele de quinta, 22/10 às 08:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.";
+const HORARIO_DA_LIMPEZA =
+  "Sua Limpeza de pele está marcada para quinta, 22/10 às 08:00, pendente da aprovação da equipe.";
+const SEM_NOITE =
+  "Não tenho horário à noite com a Dra. Ana Lima. Posso procurar de manhã ou à tarde, ou colocar você na lista de espera para à noite. O que prefere?";
+
+const T1_QUINTA =
+  "Confirma o cancelamento da sua consulta de quinta, 22/10 às 14:00?";
+const T2_QUINTA =
+  "Tudo bem, sua consulta de 22/10 às 14:00 foi cancelada. Quando quiser marcar de novo, é só chamar por aqui.";
+const T3_TERCA =
+  "Reservei terça, 03/11 às 08:00, na unidade Aldeota, por 10 minutos. Confirma a remarcação da sua consulta de sexta, 30/10 às 14:00 para terça, 03/11 às 08:00?";
+const T4_TERCA =
+  "Pronto, pedi a remarcação para terça, 03/11 às 08:00. Até a equipe aprovar, sua consulta de sexta, 30/10 às 14:00 continua marcada. A confirmação chega por aqui.";
+
+// ---------------------------------------------------------------------------
+// Os ajudantes das falas
+// ---------------------------------------------------------------------------
+
 let escrito: string[] = [];
 let conversaDoTeste: ConversaLonga | null = null;
 
-beforeEach(() => {
-  prepararOTeste();
-  escrito = [];
-  conversaDoTeste = null;
-  const capturar = (linha: string | Uint8Array): boolean => {
-    escrito.push(String(linha));
-    return true;
-  };
-  if (!process.env.DEPURAR) {
-    vi.spyOn(process.stdout, "write").mockImplementation(capturar);
-    vi.spyOn(process.stderr, "write").mockImplementation(capturar);
-  }
-});
+/** A clinica do Cadastro completo: duas unidades (nao tem lista de espera). */
+function clinicaComDuasUnidades(
+  config?: Parameters<typeof configPublicada>[0],
+): ConversaLonga {
+  const c = new ConversaLonga(contexto, {
+    catalogo: CADASTRO,
+    duasUnidades: true,
+    ...(config === undefined ? {} : { config: configPublicada(config) }),
+  });
+  conversaDoTeste = c;
+  return c;
+}
 
-afterEach(() => {
-  vi.restoreAllMocks();
-  vi.useRealTimers();
-  conversaDoTeste?.conferirOsLogs(escrito);
-  // O que esta suite promete: conversas longas, em turnos separados.
-  expect(conversaDoTeste?.turnos.length ?? 0).toBeGreaterThanOrEqual(8);
-  // O aviso de assistente virtual sai uma vez so, em toda a conversa.
-  expect(
-    conversaDoTeste?.recebidasPeloPaciente.filter((m) =>
-      m.includes(FRASE_DO_ASSISTENTE_VIRTUAL),
-    ).length ?? 0,
-  ).toBeLessThanOrEqual(1);
-});
+/** A clinica de uma unidade so: a lista de espera vale (D-38). */
+function clinicaDeUmaUnidade(
+  catalogo: CatalogoDoAgente = CATALOGO_DA_AG5,
+): ConversaLonga {
+  const c = new ConversaLonga(contexto, { catalogo });
+  conversaDoTeste = c;
+  return c;
+}
 
 /** O que a decisao gravada diz (aparece inteiro quando o assert falha). */
 function oQueDecidiu(t: TurnoDaConversa) {
@@ -152,81 +250,326 @@ function respondeu(t: TurnoDaConversa, texto: string) {
   expect(t.statusDaConversa).toBe("ia_atendendo");
 }
 
+/** O aviso de assistente virtual, so antes da primeira resposta da conversa. */
+function comOAviso(c: ConversaLonga, texto: string): string {
+  return c.recebidasPeloPaciente.length === 1
+    ? `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${texto}`
+    : texto;
+}
+
+/** A fala que o modelo responde: as ferramentas e o texto, que tem de sair. */
+async function modeloResponde(
+  c: ConversaLonga,
+  texto: string,
+  resposta: string,
+  ferramentas: unknown[] = [],
+  intervaloMs?: number,
+): Promise<TurnoDaConversa> {
+  const t = await c.fala(
+    { texto, roteiro: [...ferramentas, final(resposta)] },
+    intervaloMs,
+  );
+  respondeu(t, comOAviso(c, resposta));
+  return t;
+}
+
+/** A fala em que o modelo so chama a ferramenta e o SISTEMA responde. */
+async function sistemaResponde(
+  c: ConversaLonga,
+  texto: string,
+  frase: string,
+  ferramentas: unknown[],
+  intervaloMs?: number,
+): Promise<TurnoDaConversa> {
+  const t = await c.fala({ texto, roteiro: ferramentas }, intervaloMs);
+  respondeu(t, comOAviso(c, frase));
+  return t;
+}
+
+/** Conversa sem efeito nenhum, para a fala interessante ser a tardia. */
+async function conversaFiada(c: ConversaLonga, falas: readonly string[]) {
+  for (const texto of falas) {
+    await modeloResponde(c, texto, CERTO);
+  }
+}
+
+/** O turno passou a conversa: so a frase fixa saiu, nada do modelo. */
+function passou(
+  t: TurnoDaConversa,
+  esperado: Partial<ReturnType<typeof oQueDecidiu>>,
+  chamadas?: number,
+) {
+  expect(oQueDecidiu(t)).toMatchObject(esperado);
+  expect(t.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
+  expect(t.statusDaConversa).toBe("aguardando_humano");
+  expect(t.decisao).toMatchObject({ aprovado: false, texto_sha256: null });
+  if (chamadas !== undefined) {
+    expect(t.chamadasAoModelo).toBe(chamadas);
+  }
+}
+
+/** Depois da passagem: nenhum modelo, nenhuma decisao, nada para o paciente. */
+async function nadaMaisSai(c: ConversaLonga, falas: readonly string[]) {
+  const recebidas = c.recebidasPeloPaciente.length;
+  const decisoes = c.decisoes.length;
+  const status = c.conversa.status;
+  for (const texto of falas) {
+    const t = await c.fala({ texto });
+    expect(t.resultado).toEqual({ ok: true });
+    expect(t.chamadasAoModelo).toBe(0);
+    expect(t.enviadas).toEqual([]);
+    expect(t.decisao).toBeUndefined();
+    expect(t.statusDaConversa).toBe(status);
+  }
+  expect(c.recebidasPeloPaciente).toHaveLength(recebidas);
+  expect(c.decisoes).toHaveLength(decisoes);
+}
+
+/** Quatro falas: o preço, a oferta, a reserva de quarta e o "Confirma". */
+async function ateOConfirmaDeQuarta(c: ConversaLonga) {
+  await modeloResponde(c, "Oi, quanto custa a consulta?", PRECO_DA_CONSULTA, [
+    precoDaConsulta(),
+  ]);
+  await modeloResponde(c, "Quero marcar à tarde", OFERTA_DA_TARDE, [
+    ferramenta("buscar_horario", busca({ periodo: "tarde" })),
+  ]);
+  await modeloResponde(c, "Quarta às 14h", RESERVOU_QUARTA, [
+    ferramenta("reservar_horario", { horario: "h2" }),
+  ]);
+  const t4 = await modeloResponde(
+    c,
+    "Maria da Silva Souza, nascida em 12/03/1985",
+    CONFIRMA_QUARTA,
+    [dadosCompletos()],
+  );
+  expect(t4.estado.etapa).toBe("aguardando_confirmacao");
+  expect(c.reservasVivas).toHaveLength(1);
+}
+
+/**
+ * Seis falas de uma conversa em andamento: o preço, o endereço, a oferta, a
+ * reserva de quarta, o nome e o estacionamento. Falta só o nascimento.
+ */
+async function conversaEmAndamento(c: ConversaLonga) {
+  await modeloResponde(c, "Oi, quanto custa a consulta?", PRECO_DA_CONSULTA, [
+    precoDaConsulta(),
+  ]);
+  await modeloResponde(
+    c,
+    "Onde fica a clínica?",
+    `A unidade Aldeota fica na ${ENDERECO_DA_ALDEOTA}.`,
+    [ferramenta("consultar_unidades", { unidade: "u1" })],
+  );
+  await modeloResponde(c, "Quero marcar à tarde", OFERTA_DA_TARDE, [
+    ferramenta("buscar_horario", busca({ periodo: "tarde" })),
+  ]);
+  await modeloResponde(c, "Quarta às 14h", RESERVOU_QUARTA, [
+    ferramenta("reservar_horario", { horario: "h2" }),
+  ]);
+  await modeloResponde(
+    c,
+    "Meu nome é Maria da Silva Souza",
+    "Obrigada! Agora só falta sua data de nascimento.",
+    [soONome()],
+  );
+  await modeloResponde(c, "Tem estacionamento?", ESTACIONAMENTO, [
+    ferramenta("consultar_unidades", { unidade: "u1" }),
+  ]);
+  expect(c.dados).toMatchObject({
+    nome_completo: true,
+    data_nascimento: false,
+    faltam: ["data_nascimento"],
+  });
+  expect(c.reservasVivas).toHaveLength(1);
+}
+
+/** Sete falas: a conversa em andamento, o nascimento e o "Confirma" no ar. */
+async function comAPerguntaConfirmaNoAr(c: ConversaLonga) {
+  await conversaEmAndamento(c);
+  const t = await modeloResponde(c, "Nasci em 12/03/1985", CONFIRMA_QUARTA, [
+    soONascimento(),
+  ]);
+  expect(t.estado.etapa).toBe("aguardando_confirmacao");
+}
+
+/** As quatro falas da marcação da sexta, 30/10 às 14:00 (longe do prazo). */
+async function marcarASexta(c: ConversaLonga) {
+  await modeloResponde(
+    c,
+    "Quero marcar uma consulta para a sexta da semana que vem, à tarde",
+    OFERTA_DA_SEXTA,
+    [
+      ferramenta(
+        "buscar_horario",
+        busca({ a_partir_de: "2026-10-30", periodo: "tarde" }),
+      ),
+    ],
+  );
+  await modeloResponde(c, "Às 14h", RESERVOU_SEXTA, [
+    ferramenta("reservar_horario", { horario: "h1" }),
+  ]);
+  const t3 = await modeloResponde(
+    c,
+    "Maria da Silva Souza, nascida em 12/03/1985",
+    CONFIRMA_SEXTA,
+    [dadosCompletos()],
+  );
+  expect(t3.estado.etapa).toBe("aguardando_confirmacao");
+  const t4 = await modeloResponde(c, "Confirmo", MARCOU_SEXTA, [
+    ferramenta("agendar", {}),
+  ]);
+  expect(c.consultas).toHaveLength(1);
+  expect(t4.estado).toMatchObject({
+    etapa: "pos_marcacao",
+    desfecho: "marcou",
+    appointment_id: c.consultas[0]?.id,
+  });
+  return c.consultas[0]!;
+}
+
+/** Três dias depois: a busca da remarcação e a pergunta fixa (T3). */
+async function pedirARemarcacaoParaTerca(c: ConversaLonga) {
+  const t1 = await modeloResponde(
+    c,
+    "Preciso remarcar minha consulta, pode ser na terça de manhã?",
+    "Tenho terça, 03/11 às 08:00, na unidade Aldeota. Pode ser?",
+    [
+      ferramenta("consultar_minhas_consultas", {}),
+      ferramenta("buscar_horario_para_remarcar", {
+        consulta: "c1",
+        a_partir_de: "2026-11-03",
+        periodo: "manha",
+        hora: null,
+        unidade: null,
+      }),
+    ],
+    3 * UM_DIA_MS,
+  );
+  expect(t1.estado).toMatchObject({
+    etapa: "oferta",
+    intencao: "remarcar",
+    pedido_pendente: "remarcar",
+  });
+  const t2 = await sistemaResponde(c, "Às 8", T3_TERCA, [
+    ferramenta("reservar_horario", { horario: "h1" }),
+  ]);
+  expect(t2.estado.etapa).toBe("aguardando_confirmacao");
+  expect(t2.chamadasAoModelo).toBe(1);
+}
+
+/** As três falas da limpeza até o "Confirma". */
+async function ateOConfirmaDaLimpeza(c: ConversaLonga) {
+  await modeloResponde(
+    c,
+    "Quero marcar limpeza de pele com a Dra. Ana de manhã",
+    OFERTA_DA_LIMPEZA,
+    [limpezaComAAna("manha")],
+  );
+  await modeloResponde(c, "Quinta às 8", RESERVOU_LIMPEZA, [
+    ferramenta("reservar_horario", { horario: "h2" }),
+  ]);
+  const t = await modeloResponde(
+    c,
+    "Maria da Silva Souza, 12/03/1985",
+    CONFIRMA_LIMPEZA,
+    [dadosCompletos()],
+  );
+  expect(t.estado.etapa).toBe("aguardando_confirmacao");
+}
+
+/** A busca à noite (sem horário) e a pergunta da lista de espera (T-E1). */
+async function ateAPerguntaDaLista(c: ConversaLonga) {
+  await modeloResponde(c, "Queria com a Dra. Ana, só à noite.", SEM_NOITE, [
+    limpezaComAAna("noite"),
+  ]);
+  await sistemaResponde(
+    c,
+    "Lista de espera. Segunda ou quarta.",
+    T_E1_ANA_NOITE_SEG_QUA,
+    [pedirAListaDaNoite()],
+  );
+}
+
+const verificadorForaDoAr: Verificador = async () => ({
+  tipo: "falha",
+  motivo: "timeout",
+  modelo: null,
+  uso: null,
+  httpStatus: null,
+});
+
+beforeEach(() => {
+  prepararOTeste();
+  escrito = [];
+  conversaDoTeste = null;
+  const capturar = (linha: string | Uint8Array): boolean => {
+    escrito.push(String(linha));
+    return true;
+  };
+  vi.spyOn(process.stdout, "write").mockImplementation(capturar);
+  vi.spyOn(process.stderr, "write").mockImplementation(capturar);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+  conversaDoTeste?.conferirOsLogs(escrito);
+  // O que esta suite promete: conversas longas, em turnos separados.
+  expect(conversaDoTeste?.turnos.length ?? 0).toBeGreaterThanOrEqual(8);
+  // O aviso de assistente virtual sai uma vez so, em toda a conversa.
+  expect(
+    conversaDoTeste?.recebidasPeloPaciente.filter((m) =>
+      m.includes(FRASE_DO_ASSISTENTE_VIRTUAL),
+    ).length ?? 0,
+  ).toBeLessThanOrEqual(1);
+});
+
+// ---------------------------------------------------------------------------
+// Os cenários
+// ---------------------------------------------------------------------------
+
 describe("1. preço, convênio, endereço, agenda, troca de horário e confirmação", () => {
   it("cada assunto responde com o fato do turno; a troca solta a reserva antiga; só a última vira consulta", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
 
-    const preco =
-      "A consulta custa R$ 280,00 com o Dr. Bruno Costa e R$ 300,00 com a Dra. Ana Lima, no particular.";
-    const t1 = await c.fala({
-      texto: "Oi, quanto custa a consulta?",
-      roteiro: [
-        ferramenta("buscar_procedimento", {
-          procedimento: P_CONSULTA,
-          convenio: null,
-        }),
-        final(preco),
-      ],
-    });
-    respondeu(t1, `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${preco}`);
-    expect(t1.ferramentas).toEqual(["buscar_procedimento"]);
+    const t1 = await modeloResponde(
+      c,
+      "Oi, quanto custa a consulta?",
+      PRECO_DA_CONSULTA,
+      [precoDaConsulta()],
+    );
     expect(t1.decisao?.tool_used).toBe("buscar_procedimento");
     expect(t1.estado).toMatchObject({ etapa: "informacao", intencao: null });
 
     const convenio =
       "Sim, a Consulta com a Dra. Ana Lima é atendida pela Unimed (Nacional).";
-    const t2 = await c.fala({
-      texto: "Vocês atendem Unimed?",
-      roteiro: [
-        ferramenta("buscar_procedimento", {
-          procedimento: P_CONSULTA,
-          convenio: "Unimed Nacional",
-        }),
-        final(convenio),
-      ],
-    });
-    respondeu(t2, convenio);
+    const t2 = await modeloResponde(c, "Vocês atendem Unimed?", convenio, [
+      ferramenta("buscar_procedimento", {
+        procedimento: P_CONSULTA,
+        convenio: "Unimed Nacional",
+      }),
+    ]);
     expect(t2.estado).toMatchObject({ etapa: "informacao", intencao: null });
 
     const endereco = `Temos duas unidades: Aldeota, na ${ENDERECO_DA_ALDEOTA}, e Centro, na ${ENDERECO_DO_CENTRO}.`;
-    const t3 = await c.fala({
-      texto: "Onde fica a clínica?",
-      roteiro: [
-        ferramenta("consultar_unidades", { unidade: null }),
-        final(endereco),
-      ],
-    });
-    respondeu(t3, endereco);
+    const t3 = await modeloResponde(c, "Onde fica a clínica?", endereco, [
+      ferramenta("consultar_unidades", { unidade: null }),
+    ]);
     expect(t3.decisao?.tool_used).toBe("consultar_unidades");
 
-    const estacionamento =
-      "Na unidade Aldeota tem estacionamento no subsolo do prédio.";
-    const t4 = await c.fala({
-      texto: "Tem estacionamento?",
-      roteiro: [
-        ferramenta("consultar_unidades", { unidade: "u1" }),
-        final(estacionamento),
-      ],
-    });
-    respondeu(t4, estacionamento);
+    await modeloResponde(c, "Tem estacionamento?", ESTACIONAMENTO, [
+      ferramenta("consultar_unidades", { unidade: "u1" }),
+    ]);
     // Quatro respostas sem nenhum passo de agenda: nada reservado.
     expect(c.reservasVivas).toEqual([]);
     expect(c.cenario.banco.chamadasDe("reservar_horario_da_ia")).toEqual([]);
 
-    const oferta =
-      "Tenho quarta, 21/10 às 14:00 com a Dra. Ana Lima na unidade Centro, ou quinta, 22/10 às 13:00 com o Dr. Bruno Costa. Qual prefere?";
-    const t5 = await c.fala({
-      texto: "Quero marcar uma consulta à tarde, no particular",
-      roteiro: [
-        ferramenta("buscar_horario", busca({ periodo: "tarde" })),
-        final(oferta),
-      ],
-    });
-    respondeu(t5, oferta);
+    const t5 = await modeloResponde(
+      c,
+      "Quero marcar uma consulta à tarde, no particular",
+      OFERTA_DA_TARDE,
+      [ferramenta("buscar_horario", busca({ periodo: "tarde" }))],
+    );
     expect(t5.estado).toMatchObject({
       etapa: "oferta",
       intencao: "agendar",
@@ -240,13 +583,9 @@ describe("1. preço, convênio, endereço, agenda, troca de horário e confirma�
       "h4",
     ]);
 
-    const reservou =
-      "Reservei quarta, 21/10 às 14:00 com a Dra. Ana Lima, na unidade Centro, por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.";
-    const t6 = await c.fala({
-      texto: "Pode ser quarta às 14h",
-      roteiro: [ferramenta("reservar_horario", { horario: "h2" }), final(reservou)],
-    });
-    respondeu(t6, reservou);
+    const t6 = await modeloResponde(c, "Pode ser quarta às 14h", RESERVOU_QUARTA, [
+      ferramenta("reservar_horario", { horario: "h2" }),
+    ]);
     expect(c.reservasVivas).toEqual([
       expect.objectContaining({ starts_at: iso("2026-10-21", "14:00") }),
     ]);
@@ -258,20 +597,19 @@ describe("1. preço, convênio, endereço, agenda, troca de horário e confirma�
     // Muda de horario no meio: a busca e a reserva nova; a antiga sai.
     const trocou =
       "Troquei: reservei quinta, 22/10 às 14:00 com a Dra. Ana Lima, na unidade Centro, por 10 minutos. Agora me envie seu nome completo e sua data de nascimento.";
-    const t7 = await c.fala({
-      texto: "Mudei de ideia, prefiro quinta às 14h",
-      roteiro: [
+    const t7 = await modeloResponde(
+      c,
+      "Mudei de ideia, prefiro quinta às 14h",
+      trocou,
+      [
         ferramenta(
           "buscar_horario",
           busca({ a_partir_de: "2026-10-22", hora: "14:00" }),
         ),
         // h5 e o Dr. Bruno no mesmo horario; h6, a Dra. Ana.
         ferramenta("reservar_horario", { horario: "h6" }),
-        final(trocou),
       ],
-    });
-    respondeu(t7, trocou);
-    expect(t7.ferramentas).toEqual(["buscar_horario", "reservar_horario"]);
+    );
     expect(c.reservasVivas).toEqual([
       expect.objectContaining({ starts_at: iso("2026-10-22", "14:00") }),
     ]);
@@ -280,19 +618,12 @@ describe("1. preço, convênio, endereço, agenda, troca de horário e confirma�
 
     const confirma =
       "Obrigada! Confirma a Consulta com a Dra. Ana Lima na quinta, 22/10 às 14:00, na unidade Centro, no particular?";
-    const t8 = await c.fala({
-      texto: "Maria da Silva Souza, nascida em 12/03/1985",
-      roteiro: [
-        ferramenta("registrar_dados_do_paciente", {
-          nome_completo: "Fulano da Silva Souza",
-          data_nascimento: "1985-03-12",
-          para_o_titular: true,
-          campos_mascarados: [],
-        }),
-        final(confirma),
-      ],
-    });
-    respondeu(t8, confirma);
+    const t8 = await modeloResponde(
+      c,
+      "Maria da Silva Souza, nascida em 12/03/1985",
+      confirma,
+      [dadosCompletos()],
+    );
     expect(t8.estado.etapa).toBe("aguardando_confirmacao");
     expect(c.dados).toMatchObject({
       nome_completo: true,
@@ -304,11 +635,9 @@ describe("1. preço, convênio, endereço, agenda, troca de horário e confirma�
 
     const marcou =
       "Pronto! Sua Consulta de quinta, 22/10 às 14:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe. A confirmação chega por aqui.";
-    const t9 = await c.fala({
-      texto: "Sim, confirmo",
-      roteiro: [ferramenta("agendar", {}), final(marcou)],
-    });
-    respondeu(t9, marcou);
+    const t9 = await modeloResponde(c, "Sim, confirmo", marcou, [
+      ferramenta("agendar", {}),
+    ]);
     expect(t9.decisao?.tool_used).toBe("agendar");
     expect(c.consultas).toEqual([
       expect.objectContaining({
@@ -331,194 +660,59 @@ describe("1. preço, convênio, endereço, agenda, troca de horário e confirma�
     // Depois de marcar: o que levar e o agradecimento, sem mexer na consulta.
     const levar =
       "Para a Consulta, leve um documento com foto e chegue 15 minutos antes.";
-    const t10 = await c.fala({
-      texto: "O que eu preciso levar?",
-      roteiro: [
-        ferramenta("consultar_requisitos", {
-          procedimento: P_CONSULTA,
-          convenio: null,
-        }),
-        final(levar),
-      ],
-    });
-    respondeu(t10, levar);
+    const t10 = await modeloResponde(c, "O que eu preciso levar?", levar, [
+      ferramenta("consultar_requisitos", {
+        procedimento: P_CONSULTA,
+        convenio: null,
+      }),
+    ]);
     expect(t10.estado).toMatchObject({
       etapa: "pos_marcacao",
       appointment_id: c.consultas[0]?.id,
     });
+    await modeloResponde(c, "Obrigada!", TCHAU);
 
-    const tchau = "Por nada! Qualquer coisa, é só chamar por aqui.";
-    const t11 = await c.fala({
-      texto: "Obrigada!",
-      roteiro: [final(tchau)],
-    });
-    respondeu(t11, tchau);
-
-    // A conversa inteira: uma mensagem por fala, na ordem; o aviso uma vez so;
-    // uma decisao aprovada por resposta; uma consulta.
+    // A conversa inteira: uma mensagem por fala, na ordem; uma decisao aprovada
+    // por resposta; uma consulta.
     expect(c.recebidasPeloPaciente).toEqual([
-      `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${preco}`,
+      `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${PRECO_DA_CONSULTA}`,
       convenio,
       endereco,
-      estacionamento,
-      oferta,
-      reservou,
+      ESTACIONAMENTO,
+      OFERTA_DA_TARDE,
+      RESERVOU_QUARTA,
       trocou,
       confirma,
       marcou,
       levar,
-      tchau,
+      TCHAU,
     ]);
     expect(c.decisoes.map((d) => d.desfecho)).toEqual(
       Array.from({ length: 11 }, () => "respondeu"),
     );
-    expect(c.consultas).toHaveLength(1);
     expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toHaveLength(1);
     expect(c.conversa.status).toBe("ia_atendendo");
   });
 });
 
-/** Tudo o que a conversa fez depois da passagem: nada. */
-async function nadaMaisSai(c: ConversaLonga, falas: readonly string[]) {
-  const recebidas = c.recebidasPeloPaciente.length;
-  const decisoes = c.decisoes.length;
-  const status = c.conversa.status;
-  for (const texto of falas) {
-    // Sem roteiro: o LLM falso que fosse chamado devolveria nada, e o
-    // conferirOTurno do ajudante ja falha em qualquer chamada.
-    const t = await c.fala({ texto });
-    expect(t.resultado).toEqual({ ok: true });
-    expect(t.chamadasAoModelo).toBe(0);
-    expect(t.enviadas).toEqual([]);
-    expect(t.decisao).toBeUndefined();
-    expect(t.statusDaConversa).toBe(status);
-  }
-  expect(c.recebidasPeloPaciente).toHaveLength(recebidas);
-  expect(c.decisoes).toHaveLength(decisoes);
-}
-
-const FRASE_MARCADA_SEXTA =
-  "Pronto! Sua Consulta de sexta, 30/10 às 14:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe. A confirmação chega por aqui.";
-
-/** As quatro falas da marcação da sexta, 30/10 às 14:00 (longe do prazo). */
-async function marcarASexta(
-  c: ConversaLonga,
-  abertura = `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n`,
-) {
-  const oferta =
-    "Tenho sexta, 30/10 às 14:00 ou às 15:00 com a Dra. Ana Lima, na unidade Centro. Qual prefere?";
-  const t1 = await c.fala({
-    texto: "Quero marcar uma consulta para a sexta da semana que vem, à tarde",
-    roteiro: [
-      ferramenta(
-        "buscar_horario",
-        busca({ a_partir_de: "2026-10-30", periodo: "tarde" }),
-      ),
-      final(oferta),
-    ],
-  });
-  respondeu(t1, `${abertura}${oferta}`);
-  const reservou =
-    "Reservei sexta, 30/10 às 14:00 com a Dra. Ana Lima, na unidade Centro, por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.";
-  const t2 = await c.fala({
-    texto: "Às 14h",
-    roteiro: [ferramenta("reservar_horario", { horario: "h1" }), final(reservou)],
-  });
-  respondeu(t2, reservou);
-  const confirma =
-    "Obrigada! Confirma a Consulta com a Dra. Ana Lima na sexta, 30/10 às 14:00, na unidade Centro, no particular?";
-  const t3 = await c.fala({
-    texto: "Maria da Silva Souza, nascida em 12/03/1985",
-    roteiro: [
-      ferramenta("registrar_dados_do_paciente", {
-        nome_completo: "Fulano da Silva Souza",
-        data_nascimento: "1985-03-12",
-        para_o_titular: true,
-        campos_mascarados: [],
-      }),
-      final(confirma),
-    ],
-  });
-  respondeu(t3, confirma);
-  expect(t3.estado.etapa).toBe("aguardando_confirmacao");
-  const t4 = await c.fala({
-    texto: "Confirmo",
-    roteiro: [ferramenta("agendar", {}), final(FRASE_MARCADA_SEXTA)],
-  });
-  respondeu(t4, FRASE_MARCADA_SEXTA);
-  expect(t4.estado).toMatchObject({
-    etapa: "pos_marcacao",
-    desfecho: "marcou",
-    appointment_id: c.consultas[0]?.id,
-  });
-  expect(c.consultas).toHaveLength(1);
-  return c.consultas[0]!;
-}
-
-/** O pedido de remarcar a consulta de sexta para terça, 03/11 às 08:00 (T3). */
-async function pedirARemarcacaoParaTerca(c: ConversaLonga) {
-  const oferta =
-    "Tenho terça, 03/11 às 08:00, na unidade Aldeota. Pode ser?";
-  const t1 = await c.fala(
-    {
-      texto: "Preciso remarcar minha consulta, pode ser na terça de manhã?",
-      roteiro: [
-        ferramenta("consultar_minhas_consultas", {}),
-        ferramenta("buscar_horario_para_remarcar", {
-          consulta: "c1",
-          a_partir_de: "2026-11-03",
-          periodo: "manha",
-          hora: null,
-          unidade: null,
-        }),
-        final(oferta),
-      ],
-    },
-    3 * UM_DIA_MS,
-  );
-  respondeu(t1, oferta);
-  expect(t1.estado).toMatchObject({
-    etapa: "oferta",
-    intencao: "remarcar",
-    pedido_pendente: "remarcar",
-  });
-  const t2 = await c.fala({
-    texto: "Às 8",
-    roteiro: [ferramenta("reservar_horario", { horario: "h1" })],
-  });
-  respondeu(
-    t2,
-    "Reservei terça, 03/11 às 08:00, na unidade Aldeota, por 10 minutos. Confirma a remarcação da sua consulta de sexta, 30/10 às 14:00 para terça, 03/11 às 08:00?",
-  );
-  expect(t2.estado.etapa).toBe("aguardando_confirmacao");
-  expect(t2.chamadasAoModelo).toBe(1);
-  return { t1, t2 };
-}
-
 describe("2. marca, dias depois remarca, depois cancela: nunca duas consultas vivas", () => {
-  it("o pedido de outra consulta do mesmo procedimento é recusado; a remarcação aprovada troca uma pela outra; o cancelamento deixa zero", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+  it("outra consulta do mesmo procedimento é recusada; a remarcação aprovada troca uma pela outra; cancela e marca de novo", async () => {
+    const c = clinicaComDuasUnidades();
     const consulta = await marcarASexta(c);
 
     // No mesmo dia, outra consulta do mesmo procedimento: o banco recusa.
-    const jaTem =
-      "Você já tem Consulta marcada na sexta, 30/10 às 14:00. Se quiser, posso ajudar a remarcar ou cancelar.";
-    const t5 = await c.fala({
-      texto: "Quero marcar mais uma consulta na segunda de tarde",
-      roteiro: [
+    const t5 = await modeloResponde(
+      c,
+      "Quero marcar mais uma consulta na segunda de tarde",
+      "Você já tem Consulta marcada na sexta, 30/10 às 14:00. Se quiser, posso ajudar a remarcar ou cancelar.",
+      [
         ferramenta(
           "buscar_horario",
           busca({ a_partir_de: "2026-11-02", periodo: "tarde" }),
         ),
         ferramenta("reservar_horario", { horario: "h1" }),
-        final(jaTem),
       ],
-    });
-    respondeu(t5, jaTem);
+    );
     expect(saidasDoTurno(t5).at(-1)).toEqual({
       resultado: "ja_tem_consulta",
       dia: "sexta, 30/10",
@@ -532,14 +726,9 @@ describe("2. marca, dias depois remarca, depois cancela: nunca duas consultas vi
     await pedirARemarcacaoParaTerca(c);
     expect(c.consultas).toHaveLength(1);
 
-    const t8 = await c.fala({
-      texto: "Confirmo",
-      roteiro: [ferramenta("agendar", {})],
-    });
-    respondeu(
-      t8,
-      "Pronto, pedi a remarcação para terça, 03/11 às 08:00. Até a equipe aprovar, sua consulta de sexta, 30/10 às 14:00 continua marcada. A confirmação chega por aqui.",
-    );
+    const t8 = await sistemaResponde(c, "Confirmo", T4_TERCA, [
+      ferramenta("agendar", {}),
+    ]);
     const nova = c.consultas.find((a) => a.remarcacao_de === consulta.id);
     expect(nova).toMatchObject({
       starts_at: iso("2026-11-03", "08:00"),
@@ -557,15 +746,10 @@ describe("2. marca, dias depois remarca, depois cancela: nunca duas consultas vi
       slot_hold_id: null,
       desfecho: "remarcou",
     });
-
-    const pendencia =
-      "Sua remarcação para terça, 03/11 às 08:00 está pendente da aprovação da equipe, e a consulta de sexta, 30/10 às 14:00 continua marcada até lá.";
-    respondeu(
-      await c.fala({
-        texto: "Então está certo?",
-        roteiro: [final(pendencia)],
-      }),
-      pendencia,
+    await modeloResponde(
+      c,
+      "Então está certo?",
+      "Sua remarcação para terça, 03/11 às 08:00 está pendente da aprovação da equipe, e a consulta de sexta, 30/10 às 14:00 continua marcada até lá.",
     );
 
     // A equipe aprova a remarcacao: sobra uma de pe.
@@ -573,19 +757,12 @@ describe("2. marca, dias depois remarca, depois cancela: nunca duas consultas vi
     expect(c.consultasVivas).toEqual([nova]);
 
     // Dois dias depois, a pessoa cancela: a lista so traz a de pe.
-    const t10 = await c.fala(
-      {
-        texto: "Não vou poder ir, quero cancelar minha consulta",
-        roteiro: [
-          ferramenta("consultar_minhas_consultas", {}),
-          ferramenta("pedir_cancelamento", { consulta: "c1" }),
-        ],
-      },
-      2 * UM_DIA_MS,
-    );
-    respondeu(
-      t10,
+    const t10 = await sistemaResponde(
+      c,
+      "Não vou poder ir, quero cancelar minha consulta",
       "Confirma o cancelamento da sua consulta de terça, 03/11 às 08:00?",
+      pedirOCancelamento(),
+      2 * UM_DIA_MS,
     );
     expect(saidasDoTurno(t10)[0]).toMatchObject({
       resultado: "consultas",
@@ -598,13 +775,11 @@ describe("2. marca, dias depois remarca, depois cancela: nunca duas consultas vi
     });
     expect(nova?.status).toBe("agendado");
 
-    const t11 = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("cancelar_consulta", {})],
-    });
-    respondeu(
-      t11,
+    const t11 = await sistemaResponde(
+      c,
+      "Sim",
       "Tudo bem, sua consulta de 03/11 às 08:00 foi cancelada. Quando quiser marcar de novo, é só chamar por aqui.",
+      [ferramenta("cancelar_consulta", {})],
     );
     expect(nova?.status).toBe("cancelado_paciente");
     expect(c.consultasVivas).toEqual([]);
@@ -623,74 +798,43 @@ describe("2. marca, dias depois remarca, depois cancela: nunca duas consultas vi
       desfecho: "cancelou",
       falhas_seguidas: 0,
     });
-
-    const cancelada = "Sim, sua consulta de terça, 03/11 às 08:00 foi cancelada.";
-    respondeu(
-      await c.fala({
-        texto: "Foi cancelada mesmo?",
-        roteiro: [final(cancelada)],
-      }),
-      cancelada,
+    await modeloResponde(
+      c,
+      "Foi cancelada mesmo?",
+      "Sim, sua consulta de terça, 03/11 às 08:00 foi cancelada.",
     );
-    // So o horario novo chegou a ser marcado e so uma cancelada pela IA.
     expect(c.cenario.banco.chamadasDe("cancelar_consulta_pela_ia")).toHaveLength(1);
     expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toHaveLength(2);
 
     // Cancelou: marcar de novo vale, e os dados voltam a ser pedidos (os de
-    // antes foram com a consulta).
-    const oferta =
-      "Tenho sexta, 30/10 às 14:00 com a Dra. Ana Lima, na unidade Centro. Pode ser?";
-    const t13 = await c.fala({
-      texto: "Quero marcar de novo, pode ser na sexta à tarde",
-      roteiro: [
+    // antes foram com a consulta). A cancelada nao fica em foco.
+    const t13 = await modeloResponde(
+      c,
+      "Quero marcar de novo, pode ser na sexta à tarde",
+      "Tenho sexta, 30/10 às 14:00 com a Dra. Ana Lima, na unidade Centro. Pode ser?",
+      [
         ferramenta(
           "buscar_horario",
           busca({ a_partir_de: "2026-10-30", periodo: "tarde" }),
         ),
-        final(oferta),
       ],
-    });
-    respondeu(t13, oferta);
-    // Saiu do estado do cancelamento: a consulta cancelada nao fica em foco.
+    );
     expect(t13.estado).toMatchObject({
       etapa: "oferta",
       intencao: "agendar",
       appointment_id: null,
     });
-    const reservou =
-      "Reservei sexta, 30/10 às 14:00 com a Dra. Ana Lima, na unidade Centro, por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.";
-    respondeu(
-      await c.fala({
-        texto: "Pode",
-        roteiro: [ferramenta("reservar_horario", { horario: "h1" }), final(reservou)],
-      }),
-      reservou,
-    );
+    await modeloResponde(c, "Pode", RESERVOU_SEXTA, [
+      ferramenta("reservar_horario", { horario: "h1" }),
+    ]);
     expect(c.dados.faltam).toEqual(["nome_completo", "data_nascimento"]);
-    const confirma =
-      "Obrigada! Confirma a Consulta com a Dra. Ana Lima na sexta, 30/10 às 14:00, na unidade Centro, no particular?";
-    respondeu(
-      await c.fala({
-        texto: "Maria da Silva Souza, nascida em 12/03/1985",
-        roteiro: [
-          ferramenta("registrar_dados_do_paciente", {
-            nome_completo: "Fulano da Silva Souza",
-            data_nascimento: "1985-03-12",
-            para_o_titular: true,
-            campos_mascarados: [],
-          }),
-          final(confirma),
-        ],
-      }),
-      confirma,
+    await modeloResponde(
+      c,
+      "Maria da Silva Souza, nascida em 12/03/1985",
+      CONFIRMA_SEXTA,
+      [dadosCompletos()],
     );
-    respondeu(
-      await c.fala({
-        texto: "Sim",
-        roteiro: [ferramenta("agendar", {}), final(FRASE_MARCADA_SEXTA)],
-      }),
-      FRASE_MARCADA_SEXTA,
-    );
+    await modeloResponde(c, "Sim", MARCOU_SEXTA, [ferramenta("agendar", {})]);
     expect(c.consultasVivas).toEqual([
       expect.objectContaining({
         starts_at: iso("2026-10-30", "14:00"),
@@ -699,90 +843,19 @@ describe("2. marca, dias depois remarca, depois cancela: nunca duas consultas vi
     ]);
   });
 
-  it("marca para perto e, já dentro do prazo, pede para cancelar e remarcar: fica com a equipe, e a consulta não muda", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
-    await conversaEmAndamento(c);
-    const confirma =
-      "Obrigada! Confirma a Consulta com a Dra. Ana Lima na quarta, 21/10 às 14:00, na unidade Centro, no particular?";
-    respondeu(
-      await c.fala({
-        texto: "Nasci em 12/03/1985",
-        roteiro: [
-          ferramenta("registrar_dados_do_paciente", {
-            nome_completo: null,
-            data_nascimento: "1985-03-12",
-            para_o_titular: true,
-            campos_mascarados: [],
-          }),
-          final(confirma),
-        ],
-      }),
-      confirma,
-    );
-    const marcou =
-      "Pronto! Sua Consulta de quarta, 21/10 às 14:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.";
-    respondeu(
-      await c.fala({
-        texto: "Sim",
-        roteiro: [ferramenta("agendar", {}), final(marcou)],
-      }),
-      marcou,
-    );
-    const consulta = c.consultas[0]!;
-    c.equipeAprova(consulta);
-
-    // Oito horas depois, faltam 21 horas: o prazo da clinica e 24.
-    const t9 = await c.fala(
-      {
-        texto: "Não vou poder ir, quero cancelar",
-        roteiro: [
-          ferramenta("consultar_minhas_consultas", {}),
-          ferramenta("pedir_cancelamento", { consulta: "c1" }),
-        ],
-      },
-      8 * 60 * 60_000,
-    );
-    expect(oQueDecidiu(t9)).toMatchObject({
-      desfecho: "escalou",
-      motivo: "fora_do_prazo",
-    });
-    expect(t9.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
-    expect(consulta.status).toBe("agendado");
-    expect(c.notasInternas.at(-1)).toContain("prazo da clínica");
-    await nadaMaisSai(c, ["Sim", "Pode cancelar"]);
-    expect(consulta.status).toBe("agendado");
-    expect(c.cenario.banco.chamadasDe("cancelar_consulta_pela_ia")).toEqual([]);
-  });
-
   it("cancelar com a remarcação pendente fica com a equipe: as duas consultas continuam como estavam", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     const consulta = await marcarASexta(c);
     c.equipeAprova(consulta);
     await pedirARemarcacaoParaTerca(c);
-    await c.fala({ texto: "Confirmo", roteiro: [ferramenta("agendar", {})] });
+    await sistemaResponde(c, "Confirmo", T4_TERCA, [ferramenta("agendar", {})]);
     const nova = c.consultas.find((a) => a.remarcacao_de === consulta.id);
 
     const t = await c.fala({
       texto: "Mudei de ideia, quero cancelar a consulta",
-      roteiro: [
-        ferramenta("consultar_minhas_consultas", {}),
-        ferramenta("pedir_cancelamento", { consulta: "c1" }),
-      ],
+      roteiro: pedirOCancelamento(),
     });
-    expect(oQueDecidiu(t)).toMatchObject({
-      desfecho: "escalou",
-      motivo: "pedido_de_agenda",
-    });
-    expect(t.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
-    expect(t.statusDaConversa).toBe("aguardando_humano");
+    passou(t, { desfecho: "escalou", motivo: "pedido_de_agenda" });
     expect(consulta.status).toBe("agendado");
     expect(nova?.status).toBe("agendado");
     expect(c.cenario.banco.chamadasDe("cancelar_consulta_pela_ia")).toEqual([]);
@@ -792,64 +865,51 @@ describe("2. marca, dias depois remarca, depois cancela: nunca duas consultas vi
     expect(consulta.status).toBe("agendado");
     expect(nova?.status).toBe("agendado");
   });
+
+  it("marca para perto e, já dentro do prazo, pede para cancelar: fica com a equipe, e a consulta não muda", async () => {
+    const c = clinicaComDuasUnidades();
+    await comAPerguntaConfirmaNoAr(c);
+    await modeloResponde(c, "Sim", MARCOU_QUARTA, [ferramenta("agendar", {})]);
+    const consulta = c.consultas[0]!;
+    c.equipeAprova(consulta);
+
+    // Oito horas depois, faltam 21 horas: o prazo da clinica e 24.
+    const t9 = await c.fala(
+      {
+        texto: "Não vou poder ir, quero cancelar",
+        roteiro: pedirOCancelamento(),
+      },
+      8 * 60 * 60_000,
+    );
+    passou(t9, { desfecho: "escalou", motivo: "fora_do_prazo" });
+    expect(consulta.status).toBe("agendado");
+    expect(c.notasInternas.at(-1)).toContain("prazo da clínica");
+    await nadaMaisSai(c, ["Sim", "Pode cancelar"]);
+    expect(consulta.status).toBe("agendado");
+    expect(c.cenario.banco.chamadasDe("cancelar_consulta_pela_ia")).toEqual([]);
+  });
 });
 
 describe("3. sem horário bom: a lista de espera e depois a marcação do mesmo procedimento", () => {
   it("entra uma vez só; pedir de novo é ja_na_lista; marcar deixa uma consulta; repetir a marcação é recusado", async () => {
-    const c = new ConversaLonga(contexto, { catalogo: CATALOGO_DA_AG5 });
-    conversaDoTeste = c;
-
-    const preco = "A Limpeza de pele custa R$ 120,00 no particular, com a Dra. Ana Lima.";
-    const t1 = await c.fala({
-      texto: "Quanto custa a limpeza de pele?",
-      roteiro: [
-        ferramenta("buscar_procedimento", {
-          procedimento: P_LIMPEZA,
-          convenio: null,
-        }),
-        final(preco),
-      ],
-    });
-    respondeu(t1, `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${preco}`);
-
-    const semNoite =
-      "Não tenho horário à noite com a Dra. Ana Lima. Posso procurar de manhã ou à tarde, ou colocar você na lista de espera para à noite. O que prefere?";
-    const t2 = await c.fala({
-      texto: "Queria com a Dra. Ana, só à noite.",
-      roteiro: [
-        ferramenta(
-          "buscar_horario",
-          buscaDaLimpeza({ profissional: R_ANA, periodo: "noite" }),
-        ),
-        final(semNoite),
-      ],
-    });
-    respondeu(t2, semNoite);
+    const c = clinicaDeUmaUnidade();
+    await modeloResponde(c, "Quanto custa a limpeza de pele?", PRECO_DA_LIMPEZA, [
+      precoDaLimpeza(),
+    ]);
+    await ateAPerguntaDaLista(c);
+    const t2 = c.turnos.at(-2)!;
     expect(saidasDoTurno(t2)[0]).toMatchObject({ resultado: "sem_horario" });
     expect(t2.estado).toMatchObject({
       procedure_id: PROC.limpeza,
       professional_id: PROF.ana,
       particular: true,
     });
-
-    const t3 = await c.fala({
-      texto: "Lista de espera. Segunda ou quarta.",
-      roteiro: [
-        ferramenta("pedir_lista_de_espera", {
-          periodos: ["noite"],
-          dias: ["segunda", "quarta"],
-        }),
-      ],
-    });
-    respondeu(t3, T_E1_ANA_NOITE_SEG_QUA);
     expect(c.cenario.fila).toEqual([]);
     expect(c.cenario.pedidos).toHaveLength(1);
 
-    const t4 = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("entrar_na_lista_de_espera", {})],
-    });
-    respondeu(t4, T_E2_ANA_NOITE_SEG_QUA);
+    const t4 = await sistemaResponde(c, "Sim", T_E2_ANA_NOITE_SEG_QUA, [
+      ferramenta("entrar_na_lista_de_espera", {}),
+    ]);
     expect(c.cenario.fila).toEqual([
       expect.objectContaining({
         active: true,
@@ -866,80 +926,48 @@ describe("3. sem horário bom: a lista de espera e depois a marcação do mesmo 
     );
 
     // O turno seguinte le a entrada: dizer que esta na lista vale.
-    const naLista =
-      "Sim, você está na lista de espera para Limpeza de pele, com Dra. Ana Lima, à noite, às segundas e às quartas.";
-    respondeu(
-      await c.fala({ texto: "Estou mesmo na lista?", roteiro: [final(naLista)] }),
-      naLista,
+    await modeloResponde(
+      c,
+      "Estou mesmo na lista?",
+      "Sim, você está na lista de espera para Limpeza de pele, com Dra. Ana Lima, à noite, às segundas e às quartas.",
     );
 
     // Pedir de novo: uma entrada so.
-    const jaNaLista =
-      "Você já está na lista de espera para a Limpeza de pele com a Dra. Ana Lima, à noite, às segundas e às quartas.";
-    const t6 = await c.fala({
-      texto: "Me coloca também para as quintas",
-      roteiro: [
+    const t6 = await modeloResponde(
+      c,
+      "Me coloca também para as quintas",
+      "Você já está na lista de espera para a Limpeza de pele com a Dra. Ana Lima, à noite, às segundas e às quartas.",
+      [
         ferramenta("pedir_lista_de_espera", {
           periodos: ["noite"],
           dias: ["quinta"],
         }),
-        final(jaNaLista),
       ],
-    });
-    respondeu(t6, jaNaLista);
+    );
     expect(saidasDoTurno(t6)[0]).toMatchObject({ resultado: "ja_na_lista" });
     expect(c.cenario.fila).toHaveLength(1);
 
     // Desiste de esperar: marca de manha, o mesmo procedimento.
-    const oferta =
-      "Tenho quarta, 21/10 às 08:00 ou quinta, 22/10 às 08:00 com a Dra. Ana Lima. Qual prefere?";
-    const t7 = await c.fala({
-      texto: "Melhor marcar de manhã mesmo",
-      roteiro: [
-        ferramenta(
-          "buscar_horario",
-          buscaDaLimpeza({ profissional: R_ANA, periodo: "manha" }),
-        ),
-        final(oferta),
-      ],
-    });
-    respondeu(t7, oferta);
-    expect(t7.estado.etapa).toBe("oferta");
-
-    const reservou =
-      "Reservei quinta, 22/10 às 08:00 com a Dra. Ana Lima por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.";
-    respondeu(
-      await c.fala({
-        texto: "Quinta às 8",
-        roteiro: [ferramenta("reservar_horario", { horario: "h2" }), final(reservou)],
-      }),
-      reservou,
+    const t7 = await modeloResponde(
+      c,
+      "Melhor marcar de manhã mesmo",
+      OFERTA_DA_LIMPEZA,
+      [limpezaComAAna("manha")],
     );
-
-    const confirma =
-      "Obrigada! Confirma a Limpeza de pele com a Dra. Ana Lima na quinta, 22/10 às 08:00, no particular?";
-    const t9 = await c.fala({
-      texto: "Maria da Silva Souza, 12/03/1985",
-      roteiro: [
-        ferramenta("registrar_dados_do_paciente", {
-          nome_completo: "Fulano da Silva Souza",
-          data_nascimento: "1985-03-12",
-          para_o_titular: true,
-          campos_mascarados: [],
-        }),
-        final(confirma),
-      ],
-    });
-    respondeu(t9, confirma);
+    expect(t7.estado.etapa).toBe("oferta");
+    await modeloResponde(c, "Quinta às 8", RESERVOU_LIMPEZA, [
+      ferramenta("reservar_horario", { horario: "h2" }),
+    ]);
+    const t9 = await modeloResponde(
+      c,
+      "Maria da Silva Souza, 12/03/1985",
+      CONFIRMA_LIMPEZA,
+      [dadosCompletos()],
+    );
     expect(t9.estado.etapa).toBe("aguardando_confirmacao");
-
-    const marcou =
-      "Pronto! Sua Limpeza de pele de quinta, 22/10 às 08:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.";
-    const t10 = await c.fala({
-      texto: "Confirmo",
-      roteiro: [ferramenta("agendar", {}), final(marcou)],
-    });
-    respondeu(t10, marcou);
+    await modeloResponde(c, "Confirmo", MARCOU_LIMPEZA, [
+      ferramenta("agendar", {}),
+    ]);
     expect(c.consultas).toHaveLength(1);
     // A entrada fica na fila (a reoferta le o predicado e nao oferece a quem
     // ja tem a consulta do mesmo procedimento): nunca duas entradas.
@@ -948,20 +976,18 @@ describe("3. sem horário bom: a lista de espera e depois a marcação do mesmo 
     ]);
 
     // Com a consulta marcada, outra do mesmo procedimento: recusada.
-    const jaTem =
-      "Você já tem Limpeza de pele marcada na quinta, 22/10 às 08:00.";
-    const t11 = await c.fala({
-      texto: "Queria marcar outra limpeza de pele na sexta de manhã",
-      roteiro: [
+    const t11 = await modeloResponde(
+      c,
+      "Queria marcar outra limpeza de pele na sexta de manhã",
+      "Você já tem Limpeza de pele marcada na quinta, 22/10 às 08:00.",
+      [
         ferramenta(
           "buscar_horario",
           buscaDaLimpeza({ a_partir_de: "2026-10-23", periodo: "manha" }),
         ),
         ferramenta("reservar_horario", { horario: "h1" }),
-        final(jaTem),
       ],
-    });
-    respondeu(t11, jaTem);
+    );
     expect(saidasDoTurno(t11).at(-1)).toEqual({
       resultado: "ja_tem_consulta",
       dia: "quinta, 22/10",
@@ -971,174 +997,50 @@ describe("3. sem horário bom: a lista de espera e depois a marcação do mesmo 
     expect(c.reservasVivas).toEqual([]);
   });
 
-  it("com a consulta já marcada, pedir a lista do mesmo procedimento é recusado (D-41): nenhum pedido, nenhuma entrada", async () => {
-    const c = new ConversaLonga(contexto, { catalogo: CATALOGO_DA_AG5 });
-    conversaDoTeste = c;
-    const oferta =
-      "Tenho quarta, 21/10 às 08:00 ou quinta, 22/10 às 08:00 com a Dra. Ana Lima. Qual prefere?";
-    respondeu(
-      await c.fala({
-        texto: "Quero marcar limpeza de pele com a Dra. Ana de manhã",
-        roteiro: [
-          ferramenta(
-            "buscar_horario",
-            buscaDaLimpeza({ profissional: R_ANA, periodo: "manha" }),
-          ),
-          final(oferta),
-        ],
-      }),
-      `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${oferta}`,
+  it("com a consulta já marcada, pedir a lista do mesmo procedimento é recusado (D-41); o 'sim' solto depois não entra em lista nenhuma", async () => {
+    const c = clinicaDeUmaUnidade();
+    await ateOConfirmaDaLimpeza(c);
+    await modeloResponde(c, "Sim", MARCOU_LIMPEZA, [ferramenta("agendar", {})]);
+    await modeloResponde(
+      c,
+      "Tem à noite, se abrir vaga?",
+      "Não tenho horário à noite com a Dra. Ana Lima. Se preferir outro período, posso procurar.",
+      [limpezaComAAna("noite")],
     );
-    const reservou =
-      "Reservei quarta, 21/10 às 08:00 com a Dra. Ana Lima por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.";
-    respondeu(
-      await c.fala({
-        texto: "Quarta às 8",
-        roteiro: [ferramenta("reservar_horario", { horario: "h1" }), final(reservou)],
-      }),
-      reservou,
+    const t6 = await modeloResponde(
+      c,
+      "Então me coloca na lista de espera para a noite",
+      "Você já tem Limpeza de pele marcada na quinta, 22/10 às 08:00, então não precisa da lista de espera.",
+      [ferramenta("pedir_lista_de_espera", { periodos: ["noite"], dias: [] })],
     );
-    const confirma =
-      "Confirma a Limpeza de pele com a Dra. Ana Lima na quarta, 21/10 às 08:00, no particular?";
-    respondeu(
-      await c.fala({
-        texto: "Maria da Silva Souza, 12/03/1985",
-        roteiro: [
-          ferramenta("registrar_dados_do_paciente", {
-            nome_completo: "Fulano da Silva Souza",
-            data_nascimento: "1985-03-12",
-            para_o_titular: true,
-            campos_mascarados: [],
-          }),
-          final(confirma),
-        ],
-      }),
-      confirma,
-    );
-    const marcou =
-      "Pronto! Sua Limpeza de pele de quarta, 21/10 às 08:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.";
-    respondeu(
-      await c.fala({
-        texto: "Sim",
-        roteiro: [ferramenta("agendar", {}), final(marcou)],
-      }),
-      marcou,
-    );
-    const semNoite =
-      "Não tenho horário à noite com a Dra. Ana Lima. Se preferir outro período, posso procurar.";
-    respondeu(
-      await c.fala({
-        texto: "Tem à noite, se abrir vaga?",
-        roteiro: [
-          ferramenta(
-            "buscar_horario",
-            buscaDaLimpeza({ profissional: R_ANA, periodo: "noite" }),
-          ),
-          final(semNoite),
-        ],
-      }),
-      semNoite,
-    );
-    const jaTem =
-      "Você já tem Limpeza de pele marcada na quarta, 21/10 às 08:00, então não precisa da lista de espera.";
-    const t6 = await c.fala({
-      texto: "Então me coloca na lista de espera para a noite",
-      roteiro: [
-        ferramenta("pedir_lista_de_espera", { periodos: ["noite"], dias: [] }),
-        final(jaTem),
-      ],
-    });
-    respondeu(t6, jaTem);
     expect(saidasDoTurno(t6)[0]).toMatchObject({ resultado: "ja_tem_consulta" });
     expect(c.cenario.pedidos).toEqual([]);
     expect(c.cenario.fila).toEqual([]);
 
-    // Um "sim" solto depois da recusa nao entra em lista nenhuma.
-    const semPergunta = "Tudo certo então. Posso ajudar em mais alguma coisa?";
-    const t7 = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("entrar_na_lista_de_espera", {}), final(semPergunta)],
-    });
-    respondeu(t7, semPergunta);
+    const t7 = await modeloResponde(
+      c,
+      "Sim",
+      "Tudo certo então. Posso ajudar em mais alguma coisa?",
+      [ferramenta("entrar_na_lista_de_espera", {})],
+    );
     expect(saidasDoTurno(t7)[0]).toEqual({ resultado: "sem_pergunta_de_espera" });
     expect(c.cenario.fila).toEqual([]);
     expect(t7.estado.falhas_seguidas).toBe(1);
 
-    const tchau = "Por nada! Qualquer coisa, é só chamar por aqui.";
-    respondeu(await c.fala({ texto: "Obrigada", roteiro: [final(tchau)] }), tchau);
+    await modeloResponde(c, "Obrigada", TCHAU);
     expect(c.consultas).toHaveLength(1);
   });
 });
 
 describe("4. o sinal de emergência no meio da marcação", () => {
-  /** Preço, busca, reserva e a pergunta "Confirma": quatro falas. */
-  async function ateAPerguntaConfirma(c: ConversaLonga) {
-    const preco =
-      "A consulta custa R$ 280,00 com o Dr. Bruno Costa e R$ 300,00 com a Dra. Ana Lima, no particular.";
-    await c.fala({
-      texto: "Oi, quanto custa a consulta?",
-      roteiro: [
-        ferramenta("buscar_procedimento", {
-          procedimento: P_CONSULTA,
-          convenio: null,
-        }),
-        final(preco),
-      ],
-    });
-    const oferta =
-      "Tenho quarta, 21/10 às 14:00 com a Dra. Ana Lima na unidade Centro, ou quinta, 22/10 às 13:00 com o Dr. Bruno Costa. Qual prefere?";
-    respondeu(
-      await c.fala({
-        texto: "Quero marcar à tarde",
-        roteiro: [
-          ferramenta("buscar_horario", busca({ periodo: "tarde" })),
-          final(oferta),
-        ],
-      }),
-      oferta,
-    );
-    const reservou =
-      "Reservei quarta, 21/10 às 14:00 com a Dra. Ana Lima, na unidade Centro, por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.";
-    respondeu(
-      await c.fala({
-        texto: "Quarta às 14h",
-        roteiro: [ferramenta("reservar_horario", { horario: "h2" }), final(reservou)],
-      }),
-      reservou,
-    );
-    const confirma =
-      "Obrigada! Confirma a Consulta com a Dra. Ana Lima na quarta, 21/10 às 14:00, na unidade Centro, no particular?";
-    const t4 = await c.fala({
-      texto: "Maria da Silva Souza, nascida em 12/03/1985",
-      roteiro: [
-        ferramenta("registrar_dados_do_paciente", {
-          nome_completo: "Fulano da Silva Souza",
-          data_nascimento: "1985-03-12",
-          para_o_titular: true,
-          campos_mascarados: [],
-        }),
-        final(confirma),
-      ],
-    });
-    respondeu(t4, confirma);
-    expect(t4.estado.etapa).toBe("aguardando_confirmacao");
-    expect(c.reservasVivas).toHaveLength(1);
-  }
-
   /** A passagem por urgência: sem modelo, a marca e a frase de sempre. */
   function passouPorUrgencia(c: ConversaLonga, t: TurnoDaConversa) {
-    expect(oQueDecidiu(t)).toEqual({
-      desfecho: "escalou",
-      regra: null,
-      motivo: "urgencia",
-      falha: null,
-      gatilho: "urgencia",
-      camada: null,
-    });
-    expect(t.chamadasAoModelo).toBe(0);
+    passou(
+      t,
+      { desfecho: "escalou", motivo: "urgencia", gatilho: "urgencia" },
+      0,
+    );
     expect(t.doLaco).toBeNull();
-    expect(t.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
-    expect(t.statusDaConversa).toBe("aguardando_humano");
     expect(c.conversa.assignee_user_id).toBeNull();
     expect(trilhaDoTurno(t)).toContain(PASSO_DA_URGENCIA);
     expect(c.passagens.at(-1)).toEqual({
@@ -1151,26 +1053,16 @@ describe("4. o sinal de emergência no meio da marcação", () => {
     ]);
     // A urgencia nunca atribui.
     expect(c.executor.chamadasDe("atribuir_conversa_passada_pela_ia")).toEqual([]);
-    expect(t.decisao).toMatchObject({
-      aprovado: false,
-      texto_sha256: null,
-      tokens_entrada: 0,
-    });
+    expect(t.decisao?.tokens_entrada).toBe(0);
   }
 
   it("com o 'Confirma' no ar: passa como urgente e nenhuma mensagem nova chega ao modelo, nem o 'sim'", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
-    await ateAPerguntaConfirma(c);
-
-    const t5 = await c.fala({
-      texto: "Espera, estou com dor no peito e falta de ar",
-    });
-    passouPorUrgencia(c, t5);
-
+    const c = clinicaComDuasUnidades();
+    await ateOConfirmaDeQuarta(c);
+    passouPorUrgencia(
+      c,
+      await c.fala({ texto: "Espera, estou com dor no peito e falta de ar" }),
+    );
     await nadaMaisSai(c, [
       "Sim, confirmo",
       "alô?",
@@ -1178,36 +1070,25 @@ describe("4. o sinal de emergência no meio da marcação", () => {
       "Quanto custa a consulta?",
       "Quero cancelar tudo",
     ]);
-    // O "sim" depois da urgencia nao marcou nada, e ninguem foi chamado.
     expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
     expect(c.consultas).toEqual([]);
     expect(c.conversa.status).toBe("aguardando_humano");
-    expect(c.recebidasPeloPaciente.at(-1)).toBe(FRASE_DE_ESCALONAMENTO);
     expect(
       c.recebidasPeloPaciente.filter((m) => m === FRASE_DE_ESCALONAMENTO),
     ).toHaveLength(1);
   });
 
   it("o sinal partido numa rajada ('to com dor' e 'no peito') também passa como urgente", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
-    await ateAPerguntaConfirma(c);
-    const t5 = await c.rajada(["to com dor", "no peito"], {});
-    passouPorUrgencia(c, t5);
+    const c = clinicaComDuasUnidades();
+    await ateOConfirmaDeQuarta(c);
+    passouPorUrgencia(c, await c.rajada(["to com dor", "no peito"], {}));
     await nadaMaisSai(c, ["Sim", "Confirmo", "oi?", "por favor"]);
     expect(c.consultas).toEqual([]);
   });
 
   it("a emergência que chega no meio do turno do 'sim': nada é marcado, nada sai, e o job seguinte passa como urgente", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
-    await ateAPerguntaConfirma(c);
+    const c = clinicaComDuasUnidades();
+    await ateOConfirmaDeQuarta(c);
     const t5 = await c.fala({
       texto: "Sim, confirmo",
       roteiro: [ferramenta("agendar", {})],
@@ -1225,22 +1106,16 @@ describe("4. o sinal de emergência no meio da marcação", () => {
     expect(c.consultas).toEqual([]);
     expect(c.temJobPendente).toBe(true);
 
-    const t6 = await c.rodarOJobPendente({});
-    passouPorUrgencia(c, t6);
+    passouPorUrgencia(c, await c.rodarOJobPendente({}));
     expect(c.consultas).toEqual([]);
     await nadaMaisSai(c, ["Sim", "alô?"]);
     expect(c.temJobPendente).toBe(false);
   });
 
   it("depois de marcar: a consulta fica como está, e o pedido de cancelar depois da passagem não chega a lugar nenhum", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     const consulta = await marcarASexta(c);
-    const t5 = await c.fala({ texto: "to com falta de ar, o que eu faço" });
-    passouPorUrgencia(c, t5);
+    passouPorUrgencia(c, await c.fala({ texto: "to com falta de ar, o que eu faço" }));
     await nadaMaisSai(c, [
       "Preciso cancelar minha consulta",
       "Sim",
@@ -1252,121 +1127,14 @@ describe("4. o sinal de emergência no meio da marcação", () => {
   });
 });
 
-/**
- * Seis falas de uma conversa em andamento: preço, endereço, a busca, a reserva
- * de quarta às 14h, o nome e o estacionamento. Falta só o nascimento.
- */
-async function conversaEmAndamento(c: ConversaLonga) {
-  const preco =
-    "A consulta custa R$ 280,00 com o Dr. Bruno Costa e R$ 300,00 com a Dra. Ana Lima, no particular.";
-  await c.fala({
-    texto: "Oi, quanto custa a consulta?",
-    roteiro: [
-      ferramenta("buscar_procedimento", {
-        procedimento: P_CONSULTA,
-        convenio: null,
-      }),
-      final(preco),
-    ],
-  });
-  const endereco = `A unidade Aldeota fica na ${ENDERECO_DA_ALDEOTA}.`;
-  respondeu(
-    await c.fala({
-      texto: "Onde fica a clínica?",
-      roteiro: [ferramenta("consultar_unidades", { unidade: "u1" }), final(endereco)],
-    }),
-    endereco,
-  );
-  const oferta =
-    "Tenho quarta, 21/10 às 14:00 com a Dra. Ana Lima na unidade Centro, ou quinta, 22/10 às 13:00 com o Dr. Bruno Costa. Qual prefere?";
-  respondeu(
-    await c.fala({
-      texto: "Quero marcar à tarde",
-      roteiro: [
-        ferramenta("buscar_horario", busca({ periodo: "tarde" })),
-        final(oferta),
-      ],
-    }),
-    oferta,
-  );
-  const reservou =
-    "Reservei quarta, 21/10 às 14:00 com a Dra. Ana Lima, na unidade Centro, por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.";
-  respondeu(
-    await c.fala({
-      texto: "Quarta às 14h",
-      roteiro: [ferramenta("reservar_horario", { horario: "h2" }), final(reservou)],
-    }),
-    reservou,
-  );
-  const falta = "Obrigada! Agora só falta sua data de nascimento.";
-  respondeu(
-    await c.fala({
-      texto: "Meu nome é Maria da Silva Souza",
-      roteiro: [
-        ferramenta("registrar_dados_do_paciente", {
-          nome_completo: "Fulano da Silva Souza",
-          data_nascimento: null,
-          para_o_titular: true,
-          campos_mascarados: [],
-        }),
-        final(falta),
-      ],
-    }),
-    falta,
-  );
-  const estacionamento =
-    "Na unidade Aldeota tem estacionamento no subsolo do prédio.";
-  respondeu(
-    await c.fala({
-      texto: "Tem estacionamento?",
-      roteiro: [
-        ferramenta("consultar_unidades", { unidade: "u1" }),
-        final(estacionamento),
-      ],
-    }),
-    estacionamento,
-  );
-  expect(c.dados).toMatchObject({
-    nome_completo: true,
-    data_nascimento: false,
-    faltam: ["data_nascimento"],
-  });
-  expect(c.reservasVivas).toHaveLength(1);
-}
-
-/**
- * Sete falas sem marcar nada (a conversa de sempre, mais o nascimento): a
- * reserva viva, a pergunta "Confirma" no ar.
- */
-async function comAPerguntaConfirmaNoAr(c: ConversaLonga) {
-  await conversaEmAndamento(c);
-  const confirma =
-    "Obrigada! Confirma a Consulta com a Dra. Ana Lima na quarta, 21/10 às 14:00, na unidade Centro, no particular?";
-  const t = await c.fala({
-    texto: "Nasci em 12/03/1985",
-    roteiro: [
-      ferramenta("registrar_dados_do_paciente", {
-        nome_completo: null,
-        data_nascimento: "1985-03-12",
-        para_o_titular: true,
-        campos_mascarados: [],
-      }),
-      final(confirma),
-    ],
-  });
-  respondeu(t, confirma);
-  expect(t.estado.etapa).toBe("aguardando_confirmacao");
-}
-
-const ACOMPANHA_ALTA = { categoria: "orientacao_clinica", gravidade: "alta" } as const;
-const USO_DO_FALSO = {
-  tokensEntrada: 100,
-  tokensSaida: 10,
-  tokensCacheLidos: 0,
-  tokensCacheGravados: 0,
-};
-
-describe("5. o pedido clínico no meio da conversa", () => {
+describe("5. o pedido clínico no meio da conversa e o que fica com a equipe", () => {
+  const CLINICA_DEPOIS = "E depois da consulta, como fica?";
+  const USO = {
+    tokensEntrada: 100,
+    tokensSaida: 10,
+    tokensCacheLidos: 0,
+    tokensCacheGravados: 0,
+  };
   type CasoClinico = {
     nome: string;
     fala: FalaDaConversa;
@@ -1400,7 +1168,7 @@ describe("5. o pedido clínico no meio da conversa", () => {
           tipo: "classificacao",
           classificacao: { gatilhos: ["assunto_clinico"], confianca: "alta" },
           modelo: "gpt-6-luna",
-          uso: USO_DO_FALSO,
+          uso: USO,
         },
       },
       esperado: {
@@ -1413,7 +1181,7 @@ describe("5. o pedido clínico no meio da conversa", () => {
     {
       nome: "o classificador fora do ar: falha fechada, sem o agente",
       fala: {
-        texto: "E depois da consulta, como fica?",
+        texto: CLINICA_DEPOIS,
         classificacao: {
           tipo: "falha",
           motivo: "timeout",
@@ -1432,9 +1200,11 @@ describe("5. o pedido clínico no meio da conversa", () => {
     {
       nome: "o modelo que escreve orientação clínica: a regra barra",
       fala: {
-        texto: "E depois da consulta, como fica?",
+        texto: CLINICA_DEPOIS,
         roteiro: [
-          final("É normal doer um pouco. Pode tomar dipirona 500 mg de 6 em 6 horas."),
+          final(
+            "É normal doer um pouco. Pode tomar dipirona 500 mg de 6 em 6 horas.",
+          ),
         ],
       },
       doModelo:
@@ -1449,17 +1219,17 @@ describe("5. o pedido clínico no meio da conversa", () => {
     {
       nome: "a paráfrase que a regra não pega: o verificador por modelo barra",
       fala: {
-        texto: "E depois da consulta, como fica?",
+        texto: CLINICA_DEPOIS,
         roteiro: [final("Fico à disposição para o que precisar.")],
         verificador: async () => ({
           tipo: "veredicto",
           veredicto: {
             aprovado: false,
-            violacoes: [ACOMPANHA_ALTA],
+            violacoes: [{ categoria: "orientacao_clinica", gravidade: "alta" }],
             confianca: "alta",
           },
           modelo: "gpt-6-luna",
-          uso: USO_DO_FALSO,
+          uso: USO,
         }),
       },
       doModelo: "Fico à disposição para o que precisar.",
@@ -1474,15 +1244,9 @@ describe("5. o pedido clínico no meio da conversa", () => {
     {
       nome: "o verificador fora do ar: falha fechada",
       fala: {
-        texto: "E depois da consulta, como fica?",
+        texto: CLINICA_DEPOIS,
         roteiro: [final("Posso ajudar com a sua marcação.")],
-        verificador: async () => ({
-          tipo: "falha",
-          motivo: "timeout",
-          modelo: null,
-          uso: null,
-          httpStatus: null,
-        }),
+        verificador: verificadorForaDoAr,
       },
       doModelo: "Posso ajudar com a sua marcação.",
       esperado: {
@@ -1497,10 +1261,8 @@ describe("5. o pedido clínico no meio da conversa", () => {
     {
       nome: "o modelo que passa para a equipe",
       fala: {
-        texto: "E depois da consulta, como fica?",
-        roteiro: [
-          ferramenta("escalar_humano", { motivo: "assunto_clinico" }),
-        ],
+        texto: CLINICA_DEPOIS,
+        roteiro: [ferramenta("escalar_humano", { motivo: "assunto_clinico" })],
       },
       esperado: { desfecho: "escalou", motivo: "assunto_clinico" },
       chamadas: 1,
@@ -1540,7 +1302,7 @@ describe("5. o pedido clínico no meio da conversa", () => {
     {
       nome: "a ferramenta que não existe, num turno tardio: falha fechada",
       fala: {
-        texto: "E depois da consulta, como fica?",
+        texto: CLINICA_DEPOIS,
         roteiro: [ferramenta("apagar_a_agenda", {})],
       },
       esperado: {
@@ -1553,7 +1315,7 @@ describe("5. o pedido clínico no meio da conversa", () => {
     {
       nome: "o modelo que não chega a uma resposta, num turno tardio: falha fechada",
       fala: {
-        texto: "E depois da consulta, como fica?",
+        texto: CLINICA_DEPOIS,
         roteiro: [
           ferramenta("consultar_unidades", { unidade: null }),
           ferramenta("consultar_unidades", { unidade: "u1" }),
@@ -1571,20 +1333,11 @@ describe("5. o pedido clínico no meio da conversa", () => {
   ];
 
   it.each(casos)("$nome", async ({ fala, esperado, doModelo, chamadas }) => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     await conversaEmAndamento(c);
 
     const t = await c.fala(fala);
-    expect(oQueDecidiu(t)).toMatchObject(esperado);
-    expect(t.chamadasAoModelo).toBe(chamadas);
-    // So a frase fixa: nada do que o modelo escreveu.
-    expect(t.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
-    expect(t.statusDaConversa).toBe("aguardando_humano");
-    expect(t.decisao).toMatchObject({ aprovado: false, texto_sha256: null });
+    passou(t, esperado, chamadas);
     if (doModelo !== undefined) {
       expect(c.recebidasPeloPaciente.join("\n")).not.toContain(doModelo);
       if (esperado.desfecho === "bloqueou") {
@@ -1594,14 +1347,13 @@ describe("5. o pedido clínico no meio da conversa", () => {
         expect(JSON.stringify(t.decisao)).not.toContain(doModelo);
       }
     }
-    // O atendimento fica contado para a equipe (a reserva e o nome informado,
-    // nunca o valor) e o que a pessoa ja informou nao se perde.
+    // O atendimento fica contado para a equipe (a reserva, nunca o valor de um
+    // dado) e o que a pessoa ja informou nao se perde.
     expect(t.estado.desfecho).toBe("passou_para_equipe");
     expect(c.dados.nome_completo).toBe(true);
     const nota = c.notasInternas.at(-1) ?? "";
     expect(nota).toContain("Resumo do assistente");
     expect(nota).toContain("quarta, 21/10 às 14:00");
-    expect(nota).not.toContain("Maria");
 
     await nadaMaisSai(c, ["Sim", "Nasci em 12/03/1985", "E aí, é normal?"]);
     expect(c.consultas).toEqual([]);
@@ -1620,92 +1372,57 @@ describe("6. o modelo que diz que fez sem ter feito, num turno tardio", () => {
     doModelo: string,
     regra = "acao_nao_executada",
   ) {
-    expect(oQueDecidiu(t)).toEqual({
+    passou(t, {
       desfecho: "bloqueou",
       regra,
       motivo: "conformidade",
-      falha: null,
-      gatilho: null,
       camada: "regra",
     });
-    expect(t.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
     expect(t.ferramentas).toEqual([]);
-    expect(t.statusDaConversa).toBe("aguardando_humano");
     expect(c.rascunhosBloqueados).toEqual([
       expect.objectContaining({ texto: doModelo, decision_id: t.decisao?.id }),
     ]);
   }
 
   it("'Está marcado!' sem reservar nada: a regra barra, e o 'sim' seguinte não marca", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
-    const preco =
-      "A consulta custa R$ 280,00 com o Dr. Bruno Costa e R$ 300,00 com a Dra. Ana Lima, no particular.";
-    const conversaSemReserva = [
-      {
-        texto: "Oi, quanto custa a consulta?",
-        roteiro: [
-          ferramenta("buscar_procedimento", {
-            procedimento: P_CONSULTA,
-            convenio: null,
-          }),
-          final(preco),
-        ],
-      },
-      {
-        texto: "Onde fica a clínica?",
-        roteiro: [
-          ferramenta("consultar_unidades", { unidade: "u1" }),
-          final(`A unidade Aldeota fica na ${ENDERECO_DA_ALDEOTA}.`),
-        ],
-      },
-      {
-        texto: "Tem estacionamento?",
-        roteiro: [
-          ferramenta("consultar_unidades", { unidade: "u1" }),
-          final("Na unidade Aldeota tem estacionamento no subsolo do prédio."),
-        ],
-      },
-      {
-        texto: "Tem acesso para cadeira de rodas?",
-        roteiro: [
-          ferramenta("consultar_unidades", { unidade: "u1" }),
-          final("Na unidade Aldeota o acesso é por rampa e elevador."),
-        ],
-      },
-      {
-        texto: "O que eu preciso levar?",
-        roteiro: [
-          ferramenta("consultar_requisitos", {
-            procedimento: P_CONSULTA,
-            convenio: null,
-          }),
-          final(
-            "Para a Consulta, leve um documento com foto e chegue 15 minutos antes.",
-          ),
-        ],
-      },
-      {
-        texto: "Quero marcar à tarde",
-        roteiro: [
-          ferramenta("buscar_horario", busca({ periodo: "tarde" })),
-          final(
-            "Tenho quarta, 21/10 às 14:00 com a Dra. Ana Lima na unidade Centro, ou quinta, 22/10 às 13:00 com o Dr. Bruno Costa. Qual prefere?",
-          ),
-        ],
-      },
-      {
-        texto: "Deixa eu ver minha agenda",
-        roteiro: [final("Claro, sem pressa. Me diga qual prefere.")],
-      },
-    ];
-    for (const fala of conversaSemReserva) {
-      const t = await c.fala(fala);
-      expect(oQueDecidiu(t).desfecho).toBe("respondeu");
-    }
+    const c = clinicaComDuasUnidades();
+    await modeloResponde(c, "Oi, quanto custa a consulta?", PRECO_DA_CONSULTA, [
+      precoDaConsulta(),
+    ]);
+    await modeloResponde(
+      c,
+      "Onde fica a clínica?",
+      `A unidade Aldeota fica na ${ENDERECO_DA_ALDEOTA}.`,
+      [ferramenta("consultar_unidades", { unidade: "u1" })],
+    );
+    await modeloResponde(c, "Tem estacionamento?", ESTACIONAMENTO, [
+      ferramenta("consultar_unidades", { unidade: "u1" }),
+    ]);
+    await modeloResponde(
+      c,
+      "Tem acesso para cadeira de rodas?",
+      "Na unidade Aldeota o acesso é por rampa e elevador.",
+      [ferramenta("consultar_unidades", { unidade: "u1" })],
+    );
+    await modeloResponde(
+      c,
+      "O que eu preciso levar?",
+      "Para a Consulta, leve um documento com foto e chegue 15 minutos antes.",
+      [
+        ferramenta("consultar_requisitos", {
+          procedimento: P_CONSULTA,
+          convenio: null,
+        }),
+      ],
+    );
+    await modeloResponde(c, "Quero marcar à tarde", OFERTA_DA_TARDE, [
+      ferramenta("buscar_horario", busca({ periodo: "tarde" })),
+    ]);
+    await modeloResponde(
+      c,
+      "Deixa eu ver minha agenda",
+      "Claro, sem pressa. Me diga qual prefere.",
+    );
     expect(c.reservasVivas).toEqual([]);
 
     const alucinou = "Está marcado!";
@@ -1716,17 +1433,12 @@ describe("6. o modelo que diz que fez sem ter feito, num turno tardio", () => {
     barrado(c, t8, alucinou);
     expect(c.cenario.banco.chamadasDe("reservar_horario_da_ia")).toEqual([]);
     expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
-    expect(c.consultas).toEqual([]);
-
     await nadaMaisSai(c, ["Sim", "Obrigada"]);
     expect(c.consultas).toEqual([]);
   });
 
   it.each([
-    [
-      "'Está marcado!'",
-      "Está marcado!",
-    ],
+    ["'Está marcado!'", "Está marcado!"],
     [
       "com o dia e a hora da reserva",
       "Está marcado! Sua Consulta de quarta, 21/10 às 14:00 com a Dra. Ana Lima ficou marcada.",
@@ -1734,18 +1446,13 @@ describe("6. o modelo que diz que fez sem ter feito, num turno tardio", () => {
   ])(
     "o 'sim' ao 'Confirma' com o modelo que responde %s sem chamar agendar: barrado; a reserva não vira consulta",
     async (_nome, alucinou) => {
-      const c = new ConversaLonga(contexto, {
-        catalogo: CADASTRO,
-        duasUnidades: true,
-      });
-      conversaDoTeste = c;
+      const c = clinicaComDuasUnidades();
       await comAPerguntaConfirmaNoAr(c);
       const t = await c.fala({
         texto: "Sim, confirmo",
         roteiro: [final(alucinou)],
       });
       barrado(c, t, alucinou);
-      expect(c.consultas).toEqual([]);
       expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
       expect(c.reservasVivas).toHaveLength(1);
       await nadaMaisSai(c, ["Sim", "Confirmado?"]);
@@ -1768,27 +1475,11 @@ describe("6. o modelo que diz que fez sem ter feito, num turno tardio", () => {
   ])(
     "depois de marcar de verdade, o modelo diz que %s sem a ferramenta: barrado; a consulta fica",
     async (_nome, texto, alucinou) => {
-      const c = new ConversaLonga(contexto, {
-        catalogo: CADASTRO,
-        duasUnidades: true,
-      });
-      conversaDoTeste = c;
+      const c = clinicaComDuasUnidades();
       const consulta = await marcarASexta(c);
-      const quando =
-        "Sua Consulta está marcada para sexta, 30/10 às 14:00, pendente da aprovação da equipe.";
-      respondeu(
-        await c.fala({ texto: "Qual é mesmo o horário?", roteiro: [final(quando)] }),
-        quando,
-      );
-      const tchau = "Por nada!";
-      respondeu(await c.fala({ texto: "Obrigada", roteiro: [final(tchau)] }), tchau);
-      const espera = "Claro, é só me dizer.";
-      respondeu(
-        await c.fala({ texto: "Vou ver uma coisa aqui", roteiro: [final(espera)] }),
-        espera,
-      );
-      const t = await c.fala({ texto, roteiro: [final(alucinou)] });
-      barrado(c, t, alucinou);
+      await modeloResponde(c, "Qual é mesmo o horário?", HORARIO_DA_SEXTA);
+      await conversaFiada(c, ["Obrigada", "Vou ver uma coisa aqui"]);
+      barrado(c, await c.fala({ texto, roteiro: [final(alucinou)] }), alucinou);
       expect(consulta.status).toBe("agendado");
       expect(c.consultasVivas).toEqual([consulta]);
       expect(c.cenario.fila).toEqual([]);
@@ -1796,55 +1487,45 @@ describe("6. o modelo que diz que fez sem ter feito, num turno tardio", () => {
     },
   );
 
-  it("a pergunta no ar, o 'sim' e o modelo que diz que fez sem chamar a ferramenta: cancelar", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+  it("a T1 no ar, o 'sim' e o modelo que diz que cancelou sem a ferramenta: barrado", async () => {
+    const c = clinicaComDuasUnidades();
     await conversaEmAndamento(c);
     const { c1 } = consultasDoContato(c.cenario.banco);
-    await c.fala(
-      {
-        texto: "Preciso cancelar minha consulta de quinta",
-        roteiro: [
-          ferramenta("consultar_minhas_consultas", {}),
-          ferramenta("pedir_cancelamento", { consulta: "c1" }),
-        ],
-      },
+    await sistemaResponde(
+      c,
+      "Preciso cancelar minha consulta de quinta",
+      T1_QUINTA,
+      pedirOCancelamento(),
       20_000,
     );
-    const alucinou =
-      "Pronto, cancelei sua consulta de quinta, 22/10 às 14:00.";
-    const t = await c.fala({ texto: "Sim", roteiro: [final(alucinou)] }, 20_000);
-    barrado(c, t, alucinou);
+    const alucinou = "Pronto, cancelei sua consulta de quinta, 22/10 às 14:00.";
+    barrado(
+      c,
+      await c.fala({ texto: "Sim", roteiro: [final(alucinou)] }, 20_000),
+      alucinou,
+    );
     expect(c1.status).toBe("agendado");
     await nadaMaisSai(c, ["Sim"]);
   });
 
-  it("a pergunta no ar, o 'sim' e o modelo que diz que fez sem chamar a ferramenta: remarcar", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+  it("a T3 no ar, o 'sim' e o modelo que diz que remarcou sem a ferramenta: barrado", async () => {
+    const c = clinicaComDuasUnidades();
     const consulta = await marcarASexta(c);
     c.equipeAprova(consulta);
     await pedirARemarcacaoParaTerca(c);
-    const conversa = "Claro, é só me dizer.";
-    await c.fala({ texto: "Oi", roteiro: [final(conversa)] }, 20_000);
-    const alucinou =
-      "Pronto, remarquei sua consulta para terça, 03/11 às 08:00.";
-    const t = await c.fala({ texto: "Sim", roteiro: [final(alucinou)] }, 20_000);
-    barrado(c, t, alucinou);
+    await modeloResponde(c, "Oi", CERTO, [], 20_000);
+    const alucinou = "Pronto, remarquei sua consulta para terça, 03/11 às 08:00.";
+    barrado(
+      c,
+      await c.fala({ texto: "Sim", roteiro: [final(alucinou)] }, 20_000),
+      alucinou,
+    );
     expect(c.consultas).toEqual([consulta]);
     await nadaMaisSai(c, ["Sim"]);
   });
 
-  it("a pergunta no ar, o 'sim' e o modelo que diz que fez sem chamar a ferramenta: entrar na lista", async () => {
-    const c = new ConversaLonga(contexto, { catalogo: CATALOGO_DA_AG5 });
-    conversaDoTeste = c;
-    const preco = "A Limpeza de pele custa R$ 120,00 no particular, com a Dra. Ana Lima.";
+  it("a T-E1 no ar, o 'sim' e o modelo que diz que entrou na lista sem a ferramenta: barrado", async () => {
+    const c = clinicaDeUmaUnidade();
     for (const texto of [
       "Quanto custa a limpeza de pele?",
       "Quanto custa mesmo?",
@@ -1852,44 +1533,11 @@ describe("6. o modelo que diz que fez sem ter feito, num turno tardio", () => {
       "Certo, e o valor é esse mesmo?",
       "Só para confirmar o preço?",
     ]) {
-      await c.fala({
-        texto,
-        roteiro: [
-          ferramenta("buscar_procedimento", {
-            procedimento: P_LIMPEZA,
-            convenio: null,
-          }),
-          final(preco),
-        ],
-      });
+      await modeloResponde(c, texto, PRECO_DA_LIMPEZA, [precoDaLimpeza()]);
     }
-    await c.fala({
-      texto: "Queria com a Dra. Ana, só à noite.",
-      roteiro: [
-        ferramenta(
-          "buscar_horario",
-          buscaDaLimpeza({ profissional: R_ANA, periodo: "noite" }),
-        ),
-        final(
-          "Não tenho horário à noite com a Dra. Ana Lima. Posso colocar você na lista de espera para à noite. O que prefere?",
-        ),
-      ],
-    });
-    respondeu(
-      await c.fala({
-        texto: "Lista de espera. Segunda ou quarta.",
-        roteiro: [
-          ferramenta("pedir_lista_de_espera", {
-            periodos: ["noite"],
-            dias: ["segunda", "quarta"],
-          }),
-        ],
-      }),
-      T_E1_ANA_NOITE_SEG_QUA,
-    );
+    await ateAPerguntaDaLista(c);
     const alucinou = "Pronto, você entrou na lista de espera.";
-    const t = await c.fala({ texto: "Sim", roteiro: [final(alucinou)] });
-    barrado(c, t, alucinou);
+    barrado(c, await c.fala({ texto: "Sim", roteiro: [final(alucinou)] }), alucinou);
     expect(c.cenario.fila).toEqual([]);
     await nadaMaisSai(c, ["Sim"]);
   });
@@ -1914,90 +1562,66 @@ describe("6. o modelo que diz que fez sem ter feito, num turno tardio", () => {
   ])(
     "o modelo que repete de cabeça %s, já dito em turnos anteriores: só sai com a ferramenta do turno",
     async (_nome, deCabeca, regra) => {
-      const c = new ConversaLonga(contexto, {
-        catalogo: CADASTRO,
-        duasUnidades: true,
-      });
-      conversaDoTeste = c;
+      const c = clinicaComDuasUnidades();
       await conversaEmAndamento(c);
-      const convenio =
-        "Sim, a Consulta com a Dra. Ana Lima é atendida pela Unimed (Nacional).";
-      respondeu(
-        await c.fala({
-          texto: "Vocês atendem Unimed?",
-          roteiro: [
-            ferramenta("buscar_procedimento", {
-              procedimento: P_CONSULTA,
-              convenio: "Unimed Nacional",
-            }),
-            final(convenio),
-          ],
-        }),
-        convenio,
+      await modeloResponde(
+        c,
+        "Vocês atendem Unimed?",
+        "Sim, a Consulta com a Dra. Ana Lima é atendida pela Unimed (Nacional).",
+        [
+          ferramenta("buscar_procedimento", {
+            procedimento: P_CONSULTA,
+            convenio: "Unimed Nacional",
+          }),
+        ],
       );
-      const t = await c.fala({
-        texto: "Pode repetir, por favor?",
-        roteiro: [final(deCabeca)],
-      });
-      barrado(c, t, deCabeca, regra);
+      barrado(
+        c,
+        await c.fala({
+          texto: "Pode repetir, por favor?",
+          roteiro: [final(deCabeca)],
+        }),
+        deCabeca,
+        regra,
+      );
       await nadaMaisSai(c, ["Sim"]);
     },
   );
 
   it("com a reserva vencida, dizer que continua reservado é barrado", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     await conversaEmAndamento(c);
-    const conversa = "Claro, é só me dizer.";
-    respondeu(
-      await c.fala({ texto: "Vou ver uma coisa aqui", roteiro: [final(conversa)] }),
-      conversa,
-    );
+    await conversaFiada(c, ["Vou ver uma coisa aqui"]);
     const alucinou = "Seu horário continua reservado.";
-    const t = await c.fala(
-      { texto: "Ainda está reservado?", roteiro: [final(alucinou)] },
-      11 * 60_000,
+    barrado(
+      c,
+      await c.fala(
+        { texto: "Ainda está reservado?", roteiro: [final(alucinou)] },
+        11 * UM_MINUTO_MS,
+      ),
+      alucinou,
     );
-    barrado(c, t, alucinou);
     expect(c.reservasVivas).toEqual([]);
     await nadaMaisSai(c, ["Sim"]);
   });
 
-  // achado: "A equipe já aprovou sua consulta." passa pela regra com a
-  // consulta ainda pendente (a mesma frase da remarcacao e barrada). Nenhuma
-  // regra confere a aprovacao afirmada na marcacao: o paciente le que esta
-  // aprovada, e a equipe ainda pode recusar. Devia barrar (acao_nao_executada).
-  // Sobra so o verificador por modelo, que aqui e o falso que aprova.
+  // achado: "A equipe já aprovou sua consulta." passa pela regra com a consulta
+  // ainda pendente (a mesma frase da remarcacao e barrada). Nenhuma regra
+  // confere a aprovacao afirmada na marcacao: o paciente le que esta aprovada,
+  // e a equipe ainda pode recusar. Devia barrar (acao_nao_executada). Sobra so
+  // o verificador por modelo, que aqui e o falso que aprova.
   it.fails("com a consulta pendente, dizer que a equipe já aprovou não pode sair", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     const consulta = await marcarASexta(c);
-    const quando =
-      "Sua Consulta está marcada para sexta, 30/10 às 14:00, pendente da aprovação da equipe.";
-    respondeu(
-      await c.fala({ texto: "Qual é mesmo o horário?", roteiro: [final(quando)] }),
-      quando,
-    );
-    const tchau = "Por nada!";
-    respondeu(await c.fala({ texto: "Obrigada", roteiro: [final(tchau)] }), tchau);
-    const espera = "Claro, é só me dizer.";
-    respondeu(
-      await c.fala({ texto: "Vou ver uma coisa aqui", roteiro: [final(espera)] }),
-      espera,
-    );
+    await modeloResponde(c, "Qual é mesmo o horário?", HORARIO_DA_SEXTA);
+    await conversaFiada(c, ["Obrigada", "Vou ver uma coisa aqui"]);
     expect(consulta.approval_status).toBe("pendente");
     const alucinou = "A equipe já aprovou sua consulta.";
-    const t = await c.fala({
-      texto: "Já aprovaram?",
-      roteiro: [final(alucinou)],
-    });
-    barrado(c, t, alucinou);
+    barrado(
+      c,
+      await c.fala({ texto: "Já aprovaram?", roteiro: [final(alucinou)] }),
+      alucinou,
+    );
   });
 
   // achado: depois de marcar UMA consulta de verdade, a resposta sem dia e sem
@@ -2009,38 +1633,24 @@ describe("6. o modelo que diz que fez sem ter feito, num turno tardio", () => {
   // ferramenta rodou no turno e o procedimento pedido nao foi marcado. Sobra
   // so o verificador por modelo, que aqui e o falso que aprova.
   it.fails("depois de marcar uma consulta, 'Está marcado!' para OUTRO procedimento, sem nenhuma ferramenta: não pode sair", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     await marcarASexta(c);
-    const preco = "A Limpeza de pele custa R$ 120,00 no particular, com a Dra. Ana Lima.";
-    respondeu(
-      await c.fala({
-        texto: "E a limpeza de pele, quanto custa?",
-        roteiro: [
-          ferramenta("buscar_procedimento", {
-            procedimento: codigoDoProcedimento(CADASTRO, PROC.limpeza),
-            convenio: null,
-          }),
-          final(preco),
-        ],
+    await modeloResponde(c, "E a limpeza de pele, quanto custa?", PRECO_DA_LIMPEZA, [
+      ferramenta("buscar_procedimento", {
+        procedimento: codigoDoProcedimento(CADASTRO, PROC.limpeza),
+        convenio: null,
       }),
-      preco,
-    );
-    const tchau = "Combinado.";
-    respondeu(await c.fala({ texto: "Vou pensar", roteiro: [final(tchau)] }), tchau);
-    const certo = "Claro, é só me dizer.";
-    respondeu(await c.fala({ texto: "Já volto", roteiro: [final(certo)] }), certo);
-
+    ]);
+    await conversaFiada(c, ["Vou pensar", "Já volto"]);
     const alucinou = "Está marcado!";
-    const t = await c.fala({
-      texto: "Pode marcar a limpeza de pele para segunda de manhã",
-      roteiro: [final(alucinou)],
-    });
-    barrado(c, t, alucinou);
-    expect(c.consultas).toHaveLength(1);
+    barrado(
+      c,
+      await c.fala({
+        texto: "Pode marcar a limpeza de pele para segunda de manhã",
+        roteiro: [final(alucinou)],
+      }),
+      alucinou,
+    );
   });
 });
 
@@ -2055,45 +1665,21 @@ describe("7. muda de assunto várias vezes e volta para a marcação", () => {
   }
 
   it("a coleta não recomeça: o nome fica de uma fala para a outra, mesmo com a reserva vencendo no meio", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
-
-    await c.fala({
-      texto: "Quero marcar uma consulta à tarde",
-      roteiro: [
-        ferramenta("buscar_horario", busca({ periodo: "tarde" })),
-        final(
-          "Tenho quarta, 21/10 às 14:00 com a Dra. Ana Lima na unidade Centro, ou quinta, 22/10 às 13:00 com o Dr. Bruno Costa. Qual prefere?",
-        ),
-      ],
-    });
-    const reservou =
-      "Reservei quarta, 21/10 às 14:00 com a Dra. Ana Lima, na unidade Centro, por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.";
-    const t2 = await c.fala({
-      texto: "Quarta às 14h",
-      roteiro: [ferramenta("reservar_horario", { horario: "h2" }), final(reservou)],
-    });
-    respondeu(t2, reservou);
+    const c = clinicaComDuasUnidades();
+    await modeloResponde(c, "Quero marcar uma consulta à tarde", OFERTA_DA_TARDE, [
+      ferramenta("buscar_horario", busca({ periodo: "tarde" })),
+    ]);
+    const t2 = await modeloResponde(c, "Quarta às 14h", RESERVOU_QUARTA, [
+      ferramenta("reservar_horario", { horario: "h2" }),
+    ]);
     const reserva = t2.estado.slot_hold_id;
     expect(reserva).not.toBeNull();
-
-    const falta = "Obrigada! Agora só falta sua data de nascimento.";
-    const t3 = await c.fala({
-      texto: "Meu nome é Maria da Silva Souza",
-      roteiro: [
-        ferramenta("registrar_dados_do_paciente", {
-          nome_completo: "Fulano da Silva Souza",
-          data_nascimento: null,
-          para_o_titular: true,
-          campos_mascarados: [],
-        }),
-        final(falta),
-      ],
-    });
-    respondeu(t3, falta);
+    await modeloResponde(
+      c,
+      "Meu nome é Maria da Silva Souza",
+      "Obrigada! Agora só falta sua data de nascimento.",
+      [soONome()],
+    );
     expect(c.dados).toMatchObject({
       nome_completo: true,
       data_nascimento: false,
@@ -2123,48 +1709,35 @@ describe("7. muda de assunto várias vezes e volta para a marcação", () => {
       );
     };
 
-    const preco =
-      "A consulta custa R$ 280,00 com o Dr. Bruno Costa e R$ 300,00 com a Dra. Ana Lima, no particular.";
-    const t4 = await c.fala({
-      texto: "Só uma dúvida, quanto custa a consulta?",
-      roteiro: [
-        ferramenta("buscar_procedimento", {
-          procedimento: P_CONSULTA,
-          convenio: null,
-        }),
-        final(preco),
-      ],
-    });
-    respondeu(t4, preco);
-    nadaMudou(t4);
-
-    const limpeza =
-      "A Limpeza de pele custa R$ 120,00 no particular, com a Dra. Ana Lima.";
-    const t5 = await c.fala({
-      texto: "E a limpeza de pele?",
-      roteiro: [
+    nadaMudou(
+      await modeloResponde(
+        c,
+        "Só uma dúvida, quanto custa a consulta?",
+        PRECO_DA_CONSULTA,
+        [precoDaConsulta()],
+      ),
+    );
+    // O preco de outro procedimento nao troca o pedido da marcacao.
+    nadaMudou(
+      await modeloResponde(c, "E a limpeza de pele?", PRECO_DA_LIMPEZA, [
         ferramenta("buscar_procedimento", {
           procedimento: codigoDoProcedimento(CADASTRO, PROC.limpeza),
           convenio: null,
         }),
-        final(limpeza),
-      ],
-    });
-    respondeu(t5, limpeza);
-    // O preco de outro procedimento nao troca o pedido da marcacao.
-    nadaMudou(t5);
-
-    const endereco = `A unidade Centro fica na ${ENDERECO_DO_CENTRO}.`;
-    const t6 = await c.fala({
-      texto: "Onde fica mesmo?",
-      roteiro: [ferramenta("consultar_unidades", { unidade: "u2" }), final(endereco)],
-    });
-    respondeu(t6, endereco);
-    nadaMudou(t6);
+      ]),
+    );
+    nadaMudou(
+      await modeloResponde(
+        c,
+        "Onde fica mesmo?",
+        `A unidade Centro fica na ${ENDERECO_DO_CENTRO}.`,
+        [ferramenta("consultar_unidades", { unidade: "u2" })],
+      ),
+    );
     expect(c.reservasVivas).toHaveLength(1);
 
-    // Doze minutos depois da reserva: ela venceu. O fora do assunto responde
-    // a frase do dono e o estado fica sem a reserva, com os horarios e o nome.
+    // Doze minutos depois da reserva: ela venceu. O fora do assunto responde a
+    // frase do dono e o estado fica sem a reserva, com os horarios e o nome.
     const t7 = await c.fala({
       texto: "Quem ganhou o jogo ontem?",
       roteiro: [ferramenta("fora_do_assunto", {})],
@@ -2183,25 +1756,14 @@ describe("7. muda de assunto várias vezes e volta para a marcação", () => {
       faltam: ["data_nascimento"],
     });
 
-    // Volta: o nascimento e o mesmo horario, reservado de novo. So o que
-    // faltava e pedido: o nome nao volta.
-    const confirma =
-      "Obrigada! Confirma a Consulta com a Dra. Ana Lima na quarta, 21/10 às 14:00, na unidade Centro, no particular?";
-    const t8 = await c.fala({
-      texto: "Voltando: nasci em 12/03/1985 e pode ser aquela de quarta às 14h",
-      roteiro: [
-        ferramenta("registrar_dados_do_paciente", {
-          nome_completo: null,
-          data_nascimento: "1985-03-12",
-          para_o_titular: true,
-          campos_mascarados: [],
-        }),
-        ferramenta("reservar_horario", { horario: "h2" }),
-        final(confirma),
-      ],
-    });
-    respondeu(t8, confirma);
-    // O bloco do estado disse que a reserva tinha vencido.
+    // Volta: o nascimento e o mesmo horario, reservado de novo. So o que faltava
+    // e pedido: o nome nao volta.
+    const t8 = await modeloResponde(
+      c,
+      "Voltando: nasci em 12/03/1985 e pode ser aquela de quarta às 14h",
+      CONFIRMA_QUARTA,
+      [soONascimento(), ferramenta("reservar_horario", { horario: "h2" })],
+    );
     expect(blocoDoEstado(t8)).toContain("Dados já informados: nome completo.");
     expect(saidasDoTurno(t8)).toEqual([
       {
@@ -2224,13 +1786,7 @@ describe("7. muda de assunto várias vezes e volta para a marcação", () => {
       }),
     ]);
 
-    const marcou =
-      "Pronto! Sua Consulta de quarta, 21/10 às 14:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.";
-    const t9 = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("agendar", {}), final(marcou)],
-    });
-    respondeu(t9, marcou);
+    await modeloResponde(c, "Sim", MARCOU_QUARTA, [ferramenta("agendar", {})]);
     expect(c.consultas).toEqual([
       expect.objectContaining({ starts_at: iso("2026-10-21", "14:00") }),
     ]);
@@ -2244,20 +1800,16 @@ describe("7. muda de assunto várias vezes e volta para a marcação", () => {
     ]);
   });
 
-  it("muda de procedimento e de pagamento no meio: o nome fica, a carteirinha passa a faltar e a reserva antiga sai", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+  it("muda de pagamento no meio: o nome fica, a carteirinha passa a faltar e a reserva antiga sai", async () => {
+    const c = clinicaComDuasUnidades();
     await conversaEmAndamento(c);
     const reservaDoParticular = c.estado.slot_hold_id;
 
-    const unimed =
-      "Sim, a Consulta com a Dra. Ana Lima é atendida pela Unimed (Nacional). Tenho quarta, 21/10 às 15:00, na unidade Centro. Pode ser?";
-    const t7 = await c.fala({
-      texto: "Na verdade vou usar a Unimed Nacional, tem quarta às 15h?",
-      roteiro: [
+    const t7 = await modeloResponde(
+      c,
+      "Na verdade vou usar a Unimed Nacional, tem quarta às 15h?",
+      "Sim, a Consulta com a Dra. Ana Lima é atendida pela Unimed (Nacional). Tenho quarta, 21/10 às 15:00, na unidade Centro. Pode ser?",
+      [
         ferramenta(
           "buscar_horario",
           busca({
@@ -2266,10 +1818,8 @@ describe("7. muda de assunto várias vezes e volta para a marcação", () => {
             hora: "15:00",
           }),
         ),
-        final(unimed),
       ],
-    });
-    respondeu(t7, unimed);
+    );
     expect(t7.estado).toMatchObject({
       insurance_id: CONV.unimed,
       particular: false,
@@ -2281,16 +1831,12 @@ describe("7. muda de assunto várias vezes e volta para a marcação", () => {
     const codigoDaUnimed = (
       saidasDoTurno(t7)[0]?.horarios as { codigo: string }[]
     )[0]?.codigo;
-    const reservou =
-      "Reservei quarta, 21/10 às 15:00 com a Dra. Ana Lima, na unidade Centro, por 10 minutos. Agora me envie sua data de nascimento e o número da carteirinha.";
-    const t8 = await c.fala({
-      texto: "Pode ser",
-      roteiro: [
-        ferramenta("reservar_horario", { horario: codigoDaUnimed }),
-        final(reservou),
-      ],
-    });
-    respondeu(t8, reservou);
+    await modeloResponde(
+      c,
+      "Pode ser",
+      "Reservei quarta, 21/10 às 15:00 com a Dra. Ana Lima, na unidade Centro, por 10 minutos. Agora me envie sua data de nascimento e o número da carteirinha.",
+      [ferramenta("reservar_horario", { horario: codigoDaUnimed })],
+    );
     expect(c.reservasVivas).toEqual([
       expect.objectContaining({
         service_link_id: VINC.consultaAnaUnimed,
@@ -2303,33 +1849,30 @@ describe("7. muda de assunto várias vezes e volta para a marcação", () => {
       faltam: ["data_nascimento", "carteirinha"],
     });
 
-    const confirma =
-      "Obrigada! Confirma a Consulta com a Dra. Ana Lima na quarta, 21/10 às 15:00, na unidade Centro, pela Unimed (Nacional)?";
-    const t9 = await c.fala({
-      texto: "Carteirinha 12345678, nasci em 12/03/1985",
-      roteiro: [
+    const t9 = await modeloResponde(
+      c,
+      "Carteirinha 12345678, nasci em 12/03/1985",
+      "Obrigada! Confirma a Consulta com a Dra. Ana Lima na quarta, 21/10 às 15:00, na unidade Centro, pela Unimed (Nacional)?",
+      [
         ferramenta("registrar_dados_do_paciente", {
           nome_completo: null,
           data_nascimento: "1985-03-12",
           para_o_titular: true,
           campos_mascarados: ["carteirinha"],
         }),
-        final(confirma),
       ],
-    });
-    respondeu(t9, confirma);
+    );
     expect(t9.estado.etapa).toBe("aguardando_confirmacao");
     expect(c.dados).toMatchObject({ carteirinha: true, faltam: [] });
     // A carteirinha foi lida pelo servidor: nunca foi ao modelo.
     expect(JSON.stringify(c.cenario.corpos)).not.toContain("12345678");
 
-    const marcou =
-      "Pronto! Sua Consulta de quarta, 21/10 às 15:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.";
-    const t10 = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("agendar", {}), final(marcou)],
-    });
-    respondeu(t10, marcou);
+    await modeloResponde(
+      c,
+      "Sim",
+      "Pronto! Sua Consulta de quarta, 21/10 às 15:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.",
+      [ferramenta("agendar", {})],
+    );
     expect(c.consultas).toEqual([
       expect.objectContaining({
         service_link_id: VINC.consultaAnaUnimed,
@@ -2339,26 +1882,22 @@ describe("7. muda de assunto várias vezes e volta para a marcação", () => {
   });
 
   it("o segundo assunto de fora na mesma conversa passa para a equipe, com a marcação contada na nota", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     await conversaEmAndamento(c);
-    const t7 = await c.fala({
-      texto: "Quem ganhou o jogo ontem?",
-      roteiro: [ferramenta("fora_do_assunto", {})],
-    });
-    respondeu(t7, FRASE_FORA_DO_ASSUNTO);
-    const t8 = await c.fala({
-      texto: "E a previsão do tempo?",
-      roteiro: [ferramenta("fora_do_assunto", {})],
-    });
-    expect(oQueDecidiu(t8)).toMatchObject({
-      desfecho: "escalou",
-      motivo: "fora_do_assunto",
-    });
-    expect(t8.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
+    respondeu(
+      await c.fala({
+        texto: "Quem ganhou o jogo ontem?",
+        roteiro: [ferramenta("fora_do_assunto", {})],
+      }),
+      FRASE_FORA_DO_ASSUNTO,
+    );
+    passou(
+      await c.fala({
+        texto: "E a previsão do tempo?",
+        roteiro: [ferramenta("fora_do_assunto", {})],
+      }),
+      { desfecho: "escalou", motivo: "fora_do_assunto" },
+    );
     expect(c.notasInternas.at(-1)).toContain("quarta, 21/10 às 14:00");
     await nadaMaisSai(c, ["Nasci em 12/03/1985", "Sim"]);
     expect(c.consultas).toEqual([]);
@@ -2372,86 +1911,26 @@ describe("8. o preparo aprovado depois de marcar", () => {
     rt: RT_DE_TESTE,
     texto: TEXTO_DO_PREPARO_DE_TESTE,
   });
-  const MARCOU =
-    "Pronto! Sua Limpeza de pele de quinta, 22/10 às 08:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.";
 
-  /** Busca, reserva, dados e confirmação da limpeza: a F2 depois de marcar. */
+  /** A marcação da limpeza: a F2 colada pelo sistema, pelo filtro inteiro. */
   async function marcarALimpeza(c: ConversaLonga) {
-    await c.fala({
-      texto: "Quero marcar limpeza de pele com a Dra. Ana de manhã",
-      roteiro: [
-        ferramenta(
-          "buscar_horario",
-          buscaDaLimpeza({ profissional: R_ANA, periodo: "manha" }),
-        ),
-        final(
-          "Tenho quarta, 21/10 às 08:00 ou quinta, 22/10 às 08:00 com a Dra. Ana Lima. Qual prefere?",
-        ),
-      ],
-    });
-    const reservou =
-      "Reservei quinta, 22/10 às 08:00 com a Dra. Ana Lima por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.";
-    respondeu(
-      await c.fala({
-        texto: "Quinta às 8",
-        roteiro: [ferramenta("reservar_horario", { horario: "h2" }), final(reservou)],
-      }),
-      reservou,
-    );
-    const confirma =
-      "Obrigada! Confirma a Limpeza de pele com a Dra. Ana Lima na quinta, 22/10 às 08:00, no particular?";
-    respondeu(
-      await c.fala({
-        texto: "Maria da Silva Souza, 12/03/1985",
-        roteiro: [
-          ferramenta("registrar_dados_do_paciente", {
-            nome_completo: "Fulano da Silva Souza",
-            data_nascimento: "1985-03-12",
-            para_o_titular: true,
-            campos_mascarados: [],
-          }),
-          final(confirma),
-        ],
-      }),
-      confirma,
-    );
-    const t4 = await c.fala({
+    await ateOConfirmaDaLimpeza(c);
+    const t = await c.fala({
       texto: "Confirmo",
-      roteiro: [ferramenta("agendar", {}), final(MARCOU)],
+      roteiro: [ferramenta("agendar", {}), final(MARCOU_LIMPEZA)],
     });
-    // A F2: o sistema cola depois da resposta do modelo, pelo filtro inteiro.
-    respondeu(t4, `${MARCOU}\n\n${FRASE_DO_PREPARO_DEPOIS_DE_MARCAR}`);
-    return t4;
+    respondeu(t, `${MARCOU_LIMPEZA}\n\n${FRASE_DO_PREPARO_DEPOIS_DE_MARCAR}`);
   }
 
-  it("só o texto aprovado sai, palavra por palavra, numa mensagem só; o modelo nunca lê o texto; escrever o preparo é barrado", async () => {
-    const c = new ConversaLonga(contexto, { catalogo: CATALOGO_COM_PREPARO });
-    conversaDoTeste = c;
-    await marcarALimpeza(c);
-
-    const preco = "A Limpeza de pele custa R$ 120,00 no particular, com a Dra. Ana Lima.";
-    const t5 = await c.fala({
-      texto: "Quanto custa mesmo?",
-      roteiro: [
-        ferramenta("buscar_procedimento", {
-          procedimento: P_LIMPEZA,
-          convenio: null,
-        }),
-        final(preco),
-      ],
-    });
-    // A F2 so no turno que marcou.
-    respondeu(t5, preco);
-
-    // O pedido: sem nenhum texto do modelo, sem o filtro e sem o verificador.
-    const pedidosAoVerificador = c.cenario.verificacao.pedidos.length;
-    const t6 = await c.fala({
-      texto: "Me manda a orientação de preparo",
+  /** O pedido: uma chamada ao modelo, sem texto dele, e só o texto aprovado. */
+  async function pedirOPreparo(c: ConversaLonga, texto: string) {
+    const t = await c.fala({
+      texto,
       roteiro: [ferramenta("enviar_preparo", { procedimento: P_LIMPEZA })],
     });
-    expect(t6.enviadas).toEqual([MENSAGEM_DO_PREPARO]);
-    expect(t6.chamadasAoModelo).toBe(1);
-    expect(t6.decisao).toMatchObject({
+    expect(t.enviadas).toEqual([MENSAGEM_DO_PREPARO]);
+    expect(t.chamadasAoModelo).toBe(1);
+    expect(t.decisao).toMatchObject({
       desfecho: "enviou_preparo",
       preparo_versao_id: CATALOGO_COM_PREPARO.preparosEmVigor?.get(PROC.limpeza)
         ?.versaoId,
@@ -2461,53 +1940,53 @@ describe("8. o preparo aprovado depois de marcar", () => {
       escalation_reason: null,
       tool_used: "enviar_preparo",
     });
+    expect(t.statusDaConversa).toBe("ia_atendendo");
+    return t;
+  }
+
+  it("só o texto aprovado sai, palavra por palavra, numa mensagem só; o modelo nunca lê o texto; copiar um trecho é barrado", async () => {
+    const c = clinicaDeUmaUnidade(CATALOGO_COM_PREPARO);
+    await marcarALimpeza(c);
+
+    // A F2 so no turno que marcou.
+    await modeloResponde(c, "Quanto custa mesmo?", PRECO_DA_LIMPEZA, [
+      precoDaLimpeza(),
+    ]);
+
+    // Sem nenhum texto do modelo, sem o filtro e sem o verificador.
+    const pedidosAoVerificador = c.cenario.verificacao.pedidos.length;
+    const t6 = await pedirOPreparo(c, "Me manda a orientação de preparo");
     expect(c.cenario.verificacao.pedidos).toHaveLength(pedidosAoVerificador);
-    expect(t6.statusDaConversa).toBe("ia_atendendo");
     expect(t6.estado).toMatchObject({
       etapa: "pos_marcacao",
       appointment_id: c.consultas[0]?.id,
     });
-    const linha = c.cenario.banco
-      .linhas("message")
-      .find((m) => m.job_id === t6.job);
-    expect(linha).toMatchObject({
-      author: "sistema",
-      body: MENSAGEM_DO_PREPARO,
-      delivery_status: "enviada",
-      billable: false,
-      cost_cents: 0,
-    });
+    expect(
+      c.cenario.banco.linhas("message").find((m) => m.job_id === t6.job),
+    ).toMatchObject({ author: "sistema", body: MENSAGEM_DO_PREPARO });
 
     // O turno seguinte: o modelo le o substituto, nunca o texto (o ajudante
     // confere o texto em todo corpo).
-    const quando =
-      "Sua Limpeza de pele está marcada para quinta, 22/10 às 08:00, pendente da aprovação da equipe.";
-    const t7 = await c.fala({
-      texto: "Qual é mesmo o horário?",
-      roteiro: [final(quando)],
-    });
-    respondeu(t7, quando);
-    const noHistorico = JSON.stringify(t7.corpos[0]?.input);
-    expect(noHistorico).toContain(
+    const t7 = await modeloResponde(
+      c,
+      "Qual é mesmo o horário?",
+      HORARIO_DA_LIMPEZA,
+    );
+    expect(JSON.stringify(t7.corpos[0]?.input)).toContain(
       substitutoDaMensagemDoPreparo("Limpeza de pele"),
     );
 
     // O preparo pedido junto de outra ferramenta nao sai: volta ao modelo, e o
     // que sai e so a resposta dele, sem o texto.
-    const separada =
-      "A Limpeza de pele custa R$ 120,00. Quer receber a orientação de preparo?";
-    const t8 = await c.fala({
-      texto: "Quanto custa e me manda o preparo de novo",
-      roteiro: [
-        ferramenta("buscar_procedimento", {
-          procedimento: P_LIMPEZA,
-          convenio: null,
-        }),
+    const t8 = await modeloResponde(
+      c,
+      "Quanto custa e me manda o preparo de novo",
+      "A Limpeza de pele custa R$ 120,00. Quer receber a orientação de preparo?",
+      [
+        precoDaLimpeza(),
         ferramenta("enviar_preparo", { procedimento: P_LIMPEZA }),
-        final(separada),
       ],
-    });
-    respondeu(t8, separada);
+    );
     expect(saidasDoTurno(t8).at(-1)).toEqual({
       ok: false,
       motivo: "vai_sozinha",
@@ -2518,112 +1997,65 @@ describe("8. o preparo aprovado depois de marcar", () => {
       texto: "O que mais eu preciso saber?",
       roteiro: [final(FRASE_DO_PREPARO_SO_DO_TRECHO)],
     });
-    expect(oQueDecidiu(t9)).toMatchObject({
+    passou(t9, {
       desfecho: "bloqueou",
       motivo: "conformidade",
       regra: "orientacao_clinica",
       camada: "regra",
     });
-    expect(t9.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
-    expect(c.recebidasPeloPaciente.join("\n").split(MENSAGEM_DO_PREPARO)).toHaveLength(
-      2,
-    );
 
     await nadaMaisSai(c, ["Me manda o preparo de novo", "Sim"]);
     // O preparo saiu uma vez so, e nada do texto saiu em outra mensagem.
     const foraDoPreparo = c.recebidasPeloPaciente.filter(
       (m) => m !== MENSAGEM_DO_PREPARO,
     );
+    expect(foraDoPreparo).toHaveLength(c.recebidasPeloPaciente.length - 1);
     for (const frase of TEXTO_DO_PREPARO_DE_TESTE.split("\n")) {
       expect(foraDoPreparo.join("\n")).not.toContain(frase);
     }
   });
 
   it("o pedido do preparo no meio do 'Confirma' desarma a pergunta: o 'sim' seguinte não marca, e a pergunta de novo vale", async () => {
-    const c = new ConversaLonga(contexto, { catalogo: CATALOGO_COM_PREPARO });
-    conversaDoTeste = c;
-    await c.fala({
-      texto: "Quero marcar limpeza de pele com a Dra. Ana de manhã",
-      roteiro: [
-        ferramenta(
-          "buscar_horario",
-          buscaDaLimpeza({ profissional: R_ANA, periodo: "manha" }),
-        ),
-        final(
-          "Tenho quarta, 21/10 às 08:00 ou quinta, 22/10 às 08:00 com a Dra. Ana Lima. Qual prefere?",
-        ),
-      ],
-    });
-    const reservou =
-      "Reservei quinta, 22/10 às 08:00 com a Dra. Ana Lima por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.";
-    await c.fala({
-      texto: "Quinta às 8",
-      roteiro: [ferramenta("reservar_horario", { horario: "h2" }), final(reservou)],
-    });
-    const confirma =
-      "Obrigada! Confirma a Limpeza de pele com a Dra. Ana Lima na quinta, 22/10 às 08:00, no particular?";
-    const t3 = await c.fala({
-      texto: "Maria da Silva Souza, 12/03/1985",
-      roteiro: [
-        ferramenta("registrar_dados_do_paciente", {
-          nome_completo: "Fulano da Silva Souza",
-          data_nascimento: "1985-03-12",
-          para_o_titular: true,
-          campos_mascarados: [],
-        }),
-        final(confirma),
-      ],
-    });
-    expect(t3.estado.etapa).toBe("aguardando_confirmacao");
+    const c = clinicaDeUmaUnidade(CATALOGO_COM_PREPARO);
+    await ateOConfirmaDaLimpeza(c);
 
-    const t4 = await c.fala({
-      texto: "Antes de confirmar, me manda a orientação de preparo",
-      roteiro: [ferramenta("enviar_preparo", { procedimento: P_LIMPEZA })],
-    });
-    expect(t4.enviadas).toEqual([MENSAGEM_DO_PREPARO]);
+    const t4 = await pedirOPreparo(
+      c,
+      "Antes de confirmar, me manda a orientação de preparo",
+    );
     expect(t4.estado.etapa).not.toBe("aguardando_confirmacao");
     expect(c.reservasVivas).toHaveLength(1);
 
     // O "sim" agora responde ao preparo, nao ao "Confirma": nao marca.
-    const deNovo =
-      "Confirma a Limpeza de pele com a Dra. Ana Lima na quinta, 22/10 às 08:00, no particular?";
-    const t5 = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("agendar", {}), final(deNovo)],
-    });
-    respondeu(t5, deNovo);
+    const t5 = await modeloResponde(c, "Sim", CONFIRMA_LIMPEZA, [
+      ferramenta("agendar", {}),
+    ]);
     expect(saidasDoTurno(t5)[0]).toEqual({
       resultado: "sem_confirmacao_do_paciente",
     });
     expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
     expect(c.consultas).toEqual([]);
-    expect(t5.estado.etapa).toBe("aguardando_confirmacao");
-    expect(t5.estado.falhas_seguidas).toBe(1);
+    expect(t5.estado).toMatchObject({
+      etapa: "aguardando_confirmacao",
+      falhas_seguidas: 1,
+    });
 
     const t6 = await c.fala({
       texto: "Sim",
-      roteiro: [ferramenta("agendar", {}), final(MARCOU)],
+      roteiro: [ferramenta("agendar", {}), final(MARCOU_LIMPEZA)],
     });
-    respondeu(t6, `${MARCOU}\n\n${FRASE_DO_PREPARO_DEPOIS_DE_MARCAR}`);
+    respondeu(t6, `${MARCOU_LIMPEZA}\n\n${FRASE_DO_PREPARO_DEPOIS_DE_MARCAR}`);
     expect(c.consultas).toHaveLength(1);
     expect(t6.estado.falhas_seguidas).toBe(0);
 
-    // O preparo de novo, de outro job, sai inteiro; e o pedido com a situacao
-    // da pessoa fica com a equipe.
-    const t7 = await c.fala({
-      texto: "Me manda de novo a orientação de preparo",
-      roteiro: [ferramenta("enviar_preparo", { procedimento: P_LIMPEZA })],
-    });
-    expect(t7.enviadas).toEqual([MENSAGEM_DO_PREPARO]);
-    const t8 = await c.fala({
-      texto: "Me manda o preparo, eu tomo remédio pra pressão",
-    });
-    expect(oQueDecidiu(t8)).toMatchObject({
-      desfecho: "escalou",
-      motivo: "assunto_clinico",
-    });
-    expect(t8.chamadasAoModelo).toBe(0);
-    expect(t8.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
+    // O preparo de novo, de outro job, sai inteiro; e o pedido com a situacao da
+    // pessoa fica com a equipe, sem modelo.
+    await pedirOPreparo(c, "Me manda de novo a orientação de preparo");
+    passou(
+      await c.fala({ texto: "Me manda o preparo, eu tomo remédio pra pressão" }),
+      { desfecho: "escalou", motivo: "assunto_clinico" },
+      0,
+    );
     await nadaMaisSai(c, ["Oi?"]);
   });
 
@@ -2634,46 +2066,25 @@ describe("8. o preparo aprovado depois de marcar", () => {
   ])(
     "a pergunta '%s' respondida pelo modelo, sem a ferramenta: barrada; nada do texto do modelo sai",
     async (texto, doModelo) => {
-      const c = new ConversaLonga(contexto, { catalogo: CATALOGO_COM_PREPARO });
-      conversaDoTeste = c;
+      const c = clinicaDeUmaUnidade(CATALOGO_COM_PREPARO);
       await marcarALimpeza(c);
-      const quando =
-        "Sua Limpeza de pele está marcada para quinta, 22/10 às 08:00, pendente da aprovação da equipe.";
-      respondeu(
-        await c.fala({ texto: "Qual é mesmo o horário?", roteiro: [final(quando)] }),
-        quando,
-      );
-      const tchau = "Por nada!";
-      respondeu(await c.fala({ texto: "Obrigada", roteiro: [final(tchau)] }), tchau);
-      const espera = "Claro, é só me dizer.";
-      respondeu(
-        await c.fala({ texto: "Vou ver uma coisa aqui", roteiro: [final(espera)] }),
-        espera,
-      );
-      const t = await c.fala({ texto, roteiro: [final(doModelo)] });
-      expect(oQueDecidiu(t)).toMatchObject({
+      await modeloResponde(c, "Qual é mesmo o horário?", HORARIO_DA_LIMPEZA);
+      await conversaFiada(c, ["Obrigada", "Vou ver uma coisa aqui"]);
+      passou(await c.fala({ texto, roteiro: [final(doModelo)] }), {
         desfecho: "bloqueou",
         motivo: "conformidade",
         camada: "regra",
       });
-      expect(t.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
       expect(c.recebidasPeloPaciente.join("\n")).not.toContain(doModelo);
       await nadaMaisSai(c, ["Sim"]);
     },
   );
 
   it("a versão que sai de vigor antes do envio: nada do preparo sai; a frase e a equipe, com a nota", async () => {
-    const c = new ConversaLonga(contexto, { catalogo: CATALOGO_COM_PREPARO });
-    conversaDoTeste = c;
+    const c = clinicaDeUmaUnidade(CATALOGO_COM_PREPARO);
     await marcarALimpeza(c);
-    const quando =
-      "Sua Limpeza de pele está marcada para quinta, 22/10 às 08:00, pendente da aprovação da equipe.";
-    respondeu(
-      await c.fala({ texto: "Qual é mesmo o horário?", roteiro: [final(quando)] }),
-      quando,
-    );
-    const tchau = "Por nada!";
-    respondeu(await c.fala({ texto: "Obrigada", roteiro: [final(tchau)] }), tchau);
+    await modeloResponde(c, "Qual é mesmo o horário?", HORARIO_DA_LIMPEZA);
+    await conversaFiada(c, ["Obrigada"]);
 
     // O RT saiu: o catalogo do turno ainda tem a versao; a leitura do envio, nao.
     c.preparoForaDeVigor = true;
@@ -2681,12 +2092,8 @@ describe("8. o preparo aprovado depois de marcar", () => {
       texto: "Me manda a orientação de preparo",
       roteiro: [ferramenta("enviar_preparo", { procedimento: P_LIMPEZA })],
     });
-    expect(oQueDecidiu(t7)).toMatchObject({
-      desfecho: "escalou",
-      motivo: "assunto_clinico",
-    });
+    passou(t7, { desfecho: "escalou", motivo: "assunto_clinico" });
     expect(t7.decisao?.preparo_versao_id).toBeUndefined();
-    expect(t7.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
     expect(trilhaDoTurno(t7)).toContain(PASSO_DO_PREPARO_FORA_DE_VIGOR);
     expect(c.notasInternas.at(-1)).toContain("Resumo do assistente");
     await nadaMaisSai(c, ["Me manda o preparo", "Oi?"]);
@@ -2697,28 +2104,21 @@ describe("8. o preparo aprovado depois de marcar", () => {
 });
 
 describe("9. o 'sim' solto não confirma nada", () => {
-  const CONFIRMA_QUARTA =
+  const CONFIRMA_DE_NOVO =
     "Confirma a Consulta com a Dra. Ana Lima na quarta, 21/10 às 14:00, na unidade Centro, no particular?";
-  const MARCOU_QUARTA =
-    "Pronto! Sua Consulta de quarta, 21/10 às 14:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.";
 
   it("marcação: o 'sim' depois de outra mensagem da clínica não marca; a pergunta de novo vale", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     await comAPerguntaConfirmaNoAr(c);
 
     c.daClinica("A Clínica Bem Estar deseja uma ótima semana!");
-    const t8 = await c.fala(
-      {
-        texto: "Sim",
-        roteiro: [ferramenta("agendar", {}), final(CONFIRMA_QUARTA)],
-      },
+    const t8 = await modeloResponde(
+      c,
+      "Sim",
+      CONFIRMA_DE_NOVO,
+      [ferramenta("agendar", {})],
       20_000,
     );
-    respondeu(t8, CONFIRMA_QUARTA);
     expect(saidasDoTurno(t8)[0]).toEqual({
       resultado: "sem_confirmacao_do_paciente",
     });
@@ -2730,14 +2130,13 @@ describe("9. o 'sim' solto não confirma nada", () => {
     });
 
     // Agora o "sim" vem logo depois da pergunta: marca.
-    const t9 = await c.fala(
-      {
-        texto: "Sim",
-        roteiro: [ferramenta("agendar", {}), final(MARCOU_QUARTA)],
-      },
+    const t9 = await modeloResponde(
+      c,
+      "Sim",
+      MARCOU_QUARTA,
+      [ferramenta("agendar", {})],
       20_000,
     );
-    respondeu(t9, MARCOU_QUARTA);
     expect(c.consultas).toHaveLength(1);
     expect(t9.estado).toMatchObject({
       etapa: "pos_marcacao",
@@ -2746,23 +2145,16 @@ describe("9. o 'sim' solto não confirma nada", () => {
   });
 
   it("marcação: o 'sim' depois que a reserva venceu não marca; e o 'sim' seguinte, sem pergunta, também não", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     await comAPerguntaConfirmaNoAr(c);
 
-    const venceu =
-      "O horário que estava reservado não vale mais. Quer que eu procure de novo?";
-    const t8 = await c.fala(
-      {
-        texto: "Sim",
-        roteiro: [ferramenta("agendar", {}), final(venceu)],
-      },
-      11 * 60_000,
+    const t8 = await modeloResponde(
+      c,
+      "Sim",
+      "O horário que estava reservado não vale mais. Quer que eu procure de novo?",
+      [ferramenta("agendar", {})],
+      11 * UM_MINUTO_MS,
     );
-    respondeu(t8, venceu);
     expect(saidasDoTurno(t8)[0]).toEqual({ resultado: "reserva_vencida" });
     expect(c.consultas).toEqual([]);
     expect(c.reservasVivas).toEqual([]);
@@ -2780,12 +2172,12 @@ describe("9. o 'sim' solto não confirma nada", () => {
 
     // "Sim" de novo: a etapa nao esta armada, e a RPC nem e chamada.
     const chamadas = c.cenario.banco.chamadasDe("agendar_pela_ia").length;
-    const semPergunta = "Para qual horário? Posso procurar de novo.";
-    const t9 = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("agendar", {}), final(semPergunta)],
-    });
-    respondeu(t9, semPergunta);
+    const t9 = await modeloResponde(
+      c,
+      "Sim",
+      "Para qual horário? Posso procurar de novo.",
+      [ferramenta("agendar", {})],
+    );
     expect(saidasDoTurno(t9)[0]).toEqual({
       resultado: "sem_confirmacao_do_paciente",
     });
@@ -2795,30 +2187,21 @@ describe("9. o 'sim' solto não confirma nada", () => {
   });
 
   it("cancelamento: campanha no meio, a pergunta vencida, outro assunto e a citação de outra mensagem: nada cancela até o 'sim' logo depois da pergunta", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     const { c1, c2 } = consultasDoContato(c.cenario.banco);
-    const T1 = "Confirma o cancelamento da sua consulta de quinta, 22/10 às 14:00?";
-    const pedido = {
-      roteiro: () => [
-        ferramenta("consultar_minhas_consultas", {}),
-        ferramenta("pedir_cancelamento", { consulta: "c1" }),
-      ],
-    };
     const intacta = () => {
       expect(c1.status).toBe("agendado");
       expect(c2.status).toBe("agendado");
       expect(c.cenario.banco.chamadasDe("cancelar_consulta_pela_ia")).toEqual([]);
     };
+    const cancelar = () => [ferramenta("cancelar_consulta", {})];
 
-    const t1 = await c.fala({
-      texto: "Preciso cancelar minha consulta de quinta",
-      roteiro: pedido.roteiro(),
-    });
-    respondeu(t1, `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${T1}`);
+    const t1 = await sistemaResponde(
+      c,
+      "Preciso cancelar minha consulta de quinta",
+      T1_QUINTA,
+      pedirOCancelamento(),
+    );
     expect(t1.estado).toMatchObject({
       etapa: "cancelar",
       pedido_pendente: "cancelar",
@@ -2827,11 +2210,7 @@ describe("9. o 'sim' solto não confirma nada", () => {
 
     // A campanha sai entre a pergunta e o "sim": a pergunta volta, com falha.
     const campanha = c.daClinica("A Clínica Bem Estar deseja uma ótima semana!");
-    const t2 = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("cancelar_consulta", {})],
-    });
-    respondeu(t2, T1);
+    const t2 = await sistemaResponde(c, "Sim", T1_QUINTA, cancelar());
     intacta();
     expect(t2.estado).toMatchObject({
       pedido_pendente: "cancelar",
@@ -2840,71 +2219,60 @@ describe("9. o 'sim' solto não confirma nada", () => {
     expect(trilhaDoTurno(t2).join(" ")).toContain("outra mensagem da clínica");
 
     // Mais de uma hora depois: a pergunta venceu; volta sem falha.
-    const t3 = await c.fala(
-      { texto: "Sim", roteiro: [ferramenta("cancelar_consulta", {})] },
-      61 * 60_000,
+    const t3 = await sistemaResponde(
+      c,
+      "Sim",
+      T1_QUINTA,
+      cancelar(),
+      61 * UM_MINUTO_MS,
     );
-    respondeu(t3, T1);
     intacta();
     expect(t3.estado.falhas_seguidas).toBe(0);
     expect(trilhaDoTurno(t3).join(" ")).toContain("venceu");
 
     // Outro assunto: a pergunta desarma.
-    const preco =
-      "A consulta custa R$ 280,00 com o Dr. Bruno Costa e R$ 300,00 com a Dra. Ana Lima, no particular.";
-    const t4 = await c.fala({
-      texto: "Quanto custa a consulta?",
-      roteiro: [
-        ferramenta("buscar_procedimento", {
-          procedimento: P_CONSULTA,
-          convenio: null,
-        }),
-        final(preco),
-      ],
-    });
-    respondeu(t4, preco);
+    const t4 = await modeloResponde(
+      c,
+      "Quanto custa a consulta?",
+      PRECO_DA_CONSULTA,
+      [precoDaConsulta()],
+    );
     expect(t4.estado.pedido_pendente).toBeNull();
     intacta();
 
     // "Sim" sem pergunta armada: recusado no servidor.
-    const qual = "Claro. Sobre o que é o seu sim?";
-    const t5 = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("cancelar_consulta", {}), final(qual)],
-    });
-    respondeu(t5, qual);
+    const t5 = await modeloResponde(
+      c,
+      "Sim",
+      "Claro. Sobre o que é o seu sim?",
+      cancelar(),
+    );
     expect(saidasDoTurno(t5)[0]).toEqual({
       resultado: "sem_pergunta_de_cancelamento",
     });
     intacta();
     expect(t5.estado.falhas_seguidas).toBe(1);
 
-    const t6 = await c.fala({
-      texto: "Quero cancelar a de quinta",
-      roteiro: pedido.roteiro(),
-    });
-    respondeu(t6, T1);
+    const t6 = await sistemaResponde(
+      c,
+      "Quero cancelar a de quinta",
+      T1_QUINTA,
+      pedirOCancelamento(),
+    );
     expect(t6.estado.falhas_seguidas).toBe(0);
 
     // O "sim" que cita outra mensagem (o botao de uma mensagem antiga).
     const t7 = await c.fala({
       texto: "Sim",
       citacao: { mensagem: campanha },
-      roteiro: [ferramenta("cancelar_consulta", {})],
+      roteiro: cancelar(),
     });
-    respondeu(t7, T1);
+    respondeu(t7, T1_QUINTA);
     intacta();
     expect(t7.estado.falhas_seguidas).toBe(1);
 
     // O "sim" logo depois da pergunta: cancela so a consulta do pedido.
-    const t8 = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("cancelar_consulta", {})],
-    });
-    respondeu(
-      t8,
-      "Tudo bem, sua consulta de 22/10 às 14:00 foi cancelada. Quando quiser marcar de novo, é só chamar por aqui.",
-    );
+    const t8 = await sistemaResponde(c, "Sim", T2_QUINTA, cancelar());
     expect(c1.status).toBe("cancelado_paciente");
     expect(c2.status).toBe("agendado");
     expect(c.cenario.banco.chamadasDe("cancelar_consulta_pela_ia")).toHaveLength(1);
@@ -2915,41 +2283,27 @@ describe("9. o 'sim' solto não confirma nada", () => {
   });
 
   it("remarcação: outra pergunta no meio e o 'sim' depois da hora não trocam a consulta", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     const consulta = await marcarASexta(c);
     c.equipeAprova(consulta);
     await pedirARemarcacaoParaTerca(c);
 
     // Outro assunto depois da T3: a pergunta deixa de valer.
-    const preco =
-      "A consulta custa R$ 280,00 com o Dr. Bruno Costa e R$ 300,00 com a Dra. Ana Lima, no particular.";
-    const t7 = await c.fala({
-      texto: "Quanto custa mesmo?",
-      roteiro: [
-        ferramenta("buscar_procedimento", {
-          procedimento: P_CONSULTA,
-          convenio: null,
-        }),
-        final(preco),
-      ],
-    });
-    respondeu(t7, preco);
+    const t7 = await modeloResponde(c, "Quanto custa mesmo?", PRECO_DA_CONSULTA, [
+      precoDaConsulta(),
+    ]);
     expect(t7.estado).toMatchObject({
       etapa: "oferta",
       pedido_pendente: "remarcar",
     });
 
     // O "sim" agora responde ao preco: nao remarca.
-    const deNovo = "Para remarcar, preciso que confirme o horário de novo.";
-    const t8 = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("agendar", {}), final(deNovo)],
-    });
-    respondeu(t8, deNovo);
+    const t8 = await modeloResponde(
+      c,
+      "Sim",
+      "Para remarcar, preciso que confirme o horário de novo.",
+      [ferramenta("agendar", {})],
+    );
     expect(saidasDoTurno(t8)[0]).toEqual({
       resultado: "sem_confirmacao_do_paciente",
     });
@@ -2957,40 +2311,31 @@ describe("9. o 'sim' solto não confirma nada", () => {
     expect(consulta.remarcacao_pedida_em ?? null).toBeNull();
 
     // A T3 de novo, e o "sim" so depois de vencer a reserva.
-    const t9 = await c.fala({
-      texto: "Pode ser terça às 8 mesmo",
-      roteiro: [ferramenta("reservar_horario", { horario: "h1" })],
-    });
-    respondeu(
-      t9,
-      "Reservei terça, 03/11 às 08:00, na unidade Aldeota, por 10 minutos. Confirma a remarcação da sua consulta de sexta, 30/10 às 14:00 para terça, 03/11 às 08:00?",
-    );
+    const t9 = await sistemaResponde(c, "Pode ser terça às 8 mesmo", T3_TERCA, [
+      ferramenta("reservar_horario", { horario: "h1" }),
+    ]);
     expect(t9.estado.etapa).toBe("aguardando_confirmacao");
-    const venceu = "O horário reservado não vale mais. Quer que eu procure de novo?";
-    const t10 = await c.fala(
-      { texto: "Sim", roteiro: [ferramenta("agendar", {}), final(venceu)] },
-      11 * 60_000,
+    const t10 = await modeloResponde(
+      c,
+      "Sim",
+      "O horário reservado não vale mais. Quer que eu procure de novo?",
+      [ferramenta("agendar", {})],
+      11 * UM_MINUTO_MS,
     );
-    respondeu(t10, venceu);
     expect(saidasDoTurno(t10)[0]).toEqual({ resultado: "reserva_vencida" });
     expect(c.consultas).toEqual([consulta]);
     expect(consulta.status).toBe("agendado");
   });
 
   it("o 'sim' sem pergunta nenhuma, duas vezes seguidas: passa para a equipe, sem o texto do modelo", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     await conversaEmAndamento(c);
-
-    const qual = "Claro. Sobre o que é o seu sim?";
-    const t7 = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("agendar", {}), final(qual)],
-    });
-    respondeu(t7, qual);
+    const t7 = await modeloResponde(
+      c,
+      "Sim",
+      "Claro. Sobre o que é o seu sim?",
+      [ferramenta("agendar", {})],
+    );
     expect(t7.estado.falhas_seguidas).toBe(1);
 
     const doModelo = "Pronto, está tudo certo.";
@@ -2998,11 +2343,7 @@ describe("9. o 'sim' solto não confirma nada", () => {
       texto: "Sim",
       roteiro: [ferramenta("cancelar_consulta", {}), final(doModelo)],
     });
-    expect(oQueDecidiu(t8)).toMatchObject({
-      desfecho: "escalou",
-      motivo: "falhas_seguidas",
-    });
-    expect(t8.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
+    passou(t8, { desfecho: "escalou", motivo: "falhas_seguidas" });
     expect(c.recebidasPeloPaciente.join("\n")).not.toContain(doModelo);
     expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
     expect(c.cenario.banco.chamadasDe("cancelar_consulta_pela_ia")).toEqual([]);
@@ -3010,168 +2351,87 @@ describe("9. o 'sim' solto não confirma nada", () => {
     expect(c.consultas).toEqual([]);
   });
 
-  it("o 'sim' cruzado entre as perguntas: o da lista de espera não marca, e o do 'Confirma' não entra na lista", async () => {
-    const c = new ConversaLonga(contexto, { catalogo: CATALOGO_DA_AG5 });
-    conversaDoTeste = c;
-
-    const semNoite =
-      "Não tenho horário à noite com a Dra. Ana Lima. Posso procurar de manhã ou à tarde, ou colocar você na lista de espera para à noite. O que prefere?";
-    await c.fala({
-      texto: "Queria limpeza de pele com a Dra. Ana, só à noite.",
-      roteiro: [
-        ferramenta(
-          "buscar_horario",
-          buscaDaLimpeza({ profissional: R_ANA, periodo: "noite" }),
-        ),
-        final(semNoite),
-      ],
-    });
-    respondeu(
-      await c.fala({
-        texto: "Lista de espera. Segunda ou quarta.",
-        roteiro: [
-          ferramenta("pedir_lista_de_espera", {
-            periodos: ["noite"],
-            dias: ["segunda", "quarta"],
-          }),
-        ],
-      }),
-      T_E1_ANA_NOITE_SEG_QUA,
-    );
+  it("o 'sim' cruzado entre as perguntas: o do 'Confirma' não entra na lista, e o da lista não marca", async () => {
+    const c = clinicaDeUmaUnidade();
+    await ateAPerguntaDaLista(c);
 
     // A pessoa nao responde a T-E1: vai para a marcacao.
-    const oferta =
-      "Tenho quarta, 21/10 às 08:00 ou quinta, 22/10 às 08:00 com a Dra. Ana Lima. Qual prefere?";
-    respondeu(
-      await c.fala({
-        texto: "Melhor de manhã mesmo",
-        roteiro: [
-          ferramenta(
-            "buscar_horario",
-            buscaDaLimpeza({ profissional: R_ANA, periodo: "manha" }),
-          ),
-          final(oferta),
-        ],
-      }),
-      oferta,
-    );
-    const reservou =
-      "Reservei quinta, 22/10 às 08:00 com a Dra. Ana Lima por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.";
-    respondeu(
-      await c.fala({
-        texto: "Quinta às 8",
-        roteiro: [ferramenta("reservar_horario", { horario: "h2" }), final(reservou)],
-      }),
-      reservou,
-    );
-    const confirma =
-      "Obrigada! Confirma a Limpeza de pele com a Dra. Ana Lima na quinta, 22/10 às 08:00, no particular?";
-    const t5 = await c.fala({
-      texto: "Maria da Silva Souza, 12/03/1985",
-      roteiro: [
-        ferramenta("registrar_dados_do_paciente", {
-          nome_completo: "Fulano da Silva Souza",
-          data_nascimento: "1985-03-12",
-          para_o_titular: true,
-          campos_mascarados: [],
-        }),
-        final(confirma),
-      ],
-    });
-    respondeu(t5, confirma);
-    expect(t5.estado.etapa).toBe("aguardando_confirmacao");
+    await ateOConfirmaDaLimpeza(c);
+    expect(c.estado.etapa).toBe("aguardando_confirmacao");
     expect(c.cenario.pedidos).toHaveLength(1);
 
     // O "sim" responde ao "Confirma", e o modelo chama a lista: nao entra. O
     // sistema pergunta a T-E1 de novo (com falha), e o "Confirma" desarma.
-    const t6 = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("entrar_na_lista_de_espera", {})],
-    });
-    respondeu(t6, T_E1_ANA_NOITE_SEG_QUA);
+    const t6 = await sistemaResponde(c, "Sim", T_E1_ANA_NOITE_SEG_QUA, [
+      ferramenta("entrar_na_lista_de_espera", {}),
+    ]);
     expect(c.cenario.fila).toEqual([]);
     expect(c.consultas).toEqual([]);
     expect(t6.estado.etapa).not.toBe("aguardando_confirmacao");
     expect(t6.estado.falhas_seguidas).toBe(1);
 
-    // O "sim" agora responde a T-E1, e o modelo chama agendar: nao marca.
-    const deNovo =
-      "Confirma a Limpeza de pele com a Dra. Ana Lima na quinta, 22/10 às 08:00, no particular?";
+    // O "sim" agora responde a T-E1, e o modelo chama agendar: nao marca, e a
+    // segunda falha seguida passa para a equipe.
     const t7 = await c.fala({
       texto: "Sim",
-      roteiro: [ferramenta("agendar", {}), final(deNovo)],
+      roteiro: [ferramenta("agendar", {}), final(CONFIRMA_LIMPEZA)],
     });
-    expect(oQueDecidiu(t7)).toMatchObject({
-      desfecho: "escalou",
-      motivo: "falhas_seguidas",
-    });
-    expect(t7.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
+    passou(t7, { desfecho: "escalou", motivo: "falhas_seguidas" });
     expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
-    expect(c.consultas).toEqual([]);
-    expect(c.cenario.fila).toEqual([]);
 
     await nadaMaisSai(c, ["Sim", "Sim"]);
     expect(c.consultas).toEqual([]);
     expect(c.cenario.fila).toEqual([]);
   });
 
-  // achado: na marcacao e na remarcacao o "sim" nao tem a lista fechada do
-  // cancelamento e da lista de espera (D-30): quem julga a resposta da pessoa e
-  // so o modelo. A pessoa escreve "Não, melhor não" (sozinho, ou "Sim" e "Não,
-  // espera" na mesma rajada, lidos pelo mesmo job), o modelo chama agendar e a
-  // consulta nasce, pendente da equipe, com a resposta "ficou marcada". Devia
-  // recusar (sem_confirmacao_do_paciente), como no cancelamento.
+  // achado: na marcacao o "sim" nao tem a lista fechada do cancelamento e da
+  // lista de espera (D-30): quem julga a resposta da pessoa e so o modelo. A
+  // pessoa escreve "Não, melhor não" (sozinho, ou "Sim" e "Não, espera" na mesma
+  // rajada, lidos pelo mesmo job), o modelo chama agendar e a consulta nasce,
+  // pendente da equipe, com a resposta "ficou marcada". Devia recusar
+  // (sem_confirmacao_do_paciente), como no cancelamento.
   it.fails.each([
     ["'Não, melhor não'", ["Não, melhor não"]],
     ["'Sim' e 'Não, espera' na mesma rajada", ["Sim", "Não, espera"]],
-  ])("marcação: %s com o modelo que chama agendar não pode marcar", async (_nome, textos) => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
-    await comAPerguntaConfirmaNoAr(c);
-    await c.rajada(
-      textos,
-      { roteiro: [ferramenta("agendar", {}), final(MARCOU_QUARTA)] },
-      20_000,
-    );
-    expect(c.consultas).toEqual([]);
-  });
+  ])(
+    "marcação: %s com o modelo que chama agendar não pode marcar",
+    async (_nome, textos) => {
+      const c = clinicaComDuasUnidades();
+      await comAPerguntaConfirmaNoAr(c);
+      await c.rajada(
+        textos,
+        { roteiro: [ferramenta("agendar", {}), final(MARCOU_QUARTA)] },
+        20_000,
+      );
+      expect(c.consultas).toEqual([]);
+    },
+  );
 
   it("cancelamento: 'Sim' e 'Não, espera' na mesma rajada: a lista fechada não cancela, e a pergunta volta", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     await conversaEmAndamento(c);
     const { c1 } = consultasDoContato(c.cenario.banco);
-    const T1 = "Confirma o cancelamento da sua consulta de quinta, 22/10 às 14:00?";
-    respondeu(
-      await c.fala({
-        texto: "Preciso cancelar minha consulta de quinta",
-        roteiro: [
-          ferramenta("consultar_minhas_consultas", {}),
-          ferramenta("pedir_cancelamento", { consulta: "c1" }),
-        ],
-      }),
-      T1,
+    await sistemaResponde(
+      c,
+      "Preciso cancelar minha consulta de quinta",
+      T1_QUINTA,
+      pedirOCancelamento(),
     );
     const t8 = await c.rajada(["Sim", "Não, espera"], {
       roteiro: [ferramenta("cancelar_consulta", {})],
     });
-    respondeu(t8, T1);
+    respondeu(t8, T1_QUINTA);
     expect(c1.status).toBe("agendado");
     expect(c.cenario.banco.chamadasDe("cancelar_consulta_pela_ia")).toEqual([]);
     expect(t8.estado.falhas_seguidas).toBe(1);
+
     // "Não": fica como esta, sem cancelar, e o modelo so le o resultado.
-    const naoCancelou = "Tudo bem, sua consulta continua marcada.";
-    const t9 = await c.fala({
-      texto: "Não",
-      roteiro: [ferramenta("cancelar_consulta", {}), final(naoCancelou)],
-    });
-    respondeu(t9, naoCancelou);
+    const t9 = await modeloResponde(
+      c,
+      "Não",
+      "Tudo bem, sua consulta continua marcada.",
+      [ferramenta("cancelar_consulta", {})],
+    );
     expect(saidasDoTurno(t9)[0]).toEqual({ resultado: "paciente_nao_confirmou" });
     expect(c1.status).toBe("agendado");
     expect(t9.estado.pedido_pendente).toBeNull();
@@ -3180,44 +2440,30 @@ describe("9. o 'sim' solto não confirma nada", () => {
 
 describe("10. dois assuntos numa fala só e a rajada", () => {
   it("cada job responde uma vez; o segundo job da rajada não repete; o 'sim' com mensagem no meio do turno não marca", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
 
-    const dois = `A consulta custa R$ 300,00 com a Dra. Ana Lima, no particular. A unidade Aldeota fica na ${ENDERECO_DA_ALDEOTA}.`;
-    const t1 = await c.fala({
-      texto: "Quanto custa a consulta e onde fica a clínica?",
-      roteiro: [
-        ferramenta("buscar_procedimento", {
-          procedimento: P_CONSULTA,
-          convenio: null,
-        }),
-        ferramenta("consultar_unidades", { unidade: "u1" }),
-        final(dois),
-      ],
-    });
-    respondeu(t1, `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${dois}`);
+    const t1 = await modeloResponde(
+      c,
+      "Quanto custa a consulta e onde fica a clínica?",
+      `A consulta custa R$ 300,00 com a Dra. Ana Lima, no particular. A unidade Aldeota fica na ${ENDERECO_DA_ALDEOTA}.`,
+      [precoDaConsulta(), ferramenta("consultar_unidades", { unidade: "u1" })],
+    );
     expect(t1.ferramentas).toEqual(["buscar_procedimento", "consultar_unidades"]);
 
     // A rajada: um job so le as tres e responde uma vez.
-    const oferta =
-      "Tenho quarta, 21/10 às 14:00 com a Dra. Ana Lima na unidade Centro, ou quinta, 22/10 às 13:00 com o Dr. Bruno Costa. Qual prefere?";
     const t2 = await c.rajada(["Quero marcar", "à tarde", "sem convênio"], {
       roteiro: [
         ferramenta("buscar_horario", busca({ periodo: "tarde" })),
-        final(oferta),
+        final(OFERTA_DA_TARDE),
       ],
     });
-    respondeu(t2, oferta);
-    const turnoDaRajada = c.executor
-      .linhas("ai_turno")
-      .find((l) => l.job_id === t2.job);
-    expect(turnoDaRajada?.mensagens_lidas).toHaveLength(3);
-    // As tres foram ao modelo, depois da resposta anterior.
+    respondeu(t2, OFERTA_DA_TARDE);
+    const lidasDoTurno = (t: TurnoDaConversa) =>
+      c.executor.linhas("ai_turno").find((l) => l.job_id === t.job)
+        ?.mensagens_lidas;
+    expect(lidasDoTurno(t2)).toHaveLength(3);
     expect(
-      (t2.corpos[0]?.input as { role: string; content: string }[])
+      (t2.corpos[0]?.input as { content: string }[])
         .slice(-3)
         .map((m) => m.content),
     ).toEqual(["Quero marcar", "à tarde", "sem convênio"]);
@@ -3230,22 +2476,12 @@ describe("10. dois assuntos numa fala só e a rajada", () => {
     expect(t3.decisao).toBeUndefined();
 
     // Dois assuntos com efeito na mesma fala: a reserva e os dados.
-    const confirma =
-      "Obrigada! Confirma a Consulta com a Dra. Ana Lima na quarta, 21/10 às 14:00, na unidade Centro, no particular?";
-    const t4 = await c.fala({
-      texto: "Quarta às 14h. Sou Maria da Silva Souza, nasci em 12/03/1985",
-      roteiro: [
-        ferramenta("reservar_horario", { horario: "h2" }),
-        ferramenta("registrar_dados_do_paciente", {
-          nome_completo: "Fulano da Silva Souza",
-          data_nascimento: "1985-03-12",
-          para_o_titular: true,
-          campos_mascarados: [],
-        }),
-        final(confirma),
-      ],
-    });
-    respondeu(t4, confirma);
+    const t4 = await modeloResponde(
+      c,
+      "Quarta às 14h. Sou Maria da Silva Souza, nasci em 12/03/1985",
+      CONFIRMA_QUARTA,
+      [ferramenta("reservar_horario", { horario: "h2" }), dadosCompletos()],
+    );
     expect(t4.estado.etapa).toBe("aguardando_confirmacao");
     expect(c.dados.faltam).toEqual([]);
     const reserva = t4.estado.slot_hold_id;
@@ -3286,21 +2522,18 @@ describe("10. dois assuntos numa fala só e a rajada", () => {
       ],
     });
     respondeu(t6, trocou);
-    expect(
-      c.executor.linhas("ai_turno").find((l) => l.job_id === t6.job)
-        ?.mensagens_lidas,
-    ).toHaveLength(2);
+    expect(lidasDoTurno(t6)).toHaveLength(2);
     expect(t6.estado.slot_hold_id).not.toBe(reserva);
     expect(t6.estado.etapa).toBe("aguardando_confirmacao");
     expect(c.temJobPendente).toBe(false);
 
-    const marcou =
-      "Pronto! Sua Consulta de quinta, 22/10 às 14:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.";
-    const t7 = await c.fala(
-      { texto: "Sim", roteiro: [ferramenta("agendar", {}), final(marcou)] },
+    const t7 = await modeloResponde(
+      c,
+      "Sim",
+      "Pronto! Sua Consulta de quinta, 22/10 às 14:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.",
+      [ferramenta("agendar", {})],
       30_000,
     );
-    respondeu(t7, marcou);
     expect(c.consultas).toEqual([
       expect.objectContaining({ starts_at: iso("2026-10-22", "14:00") }),
     ]);
@@ -3312,25 +2545,22 @@ describe("10. dois assuntos numa fala só e a rajada", () => {
     expect(t8.enviadas).toEqual([]);
     expect(c.consultas).toHaveLength(1);
 
-    const tchau = "Por nada! Qualquer coisa, é só chamar por aqui.";
-    const t9 = await c.rajada(["Obrigada", "Até mais"], { roteiro: [final(tchau)] });
-    respondeu(t9, tchau);
+    const t9 = await c.rajada(["Obrigada", "Até mais"], {
+      roteiro: [final(TCHAU)],
+    });
+    respondeu(t9, TCHAU);
     expect(c.decisoes.filter((d) => d.desfecho === "respondeu")).toHaveLength(6);
   });
 
   it("a mensagem no meio do turno do cancelamento e da lista de espera: nada acontece, e o job seguinte lê as duas", async () => {
-    const c = new ConversaLonga(contexto, { catalogo: CATALOGO_DA_AG5 });
-    conversaDoTeste = c;
+    const c = clinicaDeUmaUnidade();
     const { c1 } = consultasDoContato(c.cenario.banco);
-    const T1 = "Confirma o cancelamento da sua consulta de quinta, 22/10 às 14:00?";
-    const pedido = await c.fala({
-      texto: "Quero cancelar a de quinta",
-      roteiro: [
-        ferramenta("consultar_minhas_consultas", {}),
-        ferramenta("pedir_cancelamento", { consulta: "c1" }),
-      ],
-    });
-    respondeu(pedido, `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${T1}`);
+    await sistemaResponde(
+      c,
+      "Quero cancelar a de quinta",
+      T1_QUINTA,
+      pedirOCancelamento(),
+    );
 
     const t2 = await c.fala({
       texto: "Sim",
@@ -3355,44 +2585,21 @@ describe("10. dois assuntos numa fala só e a rajada", () => {
     const t3 = await c.rodarOJobPendente({
       roteiro: [ferramenta("cancelar_consulta", {})],
     });
-    respondeu(t3, T1);
+    respondeu(t3, T1_QUINTA);
     expect(c1.status).toBe("agendado");
     expect(t3.estado.falhas_seguidas).toBe(1);
 
-    const continua = "Tudo bem, sua consulta continua marcada.";
-    const t4 = await c.fala({
-      texto: "Não",
-      roteiro: [ferramenta("cancelar_consulta", {}), final(continua)],
-    });
-    respondeu(t4, continua);
+    const t4 = await modeloResponde(
+      c,
+      "Não",
+      "Tudo bem, sua consulta continua marcada.",
+      [ferramenta("cancelar_consulta", {})],
+    );
     expect(c1.status).toBe("agendado");
     expect(t4.estado.pedido_pendente).toBeNull();
 
     // A lista de espera, com o mesmo caminho.
-    const semNoite =
-      "Não tenho horário à noite com a Dra. Ana Lima. Posso procurar de manhã ou à tarde, ou colocar você na lista de espera para à noite. O que prefere?";
-    await c.fala({
-      texto: "Queria limpeza de pele com a Dra. Ana, só à noite.",
-      roteiro: [
-        ferramenta(
-          "buscar_horario",
-          buscaDaLimpeza({ profissional: R_ANA, periodo: "noite" }),
-        ),
-        final(semNoite),
-      ],
-    });
-    respondeu(
-      await c.fala({
-        texto: "Lista de espera. Segunda ou quarta.",
-        roteiro: [
-          ferramenta("pedir_lista_de_espera", {
-            periodos: ["noite"],
-            dias: ["segunda", "quarta"],
-          }),
-        ],
-      }),
-      T_E1_ANA_NOITE_SEG_QUA,
-    );
+    await ateAPerguntaDaLista(c);
     const t7 = await c.fala({
       texto: "Sim",
       roteiro: [ferramenta("entrar_na_lista_de_espera", {})],
@@ -3410,12 +2617,12 @@ describe("10. dois assuntos numa fala só e a rajada", () => {
     respondeu(t8, T_E1_ANA_NOITE_SEG_QUA);
     expect(c.cenario.fila).toEqual([]);
 
-    const semLista = "Tudo bem, não coloquei você na lista de espera.";
-    const t9 = await c.fala({
-      texto: "Não",
-      roteiro: [ferramenta("entrar_na_lista_de_espera", {}), final(semLista)],
-    });
-    respondeu(t9, semLista);
+    const t9 = await modeloResponde(
+      c,
+      "Não",
+      "Tudo bem, não coloquei você na lista de espera.",
+      [ferramenta("entrar_na_lista_de_espera", {})],
+    );
     expect(saidasDoTurno(t9)[0]).toMatchObject({
       resultado: "paciente_nao_quis",
     });
@@ -3423,17 +2630,14 @@ describe("10. dois assuntos numa fala só e a rajada", () => {
   });
 
   it("o canal ocupado no turno que marca: a resposta sai depois, uma vez só, sem chamar o modelo de novo", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     await comAPerguntaConfirmaNoAr(c);
-    const marcou =
-      "Pronto! Sua Consulta de quarta, 21/10 às 14:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.";
     c.canalOcupado = true;
     const t8 = await c.fala(
-      { texto: "Sim", roteiro: [ferramenta("agendar", {}), final(marcou)] },
+      {
+        texto: "Sim",
+        roteiro: [ferramenta("agendar", {}), final(MARCOU_QUARTA)],
+      },
       20_000,
     );
     expect(t8.resultado).toMatchObject({ motivo: "canal_ocupado" });
@@ -3446,73 +2650,377 @@ describe("10. dois assuntos numa fala só e a rajada", () => {
     const t9 = await c.repetirOJob(t8);
     expect(t9.resultado).toEqual({ ok: true });
     expect(t9.chamadasAoModelo).toBe(0);
-    respondeu(t9, marcou);
+    respondeu(t9, MARCOU_QUARTA);
     expect(c.consultas).toHaveLength(1);
     expect(c.decisoes.filter((d) => d.job_id === t8.job)).toHaveLength(1);
     expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toHaveLength(1);
-    expect(c.executor.linhas("ai_turno").find((l) => l.job_id === t8.job)).toMatchObject({
-      estado: "enviado",
-      texto: null,
-    });
+    expect(
+      c.executor.linhas("ai_turno").find((l) => l.job_id === t8.job),
+    ).toMatchObject({ estado: "enviado", texto: null });
 
     // A fala seguinte segue normal: o "sim" ja foi respondido.
-    const tchau = "Por nada! Qualquer coisa, é só chamar por aqui.";
-    const t10 = await c.fala({ texto: "Obrigada", roteiro: [final(tchau)] });
-    respondeu(t10, tchau);
+    const t10 = await modeloResponde(c, "Obrigada", TCHAU);
     expect(
-      (t10.corpos[0]?.input as { role: string; content: string }[]).at(-1)?.content,
+      (t10.corpos[0]?.input as { content: string }[]).at(-1)?.content,
     ).toBe("Obrigada");
   });
 
   it("mais de cinco mensagens sem resposta: nenhum modelo lê, e a conversa passa para a equipe", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     await conversaEmAndamento(c);
-    const t7 = await c.rajada(
-      ["oi", "tem alguém aí", "?", "alô", "oi?", "preciso de ajuda"],
-      {},
+    passou(
+      await c.rajada(
+        ["oi", "tem alguém aí", "?", "alô", "oi?", "preciso de ajuda"],
+        {},
+      ),
+      { desfecho: "escalou", motivo: "agente_pediu", gatilho: "mensagem_longa" },
+      0,
     );
-    expect(oQueDecidiu(t7)).toMatchObject({
-      desfecho: "escalou",
-      motivo: "agente_pediu",
-      gatilho: "mensagem_longa",
-    });
-    expect(t7.chamadasAoModelo).toBe(0);
-    expect(t7.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
     await nadaMaisSai(c, ["Sim", "oi"]);
     expect(c.consultas).toEqual([]);
   });
 
   it("o teto de respostas por hora da conversa: sem modelo, a frase e a equipe; a conversa não fica sem resposta", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     c.executor.linhas("ia_liberacao")[0]!.teto_respostas_por_conversa_hora = 6;
     await conversaEmAndamento(c);
-    const t7 = await c.fala({ texto: "Nasci em 12/03/1985" });
-    expect(oQueDecidiu(t7)).toMatchObject({
-      desfecho: "escalou",
-      motivo: "teto_de_respostas",
-    });
-    expect(t7.chamadasAoModelo).toBe(0);
-    expect(t7.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
+    passou(
+      await c.fala({ texto: "Nasci em 12/03/1985" }),
+      { desfecho: "escalou", motivo: "teto_de_respostas" },
+      0,
+    );
     await nadaMaisSai(c, ["Sim", "oi"]);
     expect(c.consultas).toEqual([]);
   });
 });
 
-describe("11. a conversa que sai da IA por fora do que o paciente escreveu", () => {
-  it("a autorização revogada no meio: sem modelo e sem frase; quem revogou não recebe mais nada", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
+describe("11. duas frentes, o efeito já feito e a conversa que sai da IA por fora", () => {
+  const P_LIMPEZA_DO_CADASTRO = codigoDoProcedimento(CADASTRO, PROC.limpeza);
+
+  /**
+   * A marcação da limpeza até o "Confirma", a T1 de outra consulta e o "sim": a
+   * consulta cancela e a reserva fica. Um minuto entre as falas: a reserva dura.
+   */
+  async function cancelarNoMeioDaMarcacao(c: ConversaLonga) {
+    const { c1, c2 } = consultasDoContato(c.cenario.banco);
+    await modeloResponde(
+      c,
+      "Quero marcar limpeza de pele de manhã",
+      "Tenho quarta, 21/10 às 08:00 com a Dra. Ana Lima na unidade Aldeota. Pode ser?",
+      [
+        ferramenta(
+          "buscar_horario",
+          busca({ procedimento: P_LIMPEZA_DO_CADASTRO, periodo: "manha" }),
+        ),
+      ],
+    );
+    await modeloResponde(
+      c,
+      "Pode",
+      "Reservei quarta, 21/10 às 08:00 com a Dra. Ana Lima, na unidade Aldeota, por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.",
+      [ferramenta("reservar_horario", { horario: "h1" })],
+      UM_MINUTO_MS,
+    );
+    const confirma =
+      "Obrigada! Confirma a Limpeza de pele com a Dra. Ana Lima na quarta, 21/10 às 08:00, na unidade Aldeota, no particular?";
+    const t3 = await modeloResponde(
+      c,
+      "Maria da Silva Souza, nascida em 12/03/1985",
+      confirma,
+      [dadosCompletos()],
+      UM_MINUTO_MS,
+    );
+    expect(t3.estado.etapa).toBe("aguardando_confirmacao");
+    const reserva = t3.estado.slot_hold_id;
+
+    // Antes de confirmar, cancela a outra: a T1.
+    const t4 = await sistemaResponde(
+      c,
+      "Antes, preciso cancelar minha consulta de quinta",
+      T1_QUINTA,
+      pedirOCancelamento(),
+      UM_MINUTO_MS,
+    );
+    expect(t4.estado).toMatchObject({
+      etapa: "cancelar",
+      pedido_pendente: "cancelar",
+      appointment_id: C1,
+      slot_hold_id: reserva,
     });
-    conversaDoTeste = c;
+
+    const t5 = await sistemaResponde(
+      c,
+      "Sim",
+      T2_QUINTA,
+      [ferramenta("cancelar_consulta", {})],
+      UM_MINUTO_MS,
+    );
+    expect(c1.status).toBe("cancelado_paciente");
+    expect(c2.status).toBe("agendado");
+    // So o cancelamento: o "sim" nao marcou a limpeza.
+    expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
+    expect(t5.estado.slot_hold_id).toBe(reserva);
+    expect(c.reservasVivas).toHaveLength(1);
+    return { c1, c2, reserva, confirma };
+  }
+
+  it("cancela outra consulta no meio de uma marcação: a reserva fica e a marcação termina, com a pergunta de novo", async () => {
+    const c = clinicaComDuasUnidades();
+    const { c1, c2, reserva, confirma } = await cancelarNoMeioDaMarcacao(c);
+
+    // Volta para a limpeza: a pergunta de novo e o "sim" marcam a reservada.
+    const t6 = await modeloResponde(
+      c,
+      "E a limpeza de pele?",
+      confirma,
+      [],
+      UM_MINUTO_MS,
+    );
+    expect(t6.estado).toMatchObject({
+      etapa: "aguardando_confirmacao",
+      slot_hold_id: reserva,
+    });
+    await modeloResponde(
+      c,
+      "Sim",
+      "Pronto! Sua Limpeza de pele de quarta, 21/10 às 08:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.",
+      [ferramenta("agendar", {})],
+      UM_MINUTO_MS,
+    );
+    expect(c.consultasVivas.map((a) => a.starts_at)).toEqual([
+      iso("2026-10-27", "09:00"),
+      iso("2026-10-21", "08:00"),
+    ]);
+    expect(c1.status).toBe("cancelado_paciente");
+    expect(c2.status).toBe("agendado");
+    await modeloResponde(c, "Obrigada", TCHAU);
+  });
+
+  // achado: com uma marcacao em andamento, o cancelamento feito sai do estado no
+  // mesmo turno (ehEstadoDoCancelamento exige a reserva vazia e nenhum horario
+  // oferecido; fechar apaga o id): no turno seguinte a IA nao sabe mais que
+  // cancelou, e a resposta VERDADEIRA ("sua consulta ... foi cancelada") e
+  // barrada (acao_nao_executada) e a conversa cai para a equipe. Nada errado
+  // chega ao paciente: ele recebe a frase fixa no lugar da resposta. Devia
+  // passar, como passa sem a marcacao em andamento (cenario 2).
+  it.fails("com a marcação em andamento, a resposta verdadeira sobre o cancelamento feito tem de passar", async () => {
+    const c = clinicaComDuasUnidades();
+    await conversaFiada(c, ["Oi, tudo bem?", "Queria umas informações"]);
+    await cancelarNoMeioDaMarcacao(c);
+    await modeloResponde(
+      c,
+      "Foi cancelada mesmo?",
+      "Sim, sua consulta de quinta, 22/10 às 14:00 foi cancelada.",
+      [],
+      UM_MINUTO_MS,
+    );
+  });
+
+  it("a marcação feita com a resposta barrada: a consulta fica, o paciente recebe só a frase e a nota conta a consulta", async () => {
+    const c = clinicaComDuasUnidades();
+    await comAPerguntaConfirmaNoAr(c);
+    const t = await c.fala(
+      {
+        texto: "Sim",
+        roteiro: [
+          ferramenta("agendar", {}),
+          final(
+            "Pronto! Sua Consulta de quarta, 21/10 às 14:00 ficou marcada. O resultado é garantido.",
+          ),
+        ],
+      },
+      20_000,
+    );
+    passou(t, {
+      desfecho: "bloqueou",
+      regra: "promessa_resultado",
+      camada: "regra",
+    });
+    expect(c.consultas).toHaveLength(1);
+    expect(t.decisao?.tool_used).toBe("agendar");
+    expect(t.estado).toMatchObject({
+      etapa: "pos_marcacao",
+      desfecho: "passou_para_equipe",
+      appointment_id: c.consultas[0]?.id,
+    });
+    expect(c.notasInternas.at(-1)).toContain("Consulta marcada pelo assistente");
+    await nadaMaisSai(c, ["Sim", "Está marcado?"]);
+    expect(c.consultas).toHaveLength(1);
+  });
+
+  /** O cancelamento feito no turno em que a T2 não pode sair. */
+  async function cancelarComOVerificadorForaDoAr(c: ConversaLonga) {
+    await conversaEmAndamento(c);
+    const { c1 } = consultasDoContato(c.cenario.banco);
+    await sistemaResponde(
+      c,
+      "Preciso cancelar minha consulta de quinta",
+      T1_QUINTA,
+      pedirOCancelamento(),
+      20_000,
+    );
+    const t = await c.fala(
+      {
+        texto: "Sim",
+        roteiro: [ferramenta("cancelar_consulta", {})],
+        verificador: verificadorForaDoAr,
+      },
+      20_000,
+    );
+    return { c1, t };
+  }
+
+  it("o cancelamento feito com o verificador fora do ar: a consulta fica cancelada e o paciente recebe só a frase", async () => {
+    const c = clinicaComDuasUnidades();
+    const { c1, t } = await cancelarComOVerificadorForaDoAr(c);
+    passou(t, {
+      desfecho: "bloqueou",
+      regra: "falha_verificador",
+      camada: "falha",
+    });
+    expect(c1.status).toBe("cancelado_paciente");
+    expect(t.decisao?.tool_used).toBe("cancelar_consulta");
+    expect(trilhaDoTurno(t).join(" ")).toContain("Cancelou a consulta");
+    await nadaMaisSai(c, ["Cancelou?", "Sim"]);
+  });
+
+  // achado: o cancelamento FEITO no turno e a T2 que nao sai (o filtro barrou ou
+  // o verificador caiu): a nota da equipe diz "Pedido: cancelar a consulta de
+  // quinta..." e "Parou em: a resposta não passou na conformidade", como se o
+  // pedido estivesse em aberto. O paciente so recebeu a frase; quem atende pode
+  // nao saber que a consulta ja saiu da agenda. Devia dizer "Consulta cancelada
+  // pelo assistente nesta conversa" (notaDaPassagem volta no ramo do pedido,
+  // antes da linha da cancelada; a passagem do turno SEGUINTE diz).
+  it.fails("o cancelamento feito com a T2 barrada: a nota da equipe tem de dizer que cancelou", async () => {
+    const c = clinicaComDuasUnidades();
+    await cancelarComOVerificadorForaDoAr(c);
+    expect(c.notasInternas.at(-1)).toContain(
+      "Consulta cancelada pelo assistente nesta conversa: quinta, 22/10 às 14:00.",
+    );
+  });
+
+  it("a remarcação pedida com o verificador fora do ar: a nova fica pendente, a antiga de pé, e a nota conta o par", async () => {
+    const c = clinicaComDuasUnidades();
+    const consulta = await marcarASexta(c);
+    c.equipeAprova(consulta);
+    await modeloResponde(
+      c,
+      "Qual é mesmo o horário?",
+      "Sua Consulta está marcada para sexta, 30/10 às 14:00.",
+    );
+    await pedirARemarcacaoParaTerca(c);
+    const t = await c.fala(
+      {
+        texto: "Confirmo",
+        roteiro: [ferramenta("agendar", {})],
+        verificador: verificadorForaDoAr,
+      },
+      20_000,
+    );
+    passou(t, { desfecho: "bloqueou", regra: "falha_verificador" });
+    expect(c.consultas.find((a) => a.remarcacao_de === consulta.id)).toMatchObject({
+      approval_status: "pendente",
+    });
+    expect(consulta.status).toBe("agendado");
+    const nota = c.notasInternas.at(-1) ?? "";
+    expect(nota).toContain("sexta, 30/10 às 14:00");
+    expect(nota).toContain("terça, 03/11 às 08:00");
+    await nadaMaisSai(c, ["Remarcou?"]);
+  });
+
+  it("a entrada na lista com o verificador fora do ar: a entrada fica, e a nota conta a lista", async () => {
+    const c = clinicaDeUmaUnidade();
+    for (const texto of [
+      "Quanto custa a limpeza de pele?",
+      "Quanto custa mesmo?",
+      "Desculpa, quanto era?",
+      "Certo, e o valor é esse mesmo?",
+    ]) {
+      await modeloResponde(c, texto, PRECO_DA_LIMPEZA, [precoDaLimpeza()]);
+    }
+    await ateAPerguntaDaLista(c);
+    passou(
+      await c.fala({
+        texto: "Sim",
+        roteiro: [ferramenta("entrar_na_lista_de_espera", {})],
+        verificador: verificadorForaDoAr,
+      }),
+      { desfecho: "bloqueou", regra: "falha_verificador" },
+    );
+    expect(c.cenario.fila).toHaveLength(1);
+    expect(c.notasInternas.at(-1)).toContain("lista de espera");
+    await nadaMaisSai(c, ["Entrei?"]);
+  });
+
+  it("a conversa que passa de 20 mensagens: o modelo lê só as últimas, a saudação e o aviso não voltam, e as âncoras continuam", async () => {
+    const saudacao = "Olá! Que bom falar com você.";
+    const c = clinicaComDuasUnidades({ saudacao });
+    const t1 = await c.fala({
+      texto: "Quero marcar uma consulta para a sexta da semana que vem, à tarde",
+      roteiro: [
+        ferramenta(
+          "buscar_horario",
+          busca({ a_partir_de: "2026-10-30", periodo: "tarde" }),
+        ),
+        final(OFERTA_DA_SEXTA),
+      ],
+    });
+    respondeu(
+      t1,
+      `${saudacao}\n\n${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${OFERTA_DA_SEXTA}`,
+    );
+    await modeloResponde(c, "Às 14h", RESERVOU_SEXTA, [
+      ferramenta("reservar_horario", { horario: "h1" }),
+    ]);
+    await modeloResponde(
+      c,
+      "Maria da Silva Souza, nascida em 12/03/1985",
+      CONFIRMA_SEXTA,
+      [dadosCompletos()],
+    );
+    const t4 = await modeloResponde(c, "Confirmo", MARCOU_SEXTA, [
+      ferramenta("agendar", {}),
+    ]);
+    const consulta = c.consultas[0]!;
+    for (const texto of [
+      "Qual é mesmo o horário?",
+      "E é sexta mesmo?",
+      "Às 14h, certo?",
+      "Com a Dra. Ana?",
+      "Pendente da equipe?",
+      "Desculpa, sou esquecida",
+      "Me diz de novo o horário",
+      "Sexta, né?",
+    ]) {
+      const t = await modeloResponde(c, texto, HORARIO_DA_SEXTA);
+      expect(t.estado).toEqual(t4.estado);
+    }
+    // 12 falas e 12 respostas: o modelo le as 20 ultimas, com a pendente no fim.
+    const input = c.turnos.at(-1)?.corpos[0]?.input as { content: string }[];
+    expect(input).toHaveLength(20);
+    expect(input.at(-1)?.content).toBe("Sexta, né?");
+    expect(
+      c.recebidasPeloPaciente.filter((m) => m.includes(saudacao)),
+    ).toHaveLength(1);
+
+    // Dali em diante, cancelar vale como sempre: as ancoras leem o banco.
+    await sistemaResponde(
+      c,
+      "Quero cancelar minha consulta",
+      "Confirma o cancelamento da sua consulta de sexta, 30/10 às 14:00?",
+      pedirOCancelamento(),
+    );
+    await sistemaResponde(
+      c,
+      "Sim",
+      "Tudo bem, sua consulta de 30/10 às 14:00 foi cancelada. Quando quiser marcar de novo, é só chamar por aqui.",
+      [ferramenta("cancelar_consulta", {})],
+    );
+    expect(consulta.status).toBe("cancelado_paciente");
+  });
+
+  it("a autorização revogada no meio: sem modelo e sem frase; quem revogou não recebe mais nada", async () => {
+    const c = clinicaComDuasUnidades();
     await conversaEmAndamento(c);
     c.consentimento = false;
     const recebidas = c.recebidasPeloPaciente.length;
@@ -3527,11 +3035,7 @@ describe("11. a conversa que sai da IA por fora do que o paciente escreveu", () 
   });
 
   it("a IA desligada para este telefone no meio: sem modelo e sem frase; a conversa fica com a equipe", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     await comAPerguntaConfirmaNoAr(c);
     c.liberada = false;
     const recebidas = c.recebidasPeloPaciente.length;
@@ -3545,11 +3049,7 @@ describe("11. a conversa que sai da IA por fora do que o paciente escreveu", () 
   });
 
   it.each([
-    [
-      "com o 'sim' e o agendar",
-      "Sim",
-      () => [ferramenta("agendar", {})],
-    ],
+    ["com o 'sim' e o agendar", "Sim", () => [ferramenta("agendar", {})]],
     [
       "com a resposta já escrita",
       "Quanto custa mesmo?",
@@ -3558,11 +3058,7 @@ describe("11. a conversa que sai da IA por fora do que o paciente escreveu", () 
   ])(
     "alguém da equipe assume no meio do turno, %s: nada marca e nada sai, nem a frase",
     async (_nome, texto, roteiro) => {
-      const c = new ConversaLonga(contexto, {
-        catalogo: CADASTRO,
-        duasUnidades: true,
-      });
-      conversaDoTeste = c;
+      const c = clinicaComDuasUnidades();
       await comAPerguntaConfirmaNoAr(c);
       const recebidas = c.recebidasPeloPaciente.length;
       const t8 = await c.fala(
@@ -3590,471 +3086,36 @@ describe("11. a conversa que sai da IA por fora do que o paciente escreveu", () 
   );
 });
 
-describe("12. duas frentes na mesma conversa e o efeito que já aconteceu", () => {
-  const P_LIMPEZA_DO_CADASTRO = codigoDoProcedimento(CADASTRO, PROC.limpeza);
-  /** Um minuto entre as falas: a reserva dura as cinco. */
-  const UM_MINUTO_MS = 60_000;
-
-  /**
-   * Duas falas de conversa, a marcação da limpeza até o "Confirma", a T1 de
-   * outra consulta e o "sim": a consulta cancela e a reserva fica.
-   */
-  async function cancelarNoMeioDaMarcacao(c: ConversaLonga) {
-    const { c1, c2 } = consultasDoContato(c.cenario.banco);
-    const oferta =
-      "Tenho quarta, 21/10 às 08:00 com a Dra. Ana Lima na unidade Aldeota. Pode ser?";
-    await c.fala({
-      texto: "Quero marcar limpeza de pele de manhã",
-      roteiro: [
-        ferramenta(
-          "buscar_horario",
-          busca({ procedimento: P_LIMPEZA_DO_CADASTRO, periodo: "manha" }),
-        ),
-        final(oferta),
-      ],
-    });
-    const reservou =
-      "Reservei quarta, 21/10 às 08:00 com a Dra. Ana Lima, na unidade Aldeota, por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.";
-    respondeu(
-      await c.fala(
-        {
-          texto: "Pode",
-          roteiro: [ferramenta("reservar_horario", { horario: "h1" }), final(reservou)],
-        },
-        UM_MINUTO_MS,
-      ),
-      reservou,
-    );
-    const confirma =
-      "Obrigada! Confirma a Limpeza de pele com a Dra. Ana Lima na quarta, 21/10 às 08:00, na unidade Aldeota, no particular?";
-    const t3 = await c.fala(
-      {
-        texto: "Maria da Silva Souza, nascida em 12/03/1985",
-        roteiro: [
-          ferramenta("registrar_dados_do_paciente", {
-            nome_completo: "Fulano da Silva Souza",
-            data_nascimento: "1985-03-12",
-            para_o_titular: true,
-            campos_mascarados: [],
-          }),
-          final(confirma),
-        ],
-      },
-      UM_MINUTO_MS,
-    );
-    respondeu(t3, confirma);
-    expect(t3.estado.etapa).toBe("aguardando_confirmacao");
-    const reserva = t3.estado.slot_hold_id;
-
-    // Antes de confirmar, cancela a outra: a T1.
-    const T1 = "Confirma o cancelamento da sua consulta de quinta, 22/10 às 14:00?";
-    const t4 = await c.fala(
-      {
-        texto: "Antes, preciso cancelar minha consulta de quinta",
-        roteiro: [
-          ferramenta("consultar_minhas_consultas", {}),
-          ferramenta("pedir_cancelamento", { consulta: "c1" }),
-        ],
-      },
-      UM_MINUTO_MS,
-    );
-    respondeu(t4, T1);
-    expect(t4.estado).toMatchObject({
-      etapa: "cancelar",
-      pedido_pendente: "cancelar",
-      appointment_id: C1,
-      slot_hold_id: reserva,
-    });
-
-    const t5 = await c.fala(
-      { texto: "Sim", roteiro: [ferramenta("cancelar_consulta", {})] },
-      UM_MINUTO_MS,
-    );
-    respondeu(
-      t5,
-      "Tudo bem, sua consulta de 22/10 às 14:00 foi cancelada. Quando quiser marcar de novo, é só chamar por aqui.",
-    );
-    expect(c1.status).toBe("cancelado_paciente");
-    expect(c2.status).toBe("agendado");
-    // So o cancelamento: o "sim" nao marcou a limpeza.
-    expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
-    expect(t5.estado.slot_hold_id).toBe(reserva);
-    expect(c.reservasVivas).toHaveLength(1);
-    return { c1, c2, reserva, confirma };
-  }
-
-  it("cancela outra consulta no meio de uma marcação: a reserva fica e a marcação termina, com a pergunta de novo", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
-    const { c1, c2, reserva, confirma } = await cancelarNoMeioDaMarcacao(c);
-
-    // Volta para a limpeza: a pergunta de novo e o "sim" marcam a reservada.
-    const t6 = await c.fala(
-      { texto: "E a limpeza de pele?", roteiro: [final(confirma)] },
-      UM_MINUTO_MS,
-    );
-    respondeu(t6, confirma);
-    expect(t6.estado).toMatchObject({
-      etapa: "aguardando_confirmacao",
-      slot_hold_id: reserva,
-    });
-
-    const marcou =
-      "Pronto! Sua Limpeza de pele de quarta, 21/10 às 08:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.";
-    const t7 = await c.fala(
-      { texto: "Sim", roteiro: [ferramenta("agendar", {}), final(marcou)] },
-      UM_MINUTO_MS,
-    );
-    respondeu(t7, marcou);
-    expect(c.consultasVivas.map((a) => a.starts_at)).toEqual([
-      iso("2026-10-27", "09:00"),
-      iso("2026-10-21", "08:00"),
-    ]);
-    expect(c1.status).toBe("cancelado_paciente");
-    expect(c2.status).toBe("agendado");
-
-    const tchau = "Por nada! Qualquer coisa, é só chamar por aqui.";
-    respondeu(await c.fala({ texto: "Obrigada", roteiro: [final(tchau)] }), tchau);
-  });
-
-  // achado: com uma marcacao em andamento, o cancelamento feito sai do estado
-  // no mesmo turno (ehEstadoDoCancelamento exige a reserva vazia e nenhum
-  // horario oferecido; fechar apaga o id): no turno seguinte a IA nao sabe mais
-  // que cancelou, e a resposta VERDADEIRA ("sua consulta ... foi cancelada") e
-  // barrada (acao_nao_executada) e a conversa cai para a equipe. Nada errado
-  // chega ao paciente: ele recebe a frase fixa no lugar da resposta. Devia
-  // passar, como passa sem a marcacao em andamento (cenario 2).
-  it.fails("com a marcação em andamento, a resposta verdadeira sobre o cancelamento feito tem de passar", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
-    const certo = "Claro, é só me dizer.";
-    respondeu(
-      await c.fala({ texto: "Oi, tudo bem?", roteiro: [final(certo)] }),
-      `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${certo}`,
-    );
-    respondeu(await c.fala({ texto: "Queria umas informações", roteiro: [final(certo)] }), certo);
-    await cancelarNoMeioDaMarcacao(c);
-    const cancelada =
-      "Sim, sua consulta de quinta, 22/10 às 14:00 foi cancelada.";
-    respondeu(
-      await c.fala(
-        { texto: "Foi cancelada mesmo?", roteiro: [final(cancelada)] },
-        UM_MINUTO_MS,
-      ),
-      cancelada,
-    );
-  });
-
-  /** O efeito feito, com a resposta que não sai: a equipe tem de saber. */
-  const verificadorForaDoAr: Verificador = async () => ({
-    tipo: "falha",
-    motivo: "timeout",
-    modelo: null,
-    uso: null,
-    httpStatus: null,
-  });
-
-  it("a marcação feita com a resposta barrada: a consulta fica, o paciente recebe só a frase e a nota conta a consulta", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
-    await comAPerguntaConfirmaNoAr(c);
-    const doModelo =
-      "Pronto! Sua Consulta de quarta, 21/10 às 14:00 ficou marcada. O resultado é garantido.";
-    const t = await c.fala(
-      { texto: "Sim", roteiro: [ferramenta("agendar", {}), final(doModelo)] },
-      20_000,
-    );
-    expect(oQueDecidiu(t)).toMatchObject({
-      desfecho: "bloqueou",
-      regra: "promessa_resultado",
-      camada: "regra",
-    });
-    expect(t.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
-    expect(c.consultas).toHaveLength(1);
-    expect(t.decisao?.tool_used).toBe("agendar");
-    expect(t.estado).toMatchObject({
-      etapa: "pos_marcacao",
-      desfecho: "passou_para_equipe",
-      appointment_id: c.consultas[0]?.id,
-    });
-    expect(c.notasInternas.at(-1)).toContain("Consulta marcada pelo assistente");
-    await nadaMaisSai(c, ["Sim", "Está marcado?"]);
-    expect(c.consultas).toHaveLength(1);
-  });
-
-  /** O cancelamento feito no turno em que a T2 não pode sair. */
-  async function cancelarComOVerificadorForaDoAr(c: ConversaLonga) {
-    await conversaEmAndamento(c);
-    const { c1 } = consultasDoContato(c.cenario.banco);
-    await c.fala(
-      {
-        texto: "Preciso cancelar minha consulta de quinta",
-        roteiro: [
-          ferramenta("consultar_minhas_consultas", {}),
-          ferramenta("pedir_cancelamento", { consulta: "c1" }),
-        ],
-      },
-      20_000,
-    );
-    const t = await c.fala(
-      {
-        texto: "Sim",
-        roteiro: [ferramenta("cancelar_consulta", {})],
-        verificador: verificadorForaDoAr,
-      },
-      20_000,
-    );
-    return { c1, t };
-  }
-
-  it("o cancelamento feito com o verificador fora do ar: a consulta fica cancelada e o paciente recebe só a frase", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
-    const { c1, t } = await cancelarComOVerificadorForaDoAr(c);
-    expect(oQueDecidiu(t)).toMatchObject({
-      desfecho: "bloqueou",
-      regra: "falha_verificador",
-      camada: "falha",
-    });
-    expect(t.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
-    expect(c1.status).toBe("cancelado_paciente");
-    expect(t.decisao?.tool_used).toBe("cancelar_consulta");
-    expect(trilhaDoTurno(t).join(" ")).toContain("Cancelou a consulta");
-    await nadaMaisSai(c, ["Cancelou?", "Sim"]);
-  });
-
-  // achado: o cancelamento FEITO no turno e a T2 que nao sai (o filtro barrou
-  // ou o verificador caiu): a nota da equipe diz "Pedido: cancelar a consulta
-  // de quinta..." e "Parou em: a resposta não passou na conformidade", como se
-  // o pedido estivesse em aberto. O paciente so recebeu a frase; quem atende
-  // pode nao saber que a consulta ja saiu da agenda. Devia dizer "Consulta
-  // cancelada pelo assistente nesta conversa" (notaDaPassagem volta no ramo do
-  // pedido, antes da linha da cancelada; a passagem do turno SEGUINTE diz).
-  it.fails("o cancelamento feito com a T2 barrada: a nota da equipe tem de dizer que cancelou", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
-    await cancelarComOVerificadorForaDoAr(c);
-    expect(c.notasInternas.at(-1)).toContain(
-      "Consulta cancelada pelo assistente nesta conversa: quinta, 22/10 às 14:00.",
-    );
-  });
-
-  it("a remarcação pedida com o verificador fora do ar: a nova fica pendente, a antiga de pé, e a nota conta o par", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
-    const consulta = await marcarASexta(c);
-    c.equipeAprova(consulta);
-    const quando =
-      "Sua Consulta está marcada para sexta, 30/10 às 14:00.";
-    respondeu(
-      await c.fala({ texto: "Qual é mesmo o horário?", roteiro: [final(quando)] }),
-      quando,
-    );
-    await pedirARemarcacaoParaTerca(c);
-    const t = await c.fala(
-      {
-        texto: "Confirmo",
-        roteiro: [ferramenta("agendar", {})],
-        verificador: verificadorForaDoAr,
-      },
-      20_000,
-    );
-    expect(oQueDecidiu(t)).toMatchObject({
-      desfecho: "bloqueou",
-      regra: "falha_verificador",
-    });
-    expect(t.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
-    const nova = c.consultas.find((a) => a.remarcacao_de === consulta.id);
-    expect(nova).toMatchObject({ approval_status: "pendente" });
-    expect(consulta.status).toBe("agendado");
-    const nota = c.notasInternas.at(-1) ?? "";
-    expect(nota).toContain("sexta, 30/10 às 14:00");
-    expect(nota).toContain("terça, 03/11 às 08:00");
-    await nadaMaisSai(c, ["Remarcou?"]);
-  });
-
-  it("a entrada na lista com o verificador fora do ar: a entrada fica, e a nota conta a lista", async () => {
-    const c = new ConversaLonga(contexto, { catalogo: CATALOGO_DA_AG5 });
-    conversaDoTeste = c;
-    const preco = "A Limpeza de pele custa R$ 120,00 no particular, com a Dra. Ana Lima.";
-    const buscarOPreco = () => [
-      ferramenta("buscar_procedimento", {
-        procedimento: P_LIMPEZA,
-        convenio: null,
-      }),
-      final(preco),
-    ];
-    for (const texto of [
-      "Quanto custa a limpeza de pele?",
-      "Quanto custa mesmo?",
-      "Desculpa, quanto era?",
-      "Certo, e o valor é esse mesmo?",
-    ]) {
-      await c.fala({ texto, roteiro: buscarOPreco() });
-    }
-    const semNoite =
-      "Não tenho horário à noite com a Dra. Ana Lima. Posso procurar de manhã ou à tarde, ou colocar você na lista de espera para à noite. O que prefere?";
-    await c.fala({
-      texto: "Queria com a Dra. Ana, só à noite.",
-      roteiro: [
-        ferramenta(
-          "buscar_horario",
-          buscaDaLimpeza({ profissional: R_ANA, periodo: "noite" }),
-        ),
-        final(semNoite),
-      ],
-    });
-    respondeu(
-      await c.fala({
-        texto: "Lista de espera. Segunda ou quarta.",
-        roteiro: [
-          ferramenta("pedir_lista_de_espera", {
-            periodos: ["noite"],
-            dias: ["segunda", "quarta"],
-          }),
-        ],
-      }),
-      T_E1_ANA_NOITE_SEG_QUA,
-    );
-    const t = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("entrar_na_lista_de_espera", {})],
-      verificador: verificadorForaDoAr,
-    });
-    expect(oQueDecidiu(t)).toMatchObject({
-      desfecho: "bloqueou",
-      regra: "falha_verificador",
-    });
-    expect(t.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
-    expect(c.cenario.fila).toHaveLength(1);
-    expect(c.notasInternas.at(-1)).toContain("lista de espera");
-    await nadaMaisSai(c, ["Entrei?"]);
-  });
-
-  it("a conversa que passa de 20 mensagens: o modelo lê só as últimas, a saudação e o aviso não voltam, e o estado continua inteiro", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-      config: configPublicada({ saudacao: "Olá! Que bom falar com você." }),
-    });
-    conversaDoTeste = c;
-    const consulta = await marcarASexta(
-      c,
-      `Olá! Que bom falar com você.\n\n${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n`,
-    );
-    const voltas = [
-      "Qual é mesmo o horário?",
-      "E é sexta mesmo?",
-      "Às 14h, certo?",
-      "Com a Dra. Ana?",
-      "Pendente da equipe?",
-      "Desculpa, sou esquecida",
-      "Me diz de novo o horário",
-      "Sexta, né?",
-    ];
-    const quando =
-      "Sua Consulta está marcada para sexta, 30/10 às 14:00, pendente da aprovação da equipe.";
-    for (const texto of voltas) {
-      const t = await c.fala({ texto, roteiro: [final(quando)] });
-      respondeu(t, quando);
-      expect(t.estado).toMatchObject({
-        etapa: "pos_marcacao",
-        appointment_id: consulta.id,
-      });
-    }
-    // 12 falas e 12 respostas: o modelo le as 20 ultimas e a pendente no fim.
-    const ultimo = c.turnos.at(-1)!;
-    const input = ultimo.corpos[0]?.input as { role: string; content: string }[];
-    expect(input).toHaveLength(20);
-    expect(input.at(-1)?.content).toBe("Sexta, né?");
-    expect(
-      c.recebidasPeloPaciente.filter((m) => m.includes("Que bom falar com você")),
-    ).toHaveLength(1);
-
-    // Dali em diante, cancelar vale como sempre: as ancoras leem o banco.
-    const T1 = "Confirma o cancelamento da sua consulta de sexta, 30/10 às 14:00?";
-    respondeu(
-      await c.fala({
-        texto: "Quero cancelar minha consulta",
-        roteiro: [
-          ferramenta("consultar_minhas_consultas", {}),
-          ferramenta("pedir_cancelamento", { consulta: "c1" }),
-        ],
-      }),
-      T1,
-    );
-    const cancelou = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("cancelar_consulta", {})],
-    });
-    respondeu(
-      cancelou,
-      "Tudo bem, sua consulta de 30/10 às 14:00 foi cancelada. Quando quiser marcar de novo, é só chamar por aqui.",
-    );
-    expect(consulta.status).toBe("cancelado_paciente");
-  });
-});
-
-describe("13. áudio e foto no meio da conversa", () => {
-  const CONFIRMA =
-    "Obrigada! Confirma a Consulta com a Dra. Ana Lima na sexta, 30/10 às 14:00, na unidade Centro, no particular?";
-
-  /** A marcação inteira falada: a escolha, os dados e o "sim". */
+describe("12. áudio e foto no meio da conversa", () => {
+  /** A marcação falada: a escolha, os dados e o "sim". */
   async function marcarFalando(c: ConversaLonga) {
-    const oferta =
-      "Tenho sexta, 30/10 às 14:00 ou às 15:00 com a Dra. Ana Lima, na unidade Centro. Qual prefere?";
-    const t1 = await c.fala({
-      texto: "Quero marcar uma consulta para a sexta da semana que vem, à tarde",
-      roteiro: [
+    await modeloResponde(
+      c,
+      "Quero marcar uma consulta para a sexta da semana que vem, à tarde",
+      OFERTA_DA_SEXTA,
+      [
         ferramenta(
           "buscar_horario",
           busca({ a_partir_de: "2026-10-30", periodo: "tarde" }),
         ),
-        final(oferta),
+      ],
+    );
+    const t2 = await c.audio("Pode ser às catorze horas", {
+      roteiro: [
+        ferramenta("reservar_horario", { horario: "h1" }),
+        final(RESERVOU_SEXTA),
       ],
     });
-    respondeu(t1, `${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${oferta}`);
-    const reservou =
-      "Reservei sexta, 30/10 às 14:00 com a Dra. Ana Lima, na unidade Centro, por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.";
-    const t2 = await c.audio("Pode ser às catorze horas", {
-      roteiro: [ferramenta("reservar_horario", { horario: "h1" }), final(reservou)],
-    });
-    respondeu(t2, reservou);
-    // O modelo le a transcricao marcada como audio, com o nome mascarado.
-    expect(
-      (t2.corpos[0]?.input as { role: string; content: string }[]).at(-1)?.content,
-    ).toBe(`${PREFIXO_DO_AUDIO} Pode ser às catorze horas`);
+    respondeu(t2, RESERVOU_SEXTA);
+    // O modelo le a transcricao marcada como audio.
+    expect((t2.corpos[0]?.input as { content: string }[]).at(-1)?.content).toBe(
+      `${PREFIXO_DO_AUDIO} Pode ser às catorze horas`,
+    );
 
     const t3 = await c.audio("Maria da Silva Souza, nascida em 12/03/1985", {
-      roteiro: [
-        ferramenta("registrar_dados_do_paciente", {
-          nome_completo: "Fulano da Silva Souza",
-          data_nascimento: "1985-03-12",
-          para_o_titular: true,
-          campos_mascarados: [],
-        }),
-        final(CONFIRMA),
-      ],
+      roteiro: [dadosCompletos(), final(CONFIRMA_SEXTA)],
     });
-    respondeu(t3, CONFIRMA);
+    respondeu(t3, CONFIRMA_SEXTA);
     expect(t3.estado.etapa).toBe("aguardando_confirmacao");
     expect(c.dados).toMatchObject({
       nome_completo: true,
@@ -4062,34 +3123,29 @@ describe("13. áudio e foto no meio da conversa", () => {
       faltam: [],
     });
 
-    const marcou =
-      "Pronto! Sua Consulta de sexta, 30/10 às 14:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.";
-    const t4 = await c.audio("sim", {
-      roteiro: [ferramenta("agendar", {}), final(marcou)],
-    });
-    respondeu(t4, marcou);
+    respondeu(
+      await c.audio("sim", {
+        roteiro: [ferramenta("agendar", {}), final(MARCOU_SEXTA)],
+      }),
+      MARCOU_SEXTA,
+    );
     expect(c.consultas).toHaveLength(1);
     return c.consultas[0]!;
   }
 
   it("a marcação falada, o pedido lido na foto e o sinal de emergência falado: o portão lê a transcrição", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     const consulta = await marcarFalando(c);
     expect(c.executor.linhas("ia_leitura_da_midia")).toHaveLength(3);
 
     // A foto de um pedido com um procedimento do Cadastro: o modelo le so a
     // descricao do servidor.
-    const P_EXAME = codigoDoProcedimento(CADASTRO, PROC.exame);
     const pedido = "No pedido que você mandou, vi Exame. É isso mesmo?";
     const t5 = await c.foto(
       {
         tipo: "pedido_de_exame_ou_procedimento",
         procedimentos: [PROC.exame],
-        codigos: [P_EXAME],
+        codigos: [codigoDoProcedimento(CADASTRO, PROC.exame)],
         foraDoCadastro: 0,
         confianca: "alta",
       },
@@ -4097,28 +3153,19 @@ describe("13. áudio e foto no meio da conversa", () => {
     );
     respondeu(t5, pedido);
     expect(
-      (t5.corpos[0]?.input as { role: string; content: string }[]).at(-1)?.content,
+      (t5.corpos[0]?.input as { content: string }[]).at(-1)?.content,
     ).toContain("Exame");
-
-    const certo = "Certo. Qualquer coisa, é só chamar por aqui.";
-    respondeu(await c.fala({ texto: "Isso, depois eu vejo", roteiro: [final(certo)] }), certo);
-    respondeu(await c.fala({ texto: "Obrigada", roteiro: [final(certo)] }), certo);
+    await conversaFiada(c, ["Isso, depois eu vejo", "Obrigada"]);
 
     // O sinal de emergencia falado: passa como urgente, sem o agente.
-    const t8 = await c.audio("estou com dor no peito e falta de ar");
-    expect(oQueDecidiu(t8)).toEqual({
-      desfecho: "escalou",
-      regra: null,
-      motivo: "urgencia",
-      falha: null,
-      gatilho: "urgencia",
-      camada: null,
-    });
-    expect(t8.chamadasAoModelo).toBe(0);
-    expect(t8.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
+    passou(
+      await c.audio("estou com dor no peito e falta de ar"),
+      { desfecho: "escalou", motivo: "urgencia", gatilho: "urgencia" },
+      0,
+    );
     expect(c.executor.linhas("conversa_urgente")).toHaveLength(1);
 
-    // Depois da passagem, nem o audio nem a foto chamam modelo nenhum.
+    // Depois da passagem, nem o texto nem o audio chamam modelo nenhum.
     await nadaMaisSai(c, ["alô?", "Sim"]);
     const t11 = await c.audio("sim, confirmo");
     expect(t11.chamadasAoModelo).toBe(0);
@@ -4126,87 +3173,57 @@ describe("13. áudio e foto no meio da conversa", () => {
     expect(consulta.status).toBe("agendado");
   });
 
-  it("o 'sim' falado cancela depois da pergunta; o áudio sem fala e a foto clínica passam para a equipe, sem o agente", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+  it("o 'sim' falado cancela depois da pergunta, o 'não' falado não; a foto clínica passa para a equipe, sem o agente", async () => {
+    const c = clinicaComDuasUnidades();
     const consulta = await marcarFalando(c);
     c.equipeAprova(consulta);
 
     const T1 = "Confirma o cancelamento da sua consulta de sexta, 30/10 às 14:00?";
-    respondeu(
-      await c.fala({
-        texto: "Quero cancelar",
-        roteiro: [
-          ferramenta("consultar_minhas_consultas", {}),
-          ferramenta("pedir_cancelamento", { consulta: "c1" }),
-        ],
-      }),
-      T1,
-    );
-    // O audio de um "nao" nao cancela.
+    await sistemaResponde(c, "Quero cancelar", T1, pedirOCancelamento());
     const continua = "Tudo bem, sua consulta continua marcada.";
-    const t6 = await c.audio("não, deixa", {
-      roteiro: [ferramenta("cancelar_consulta", {}), final(continua)],
-    });
-    respondeu(t6, continua);
+    respondeu(
+      await c.audio("não, deixa", {
+        roteiro: [ferramenta("cancelar_consulta", {}), final(continua)],
+      }),
+      continua,
+    );
     expect(consulta.status).toBe("agendado");
 
-    respondeu(
-      await c.fala({
-        texto: "Pensando bem, quero cancelar sim",
-        roteiro: [
-          ferramenta("consultar_minhas_consultas", {}),
-          ferramenta("pedir_cancelamento", { consulta: "c1" }),
-        ],
-      }),
+    await sistemaResponde(
+      c,
+      "Pensando bem, quero cancelar sim",
       T1,
+      pedirOCancelamento(),
     );
-    const t8 = await c.audio("sim", {
-      roteiro: [ferramenta("cancelar_consulta", {})],
-    });
     respondeu(
-      t8,
+      await c.audio("sim", { roteiro: [ferramenta("cancelar_consulta", {})] }),
       "Tudo bem, sua consulta de 30/10 às 14:00 foi cancelada. Quando quiser marcar de novo, é só chamar por aqui.",
     );
     expect(consulta.status).toBe("cancelado_paciente");
 
-    // A foto de um documento clinico: o leitor identificou, e a conversa passa.
-    const t9 = await c.foto({
-      tipo: "receita",
-      procedimentos: [],
-      codigos: [],
-      foraDoCadastro: 0,
-      confianca: "alta",
-    });
-    expect(t9.chamadasAoModelo).toBe(0);
-    expect(t9.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
-    expect(oQueDecidiu(t9)).toMatchObject({
-      desfecho: "escalou",
-      motivo: "midia_clinica",
-      gatilho: null,
-    });
-    expect(t9.statusDaConversa).toBe("aguardando_humano");
+    // A foto de uma receita: o leitor identificou, e a conversa passa.
+    passou(
+      await c.foto({
+        tipo: "receita",
+        procedimentos: [],
+        codigos: [],
+        foraDoCadastro: 0,
+        confianca: "alta",
+      }),
+      { desfecho: "escalou", motivo: "midia_clinica", gatilho: null },
+      0,
+    );
     await nadaMaisSai(c, ["Sim"]);
   });
 
   it("o áudio sem fala no meio da marcação: nada é reservado nem marcado, e a conversa passa como mídia", async () => {
-    const c = new ConversaLonga(contexto, {
-      catalogo: CADASTRO,
-      duasUnidades: true,
-    });
-    conversaDoTeste = c;
+    const c = clinicaComDuasUnidades();
     await conversaEmAndamento(c);
-    const t7 = await c.audio(null);
-    expect(oQueDecidiu(t7)).toMatchObject({
-      desfecho: "escalou",
-      motivo: "midia_nao_suportada",
-      gatilho: "midia",
-    });
-    expect(t7.chamadasAoModelo).toBe(0);
-    expect(t7.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
+    passou(
+      await c.audio(null),
+      { desfecho: "escalou", motivo: "midia_nao_suportada", gatilho: "midia" },
+      0,
+    );
     await nadaMaisSai(c, ["Sim", "Nasci em 12/03/1985"]);
     expect(c.consultas).toEqual([]);
   });
