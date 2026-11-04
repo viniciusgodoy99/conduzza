@@ -61,8 +61,8 @@ function clienteFalso() {
   };
 }
 
-import { exportarPainel } from "@/app/(app)/painel-geral/exportar/exportar-painel";
-import { POST } from "@/app/(app)/painel-geral/exportar/route";
+import { exportarPainel } from "@/app/(admin)/painel-geral/exportar/exportar-painel";
+import { POST } from "@/app/(admin)/painel-geral/exportar/route";
 import {
   COLUNAS_DA_EXPORTACAO_DO_PAINEL,
   corpoDoPedidoDoPainel,

@@ -145,7 +145,11 @@ function rotuloDoItem(item: NavItem, t: Translate): string {
     : item.label;
 }
 
-function MarcaDoRail({
+/**
+ * A marca no topo do menu (lockup aberto, simbolo recolhido). Tambem serve a
+ * area do super admin (components/shell/shell-da-equipe.tsx).
+ */
+export function MarcaDoRail({
   nomeDoProduto,
   acao,
 }: {
@@ -175,7 +179,11 @@ function MarcaDoRail({
   );
 }
 
-function ItemDoMenu({
+/**
+ * Um item do menu, aberto ou recolhido (o rotulo vira dica ao lado). Tambem
+ * serve a area do super admin (components/shell/shell-da-equipe.tsx).
+ */
+export function ItemDoMenu({
   item,
   rotulo,
   ativo,

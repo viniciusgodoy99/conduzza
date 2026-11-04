@@ -14,9 +14,13 @@ function arquivosDe(pasta: string): string[] {
     .map((nome) => join(pasta, nome));
 }
 
+// Desde 03/11/2026, a area do super admin inteira (app/(admin): o layout com
+// a guarda, o erro e o painel), o menu proprio dela e a escolha de entrada.
 const ARQUIVOS_DO_PAINEL = [
-  ...arquivosDe("app/(app)/painel-geral"),
+  ...arquivosDe("app/(admin)"),
   ...arquivosDe("components/painel-geral"),
+  "components/shell/shell-da-equipe.tsx",
+  "lib/auth/area-da-equipe.ts",
   "lib/queries/painel-geral.ts",
 ];
 

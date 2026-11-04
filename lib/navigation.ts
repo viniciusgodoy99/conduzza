@@ -1,4 +1,5 @@
 import {
+  Building2,
   CalendarCheck,
   CalendarDays,
   ChartColumn,
@@ -37,6 +38,12 @@ import type { ModuleKey } from "@/lib/domain/permissions";
 // itemsForRole do AppShell, components/shell/app-shell.tsx). ATENCAO: sem a
 // flag, item com moduleKey null aparece para TODOS os papeis. A rota confere
 // de novo no layout dela, e cada acao no servidor e no banco.
+//
+// Desde 03/11/2026 (decisao do dono, "Conta propria so para o painel"), o
+// Painel geral mora numa area separada da clinica (app/(admin), com o menu
+// proprio de components/shell/shell-da-equipe.tsx). O item continua no menu
+// da clinica para as contas antigas (super admin e membro de clinica ao
+// mesmo tempo, ate a limpeza) e leva para a area nova.
 
 export type NavGroup =
   "principal" | "operacao_do_dia" | "inteligencia" | "administracao";
@@ -183,6 +190,29 @@ export const NAV_ITEMS: NavItem[] = [
     soSuperAdmin: true,
   },
 ];
+
+/**
+ * O menu da area do super admin (app/(admin), decisao do dono de 03/11/2026):
+ * so o Painel geral, o mesmo item do menu da clinica.
+ */
+export const ITENS_DA_AREA_DA_EQUIPE: NavItem[] = NAV_ITEMS.filter(
+  (item) => item.soSuperAdmin === true,
+);
+
+/**
+ * "Abrir a clinica" no menu da area do super admin: so para a conta que ainda
+ * e membro ativo de alguma clinica (as contas antigas, ate a limpeza). Leva
+ * ao Inicio, onde o layout da clinica decide o resto (a escolha entre
+ * varias, inclusive). Building2 e o desenho da clinica no painel, sem dono
+ * de status.
+ */
+export const ABRIR_A_CLINICA: NavItem = {
+  href: "/inicio",
+  label: "Abrir a clínica",
+  icon: Building2,
+  group: "principal",
+  moduleKey: null,
+};
 
 /**
  * Preferencia do menu lateral, guardada no cookie cz_rail (docs/06 secao

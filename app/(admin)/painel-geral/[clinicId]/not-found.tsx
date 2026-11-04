@@ -5,7 +5,8 @@ import { EstadoDeTela } from "@/components/shell/estado-de-tela";
 import { Button } from "@/components/ui/button";
 
 // Clinica que nao esta no Painel geral: id invalido, clinica removida ou de
-// teste automatico (as suites nao entram no painel). Dentro do shell, em
+// teste automatico (as suites nao entram no painel). Dentro do menu da area
+// do super admin, em
 // portugues e com caminho de volta, no lugar do 404 do Next.
 export default function ClinicaNaoEncontradaNoPainel() {
   return (
