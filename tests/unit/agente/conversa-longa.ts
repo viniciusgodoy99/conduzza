@@ -423,6 +423,25 @@ export class ConversaLonga {
     this.ligarOEstado();
     this.ligarOPreparo();
     this.ligarAFila();
+    // Toda RPC de agenda do banco recusa a conversa que saiu da IA (os
+    // contratos da AG3 e da AG4 nao tem a conversa, so o da AG5).
+    const agenda = this.cenario.banco;
+    for (const nome of [
+      "reservar_horario_da_ia",
+      "registrar_dados_da_marcacao",
+      "agendar_pela_ia",
+      "cancelar_consulta_pela_ia",
+      "pedir_lista_de_espera_pela_ia",
+      "entrar_na_lista_de_espera_pela_ia",
+    ]) {
+      const doContrato = agenda.manipuladores.get(nome)!;
+      agenda.rpc(nome, (args) =>
+        this.conversa.status === "ia_atendendo" &&
+        (this.conversa.assignee_user_id ?? null) === null
+          ? doContrato(args)
+          : { data: { ok: false, motivo: "ia_desligada" }, error: null },
+      );
+    }
   }
 
   /**
@@ -694,6 +713,14 @@ export class ConversaLonga {
     return id;
   }
 
+  /** Alguem da equipe assume a conversa (Assumir). */
+  equipeAssume(): void {
+    Object.assign(this.conversa, {
+      status: "em_atendimento",
+      assignee_user_id: "a1a1a1a1-0000-4000-8000-000000000001",
+    });
+  }
+
   /** A equipe aprova a consulta (a marcada pela IA, ou a remarcacao). */
   equipeAprova(consulta: Linha): void {
     consulta.approval_status = "aprovado";
@@ -726,6 +753,24 @@ export class ConversaLonga {
       this.escreve(texto);
     }
     return this.rodarJob(f);
+  }
+
+  /** Um job sem mensagem nova (o segundo job da mesma rajada). */
+  async continua(
+    f: Omit<FalaDaConversa, "texto"> = {},
+  ): Promise<TurnoDaConversa> {
+    return this.rodarJob(f);
+  }
+
+  /** O mesmo job de novo, como a fila faz com o que nao foi concluido. */
+  async repetirOJob(turno: TurnoDaConversa): Promise<TurnoDaConversa> {
+    const linha = this.executor
+      .linhas("job_queue")
+      .find((j) => j.id === turno.job);
+    if (linha === undefined) {
+      throw new Error("job fora da fila");
+    }
+    return this.rodarJob({}, linha);
   }
 
   /** O job que a fila deixou esperando (a mensagem nova da pessoa). */
@@ -768,9 +813,11 @@ export class ConversaLonga {
     const estavaFora = this.conversa.status !== "ia_atendendo";
     const decisoesAntes = this.decisoes.length;
     const enviadasAntes = fakeSentMessages().length;
-    cenario.jobs.push(job.id);
-    cenario.jobCriadoEm.set(job.id, Date.parse(job.created_at ?? ""));
-    cenario.estadoDoTurnoPorJob.set(job.id, "reservado");
+    if (!cenario.jobs.includes(job.id)) {
+      cenario.jobs.push(job.id);
+      cenario.jobCriadoEm.set(job.id, Date.parse(job.created_at ?? ""));
+      cenario.estadoDoTurnoPorJob.set(job.id, "reservado");
+    }
 
     const roteiro = [...(f.roteiro ?? [])];
     const corpos: Record<string, unknown>[] = [];
@@ -897,10 +944,15 @@ export class ConversaLonga {
       }
     }
     // A conversa que passou neste job avisa com a frase fixa, e so ela.
+    // (Sem decisao, a passagem sem frase: a autorizacao revogada. Com a
+    // liberacao que caiu no meio, a conversa ja estava com alguem: nada sai.)
     if (!e.estavaFora && turno.statusDaConversa !== "ia_atendendo") {
-      expect(turno.enviadas, `${rotulo}: a passagem`).toEqual([
-        FRASE_DE_ESCALONAMENTO,
-      ]);
+      const semFrase =
+        turno.decisao === undefined ||
+        turno.decisao.motivo_da_falha === "liberacao_suspensa";
+      expect(turno.enviadas, `${rotulo}: a passagem`).toEqual(
+        semFrase ? [] : [FRASE_DE_ESCALONAMENTO],
+      );
     }
     // A conversa de saida nao recebe mais nada, em nenhum turno seguinte.
     if (this.jobDaSaida !== null) {
@@ -913,15 +965,20 @@ export class ConversaLonga {
   }
 
   /**
-   * Nunca duas consultas de pe do mesmo procedimento (fora a remarcacao
-   * pendente ligada a antiga), nem duas no mesmo horario do profissional.
+   * Nunca duas consultas de pe do mesmo procedimento marcadas pela IA (fora a
+   * remarcacao pendente ligada a antiga), nem duas no mesmo horario do
+   * profissional.
    */
   private conferirAsConsultas(rotulo: string): void {
     const vinculos = this.cenario.catalogo.vinculos;
     const porProcedimento = new Map<string, number>();
     const vivas = this.consultasVivas;
     for (const consulta of vivas) {
-      if (consulta.remarcacao_de != null && consulta.approval_status === "pendente") {
+      if (
+        consulta.created_by !== "ia" ||
+        (consulta.remarcacao_de != null &&
+          consulta.approval_status === "pendente")
+      ) {
         continue;
       }
       const procedimento =
