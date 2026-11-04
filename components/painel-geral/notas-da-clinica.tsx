@@ -8,7 +8,7 @@ import {
   escreverNotaDaClinicaAction,
   excluirNotaDaClinicaAction,
   type ResultadoDoPainel,
-} from "@/app/(app)/painel-geral/actions";
+} from "@/app/(admin)/painel-geral/actions";
 import {
   autoria,
   contagemNoPainel,

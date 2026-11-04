@@ -17,13 +17,13 @@ import {
   contarConfirmacoesDeAmanha,
   contarConversasAguardando,
 } from "@/components/shell/contadores-do-menu";
-import { CriarClinica } from "@/components/shell/criar-clinica";
 import { EstadoDeTela, TelaSemShell } from "@/components/shell/estado-de-tela";
 import { MotorStatus } from "@/components/shell/motor-status";
 import { SairDaConta } from "@/components/shell/sair-da-conta";
 import { WhatsappStatus } from "@/components/shell/whatsapp-status";
 import { Button } from "@/components/ui/button";
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import { vaiDiretoParaOPainel } from "@/lib/auth/area-da-equipe";
 import {
   COLUNAS_DA_FAIXA,
   numerosParaContar,
@@ -137,15 +137,15 @@ export default async function AppLayout({
       );
     }
 
-    // Dono do produto sem clinica ativa: precisa poder CRIAR uma, senao entra
-    // no sistema e nao consegue fazer nada. A tela completa de administracao
-    // e a Tela 14 (tarefa 5.5).
-    if (context.isProductAdmin && ativos.length === 0) {
-      return (
-        <TelaSemShell>
-          <CriarClinica primeira email={context.userEmail} />
-        </TelaSemShell>
-      );
+    // A conta do painel (decisao do dono de 03/11/2026, "Conta propria so
+    // para o painel"): o super admin sem vinculo ativo vai direto para o
+    // Painel geral, na area separada da clinica (app/(admin)), e nunca ve
+    // "Criar clinica" (essa conta nao entra em clinica: o banco recusa o
+    // vinculo desde a migration 20261103110000). Vale para o login, o "/" e
+    // qualquer tela da clinica, porque todos passam por aqui. As contas
+    // antigas, membros de clinica, seguem abaixo como antes.
+    if (vaiDiretoParaOPainel(context)) {
+      redirect("/painel-geral");
     }
 
     // Tem clinica ativa (mais de uma) e talvez um pedido pendente em outra:

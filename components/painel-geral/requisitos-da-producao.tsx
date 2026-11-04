@@ -8,7 +8,7 @@ import {
   registrarRequisitoDaProducaoAction,
   revogarRequisitoDaProducaoAction,
   type ResultadoDoPainel,
-} from "@/app/(app)/painel-geral/actions";
+} from "@/app/(admin)/painel-geral/actions";
 import {
   dataEHoraNaClinica,
   efeitoDeRevogar,

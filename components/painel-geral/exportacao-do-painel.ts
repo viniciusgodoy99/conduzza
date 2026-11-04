@@ -33,7 +33,7 @@ import {
 // Exportar a lista do Painel geral (segunda leva, 26/10/2026; escolha (7)
 // do dono). Regras PURAS: o corpo do pedido (os filtros e a ordem da tela),
 // as colunas e as linhas do arquivo, o nome do arquivo e o que vai para a
-// trilha. Quem le o banco e grava a trilha e app/(app)/painel-geral/
+// trilha. Quem le o banco e grava a trilha e app/(admin)/painel-geral/
 // exportar (o molde e a exportacao dos leads, docs/04 secao 20).
 //
 // - O arquivo sai com as clinicas que batem com os filtros da tela, na

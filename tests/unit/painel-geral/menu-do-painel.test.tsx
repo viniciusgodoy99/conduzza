@@ -6,7 +6,10 @@ import { describe, expect, it, vi } from "vitest";
 // apareceria para TODOS os papeis sem a flag soSuperAdmin: o teste renderiza
 // o AppShell de verdade (o filtro itemsForRole vive nele) com e sem o super
 // admin, em todos os papeis. A rota tem a propria guarda no servidor
-// (app/(app)/painel-geral/layout.tsx).
+// (app/(admin)/layout.tsx, a area do super admin desde 03/11/2026, com o
+// menu proprio: tests/unit/auth/layout-da-area-da-equipe.test.tsx). O item
+// continua no menu da clinica para as contas antigas (super admin e membro
+// de clinica ao mesmo tempo, ate a limpeza) e leva para a area nova.
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/inicio",
@@ -27,7 +30,12 @@ vi.mock("@/app/(auth)/actions", () => ({
 
 import { AppShell } from "@/components/shell/app-shell";
 import { ROLE_LABELS, type Role } from "@/lib/domain/permissions";
-import { NAV_ITEMS, itemDaRota } from "@/lib/navigation";
+import {
+  ABRIR_A_CLINICA,
+  ITENS_DA_AREA_DA_EQUIPE,
+  NAV_ITEMS,
+  itemDaRota,
+} from "@/lib/navigation";
 
 const PAPEIS: Role[] = [
   "admin",
@@ -93,5 +101,26 @@ describe("item Painel geral no menu", () => {
     const saida = shell(papel, true);
     expect(saida).toContain('href="/painel-geral"');
     expect(saida).toContain("Painel geral");
+  });
+});
+
+describe("menu da área do super admin (03/11/2026)", () => {
+  it("só o Painel geral, o mesmo item do menu da clínica", () => {
+    expect(ITENS_DA_AREA_DA_EQUIPE.map((i) => i.href)).toEqual([
+      "/painel-geral",
+    ]);
+    expect(ITENS_DA_AREA_DA_EQUIPE[0]).toBe(
+      NAV_ITEMS.find((i) => i.href === "/painel-geral"),
+    );
+  });
+
+  it("Abrir a clínica leva ao Início, sem módulo da matriz", () => {
+    expect(ABRIR_A_CLINICA).toMatchObject({
+      href: "/inicio",
+      label: "Abrir a clínica",
+      moduleKey: null,
+    });
+    // Nao e item do menu da clinica (la o Inicio ja existe).
+    expect(NAV_ITEMS).not.toContain(ABRIR_A_CLINICA);
   });
 });

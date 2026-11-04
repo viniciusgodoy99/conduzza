@@ -88,7 +88,7 @@ import {
   registrarRequisitoDaProducaoAction,
   revogarRequisitoDaProducaoAction,
   suspenderClinicaAction,
-} from "@/app/(app)/painel-geral/actions";
+} from "@/app/(admin)/painel-geral/actions";
 import { TEXTOS_DO_PAINEL } from "@/components/painel-geral/painel-geral";
 
 beforeEach(() => {

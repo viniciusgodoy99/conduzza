@@ -35,12 +35,12 @@ import { adminClient, anonClient } from "../rls/stack";
 //   DENTRO desse teste (definir_agente_da_clinica recusa as de teste) e
 //   volta a ser no finally, desligada; ela nao tem numero nem telefone,
 //   entao nem em Teste a IA atende nela;
-// - com INTEGRACAO_COM_SUPER_ADMIN=1 (opt-in, como o RLS_COM_SUPER_ADMIN de
-//   painel-geral.test.ts: cria um product_admin sintetico NA PRODUCAO, com
-//   senha aleatoria e e-mail em example.com, e o apaga no fim): o super
-//   admin com vinculo ativo na A entra por ultimo e VIRA o ultimo acesso da
-//   A, marcado (equipe_conduzza), e conta nas ativas (o desenho: "dos
-//   membros ATIVOS"); aparece na equipe, marcado.
+// - (ate 03/11/2026, com INTEGRACAO_COM_SUPER_ADMIN=1: um super admin
+//   sintetico com vinculo ativo na A virava o ultimo acesso dela, marcado.
+//   Desde a migration 20261103110000, o banco recusa vincular super admin a
+//   clinica (CZSA1); o uso da equipe Conduzza numa clinica, marcado, e o da
+//   conta normal marcada em equipe_conduzza, provado em
+//   tests/integration/super-admin-sem-clinica.test.ts.)
 // A regra dos 30 dias (30 dias exatos em uso, 30 dias e 1 microssegundo
 // sem uso), o empate pelo menor user_id e a sessao renovada ha dias com o
 // login de mais de 30 nao se montam pela API (o Auth nao deixa escolher a
@@ -76,10 +76,8 @@ import { adminClient, anonClient } from "../rls/stack";
 const admin = adminClient();
 const sufixo = crypto.randomUUID().slice(0, 8);
 const SENHA = `PainelCsInt!${sufixo}`;
-const COM_SUPER_ADMIN = process.env.INTEGRACAO_COM_SUPER_ADMIN === "1";
 
 const email = (papel: string) => `painel-cs-int-${papel}-${sufixo}@teste.dev`;
-const EMAIL_DO_SUPER = `painel-cs-int-super-${sufixo}@example.com`;
 
 let clinicaA = "";
 let clinicaB = "";
@@ -523,10 +521,7 @@ describe("o último acesso é a última atividade, não só o login", () => {
 // marca de teste so aqui dentro (definir_agente_da_clinica recusa as de
 // teste), e de volta no finally, desligada.
 describe("o agente pelo painel confere o estado que a tela mostrava", () => {
-  async function agente(
-    estadoVisto: string,
-    estado: string,
-  ): Promise<Erro> {
+  async function agente(estadoVisto: string, estado: string): Promise<Erro> {
     const { error } = await admin.rpc("definir_agente_da_clinica_no_painel", {
       p_clinic_id: clinicaB,
       p_estado_visto: estadoVisto,
@@ -658,75 +653,7 @@ describe("o agente pelo painel confere o estado que a tela mostrava", () => {
   });
 });
 
-// O super admin com vinculo na A: so com INTEGRACAO_COM_SUPER_ADMIN=1.
-describe.skipIf(!COM_SUPER_ADMIN)(
-  "a equipe Conduzza conta no uso, marcada (opt-in)",
-  () => {
-    const senhaDoSuper = `${crypto.randomUUID()}!Aa1`;
-    let superAdmin = "";
-
-    beforeAll(async () => {
-      const { data, error } = await admin.auth.admin.createUser({
-        email: EMAIL_DO_SUPER,
-        password: senhaDoSuper,
-        email_confirm: true,
-        user_metadata: { name: "Super admin sintético" },
-      });
-      if (error || !data.user) {
-        throw new Error(
-          `criar super admin: ${error?.message ?? "sem usuário"}`,
-        );
-      }
-      superAdmin = data.user.id;
-      ids.set("super", superAdmin);
-      await admin
-        .from("product_admin")
-        .insert({ user_id: superAdmin })
-        .throwOnError();
-      await admin
-        .from("clinic_member")
-        .insert({
-          clinic_id: clinicaA,
-          user_id: superAdmin,
-          role: "admin",
-          status: "ativo",
-        })
-        .throwOnError();
-      // O super admin entra por ULTIMO, depois de todo mundo.
-      await pausa(1_100);
-      await entrar(EMAIL_DO_SUPER, senhaDoSuper);
-    }, 60_000);
-
-    afterAll(async () => {
-      if (superAdmin) {
-        // So o product_admin sai aqui; o vinculo sai com a clinica e o
-        // usuario no afterAll geral.
-        const { error } = await admin
-          .from("product_admin")
-          .delete()
-          .eq("user_id", superAdmin);
-        expect(error, "tirar o product_admin sintetico").toBeNull();
-      }
-    });
-
-    it("o login do super admin (o último) vira o último acesso da A, marcado, e ele conta nas ativas", async () => {
-      const a = linha(await painel(), clinicaA);
-      expect(a.ultimo_acesso?.user_id).toBe(superAdmin);
-      expect(a.ultimo_acesso?.equipe_conduzza).toBe(true);
-      expect(a.ultimo_acesso?.implementador).toBe(false);
-      expect(a.em_uso).toBe(true);
-      expect(a.membros_ativos).toBe(4);
-      expect(a.membros_equipe_conduzza).toBe(1);
-      expect(a.pessoas.map((p) => p.email)).toContain(EMAIL_DO_SUPER);
-      const e = await equipe(clinicaA);
-      const doSuper = e.equipe.find((p) => p.user_id === superAdmin);
-      expect(doSuper).toMatchObject({
-        equipe_conduzza: true,
-        conta_no_uso: true,
-        situacao: "ativo",
-        papel: "admin",
-      });
-      expect(doSuper?.ultimo_acesso_em).not.toBeNull();
-    });
-  },
-);
+// O super admin com vinculo na A (o bloco opt-in que ficava aqui) saiu com a
+// migration 20261103110000: o banco recusa vincular super admin a clinica
+// (CZSA1). O uso da equipe Conduzza numa clinica, marcado, esta em
+// tests/integration/super-admin-sem-clinica.test.ts (equipe_conduzza).

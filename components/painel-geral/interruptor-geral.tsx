@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import {
   definirInterruptorGeralAction,
   type ResultadoDoPainel,
-} from "@/app/(app)/painel-geral/actions";
+} from "@/app/(admin)/painel-geral/actions";
 import { LIGADO_DESLIGADO_STATUS } from "@/components/agente/whatsapp/agente-de-ia";
 import { TEXTOS_DO_PAINEL } from "@/components/painel-geral/painel-geral";
 import { Aviso } from "@/components/shared/aviso";

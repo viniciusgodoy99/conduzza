@@ -25,7 +25,8 @@ import { createClient } from "@/lib/supabase/server";
 
 // Detalhe de uma clinica no Painel geral (onda 1, decisao do dono de
 // 20/10/2026; desde 26/10/2026, o acompanhamento de cliente), so para a
-// equipe Conduzza (a guarda e o layout da rota). Aqui so se le; o desenho e
+// equipe Conduzza (a guarda e o layout da area do super admin,
+// app/(admin)/layout.tsx). Aqui so se le; o desenho e
 // o DetalheDaClinica (components/painel-geral).
 //
 // A linha da clinica vem do painel (painel_cs_das_clinicas, obrigatoria:
