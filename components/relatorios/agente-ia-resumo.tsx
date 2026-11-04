@@ -65,7 +65,9 @@ export function CartaoDoAgente({
     );
   }
   if (leitura.estado === "vazio") {
-    return <CartaoDeMetrica {...casca} estado="vazio" rodape={leitura.rodape} />;
+    return (
+      <CartaoDeMetrica {...casca} estado="vazio" rodape={leitura.rodape} />
+    );
   }
   return (
     <CartaoDeMetrica

@@ -142,14 +142,17 @@ describe("os cartoes do agente", () => {
   it.each([
     ["sem o bloco", null],
     ["bloco zerado, sem atividade", SEM_ATIVIDADE],
-  ])("%s: todos em Ainda não medido, com a dica, nunca zero", (_nome, agente) => {
-    for (const rotulo of METRICAS_DO_AGENTE) {
-      const html = cartao(rotulo, agente);
-      expect(html).toContain('data-estado="nao-medido"');
-      expect(texto(html)).toBe(`${rotulo} Ainda não medido`);
-      expect(html).toContain(`data-dica="${DICA_DO_AGENTE}"`);
-    }
-  });
+  ])(
+    "%s: todos em Ainda não medido, com a dica, nunca zero",
+    (_nome, agente) => {
+      for (const rotulo of METRICAS_DO_AGENTE) {
+        const html = cartao(rotulo, agente);
+        expect(html).toContain('data-estado="nao-medido"');
+        expect(texto(html)).toBe(`${rotulo} Ainda não medido`);
+        expect(html).toContain(`data-dica="${DICA_DO_AGENTE}"`);
+      }
+    },
+  );
 
   it("com atividade: o numero real de cada metrica", () => {
     expect(texto(cartao("Resolvidas sem humano", AGENTE))).toBe(
@@ -246,7 +249,11 @@ describe("os cartoes do agente", () => {
       anterior,
     );
     expect(insatisfacao).toMatch(/data-sentido="caiu"[^>]*text-success-text/);
-    const agendamentos = cartao("Agendamentos feitos pela IA", AGENTE, anterior);
+    const agendamentos = cartao(
+      "Agendamentos feitos pela IA",
+      AGENTE,
+      anterior,
+    );
     expect(agendamentos).toMatch(/data-sentido="caiu"[^>]*text-alert-text/);
     // Duracao nao compara, como a primeira resposta da equipe.
     expect(cartao("Primeira resposta da IA", AGENTE, anterior)).not.toContain(
@@ -318,10 +325,7 @@ describe("os cartoes do agente", () => {
 });
 
 describe("a exportacao do agente", () => {
-  const exportar = (
-    aba: "geral" | "ia",
-    agente: DesempenhoDoAgente | null,
-  ) =>
+  const exportar = (aba: "geral" | "ia", agente: DesempenhoDoAgente | null) =>
     montarExportavelDaAba({
       aba,
       podeVerValores: false,
@@ -331,9 +335,14 @@ describe("a exportacao do agente", () => {
       dimensaoAgenda: "profissional",
     });
 
-  const secaoDoAgente = (aba: "geral" | "ia", agente: DesempenhoDoAgente | null) =>
+  const secaoDoAgente = (
+    aba: "geral" | "ia",
+    agente: DesempenhoDoAgente | null,
+  ) =>
     exportar(aba, agente).secoes.find((secao) =>
-      secao.titulo.includes(aba === "ia" ? "Desempenho do agente" : "Agente de IA"),
+      secao.titulo.includes(
+        aba === "ia" ? "Desempenho do agente" : "Agente de IA",
+      ),
     )!.linhas;
 
   const NUMEROS: string[][] = [

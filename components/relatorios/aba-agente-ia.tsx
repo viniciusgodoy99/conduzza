@@ -118,7 +118,10 @@ export function AbaAgenteIa({
         )}
       </section>
 
-      <Secao titulo="Desempenho da recepcionista de IA" icone={BotMessageSquare}>
+      <Secao
+        titulo="Desempenho da recepcionista de IA"
+        icone={BotMessageSquare}
+      >
         {agenteComAtividade(atual.agente) ? null : (
           <p className="max-w-prose text-[13px] text-text-secondary">
             Estes números chegam com o agente de IA. Enquanto ele não atende,

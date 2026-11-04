@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { criarNumeroDeTeste } from "./numeros";
 import { adminClient, anonClient } from "./stack";
 
 // Fase 5.1/5.2: as RPCs de agregado por periodo (SECURITY INVOKER) e a
@@ -173,6 +174,112 @@ describe("papel profissional: trava no banco", () => {
       p_professional_id: crypto.randomUUID(),
     });
     expect(alheia.data).toBeNull();
+  });
+});
+
+// O bloco "agente" de atendimento_do_periodo (migration 20261104120000). Escrito
+// em 04/11/2026 com a migration NAO aplicada e NAO rodado: bate no banco de
+// verdade e so passa depois dela (npm run test:rls -- relatorios).
+describe("desempenho do agente: isolamento entre clínicas e papel", () => {
+  type Corpo = { atual: { agente: Record<string, number | null> } };
+  const ZERADO = {
+    atendidas: 0,
+    resolvidas_sem_humano: 0,
+    transferidas: 0,
+    insatisfacao: 0,
+    primeira_resposta_mediana_segundos: null,
+    agendamentos: 0,
+  };
+
+  beforeAll(async () => {
+    // A atividade da IA so na B: respondeu em 60 s e passou para a equipe.
+    await criarNumeroDeTeste(admin, clinicaB);
+    const { data: contato } = await admin
+      .from("contact")
+      .select("id")
+      .eq("clinic_id", clinicaB)
+      .single()
+      .throwOnError();
+    const { data: conversa } = await admin
+      .from("conversation")
+      .insert({ clinic_id: clinicaB, contact_id: contato!.id })
+      .select("id")
+      .single()
+      .throwOnError();
+    const entrada = Date.now() - 2 * 86_400_000;
+    await admin
+      .from("message")
+      .insert([
+        {
+          clinic_id: clinicaB,
+          conversation_id: conversa!.id,
+          direction: "entrada",
+          author: "paciente",
+          body: "Oi",
+          created_at: new Date(entrada).toISOString(),
+        },
+        {
+          clinic_id: clinicaB,
+          conversation_id: conversa!.id,
+          direction: "saida",
+          author: "ia",
+          body: "Olá!",
+          delivery_status: "enviada",
+          created_at: new Date(entrada + 60_000).toISOString(),
+        },
+      ])
+      .throwOnError();
+    await admin
+      .from("ai_decision_log")
+      .insert({
+        clinic_id: clinicaB,
+        conversation_id: conversa!.id,
+        escalation_reason: "insatisfacao",
+      })
+      .throwOnError();
+  });
+
+  it("admin da A pedindo a B recebe o bloco zerado; gestor da B vê o dela (contraprova)", async () => {
+    const clienteA = await logado(email("admin-a"));
+    const deA = await clienteA.rpc("atendimento_do_periodo", {
+      p_clinic_id: clinicaB,
+      ...JANELA,
+    });
+    expect(deA.error).toBeNull();
+    expect((deA.data as Corpo).atual.agente).toEqual(ZERADO);
+
+    const clienteB = await logado(email("gestor-b"));
+    const deB = await clienteB.rpc("atendimento_do_periodo", {
+      p_clinic_id: clinicaB,
+      ...JANELA,
+    });
+    expect(deB.error).toBeNull();
+    expect((deB.data as Corpo).atual.agente).toEqual({
+      atendidas: 1,
+      resolvidas_sem_humano: 0,
+      transferidas: 1,
+      insatisfacao: 1,
+      primeira_resposta_mediana_segundos: 60,
+      agendamentos: 0,
+    });
+  });
+
+  it("recepção e profissional: a recepção lê as decisões pelas colunas com grant; o profissional recebe null", async () => {
+    const recepcao = await logado(email("recepcao-a"));
+    const lida = await recepcao.rpc("atendimento_do_periodo", {
+      p_clinic_id: clinicaA,
+      ...JANELA,
+    });
+    expect(lida.error).toBeNull();
+    expect((lida.data as Corpo).atual.agente).toEqual(ZERADO);
+
+    const profissional = await logado(email("prof-a"));
+    const nula = await profissional.rpc("atendimento_do_periodo", {
+      p_clinic_id: clinicaA,
+      ...JANELA,
+    });
+    expect(nula.error).toBeNull();
+    expect(nula.data).toBeNull();
   });
 });
 

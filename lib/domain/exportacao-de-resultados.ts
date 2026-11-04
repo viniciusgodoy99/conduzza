@@ -969,7 +969,9 @@ export function lerMetricaDoAgente(
         : {
             ...contagem((bloco) => bloco.resolvidasSemHumano, "maior-melhor"),
             rodape: `de ${numero(agente.atendidas)} ${
-              agente.atendidas === 1 ? "conversa atendida" : "conversas atendidas"
+              agente.atendidas === 1
+                ? "conversa atendida"
+                : "conversas atendidas"
             } pela IA`,
             noCsv: `${numero(agente.resolvidasSemHumano)} de ${numero(agente.atendidas)}`,
           };
@@ -982,7 +984,10 @@ export function lerMetricaDoAgente(
     case "Primeira resposta da IA":
       // Duracao nao compara, como a primeira resposta da equipe.
       return agente.primeiraRespostaMedianaSegundos === null
-        ? { estado: "vazio", rodape: "nenhuma conversa nova respondida pela IA" }
+        ? {
+            estado: "vazio",
+            rodape: "nenhuma conversa nova respondida pela IA",
+          }
         : {
             estado: "valor",
             valor: formatarDuracao(agente.primeiraRespostaMedianaSegundos),
