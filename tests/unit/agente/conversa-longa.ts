@@ -126,7 +126,7 @@ export function configPublicada(
 
 /** O id (uuid) da versao do preparo em vigor de um procedimento. */
 function versaoDoPreparo(procedimentoId: string): string {
-  return `e7e70000-0000-4000-8000-${procedimentoId.slice(0, 12)}`;
+  return `e7e70000-0000-4000-8000-${procedimentoId.replaceAll("-", "").slice(0, 12)}`;
 }
 
 /**
