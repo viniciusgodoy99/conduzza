@@ -35,6 +35,7 @@ import {
   formatarReaisCompleto,
   percentualDe,
 } from "@/lib/domain/formato-compacto";
+import type { EntradaDaVariacao, Polaridade } from "@/lib/domain/variacao";
 import type { ConversoesResumo } from "@/lib/queries/conversoes-meta";
 import type {
   AbaDeResultados,
@@ -42,6 +43,7 @@ import type {
   AnunciosDoPeriodo,
   AtendimentoDoPeriodo,
   CampanhasDoPeriodo,
+  DesempenhoDoAgente,
   FaturamentoDoPeriodo,
   FunilDoPeriodo,
   LinhaDeBase,
@@ -884,20 +886,24 @@ export const AUTOR_ROTULO: Record<string, string> = {
   ia: "Recepcionista de IA",
 };
 
-// Desempenho do agente de IA (A2). Ainda nao medido: o agente nao atende.
-// Regras de calculo documentadas agora, para quando o agente existir (nada
-// disso e calculado hoje; numero inventado nao entra na tela nem no CSV):
-// - atendidas pela IA: conversas com ao menos uma mensagem author='ia' no
-//   periodo;
-// - resolvidas sem humano: dessas, as sem nenhuma saida de author='usuario'
-//   que nao seja nota interna;
-// - transferidas para a equipe: com ai_decision_log.escalation_reason nao
-//   nulo;
-// - escalonadas por insatisfacao: escalation_reason = 'insatisfacao' (a
-//   coluna e texto livre, o vocabulario fecha junto com o agente);
-// - primeira resposta da IA: mediana entre a 1a entrada e a 1a saida 'ia';
-// - agendamentos feitos pela IA: appointment.created_by = 'ia';
-// - satisfacao: regra decidida depois.
+// Desempenho do agente de IA (bloco agente de atendimento_do_periodo, migration
+// 20261104120000). A regra final, tudo dentro do periodo:
+// - atendidas pela IA: conversas com resposta da IA que saiu (author='ia',
+//   saida, sem nota interna, com recibo: enviada, entregue ou lida);
+// - resolvidas sem humano: dessas, as sem saida de author='usuario' que nao
+//   seja nota interna, sem ai_decision_log.escalation_reason (passada e ainda
+//   sem resposta nao foi resolvida) e sem resposta da IA sem recibo (enviando
+//   ou falhou: o motor passa para a equipe sem gravar o motivo);
+// - transferidas para a equipe: conversas com escalation_reason nao nulo;
+// - escalonadas por insatisfacao: escalation_reason = 'insatisfacao';
+// - primeira resposta da IA: mediana entre a 1a entrada da conversa no periodo
+//   e a 1a resposta da IA que saiu;
+// - agendamentos feitos pela IA: appointment.created_by = 'ia' criadas no
+//   periodo, menos as recusadas pela equipe;
+// - satisfacao: regra decidida depois, sempre "Ainda não medido".
+// Sem atividade da IA no recorte (nem atendida, nem transferida, nem
+// agendamento) ou sem o bloco (migration nao aplicada), nao existe numero:
+// "Ainda não medido", nunca zero, na tela e no CSV.
 export const METRICAS_DO_AGENTE = [
   "Resolvidas sem humano",
   "Transferidas para a equipe",
@@ -906,6 +912,99 @@ export const METRICAS_DO_AGENTE = [
   "Agendamentos feitos pela IA",
   "Satisfação",
 ] as const;
+
+export type MetricaDoAgente = (typeof METRICAS_DO_AGENTE)[number];
+
+export type LeituraDaMetricaDoAgente =
+  | { estado: "nao-medido" }
+  /** A medida existe, mas o recorte nao tem o que medir. */
+  | { estado: "vazio"; rodape: string }
+  | {
+      estado: "valor";
+      valor: string;
+      rodape?: string;
+      /** null = sem comparacao. */
+      variacao: EntradaDaVariacao | null;
+      /** Como sai no CSV, quando o valor sozinho nao se explica. */
+      noCsv?: string;
+    };
+
+export function agenteComAtividade(
+  agente: DesempenhoDoAgente | null,
+): agente is DesempenhoDoAgente {
+  return (
+    agente !== null &&
+    (agente.atendidas > 0 || agente.transferidas > 0 || agente.agendamentos > 0)
+  );
+}
+
+/** A conta de cada metrica, a mesma na tela e no CSV. */
+export function lerMetricaDoAgente(
+  rotulo: MetricaDoAgente,
+  agente: DesempenhoDoAgente | null,
+  anterior: DesempenhoDoAgente | null = null,
+): LeituraDaMetricaDoAgente {
+  if (rotulo === "Satisfação" || !agenteComAtividade(agente)) {
+    return { estado: "nao-medido" };
+  }
+  // Periodo anterior sem atividade nao e base: o zero dele nao foi medido.
+  const base = agenteComAtividade(anterior) ? anterior : null;
+  const contagem = (
+    ler: (bloco: DesempenhoDoAgente) => number,
+    polaridade: Polaridade,
+  ) => ({
+    estado: "valor" as const,
+    valor: numero(ler(agente)),
+    variacao: base && {
+      atual: ler(agente),
+      anterior: ler(base),
+      polaridade,
+      comparadoCom: "período anterior",
+    },
+  });
+  switch (rotulo) {
+    case "Resolvidas sem humano":
+      return agente.atendidas === 0
+        ? { estado: "vazio", rodape: "nenhuma conversa atendida pela IA" }
+        : {
+            ...contagem((bloco) => bloco.resolvidasSemHumano, "maior-melhor"),
+            rodape: `de ${numero(agente.atendidas)} ${
+              agente.atendidas === 1 ? "conversa atendida" : "conversas atendidas"
+            } pela IA`,
+            noCsv: `${numero(agente.resolvidasSemHumano)} de ${numero(agente.atendidas)}`,
+          };
+    case "Transferidas para a equipe":
+      return contagem((bloco) => bloco.transferidas, "menor-melhor");
+    case "Escalonadas por insatisfação":
+      return contagem((bloco) => bloco.insatisfacao, "menor-melhor");
+    case "Agendamentos feitos pela IA":
+      return contagem((bloco) => bloco.agendamentos, "maior-melhor");
+    case "Primeira resposta da IA":
+      // Duracao nao compara, como a primeira resposta da equipe.
+      return agente.primeiraRespostaMedianaSegundos === null
+        ? { estado: "vazio", rodape: "nenhuma conversa nova respondida pela IA" }
+        : {
+            estado: "valor",
+            valor: formatarDuracao(agente.primeiraRespostaMedianaSegundos),
+            rodape: "mediana do período",
+            variacao: null,
+          };
+  }
+}
+
+function linhasDoAgente(agente: DesempenhoDoAgente | null): string[][] {
+  return METRICAS_DO_AGENTE.map((rotulo) => {
+    const leitura = lerMetricaDoAgente(rotulo, agente);
+    return [
+      rotulo,
+      leitura.estado === "nao-medido"
+        ? "Ainda não medido"
+        : leitura.estado === "vazio"
+          ? "sem dados"
+          : (leitura.noCsv ?? leitura.valor),
+    ];
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Exportacao
@@ -1245,7 +1344,7 @@ function montarGeral(entrada: EntradaDaExportacao): SecaoExportavel[] {
       titulo: "Agente de IA",
       linhas: [
         ["Indicador", "Valor"],
-        ...METRICAS_DO_AGENTE.map((rotulo) => [rotulo, "Ainda não medido"]),
+        ...linhasDoAgente(atendimento.agente),
         [
           "Primeira resposta da equipe (mediana)",
           formatarDuracao(atendimento.primeiraResposta.medianaSegundos),
@@ -1458,10 +1557,7 @@ function montarAgente(entrada: EntradaDaExportacao): SecaoExportavel[] {
     },
     {
       titulo: "Desempenho do agente de IA",
-      linhas: [
-        ["Indicador", "Valor"],
-        ...METRICAS_DO_AGENTE.map((rotulo) => [rotulo, "Ainda não medido"]),
-      ],
+      linhas: [["Indicador", "Valor"], ...linhasDoAgente(atual.agente)],
     },
     { titulo: "Mensagens no período", linhas: mensagens },
   ];
