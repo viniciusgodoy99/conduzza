@@ -201,6 +201,20 @@ export type TurnoDaConversa = {
   corpos: Record<string, unknown>[];
 };
 
+/** As ferramentas que o roteiro do LLM falso pede, na ordem. */
+function ferramentasDoRoteiro(roteiro: readonly unknown[]): string[] {
+  return roteiro.flatMap((rodada) =>
+    (((rodada as { output?: unknown } | null)?.output ?? []) as {
+      type?: string;
+      name?: string;
+    }[]).flatMap((item) =>
+      item.type === "function_call" && typeof item.name === "string"
+        ? [item.name]
+        : [],
+    ),
+  );
+}
+
 /** As saidas das ferramentas que o modelo leu no ultimo corpo do job. */
 export function saidasDoTurno(turno: TurnoDaConversa): Record<string, unknown>[] {
   const input = (turno.corpos.at(-1)?.input ?? []) as {
@@ -231,6 +245,8 @@ export class ConversaLonga {
   readonly eventosPedidos: string[] = [];
   /** A autorizacao para receber mensagens. */
   consentimento = true;
+  /** A liberacao da IA para este telefone (o interruptor da clinica). */
+  liberada = true;
   /** A versao do preparo saiu de vigor (a leitura do envio devolve nulo). */
   preparoForaDeVigor = false;
   /** O proximo envio encontra o canal do numero ocupado (slot adiado). */
@@ -418,7 +434,10 @@ export class ConversaLonga {
   private ligarAsRpcs(): void {
     const { executor } = this;
     const verdadeiro = () => ({ data: true, error: null });
-    executor.rpc("ia_pode_falar_com", verdadeiro);
+    executor.rpc("ia_pode_falar_com", () => ({
+      data: this.liberada,
+      error: null,
+    }));
     executor.rpc("confirmar_posse_job", verdadeiro);
     executor.rpc("ia_marcar_respondida", verdadeiro);
     executor.rpc("consentimento_vigente", () => ({
@@ -999,6 +1018,7 @@ export class ConversaLonga {
       estavaFora,
       decisoesNovas: this.decisoes.length - decisoesAntes,
       sobrouNoRoteiro: roteiro.length,
+      pedidas: ferramentasDoRoteiro(f.roteiro ?? []),
     });
     if (!estavaFora && turno.statusDaConversa !== "ia_atendendo") {
       this.turnoDaSaida = turno.indice;
@@ -1050,11 +1070,23 @@ export class ConversaLonga {
 
   private conferirOTurno(
     turno: TurnoDaConversa,
-    e: { estavaFora: boolean; decisoesNovas: number; sobrouNoRoteiro: number },
+    e: {
+      estavaFora: boolean;
+      decisoesNovas: number;
+      sobrouNoRoteiro: number;
+      pedidas: readonly string[];
+    },
   ): void {
     const rotulo = `turno ${turno.indice}`;
     // O roteiro do LLM falso foi todo usado: o turno nao parou antes da hora.
     expect(e.sobrouNoRoteiro, `${rotulo}: sobrou roteiro`).toBe(0);
+    // Toda ferramenta que o modelo pediu rodou, na ordem, e nenhuma outra
+    // (escalar_humano encerra sem rodar; a desconhecida e falha fechada).
+    if (turno.decisao?.motivo_da_falha !== "ferramenta_invalida") {
+      expect(turno.ferramentas, `${rotulo}: ferramentas`).toEqual(
+        e.pedidas.filter((nome) => nome !== "escalar_humano"),
+      );
+    }
     // Cada job manda no maximo uma mensagem e grava no maximo uma decisao.
     expect(turno.enviadas.length, `${rotulo}: enviadas`).toBeLessThanOrEqual(1);
     expect(e.decisoesNovas, `${rotulo}: decisoes`).toBeLessThanOrEqual(1);
@@ -1073,11 +1105,21 @@ export class ConversaLonga {
       expect(turno.doLaco, `${rotulo}: laco depois da passagem`).toBeNull();
     }
 
-    // O que saiu tem a decisao do mesmo job, com o mesmo texto.
+    // O que saiu tem a decisao do mesmo job, com o mesmo texto, e o custo.
     const [enviada] = turno.enviadas;
     if (enviada !== undefined) {
       const decisao = turno.decisao;
       expect(decisao, `${rotulo}: envio sem decisao`).toBeDefined();
+      expect(
+        this.cenario.banco.linhas("message").find((m) => m.job_id === turno.job),
+        `${rotulo}: o registro do envio`,
+      ).toMatchObject({
+        body: enviada,
+        delivery_status: "enviada",
+        billable: false,
+        cost_cents: 0,
+      });
+      expect(enviada, `${rotulo}: travessao`).not.toMatch(/[–—]/);
       if (enviada === FRASE_DE_ESCALONAMENTO) {
         expect(["escalou", "bloqueou", "falhou"], rotulo).toContain(
           decisao?.desfecho,
@@ -1168,7 +1210,19 @@ export class ConversaLonga {
     rotulo: string,
     turno: TurnoDaConversa,
   ): void {
-    const tudo = JSON.stringify(turno.corpos);
+    for (const corpo of turno.corpos) {
+      expect(corpo.store, `${rotulo}: store`).toBe(false);
+      expect(corpo.safety_identifier, `${rotulo}: identificador`).toMatch(
+        /^[0-9a-f]{64}$/,
+      );
+    }
+    const tudo = JSON.stringify([
+      turno.corpos,
+      this.cenario.verificacao.pedidos.map(({ rascunho, mensagensDoPaciente }) => [
+        rascunho,
+        mensagensDoPaciente,
+      ]),
+    ]);
     expect(tudo, `${rotulo}: o nome foi ao modelo`).not.toContain("Maria");
     expect(tudo, `${rotulo}: o telefone foi ao modelo`).not.toContain(
       TELEFONE.slice(1),
