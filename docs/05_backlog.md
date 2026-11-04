@@ -1400,7 +1400,7 @@ Banco no `docs/04`, seção 35 (e as referências nas seções 5 e 33.11); arqui
 
 **Estado:** pronta na branch (`10a4107`), **aguardando o ok explícito do dono** para ensaiar e aplicar a migration e, só depois dela e das provas de banco na produção, publicar o código (o merge e o push). A AG4, de que ela depende, está no ar desde 28/10/2026 (entrada acima). Nada da AG5 mudou no `main` nem na produção.
 
-**Decisões do dono, aprovadas em 04/11/2026 como recomendadas** ("Pode ensaiar e aplicar a migration da AG5 na produção e publicar, com as recomendações das D-36 a D-48"; as do banco são constantes nomeadas, e trocar é uma migration pequena; a D-47 e a D-48 ainda por construir, a migration da D-48 com o seu próprio ok; o item 14 continua com o dono):
+**Decisões do dono, aprovadas em 04/11/2026 como recomendadas** ("Pode ensaiar e aplicar a migration da AG5 na produção e publicar, com as recomendações das D-36 a D-48"; as do banco são constantes nomeadas, e trocar é uma migration pequena; a D-47 e a D-48 ainda por construir, a migration da D-48 com o seu próprio ok; o item 14 aprovado à parte, no mesmo dia):
 1. **D-36, a habilidade:** "Lista de espera", desligada por padrão, só com "Agendar consulta" valendo (`c_exige_agendar`); a IA oferece a lista depois de consultar a agenda sem horário que sirva, ou quando a pessoa pede (consultando antes). Sem campo novo.
 2. **D-37, o pagamento e o vínculo:** a entrada da IA guarda o convênio ou o particular e só vale para os vínculos com "IA pode agendar"; a reoferta e o aceite respeitam; as entradas da recepção ficam como hoje (`c_regra_da_entrada_da_ia` no banco e `REGRA_DA_ENTRADA_DA_IA` no código: trocar nos dois).
 3. **D-38, a unidade:** fica fora da AG5 (a fila e a oferta não têm unidade); com mais de uma unidade ativa, a lista pela IA passa para a equipe (`c_maximo_de_unidades`; nenhuma clínica tem hoje).
@@ -1414,11 +1414,11 @@ Banco no `docs/04`, seção 35 (e as referências nas seções 5 e 33.11); arqui
 11. **D-46, os dados para marcar:** a entrada não pede; a consulta que nasce da oferta vem sem eles, como hoje, e a recepção completa.
 12. **D-47 (nova, da construção):** quem está na lista e depois marca o mesmo procedimento continua com a entrada ativa, e o SIM de uma oferta criaria a segunda consulta (já é assim hoje com as entradas da equipe). A recomendação: a próxima etapa desativa a entrada quando a pessoa marca o mesmo procedimento. Para a entrada da IA, a revisão já decidiu (trocável): o aceite da oferta recusa quando a pessoa já tem consulta futura do mesmo procedimento, e o job tira essa entrada da onda (a entrada continua ativa); e a IA não põe na lista quem já tem uma entrada ativa do mesmo procedimento (de qualquer profissional e de qualquer origem) ou uma de qualquer procedimento.
 13. **D-48 (nova):** o lembrete da oferta já sai pelo envio 1:1, mas na fila do número continua com a prioridade das confirmações; furar a fila pede uma migration pequena (o CHECK `job_queue_prioridade_valida` só aceita 0 e 1) e uma linha no código. A recomendação: fazer depois da AG5 no ar.
-14. **O texto da recusa educada para quem já tem a consulta:** `RESPOSTA_OFERTA_PERDIDA` diz "Você continua na nossa lista de espera e a gente avisa quando abrir outra vaga", o que não vale para quem já tem a consulta do mesmo procedimento; o banco já entrega o motivo (`ja_tem_consulta`), e o texto próprio é do dono (junto da D-40).
+14. **O texto da recusa educada para quem já tem a consulta:** `RESPOSTA_OFERTA_PERDIDA` diz "Você continua na nossa lista de espera e a gente avisa quando abrir outra vaga", o que não vale para quem já tem a consulta do mesmo procedimento; o banco já entrega o motivo (`ja_tem_consulta`). **Aprovado pelo dono em 04/11/2026**, em `RESPOSTA_OFERTA_JA_TEM_CONSULTA`: "Você já tem uma consulta marcada para esse procedimento, então este horário não foi reservado. Se quiser trocar a data, é só avisar aqui."
 
 **Contradições apontadas ao dono** (CLAUDE.md, seção 7; nada mudado sozinho; do desenho):
-1. A spec 2.4 lista a habilidade "oferecer horário de lista de espera"; a D-11 e a 9.2 dizem que a IA põe na lista e que a oferta é a reoferta automática, do sistema. A recomendação: trocar o nome em 2.4 por "colocar na lista de espera".
-2. A spec 9.1 (fila por profissional e procedimento, com turno e dias) não tem pagamento: a D-37 estende o modelo, com o ok do dono em 04/11/2026 (o texto da spec ainda por ajustar). A 9.4 fala de entrada "pelo próprio paciente na conversa": a AG5 entrega a entrada pela IA na conversa; outra via não existe.
+1. A spec 2.4 lista a habilidade "oferecer horário de lista de espera"; a D-11 e a 9.2 dizem que a IA põe na lista e que a oferta é a reoferta automática, do sistema. **Ajustada em 04/11/2026, com o ok do dono:** o nome em 2.4 passou a "colocar na lista de espera".
+2. A spec 9.1 (fila por profissional e procedimento, com turno e dias) não tem pagamento: a D-37 estende o modelo. A 9.4 falava de entrada "pelo próprio paciente na conversa": a AG5 entrega a entrada pela IA na conversa; outra via não existe. **As duas ajustadas em 04/11/2026, com o ok do dono.**
 3. A D-2 (a consulta da IA nasce pendente) contra o aceite direto da entrada da IA (D-45). **Resolvida pelo dono em 04/11/2026: no SIM da oferta vale a D-45.**
 4. O `docs/01` (Módulo 2), o brief (Tela 6) e o texto fixo diziam que a lista de espera era da equipe: as notas da AG5 dizem o que muda, e as notas antigas ficam como histórico.
 
@@ -1449,8 +1449,8 @@ Banco no `docs/04`, seção 35 (e as referências nas seções 5 e 33.11); arqui
 
 **Pontos para o dono:**
 1. **O ok para ensaiar e aplicar a migration da AG5 na produção**, rodar as provas de banco e publicar (o merge e o push), nessa ordem: **dado em 04/11/2026.**
-2. **As decisões** (acima): D-36 a D-48 aprovadas em 04/11/2026; falta o texto da recusa para quem já tem a consulta.
-3. **As contradições** (acima): a spec 2.4, a 9.1 e a 9.4, e a D-2 contra a D-45.
+2. **As decisões** (acima): D-36 a D-48 e o texto da recusa para quem já tem a consulta aprovados em 04/11/2026.
+3. **As contradições** (acima): a spec 2.4, a 9.1 e a 9.4, e a D-2 contra a D-45, **resolvidas em 04/11/2026.**
 4. **Os textos novos das telas**, que vão como proposta (os fixos T-E1, T-E2 e T-E4 aprovados com a D-40).
 5. **Nas clínicas de teste, depois de publicar:** ligar "Agendar consulta" e "Lista de espera" e publicar; o teste com os telefones forçados da equipe, incluindo o ciclo da oferta.
 6. **A rodada paga D34** antes de qualquer paciente.

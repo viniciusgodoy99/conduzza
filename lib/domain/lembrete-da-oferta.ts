@@ -110,7 +110,8 @@ export function ofertaDePeParaOContato(
 /**
  * O last_error do job do lembrete gravado JA cancelado, sem nunca ter sido
  * pedido (revisao da AG5): a pessoa ouviu a recusa educada do aceite
- * (RESPOSTA_OFERTA_PERDIDA, "esse horario nao esta mais disponivel"), em
+ * (RESPOSTA_OFERTA_PERDIDA, "esse horario nao esta mais disponivel", ou
+ * RESPOSTA_OFERTA_JA_TEM_CONSULTA), em
  * geral com a oferta ainda aberta para ela (sem_vinculo, inclusive
  * ja_tem_consulta; nao_cabe; recurso_ocupado). O lembrete desta oferta nunca
  * sai para ela, e nenhuma mensagem esperava por ele. Codigo curto, como todo

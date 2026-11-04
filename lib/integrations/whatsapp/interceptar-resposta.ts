@@ -35,6 +35,7 @@ import {
   RESPOSTA_CANCELADA,
   RESPOSTA_CONFIRMADA,
   RESPOSTA_OFERTA_GANHOU,
+  RESPOSTA_OFERTA_JA_TEM_CONSULTA,
   RESPOSTA_OFERTA_PERDIDA,
   RESPOSTA_OFERTA_RECUSADA,
   RESPOSTA_REMARCAR,
@@ -1155,6 +1156,7 @@ async function tratarRespostaDeOferta(
       starts_at?: string;
       profissional?: string | null;
       timezone?: string;
+      motivo?: string;
     } | null;
     if (resultado?.ok === true && resultado.starts_at) {
       const inicio = new TZDate(
@@ -1184,8 +1186,15 @@ async function tratarRespostaDeOferta(
       // aceite recusado com a oferta ainda aberta para ela (sem_vinculo,
       // inclusive ja_tem_consulta; nao_cabe; recurso_ocupado): a pessoa ouve
       // que o horario nao esta mais disponivel, entao o lembrete desta
-      // oferta nunca sai para ela (revisao da AG5).
-      await responder(admin, entrada, RESPOSTA_OFERTA_PERDIDA);
+      // oferta nunca sai para ela (revisao da AG5). Quem ja tem a consulta
+      // nao continua na lista de verdade: tem o texto proprio.
+      await responder(
+        admin,
+        entrada,
+        resultado?.motivo === "ja_tem_consulta"
+          ? RESPOSTA_OFERTA_JA_TEM_CONSULTA
+          : RESPOSTA_OFERTA_PERDIDA,
+      );
       await dispensarLembrete(admin, entrada, oferta.id);
     }
   }
