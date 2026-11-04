@@ -18,6 +18,7 @@ import {
   type ClienteDoAgente,
   type ResultadoDoTurno,
 } from "@/lib/agente/laco";
+import { portaDaMidiaDoWhatsapp } from "@/lib/agente/midia";
 import type { ConfigDoAgente } from "@/lib/domain/agente/config";
 import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
 import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
@@ -27,6 +28,8 @@ import type {
   ClassificadorDeEntrada,
   ResultadoDoClassificador,
 } from "@/lib/integrations/llm/classificador-de-entrada";
+import type { ResultadoDoLeitor } from "@/lib/integrations/llm/leitor-de-midia";
+import type { ResultadoDaTranscricaoNoModelo } from "@/lib/integrations/llm/transcricao";
 import {
   fakeSentMessages,
   resetFakeProvider,
@@ -58,6 +61,13 @@ import {
   TELEFONE,
   type OpcoesDaPassagemDaAg6,
 } from "./ag6-contrato";
+import {
+  jpegSintetico,
+  linhaDeMidia,
+  mp3Sintetico,
+  PRECO_DO_WHISPER_POR_MINUTO,
+  rpcsDaAg6b,
+} from "./ag6b-contrato";
 import {
   AGORA,
   CLINICA,
@@ -119,7 +129,12 @@ export function configPublicada(
     ...base,
     status: "publicada",
     versao: 3,
-    habilidades: { ...base.habilidades, enviar_preparo: true },
+    habilidades: {
+      ...base.habilidades,
+      enviar_preparo: true,
+      ler_audio: true,
+      ler_imagem_e_documento: true,
+    },
     ...extra,
   };
 }
@@ -218,8 +233,13 @@ export class ConversaLonga {
   consentimento = true;
   /** A versao do preparo saiu de vigor (a leitura do envio devolve nulo). */
   preparoForaDeVigor = false;
-  /** Quantas vezes a conversa ja saiu da IA (o job em que saiu). */
-  private jobDaSaida: number | null = null;
+  /** O proximo envio encontra o canal do numero ocupado (slot adiado). */
+  canalOcupado = false;
+  /** A transcricao e a leitura falsas, por mensagem. */
+  private readonly transcricoes = new Map<string, ResultadoDaTranscricaoNoModelo>();
+  private readonly leituras = new Map<string, ResultadoDoLeitor>();
+  /** O turno em que a conversa saiu da IA. */
+  private turnoDaSaida: number | null = null;
 
   constructor(
     contexto: ContextoDoTeste,
@@ -308,7 +328,16 @@ export class ConversaLonga {
       status: "publicada",
       version: 3,
       escalation_rules: { passagem_para: "fila" },
+      skills: { ler_audio: true, ler_imagem_e_documento: true },
     });
+    for (const procedimento of this.cenario.catalogo.procedimentos) {
+      executor.linhas("procedure").push({
+        id: procedimento.id,
+        clinic_id: CLINICA,
+        name: procedimento.nome,
+        active: true,
+      });
+    }
     executor.linhas("ia_liberacao").push({
       clinic_id: CLINICA,
       teto_respostas_por_conversa_hora: 20,
@@ -319,6 +348,14 @@ export class ConversaLonga {
       saida_microdolar_por_milhao: 4_000_000,
       cache_leitura_microdolar_por_milhao: 100_000,
       cache_escrita_microdolar_por_milhao: 0,
+    });
+    executor.linhas("llm_preco").push({
+      modelo: "whisper-1",
+      entrada_microdolar_por_milhao: 0,
+      saida_microdolar_por_milhao: 0,
+      cache_leitura_microdolar_por_milhao: 0,
+      cache_escrita_microdolar_por_milhao: 0,
+      audio_microdolar_por_minuto: PRECO_DO_WHISPER_POR_MINUTO,
     });
     executor.aoInserir = (tabela, linha) => this.gatilhoDoBanco(tabela, linha);
     this.ligarAsRpcs();
@@ -388,10 +425,19 @@ export class ConversaLonga {
       data: this.consentimento,
       error: null,
     }));
-    executor.rpc("reservar_slot_envio_v2", () => ({
-      data: { estado: "ok", espera_ms: 0 },
-      error: null,
-    }));
+    executor.rpc("reservar_slot_envio_v2", () => {
+      if (this.canalOcupado) {
+        this.canalOcupado = false;
+        return {
+          data: {
+            estado: "adiado",
+            livre_em: new Date(this.cenario.agora + 20_000).toISOString(),
+          },
+          error: null,
+        };
+      }
+      return { data: { estado: "ok", espera_ms: 0 }, error: null };
+    });
     executor.rpc("reservar_gasto_da_ia", () => ({
       data: randomUUID(),
       error: null,
@@ -420,6 +466,7 @@ export class ConversaLonga {
     };
     rpcDaPassagemDaAg6(executor, passagem);
     rpcDaAtribuicaoDaAg6(executor, passagem);
+    rpcsDaAg6b(executor, { liberado: () => true });
     this.ligarOEstado();
     this.ligarOPreparo();
     this.ligarAFila();
@@ -742,6 +789,70 @@ export class ConversaLonga {
     return this.rodarJob(f);
   }
 
+  /** O audio da pessoa: a transcricao falsa (o texto, ou nada: sem fala). */
+  async audio(
+    transcricao: string | null,
+    f: Omit<FalaDaConversa, "texto" | "citacao"> = {},
+  ): Promise<TurnoDaConversa> {
+    const id = this.midiaNaConversa("audio", null);
+    this.transcricoes.set(
+      id,
+      transcricao === null
+        ? { tipo: "sem_fala", segundos: 15, uso: { modelo: "whisper-1", segundos: 15 } }
+        : {
+            tipo: "transcrita",
+            texto: transcricao,
+            segundos: 15,
+            uso: { modelo: "whisper-1", segundos: 15 },
+          },
+    );
+    if (transcricao !== null) {
+      this.falas.push(transcricao);
+    }
+    return this.rodarJob(f);
+  }
+
+  /** A foto da pessoa: a leitura falsa do arquivo. */
+  async foto(
+    leitura: Extract<ResultadoDoLeitor, { tipo: "lido" }>["leitura"],
+    f: Omit<FalaDaConversa, "texto" | "citacao"> = {},
+  ): Promise<TurnoDaConversa> {
+    const id = this.midiaNaConversa("imagem", null);
+    this.leituras.set(id, {
+      tipo: "lido",
+      leitura,
+      modelo: "gpt-6-luna",
+      uso: {
+        tokensEntrada: 1_900,
+        tokensSaida: 20,
+        tokensCacheLidos: 0,
+        tokensCacheGravados: 0,
+      },
+    });
+    return this.rodarJob(f);
+  }
+
+  /** A mensagem do paciente com midia, dois minutos depois da anterior. */
+  private midiaNaConversa(
+    contentType: "audio" | "imagem",
+    legenda: string | null,
+  ): string {
+    this.passa(2 * 60_000);
+    const id = randomUUID();
+    const ultima = this.cenario.noBanco.at(-1)?.em ?? Number.NEGATIVE_INFINITY;
+    this.cenario.banco.inserir("message", {
+      ...linhaDeMidia({
+        id,
+        contentType,
+        body: legenda,
+        criadaEm: new Date(Math.max(this.cenario.agora, ultima + 1)).toISOString(),
+      }),
+      clinic_id: CLINICA,
+      conversation_id: CONVERSA,
+    });
+    return id;
+  }
+
   /** Varias mensagens antes de o job rodar: um job so le todas. */
   async rajada(
     textos: readonly string[],
@@ -855,6 +966,7 @@ export class ConversaLonga {
       enviarResposta: enviarRespostaDaIa,
       enviarFrase: enviarFraseFixaDaIa,
       enviarPreparo: enviarPreparoAprovadoDaIa,
+      midia: this.midiaDoExecutor(),
     };
     const resultado = await executarRespostaComIa(job, EXECUTOR, deps);
     linha.status = "concluido";
@@ -874,7 +986,7 @@ export class ConversaLonga {
       enviadas: fakeSentMessages()
         .slice(enviadasAntes)
         .map((m) => m.body),
-      decisao: this.decisoes.slice(decisoesAntes).at(-1),
+      decisao: this.decisoes.filter((d) => d.job_id === job.id).at(-1),
       chamadasAoModelo: create.mock.calls.length,
       ferramentas:
         (doLaco as ResultadoDoTurno | null)?.ferramentasUsadas ?? [],
@@ -889,9 +1001,47 @@ export class ConversaLonga {
       sobrouNoRoteiro: roteiro.length,
     });
     if (!estavaFora && turno.statusDaConversa !== "ia_atendendo") {
-      this.jobDaSaida = turno.indice;
+      this.turnoDaSaida = turno.indice;
     }
     return turno;
+  }
+
+  /** A midia de verdade (o plano e a porta) sobre as integracoes falsas. */
+  private midiaDoExecutor(): NonNullable<DependenciasDoExecutorDaIa["midia"]> {
+    const tetosDoLeitor = { imagem: 1_600, pagina: 1_800 };
+    return {
+      transcricaoCalibrada: true,
+      tetosDoLeitor,
+      modeloDaTranscricao: "whisper-1",
+      modeloDoLeitor: "gpt-6-luna",
+      criarPorta: (e) =>
+        portaDaMidiaDoWhatsapp(this.admin, {
+          ...e,
+          lerArquivo: async (a) => ({
+            tipo: "ok",
+            bytes: this.transcricoes.has(a.messageId)
+              ? mp3Sintetico(15)
+              : jpegSintetico(),
+          }),
+          transcrever: async (t) =>
+            this.transcricoes.get(t.messageId) ?? {
+              tipo: "falhou",
+              motivo: "desconhecida",
+              uso: null,
+            },
+          lerComOModelo: async (l) =>
+            this.leituras.get(l.messageId) ?? {
+              tipo: "falha",
+              motivo: "desconhecida",
+              modelo: null,
+              uso: null,
+            },
+          versaoDaTranscricao: "transcricao-0123456789ab",
+          modeloDoLeitor: "gpt-6-luna",
+          modeloDaTranscricao: "whisper-1",
+          tetosDoLeitor,
+        }),
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -955,13 +1105,22 @@ export class ConversaLonga {
       );
     }
     // A conversa de saida nao recebe mais nada, em nenhum turno seguinte.
-    if (this.jobDaSaida !== null) {
+    if (this.turnoDaSaida !== null) {
       expect(turno.statusDaConversa, rotulo).not.toBe("ia_atendendo");
     }
 
     this.conferirAsConsultas(rotulo);
     this.conferirOQueFoiAoModelo(rotulo, turno);
     this.conferirADecisao(rotulo, turno);
+    // A nota da equipe e montada do estado e do Cadastro: nada do paciente.
+    for (const nota of this.notasInternas) {
+      expect(nota, `${rotulo}: o nome na nota`).not.toContain("Maria");
+      for (const fala of this.falas) {
+        if (fala.length >= 12) {
+          expect(nota, `${rotulo}: fala na nota`).not.toContain(fala);
+        }
+      }
+    }
   }
 
   /**
