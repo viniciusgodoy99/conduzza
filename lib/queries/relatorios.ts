@@ -28,8 +28,8 @@ import { STATUS_PENDENTES } from "@/lib/queries/confirmacoes";
 //   em DIAS CIVIS (aaaa-mm-dd), que tambem sao o que entra nas chaves de
 //   cache: estaveis e legiveis.
 // - O que nao existe no shape nao existe no produto: nao ha chave de custo
-//   em reais (message_pricing vazia, pendencia P1) nem de "% resolvido pela
-//   IA" (nada escreve author='ia' ainda). Ausencia != zero.
+//   em reais (message_pricing vazia, pendencia P1). Ausencia != zero: sem o
+//   bloco agente (migration 20261104120000 ainda nao aplicada), agente e null.
 
 export type Periodizado<T> = { atual: T; anterior: T | null };
 
@@ -107,6 +107,17 @@ export type PivoDaRegua = {
   depois: { comDesfecho: number; faltas: number };
 } | null;
 
+/** O bloco agente de atendimento_do_periodo. Regras: exportacao-de-resultados.ts. */
+export type DesempenhoDoAgente = {
+  atendidas: number;
+  resolvidasSemHumano: number;
+  transferidas: number;
+  insatisfacao: number;
+  /** null = nenhuma conversa nova respondida pela IA ("sem dados", nunca 0). */
+  primeiraRespostaMedianaSegundos: number | null;
+  agendamentos: number;
+};
+
 export type AtendimentoDoPeriodo = {
   conversasIniciadas: number;
   /** Mediana e p90, nunca media: uma noite sem plantao destruiria a media.
@@ -123,6 +134,8 @@ export type AtendimentoDoPeriodo = {
     saida: number;
     notasInternas: number;
   };
+  /** null = o banco ainda nao devolve o bloco. Nunca vira zero. */
+  agente: DesempenhoDoAgente | null;
 };
 
 /** Contagens do INSTANTE (nao do periodo): por isso ficam fora das RPCs. */
@@ -615,9 +628,19 @@ type AtendimentoRpc = {
     saida: number;
     notas_internas: number;
   };
+  /** Ausente enquanto a migration 20261104120000 nao for aplicada. */
+  agente?: {
+    atendidas: number;
+    resolvidas_sem_humano: number;
+    transferidas: number;
+    insatisfacao: number;
+    primeira_resposta_mediana_segundos: number | null;
+    agendamentos: number;
+  } | null;
 };
 
 function lerAtendimento(bloco: AtendimentoRpc): AtendimentoDoPeriodo {
+  const agente = bloco.agente ?? null;
   return {
     conversasIniciadas: bloco.conversas_iniciadas,
     primeiraResposta: {
@@ -631,6 +654,15 @@ function lerAtendimento(bloco: AtendimentoRpc): AtendimentoDoPeriodo {
       entrada: bloco.mensagens.entrada,
       saida: bloco.mensagens.saida,
       notasInternas: bloco.mensagens.notas_internas,
+    },
+    agente: agente && {
+      atendidas: agente.atendidas,
+      resolvidasSemHumano: agente.resolvidas_sem_humano,
+      transferidas: agente.transferidas,
+      insatisfacao: agente.insatisfacao,
+      primeiraRespostaMedianaSegundos:
+        agente.primeira_resposta_mediana_segundos,
+      agendamentos: agente.agendamentos,
     },
   };
 }

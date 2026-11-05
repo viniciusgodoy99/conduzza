@@ -21,6 +21,7 @@ import { interpretarRespostaDeOferta } from "@/lib/domain/lista-espera";
 import { interpretarResposta } from "@/lib/domain/resposta-paciente";
 import {
   RESPOSTA_CONFIRMADA,
+  RESPOSTA_OFERTA_JA_TEM_CONSULTA,
   RESPOSTA_OFERTA_PERDIDA,
   RESPOSTA_OFERTA_RECUSADA,
 } from "@/lib/domain/textos-padrao";
@@ -1750,22 +1751,28 @@ describe("o aceite recusado com a oferta aberta dispensa o lembrete (revisão da
   }
 
   it.each([
-    ["sem_vinculo (o catálogo mudou)", { erro: "sem_vinculo" }],
+    [
+      "sem_vinculo (o catálogo mudou)",
+      { erro: "sem_vinculo" },
+      RESPOSTA_OFERTA_PERDIDA,
+    ],
     [
       "sem_vinculo com ja_tem_consulta",
       { erro: "sem_vinculo", motivo: "ja_tem_consulta" },
+      RESPOSTA_OFERTA_JA_TEM_CONSULTA,
     ],
-    ["nao_cabe", { erro: "nao_cabe" }],
+    ["nao_cabe", { erro: "nao_cabe" }, RESPOSTA_OFERTA_PERDIDA],
     [
       "horario_ocupado pelo recurso",
       { erro: "horario_ocupado", motivo: "recurso_ocupado" },
+      RESPOSTA_OFERTA_PERDIDA,
     ],
   ])(
     "%s: a recusa educada, o lembrete gravado já cancelado, e o 'Como assim?' seguinte vai para a IA sem o lembrete",
-    async (_nome, resposta) => {
+    async (_nome, resposta, texto) => {
       aceiteRecusado(resposta);
       expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
-      expect((ecos()[0]?.payload as Linha).body).toBe(RESPOSTA_OFERTA_PERDIDA);
+      expect((ecos()[0]?.payload as Linha).body).toBe(texto);
       expect(jobDoLembrete()).toMatchObject({
         clinic_id: CLINICA,
         kind: "enviar_mensagem_ativa",
@@ -1826,7 +1833,7 @@ describe("o aceite recusado com a oferta aberta dispensa o lembrete (revisão da
     voltarAoContador();
     expect(await interceptar(entrada("SIM"))).toBe("tratou_com_eco");
     expect((ecos().at(-1)?.payload as Linha).body).toBe(
-      RESPOSTA_OFERTA_PERDIDA,
+      RESPOSTA_OFERTA_JA_TEM_CONSULTA,
     );
     // Continua morto (cobriu a pergunta), nao dispensado.
     expect(jobDoLembrete()).toMatchObject({
