@@ -298,6 +298,11 @@ export type ReservaLida = {
    * Ausente: so vale o "viva" da leitura.
    */
   expiraEm?: string | null;
+  /**
+   * A reserva ja virou consulta: a retomada do job que marcou e caiu. A RPC
+   * devolve a mesma consulta a esse job, e nunca marca outra com ela.
+   */
+  consumida?: boolean;
 };
 
 /**
@@ -2825,12 +2830,15 @@ export function criarAgendaDoTurno(entrada: {
     // modelo, e "Nao, melhor nao" com o agendar chamado marcava a consulta. O
     // "sim" na lista fechada, como no cancelamento (D-30), antes da RPC. A
     // pergunta volta pelo caminho de sempre de sem_confirmacao_do_paciente, e
-    // conta falha (na segunda seguida, a equipe).
+    // conta falha (na segunda seguida, a equipe). Com a reserva ja consumida, a
+    // RPC decide (a retomada do job que marcou, com mensagem nova nas pendentes:
+    // recusar aqui perguntaria de novo por uma consulta que ja existe).
     const respostaDaPessoa = (entrada.mensagens?.pendentes ?? []).map(
       (m) => m.original,
     );
     if (
       comEstado &&
+      reserva?.leitura?.consumida !== true &&
       !(remarcarId === null
         ? confirmouAMarcacao(
             respostaDaPessoa,

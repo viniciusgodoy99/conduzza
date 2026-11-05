@@ -881,6 +881,7 @@ export async function lerReservaDaIa(
       (linha.consumido_em === null || linha.consumido_em === undefined) &&
       Number.isFinite(expira) &&
       expira > agoraMs,
+    consumida: linha.consumido_em !== null && linha.consumido_em !== undefined,
     serviceLinkId: linha.service_link_id,
     inicio: linha.starts_at,
     fim: linha.ends_at,
