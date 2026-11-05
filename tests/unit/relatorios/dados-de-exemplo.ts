@@ -5,6 +5,7 @@ import type {
   AnunciosDoPeriodo,
   AtendimentoDoPeriodo,
   CampanhasDoPeriodo,
+  DesempenhoDoAgente,
   FaturamentoDoPeriodo,
   FunilDoPeriodo,
   InvestimentoDoPeriodo,
@@ -102,6 +103,17 @@ export const ATENDIMENTO: AtendimentoDoPeriodo = {
     saida: 380,
     notasInternas: 12,
   },
+  agente: null,
+};
+
+/** O bloco do agente com atividade: 21 atendidas, 12 resolvidas. */
+export const AGENTE: DesempenhoDoAgente = {
+  atendidas: 21,
+  resolvidasSemHumano: 12,
+  transferidas: 6,
+  insatisfacao: 2,
+  primeiraRespostaMedianaSegundos: 540,
+  agendamentos: 7,
 };
 
 export const FATURAMENTO: FaturamentoDoPeriodo = {

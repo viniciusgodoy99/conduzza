@@ -10,11 +10,10 @@ import {
   MessagesSquare,
   Reply,
   ReplyAll,
-  Sparkles,
   StickyNote,
 } from "lucide-react";
 
-import { DICA_DO_AGENTE } from "@/components/relatorios/agente-ia-resumo";
+import { CartaoDoAgente } from "@/components/relatorios/agente-ia-resumo";
 import { DICA_SEM_ACESSO_A_VALORES } from "@/components/relatorios/cartoes-de-valor";
 import { Secao } from "@/components/relatorios/secao";
 import { CartaoDeMetrica } from "@/components/shared/cartao-de-metrica";
@@ -23,6 +22,7 @@ import { formatarDuracao } from "@/lib/domain/duracao";
 import {
   AUTOR_ROTULO,
   METRICAS_DO_AGENTE,
+  agenteComAtividade,
 } from "@/lib/domain/exportacao-de-resultados";
 import type {
   AtendimentoDoPeriodo,
@@ -32,8 +32,9 @@ import type {
 // Aba Agente de IA (Fase 3, recebe IA e Custos): so o que e REAL hoje.
 // - Atendimento humano: conversas, respondidas e a primeira resposta em
 //   mediana e p90, nunca media (uma noite sem plantao destruiria a media).
-// - Desempenho do agente (A2): "Ainda não medido" com dica, nunca zero. As
-//   regras de calculo estao em lib/domain/exportacao-de-resultados.ts.
+// - Desempenho do agente: numero real com atividade da IA no periodo; sem
+//   atividade, "Ainda não medido" com dica, nunca zero. As regras de calculo
+//   estao em lib/domain/exportacao-de-resultados.ts.
 // - Mensagens e quem enviou. Custo por mensagem e conceito do canal oficial
 //   (isOfficialChannel): com uazapi ou fake o cartao e a nota nem aparecem
 //   (regra 3.3), e mesmo no oficial e valor em reais, so admin e gestor.
@@ -117,22 +118,23 @@ export function AbaAgenteIa({
         )}
       </section>
 
-      <Secao titulo="Desempenho da recepcionista de IA" icone={BotMessageSquare}>
-        <p className="max-w-prose text-[13px] text-text-secondary">
-          Estes números chegam com o agente de IA. Enquanto ele não atende, não
-          existe número para mostrar, e número inventado não entra aqui.
-        </p>
+      <Secao
+        titulo="Desempenho da recepcionista de IA"
+        icone={BotMessageSquare}
+      >
+        {agenteComAtividade(atual.agente) ? null : (
+          <p className="max-w-prose text-[13px] text-text-secondary">
+            Estes números chegam com o agente de IA. Enquanto ele não atende,
+            não existe número para mostrar, e número inventado não entra aqui.
+          </p>
+        )}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {METRICAS_DO_AGENTE.map((rotulo) => (
-            <CartaoDeMetrica
+            <CartaoDoAgente
               key={rotulo}
-              variante="afundado"
-              tamanho="md"
               rotulo={rotulo}
-              icone={Sparkles}
-              tom="ai"
-              estado="nao-medido"
-              dica={DICA_DO_AGENTE}
+              agente={atual.agente}
+              anterior={anterior?.agente ?? null}
             />
           ))}
         </div>

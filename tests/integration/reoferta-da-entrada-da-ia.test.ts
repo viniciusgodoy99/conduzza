@@ -162,7 +162,7 @@ async function ondaMaisRecente(): Promise<{ id: string; offered_to: string[]; ma
   expect(await executarOfertaDeEspera(admin, job as unknown as Job)).toEqual({ ok: true });
   await admin
     .from("job_queue")
-    .update({ status: "concluido", completed_at: new Date().toISOString() })
+    .update({ status: "concluido" })
     .eq("id", (job as { id: string }).id);
   const { data: oferta } = await admin
     .from("waitlist_offer")

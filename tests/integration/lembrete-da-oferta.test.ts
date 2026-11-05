@@ -299,7 +299,7 @@ async function ofertaPara(contato: string, conversa: string): Promise<Oferta> {
   });
   await admin
     .from("job_queue")
-    .update({ status: "concluido", completed_at: new Date().toISOString() })
+    .update({ status: "concluido" })
     .eq("id", (job as { id: string }).id)
     .throwOnError();
 
