@@ -166,6 +166,7 @@ import type {
   HorarioDoFato,
   HorarioLivreDoTurno,
 } from "@/lib/domain/conformidade/fatos-do-turno";
+import { pedeOutraMarcacao } from "@/lib/domain/conformidade/fatos-do-turno";
 import { pareceNomeDePessoa } from "@/lib/domain/conformidade/minimizar";
 import {
   confirmouAMarcacao,
@@ -331,6 +332,11 @@ export type ConsultaLida = {
   pendente?: boolean;
   /** AG4: appointment.remarcacao_de (esta consulta e a remarcacao de outra). */
   remarcacaoDe?: string | null;
+  /**
+   * Revisao final da AG7: appointment.created_at (ISO), o corte de "desde a
+   * marcacao". Ausente: nao se sabe, e toda mensagem da janela conta.
+   */
+  criadaEm?: string;
   /**
    * Revisao da AG4 (achado 7): a consulta esta cancelada (pelo paciente ou
    * pela clinica). So o cancelamento feito nesta conversa (o estado) le
@@ -1265,6 +1271,7 @@ export function criarAgendaDoTurno(entrada: {
     profissional: string | null;
     pendente: boolean;
     procedimento: string | null;
+    criadaEm: string | undefined;
   } | null = null;
   let consultaDoTurno: { dia: string; hora: string } | null = null;
   // [AG7 preparo] O procedimento que o agendar deste turno marcou (F2).
@@ -1408,6 +1415,24 @@ export function criarAgendaDoTurno(entrada: {
         ? { remarcacaoAprovada: true }
         : {}),
     };
+  }
+
+  /**
+   * Revisao final da AG7: em algum turno da janela, desde a marcacao real, a
+   * pessoa pediu para marcar outra coisa? Sem o horario de um dos dois, a
+   * comparacao e falsa e a mensagem conta (falha fechada).
+   */
+  function pediuOutraDepoisDaMarcacao(lida: {
+    procedimento: string | null;
+    criadaEm: string | undefined;
+  }): boolean {
+    const corte = Date.parse(lida.criadaEm ?? "");
+    const nomes = lida.procedimento === null ? [] : [lida.procedimento];
+    return (entrada.mensagens?.doPaciente ?? []).some(
+      (m) =>
+        !(Date.parse(m.criadaEm ?? "") <= corte) &&
+        pedeOutraMarcacao(m.original, nomes),
+    );
   }
 
   /** AG4: a consulta da lista como a consulta em foco. */
@@ -1917,6 +1942,7 @@ export function criarAgendaDoTurno(entrada: {
               procedimento:
                 procedimentoDe(vinculoDe(lida.serviceLinkId ?? null)?.procedimentoId)
                   ?.nome ?? null,
+              criadaEm: lida.criadaEm,
             };
           }
         } catch {
@@ -4586,6 +4612,10 @@ export function criarAgendaDoTurno(entrada: {
               ...(consultaLida.procedimento === null
                 ? {}
                 : { procedimento: consultaLida.procedimento }),
+              // Revisao final da AG7: o pedido de marcar desde a marcacao.
+              ...(pediuOutraDepoisDaMarcacao(consultaLida)
+                ? { pedidoDepoisDaMarcacao: true }
+                : {}),
             },
           }),
       // AG4: a consulta em foco do pedido e a remarcacao pedida, relidas.

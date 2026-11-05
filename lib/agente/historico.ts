@@ -243,7 +243,15 @@ export function mensagemDaLinha(
   // mascara (textoOriginalDaClinica): o laco troca o texto do preparo pelo
   // marcador NELE e so depois refaz a mascara (CFM-1). So o servidor le.
   return autor === "paciente"
-    ? { autor, texto, tipo: "texto", textoOriginal: corpo }
+    ? {
+        autor,
+        texto,
+        tipo: "texto",
+        textoOriginal: corpo,
+        ...(typeof linha.created_at === "string"
+          ? { criadaEm: linha.created_at }
+          : {}),
+      }
     : {
         autor,
         ...autoria,

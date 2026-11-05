@@ -495,12 +495,21 @@ export class ConversaLonga {
       "entrar_na_lista_de_espera_pela_ia",
     ]) {
       const doContrato = agenda.manipuladores.get(nome)!;
-      agenda.rpc(nome, (args) =>
-        this.conversa.status === "ia_atendendo" &&
-        (this.conversa.assignee_user_id ?? null) === null
-          ? doContrato(args)
-          : { data: { ok: false, motivo: "ia_desligada" }, error: null },
-      );
+      agenda.rpc(nome, async (args) => {
+        if (
+          this.conversa.status !== "ia_atendendo" ||
+          (this.conversa.assignee_user_id ?? null) !== null
+        ) {
+          return { data: { ok: false, motivo: "ia_desligada" }, error: null };
+        }
+        const resposta = await doContrato(args);
+        // O default do banco: o corte de "desde a marcacao" (os contratos nao
+        // gravam o created_at da consulta).
+        for (const consulta of agenda.linhas("appointment")) {
+          consulta.created_at ??= new Date(this.cenario.agora).toISOString();
+        }
+        return resposta;
+      });
     }
   }
 

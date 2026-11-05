@@ -968,7 +968,7 @@ export async function lerConsultaDaIa(
     const { data, error } = await admin
       .from("appointment")
       .select(
-        "starts_at, status, approval_status, unit_id, professional_id, service_link_id, remarcacao_de",
+        "starts_at, status, approval_status, unit_id, professional_id, service_link_id, remarcacao_de, created_at",
       )
       .eq("clinic_id", ids.clinicId)
       .eq("contact_id", ids.contactId)
@@ -985,6 +985,7 @@ export async function lerConsultaDaIa(
       professional_id?: unknown;
       service_link_id?: unknown;
       remarcacao_de?: unknown;
+      created_at?: unknown;
     } | null;
   }, PRAZO_DA_AGENDA_MS);
   if (corrida.tipo !== "resultado") {
@@ -1020,6 +1021,9 @@ export async function lerConsultaDaIa(
     cancelada:
       linha.status === "cancelado_paciente" ||
       linha.status === "cancelado_clinica",
+    ...(typeof linha.created_at === "string"
+      ? { criadaEm: linha.created_at }
+      : {}),
   };
 }
 

@@ -411,6 +411,11 @@ export type MensagemDaConversa = {
    */
   autoria?: AutoriaDaClinica | null;
   /**
+   * Revisao final da AG7: message.created_at (ISO), so no historico do
+   * WhatsApp; so o servidor le, para o corte de "desde a marcacao".
+   */
+  criadaEm?: string;
+  /**
    * null para midia sem texto. No historico do WhatsApp, com o nome do
    * contato trocado pela marca (lib/agente/historico.ts): e o texto que os
    * modelos da OpenAI (classificador, agente e verificador) leem.
@@ -1779,6 +1784,7 @@ function mensagensDoPacienteParaOsDados(
             original: m.textoOriginal ?? m.texto,
             // [AG6b mídia]
             ...(m.origem === undefined ? {} : { origem: m.origem }),
+            ...(m.criadaEm === undefined ? {} : { criadaEm: m.criadaEm }),
           },
         ]
       : [],

@@ -251,6 +251,13 @@ export type ConsultaDoFato = HorarioDoFato & {
    * sem dia e sem hora tem de falar DELA); nunca vai ao resumo do verificador.
    */
   procedimento?: string;
+  /**
+   * Revisao final da AG7: desde a marcacao real, a pessoa pediu para marcar
+   * outra coisa (pedeOutraMarcacao), em algum turno. Um booleano: o texto dela
+   * nao anda nos fatos. A frase sem dia, sem hora e sem o nome do procedimento
+   * barra (marcada_nao_citada).
+   */
+  pedidoDepoisDaMarcacao?: boolean;
 };
 
 /**
@@ -569,6 +576,8 @@ function consultaDoFatoValida(valor: unknown): boolean {
     ?.remarcacaoAprovada;
   const pendente = (valor as Record<string, unknown> | null)?.aprovacaoPendente;
   const procedimento = (valor as Record<string, unknown> | null)?.procedimento;
+  const pedido = (valor as Record<string, unknown> | null)
+    ?.pedidoDepoisDaMarcacao;
   return (
     horarioDoFatoValido(valor) &&
     typeof (valor as Record<string, unknown>).marcadaNestaConversa ===
@@ -579,7 +588,8 @@ function consultaDoFatoValida(valor: unknown): boolean {
     (aprovada === undefined || typeof aprovada === "boolean") &&
     !(remarcada === true && aprovada === true) &&
     (pendente === undefined || typeof pendente === "boolean") &&
-    (procedimento === undefined || typeof procedimento === "string")
+    (procedimento === undefined || typeof procedimento === "string") &&
+    (pedido === undefined || typeof pedido === "boolean")
   );
 }
 
@@ -5562,6 +5572,52 @@ const PALAVRAS_QUE_NAO_DISTINGUEM: ReadonlySet<string> = new Set([
 /** O tamanho minimo da palavra que distingue um procedimento de outro. */
 const MINIMO_DA_PALAVRA_QUE_DISTINGUE = 4;
 
+/** As palavras do nome que distinguem o procedimento de outro. */
+function palavrasQueDistinguem(nomes: readonly string[]): string[] {
+  return nomes
+    .flatMap(palavrasDoProcedimento)
+    .filter(
+      (palavra) =>
+        palavra.length >= MINIMO_DA_PALAVRA_QUE_DISTINGUE &&
+        !PALAVRAS_QUE_NAO_DISTINGUEM.has(palavra),
+    );
+}
+
+/** Revisao final da AG7: qualquer pedido de marcar, por qualquer palavra. */
+const PEDIDO_DE_MARCAR =
+  /\b(?:marc|agend|reserv|encaix)|\b(?:quero|queria|gostaria|preciso|posso|pode|vou|da pra|da para|tem como|consigo)\b[^.!?]*\bfazer\b/;
+/** So pergunta se a consulta ficou marcada: nao pede nada novo. */
+const SO_PERGUNTA_DO_ESTADO =
+  /^(?:(?:e ai|entao|oi|ola|sim|ok|bom dia|boa tarde|boa noite)[,!. ]*)*(?:(?:a|o|minha|meu)\s+)*(?:(?:consulta|horario)\s+)?(?:ja\s+)?(?:(?:ficou|esta|ta|foi)\s+(?:mesmo\s+)?(?:marcad|agendad|reservad)[oa]|marcou|marcaram|agendou|agendaram)(?:\s+mesmo)?[?!. ]*$/;
+/** O pedido de mais uma, mesmo com o nome da consulta marcada. */
+const PEDIDO_DE_MAIS_UMA =
+  /\b(?:outr[oa]s?|mais uma?|de novo|novamente|tambem)\b/;
+
+/**
+ * Revisao final da AG7: a mensagem pede para marcar algo que nao e a consulta
+ * marcada? Qualquer verbo de marcar sem o nome dela conta (na duvida, barra),
+ * com "outra" e "tambem" mesmo com o nome; so a pergunta do estado ("Ficou
+ * marcado?") nao conta. PURA. Sobra (com o verificador): o nome da marcada
+ * junto de um nome fora do Cadastro, e o pedido sem nenhum desses verbos
+ * ("e o botox?", que so conta com o nome do Cadastro, no proprio turno).
+ */
+export function pedeOutraMarcacao(
+  mensagem: string,
+  nomesDaMarcada: readonly string[],
+): boolean {
+  const daMarcada = palavrasQueDistinguem(nomesDaMarcada);
+  return normalizarBase(mensagem)
+    .split(/[.!?\n]+/)
+    .map((frase) => frase.trim())
+    .some(
+      (frase) =>
+        PEDIDO_DE_MARCAR.test(frase) &&
+        !SO_PERGUNTA_DO_ESTADO.test(frase) &&
+        (PEDIDO_DE_MAIS_UMA.test(frase) ||
+          !daMarcada.some((palavra) => regexDasPalavras([palavra]).test(frase))),
+    );
+}
+
 /**
  * Revisao da AG5 (achado 2): as palavras que so OUTRO procedimento do
  * Cadastro tem, para a frase que cita o procedimento em parte ("na lista de
@@ -6739,7 +6795,9 @@ export function regrasDosFatos(
   // palavra "consulta" ou "horario", nem o par, nem o nome dela). Sem outro
   // procedimento pedido nem citado, a marcacao real sustenta a frase ("Sim,
   // ficou marcado!"). Com outra consulta lida no turno a frase pode ser dela:
-  // fica com o verificador.
+  // fica com o verificador. Revisao final da AG7: desde a marcacao, em qualquer
+  // turno, o pedido de marcar outra coisa (pedeOutraMarcacao) tira a palavra
+  // "consulta" da conta: so o par ou o nome da marcada sustentam a frase.
   if (
     marcadas.length > 0 &&
     marcadas.length === fatos.consultasLidas.length &&
@@ -6766,18 +6824,18 @@ export function regrasDosFatos(
       fatos,
       [],
     );
-    const daMarcada = nomesDasMarcadas
-      .flatMap(palavrasDoProcedimento)
-      .filter(
-        (palavra) =>
-          palavra.length >= MINIMO_DA_PALAVRA_QUE_DISTINGUE &&
-          !PALAVRAS_QUE_NAO_DISTINGUEM.has(palavra),
-      );
+    const daMarcada = palavrasQueDistinguem(nomesDasMarcadas);
     const pediuOutro = contexto.mensagensDoPaciente.some((m) =>
       cita(deOutros, normalizarBase(m)),
     );
+    const mensagemNomeiaAMarcada = mensagemTemOPar || cita(daMarcada, base);
     const mensagemFalaDaMarcada =
-      mensagemTemOPar || REFERENCIA_A_CONSULTA.test(base) || cita(daMarcada, base);
+      mensagemNomeiaAMarcada || REFERENCIA_A_CONSULTA.test(base);
+    const pediuDepois =
+      marcadas.some((c) => c.pedidoDepoisDaMarcacao === true) ||
+      contexto.mensagensDoPaciente.some((m) =>
+        pedeOutraMarcacao(m, nomesDasMarcadas),
+      );
     const naoFalaDaMarcada = [...alegadas].some(([indice, daFrase]) => {
       const frase = frasesSemDiminutivo[indice];
       if (
@@ -6787,7 +6845,10 @@ export function regrasDosFatos(
       ) {
         return false;
       }
-      if (pediuOutro && !mensagemFalaDaMarcada) {
+      if (
+        (pediuOutro && !mensagemFalaDaMarcada) ||
+        (pediuDepois && !mensagemNomeiaAMarcada)
+      ) {
         return true;
       }
       // O "Dr." separa a frase sem a mascara: sem a contagem igual, fica com o
@@ -7028,6 +7089,11 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   `marcada nao citada: sem marcacao no turno, a frase sem dia e sem hora barra se a oracao dela cita outro procedimento (${SEPARA_ORACOES.source}), fora a oracao que nega ou traz ${VERBO_DE_OUTRO_ASSUNTO.source} sem marcar, ou se a pessoa pediu outro no turno e a mensagem nao traz ${REFERENCIA_A_CONSULTA.source}, o par nem o nome da marcada`,
   "fechamento licenciado: o par de uma acao ou de uma consulta lida",
   "eco do pedido: fonte so na frase que nega ou pergunta",
+  // Revisao final da AG7: o pedido de marcar desde a marcacao real.
+  PEDIDO_DE_MARCAR.source,
+  SO_PERGUNTA_DO_ESTADO.source,
+  PEDIDO_DE_MAIS_UMA.source,
+  "marcada nao citada: desde a marcacao, em qualquer turno, o pedido de marcar sem o nome da marcada barra a frase sem o par e sem o nome",
   // Revisao curta das correcoes da AG3 (achados 3 a 7): o horario que nao esta
   // livre, o relato do pedido, o horario de outra pessoa, o duplo negativo
   // como horario livre, os tipos de marca com o par de cada um, as marcas

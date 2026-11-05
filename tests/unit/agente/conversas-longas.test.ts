@@ -1724,6 +1724,33 @@ describe("6. o modelo que diz que fez sem ter feito, num turno tardio", () => {
     );
   });
 
+  // Revisao final da AG7 (achado 6): o pedido num turno anterior, desde a
+  // marcacao real, conta em todo turno depois dele. O pedido de antes de marcar
+  // ("Quero marcar uma consulta...") nunca conta.
+  it.each([
+    ["Está marcado!", "E aí, ficou certo?"],
+    ["Sim, ficou marcado!", "E aí, ficou certo?"],
+    ["Sua consulta está marcada.", "Tudo certo então?"],
+  ])("o pedido de marcar em outro turno: %s depois de %s não sai", async (alucinou, pergunta) => {
+    const c = clinicaComDuasUnidades();
+    await marcarASexta(c);
+    await modeloResponde(c, "Pode marcar a limpeza de pele", "Qual dia você prefere?");
+    await conversaFiada(c, ["Vou pensar", "Já volto"]);
+    barrado(c, await c.fala({ texto: pergunta, roteiro: [final(alucinou)] }), alucinou);
+  });
+
+  it("a frase com o dia da marcada passa mesmo depois do pedido de outra", async () => {
+    const c = clinicaComDuasUnidades();
+    await marcarASexta(c);
+    await modeloResponde(c, "Quero marcar botox", "Qual dia você prefere?");
+    await conversaFiada(c, ["Vou pensar", "Já volto"]);
+    await modeloResponde(
+      c,
+      "E aí, ficou certo?",
+      "Sua Consulta está marcada para sexta, 30/10 às 14:00.",
+    );
+  });
+
   it("depois de marcar uma consulta, 'Está marcado!' para OUTRO procedimento, sem nenhuma ferramenta: não pode sair", async () => {
     const c = clinicaComDuasUnidades();
     await marcarASexta(c);

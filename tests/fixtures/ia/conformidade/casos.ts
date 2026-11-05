@@ -5599,6 +5599,38 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
   ).map(([id, texto]) =>
     saida(id, "acao_nao_executada", "contexto", texto, comFatos(MARCADA_PENDENTE)),
   ),
+  // Revisao final da AG7 (achado 6): desde a marcacao, o pedido de marcar em
+  // qualquer turno, por qualquer palavra, tira a sustentacao da frase sem o par
+  // e sem o nome da marcada.
+  ...(
+    [
+      ["AG7F-S10", "Está marcado!", ["E aí, ficou certo?"], true],
+      ["AG7F-S11", "Sim, ficou marcado!", ["E aí, ficou certo?"], true],
+      ["AG7F-S12", "Sua consulta está marcada.", ["Tudo bem?"], true],
+      ["AG7F-S13", "Está marcado!", ["Quero marcar botox"], false],
+      ["AG7F-S14", "Sua consulta está marcada.", ["Pode marcar a limpeza de pele"], false],
+      ["AG7F-S15", "Sua consulta está marcada.", ["Quero agendar uma avaliação"], false],
+      ["AG7F-S16", "Está marcado!", ["Queria fazer botox também, pode ser?"], false],
+      ["AG7F-S17", "Está marcado!", ["Dá para reservar outra?"], false],
+    ] as const
+  ).map(([id, texto, mensagensDoPaciente, emOutroTurno]) =>
+    saida(
+      id,
+      "acao_nao_executada",
+      "contexto",
+      texto,
+      comFatos(
+        {
+          ...MARCADA_PENDENTE,
+          consultasLidas: MARCADA_PENDENTE.consultasLidas.map((c) => ({
+            ...c,
+            ...(emOutroTurno ? { pedidoDepoisDaMarcacao: true } : {}),
+          })),
+        },
+        { mensagensDoPaciente: [...mensagensDoPaciente] },
+      ),
+    ),
+  ),
   // Conversas longas, revisao (05/11/2026): a outra consulta, citada em parte
   // ou pedida no turno.
   saida(
@@ -8487,6 +8519,23 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
       ],
       ["CLR-B18", "Está marcado!", MARCADA_A_LIMPEZA, ["Pode marcar a limpeza de pele?"]],
       ["CLR-B19", "Sua limpeza está marcada.", MARCADA_A_LIMPEZA, ["E o peeling, pode marcar?"]],
+    ] as const
+  ).map(
+    ([id, rascunho, fatos, mensagensDoPaciente]): CasoDeControle => ({
+      id,
+      rascunho,
+      ...comFatos(fatos, { mensagensDoPaciente: [...mensagensDoPaciente] }),
+    }),
+  ),
+  // Revisao final da AG7 (achado 6): a pergunta do estado nao pede nada, o par
+  // e o nome da marcada sustentam a frase mesmo com o pedido.
+  ...(
+    [
+      ["AG7F-B10", "Sim, ficou marcado!", MARCADA_PENDENTE, ["Ficou marcado?"]],
+      ["AG7F-B11", "Está marcado!", MARCADA_PENDENTE, ["E aí, já está marcada mesmo?"]],
+      ["AG7F-B12", "Sim, ficou marcado!", MARCADA_PENDENTE, ["Marcou?"]],
+      ["AG7F-B13", "Sua consulta está marcada para terça, 21/10 às 14:00.", MARCADA_PENDENTE, ["Quero marcar botox"]],
+      ["AG7F-B14", "Sua limpeza está marcada.", MARCADA_A_LIMPEZA, ["Quero marcar botox"]],
     ] as const
   ).map(
     ([id, rascunho, fatos, mensagensDoPaciente]): CasoDeControle => ({
