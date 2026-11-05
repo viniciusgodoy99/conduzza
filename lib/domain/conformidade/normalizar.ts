@@ -430,30 +430,42 @@ export type Compacto = {
  * O compacto e, junto, onde cada palavra comecava. Serve para o lexico que
  * so vale a partir do comeco de uma palavra ("trama dol" e remedio;
  * "especialista" nao e "cialis", nem "pouco de informacao" e "codein").
+ *
+ * Revisao de desempenho de 31/10/2026: a ultima letra fica numa variavel e
+ * as letras numa lista. Antes, perguntar o fim do compacto que crescia
+ * (endsWith) achatava a string inteira a cada letra: tempo quadratico, de
+ * 50 a 150 ms em 65.536 caracteres, e o portao compacta quatro vezes por
+ * mensagem (duas visoes compactas, nas visoes do portao e nas da urgencia).
+ * Ler por unidade de codigo da o mesmo resultado que por ponto de codigo: so
+ * [a-z] conta, e as duas metades de um par substituto sao "nao letra" como o
+ * par inteiro.
  */
 export function compactarComInicios(texto: string): Compacto {
-  let compacto = "";
+  const letras: string[] = [];
   const inicios = new Set<number>();
+  let ultima = -1;
   let comecoDePalavra = true;
-  for (const caractere of texto) {
-    if (!/[a-z]/.test(caractere)) {
+  for (let posicao = 0; posicao < texto.length; posicao += 1) {
+    const codigo = texto.charCodeAt(posicao);
+    if (codigo < 0x61 || codigo > 0x7a) {
       comecoDePalavra = true;
       continue;
     }
-    if (compacto.endsWith(caractere)) {
+    if (codigo === ultima) {
       // Letra repetida some; se ela abria uma palavra, quem fica abre.
       if (comecoDePalavra) {
-        inicios.add(compacto.length - 1);
+        inicios.add(letras.length - 1);
       }
     } else {
       if (comecoDePalavra) {
-        inicios.add(compacto.length);
+        inicios.add(letras.length);
       }
-      compacto += caractere;
+      letras.push(texto.charAt(posicao));
+      ultima = codigo;
     }
     comecoDePalavra = false;
   }
-  return { compacto, inicios };
+  return { compacto: letras.join(""), inicios };
 }
 
 /** O termo aparece no compacto comecando no inicio de uma palavra. */
@@ -522,14 +534,118 @@ export type VisoesDoTexto = {
   soLetras: string;
 };
 
+/**
+ * O que barra uma troca quando aparece perto dela (a intencao clinica perto
+ * do "exame" da pergunta de preco, padroes.ts).
+ */
+export type GuardaDeJanela = {
+  /** Fonte da regex do que barra a troca, com as bordas (\b...\b). */
+  fonte: string;
+  /** Ate quantos caracteres antes e depois do fim do casamento. */
+  janela: number;
+};
+
 export type Neutralizacao = {
   /** Nome da troca (para a versao das regras). */
   nome: string;
   /** Fonte da regex, escrita para o texto normalizado e com espacos unicos. */
   fonte: string;
-  /** O que entra no lugar do trecho (aceita $1, $2...). */
+  /** O que entra no lugar do trecho (aceita $1, $2..., menos com guarda). */
   troca: string;
+  /**
+   * A troca so vale se nenhum trecho que case a guarda terminar ate
+   * `janela` caracteres antes do fim do casamento nem comecar ate `janela`
+   * caracteres depois dele. Onde a guarda barra, a busca segue da posicao
+   * seguinte ao comeco do casamento, como a regex faria. Da o mesmo que a
+   * lookaround (?<!G[\s\S]{0,janela})(?![\s\S]{0,janela}G) no fim da fonte
+   * quando cada comeco so tem um fim possivel (o caso de "exames?\b"), sem
+   * o custo quadratico: como lookaround, cada casamento varria a janela de
+   * novo; a guarda acha onde G comeca e termina uma vez por texto. Sem $ na
+   * troca.
+   */
+  semPorPerto?: GuardaDeJanela;
 };
+
+/** Onde algum trecho comeca (ou termina), em ordem: uma busca so no texto. */
+function posicoesDaGuarda(texto: string, regex: RegExp): number[] {
+  const posicoes: number[] = [];
+  regex.lastIndex = 0;
+  for (
+    let casamento = regex.exec(texto);
+    casamento !== null;
+    casamento = regex.exec(texto)
+  ) {
+    posicoes.push(casamento.index);
+    // O casamento e vazio (so a lookaround): a proxima busca anda um.
+    regex.lastIndex = casamento.index + 1;
+  }
+  return posicoes;
+}
+
+/** A primeira posicao da lista ordenada que nao e menor que o alvo. */
+function primeiraDesde(posicoes: readonly number[], alvo: number): number {
+  let baixo = 0;
+  let alto = posicoes.length;
+  while (baixo < alto) {
+    const meio = (baixo + alto) >>> 1;
+    if ((posicoes[meio] ?? 0) < alvo) {
+      baixo = meio + 1;
+    } else {
+      alto = meio;
+    }
+  }
+  return baixo;
+}
+
+/** Ha posicao da lista ordenada entre de e ate (inclusive)? */
+function temPosicaoEntre(
+  posicoes: readonly number[],
+  de: number,
+  ate: number,
+): boolean {
+  const indice = primeiraDesde(posicoes, de);
+  return indice < posicoes.length && (posicoes[indice] ?? 0) <= ate;
+}
+
+function trocaComGuarda(
+  item: Neutralizacao,
+  guarda: GuardaDeJanela,
+): (texto: string) => string {
+  if (item.troca.includes("$")) {
+    throw new Error(`A troca ${item.nome} tem guarda e nao aceita $.`);
+  }
+  const regex = new RegExp(item.fonte, "g");
+  // Os fins e os comecos da guarda, como as lookarounds os leriam.
+  const fins = new RegExp(`(?<=${guarda.fonte})`, "g");
+  const comecos = new RegExp(`(?=${guarda.fonte})`, "g");
+  return (texto) => {
+    regex.lastIndex = 0;
+    let casamento = regex.exec(texto);
+    if (casamento === null) {
+      return texto;
+    }
+    const finsNoTexto = posicoesDaGuarda(texto, fins);
+    const comecosNoTexto = posicoesDaGuarda(texto, comecos);
+    let saida = "";
+    let copiado = 0;
+    while (casamento !== null) {
+      const inicio = casamento.index;
+      const fim = inicio + casamento[0].length;
+      const barrado =
+        temPosicaoEntre(finsNoTexto, fim - guarda.janela, fim) ||
+        temPosicaoEntre(comecosNoTexto, fim, fim + guarda.janela);
+      if (barrado) {
+        regex.lastIndex = inicio + 1;
+      } else {
+        saida += texto.slice(copiado, inicio) + item.troca;
+        copiado = fim;
+        regex.lastIndex = fim > inicio ? fim : fim + 1;
+      }
+      casamento = regex.exec(texto);
+    }
+    return saida + texto.slice(copiado);
+  };
+}
 
 /**
  * Aplica as trocas de expressao permitida (padroes.ts) no texto ja
@@ -539,15 +655,14 @@ export type Neutralizacao = {
 export function neutralizador(
   lista: readonly Neutralizacao[],
 ): (texto: string) => string {
-  const compiladas = lista.map((item) => ({
-    regex: new RegExp(item.fonte, "g"),
-    troca: item.troca,
-  }));
-  return (texto) =>
-    compiladas.reduce(
-      (saida, { regex, troca }) => saida.replace(regex, troca),
-      texto,
-    );
+  const trocas = lista.map((item): ((texto: string) => string) => {
+    if (item.semPorPerto !== undefined) {
+      return trocaComGuarda(item, item.semPorPerto);
+    }
+    const regex = new RegExp(item.fonte, "g");
+    return (texto) => texto.replace(regex, item.troca);
+  });
+  return (texto) => trocas.reduce((saida, trocar) => trocar(saida), texto);
 }
 
 const SEM_NEUTRALIZAR = (texto: string) => texto;
@@ -594,6 +709,45 @@ export function visoesDoTexto(
     compactoComL: compactar(leetComL),
     soLetras: leet.replace(/[^a-z]/g, ""),
   };
+}
+
+/**
+ * As muletas da fala, que saem da visao corrida (o audio transcrito e o
+ * WhatsApp: "Eu quero, sabe, morrer.", "uma vontade, tipo, de morrer").
+ */
+export const MULETAS_DA_FALA: readonly string[] = [
+  "tipo",
+  "sabe",
+  "assim",
+  "ne",
+  "neh",
+  "entendeu",
+  "ai",
+];
+
+const MULETAS = new Set(MULETAS_DA_FALA);
+
+/**
+ * Visao corrida (frente S1, revisao rev5 de 31/10/2026): o que nao e letra
+ * nem digito (pontuacao, reticencias, emoji, simbolo) vira um espaco so, as
+ * muletas da fala saem e a palavra repetida em seguida fica uma vez ("de, de
+ * morrer" vira "de morrer"; "ele, ele parou" vira "ele parou"). Recebe a
+ * visao base. So a rede de seguranca do portao le esta visao: as visoes de
+ * sempre (frasesDasVisoes) nao mudam.
+ */
+export function visaoCorrida(base: string): string {
+  const palavras: string[] = [];
+  for (const palavra of base.split(/[^a-z0-9]+/)) {
+    if (
+      palavra === "" ||
+      MULETAS.has(palavra) ||
+      palavra === palavras[palavras.length - 1]
+    ) {
+      continue;
+    }
+    palavras.push(palavra);
+  }
+  return palavras.join(" ");
 }
 
 /** As visoes em que os padroes de frase rodam. */

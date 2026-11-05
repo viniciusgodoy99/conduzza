@@ -18,18 +18,24 @@ import {
 } from "@/lib/domain/conformidade/categorias";
 import {
   frasesDasVisoes,
+  MULETAS_DA_FALA,
   neutralizador,
   normalizarBase,
   sinaisDeOfuscacao,
   temLetraForaDoAlfabeto,
+  visaoCorrida,
   visoesDoTexto,
 } from "@/lib/domain/conformidade/normalizar";
 import {
   IDADES_POR_EXTENSO,
   LEXICO_COMPACTO_DE_ENTRADA,
   NEUTRALIZACOES_DE_ENTRADA,
+  PADROES_DA_REDE_DE_SEGURANCA,
   PADROES_DE_ENTRADA,
 } from "@/lib/domain/conformidade/padroes";
+// [AG6 urgência] início
+import { detectarUrgencia } from "@/lib/domain/conformidade/urgencia";
+// [AG6 urgência] fim
 
 /** Texto acima disso escala (plano de seguranca, secao 3). */
 export const LIMITE_DE_MENSAGEM = 1000;
@@ -44,11 +50,51 @@ export const LIMITE_DA_RAJADA = 2000;
  * caso, como segunda trava.
  */
 export const MAXIMO_DE_MENSAGENS_NO_CONTEXTO = 5;
+/**
+ * Quanto o portao le de cada texto, contado DEPOIS da normalizacao (frente
+ * S1, revisao rev5 de 31/10/2026). A NFKD multiplica alguns caracteres
+ * (U+FDFA vira 18), e 65.536 deles viravam 1.179.648 caracteres em cada
+ * visao e em cada padrao (de 520 a 870 ms). 20.000 cobre com folga o texto
+ * que nao escala pelo tamanho (1.000 caracteres vezes 18, o maximo da
+ * NFKD): o portao le esse texto inteiro, como antes. Acima do limite, o
+ * texto ja escala como mensagem longa, e o resto dele nao muda a passagem.
+ */
+export const LIMITE_DA_LEITURA = 20_000;
+
+/**
+ * O comeco do texto que, depois da NFKD, cabe no limite da leitura. O
+ * caractere ASCII conta um; o resto conta o tamanho da propria NFKD.
+ */
+function trechoLido(texto: string): string {
+  let usados = 0;
+  let fim = 0;
+  for (const caractere of texto) {
+    const custo =
+      (caractere.codePointAt(0) ?? 0) < 0x80
+        ? 1
+        : caractere.normalize("NFKD").length;
+    if (usados + custo > LIMITE_DA_LEITURA) {
+      break;
+    }
+    usados += custo;
+    fim += caractere.length;
+  }
+  return fim === texto.length ? texto : texto.slice(0, fim);
+}
 
 export type MensagemDeEntrada = {
   /** message.content_type: so "texto" segue; qualquer outro e midia. */
   tipo: string;
   texto: string | null;
+  // [AG6 urgência] início
+  /**
+   * A legenda da midia, quando o paciente escreveu uma (message.body da
+   * imagem, do documento ou do video). So a URGENCIA le (revisao de
+   * 28/10/2026): a midia continua escalando como "midia", e nenhum outro
+   * gatilho le a legenda. No texto e no audio, ignorada.
+   */
+  legenda?: string | null;
+  // [AG6 urgência] fim
 };
 
 export type EntradaDoPortao = {
@@ -143,7 +189,10 @@ const neutralizarEntrada = neutralizador(NEUTRALIZACOES_DE_ENTRADA);
 function gatilhosDoTexto(bruto: string): Set<GatilhoDeEntrada> {
   const achados = new Set<GatilhoDeEntrada>();
   const visoes = visoesDoTexto(bruto, [], neutralizarEntrada);
-  const frases = frasesDasVisoes(visoes);
+  // Cada visao diferente uma vez so (rev5): no texto comum as cinco visoes
+  // costumam ser o mesmo texto, e cada padrao rodava cinco vezes nele. O
+  // resultado e o mesmo.
+  const frases = [...new Set(frasesDasVisoes(visoes))];
 
   for (const padrao of PADROES_DE_ENTRADA) {
     if (frases.some((frase) => padrao.regex.test(frase))) {
@@ -177,7 +226,40 @@ function gatilhosDoTexto(bruto: string): Set<GatilhoDeEntrada> {
   if (temLetraForaDoAlfabeto(visoes.base)) {
     achados.add("manipulacao");
   }
+  // S1 (rev5): a rede de seguranca tambem na visao corrida (pontuacao,
+  // emoji e muletas da fala fora): "Eu quero, sabe, morrer.", "vou me...
+  // matar", "quero 😭 morrer".
+  const corrida = visaoCorrida(visoes.base);
+  if (!frases.includes(corrida)) {
+    for (const padrao of PADROES_DA_REDE_DE_SEGURANCA) {
+      if (padrao.regex.test(corrida)) {
+        achados.add(padrao.gatilho);
+      }
+    }
+  }
   return achados;
+}
+
+/**
+ * S1 (31/10/2026): a rede de seguranca (padroes.ts) tambem na juncao das
+ * mensagens de texto do turno, na ordem e separadas por espaco ("quero" e
+ * "morrer"; "nao", "aguento", "mais", "viver"; "fiz labial" e "o labio
+ * ficou branco"). So a rede le a juncao: os outros padroes continuam lendo
+ * cada mensagem sozinha. A juncao so acrescenta (escala como sintoma).
+ */
+function redeDeSegurancaNaJuncao(textos: readonly string[]): boolean {
+  if (textos.length < 2) {
+    return false;
+  }
+  const visoes = visoesDoTexto(textos.join(" "), [], neutralizarEntrada);
+  // Rev5: e na visao corrida ("eu so quero..." e "morrer"; "nao quero." e
+  // "mais viver.").
+  const frases = [
+    ...new Set([...frasesDasVisoes(visoes), visaoCorrida(visoes.base)]),
+  ];
+  return PADROES_DA_REDE_DE_SEGURANCA.some((padrao) =>
+    frases.some((frase) => padrao.regex.test(frase)),
+  );
 }
 
 /**
@@ -190,12 +272,34 @@ export function detectarGatilhosDeEntrada(
 ): GatilhoDeEntrada[] {
   const achados = new Set<GatilhoDeEntrada>();
   let total = 0;
+  // [AG6 urgência] início
+  /** O que a urgencia le: o texto e a legenda da midia, na ordem. */
+  const textosDaUrgencia: (string | null)[] = [];
+  // [AG6 urgência] fim
+  /** S1: os textos do turno, na ordem, para a rede de seguranca na juncao. */
+  const textosDaRede: string[] = [];
 
   for (const mensagem of entrada.mensagens) {
+    // [AG6b mídia] início
+    // AG6b (D-98): a figurinha que o servidor (ou o leitor) reconheceu nao
+    // escala como midia e nao tem texto. Conta so no numero de mensagens.
+    if (mensagem.tipo === "figurinha") {
+      continue;
+    }
+    // [AG6b mídia] fim
     if (mensagem.tipo !== "texto") {
       // Audio (mesmo transcrito), imagem e documento nunca vao ao agente na
       // fase controlada: escala.
       achados.add("midia");
+      // [AG6 urgência] início
+      // A legenda da imagem, do documento ou do video. O audio nao tem
+      // legenda, e a transcricao nao e lida nesta rodada.
+      textosDaUrgencia.push(
+        mensagem.tipo === "audio" || mensagem.legenda == null
+          ? null
+          : trechoLido(mensagem.legenda),
+      );
+      // [AG6 urgência] fim
       continue;
     }
     const texto = mensagem.texto ?? "";
@@ -204,10 +308,42 @@ export function detectarGatilhosDeEntrada(
     if (tamanho > LIMITE_DE_MENSAGEM) {
       achados.add("mensagem_longa");
     }
-    for (const gatilho of gatilhosDoTexto(texto)) {
+    // S1 (rev5): o portao le o comeco que, normalizado, cabe no limite da
+    // leitura (o texto que nao escala pelo tamanho cabe inteiro).
+    const lido = trechoLido(texto);
+    for (const gatilho of gatilhosDoTexto(lido)) {
       achados.add(gatilho);
     }
+    // [AG6 urgência] início
+    textosDaUrgencia.push(lido);
+    // [AG6 urgência] fim
+    if (lido.trim() !== "") {
+      textosDaRede.push(lido);
+    }
   }
+  // S1: a rede de seguranca na juncao das mensagens de texto (o risco de
+  // vida e a emergencia aguda partidos em varias mensagens). Acima da
+  // rajada ou do numero de mensagens o portao ja escala (mensagem longa,
+  // abaixo): a juncao so e lida quando pode mudar o resultado, e o texto
+  // longo nao paga a leitura de novo.
+  if (
+    total <= LIMITE_DA_RAJADA &&
+    entrada.mensagens.length <= MAXIMO_DE_MENSAGENS_NO_CONTEXTO &&
+    redeDeSegurancaNaJuncao(textosDaRede)
+  ) {
+    achados.add("sintoma");
+  }
+  // [AG6 urgência] início
+  // O sinal de emergencia da lista deterministica (urgencia.ts, D-51):
+  // "urgencia" e o primeiro gatilho (categorias.ts). Cada mensagem sozinha,
+  // a legenda da midia e a juncao delas na ordem ("to com dor" e "no
+  // peito"; revisao de 28/10/2026). No WhatsApp o executor ja passou a
+  // conversa antes do teto e da reserva (passo 7c), com os mesmos textos;
+  // aqui e a segunda trava e o caminho do simulador.
+  if (detectarUrgencia(textosDaUrgencia) !== null) {
+    achados.add("urgencia");
+  }
+  // [AG6 urgência] fim
   if (total > LIMITE_DA_RAJADA) {
     achados.add("mensagem_longa");
   }
@@ -441,6 +577,12 @@ export const FONTES_DO_PORTAO_EM_CODIGO: readonly string[] = [
   `caixa alta: ${MINIMO_DE_LETRAS_DA_CAIXA_ALTA} letras, ${PROPORCAO_DA_CAIXA_ALTA}, ${MINIMO_DE_PALAVRAS_DA_CAIXA_ALTA} palavras, sem ${INTERROGACAO.source}`,
   `limites: ${LIMITE_DE_MENSAGEM}, ${LIMITE_DA_RAJADA}, ${MAXIMO_DE_MENSAGENS_NO_CONTEXTO}`,
   "midia escala",
+  // [AG6b mídia] início
+  // AG6b: a figurinha reconhecida nao escala nem tem texto; o audio a
+  // transcrever chega como texto vazio e o arquivo a ler como a legenda
+  // (quem monta e o laco: entradaDoPortao).
+  "figurinha nao escala como midia e nao tem texto",
+  // [AG6b mídia] fim
   // Revisao final da AG3 (D-8): a consulta para outra pessoa adulta.
   PEDIDO_DE_AGENDA.source,
   PARA_A_PESSOA.source,
@@ -464,6 +606,22 @@ export const FONTES_DO_PORTAO_EM_CODIGO: readonly string[] = [
   A_PESSOA_TEM_CONSULTA.source,
   NEGACAO_ANTES_DA_CONSULTA.source,
   "outra pessoa adulta: a consulta dela (colada: a consulta da minha mae, cancela a da minha mae), a pessoa que quer cancelar ou remarcar e a que tem consulta com o pedido de cancelar nas mensagens do turno, fora da negacao",
+  // S1 (31/10/2026): a rede de seguranca (padroes.ts) le tambem a juncao.
+  `rede de seguranca: os padroes da rede (sintoma) tambem na juncao das mensagens de texto do turno, na ordem, separadas por espaco, ate ${LIMITE_DA_RAJADA} caracteres e ${MAXIMO_DE_MENSAGENS_NO_CONTEXTO} mensagens (acima, o portao ja escala como mensagem longa)`,
+  // S1 (rev5): a visao corrida e o limite da leitura.
+  `rede de seguranca na visao corrida (o que nao e letra nem digito vira espaco, a palavra repetida fica uma vez, sem as muletas ${MULETAS_DA_FALA.join(", ")}), na mensagem e na juncao`,
+  `limite da leitura: ${LIMITE_DA_LEITURA} caracteres depois da NFKD (o ASCII conta um), na mensagem, na legenda e no que vai a urgencia`,
+  // Revisao de desempenho de 31/10/2026: a guarda de janela das trocas (a
+  // intencao clinica perto do exame da pergunta de preco) e lida em codigo
+  // (normalizar.ts), fora da fonte da troca; a versao do portao le as
+  // trocas so pelo nome, pela fonte e pela troca.
+  ...NEUTRALIZACOES_DE_ENTRADA.flatMap(({ nome, semPorPerto }) =>
+    semPorPerto === undefined
+      ? []
+      : [
+          `${nome}: sem ${semPorPerto.fonte} ate ${semPorPerto.janela} caracteres do fim do casamento`,
+        ],
+  ),
 ];
 
 /** Atalho para o filtro de saida: gatilhos de um conjunto de textos. */

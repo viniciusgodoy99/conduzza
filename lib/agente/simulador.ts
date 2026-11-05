@@ -734,6 +734,9 @@ export async function simularTurno(
     }),
     atendimento,
     modeloDosClassificadores,
+    // [AG6b mídia] D-62: o simulador nao le audio, foto nem documento (toda
+    // midia continua passando para a equipe, como hoje).
+    midia: null,
   });
 
   await acertarGasto(admin, {

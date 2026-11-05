@@ -9,8 +9,9 @@
 //
 // - A chave vem SO do ambiente da linha de comando, do projeto "avaliacao"
 //   da OpenAI (limite rigido de gasto, expiracao curta, revogar ao terminar).
-//   Nunca a de producao (OPENAI_API_KEY), nunca a da transcricao
-//   (UAZAPI_OPENAI_KEY), nunca no .env.local, nunca com VERCEL_ENV=production.
+//   Nunca a de producao (OPENAI_API_KEY), nunca no .env.local, nunca com
+//   VERCEL_ENV=production. [AG6b mídia] A transcricao pela uazapi saiu
+//   (D-94): nao ha mais chave dela a conferir.
 // - Os precos vem por parametro, conferidos na tabela oficial da OpenAI no
 //   dia (developers.openai.com/api/docs/pricing; preco nao mora no codigo).
 //   Com eles, o script estima o pior caso de cada chamada ANTES de fazer, e
@@ -126,11 +127,8 @@ function lerParametros() {
       "A chave de avaliacao e igual a OPENAI_API_KEY: use a chave do projeto avaliacao.",
     );
   }
-  if (chave === process.env.UAZAPI_OPENAI_KEY?.trim()) {
-    throw new Error(
-      "A chave de avaliacao e igual a UAZAPI_OPENAI_KEY: use a chave do projeto avaliacao.",
-    );
-  }
+  // [AG6b mídia] A conferencia contra a chave da transcricao pela uazapi
+  // saiu com ela (D-94).
   const modelo = modeloDoVerificador(process.env);
   if (modelo === null) {
     throw new Error("IA_MODELO_VERIFICADOR fora da lista fechada.");

@@ -16,11 +16,18 @@ import {
   type ResultadoDaPublicacao,
 } from "@/components/agente/acoes";
 import { CartaoDaAgenda } from "@/components/agente/cartao-da-agenda";
+// [AG6 passagem] início
+import { CartaoDaPassagem } from "@/components/agente/cartao-da-passagem";
+import { CartaoDaUrgencia } from "@/components/agente/cartao-da-urgencia";
+// [AG6 passagem] fim
 import { CartaoDoPublico } from "@/components/agente/cartao-do-publico";
 import { CartaoDosDadosExigidos } from "@/components/agente/cartao-dos-dados-exigidos";
 import { CartaoDosPrazos } from "@/components/agente/cartao-dos-prazos";
 import {
   abasNaoSalvas,
+  // [AG6 passagem] início
+  comAPassagem,
+  // [AG6 passagem] fim
   comOsDadosParaMarcar,
   formulariosNaoSalvos,
   GERACAO_INICIAL,
@@ -36,6 +43,13 @@ import {
   listaEmTexto,
   textoDasAlteracoes,
   textoDaUltimaPublicada,
+  // [AG6 passagem] início
+  TEXTOS_DA_PASSAGEM,
+  // [AG6 passagem] fim
+  // [AG6b mídia] início
+  midiaLigadaNasHabilidades,
+  TEXTOS_DA_MIDIA,
+  // [AG6b mídia] fim
   TEXTOS_DO_AGENTE as T,
   type AbaDoAgente,
 } from "@/components/agente/textos";
@@ -107,6 +121,11 @@ import {
 //   dados, e descartar remonta os tres. A aba Habilidades recebe os prazos
 //   do rascunho para travar "Cancelar consulta" e "Remarcar consulta"
 //   enquanto o prazo de cada uma estiver vazio.
+// - [AG6 passagem] início AG6a: Regras e limites ganha o cartao "Para quem vai a
+//   conversa" (D-15 e D-55), logo depois dos prazos, formulario proprio com
+//   a propria chave; o nao salvo dele conta como o de "Quem o assistente
+//   atende" (comAPassagem), e descartar remonta os dois. E o cartao
+//   "Urgência" (D-53), so texto nesta rodada. [AG6 passagem] fim
 //
 // Toda gravacao vai para o RASCUNHO (o paciente so ve depois de publicar).
 // Uma acao por vez: enquanto uma roda, os outros controles esperam. O
@@ -128,6 +147,9 @@ export function chavesDosFormularios(config: DadosDoPainel["config"]): {
   agenda: string;
   dados: string;
   prazos: string;
+  // [AG6 passagem] início
+  passagem: string;
+  // [AG6 passagem] fim
   instrucoes: string;
 } {
   return {
@@ -153,6 +175,9 @@ export function chavesDosFormularios(config: DadosDoPainel["config"]): {
       config.prazos.cancelarHoras,
       config.prazos.remarcarHoras,
     ]),
+    // [AG6 passagem] início
+    passagem: JSON.stringify(config.regras?.passagemPara ?? "fila"),
+    // [AG6 passagem] fim
     instrucoes: JSON.stringify(config.instrucoes),
   };
 }
@@ -192,6 +217,10 @@ export function PainelDoAgente({
   const [dadosNaoSalvos, setDadosNaoSalvos] = useState(false);
   // O cartao "Prazos para cancelar e remarcar" (AG4): tambem.
   const [prazosNaoSalvos, setPrazosNaoSalvos] = useState(false);
+  // [AG6 passagem] início
+  // O cartao "Para quem vai a conversa" (AG6a): conta como o do publico.
+  const [passagemNaoSalva, setPassagemNaoSalva] = useState(false);
+  // [AG6 passagem] fim
   // Descartar remonta o formulario (a chave muda) com o que esta salvo.
   const [geracao, setGeracao] = useState(GERACAO_INICIAL);
   const avisos = useMemo(() => {
@@ -230,7 +259,12 @@ export function PainelDoAgente({
   const ultimaPublicada = dados.versoes?.find((versao) => versao.emUso) ?? null;
   const chaves = chavesDosFormularios(config);
   const pendentes = formulariosNaoSalvos(
-    comOsDadosParaMarcar(naoSalvos, dadosNaoSalvos || prazosNaoSalvos),
+    // [AG6 passagem] início
+    comAPassagem(
+      comOsDadosParaMarcar(naoSalvos, dadosNaoSalvos || prazosNaoSalvos),
+      passagemNaoSalva,
+    ),
+    // [AG6 passagem] fim
     superAdmin,
   );
 
@@ -239,6 +273,9 @@ export function PainelDoAgente({
     setNaoSalvos(NADA_NAO_SALVO);
     setDadosNaoSalvos(false);
     setPrazosNaoSalvos(false);
+    // [AG6 passagem] início
+    setPassagemNaoSalva(false);
+    // [AG6 passagem] fim
   };
 
   const trocarAba = (valor: string) => {
@@ -416,6 +453,9 @@ export function PainelDoAgente({
                 podeEditar={podeEditar}
                 dica={dica}
                 pendente={pendente}
+                // [AG6b mídia] a dica da habilidade que o servidor ainda
+                // nao deixa valer (a prova paga, D-100)
+                midiaNoServidor={dados.midiaNoServidor}
                 ocupado={(chave) => ocupado(`habilidade-${chave}`)}
                 aoAlternar={(proximas, habilidade) =>
                   executar(
@@ -551,6 +591,28 @@ export function PainelDoAgente({
                     aoMudarNaoSalvo={setPrazosNaoSalvos}
                   />
                 }
+                // [AG6 passagem] início
+                passagem={
+                  <CartaoDaPassagem
+                    key={`${chaves.passagem}:${geracao.publico}`}
+                    passagemPara={config.regras?.passagemPara ?? "fila"}
+                    podeEditar={podeEditar}
+                    dica={dica}
+                    pendente={pendente}
+                    salvando={ocupado("passagem")}
+                    aoSalvar={(passagemPara, retorno) =>
+                      executar(
+                        "passagem",
+                        () => acoes.salvarPassagem(passagemPara),
+                        TEXTOS_DA_PASSAGEM.salva,
+                        retorno,
+                      )
+                    }
+                    aoMudarNaoSalvo={setPassagemNaoSalva}
+                  />
+                }
+                urgencia={<CartaoDaUrgencia />}
+                // [AG6 passagem] fim
                 podeEditar={podeEditar}
                 dica={dica}
                 pendente={pendente}
@@ -636,6 +698,13 @@ export function PainelDoAgente({
           dica={dica}
           motivo={dados.motivoDoSimulador}
           aoSimular={acoes.simular}
+          // [AG6b mídia] D-62: com midia ligada no rascunho (que o simulador
+          // usa), a nota de que audio, foto e documento sao so do WhatsApp
+          notaDaMidia={
+            midiaLigadaNasHabilidades(config.habilidades)
+              ? TEXTOS_DA_MIDIA.simulador
+              : null
+          }
         />
       </div>
 

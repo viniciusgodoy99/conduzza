@@ -763,3 +763,71 @@ describe("calibragem da revisão 2: o que as regras novas não podem barrar", ()
     ]);
   });
 });
+
+// Revisao final de 31/10/2026 (A2): o ponto de referencia que
+// consultar_unidades trouxe nunca vira trecho de endereco (a mascara da
+// revisao R2 de d1a15f6 saiu; liberar a referencia perto de UPA e PROPOSTA
+// para o dono). So o endereco, o logradouro com numero, o bairro e a cidade,
+// como no main.
+describe("revisão final (A2): o ponto de referência da ferramenta não é trecho de endereço", () => {
+  const saida = (referencia: string) =>
+    JSON.stringify({
+      resultado: "unidades",
+      unidades: [
+        {
+          codigo: "u1",
+          nome: "Centro",
+          endereco: "Rua X, 123, Centro, Fortaleza, CE",
+          ponto_de_referencia: referencia,
+          horario_de_funcionamento: null,
+        },
+      ],
+    });
+  const trechos = (rascunho: string, referencia: string) =>
+    trechosDeEnderecoDasFerramentas(
+      rascunho,
+      fatos({ saidasDasFerramentas: [saida(referencia)] }),
+    );
+
+  it("o texto exato do campo, citado, nao sai (so o logradouro com numero)", () => {
+    expect(
+      trechos(
+        "Ficamos na Rua X, 123, em frente à UPA do Centro!",
+        "Em frente à UPA do Centro.",
+      ),
+    ).not.toContain("em frente a upa do centro");
+    expect(
+      trechos(
+        "A unidade fica ao lado do Pronto-Socorro.",
+        "Ao lado do Pronto-Socorro",
+      ),
+    ).toEqual([]);
+    expect(
+      trechos(
+        "Ao lado do Hospital, tome dipirona antes de vir.",
+        "Ao lado do Hospital, tome dipirona antes de vir",
+      ),
+    ).toEqual([]);
+  });
+});
+
+// Revisao final de 31/10/2026 (desempenho): as leituras frase a frase
+// (partesDaOferta, que fechamentosDasFrases chama em toda frase, relendo as
+// datas e as horas do texto inteiro; e a abreviacao antes de cada ponto) eram
+// quadraticas no tamanho do texto: 32.768 caracteres de ". " levavam 10,5 s.
+// Agora sao lineares; o filtro ainda sai cedo no rascunho longo
+// (filtro-deterministico.ts), e aqui a funcao e chamada direto.
+describe("revisão final: as regras dos fatos são lineares no tamanho do texto", () => {
+  // O limite e folgado de proposito (a bateria roda em paralelo e a maquina
+  // pode estar ocupada): sozinho leva uns 0,6 s; quadratico levava 10,5 s.
+  it('32.768 caracteres de ". " em menos de 8 s', () => {
+    const texto = ". ".repeat(16_384);
+    const inicio = performance.now();
+    regrasDosFatos(texto, {
+      fatos: fatos({ hoje: { dia: 20, mes: 10, ano: 2026 } }),
+      nomesDoCatalogo: CONTEXTO_PADRAO.nomesDoCatalogo,
+      mensagensDoPaciente: ["Oi"],
+    });
+    expect(performance.now() - inicio).toBeLessThan(8_000);
+  });
+});

@@ -2,15 +2,25 @@
 
 import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { useEffect } from "react";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type {
+  RealtimeChannel,
+  RealtimePostgresChangesPayload,
+  SupabaseClient,
+} from "@supabase/supabase-js";
 
 import { agendadasKeys } from "@/lib/domain/mensagem-agendada";
-import { recencia } from "@/lib/domain/filtros-da-conversa";
 import {
   aplicarLinhaAosNumeros,
   type LinhaDoNumeroNoInbox,
 } from "@/lib/domain/numeros-do-inbox";
 import {
+  // [AG6 urgência] início
+  aplicarMarcaNaLista,
+  aplicarMarcasNaLista,
+  fetchMarcasAbertas,
+  marcaDeUrgenciaDaLinha,
+  ordemDoAtendimento,
+  // [AG6 urgência] fim
   conversationKeys,
   numerosKeys,
   type ConversationListItem,
@@ -41,6 +51,25 @@ import { assinarComSessao } from "@/lib/realtime/assinar-com-sessao";
 // conversa afetada. A invalidacao completa fica para os casos raros em que a
 // linha nova nao esta na lista (conversa nova ou reaberta), que precisam do
 // join de contato que o payload do evento nao traz.
+//
+// [AG6 urgência] início A MARCA DE URGENCIA (conversa_urgente, D-53): so ids e
+// instantes, na publicacao do tempo real. O evento dela atualiza so a marca
+// da conversa na lista (e a ordem: a urgente aberta vem primeiro). A
+// conversa que sai de "Aguardando você" perde a marca no proprio evento da
+// conversa: o gatilho do banco fecha a marca na mesma transacao, e uma
+// marca velha (evento perdido) nunca volta a marcar a conversa que alguem
+// ja pegou. DELETE (a poda da marca encerrada) nao muda a tela.
+//
+// A MARCA NUM CANAL PROPRIO (revisao da AG6a): o servidor do tempo real cria
+// todas as assinaturas de um canal numa transacao so, e uma tabela fora da
+// publicacao (o codigo no ar antes da migration 20261029120000, ou um
+// rollback dela) desfaz o lote inteiro em silencio, depois de o cliente ja
+// ter recebido SUBSCRIBED: o canal do Atendimento perdia conversation,
+// message, contact e whatsapp_account. Com a marca em outro canal
+// (canaisDoInbox), a falha dela fica so nela. Ao ficar de pe, o canal da
+// marca le as marcas abertas (fetchMarcasAbertas) e aplica cada uma, como
+// um evento: a marca que nasceu antes da assinatura nao se perde.
+// [AG6 urgência] fim
 
 type ConversationRow = {
   id: string;
@@ -70,6 +99,29 @@ type ConversationRow = {
 function colunaOu<T>(novo: T | undefined, atual: T): T {
   return novo !== undefined ? novo : atual;
 }
+
+// [AG6 urgência] início
+/** A linha de conversa_urgente como o evento entrega (a linha inteira). */
+type LinhaDaMarca = {
+  conversation_id?: unknown;
+  clinic_id?: unknown;
+  desde?: unknown;
+  encerrada_em?: unknown;
+};
+
+/**
+ * A marca da conversa depois de um evento DELA (conversation): fica so em
+ * "Aguardando você". Qualquer outro status quer dizer que alguem assumiu,
+ * transferiu ou resolveu (ou a IA voltou), e o gatilho do banco ja fechou a
+ * marca na mesma transacao.
+ */
+export function marcaDepoisDoEvento(
+  status: string,
+  marca: ConversationListItem["urgente"],
+): ConversationListItem["urgente"] {
+  return status === "aguardando_humano" ? (marca ?? null) : null;
+}
+// [AG6 urgência] fim
 
 /**
  * Janela que junta as releituras das agendadas: uma mensagem gera varios
@@ -154,6 +206,76 @@ export function chavesDoFioNoEvento(
   }
   return chaves;
 }
+
+// [AG6 urgência] início
+/** Os nomes dos dois canais do Atendimento (um por clinica). */
+export const CANAIS_DO_INBOX = {
+  principal: (clinicId: string) => `inbox:${clinicId}`,
+  urgencia: (clinicId: string) => `inbox-urgencia:${clinicId}`,
+} as const;
+
+/** Um evento do banco como o tempo real entrega (a linha inteira). */
+export type EventoDoBanco = RealtimePostgresChangesPayload<
+  Record<string, unknown>
+>;
+
+/** O que cada tabela faz na tela (o hook monta as reacoes). */
+export type ReacoesDoInbox = {
+  conversa: (evento: EventoDoBanco) => void;
+  mensagem: (evento: EventoDoBanco) => void;
+  contato: (evento: EventoDoBanco) => void;
+  numero: (evento: EventoDoBanco) => void;
+  marca: (evento: EventoDoBanco) => void;
+};
+
+/**
+ * Os dois canais do Atendimento, filtrados pela clinica: o principal
+ * (conversation, message, contact e whatsapp_account, como antes da AG6a)
+ * e o da marca de urgencia (conversa_urgente), separado de proposito (ver o
+ * topo: a falha da marca nunca derruba o principal). So monta: quem chama
+ * entra em cada um com assinarComSessao.
+ */
+export function canaisDoInbox(
+  supabase: Pick<SupabaseClient, "channel">,
+  clinicId: string,
+  reagir: ReacoesDoInbox,
+): { principal: RealtimeChannel; urgencia: RealtimeChannel } {
+  const filter = `clinic_id=eq.${clinicId}`;
+  const principal = supabase
+    .channel(CANAIS_DO_INBOX.principal(clinicId))
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "conversation", filter },
+      reagir.conversa,
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "message", filter },
+      reagir.mensagem,
+    )
+    .on(
+      "postgres_changes",
+      { event: "UPDATE", schema: "public", table: "contact", filter },
+      reagir.contato,
+    )
+    .on(
+      "postgres_changes",
+      // UPDATE (status, nome, principal, remocao) e INSERT (numero novo,
+      // inclusive o primeiro da clinica, que tira o Inbox do "Conecte o
+      // WhatsApp").
+      { event: "*", schema: "public", table: "whatsapp_account", filter },
+      reagir.numero,
+    );
+  const urgencia = supabase.channel(CANAIS_DO_INBOX.urgencia(clinicId)).on(
+    "postgres_changes",
+    // INSERT e UPDATE; a RLS do tempo real recorta por assinante, como a
+    // de conversation.
+    { event: "*", schema: "public", table: "conversa_urgente", filter },
+    reagir.marca,
+  );
+  return { principal, urgencia };
+}
+// [AG6 urgência] fim
 
 export function useInboxChannel(
   supabase: SupabaseClient,
@@ -288,14 +410,47 @@ export function useInboxChannel(
           row.whatsapp_account_id,
           existente.whatsapp_account_id,
         ),
+        // [AG6 urgência] início A marca so vale em "Aguardando você" (ver o topo).
+        urgente: marcaDepoisDoEvento(row.status, existente.urgente),
+        // [AG6 urgência] fim
       };
       const proxima = atual
         .map((c) => (c.id === row.id ? atualizada : c))
-        // A mesma ordem da lista: a mensagem mais recente, enviada ou
-        // recebida, primeiro (recencia, como no WhatsApp).
-        .sort((a, b) => recencia(b) - recencia(a));
+        // A mesma ordem da lista: a urgente aberta primeiro e, depois, a
+        // mensagem mais recente, enviada ou recebida (recencia, como no
+        // WhatsApp). [AG6 urgência]
+        .sort(ordemDoAtendimento);
       queryClient.setQueryData<ConversationListItem[]>(listKey, proxima);
     };
+
+    // [AG6 urgência] início A marca nova, reaberta ou encerrada: so a marca da
+    // conversa muda, em todas as listas sob a chave-mae (a ativa, o arquivo
+    // e a conversa do link). A marca aberta de uma conversa que a lista
+    // ativa ainda nao tem (a conversa nova da mesma transacao) relê a
+    // lista, como a linha desconhecida acima, uma vez por lote. Serve ao
+    // evento (uma linha, aplicarMarcaNaLista) e as marcas abertas lidas ao
+    // assinar (varias, aplicarMarcasNaLista, so na conversa ainda na fila).
+    const aplicarMarcas = (
+      linhas: readonly LinhaDaMarca[],
+      aplicar: (lista: ConversationListItem[]) => ConversationListItem[],
+    ) => {
+      queryClient.setQueriesData<ConversationListItem[]>(
+        { queryKey: listKey },
+        (lista) => (Array.isArray(lista) ? aplicar(lista) : lista),
+      );
+      const ativa = queryClient.getQueryData<ConversationListItem[]>(listKey);
+      if (
+        ativa &&
+        linhas.some(
+          (linha) =>
+            marcaDeUrgenciaDaLinha(linha) !== null &&
+            !ativa.some((c) => c.id === linha.conversation_id),
+        )
+      ) {
+        void queryClient.invalidateQueries({ queryKey: listKey, exact: true });
+      }
+    };
+    // [AG6 urgência] fim
 
     // Numeros da clinica (docs/07, achado 6). Toda reserva de slot de envio
     // faz UPDATE em whatsapp_account, e antes cada mudanca de status chamava
@@ -317,97 +472,68 @@ export function useInboxChannel(
       }
     };
 
-    const channel = supabase
-      .channel(`inbox:${clinicId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "conversation",
-          filter: `clinic_id=eq.${clinicId}`,
-        },
-        (payload) => {
-          const row = payload.new as ConversationRow | null;
-          if (row?.id) {
-            aplicarConversa(row);
-            // A IA tirou ou devolveu a conversa: as decisoes e o Devolver.
-            for (const queryKey of chavesDoFioNoEvento(
-              row.id,
-              "conversation",
-            )) {
-              void queryClient.invalidateQueries({ queryKey });
-            }
-            // A reconciliacao da agendada atribui a conversa a quem assina
-            // na mesma transacao em que liga a mensagem a agendada.
-            avisarAgendadas(row.id, row.contact_id ?? null);
+    // [AG6 urgência] Os dois canais (canaisDoInbox): o principal, com as
+    // mesmas reacoes de antes, e o da marca.
+    const { principal, urgencia } = canaisDoInbox(supabase, clinicId, {
+      conversa: (payload) => {
+        const row = payload.new as ConversationRow | null;
+        if (row?.id) {
+          aplicarConversa(row);
+          // A IA tirou ou devolveu a conversa: as decisoes e o Devolver.
+          for (const queryKey of chavesDoFioNoEvento(row.id, "conversation")) {
+            void queryClient.invalidateQueries({ queryKey });
           }
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "message",
-          filter: `clinic_id=eq.${clinicId}`,
-        },
-        (payload) => {
-          // So o fio da conversa afetada, nunca a lista. A conversa em si vem
-          // pelo evento de conversation acima (a ingestao atualiza a linha).
-          const conversationId = (
-            payload.new as { conversation_id?: string } | null
-          )?.conversation_id;
-          if (conversationId) {
-            // O fio, o registro da IA (bloqueio) e o Devolver da conversa.
-            for (const queryKey of chavesDoFioNoEvento(
-              conversationId,
-              "message",
-            )) {
-              void queryClient.invalidateQueries({ queryKey });
-            }
-            // A agendada que saiu (ou nao saiu), a entrada do paciente (o
-            // aviso "escreveu depois") e a autoria da bolha nova.
-            avisarAgendadas(conversationId);
+          // A reconciliacao da agendada atribui a conversa a quem assina
+          // na mesma transacao em que liga a mensagem a agendada.
+          avisarAgendadas(row.id, row.contact_id ?? null);
+        }
+      },
+      mensagem: (payload) => {
+        // So o fio da conversa afetada, nunca a lista. A conversa em si vem
+        // pelo evento de conversation acima (a ingestao atualiza a linha).
+        const conversationId = (
+          payload.new as { conversation_id?: string } | null
+        )?.conversation_id;
+        if (conversationId) {
+          // O fio, o registro da IA (bloqueio) e o Devolver da conversa.
+          for (const queryKey of chavesDoFioNoEvento(
+            conversationId,
+            "message",
+          )) {
+            void queryClient.invalidateQueries({ queryKey });
           }
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "contact",
-          filter: `clinic_id=eq.${clinicId}`,
-        },
-        () => {
-          // Etapa e nome do contato mudam FORA do Inbox (Kanban, termo-chave,
-          // gatilhos da agenda, o proprio assumir): sem isto o seletor de
-          // etapa do painel editava sobre um retrato velho (achado da
-          // revisao de 19/09). So a lista e invalidada: o contato viaja
-          // embutido nela.
-          void queryClient.invalidateQueries({ queryKey: ["conversations"] });
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          // UPDATE (status, nome, principal, remocao) e INSERT (numero novo,
-          // inclusive o primeiro da clinica, que tira o Inbox do "Conecte o
-          // WhatsApp").
-          event: "*",
-          schema: "public",
-          table: "whatsapp_account",
-          filter: `clinic_id=eq.${clinicId}`,
-        },
-        (payload) => {
-          const linha = payload.new as LinhaDoNumeroNoInbox | null;
-          if (linha?.id) {
-            aplicarNumero(linha);
-          }
-        },
-      );
-    const parar = assinarComSessao(supabase, channel, (status) => {
+          // A agendada que saiu (ou nao saiu), a entrada do paciente (o
+          // aviso "escreveu depois") e a autoria da bolha nova.
+          avisarAgendadas(conversationId);
+        }
+      },
+      contato: () => {
+        // Etapa e nome do contato mudam FORA do Inbox (Kanban, termo-chave,
+        // gatilhos da agenda, o proprio assumir): sem isto o seletor de
+        // etapa do painel editava sobre um retrato velho (achado da
+        // revisao de 19/09). So a lista e invalidada: o contato viaja
+        // embutido nela.
+        void queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      },
+      numero: (payload) => {
+        const linha = payload.new as LinhaDoNumeroNoInbox | null;
+        if (linha?.id) {
+          aplicarNumero(linha);
+        }
+      },
+      // [AG6 urgência] início A marca de urgencia (INSERT e UPDATE).
+      marca: (payload) => {
+        if (payload.eventType === "DELETE") {
+          return;
+        }
+        const linha = payload.new as LinhaDaMarca | null;
+        if (typeof linha?.conversation_id === "string") {
+          aplicarMarcas([linha], (lista) => aplicarMarcaNaLista(lista, linha));
+        }
+      },
+      // [AG6 urgência] fim
+    });
+    const parar = assinarComSessao(supabase, principal, (status) => {
       // Catch-up: o que chegou entre a busca do servidor e o canal ficar de
       // pe (ou durante uma queda de conexao) nao gerou evento para esta
       // aba. Ao (re)conectar, refaz a lista, o fio aberto e os numeros; sem
@@ -431,12 +557,37 @@ export function useInboxChannel(
       }
     });
 
+    // [AG6 urgência] início O canal da marca entra a parte. Ao ficar de pe (e a
+    // cada volta), as marcas abertas, lidas pela sessao, entram como
+    // eventos: a marca que nasceu antes da assinatura nao se perde. A
+    // leitura que falha (sem a tabela, antes da migration) nao muda nada.
+    let montado = true;
+    const pararUrgencia = assinarComSessao(supabase, urgencia, (status) => {
+      if (status !== "SUBSCRIBED") {
+        return;
+      }
+      void fetchMarcasAbertas(supabase, clinicId)
+        .then((marcas) => {
+          if (montado && marcas.length > 0) {
+            aplicarMarcas(marcas, (lista) =>
+              aplicarMarcasNaLista(lista, marcas),
+            );
+          }
+        })
+        .catch(() => undefined);
+    });
+    // [AG6 urgência] fim
+
     return () => {
       for (const espera of releituras.values()) {
         window.clearTimeout(espera);
       }
       releituras.clear();
       parar();
+      // [AG6 urgência] início
+      montado = false;
+      pararUrgencia();
+      // [AG6 urgência] fim
     };
   }, [supabase, clinicId, queryClient, aberta]);
 }

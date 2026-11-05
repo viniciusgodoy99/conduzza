@@ -90,6 +90,23 @@ export function comOsDadosParaMarcar(
     : estado;
 }
 
+// [AG6 passagem] início
+/**
+ * O estado com o cartao "Para quem vai a conversa" (AG6a) junto do "Quem o
+ * assistente atende": os dois sao cartoes de radio sobre quem a conversa
+ * envolve, moram na mesma aba e descartar remonta os dois (a geracao do
+ * "publico"). O que foi escolhido e nao salvo deixa "publico" pendente.
+ */
+export function comAPassagem(
+  estado: EstadoNaoSalvo,
+  passagemNaoSalva: boolean,
+): EstadoNaoSalvo {
+  return passagemNaoSalva && !estado.publico
+    ? { ...estado, publico: true }
+    : estado;
+}
+// [AG6 passagem] fim
+
 /**
  * Os formularios com edicao nao salva, na ordem das abas. O das instrucoes
  * so conta para o super admin (a aba nem existe para os outros).

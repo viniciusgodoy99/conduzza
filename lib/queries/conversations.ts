@@ -1,8 +1,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { ConversationStatus } from "@/lib/design/status";
+// [AG6b mídia] início
+// So TIPOS (somem no build): o Atendimento nao carrega a configuracao do
+// agente no navegador.
+import type {
+  LeituraDaMidiaNaTela,
+  MidiaLida,
+  TipoDaMidiaLida,
+} from "@/lib/domain/agente/config";
+// [AG6b mídia] fim
 import { corDoNumero, type CorDoNumero } from "@/lib/domain/cor-do-numero";
 import { recencia } from "@/lib/domain/filtros-da-conversa";
+import { log } from "@/lib/log";
 
 // Tipos e fetchers do Inbox. Sem tipos gerados do banco (pendencia
 // registrada), as formas sao declaradas aqui e os selects fazem cast; a RLS
@@ -71,7 +81,145 @@ export type ConversationListItem = {
    */
   whatsapp_account_id?: string | null;
   contact: ContactSummary;
+  // [AG6 urgência] início
+  /**
+   * A marca de urgencia ABERTA da conversa (conversa_urgente, AG6a, D-53):
+   * a IA passou a conversa porque a pessoa descreveu algo que pode ser uma
+   * emergencia. Nula sem marca ou com a marca encerrada (alguem assumiu,
+   * transferiu ou resolveu). So o instante, nenhum dado de paciente. Vem
+   * embutida no select da lista e o tempo real a mantem viva
+   * (lib/realtime/use-inbox-channel.ts). Opcional so para os testes que
+   * montam a conversa na mao; o select traz sempre.
+   */
+  urgente?: MarcaDeUrgencia | null;
+  // [AG6 urgência] fim
 };
+
+// [AG6 urgência] início
+/** A marca aberta: desde quando a conversa e urgente (a ultima passagem). */
+export type MarcaDeUrgencia = { desde: string };
+
+/**
+ * A marca de urgencia ABERTA de uma linha de conversa_urgente, venha do
+ * embutido da lista (objeto ou lista de um item, conforme o PostgREST prova
+ * a relacao um para um) ou do evento do tempo real (a linha inteira). Marca
+ * encerrada, sem o instante ou fora do formato: nula. Nunca lanca.
+ */
+export function marcaDeUrgenciaDaLinha(valor: unknown): MarcaDeUrgencia | null {
+  const linha: unknown = Array.isArray(valor) ? valor[0] : valor;
+  if (typeof linha !== "object" || linha === null) {
+    return null;
+  }
+  const { desde, encerrada_em } = linha as {
+    desde?: unknown;
+    encerrada_em?: unknown;
+  };
+  if (typeof desde !== "string" || Number.isNaN(Date.parse(desde))) {
+    return null;
+  }
+  // Ausente conta como aberta: esconder uma urgencia de verdade custa mais do
+  // que mostrar uma ja encerrada (que o status, abaixo, ainda filtra).
+  return encerrada_em === null || encerrada_em === undefined ? { desde } : null;
+}
+
+/**
+ * A conversa esta marcada como urgente AGORA: a marca aberta e o status
+ * "Aguardando você". O gatilho do banco (urgencia_sai_quando_alguem_pega)
+ * fecha a marca na mesma transacao em que a conversa sai de "Aguardando
+ * você" (assumir, transferir, resolver): olhar o status tambem tira o chip
+ * no mesmo evento da conversa, sem esperar o evento da marca, e nunca deixa
+ * uma marca velha (evento perdido) marcar a conversa que alguem ja pegou.
+ */
+export function urgenteAberta(
+  conversa: Pick<ConversationListItem, "status"> & {
+    urgente?: MarcaDeUrgencia | null;
+  },
+): boolean {
+  return conversa.status === "aguardando_humano" && Boolean(conversa.urgente);
+}
+
+function instanteDaMarca(conversa: { urgente?: MarcaDeUrgencia | null }) {
+  const ms = conversa.urgente ? Date.parse(conversa.urgente.desde) : Number.NaN;
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+/**
+ * A ordem da lista do Atendimento (D-53, a excecao a "ordem da ultima
+ * mensagem"): as urgentes abertas primeiro, entre elas pela chegada (a mais
+ * antiga em cima: espera ha mais tempo); depois, a ordem de sempre, a
+ * mensagem mais recente primeiro (recencia).
+ */
+export function ordemDoAtendimento(
+  a: ConversationListItem,
+  b: ConversationListItem,
+): number {
+  const urgenteA = urgenteAberta(a);
+  const urgenteB = urgenteAberta(b);
+  if (urgenteA !== urgenteB) {
+    return urgenteA ? -1 : 1;
+  }
+  if (urgenteA) {
+    const chegada = instanteDaMarca(a) - instanteDaMarca(b);
+    if (chegada !== 0) {
+      return chegada;
+    }
+  }
+  return recencia(b) - recencia(a);
+}
+
+/**
+ * Aplica uma linha de conversa_urgente (evento do tempo real) a uma lista de
+ * conversas: so a conversa dela muda, e a lista volta na ordem do
+ * Atendimento. Devolve a MESMA lista quando nada mudou (a conversa nao esta
+ * nela, ou a marca e a mesma), para o cache nao redesenhar a toa.
+ */
+export function aplicarMarcaNaLista(
+  lista: ConversationListItem[],
+  linha: { conversation_id?: unknown; desde?: unknown; encerrada_em?: unknown },
+): ConversationListItem[] {
+  const id = linha.conversation_id;
+  if (typeof id !== "string") {
+    return lista;
+  }
+  const atual = lista.find((conversa) => conversa.id === id);
+  if (!atual) {
+    return lista;
+  }
+  const marca = marcaDeUrgenciaDaLinha(linha);
+  if ((atual.urgente?.desde ?? null) === (marca?.desde ?? null)) {
+    return lista;
+  }
+  return lista
+    .map((conversa) =>
+      conversa.id === id ? { ...conversa, urgente: marca } : conversa,
+    )
+    .sort(ordemDoAtendimento);
+}
+
+/**
+ * As marcas abertas lidas ao assinar o canal da marca
+ * (lib/realtime/use-inbox-channel.ts), de uma vez: a MESMA lista quando
+ * nenhuma muda nada. So acrescenta ou atualiza, e so na conversa que a
+ * lista ainda tem em "Aguardando você": a leitura pode ser mais velha que o
+ * evento da conversa (alguem assumiu enquanto ela viajava), e a marca velha
+ * nao pode grudar na conversa que ja saiu da fila. A marca que nao veio
+ * nao e apagada (quem fecha a marca e o evento dela, e a conversa que sai
+ * de "Aguardando você" ja perde a marca pelo proprio status). O evento de
+ * uma marca usa aplicarMarcaNaLista direto: ele pode chegar antes do
+ * evento da conversa, e a marca vale assim mesmo.
+ */
+export function aplicarMarcasNaLista(
+  lista: ConversationListItem[],
+  linhas: readonly Parameters<typeof aplicarMarcaNaLista>[1][],
+): ConversationListItem[] {
+  return linhas.reduce((atual, linha) => {
+    const conversa = atual.find((c) => c.id === linha.conversation_id);
+    return conversa?.status === "aguardando_humano"
+      ? aplicarMarcaNaLista(atual, linha)
+      : atual;
+  }, lista);
+}
+// [AG6 urgência] fim
 
 /** Os mesmos valores de message.author. */
 export type AutorDaPrevia = "paciente" | "usuario" | "ia" | "sistema";
@@ -188,8 +336,80 @@ export function estadoDoConsentimento(
   return consent.revoked_at ? "revogado" : "autorizado";
 }
 
-const CONVERSATION_SELECT =
+// A conversa como a lista precisa, SEM a marca de urgencia: e o select de
+// antes da AG6a, e o da volta quando o embutido da marca falha (abaixo).
+const CONVERSATION_SELECT_SEM_MARCA =
   "id, status, assignee_user_id, unread_count, awaiting_reply, last_message_at, last_inbound_at, last_preview, last_preview_kind, last_preview_author, last_preview_author_user_id, tags, whatsapp_account_id, contact:contact_id (id, clinic_id, name, phone_e164, kind, funnel_stage, source_channel, source_campaign, source_origin, source_medium, source_method, source_ad_id, source_google_campaign_id, first_contact_at)";
+
+// [AG6 urgência] início No fim do select, a marca de urgencia embutida
+// (urgencia:conversa_urgente, uma linha por conversa pela FK
+// conversa_urgente_conversation_id_fkey, RLS igual a de conversation): so o
+// instante e se esta encerrada. "as const" mantem o tipo literal que o
+// supabase-js le.
+//
+// CODIGO NO AR ANTES DA MIGRATION 20261029120000 (revisao da AG6a): sem a
+// tabela, o embutido da PGRST200 (a relacao fora do cache de esquema) ou
+// 42P01 (o cache ainda acha a tabela que saiu, como no rollback), e a lista
+// de TODAS as clinicas caia no error.tsx. Com esses dois codigos, a busca
+// e refeita sem o embutido e cada conversa vem com `urgente: null`: o
+// Atendimento abre sem a marca, e o servidor registra a volta no log so
+// com o codigo (revisao curta). Qualquer outro erro continua sendo erro.
+// [AG6 urgência] fim
+const CONVERSATION_SELECT =
+  `${CONVERSATION_SELECT_SEM_MARCA}, urgencia:conversa_urgente (desde, encerrada_em)` as const;
+
+// [AG6 urgência] início
+/** Os codigos do embutido da marca sem a tabela (ver CONVERSATION_SELECT). */
+const MARCA_FORA_DO_BANCO: ReadonlySet<string> = new Set(["PGRST200", "42P01"]);
+
+/** O erro e o do embutido da marca sem a tabela (a migration nao rodou)? */
+export function marcaForaDoBanco(
+  error: { code?: string | null } | null | undefined,
+): boolean {
+  return MARCA_FORA_DO_BANCO.has(error?.code ?? "");
+}
+
+type RespostaDaBusca = {
+  data: unknown;
+  error: { code?: string | null; message: string } | null;
+};
+
+/** O evento do log quando a lista volta sem o embutido da marca. */
+export const EVENTO_DA_LISTA_SEM_A_MARCA = "atendimento_lista_sem_a_marca";
+
+/**
+ * A volta sem o embutido deixa rastro no servidor (revisao curta da AG6a:
+ * antes, ela era silenciosa, e o Atendimento sem a marca de urgencia
+ * passava despercebido). So o codigo do erro, nada de dado (nem a clinica:
+ * o erro e do banco inteiro). No navegador, nada: este modulo roda nos dois
+ * lados, o log estruturado e do servidor (process.stdout) e a carga da tela
+ * passa sempre pelo servidor primeiro (a pagina do Atendimento).
+ */
+function registrarAVoltaSemAMarca(codigo: string | null): void {
+  if (typeof window !== "undefined") {
+    return;
+  }
+  log.warn(EVENTO_DA_LISTA_SEM_A_MARCA, { error_code: codigo });
+}
+
+/**
+ * Faz a busca com a marca embutida e, se o embutido nao existe no banco
+ * (marcaForaDoBanco), refaz sem ele, com o rastro no servidor. `buscar`
+ * recebe o select de cada vez.
+ */
+async function comAMarcaSePuder(
+  buscar: (
+    colunas: typeof CONVERSATION_SELECT | typeof CONVERSATION_SELECT_SEM_MARCA,
+  ) => PromiseLike<RespostaDaBusca>,
+): Promise<RespostaDaBusca> {
+  const resposta = await buscar(CONVERSATION_SELECT);
+  if (!marcaForaDoBanco(resposta.error)) {
+    return resposta;
+  }
+  registrarAVoltaSemAMarca(resposta.error?.code ?? null);
+  return buscar(CONVERSATION_SELECT_SEM_MARCA);
+}
+// [AG6 urgência] fim
 
 export const conversationKeys = {
   list: (clinicId: string) => ["conversations", clinicId] as const,
@@ -202,6 +422,16 @@ export const conversationKeys = {
   totalResolvidas: (clinicId: string) =>
     ["conversations-resolvidas-total", clinicId] as const,
   messages: (conversationId: string) => ["messages", conversationId] as const,
+  // [AG6b mídia] início
+  /**
+   * As leituras da midia pelo assistente (fetchLeiturasDaMidia), DEBAIXO da
+   * chave das mensagens da conversa de proposito: elas ficam fora do tempo
+   * real (a linha tem texto do paciente), e todo evento de message que rele
+   * o fio (invalidar e por prefixo) rele as leituras junto.
+   */
+  leiturasDaMidia: (conversationId: string) =>
+    ["messages", conversationId, "leituras-da-midia"] as const,
+  // [AG6b mídia] fim
   decisions: (conversationId: string) => ["decisions", conversationId] as const,
   consent: (contactId: string) => ["consent", contactId] as const,
 };
@@ -210,7 +440,15 @@ function normalizeConversation(
   row: Record<string, unknown>,
 ): ConversationListItem {
   const contact = Array.isArray(row.contact) ? row.contact[0] : row.contact;
-  return { ...row, contact } as ConversationListItem;
+  // [AG6 urgência] início O embutido cru (urgencia) vira a marca aberta
+  // (urgente); sem o embutido (a busca de volta), nulo.
+  const { urgencia, ...resto } = row;
+  return {
+    ...resto,
+    contact,
+    urgente: marcaDeUrgenciaDaLinha(urgencia),
+  } as ConversationListItem;
+  // [AG6 urgência] fim
 }
 
 // Teto da lista ativa. O Inbox mostra conversas em andamento; resolvida e
@@ -228,32 +466,38 @@ export async function fetchConversations(
   supabase: SupabaseClient,
   clinicId: string,
 ): Promise<ConversationListItem[]> {
+  // [AG6 urgência] As duas buscas com a marca embutida, cada uma com a volta
+  // sem ela (comAMarcaSePuder).
   const [recentes, esperando] = await Promise.all([
-    supabase
-      .from("conversation")
-      .select(CONVERSATION_SELECT)
-      .eq("clinic_id", clinicId)
-      .neq("status", "resolvida")
-      // A mensagem mais recente, enviada OU recebida, primeiro, como no
-      // WhatsApp (pedido do dono em 06/10/2026; antes era a ordem de
-      // recebimento). A mesma chave de recencia
-      // (lib/domain/filtros-da-conversa) e o indice conversation(clinic_id,
-      // status, last_message_at desc).
-      .order("last_message_at", { ascending: false, nullsFirst: false })
-      .limit(CONVERSATIONS_ATIVAS_LIMIT),
+    comAMarcaSePuder((colunas) =>
+      supabase
+        .from("conversation")
+        .select(colunas)
+        .eq("clinic_id", clinicId)
+        .neq("status", "resolvida")
+        // A mensagem mais recente, enviada OU recebida, primeiro, como no
+        // WhatsApp (pedido do dono em 06/10/2026; antes era a ordem de
+        // recebimento). A mesma chave de recencia
+        // (lib/domain/filtros-da-conversa) e o indice conversation(clinic_id,
+        // status, last_message_at desc).
+        .order("last_message_at", { ascending: false, nullsFirst: false })
+        .limit(CONVERSATIONS_ATIVAS_LIMIT),
+    ),
     // Quem ESPERA resposta entra sempre, mesmo fora das 300 mais recentes.
     // last_message_at anda com todo envio (regua, confirmacao, agendada):
     // numa manha de 300 toques, a conversa em que o paciente escreveu ontem
     // e ninguem respondeu sairia do lote, do "Aguardando voce" e do "Ha mais
     // de 24h" sem aviso (achado 25 da revisao).
-    supabase
-      .from("conversation")
-      .select(CONVERSATION_SELECT)
-      .eq("clinic_id", clinicId)
-      .neq("status", "resolvida")
-      .eq("awaiting_reply", true)
-      .order("last_inbound_at", { ascending: false, nullsFirst: false })
-      .limit(CONVERSATIONS_ATIVAS_LIMIT),
+    comAMarcaSePuder((colunas) =>
+      supabase
+        .from("conversation")
+        .select(colunas)
+        .eq("clinic_id", clinicId)
+        .neq("status", "resolvida")
+        .eq("awaiting_reply", true)
+        .order("last_inbound_at", { ascending: false, nullsFirst: false })
+        .limit(CONVERSATIONS_ATIVAS_LIMIT),
+    ),
   ]);
   if (recentes.error) {
     throw new Error(recentes.error.message);
@@ -272,7 +516,12 @@ export async function fetchConversations(
       porId.set(conversa.id, conversa);
     }
   }
-  return [...porId.values()].sort((a, b) => recencia(b) - recencia(a));
+  // [AG6 urgência] início A ordem do Atendimento: as urgentes abertas primeiro
+  // (D-53), depois a recencia. A passagem por urgencia deixa a conversa
+  // esperando resposta e com a mensagem mais recente: ela entra no lote
+  // pelas duas buscas.
+  return [...porId.values()].sort(ordemDoAtendimento);
+  // [AG6 urgência] fim
 }
 
 // Teto do arquivo de resolvidas carregado de uma vez. A lista precisa dele
@@ -286,13 +535,15 @@ export async function fetchResolvedConversations(
   clinicId: string,
   limit = RESOLVIDAS_LIMIT,
 ): Promise<ConversationListItem[]> {
-  const { data, error } = await supabase
-    .from("conversation")
-    .select(CONVERSATION_SELECT)
-    .eq("clinic_id", clinicId)
-    .eq("status", "resolvida")
-    .order("last_message_at", { ascending: false, nullsFirst: false })
-    .limit(limit);
+  const { data, error } = await comAMarcaSePuder((colunas) =>
+    supabase
+      .from("conversation")
+      .select(colunas)
+      .eq("clinic_id", clinicId)
+      .eq("status", "resolvida")
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .limit(limit),
+  );
   if (error) {
     throw new Error(error.message);
   }
@@ -309,17 +560,54 @@ export async function fetchConversationById(
   clinicId: string,
   conversationId: string,
 ): Promise<ConversationListItem | null> {
-  const { data, error } = await supabase
-    .from("conversation")
-    .select(CONVERSATION_SELECT)
-    .eq("clinic_id", clinicId)
-    .eq("id", conversationId)
-    .maybeSingle();
+  const { data, error } = await comAMarcaSePuder((colunas) =>
+    supabase
+      .from("conversation")
+      .select(colunas)
+      .eq("clinic_id", clinicId)
+      .eq("id", conversationId)
+      .maybeSingle(),
+  );
   if (error) {
     throw new Error(error.message);
   }
   return data ? normalizeConversation(data as Record<string, unknown>) : null;
 }
+
+// [AG6 urgência] início
+/** Teto das marcas abertas lidas de uma vez (a mesma ordem da lista ativa). */
+export const MARCAS_ABERTAS_LIMIT = CONVERSATIONS_ATIVAS_LIMIT;
+
+/**
+ * As marcas de urgencia ABERTAS da clinica (so ids e instantes, nenhum dado
+ * de paciente), pela sessao: a RLS de conversa_urgente recorta como a de
+ * conversation. O tempo real do Atendimento le ao assinar o canal da marca
+ * (lib/realtime/use-inbox-channel.ts), para a marca que nasceu antes de o
+ * canal ficar de pe nao se perder. Lanca no erro (sem a tabela, antes da
+ * migration, tambem): quem chama ignora.
+ */
+export async function fetchMarcasAbertas(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<
+  { conversation_id: string; desde: string; encerrada_em: string | null }[]
+> {
+  const { data, error } = await supabase
+    .from("conversa_urgente")
+    .select("conversation_id, desde, encerrada_em")
+    .eq("clinic_id", clinicId)
+    .is("encerrada_em", null)
+    .limit(MARCAS_ABERTAS_LIMIT);
+  if (error) {
+    throw new Error(error.message);
+  }
+  return (data ?? []) as {
+    conversation_id: string;
+    desde: string;
+    encerrada_em: string | null;
+  }[];
+}
+// [AG6 urgência] fim
 
 /**
  * Um numero de WhatsApp ATIVO da clinica, como o Inbox e Configuracoes vao
@@ -560,6 +848,278 @@ export async function fetchMessagesPage(
       : null;
   return { items: rows.reverse(), nextCursor };
 }
+
+// [AG6b mídia] início
+// LEITURAS DA MIDIA PELO ASSISTENTE (AG6b; desenho da AG6b, secoes 3.4 e 6;
+// D-99 pela recomendacao, pendente do dono). Na conversa que a IA atende, com
+// a habilidade valendo, o assistente transcreve o audio do paciente
+// ("Entender áudio") e le a foto ou o PDF ("Ler imagem e documento"); o
+// servidor grava o resultado em ia_leitura_da_midia (migration
+// 20261030100000), uma linha por mensagem, nunca alterada. A equipe ve
+// embaixo da bolha "Transcrição do assistente:" no audio e "Lido pelo
+// assistente:" na foto e no documento
+// (components/atendimento/media/leitura-do-assistente.tsx).
+//
+// Consulta PROPRIA, fora do select do fio, de proposito (a licao do achado
+// 16 e da AG6a): sem a tabela (codigo no ar antes da migration, ou o
+// rollback) o PostgREST responde PGRST205 ou 42P01, e a conversa abre sem as
+// leituras, como antes; qualquer outro erro lanca, e a tela diz "Leitura do
+// assistente indisponível agora." na linha da midia, so na clinica da fase
+// do agente (leiturasDoFio: nas outras, nada muda, nem no erro). O fio nunca
+// cai por ela.
+//
+// E DADO DE SAUDE (a transcricao e o que a pessoa falou): pela SESSAO, com a
+// RLS da mensagem (membro ativo da clinica; o profissional so na conversa
+// dele; a mensagem apagada leva a leitura), dentro do fio que o Atendimento
+// ja audita. Fora do tempo real: a chave mora debaixo da chave das
+// mensagens da conversa (conversationKeys.leiturasDaMidia), entao o MESMO
+// evento de message que rele o fio rele as leituras. Nada daqui vai para
+// log, nem no texto do erro.
+
+/**
+ * Uma leitura como a tela mostra: o tipo e do contrato da AG6b (B2 para B3,
+ * em lib/domain/agente/config.ts). O texto do resumo e montado e gravado
+ * pelo servidor, so com nomes do Cadastro e textos fixos; a tela so mostra.
+ */
+export type { LeituraDaMidiaNaTela };
+
+/**
+ * ESPELHO de MIDIAS_LIDAS e TIPOS_DE_MIDIA_LIDA (lib/domain/agente/config.ts,
+ * os CHECKs de ia_leitura_da_midia): copia de proposito, para o Atendimento
+ * nao levar a configuracao inteira do agente ao navegador (daqui so os
+ * tipos, que somem no build). tests/unit/atendimento/leitura-da-midia.test.tsx
+ * confere as duas listas contra a configuracao.
+ */
+export const MIDIAS_LIDAS_NA_TELA = [
+  "audio",
+  "imagem",
+  "documento",
+] as const satisfies readonly MidiaLida[];
+
+export const TIPOS_LIDOS_NA_TELA = [
+  "transcricao",
+  "sem_fala",
+  "pedido_de_exame_ou_procedimento",
+  "guia_ou_autorizacao",
+  "carteirinha",
+  "documento_de_identidade",
+  "resultado_ou_laudo",
+  "receita",
+  "foto_do_corpo",
+  "figurinha",
+  "outro",
+  "ilegivel",
+] as const satisfies readonly TipoDaMidiaLida[];
+
+const MIDIAS_LIDAS_PELO_ASSISTENTE: ReadonlySet<string> = new Set(
+  MIDIAS_LIDAS_NA_TELA,
+);
+const TIPOS_DA_LEITURA: ReadonlySet<string> = new Set(TIPOS_LIDOS_NA_TELA);
+
+/** As leituras do fio aberto, como o fio recebe. */
+export type LeiturasDoFio = {
+  /**
+   * desligada: nao ha o que ler (sem midia de paciente na pagina) ou o erro
+   * nao se mostra; carregando: a primeira leitura; erro: a consulta falhou
+   * (a linha "indisponível agora"); pronta: o mapa vale.
+   */
+  estado: "desligada" | "carregando" | "erro" | "pronta";
+  /** Por message_id. */
+  porMensagem: Readonly<Record<string, LeituraDaMidiaNaTela>>;
+};
+
+/** O fio sem leituras (consulta desligada). */
+export const SEM_LEITURAS_DO_FIO: LeiturasDoFio = {
+  estado: "desligada",
+  porMensagem: {},
+};
+
+/**
+ * A mensagem pode ter leitura do assistente: e do paciente (entrada), nao e
+ * nota, nao foi apagada, e e audio, imagem ou documento. A mensagem que a
+ * clinica mandou nunca e lida (desenho da AG6b, 1.1), e o video e o resto
+ * que chega como 'texto' tambem nao.
+ */
+export function podeTerLeituraDaMidia(
+  mensagem: Pick<
+    MessageItem,
+    "direction" | "content_type" | "deleted_at" | "is_internal_note"
+  >,
+): boolean {
+  return (
+    mensagem.direction === "entrada" &&
+    !mensagem.is_internal_note &&
+    mensagem.deleted_at === null &&
+    MIDIAS_LIDAS_PELO_ASSISTENTE.has(mensagem.content_type)
+  );
+}
+
+const UUID_DA_MENSAGEM =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Os ids das mensagens da pagina que podem ter leitura, na ordem do fio. So
+ * ids validos: a bolha otimista (id provisorio) nao derruba a consulta.
+ */
+export function idsDasMidiasDoPaciente(
+  mensagens: readonly Pick<
+    MessageItem,
+    "id" | "direction" | "content_type" | "deleted_at" | "is_internal_note"
+  >[],
+): string[] {
+  return mensagens
+    .filter(
+      (mensagem) =>
+        podeTerLeituraDaMidia(mensagem) && UUID_DA_MENSAGEM.test(mensagem.id),
+    )
+    .map((mensagem) => mensagem.id);
+}
+
+/** Ids por consulta: o filtro in.(...) vai na URL. */
+const LOTE_DAS_LEITURAS = 100;
+
+/**
+ * A tabela ainda nao existe (ou ja saiu): o PostgREST responde PGRST205
+ * (fora do cache de esquema) e o Postgres, 42P01. Sem tabela, nenhuma
+ * leitura (o mesmo criterio de lib/queries/implementadores.ts).
+ */
+const LEITURAS_FORA_DO_BANCO: ReadonlySet<string> = new Set([
+  "PGRST205",
+  "42P01",
+]);
+
+function textoOuNulo(valor: unknown): string | null {
+  return typeof valor === "string" ? valor : null;
+}
+
+/**
+ * Uma linha do banco como a tela usa; fora do formato (midia ou tipo que o
+ * CHECK nao deixaria), nula: a bolha fica sem linha.
+ */
+function leituraDaLinha(
+  linha: Record<string, unknown>,
+): LeituraDaMidiaNaTela | null {
+  const { message_id: messageId, midia, tipo } = linha;
+  if (
+    typeof messageId !== "string" ||
+    typeof midia !== "string" ||
+    !MIDIAS_LIDAS_PELO_ASSISTENTE.has(midia) ||
+    typeof tipo !== "string" ||
+    !TIPOS_DA_LEITURA.has(tipo)
+  ) {
+    return null;
+  }
+  return {
+    messageId,
+    midia: midia as MidiaLida,
+    tipo: tipo as TipoDaMidiaLida,
+    transcricao: textoOuNulo(linha.transcricao),
+    resumo: textoOuNulo(linha.resumo),
+  };
+}
+
+/**
+ * As leituras das mensagens, por message_id. Sem a tabela, mapa vazio (a
+ * conversa abre como antes). Outro erro LANCA, sem nada do erro do banco no
+ * texto: a tela mostra a linha "indisponível agora", e o fio continua.
+ */
+export async function fetchLeiturasDaMidia(
+  supabase: SupabaseClient,
+  clinicId: string,
+  messageIds: readonly string[],
+): Promise<Record<string, LeituraDaMidiaNaTela>> {
+  const ids = [
+    ...new Set(messageIds.filter((id) => UUID_DA_MENSAGEM.test(id))),
+  ];
+  if (ids.length === 0) {
+    return {};
+  }
+  const lotes: string[][] = [];
+  for (let inicio = 0; inicio < ids.length; inicio += LOTE_DAS_LEITURAS) {
+    lotes.push(ids.slice(inicio, inicio + LOTE_DAS_LEITURAS));
+  }
+  const respostas = await Promise.all(
+    lotes.map((lote) =>
+      supabase
+        .from("ia_leitura_da_midia")
+        .select("message_id, midia, tipo, transcricao, resumo")
+        .eq("clinic_id", clinicId)
+        .in("message_id", lote),
+    ),
+  );
+  const porMensagem: Record<string, LeituraDaMidiaNaTela> = {};
+  for (const { data, error } of respostas) {
+    if (error) {
+      if (LEITURAS_FORA_DO_BANCO.has(error.code ?? "")) {
+        return {};
+      }
+      throw new Error("leituras da midia ilegiveis");
+    }
+    for (const linha of (data ?? []) as Record<string, unknown>[]) {
+      const leitura = leituraDaLinha(linha);
+      if (leitura) {
+        porMensagem[leitura.messageId] = leitura;
+      }
+    }
+  }
+  return porMensagem;
+}
+
+/**
+ * A consulta das leituras roda? So na clinica da fase do agente (iaNaFase,
+ * a lista do banco decidida no servidor: fora dela nao ha leitura do
+ * assistente), com a conversa aberta e alguma midia do paciente na pagina.
+ * Revisao das telas da AG6b (item 6): ela e relida a cada evento de message
+ * da conversa aberta, e rodava em toda clinica, uma requisicao a mais por
+ * evento mesmo sem IA.
+ */
+export function consultaDasLeiturasLigada(entrada: {
+  iaNaFase: boolean;
+  conversaAberta: boolean;
+  ids: readonly string[];
+}): boolean {
+  return entrada.iaNaFase && entrada.conversaAberta && entrada.ids.length > 0;
+}
+
+/**
+ * O estado das leituras para o fio, a partir da consulta. Com o mapa na
+ * mao (inclusive o da leitura anterior, enquanto a nova roda), vale o mapa:
+ * leitura que ja apareceu nao some por uma releitura que falhou. Sem mapa e
+ * com erro, "erro" so quando `mostrarErro` (a clinica da fase do agente;
+ * nas outras nada muda, nem no erro).
+ */
+export function leiturasDoFio(consulta: {
+  /** A consulta roda (ha midia de paciente na pagina). */
+  ligada: boolean;
+  mostrarErro: boolean;
+  data: Readonly<Record<string, LeituraDaMidiaNaTela>> | undefined;
+  isError: boolean;
+}): LeiturasDoFio {
+  if (!consulta.ligada) {
+    return SEM_LEITURAS_DO_FIO;
+  }
+  if (consulta.data) {
+    return { estado: "pronta", porMensagem: consulta.data };
+  }
+  if (consulta.isError) {
+    return consulta.mostrarErro
+      ? { estado: "erro", porMensagem: {} }
+      : SEM_LEITURAS_DO_FIO;
+  }
+  return { estado: "carregando", porMensagem: {} };
+}
+
+/** A leitura da mensagem, ou null (sem leitura, ou o fio sem o mapa). */
+export function leituraDaMensagem(
+  leituras: LeiturasDoFio,
+  messageId: string,
+): LeituraDaMidiaNaTela | null {
+  // hasOwn: um id como "constructor" nao pode achar nada no prototipo.
+  return Object.hasOwn(leituras.porMensagem, messageId)
+    ? (leituras.porMensagem[messageId] ?? null)
+    : null;
+}
+// [AG6b mídia] fim
 
 export async function fetchComplianceDecisions(
   supabase: SupabaseClient,

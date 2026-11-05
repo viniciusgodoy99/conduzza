@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -97,6 +97,9 @@ describe("gatilhos de entrada", () => {
         "manipulacao",
         "midia",
         "mensagem_longa",
+        // [AG6 urgência] início
+        "urgencia",
+        // [AG6 urgência] fim
       ].sort(),
     );
   });
@@ -106,3 +109,45 @@ describe("gatilhos de entrada", () => {
     expect(GATILHOS_DO_CLASSIFICADOR).not.toContain("mensagem_longa");
   });
 });
+
+// [AG6 urgência] início
+// AG6a (D-51 e D-52): o gatilho urgencia (a lista deterministica de
+// lib/domain/conformidade/urgencia.ts), o primeiro na ordem e so do portao.
+describe("AG6a: o gatilho urgencia", () => {
+  it("é o primeiro na ordem (vence sintoma, menor e mídia)", () => {
+    expect(GATILHOS_DE_ENTRADA[0]).toBe("urgencia");
+  });
+
+  it("o classificador por modelo não decide urgência (D-52)", () => {
+    expect(GATILHOS_DO_CLASSIFICADOR as readonly string[]).not.toContain(
+      "urgencia",
+    );
+  });
+
+  it("o CHECK de gatilho_entrada da migration mais nova que o define é GATILHOS_DE_ENTRADA", () => {
+    const pasta = "supabase/migrations";
+    const definicao =
+      /add constraint ai_decision_log_gatilho_entrada_valido\s+check \(gatilho_entrada is null or gatilho_entrada in \(([\s\S]*?)\)\)/gi;
+    let achado: { arquivo: string; valores: string[] } | null = null;
+    for (const arquivo of readdirSync(pasta)
+      .filter((nome) => nome.endsWith(".sql"))
+      .sort()
+      .reverse()) {
+      const bloco = [
+        ...readFileSync(`${pasta}/${arquivo}`, "utf8").matchAll(definicao),
+      ].at(-1)?.[1];
+      if (bloco !== undefined) {
+        achado = {
+          arquivo,
+          valores: [...bloco.matchAll(/'([a-z_]+)'/g)].map((m) => m[1] ?? ""),
+        };
+        break;
+      }
+    }
+    expect(achado?.arquivo).toBe("20261029120000_urgencia_e_passagem_da_ia.sql");
+    expect([...(achado?.valores ?? [])].sort()).toEqual(
+      [...GATILHOS_DE_ENTRADA].sort(),
+    );
+  });
+});
+// [AG6 urgência] fim

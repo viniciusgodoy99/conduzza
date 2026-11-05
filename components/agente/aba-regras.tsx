@@ -67,6 +67,11 @@ import {
 // - Prazos para cancelar e remarcar (AG4, D-24): o cartao dos prazos
 //   (cartao-dos-prazos.tsx), com o proprio Salvar, logo depois dos dados
 //   para marcar. Tambem montado pelo painel.
+// - [AG6 passagem] início Para quem vai a conversa (AG6a, D-15 e D-55): o cartao
+//   da passagem (cartao-da-passagem.tsx), com o proprio Salvar, logo depois
+//   dos prazos; e o cartao "Urgência" (cartao-da-urgencia.tsx, so o texto
+//   nesta rodada), antes dos gatilhos. Os dois montados pelo painel.
+//   [AG6 passagem] fim
 // - Os 6 gatilhos obrigatorios de passar para a equipe, travados (so
 //   exibicao: quem decide e o codigo do agente, nao esta lista).
 // - A caixa de Conformidade do brief: Aviso ambar com cadeado, o texto
@@ -196,6 +201,10 @@ export function AbaRegras({
   limitesDaAgenda,
   dadosParaMarcar,
   prazos,
+  // [AG6 passagem] início
+  passagem,
+  urgencia,
+  // [AG6 passagem] fim
   podeEditar,
   dica,
   pendente,
@@ -218,6 +227,12 @@ export function AbaRegras({
   dadosParaMarcar?: React.ReactNode;
   /** O cartao "Prazos para cancelar e remarcar" (AG4), montado pelo painel. */
   prazos?: React.ReactNode;
+  // [AG6 passagem] início
+  /** O cartao "Para quem vai a conversa" (AG6a), montado pelo painel. */
+  passagem?: React.ReactNode;
+  /** O cartao "Urgência" (AG6a), montado pelo painel. */
+  urgencia?: React.ReactNode;
+  // [AG6 passagem] fim
   podeEditar: boolean;
   dica: string | null;
   pendente: boolean;
@@ -246,6 +261,12 @@ export function AbaRegras({
       {dadosParaMarcar}
 
       {prazos}
+
+      {/* [AG6 passagem] início */}
+      {passagem}
+
+      {urgencia}
+      {/* [AG6 passagem] fim */}
 
       <Card role="region" aria-labelledby="agente-gatilhos-titulo">
         <CardHeader>

@@ -359,7 +359,10 @@ describe("recepção", () => {
     const livre = tags(html, "switch").filter(
       (tag) => !tag.includes('aria-disabled="true"'),
     );
-    expect(livre).toHaveLength(6);
+    // [AG6b mídia] início
+    // AG6b: Entender áudio e Ler imagem e documento (6 + 2).
+    expect(livre).toHaveLength(8);
+    // [AG6b mídia] fim
     for (const tag of livre) {
       expect(tag).toContain('disabled=""');
     }
@@ -380,7 +383,10 @@ describe("travas da Conformidade e dos gatilhos (C24)", () => {
   );
 
   it("as 8 travas, os 6 gatilhos e as 2 habilidades obrigatórias ficam ligadas", () => {
-    expect(travadas).toHaveLength(8 + 6 + 2);
+    // [AG6 urgência] início
+    // AG6a: o setimo gatilho obrigatorio, a urgencia (GATILHOS_OBRIGATORIOS).
+    expect(travadas).toHaveLength(8 + 7 + 2);
+    // [AG6 urgência] fim
     for (const tag of travadas) {
       expect(tag).toContain('aria-checked="true"');
       // a pele de ligada mesmo com o data-state da dica por cima
@@ -409,7 +415,10 @@ describe("travas da Conformidade e dos gatilhos (C24)", () => {
     );
     // Informar preço e convênio, Agendar consulta e Confirmar presença (E4);
     // Cancelar consulta e Remarcar consulta (AG4); Lista de espera (AG5).
-    expect(livre).toHaveLength(6);
+    // [AG6b mídia] início
+    // AG6b: Entender áudio e Ler imagem e documento (6 + 2).
+    expect(livre).toHaveLength(8);
+    // [AG6b mídia] fim
     const preco = livre.find((tag) =>
       tag.includes(
         'aria-labelledby="agente-habilidade-informar_preco_e_convenio"',

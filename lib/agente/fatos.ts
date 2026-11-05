@@ -238,6 +238,13 @@ export function montarFatosDoTurno(entrada: {
    * so os codigos conhecidos). Ausente: nenhuma.
    */
   respostasDaBase?: readonly string[];
+  // [AG6b mídia] início
+  /**
+   * AG6b: os itens (nomes do Cadastro) de cada pedido de exame ou
+   * procedimento lido na conversa que seguiu com a IA. Ausente: nenhum.
+   */
+  pedidos?: readonly (readonly string[])[];
+  // [AG6b mídia] fim
 }): FatosDoTurno {
   const { config, catalogo } = entrada;
   const coberturas: CoberturaDoTurno[] = [];
@@ -351,5 +358,9 @@ export function montarFatosDoTurno(entrada: {
       config.agenda,
       config.prazos,
     ).includes("pedir_lista_de_espera"),
+    // [AG6b mídia] AG6b: os pedidos lidos (so os nomes do Cadastro).
+    ...((entrada.pedidos ?? []).length > 0
+      ? { pedidos: (entrada.pedidos ?? []).map((itens) => [...itens]) }
+      : {}),
   };
 }

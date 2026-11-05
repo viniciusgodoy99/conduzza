@@ -7,7 +7,12 @@ import { useState } from "react";
 
 import { signOutAction } from "@/app/(auth)/actions";
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
-import { NavBadge } from "@/components/shell/nav-badge";
+import {
+  NavBadge,
+  // [AG6 urgência] início
+  type AlertaDoContador,
+  // [AG6 urgência] fim
+} from "@/components/shell/nav-badge";
 import type { ContadoresDoMenu, ViewerDoShell } from "@/components/shell/tipos";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,11 +40,15 @@ import { cn } from "@/lib/utils";
 // Menu lateral do Conduzza Design System (docs/06 secao 5.1): fundo ink-900
 // nos dois temas, item ativo com fundo lime translucido, texto lime e barra
 // de 2px. De 1024 a 1599px ele fica recolhido em 64px (so icones, com o
-// rotulo como dica ao lado e ainda no nome acessivel do link); a partir de
+// rotulo como dica ao lado e ainda no nome acessivel do link; com conversa
+// urgente, a dica leva tambem os dois numeros, numerosDaDica); a partir de
 // 1600px, aberto em 248px; abaixo de 1024px vira gaveta. Quem decide a
 // largura e o CSS, pela variante rail-aberto (data-rail na raiz do shell).
 
-type Contagem = keyof ContadoresDoMenu;
+// [AG6 urgência] início Os itens com contador (as urgentes nao sao item: sao o
+// alerta do contador do Atendimento).
+type Contagem = NonNullable<NavItem["badge"]>;
+// [AG6 urgência] fim
 
 // O que cada contador conta, para o leitor de tela (singular e plural).
 const DESCRICAO_DO_CONTADOR: Record<Contagem, [string, string]> = {
@@ -49,6 +58,77 @@ const DESCRICAO_DO_CONTADOR: Record<Contagem, [string, string]> = {
     "confirmações pendentes para amanhã",
   ],
 };
+
+// [AG6 urgência] início
+/**
+ * O alerta do contador do item (D-53): so o do Atendimento, e so com
+ * urgentes abertas contadas (> 0). Sem a contagem (null ou ausente), o tom
+ * de sempre: nunca um alerta inventado.
+ */
+export function alertaDoItem(
+  badge: NavItem["badge"],
+  contadores: ContadoresDoMenu,
+): AlertaDoContador | null {
+  const quantas = contadores.urgentes;
+  if (badge !== "conversas" || typeof quantas !== "number" || quantas <= 0) {
+    return null;
+  }
+  return {
+    quantas,
+    descricao: quantas === 1 ? "conversa urgente" : "conversas urgentes",
+  };
+}
+
+/**
+ * Os numeros da dica do item no menu RECOLHIDO (de 1024 a 1599px, o
+ * padrao). La, o canto do icone tem lugar para uma pilula so e o alerta
+ * vence (nav-badge.tsx): com conversa urgente, o numero de aguardando nao
+ * aparece em lugar nenhum da tela, e a dica mostrava so o rotulo (revisao
+ * curta da AG6a). Com o alerta, a dica leva os dois numeros, as urgentes
+ * primeiro e com o texto que o leitor de tela ouve no nome do link ("2
+ * conversas urgentes, 7 conversas aguardando resposta"), com o numero real
+ * (sem o 99+). Sem o alerta, nulo: a pilula do canto ja mostra o numero, e
+ * a dica fica so com o rotulo.
+ */
+export function numerosDaDica(
+  badge: NavItem["badge"],
+  contadores: ContadoresDoMenu,
+): string | null {
+  const alerta = alertaDoItem(badge, contadores);
+  if (!badge || !alerta) {
+    return null;
+  }
+  const partes = [`${alerta.quantas} ${alerta.descricao}`];
+  const aguardando = contadores[badge];
+  if (aguardando > 0) {
+    const [uma, varias] = DESCRICAO_DO_CONTADOR[badge];
+    partes.push(`${aguardando} ${aguardando === 1 ? uma : varias}`);
+  }
+  return partes.join(", ");
+}
+
+/**
+ * O conteudo da dica do item: o rotulo e, com os numeros (numerosDaDica),
+ * uma segunda linha com eles.
+ */
+export function ConteudoDaDica({
+  rotulo,
+  numeros,
+}: {
+  rotulo: string;
+  numeros: string | null;
+}) {
+  if (!numeros) {
+    return <>{rotulo}</>;
+  }
+  return (
+    <span className="grid gap-px">
+      <span>{rotulo}</span>
+      <span className="font-normal">{numeros}</span>
+    </span>
+  );
+}
+// [AG6 urgência] fim
 
 export type PropsDoRail = {
   viewer: ViewerDoShell;
@@ -108,6 +188,8 @@ export function ItemDoMenu({
   rotulo,
   ativo,
   contagem,
+  alerta = null,
+  numerosNaDica = null,
   recolhido,
   aoNavegar,
 }: {
@@ -115,6 +197,12 @@ export function ItemDoMenu({
   rotulo: string;
   ativo: boolean;
   contagem: number | null;
+  // [AG6 urgência] início
+  /** As urgentes abertas: o contador do Atendimento em alerta. */
+  alerta?: AlertaDoContador | null;
+  /** Com o alerta, os dois numeros na dica do menu recolhido. */
+  numerosNaDica?: string | null;
+  // [AG6 urgência] fim
   recolhido: boolean;
   aoNavegar?: () => void;
 }) {
@@ -148,6 +236,7 @@ export function ItemDoMenu({
           count={contagem}
           ativo={ativo}
           descricao={contagem === 1 ? descricoes[0] : descricoes[1]}
+          alerta={alerta}
         />
       ) : null}
     </Link>
@@ -161,7 +250,8 @@ export function ItemDoMenu({
     <Tooltip open={recolhido ? undefined : false}>
       <TooltipTrigger asChild>{link}</TooltipTrigger>
       <TooltipContent side="right" sideOffset={8}>
-        {rotulo}
+        {/* [AG6 urgência] Com urgentes, o rotulo e os dois numeros. */}
+        <ConteudoDaDica rotulo={rotulo} numeros={numerosNaDica} />
       </TooltipContent>
     </Tooltip>
   );
@@ -257,6 +347,8 @@ export function Rail({
                 rotulo={rotuloDoItem(item, t)}
                 ativo={item.href === itemAtivo}
                 contagem={item.badge ? contadores[item.badge] : null}
+                alerta={alertaDoItem(item.badge, contadores)}
+                numerosNaDica={numerosDaDica(item.badge, contadores)}
                 recolhido={recolhido}
                 aoNavegar={aoNavegar}
               />

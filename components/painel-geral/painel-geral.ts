@@ -985,7 +985,15 @@ export const ROTULO_DO_REQUISITO: Readonly<Record<string, string>> = {
   contrato_openai: "Contrato com a OpenAI para dado de saúde",
   aviso_assistente_virtual: "Aviso de assistente virtual aprovado",
   termo_da_clinica: "Termo da clínica com a IA e a OpenAI",
-  transcricao_com_nossa_chave: "Transcrição de áudio pela chave do Conduzza",
+  // [AG6b mídia] início
+  // D-94 (desenho da AG6b, secao 11; recomendacao, pendente do dono): a
+  // chave fica, o sentido muda. A uazapi nunca mais transcreve (transcribe
+  // false, sem UAZAPI_OPENAI_KEY); quem transcreve e o servidor do Conduzza,
+  // no turno da IA, com a chave do agente. Texto PROPOSTO (espera o dono).
+  // Ate a AG6b: "Transcrição de áudio pela chave do Conduzza".
+  transcricao_com_nossa_chave:
+    "A uazapi não transcreve: a transcrição é do Conduzza, pela chave do agente",
+  // [AG6b mídia] fim
 };
 
 /** O nome do requisito; chave que a tela nao conhece vira um nome neutro. */

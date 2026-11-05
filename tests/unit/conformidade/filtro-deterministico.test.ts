@@ -7,6 +7,7 @@ import {
   temContatoPorExtenso,
   valoresEmDinheiro,
 } from "@/lib/domain/conformidade/filtro-deterministico";
+import { fatosVazios } from "@/lib/domain/conformidade/fatos-do-turno";
 import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
 import {
   CASOS_DE_SAIDA,
@@ -678,6 +679,53 @@ describe("formato", () => {
     );
   });
 
+  // Revisao final de 31/10/2026 (desempenho): no turno da IA (com os fatos)
+  // o rascunho longo sai cedo, so com o "longo"; sem os fatos (os textos da
+  // Tela 6, em que as instrucoes passam do limite e o "longo" e descartado),
+  // o resto continua lido.
+  it("com os fatos, o rascunho longo barra so como longo, sem ler o resto", () => {
+    const fatos = fatosVazios(2026);
+    const noLimite = "Tome dipirona. ".repeat(60).slice(0, LIMITE_DO_RASCUNHO);
+    expect(
+      avaliarRegras(noLimite, { ...CONTEXTO_PADRAO, fatos }).achados.map(
+        (a) => a.regra,
+      ),
+    ).toContain("remedio_citado");
+    expect(
+      avaliarRegras(`${noLimite}x`, { ...CONTEXTO_PADRAO, fatos }),
+    ).toEqual({
+      categorias: ["formato_invalido"],
+      achados: [{ categoria: "formato_invalido", regra: "longo" }],
+    });
+    // Sem os fatos, o longo e o remedio.
+    expect(
+      avaliarRegras(`${noLimite}x`, CONTEXTO_PADRAO).achados.map(
+        (a) => a.regra,
+      ),
+    ).toEqual(expect.arrayContaining(["longo", "remedio_citado"]));
+  });
+
+  it.each([
+    ". ",
+    "21/10 às 14h. ",
+    "Reservei para terça às 14h. Pronto! ",
+    "Dra. ",
+  ])(
+    "65.536 caracteres de %j no turno da IA: menos de 1 s (antes, 31,6 s)",
+    (pedaco) => {
+      const texto = pedaco
+        .repeat(Math.ceil(65_536 / pedaco.length))
+        .slice(0, 65_536);
+      const inicio = performance.now();
+      const resultado = avaliarRegras(texto, {
+        ...CONTEXTO_PADRAO,
+        fatos: fatosVazios(2026),
+      });
+      expect(performance.now() - inicio).toBeLessThan(1_000);
+      expect(resultado.categorias).toEqual(["formato_invalido"]);
+    },
+  );
+
   it("nome exato do catalogo nao dispara a palavra clinica dele", () => {
     expect(
       avaliarRegras(
@@ -746,3 +794,249 @@ describe("resultado", () => {
     }
   });
 });
+
+// [AG6b mídia] início
+// 3a rodada da AG6b (revisao de 6eae43d): a IA comentando o resultado ou o
+// conteudo do exame ou do laudo tem regra deterministica (antes, so o
+// verificador). A bateria (bateria-ag6b.test.ts) tem os casos da revisao;
+// aqui ficam as bordas.
+describe("AG6b (3a rodada): o resultado do exame comentado pela IA", () => {
+  const regras = (texto: string, nomesDoCatalogo: string[] = []) =>
+    avaliarRegras(texto, {
+      precosDoTurno: [5_000],
+      nomesDoCatalogo,
+      mensagensDoPaciente: [],
+    }).achados.map((a) => a.regra);
+
+  it.each([
+    "Vi no seu exame que a glicemia está alta.",
+    "O exame deu positivo.",
+    "Seu resultado veio alterado.",
+    "O laudo mostra o colesterol elevado.",
+    "Sua glicemia está muito alta.",
+    "A hemoglobina glicada deu um pouco aumentada.",
+    "O teste deu reagente.",
+    "O TSH está fora do normal.",
+    "Os valores estão alterados no seu exame.",
+    "Está positivo no teste.",
+  ])("alterado (diagnostico): %s", (texto) => {
+    expect(regras(texto)).toContain("resultado_de_exame_alterado");
+  });
+
+  it.each([
+    "No laudo está tudo bem.",
+    "No laudo, está tudo bem.",
+    "Seu exame veio normal.",
+    "O resultado deu dentro da referência.",
+    "O ultrassom não mostrou nada de errado.",
+    "Está tudo bem no seu exame.",
+    "Seus exames estão sem alteração.",
+  ])("normal (triagem): %s", (texto) => {
+    expect(regras(texto)).toContain("resultado_de_exame_normal");
+  });
+
+  it("o nome do Cadastro (o marcador) tambem e o exame", () => {
+    expect(regras("O Hemograma veio normal.", ["Hemograma"])).toContain(
+      "resultado_de_exame_normal",
+    );
+    expect(regras("O Hemograma deu alterado.", ["Hemograma"])).toContain(
+      "resultado_de_exame_alterado",
+    );
+  });
+
+  it.each([
+    "Recebemos o pedido do exame.",
+    "O exame de sangue custa R$ 50,00.",
+    "Vou passar o seu resultado para a equipe.",
+    "O resultado do exame fica pronto em 3 dias úteis.",
+    "O laudo sai em até 5 dias úteis.",
+    "Seu exame está confirmado para amanhã às 8h.",
+    "O exame é rápido e o resultado sai no mesmo dia.",
+    "Tudo bem? Recebi o seu exame e já passei para a equipe.",
+    "Tudo bem, o resultado do exame fica pronto amanhã.",
+    "Seu exame está marcado e o atendimento é normal no feriado.",
+    "O resultado do exame está disponível na recepção.",
+    "Tudo bem com a sua consulta de amanhã?",
+    "O exame de glicemia é feito pela manhã.",
+  ])("controle: a recepcao com o exame passa: %s", (texto) => {
+    expect(regras(texto)).toEqual([]);
+  });
+
+  it("o preparo do exame continua orientacao clinica (D-4, opcao A)", () => {
+    expect(
+      avaliarRegras(
+        "Para o exame, venha em jejum de 8 horas se o médico pediu.",
+        CONTEXTO_PADRAO,
+      ).categorias,
+    ).toContain("orientacao_clinica");
+  });
+
+  // Revisao R2 de d1a15f6 (M6): as bordas das formas novas (a bateria tem
+  // os casos da revisao).
+  it.each([
+    "Seus exames vieram excelentes.",
+    // Revisao final de 31/10/2026: o "tranquilo" saiu da lista (descreve o
+    // exame: "O exame e tranquilo, dura uns 15 minutos.").
+    "Glicose 99, normal.",
+    "Exames normais.",
+    "O teste não acusou nada.",
+  ])("R2, normal (triagem): %s", (texto) => {
+    expect(regras(texto)).toContain("resultado_de_exame_normal");
+  });
+
+  it.each([
+    "Hemoglobina glicada: 7,5% (alta).",
+    "Teste reagente.",
+    "Colesterol um pouco alto.",
+    "O TSH veio 9, acima.",
+  ])("R2, alterado (diagnostico): %s", (texto) => {
+    expect(regras(texto)).toContain("resultado_de_exame_alterado");
+  });
+
+  it.each([
+    "O exame das 9h está ok?",
+    "Seu exame está bom para terça?",
+    "O exame está ótimo pra você na sexta?",
+    "Ótimo, no exame de amanhã traga o pedido.",
+    "O exame não tem nada a ver com a consulta.",
+    "Você prefere o ultrassom normal ou o morfológico?",
+    "O exame leva 30 minutos.",
+    "O resultado sai em 3 dias, ok?",
+    "O preço do exame está acima de R$ 50,00.",
+  ])("R2, controle: a recepcao com o exame passa: %s", (texto) => {
+    expect(regras(texto)).toEqual([]);
+  });
+
+  it("R2: o nome do Cadastro (o marcador) colado no valor nao e o resultado", () => {
+    expect(
+      regras("Prefere a Limpeza de pele normal ou a profunda?", [
+        "Limpeza de pele",
+      ]),
+    ).toEqual([]);
+    expect(
+      regras("A Limpeza de pele normal custa R$ 50,00.", ["Limpeza de pele"]),
+    ).toEqual([]);
+  });
+});
+
+// 3a rodada da AG6b (revisao de 6eae43d, M5): a troca do ponto de
+// referencia (servico_de_saude_de_referencia) so vale sem a ida ao lugar em
+// NENHUM ponto do rascunho. Sem a troca, pronto_socorro barra, como no
+// main.
+describe("AG6b (3a rodada): a ida ao lugar no rascunho inteiro", () => {
+  const prontoSocorro = (texto: string) =>
+    avaliarRegras(texto, CONTEXTO_PADRAO).achados.some(
+      (a) => a.regra === "pronto_socorro",
+    );
+
+  it.each([
+    "Ficamos em frente à UPA. Vá até lá agora.",
+    "Estamos ao lado do Pronto-Socorro. Vá para lá imediatamente.",
+    "Estamos ao lado da UPA; vá direto pra lá.",
+    "Ficamos ao lado da UPA, que é o melhor lugar para você agora.",
+    "Estamos ao lado da UPA, o local certo para isso.",
+    "Ficamos perto da UPA. Lá eles te atendem.",
+    "Ficamos perto da UPA. Procure ela agora.",
+    "Ficamos perto da UPA. Corre pra lá.",
+    "Ficamos perto da UPA. Se dirija à recepção dela.",
+    "Pode ir agora: ficamos em frente ao Pronto Atendimento.",
+    "Ficamos próximos ao posto de saúde. Sigam para lá.",
+  ])("a ida em qualquer ponto barra: %s", (texto) => {
+    expect(prontoSocorro(texto)).toBe(true);
+  });
+
+  // Revisao R2 de d1a15f6 (A2): a troca larga do ponto de referencia saiu.
+  // Os antigos controles (o endereco sem a ida) barram como no main quando
+  // nenhuma ferramenta do turno trouxe o ponto de referencia.
+  it.each([
+    "Ficamos na Rua X, em frente à UPA do bairro. Seu horário é às 14h.",
+    "A clínica fica perto da UPA do Centro, no segundo andar.",
+    "Ficamos ao lado da UPA; procure a recepção no térreo.",
+    "A clínica fica ao lado da UPA. Siga a placa azul da entrada.",
+    "Ficamos ao lado da UPA. O lembrete vai no dia anterior.",
+    "Ficamos ao lado da UPA. Você vai ver a placa azul.",
+    "A clínica fica ao lado da UPA. Sua consulta está marcada; é só confirmá-la por aqui.",
+  ])(
+    "revisao R2: sem a ferramenta, o lugar barra como no main: %s",
+    (texto) => {
+      expect(prontoSocorro(texto)).toBe(true);
+    },
+  );
+});
+
+// Revisao final de 31/10/2026 (A2): a mascara do ponto de referencia da
+// ferramenta (revisao R2) saiu. Com ou sem consultar_unidades no turno, a UPA
+// e o pronto-socorro citados barram como no main; liberar a referencia perto
+// de UPA e PROPOSTA para o dono (outro desenho).
+describe("revisão final (A2): o ponto de referência da ferramenta não sai das regras", () => {
+  const unidade = (referencia: string) =>
+    JSON.stringify({
+      resultado: "unidades",
+      unidades: [
+        {
+          codigo: "u1",
+          nome: "Centro",
+          endereco: "Rua X, 123, Centro, Fortaleza, CE",
+          ponto_de_referencia: referencia,
+          horario_de_funcionamento: "Segunda a sexta: 8h às 18h",
+        },
+      ],
+    });
+  const regras = (texto: string, referencia: string | null) =>
+    avaliarRegras(texto, {
+      ...CONTEXTO_PADRAO,
+      fatos: {
+        ...fatosVazios(2026),
+        saidasDasFerramentas: referencia === null ? [] : [unidade(referencia)],
+      },
+    }).achados.map((a) => a.regra);
+
+  it("a IA repete o ponto de referencia da ferramenta: barra como no main", () => {
+    expect(
+      regras(
+        "Ficamos na Rua X, 123, em frente à UPA do Centro.",
+        "Em frente à UPA do Centro.",
+      ),
+    ).toContain("pronto_socorro");
+    expect(
+      regras(
+        "Ficamos na Rua X, 123 (em frente à UPA do Centro).",
+        "Em frente à UPA do Centro",
+      ),
+    ).toContain("pronto_socorro");
+  });
+
+  it("o mesmo texto sem a ferramenta, e sem os fatos, tambem barra", () => {
+    expect(
+      regras("Ficamos na Rua X, 123, em frente à UPA do Centro.", null),
+    ).toContain("pronto_socorro");
+    expect(
+      avaliarRegras(
+        "Ficamos na Rua X, 123, em frente à UPA do Centro.",
+        CONTEXTO_PADRAO,
+      ).achados.map((a) => a.regra),
+    ).toContain("pronto_socorro");
+  });
+
+  it("os rascunhos da revisao final que a mascara deixava passar barram", () => {
+    expect(
+      regras(
+        "Ficamos na Rua X, 123, em frente à UPA do Centro. Vá direto para lá agora.",
+        "Em frente à UPA do Centro",
+      ),
+    ).toContain("pronto_socorro");
+    expect(
+      regras(
+        "Ao lado do Hospital, tome dipirona antes de vir.",
+        "Ao lado do Hospital, tome dipirona antes de vir",
+      ),
+    ).toEqual(expect.arrayContaining(["remedio_citado"]));
+    expect(
+      regras(
+        "Fica perto do hospital, ligue 192 se piorar.",
+        "Perto do hospital, ligue 192 se piorar",
+      ),
+    ).toContain("pronto_socorro");
+  });
+});
+// [AG6b mídia] fim

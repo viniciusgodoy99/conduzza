@@ -8,6 +8,9 @@ import {
   type MensagemDaConversa,
 } from "./laco";
 import { MARCA_DO_NOME } from "./marca-do-nome";
+// [AG6b mídia] início
+import { estadoDoArquivo, type MidiaDaConversa } from "./midia";
+// [AG6b mídia] fim
 import type { AberturaDaJanela } from "./whatsapp";
 
 // Historico da conversa do WhatsApp para o turno da IA (E3), lido do banco
@@ -50,7 +53,20 @@ import type { AberturaDaJanela } from "./whatsapp";
 //    Socorro que escrevia "socorro, me ajuda" chegava ao portao como
 //    "Fulano, me ajuda" e nao escalava. O original nunca vai para a OpenAI
 //    nem para log; as neutralizacoes do portao (Q4: "aqui e a Socorro")
-//    valem nele.
+//    valem nele;
+//  - [AG6 urgência] a midia do contato com legenda (o body da imagem, do
+//    documento ou do video; nunca do audio) leva a legenda ORIGINAL
+//    (legendaOriginal), que so a urgencia le (revisao de 28/10/2026: "to com
+//    dor no peito" escrito na foto). A midia continua indo aos modelos so
+//    como o marcador; a legenda nunca vai para a OpenAI nem para log.
+//
+//  - [AG6b mídia] o audio, a imagem e o documento do contato levam a midia
+//    (`midia`: o id da mensagem, o estado do arquivo, o media_mimetype, o
+//    created_at e a legenda com o nome mascarado), que so o servidor le: o
+//    plano do turno (lib/agente/midia.ts) decide se ela vai ao modelo
+//    (transcricao ou leitor) e aplica a leitura ja gravada. O audio ja nao
+//    "vai sem a transcricao": vai como "(áudio) ..." quando o turno o
+//    transcreveu (a leitura em ia_leitura_da_midia).
 //
 // PENDENTE e a mensagem do paciente da janela que nenhum turno encerrado
 // respondeu: o id nao esta em ai_turno.mensagens_lidas de um turno 'enviado'
@@ -123,7 +139,18 @@ type LinhaDaMensagem = {
   body: string | null;
   media_url: string | null;
   created_at: string;
+  // [AG6b mídia] AG6b: o tipo real do arquivo (o plano do turno le).
+  media_mimetype?: string | null;
 };
+
+// [AG6b mídia] início
+/** As midias que o turno pode ler (message.content_type). */
+const MIDIAS_DO_PACIENTE: ReadonlySet<string> = new Set([
+  "audio",
+  "imagem",
+  "documento",
+]);
+// [AG6b mídia] fim
 
 type LinhaDoTurno = {
   job_id: string;
@@ -244,7 +271,9 @@ export function mensagemDaLinha(
   linha: Pick<
     LinhaDaMensagem,
     "author" | "content_type" | "body" | "media_url"
-  >,
+  > &
+    // [AG6b mídia] o id, o instante e o mimetype (a midia do paciente).
+    Partial<Pick<LinhaDaMensagem, "id" | "created_at" | "media_mimetype">>,
   nomeDoContato: string | null,
 ): MensagemDaConversa {
   const autor = linha.author === "paciente" ? "paciente" : "assistente";
@@ -255,11 +284,47 @@ export function mensagemDaLinha(
   const corpo = typeof linha.body === "string" ? linha.body : "";
   const ehTexto = linha.content_type === "texto";
   if (!ehTexto || linha.media_url !== null || corpo.trim() === "") {
+    // [AG6 urgência] início
+    // A legenda do contato na midia (nunca no audio), so para a urgencia.
+    const legenda: Pick<MensagemDaConversa, "legendaOriginal"> =
+      autor === "paciente" &&
+      linha.content_type !== "audio" &&
+      corpo.trim() !== ""
+        ? { legendaOriginal: corpo }
+        : {};
+    // [AG6 urgência] fim
+    // [AG6b mídia] início
+    // AG6b: o audio, a imagem e o documento do contato, com o que o plano do
+    // turno precisa (so o servidor le).
+    const midia: Pick<MensagemDaConversa, "midia"> =
+      autor === "paciente" &&
+      MIDIAS_DO_PACIENTE.has(linha.content_type) &&
+      typeof linha.id === "string" &&
+      typeof linha.created_at === "string"
+        ? {
+            midia: {
+              messageId: linha.id,
+              midia: linha.content_type as MidiaDaConversa["midia"],
+              arquivo: estadoDoArquivo(linha.media_url),
+              mediaUrl: linha.media_url,
+              mimetype: linha.media_mimetype ?? null,
+              criadaEm: linha.created_at,
+              legenda:
+                linha.content_type !== "audio" && corpo.trim() !== ""
+                  ? mascararNome(corpo, nomeDoContato)
+                  : null,
+            },
+          }
+        : {};
+    // [AG6b mídia] fim
     return {
       autor,
       ...autoria,
       texto: null,
       tipo: ehTexto ? "midia" : linha.content_type,
+      ...legenda,
+      // [AG6b mídia]
+      ...midia,
     };
   }
   const texto = mascararNome(corpo, nomeDoContato);
@@ -338,7 +403,10 @@ export async function carregarHistoricoDaConversa(
 ): Promise<HistoricoDaConversa> {
   let consulta = admin
     .from("message")
-    .select("id, author, content_type, body, media_url, created_at")
+    // [AG6b mídia] media_mimetype: o plano da midia do turno.
+    .select(
+      "id, author, content_type, body, media_url, media_mimetype, created_at",
+    )
     .eq("clinic_id", entrada.clinicId)
     .eq("conversation_id", entrada.conversationId);
   if (entrada.abertaPor !== "ingestao") {

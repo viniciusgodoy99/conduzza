@@ -5,11 +5,16 @@ import { describe, expect, it } from "vitest";
 import { MOTIVOS_DO_AGENTE } from "@/lib/agente/ferramentas/escalar-humano";
 import type { FalhaDoAgente } from "@/lib/agente/laco";
 import { TEXTO_FIXO_DO_AGENTE } from "@/lib/agente/prompt";
+import { CODIGOS_DA_ATRIBUICAO } from "@/lib/agente/whatsapp";
 import {
+  LIMITE_DO_NOME_NA_ATRIBUICAO,
   MOTIVOS_DE_ESCALONAMENTO,
   MOTIVOS_DE_SISTEMA_DA_IA,
+  MOTIVOS_QUE_NUNCA_ATRIBUEM,
   ROTULO_DO_MOTIVO_DE_ESCALONAMENTO,
   TEXTO_DO_EVENTO_DA_IA,
+  textoDaAtribuicaoDaIa,
+  type PassagemDaConversa,
 } from "@/lib/domain/agente/config";
 import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
 import {
@@ -152,13 +157,24 @@ describe("espelhos do E3 com as migrations", () => {
     // a 20261028100000, com fora_do_prazo (22). O E3 (M1) tinha 17.
     expect(arquivo >= "20261028100000").toBe(true);
     expect(motivos.sort()).toEqual([...MOTIVOS_DE_ESCALONAMENTO].sort());
-    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(22);
+    // [AG6 urgência] início
+    // AG6a: a 20261029120000, com urgencia (23).
+    expect(arquivo >= "20261029120000").toBe(true);
+    // [AG6 urgência] fim
+    // [AG6b mídia] início
+    // AG6b: a 20261030100000, com os tres da midia (26).
+    expect(arquivo >= "20261030100000").toBe(true);
+    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(26);
+    // [AG6b mídia] fim
     for (const motivo of [
       "fora_do_assunto",
       "consulta_para_outra_pessoa",
       "ja_tem_consulta",
       "faltam_dados",
       "fora_do_prazo",
+      // [AG6 urgência] início
+      "urgencia",
+      // [AG6 urgência] fim
     ]) {
       expect(MOTIVOS_DE_ESCALONAMENTO).toContain(motivo);
     }
@@ -186,6 +202,14 @@ describe("espelhos do E3 com as migrations", () => {
       "ja_tem_consulta",
       "faltam_dados",
       "fora_do_prazo",
+      // [AG6 urgência] início
+      "urgencia",
+      // [AG6 urgência] fim
+      // [AG6b mídia] início
+      "midia_clinica",
+      "documento_do_paciente",
+      "midia_nao_identificada",
+      // [AG6b mídia] fim
     ];
     expect(literais(bloco ?? "").sort()).toEqual(
       MOTIVOS_DE_ESCALONAMENTO.filter((m) => !depoisDoE3.includes(m)).sort(),
@@ -296,3 +320,226 @@ describe("espelhos do E3 com as migrations", () => {
     );
   });
 });
+
+// [AG6 urgência] início
+// AG6a (migration 20261029120000): o motivo urgencia e do sistema (so o
+// portao deterministico decide, D-52), com o evento do banco, a passagem de
+// tres parametros e a atribuicao depois da frase (Revisao R1 do contrato da
+// frente de banco, que substituiu a secao 2).
+describe("AG6a: os espelhos da urgência e da passagem", () => {
+  it("urgencia é do sistema: o modelo nunca escolhe", () => {
+    expect(MOTIVOS_DO_AGENTE as readonly string[]).not.toContain("urgencia");
+  });
+
+  it("o evento da urgência é o do rótulo da migration da AG6a", () => {
+    const { arquivo, corpo } = corpoMaisNovo("rotulo_do_motivo_da_ia");
+    expect(arquivo >= "20261029120000").toBe(true);
+    expect(corpo).toContain(
+      "when 'urgencia' then 'A IA passou a conversa para a equipe: a pessoa descreveu algo que pode ser uma emergência.'",
+    );
+    expect(TEXTO_DO_EVENTO_DA_IA.urgencia).toBe(
+      "A IA passou a conversa para a equipe: a pessoa descreveu algo que pode ser uma emergência.",
+    );
+  });
+
+  it("a frase ao contato não muda na AG6a (a do 192 é da AG6c)", () => {
+    const { corpo } = corpoMaisNovo("frase_de_escalonamento_da_ia");
+    expect(corpo.match(/select '([^']*)'::text/)?.[1]).toBe(
+      FRASE_DE_ESCALONAMENTO,
+    );
+    expect(FRASE_DE_ESCALONAMENTO).not.toMatch(/192|samu|188|cvv/i);
+  });
+
+  /** Os parametros e o corpo da definicao MAIS NOVA de uma funcao. */
+  function definicaoMaisNova(nome: string): {
+    arquivo: string;
+    parametros: string;
+    corpo: string;
+  } | null {
+    const definicao = new RegExp(
+      `create (?:or replace )?function public\\.${nome}\\(([\\s\\S]*?)\\)\\s*returns jsonb[\\s\\S]*?\\$function\\$([\\s\\S]*?)\\$function\\$`,
+      "gi",
+    );
+    for (const arquivo of [...MIGRATIONS].reverse()) {
+      const sql = readFileSync(`${PASTA_DAS_MIGRATIONS}/${arquivo}`, "utf-8");
+      const ultimo = [...sql.matchAll(definicao)].at(-1);
+      if (ultimo !== undefined) {
+        return {
+          arquivo,
+          parametros: (ultimo[1] ?? "").replace(/\s+/g, " ").trim(),
+          corpo: ultimo[2] ?? "",
+        };
+      }
+    }
+    return null;
+  }
+
+  // Revisao R1 do contrato do banco (28/10/2026): a passagem volta aos tres
+  // parametros e nunca atribui; a atribuicao e a RPC nova, chamada DEPOIS
+  // da frase.
+  it("a passagem da migration mais nova tem os três parâmetros de sempre, devolve {passou, codigo, urgente} e nunca atribui", () => {
+    const achado = definicaoMaisNova("passar_conversa_da_ia_para_equipe");
+    expect(achado?.arquivo).toBe(
+      "20261029120000_urgencia_e_passagem_da_ia.sql",
+    );
+    expect(achado?.parametros).toBe(
+      "p_job_id uuid, p_worker text, p_motivo text",
+    );
+    for (const chave of ["'passou'", "'codigo'", "'urgente'"]) {
+      expect(achado?.corpo).toContain(chave);
+    }
+    expect(achado?.corpo).not.toContain("'atribuida'");
+    expect(achado?.corpo).not.toContain("p_atribuir");
+    expect(achado?.corpo).not.toMatch(/assignee_user_id\s*=/);
+  });
+
+  it("a atribuição (atribuir_conversa_passada_pela_ia) tem os parâmetros, os códigos e as listas do motor", () => {
+    const achado = definicaoMaisNova("atribuir_conversa_passada_pela_ia");
+    // [AG6b mídia] início
+    // A AG6b (20261030100000) recria a funcao com midia_nao_lida e os oito
+    // motivos; o corpo que vale e o dela.
+    expect(achado?.arquivo).toBe("20261030100000_midia_pela_ia.sql");
+    // [AG6b mídia] fim
+    expect(achado?.parametros).toBe("p_job_id uuid, p_worker text");
+    const corpo = achado?.corpo ?? "";
+    // Cada codigo que o motor conhece sai do banco, e nenhum outro.
+    const devolvidos = new Set(
+      [...corpo.matchAll(/'codigo', '([a-z_]+)'/g)].map((m) => m[1]),
+    );
+    expect(devolvidos).toEqual(new Set(CODIGOS_DA_ATRIBUICAO));
+    // Revisao R2 do contrato do banco: as recusas na ORDEM do motor (a
+    // primeira vez que cada codigo aparece no corpo), com mensagem_nova
+    // entre urgente e regra_fila. "atribuida" e "erro" ficam de fora (o
+    // sucesso e o bloco de excecao vem no fim do corpo).
+    const naOrdem = [
+      ...new Set(
+        [...corpo.matchAll(/'codigo', '([a-z_]+)'/g)].map((m) => m[1]),
+      ),
+    ].filter((codigo) => codigo !== "atribuida" && codigo !== "erro");
+    expect(naOrdem).toEqual(
+      CODIGOS_DA_ATRIBUICAO.filter(
+        (codigo) => codigo !== "atribuida" && codigo !== "erro",
+      ),
+    );
+    // As listas do banco sao as do motor.
+    const lista = (constante: string) =>
+      literais(
+        corpo.match(
+          new RegExp(
+            `${constante} constant text\\[\\] := array\\[([^\\]]*)\\]`,
+          ),
+        )?.[1] ?? "",
+      );
+    expect(lista("c_motivos_que_nunca_atribuem")).toEqual([
+      ...MOTIVOS_QUE_NUNCA_ATRIBUEM,
+    ]);
+    expect(lista("c_desfechos_que_passam")).toEqual([
+      "escalou",
+      "bloqueou",
+      "falhou",
+    ]);
+    expect(lista("c_papeis_que_recebem")).toEqual([
+      "admin",
+      "gestor",
+      "recepcao",
+      "profissional",
+    ]);
+    expect(corpo).toContain(
+      `c_regra_do_responsavel constant text := '${"responsavel_do_lead" satisfies PassagemDaConversa}'`,
+    );
+    expect(corpo).toContain(
+      `c_limite_do_nome constant integer := ${LIMITE_DO_NOME_NA_ATRIBUICAO}`,
+    );
+    // O evento da atribuicao e o espelho do motor.
+    expect(corpo).toContain(`'${textoDaAtribuicaoDaIa(null)}'`);
+    expect(corpo).toContain(
+      "'A conversa ficou com ' || v_nome || ', responsável pelo lead.'",
+    );
+    expect(textoDaAtribuicaoDaIa("Ana")).toBe(
+      "A conversa ficou com Ana, responsável pelo lead.",
+    );
+  });
+});
+// [AG6 urgência] fim
+
+// [AG6b mídia] início
+// AG6b (migration 20261030100000; contrato da frente de banco,
+// ag6/contrato-ag6b.md): o CHECK dos papeis de ia_uso, os codigos de
+// gravar_leitura_da_midia NA ORDEM, o portao do aviso e os textos do rotulo
+// dos tres motivos novos.
+describe("AG6b: os espelhos da midia", () => {
+  const AG6B = "20261030100000_midia_pela_ia.sql";
+  const sql = readFileSync(`${PASTA_DAS_MIGRATIONS}/${AG6B}`, "utf-8");
+
+  it("o CHECK de ia_uso.papel tem os dois papeis novos do motor", () => {
+    const papeis = literais(
+      sql.match(/add constraint ia_uso_papel_valido\s+check \(papel in \(([^)]*)\)/)?.[1] ?? "",
+    );
+    expect(papeis).toEqual([
+      "agente",
+      "verificador",
+      "classificador",
+      "transcricao",
+      "leitor_de_midia",
+    ]);
+  });
+
+  it("gravar_leitura_da_midia: os erros e as recusas na ordem do motor", () => {
+    const corpo =
+      sql.match(
+        /create function public\.gravar_leitura_da_midia\([\s\S]*?\$function\$([\s\S]*?)\$function\$/,
+      )?.[1] ?? "";
+    const erros = [...corpo.matchAll(/errcode = '22023', message = '([a-z_]+)'/g)].map(
+      (m) => m[1],
+    );
+    expect(erros).toEqual([
+      "midia_invalida",
+      "tipo_invalido",
+      "transcricao_invalida",
+      "segundos_invalidos",
+      "itens_invalidos",
+      "fora_do_cadastro_invalido",
+      "confianca_invalida",
+      "resumo_invalido",
+      "modelo_invalido",
+      "versao_invalida",
+    ]);
+    const recusas = [
+      ...new Set(
+        [...corpo.matchAll(/'ok', false, 'motivo', '([a-z_]+)'/g)].map((m) => m[1]),
+      ),
+    ];
+    expect(recusas).toEqual([
+      "sem_posse",
+      "job_antigo",
+      "fora_da_ia",
+      "mensagem_invalida",
+      "mensagem_nao_lida",
+      "leitura_desligada",
+      "midia_bloqueada",
+      "procedimento_invalido",
+    ]);
+    // As chaves das habilidades que o banco le (as de config.ts).
+    expect(corpo).toContain("'ler_audio'");
+    expect(corpo).toContain("'ler_imagem_e_documento'");
+  });
+
+  it("midia_da_ia_liberada devolve boolean (o motor confere antes de mandar)", () => {
+    expect(sql).toMatch(
+      /create function public\.midia_da_ia_liberada\(p_clinic_id uuid, p_telefone text\)\s*returns boolean/,
+    );
+  });
+
+  it("o rotulo dos tres motivos novos e o do motor", () => {
+    const { arquivo, corpo } = corpoMaisNovo("rotulo_do_motivo_da_ia");
+    expect(arquivo).toBe(AG6B);
+    for (const motivo of [
+      "midia_clinica",
+      "documento_do_paciente",
+      "midia_nao_identificada",
+    ] as const) {
+      expect(corpo).toContain(`when '${motivo}' then '${TEXTO_DO_EVENTO_DA_IA[motivo]}'`);
+    }
+  });
+});
+// [AG6b mídia] fim

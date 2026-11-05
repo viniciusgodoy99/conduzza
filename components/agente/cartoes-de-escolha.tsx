@@ -29,6 +29,7 @@ export function CartoesDeEscolha<T extends string>({
   aoEscolher,
   desabilitado = false,
   className,
+  idDaAjuda,
 }: {
   /** O name dos radios (um por grupo na tela). */
   nome: string;
@@ -39,11 +40,18 @@ export function CartoesDeEscolha<T extends string>({
   aoEscolher: (valor: T) => void;
   desabilitado?: boolean;
   className?: string;
+  /**
+   * O id do texto de ajuda do grupo, fora dele (AG6a, revisao): vira a
+   * descricao do grupo (aria-describedby), e o leitor de tela ouve a ajuda
+   * ao entrar nos cartoes.
+   */
+  idDaAjuda?: string;
 }) {
   return (
     <div
       role="radiogroup"
       aria-label={rotuloDoGrupo}
+      aria-describedby={idDaAjuda}
       aria-disabled={desabilitado || undefined}
       className={cn("grid gap-2", className)}
     >

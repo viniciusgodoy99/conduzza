@@ -319,6 +319,8 @@ export default async function AppLayout({
         clinicName: active.clinicName,
         productName: active.productName,
       }}
+      // [AG6 passagem] O aviso "A IA passou para você" (vigia do menu).
+      viewerId={context.userId}
       clinicId={active.clinicId}
       timezone={active.timezone}
       canSwitchClinic={

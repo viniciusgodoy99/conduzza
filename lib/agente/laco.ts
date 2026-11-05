@@ -233,6 +233,36 @@ import {
   type TextoDescartado,
 } from "./prompt";
 import type { PrecoDoModelo, UsoDoModelo } from "./uso";
+// [AG6b mídia] início
+import type { MotivoDaLeitura } from "@/lib/domain/agente/config";
+import type { TipoDeUrgencia } from "@/lib/domain/conformidade/urgencia";
+import { MAXIMO_DE_CHAMADAS_DO_LEITOR } from "@/lib/integrations/llm/leitor-de-midia";
+import {
+  custoMaximoDaTranscricao,
+  usoEstimadoDoLeitor,
+} from "./gasto";
+import {
+  decidirPelaLeitura,
+  FRASE_DA_FIGURINHA,
+  itensDoCatalogo,
+  MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA,
+  mensagensParaEstimativa,
+  midiaNaoLida as mensagemComMidiaNaoLida,
+  motivoMaisForte,
+  PASSO_DO_MOTIVO_DA_LEITURA,
+  PASSOS_DA_MIDIA,
+  PREFIXO_DO_AUDIO,
+  SEGUNDOS_NA_RESERVA,
+  tokensDoArquivoNaReserva,
+  type LeituraGravada,
+  type MidiaDaConversa,
+  type MidiaPronta,
+  type PortaDaMidia,
+  type ResultadoDaLeitura,
+  type ResultadoDaTranscricao,
+} from "./midia";
+import { USO_ZERADO } from "./uso";
+// [AG6b mídia] fim
 
 // ---------------------------------------------------------------------------
 // Parametros
@@ -254,6 +284,31 @@ export const PRAZO_DO_TURNO_MS = 45_000;
 export const PRAZO_DA_RODADA_MS = 20_000;
 /** Tempo guardado para o verificador do filtro depois do agente. */
 export const RESERVA_DO_FILTRO_MS = 10_000;
+// [AG6b mídia] início
+/**
+ * AG6b (revisao do prazo): a janela minima do agente que a midia (o preparo,
+ * a transcricao e a leitura) nunca usa. O prazo da midia e o resto do turno
+ * menos esta janela, a reserva do filtro e, quando o classificador ainda vem
+ * depois (a transcricao, passo 2b), o prazo dele
+ * (PRAZO_DO_CLASSIFICADOR_NO_PORTAO_MS). A midia lenta e cortada ANTES de
+ * pagar o classificador e o agente, e o turno nunca passa de prazoEm (a
+ * reserva das gravacoes e a do envio, no executor, ficam inteiras).
+ * PROPOSTA, a calibrar na prova paga (D-100) junto com os prazos da midia;
+ * a conta do minimo do turno com midia esta em
+ * PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS (lib/jobs/responder-com-ia.ts).
+ */
+export const RESERVA_DO_AGENTE_DEPOIS_DA_MIDIA_MS = 3_000;
+/**
+ * AG6b (revisao do prazo): a porta da midia recebe o prazo menos isto (ela
+ * corta ali, com o uso da chamada) e o laco corta de novo no prazo inteiro,
+ * para a porta que nao cumprir o prazo nunca levar o turno alem dele. Os
+ * cortes em ordem (revisao da juncao): a integracao do modelo corta
+ * MARGEM_ENTRE_OS_CORTES_MS e RESERVA_DA_GRAVACAO_DA_LEITURA_MS antes da
+ * porta (lib/agente/midia.ts, prazoParaAIntegracao; a fatia da gravacao e
+ * da segunda rodada, R3 de d1a15f6), a porta corta esta folga antes do laco.
+ */
+export const FOLGA_DO_CORTE_DA_MIDIA_MS = 500;
+// [AG6b mídia] fim
 /**
  * Teto de saida de UMA rodada do agente: o raciocinio (esforco low) mais a
  * resposta curta em JSON ou a chamada de ferramenta. Revisao de producao de
@@ -328,6 +383,37 @@ export type MensagemDaConversa = {
    * portao le `texto`.
    */
   textoOriginal?: string | null;
+  // [AG6 urgência] início
+  /**
+   * A legenda que o contato escreveu na midia (message.body da imagem, do
+   * documento ou do video; nunca do audio), como chegou. So a URGENCIA le
+   * (lib/domain/conformidade/urgencia.ts: o passo 7c do executor e o portao;
+   * revisao de 28/10/2026). Local e sem rede: nunca vai para a OpenAI (a
+   * midia vai aos modelos so como o marcador), nem para log, nem para a
+   * coleta de dados. Ausente: a midia sem legenda (ou o texto).
+   */
+  legendaOriginal?: string | null;
+  // [AG6 urgência] fim
+  // [AG6b mídia] início
+  /**
+   * AG6b: de onde veio o texto do paciente. "audio": a transcricao (o
+   * modelo le "(áudio) ..."; `textoOriginal` e a transcricao sem a mascara).
+   * "arquivo": o pedido lido pelo leitor de midia (o modelo le a descricao e
+   * a legenda; `texto` e a legenda mascarada). Ausente: o texto digitado.
+   */
+  origem?: "audio" | "arquivo";
+  /**
+   * AG6b: o pedido lido ("(a pessoa mandou um pedido de exame ou
+   * procedimento com: p3 Hemograma)"), montado pelo servidor so com os
+   * codigos e os nomes do Cadastro. So com origem "arquivo".
+   */
+  arquivo?: { descricao: string };
+  /**
+   * AG6b: a midia do paciente (audio, imagem ou documento) e a situacao dela
+   * no turno. So o servidor le: nunca vai a OpenAI nem para log.
+   */
+  midia?: MidiaDaConversa;
+  // [AG6b mídia] fim
 };
 
 /**
@@ -358,7 +444,11 @@ export type OrigemDoEscalonamento =
   // (consulta para outra pessoa, menor de idade, D-8).
   | "ferramenta"
   // AG3 (item 9): a segunda falha seguida do atendimento.
-  | "sistema";
+  | "sistema"
+  // [AG6b mídia] início
+  // AG6b: o leitor de midia identificou o arquivo (so na trilha).
+  | "leitor";
+// [AG6b mídia] fim
 
 /** Falhas do turno alem das do verificador e do classificador. */
 export type FalhaDoAgente =
@@ -436,6 +526,25 @@ type Comum = {
    * para a conversa nunca ficar calada. Ausente: nao foi isso.
    */
   mensagemNova?: true;
+  // [AG6b mídia] início
+  /**
+   * AG6b (D-96): a passagem deste turno tem midia do paciente que o
+   * assistente nao leu (sem leitura, "sem fala", video, localizacao). O
+   * executor do WhatsApp nao pede a atribuicao ao responsavel (o banco
+   * recusa de qualquer jeito, midia_nao_lida). Ausente: nao tem.
+   */
+  midiaNaoLida?: true;
+  /**
+   * AG6b (revisao, D-A): a gravacao da leitura da midia recusou com
+   * job_antigo (o job e de antes da janela atual: alguem assumiu e devolveu
+   * depois dele). O executor do WhatsApp so conclui o job: sem passagem,
+   * sem evento, sem frase, sem envio e sem decisao (outro job, o da janela
+   * nova, cuida da conversa). O desfecho fica o da liberacao perdida
+   * (liberacao_suspensa, a passagem sem frase que confere o D-A de novo):
+   * o lado seguro para quem nao conhece esta marca. Ausente: nao foi isso.
+   */
+  jobAntigo?: true;
+  // [AG6b mídia] fim
 };
 
 export type ResultadoDoTurno =
@@ -520,8 +629,34 @@ export type EntradaDoTurno = {
    */
   modeloDosClassificadores?: string | null;
   prazoMs?: number;
+  /**
+   * RR2 de 88e9560 (baixo 6): o INSTANTE em que o turno acaba, no relogio
+   * `agora` (o mesmo de quem chama). O executor do WhatsApp conta o prazo do
+   * turno ANTES de umas idas ao banco (o estado, o nascimento, a reserva e o
+   * turno); contado do comeco do laco, o atraso delas saia da reserva das
+   * gravacoes e, com o banco lento, da do envio. Com o instante, o laco e o
+   * executor usam a mesma referencia, e essas idas ficam dentro da conta do
+   * turno. O turno acaba no que vier primeiro: este instante ou o comeco do
+   * laco mais `prazoMs`. Ausente (o simulador) ou invalido: so `prazoMs`.
+   */
+  prazoEmMs?: number;
   /** Relogio injetavel para teste. */
   agora?: () => number;
+  // [AG6b mídia] início
+  /**
+   * AG6b: a porta da midia (ler o arquivo, transcrever, ler a foto ou o
+   * PDF e gravar a leitura). O simulador passa null (D-62): toda midia
+   * continua escalando como hoje. Ausente ou nula: nenhuma midia sai.
+   */
+  midia?: PortaDaMidia | null;
+  /**
+   * Revisao R3 de d1a15f6 (2): os tetos de tokens do leitor que o executor
+   * injetou, os MESMOS do plano, da reserva e da porta (o pior caso do
+   * arquivo quando o laco corta a leitura). Ausentes: as constantes do
+   * leitor (TETO_DE_TOKENS_POR_IMAGEM e _POR_PAGINA), como na porta.
+   */
+  tetosDoLeitor?: { imagem: number | null; pagina: number | null };
+  // [AG6b mídia] fim
 };
 
 // ---------------------------------------------------------------------------
@@ -567,7 +702,28 @@ const MOTIVO_DO_GATILHO: Readonly<
   // Sem codigo proprio em escalation_reason: o gatilho_entrada guarda
   // "mensagem_longa" e o motivo e o generico.
   mensagem_longa: "agente_pediu",
+  // [AG6 urgência] início
+  // AG6a: o sinal de emergencia (urgencia.ts) passa com o motivo proprio.
+  urgencia: "urgencia",
+  // [AG6 urgência] fim
 };
+
+// [AG6 urgência] início
+/**
+ * AG6a: o passo da conferencia da entrada (o mesmo texto dos outros
+ * gatilhos do portao), para o executor do WhatsApp repetir na urgencia que
+ * ele passa antes do teto e da reserva.
+ */
+export const PASSO_DA_CONFERENCIA_DA_ENTRADA =
+  "A mensagem foi conferida antes de chegar ao assistente.";
+
+/**
+ * AG6a (desenho 5.3): o passo da urgencia na trilha ("Por que a IA
+ * respondeu isso"). Nunca cita o sinal nem o texto do paciente.
+ */
+export const PASSO_DA_URGENCIA =
+  "A mensagem descreve algo que pode ser uma emergência: passou para a equipe como urgente.";
+// [AG6 urgência] fim
 
 function textoDoGatilho(gatilho: GatilhoDeEntrada): string {
   return gatilho === "mensagem_longa"
@@ -899,14 +1055,39 @@ export function mensagemParaOModelo(
   mensagem: MensagemDaConversa,
   opcoes: OpcoesDoTextoParaOsModelos = {},
 ): string {
+  // [AG6b mídia] início
+  // AG6b (D-98): a figurinha do paciente, sem conteudo nenhum.
+  if (mensagem.tipo === "figurinha" && mensagem.autor === "paciente") {
+    return FRASE_DA_FIGURINHA;
+  }
+  // [AG6b mídia] fim
   if ((mensagem.tipo ?? "texto") !== "texto" || mensagem.texto === null) {
     return MARCADOR_DE_MIDIA[mensagem.autor];
   }
-  return Array.from(
+  // [AG6b mídia] o corpo (era o retorno direto), para a marca e a descricao.
+  const corpo = Array.from(
     semMarcadores(minimizarParaLlm(textoParaOsModelos(mensagem, opcoes))),
   )
     .slice(0, CARACTERES_POR_MENSAGEM)
     .join("");
+  // [AG6b mídia] início
+  // AG6b: a transcricao vai marcada como audio; o pedido lido, com a
+  // descricao do servidor antes da legenda. O corte e so no texto do
+  // paciente (a marca e a descricao nunca sao cortadas).
+  if (mensagem.autor === "paciente" && mensagem.origem === "audio") {
+    return `${PREFIXO_DO_AUDIO} ${corpo}`;
+  }
+  if (
+    mensagem.autor === "paciente" &&
+    mensagem.origem === "arquivo" &&
+    mensagem.arquivo !== undefined
+  ) {
+    return corpo.trim() === ""
+      ? mensagem.arquivo.descricao
+      : `${mensagem.arquivo.descricao} ${corpo}`;
+  }
+  // [AG6b mídia] fim
+  return corpo;
 }
 
 export function historicoParaOModelo(
@@ -918,6 +1099,66 @@ export function historicoParaOModelo(
     content: mensagemParaOModelo(mensagem, opcoes),
   }));
 }
+
+// [AG6b mídia] início
+/**
+ * AG6b: a mensagem pendente como o portao de entrada a le (desenho 5.1, 1a
+ * e 1c). O texto (e a transcricao ja aplicada) pelo original; a figurinha,
+ * sem texto e sem escalar como midia; o audio a transcrever, um texto vazio
+ * (conta na rajada e no numero de mensagens); o arquivo a ler (ou ja lido),
+ * a legenda original. O resto (a midia fora, o audio sem fala, o video, a
+ * localizacao) continua midia, e escala.
+ */
+export function entradaDoPortao(m: MensagemDaConversa): MensagemDeEntrada {
+  const tipo = m.tipo ?? "texto";
+  if (tipo === "texto") {
+    return {
+      tipo: "texto",
+      texto: m.textoOriginal ?? m.texto,
+      legenda: m.legendaOriginal ?? null,
+    };
+  }
+  if (tipo === "figurinha") {
+    return { tipo: "figurinha", texto: null };
+  }
+  const situacao = m.midia?.situacao;
+  if (situacao === "a_transcrever") {
+    return { tipo: "texto", texto: "" };
+  }
+  if (
+    m.midia !== undefined &&
+    m.midia.midia !== "audio" &&
+    (situacao === "a_ler" || situacao === "lida")
+  ) {
+    return { tipo: "texto", texto: m.legendaOriginal ?? "" };
+  }
+  return {
+    tipo,
+    texto: m.textoOriginal ?? m.texto,
+    // [AG6 urgência] A legenda da midia, so para a urgencia.
+    legenda: m.legendaOriginal ?? null,
+  };
+}
+
+/**
+ * AG6b: o arquivo a ler (ou ja lido, ainda midia) visto pela legenda
+ * mascarada, como texto: o classificador, o verificador e a carteirinha em
+ * jogo leem a legenda (o arquivo so o leitor ve). O resto, como esta.
+ */
+export function vistaDaLegenda(m: MensagemDaConversa): MensagemDaConversa {
+  const situacao = m.midia?.situacao;
+  if (
+    m.midia !== undefined &&
+    m.midia.midia !== "audio" &&
+    (m.tipo ?? "texto") !== "texto" &&
+    m.tipo !== "figurinha" &&
+    (situacao === "a_ler" || situacao === "lida")
+  ) {
+    return { ...m, tipo: "texto", texto: m.midia.legenda ?? "" };
+  }
+  return m;
+}
+// [AG6b mídia] fim
 
 /** As mensagens do paciente depois da ultima resposta (nao respondidas). */
 export function mensagensPendentes(
@@ -1007,6 +1248,27 @@ export function custoMaximoDoTurno(entrada: {
    * situacao fica com o texto mais longo.
    */
   atendimento?: AtendimentoParaOModelo | null;
+  // [AG6b mídia] início
+  /**
+   * AG6b (desenho 5.3): a midia que o turno pode mandar aos modelos (o plano
+   * do turno). Cada audio a transcrever conta SEGUNDOS_NA_RESERVA (120 s)
+   * pelo preco por minuto do modelo; cada arquivo a ler, o pior caso do
+   * leitor (o teto de tokens do arquivo, o envelope e a saida). Revisao da
+   * AG6b (a juncao): com a nova tentativa propria das integracoes, o pior
+   * caso honesto e MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO chamadas por audio e
+   * MAXIMO_DE_CHAMADAS_DO_LEITOR por arquivo (cada uma pode ser cobrada); o
+   * acerto continua cobrando o real. E a mensagem de cada um conta como
+   * texto no agente, no classificador e no verificador
+   * (mensagensParaEstimativa: a transcricao com 1.000 caracteres no pior
+   * caso de bytes). Sem preco ou sem teto: null (quem chama falha fechado).
+   */
+  midia?: {
+    aTranscrever: number;
+    modeloDaTranscricao: string;
+    aLer: readonly { tokensDoArquivo: number }[];
+    modeloDoLeitor: string;
+  } | null;
+  // [AG6b mídia] fim
 }): number | null {
   // AG3: com a carteirinha em jogo o texto vai com os codigos curtos
   // escondidos, que pode ficar uns caracteres mais longo ("1234" vira
@@ -1014,7 +1276,15 @@ export function custoMaximoDoTurno(entrada: {
   const maisLongo = <T,>(a: T, b: T): T =>
     JSON.stringify(a).length >= JSON.stringify(b).length ? a : b;
   const escondido: OpcoesDoTextoParaOsModelos = { esconderCodigos: true };
-  const pendentes = mensagensPendentes(entrada.mensagens).map((m) =>
+  // [AG6b mídia] início
+  // As midias que vao aos modelos contam como texto (o pior caso).
+  const itensDaLeitura = itensDoCatalogo(entrada.catalogo);
+  const mensagensDaConta =
+    entrada.midia === null || entrada.midia === undefined
+      ? entrada.mensagens
+      : mensagensParaEstimativa(entrada.mensagens, itensDaLeitura);
+  // [AG6b mídia] fim
+  const pendentes = mensagensPendentes(mensagensDaConta).map((m) =>
     maisLongo(m.texto ?? "", textoParaOsModelos(m, escondido)),
   );
   const corpo = {
@@ -1025,9 +1295,10 @@ export function custoMaximoDoTurno(entrada: {
       contato: entrada.contato ?? null,
       atendimento: entrada.atendimento ?? null,
     }),
+    // [AG6b mídia] mensagensDaConta (era entrada.mensagens).
     input: maisLongo(
-      historicoParaOModelo(entrada.mensagens),
-      historicoParaOModelo(entrada.mensagens, escondido),
+      historicoParaOModelo(mensagensDaConta),
+      historicoParaOModelo(mensagensDaConta, escondido),
     ),
     tools: ferramentasDaChamada(entrada.config),
     text: { format: FORMATO_DA_RESPOSTA },
@@ -1077,6 +1348,39 @@ export function custoMaximoDoTurno(entrada: {
     }
     total += custo;
   }
+  // [AG6b mídia] início
+  if (entrada.midia !== null && entrada.midia !== undefined) {
+    for (let i = 0; i < entrada.midia.aTranscrever; i += 1) {
+      const custo = custoMaximoDaTranscricao(
+        SEGUNDOS_NA_RESERVA,
+        entrada.midia.modeloDaTranscricao,
+        entrada.precos,
+      );
+      if (custo === null) {
+        return null;
+      }
+      // Revisao da AG6b: cada chamada da transcricao (a primeira e a nova
+      // tentativa) pode ser cobrada.
+      total += MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA * custo;
+    }
+    for (const arquivo of entrada.midia.aLer) {
+      const uso = usoEstimadoDoLeitor({
+        catalogo: itensDaLeitura,
+        tokensDoArquivo: arquivo.tokensDoArquivo,
+      });
+      const custo =
+        uso === null
+          ? null
+          : custoMaximoDaChamada(uso, entrada.midia.modeloDoLeitor, entrada.precos);
+      if (custo === null) {
+        return null;
+      }
+      // Revisao da AG6b: cada chamada do leitor (a primeira e a nova
+      // tentativa) pode ser cobrada.
+      total += MAXIMO_DE_CHAMADAS_DO_LEITOR * custo;
+    }
+  }
+  // [AG6b mídia] fim
   return total;
 }
 
@@ -1112,13 +1416,49 @@ export function atendimentoParaEstimativa(entrada: {
 /** As mensagens do paciente no formato de registrar_dados_do_paciente. */
 function mensagensDoPacienteParaOsDados(
   mensagens: readonly MensagemDaConversa[],
-): { mascarado: string; original: string }[] {
+): {
+  mascarado: string;
+  original: string;
+  // [AG6b mídia] AG6b (D-57): a origem, para o CPF e a carteirinha ditos
+  // nunca serem lidos (so digitados). A descricao do arquivo nunca entra:
+  // no pedido, o texto e so a legenda.
+  origem?: "audio" | "arquivo";
+}[] {
   return mensagens.flatMap((m) =>
     m.autor === "paciente" && (m.tipo ?? "texto") === "texto" && m.texto !== null
-      ? [{ mascarado: m.texto, original: m.textoOriginal ?? m.texto }]
+      ? [
+          {
+            mascarado: m.texto,
+            original: m.textoOriginal ?? m.texto,
+            // [AG6b mídia]
+            ...(m.origem === undefined ? {} : { origem: m.origem }),
+          },
+        ]
       : [],
   );
 }
+
+// [AG6b mídia] início
+/**
+ * AG6b: os itens (nomes do Cadastro) de cada pedido lido que seguiu com a IA
+ * nas mensagens do turno, para os fatos ("A pessoa mandou um pedido com:
+ * Hemograma, Glicemia de jejum."). Nunca texto do arquivo.
+ */
+function pedidosDoTurno(
+  mensagens: readonly MensagemDaConversa[],
+  catalogo: CatalogoDoAgente,
+): string[][] {
+  const itens = itensDoCatalogo(catalogo);
+  return mensagens.flatMap((m) => {
+    const leitura = m.midia?.leitura;
+    if (m.origem !== "arquivo" || leitura === undefined) {
+      return [];
+    }
+    const decisao = decidirPelaLeitura(leitura, itens);
+    return decisao.tipo === "segue" ? [decisao.itens.map((i) => i.nome)] : [];
+  });
+}
+// [AG6b mídia] fim
 
 /** O que a nota para a equipe diz do motivo da passagem. */
 function motivoParaANota(desfecho: DesfechoDoTurno): string {
@@ -1168,8 +1508,12 @@ export function turnoDaColetaDeDados(
   );
 }
 
-/** Hoje (AAAA-MM-DD) no fuso da clinica, para a idade do portao. */
-function hojeNoFuso(agoraMs: number, fuso: string): string | null {
+/**
+ * Hoje (AAAA-MM-DD) no fuso da clinica, para a idade do portao. AG6b
+ * (revisao): exportado para o portao da espera do download no executor
+ * (lib/jobs/responder-com-ia.ts) usar a MESMA data que o laco usa.
+ */
+export function hojeNoFuso(agoraMs: number, fuso: string): string | null {
   try {
     const partes = new Intl.DateTimeFormat("en-CA", {
       timeZone: fuso,
@@ -1202,6 +1546,28 @@ export async function executarTurnoDoAgente(
     pendentes.length === 0
       ? undefined
       : entrada.mensagens[entrada.mensagens.length - pendentes.length - 1];
+  // [AG6b mídia] início
+  // AG6b: as mensagens do paciente da agenda sao VIVAS (os mesmos arrays,
+  // trocados no lugar): a transcricao e o pedido lido entram nelas depois da
+  // leitura, antes do agente (o "sim" falado, D-97; o nome e o nascimento
+  // ditos, D-57). As ferramentas leem na hora da chamada.
+  const mensagensDaAgenda = {
+    doPaciente: mensagensDoPacienteParaOsDados(entrada.mensagens),
+    pendentes: mensagensDoPacienteParaOsDados(pendentes),
+  };
+  const atualizarAgenda = (mensagens: readonly MensagemDaConversa[]) => {
+    mensagensDaAgenda.doPaciente.splice(
+      0,
+      mensagensDaAgenda.doPaciente.length,
+      ...mensagensDoPacienteParaOsDados(mensagens),
+    );
+    mensagensDaAgenda.pendentes.splice(
+      0,
+      mensagensDaAgenda.pendentes.length,
+      ...mensagensDoPacienteParaOsDados(mensagensPendentes(mensagens)),
+    );
+  };
+  // [AG6b mídia] fim
   const agendaDoTurno = criarAgendaDoTurno({
     porta: entrada.agenda ?? null,
     catalogo: entrada.catalogo,
@@ -1210,8 +1576,9 @@ export async function executarTurnoDoAgente(
     fuso: entrada.fuso,
     atendimento: entrada.atendimento ?? null,
     mensagens: {
-      doPaciente: mensagensDoPacienteParaOsDados(entrada.mensagens),
-      pendentes: mensagensDoPacienteParaOsDados(pendentes),
+      // [AG6b mídia] os arrays vivos
+      doPaciente: mensagensDaAgenda.doPaciente,
+      pendentes: mensagensDaAgenda.pendentes,
       antesDasPendentes:
         antes === undefined || antes.autor !== "assistente"
           ? null
@@ -1228,7 +1595,12 @@ export async function executarTurnoDoAgente(
     // comeco do turno mais o tempo que ja passou.
     agora: entrada.agora ?? relogioDesde(entrada.agoraMs),
   });
-  const resultado = await turnoDoAgente(entrada, agendaDoTurno);
+  const resultado = await turnoDoAgente(
+    entrada,
+    agendaDoTurno,
+    // [AG6b mídia]
+    atualizarAgenda,
+  );
   if (!comEstado) {
     return resultado;
   }
@@ -1237,8 +1609,10 @@ export async function executarTurnoDoAgente(
     // responder (inclusive a mensagem nova da pessoa no meio do turno) nao
     // sai e nao passa para a equipe (o executor fecha sem envio).
     const semEnvio =
-      resultado.desfecho.tipo === "falhou" &&
-      resultado.desfecho.motivo === "sem_mensagem";
+      (resultado.desfecho.tipo === "falhou" &&
+        resultado.desfecho.motivo === "sem_mensagem") ||
+      // [AG6b mídia] O job antigo (D-A) so conclui: nada passa.
+      resultado.jobAntigo === true;
     const passou = resultado.tipo === "frase_fixa" && !semEnvio;
     // AG5: a lista de espera desta conversa mora fora do estado; na passagem
     // antes do preparo (o portao), le so para a nota (nunca lanca).
@@ -1275,12 +1649,21 @@ export async function executarTurnoDoAgente(
 async function turnoDoAgente(
   entrada: EntradaDoTurno,
   agendaDoTurno: AgendaDoTurno,
+  // [AG6b mídia] AG6b: a agenda recebe as mensagens com a midia lida.
+  atualizarAgenda: (mensagens: readonly MensagemDaConversa[]) => void = () =>
+    undefined,
 ): Promise<ResultadoDoTurno> {
   const comEstado =
     entrada.atendimento !== null && entrada.atendimento !== undefined;
   const agora = entrada.agora ?? Date.now;
   const inicio = agora();
-  const prazoEm = inicio + (entrada.prazoMs ?? PRAZO_DO_TURNO_MS);
+  const prazoPelaDuracao = inicio + (entrada.prazoMs ?? PRAZO_DO_TURNO_MS);
+  // RR2 de 88e9560 (baixo 6): o instante de quem chama, na mesma referencia
+  // (as idas ao banco antes do laco ficam dentro da conta do turno).
+  const prazoEm =
+    typeof entrada.prazoEmMs === "number" && Number.isFinite(entrada.prazoEmMs)
+      ? Math.min(prazoPelaDuracao, entrada.prazoEmMs)
+      : prazoPelaDuracao;
   const trilha: PassoDoTurno[] = [];
   const uso: UsoDoModelo[] = [];
   const ferramentasUsadas: FerramentaDoAgente[] = [];
@@ -1288,6 +1671,22 @@ async function turnoDoAgente(
   let descartados: TextoDescartado = { instrucoes: false, itensDaBase: 0 };
   const modeloDosClassificadores =
     entrada.modeloDosClassificadores?.trim() || "desconhecido";
+  // [AG6b mídia] início
+  // A copia das mensagens do turno: as pendentes com midia mudam aqui (a
+  // transcricao, o pedido lido, a figurinha), nunca em entrada.mensagens.
+  const mensagensDoTurno: MensagemDaConversa[] = [...entrada.mensagens];
+  const inicioDasPendentes =
+    mensagensDoTurno.length - mensagensPendentes(entrada.mensagens).length;
+  const pendentesDoTurno = () => mensagensDoTurno.slice(inicioDasPendentes);
+  const trocarPendente = (messageId: string, nova: MensagemDaConversa) => {
+    const i = mensagensDoTurno.findIndex(
+      (m, j) => j >= inicioDasPendentes && m.midia?.messageId === messageId,
+    );
+    if (i >= 0) {
+      mensagensDoTurno[i] = nova;
+    }
+  };
+  // [AG6b mídia] fim
 
   const fraseFixa = (
     desfecho: DesfechoDoTurno,
@@ -1303,6 +1702,10 @@ async function turnoDoAgente(
     descartados,
     ferramentasUsadas,
     rascunhoBloqueado,
+    // [AG6b mídia] D-96: a passagem com midia do paciente que ninguem leu.
+    ...(pendentesDoTurno().some(mensagemComMidiaNaoLida)
+      ? { midiaNaoLida: true as const }
+      : {}),
   });
   const escalar = (
     motivo: MotivoDeEscalonamento,
@@ -1321,6 +1724,540 @@ async function turnoDoAgente(
     return fraseFixa({ tipo: "falhou", motivo });
   };
 
+  // [AG6b mídia] início
+  // A midia que fica fora (sem porta, o arquivo fora da regra, ou o preparo
+  // de um audio do turno que deu fora): continua midia, e o portao escala.
+  const marcarComoFora = (mensagens: readonly MensagemDaConversa[]) => {
+    for (const m of mensagens) {
+      if (m.midia !== undefined) {
+        trocarPendente(m.midia.messageId, {
+          ...m,
+          midia: { ...m.midia, situacao: "fora" },
+        });
+      }
+    }
+  };
+  /**
+   * O prazo que a midia pode usar AGORA (revisao da AG6b): o resto do turno
+   * menos a reserva do filtro (o verificador), a janela minima do agente e,
+   * quando o classificador ainda vem depois (a transcricao, 2b), o prazo
+   * dele. A midia nunca come o que vem depois dela, e o turno nunca passa
+   * de prazoEm (a reserva das gravacoes e a do envio ficam inteiras).
+   */
+  const prazoParaAMidia = (classificadorDepois: boolean) =>
+    prazoEm -
+    agora() -
+    RESERVA_DO_FILTRO_MS -
+    RESERVA_DO_AGENTE_DEPOIS_DA_MIDIA_MS -
+    (classificadorDepois ? PRAZO_DO_CLASSIFICADOR_NO_PORTAO_MS : 0);
+  /**
+   * O corte duro de um passo da midia (revisao da AG6b): a porta recebe o
+   * prazo menos a folga e o sinal deste corte (ela corta ali, com o uso da
+   * chamada); o laco corta no prazo inteiro, para a porta que nao cumprir.
+   */
+  const cortarAMidia = <T,>(
+    executar: (prazoDaPortaMs: number, sinal: AbortSignal) => Promise<T>,
+    prazoMs: number,
+  ) =>
+    correrComPrazo(
+      (sinal) =>
+        executar(Math.max(0, prazoMs - FOLGA_DO_CORTE_DA_MIDIA_MS), sinal),
+      prazoMs,
+    );
+  /** O motivo do preparo que falhou: o prazo, ou o resto (falha fechada). */
+  const motivoDoPreparo = (prontas: readonly MidiaPronta[]): FalhaDoAgente =>
+    prontas.some((p) => p.tipo === "falhou" && p.codigo === "prazo")
+      ? "timeout"
+      : "desconhecida";
+  /** O preparo que nem voltou (a porta que nao cumpriu o prazo). */
+  const preparoCortado = (
+    corrida: { tipo: "prazo" } | { tipo: "erro" },
+    passo: string,
+  ): ResultadoDoTurno => {
+    log.warn("ia_midia_cortada", {
+      kind: "preparo",
+      clinic_id: entrada.clinicId,
+      error_code: corrida.tipo === "prazo" ? "prazo" : "excecao",
+    });
+    trilha.push({ tipo: "equipe", texto: passo });
+    return fraseFixa({
+      tipo: "falhou",
+      motivo: corrida.tipo === "prazo" ? "timeout" : "desconhecida",
+    });
+  };
+  /**
+   * A transcricao que a porta nao devolveu no prazo (ou que lancou): falha,
+   * com o pior caso pelos segundos medidos (nao se sabe quantas chamadas
+   * sairam: MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO, a mesma conta da reserva).
+   */
+  const transcricaoCortada = (
+    audio: Extract<MidiaPronta, { tipo: "audio" }>,
+    corrida: { tipo: "prazo" } | { tipo: "erro" },
+  ): ResultadoDaTranscricao => ({
+    tipo: "falhou",
+    motivo: corrida.tipo === "prazo" ? "timeout" : "desconhecida",
+    uso: {
+      papel: "transcricao",
+      modelo: "desconhecido",
+      uso: { ...USO_ZERADO },
+      segundosDeAudio:
+        MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA *
+        Math.max(1, Math.ceil(audio.segundos)),
+    },
+  });
+  /**
+   * A leitura que a porta nao devolveu no prazo (ou que lancou): falha, com
+   * o pior caso do arquivo em cada chamada que pode ter saido
+   * (MAXIMO_DE_CHAMADAS_DO_LEITOR, a mesma conta da reserva; a figurinha nao
+   * chama modelo). Revisao R3 de d1a15f6 (2): pelos tetos INJETADOS
+   * (entrada.tetosDoLeitor, os do plano, da reserva e da porta), nunca pelas
+   * constantes do modulo quando o executor deu outros.
+   */
+  const leituraCortada = (
+    arquivo: Extract<MidiaPronta, { tipo: "arquivo" | "figurinha" }>,
+    corrida: { tipo: "prazo" } | { tipo: "erro" },
+    catalogoDaLeitura: ReturnType<typeof itensDoCatalogo>,
+  ): ResultadoDaLeitura => {
+    const estimado =
+      arquivo.tipo === "arquivo"
+        ? usoEstimadoDoLeitor({
+            catalogo: catalogoDaLeitura,
+            tokensDoArquivo: tokensDoArquivoNaReserva(
+              arquivo.midia,
+              arquivo.arquivo.tipo === "pdf" ? "application/pdf" : "image/jpeg",
+              entrada.tetosDoLeitor,
+            ),
+          })
+        : null;
+    return {
+      tipo: "falhou",
+      motivo: corrida.tipo === "prazo" ? "timeout" : "desconhecida",
+      uso:
+        estimado === null
+          ? null
+          : {
+              papel: "leitor_de_midia",
+              modelo: modeloDosClassificadores,
+              uso: {
+                tokensEntrada: MAXIMO_DE_CHAMADAS_DO_LEITOR * estimado.tokensEntrada,
+                tokensSaida: MAXIMO_DE_CHAMADAS_DO_LEITOR * estimado.tokensSaida,
+                tokensCacheLidos:
+                  MAXIMO_DE_CHAMADAS_DO_LEITOR * estimado.tokensCacheLidos,
+                tokensCacheGravados:
+                  MAXIMO_DE_CHAMADAS_DO_LEITOR * estimado.tokensCacheGravados,
+              },
+            },
+    };
+  };
+  /**
+   * D-A (revisao da AG6b): a gravacao da leitura disse job_antigo. O job
+   * so conclui (o executor ve a marca): a frase fixa daqui nunca sai.
+   */
+  const jobAntigo = (): ResultadoDoTurno => ({
+    ...fraseFixa({ tipo: "falhou", motivo: "liberacao_suspensa" }),
+    jobAntigo: true,
+  });
+  /**
+   * Revisao R2 de d1a15f6 (M3): a transcricao leu urgencia no texto inteiro
+   * de um audio do turno, inclusive no que as travas descartaram ("Quero
+   * morrer." curto e incerto, "Socorro..." no ruido). So o tipo chegou (o
+   * texto descartado nunca sai da integracao); o 1c passa a conversa como
+   * urgente, pelo caminho de sempre. RR2 de 88e9560 (medio 2): tambem a
+   * urgencia que veio na FALHA depois da transcricao (a gravacao da leitura
+   * recusada, o corte durante a RPC).
+   */
+  let urgenciaNoAudio = false;
+  /**
+   * A urgencia que a porta devolveu com o audio (so o tipo), ou null: a do
+   * texto inteiro do audio, inclusive o descartado, e a da falha depois da
+   * transcricao. A do texto mantido e a da rajada o 1c le; nos caminhos que
+   * nao chegam ao 1c, urgenciaNaRajada.
+   */
+  const urgenciaDoAudio = (
+    feita: ResultadoDaTranscricao,
+  ): TipoDeUrgencia | null => {
+    switch (feita.tipo) {
+      case "transcrita":
+      case "sem_fala":
+        return feita.urgencia;
+      case "falhou":
+        return feita.urgencia ?? null;
+      default:
+        return null;
+    }
+  };
+  /**
+   * RR2 de 88e9560 (rev4): a urgencia da RAJADA como o 1c a le, sem aplicar
+   * nada ao turno: as pendentes como o portao as ve (entradaDoPortao: os
+   * textos, as legendas, o audio ainda sem texto) com as transcricoes que
+   * voltaram no lugar dos audios, cada mensagem sozinha e a juncao delas na
+   * ordem (detectarGatilhosDeEntrada, a mesma lista). O caminho do audio
+   * ruim (baixo 7) e o da falha de outro audio nunca chegam ao 1c, e o audio
+   * lido sozinho perdia a juncao: "minha mae" escrito e "nao responde mais,
+   * ta caida no chao" falado so sao urgencia juntos.
+   */
+  const urgenciaNaRajada = (
+    transcritas: ReadonlyMap<string, string>,
+  ): boolean => {
+    const entradas = pendentesDoTurno().map((m): MensagemDeEntrada => {
+      const transcrito =
+        m.midia === undefined ? undefined : transcritas.get(m.midia.messageId);
+      return transcrito === undefined
+        ? entradaDoPortao(m)
+        : { tipo: "texto", texto: transcrito };
+    });
+    return detectarGatilhosDeEntrada({
+      mensagens: entradas,
+      dataDeNascimento: entrada.dataDeNascimento ?? null,
+      hojeNaClinica:
+        entrada.hojeNaClinica ?? hojeNoFuso(entrada.agoraMs, entrada.fuso),
+    }).includes("urgencia");
+  };
+  /**
+   * A urgencia do portao (1a e 1c) e a do audio acima: a conferencia de
+   * sempre, o passo da urgencia e a passagem com o motivo urgencia (o banco
+   * marca como Urgente e nunca atribui).
+   */
+  const passarPorUrgencia = (): ResultadoDoTurno => {
+    trilha.push({ tipo: "outro", texto: PASSO_DA_CONFERENCIA_DA_ENTRADA });
+    trilha.push({ tipo: "equipe", texto: PASSO_DA_URGENCIA });
+    return fraseFixa({
+      tipo: "escalou",
+      motivo: "urgencia",
+      gatilho: "urgencia",
+      origem: "portao",
+    });
+  };
+
+  /**
+   * 2b. Transcreve os audios a transcrever. Devolve o desfecho quando o
+   * turno para aqui (falha fechada, a conversa saiu da IA, o prazo), ou null
+   * para seguir (o 1c confere o texto transcrito, o sem fala, o fora e a
+   * urgencia que a transcricao leu no audio).
+   */
+  const transcreverAsPendentes = async (
+    lista: readonly MensagemDaConversa[],
+  ): Promise<ResultadoDoTurno | null> => {
+    const porta = entrada.midia ?? null;
+    if (porta === null) {
+      marcarComoFora(lista);
+      return null;
+    }
+    // O classificador ainda vem depois da transcricao: o prazo dele fica.
+    const prazoDoPreparo = prazoParaAMidia(true);
+    if (prazoDoPreparo < 1_000) {
+      return falhar("prazo");
+    }
+    const preparo = await cortarAMidia(
+      (prazo, sinal) =>
+        porta.preparar(
+          lista.flatMap((m) => (m.midia === undefined ? [] : [m.midia])),
+          prazo,
+          sinal,
+        ),
+      prazoDoPreparo,
+    );
+    if (preparo.tipo !== "resultado") {
+      return preparoCortado(preparo, PASSOS_DA_MIDIA.transcricaoFalhou);
+    }
+    const prontas = preparo.valor;
+    const audios = prontas.filter(
+      (p): p is Extract<MidiaPronta, { tipo: "audio" }> => p.tipo === "audio",
+    );
+    const algumPreparoFalhou = prontas.some((p) => p.tipo === "falhou");
+    const todosProntos =
+      !algumPreparoFalhou &&
+      audios.length === prontas.length &&
+      audios.length === lista.length;
+    /**
+     * O turno com um audio ruim, como sempre foi: o preparo que falhou (o
+     * Storage) e a falha tecnica; o audio fora da regra (o limite, o
+     * formato, os primeiros bytes) marca todos como fora, e o 1c escala como
+     * midia. Nenhuma transcricao vale como texto neste turno.
+     */
+    const comUmAudioRuim = (): ResultadoDoTurno | null => {
+      if (algumPreparoFalhou) {
+        trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.transcricaoFalhou });
+        return fraseFixa({ tipo: "falhou", motivo: motivoDoPreparo(prontas) });
+      }
+      marcarComoFora(lista);
+      return null;
+    };
+    // RR2 de 88e9560 (baixo 7): um audio ruim no turno nao impede mais a
+    // transcricao dos bons. Os bons sao transcritos SO para ler a urgencia
+    // (no mesmo prazo e com o mesmo corte; a reserva do gasto ja conta todo
+    // audio a transcrever do plano), e o turno passa para a equipe como
+    // sempre (comUmAudioRuim), ou como urgente. Sem audio bom, ou sem prazo
+    // para eles, fica como sempre.
+    if (!todosProntos && audios.length === 0) {
+      return comUmAudioRuim();
+    }
+    const prazo = prazoParaAMidia(true);
+    if (prazo < 1_000) {
+      return todosProntos ? falhar("prazo") : comUmAudioRuim();
+    }
+    const feitas = await Promise.all(
+      audios.map(async (audio) => {
+        const corrida = await cortarAMidia(
+          (prazoDaPorta, sinal) => porta.transcrever(audio, prazoDaPorta, sinal),
+          prazo,
+        );
+        return {
+          audio,
+          feita:
+            corrida.tipo === "resultado"
+              ? corrida.valor
+              : transcricaoCortada(audio, corrida),
+        };
+      }),
+    );
+    for (const { feita } of feitas) {
+      if (feita.uso !== null) {
+        uso.push(feita.uso);
+      }
+    }
+    // Antes da urgencia, de proposito (rev4, documentado no contrato): o
+    // job_antigo (D-A) so conclui, sem passagem; e com a conversa ja fora da
+    // IA a passagem do banco devolve ja_fora_da_ia SEM a marca (a marca so
+    // nasce quando a passagem tira a conversa da IA). Passar pela urgencia
+    // aqui nao marcaria nada e gravaria uma decisao de passagem que nao
+    // houve. Marcar a conversa que ja esta com a equipe pede o banco.
+    if (feitas.some(({ feita }) => feita.tipo === "job_antigo")) {
+      return jobAntigo();
+    }
+    if (feitas.some(({ feita }) => feita.tipo === "fora_da_ia")) {
+      return falhar("liberacao_suspensa");
+    }
+    // Revisao R2 de d1a15f6 (M3): a urgencia que a transcricao leu no audio
+    // inteiro (so o tipo), no sem fala e na transcricao. RR2 de 88e9560
+    // (medio 2): tambem a que veio na falha depois da transcricao.
+    if (feitas.some(({ feita }) => urgenciaDoAudio(feita) !== null)) {
+      urgenciaNoAudio = true;
+    }
+    /** As transcricoes que voltaram (o texto mantido, como foi falado). */
+    const transcritas = new Map(
+      feitas.flatMap(({ audio, feita }) =>
+        feita.tipo === "transcrita"
+          ? [[audio.messageId, feita.texto] as const]
+          : [],
+      ),
+    );
+    if (!todosProntos) {
+      // RR2 de 88e9560 (baixo 7): a urgencia de um audio bom vence o audio
+      // ruim (a falha do preparo ou o fora da regra), como vence a falha
+      // tecnica de outro audio. Rev4: lida na rajada inteira, como no 1c.
+      return urgenciaNoAudio || urgenciaNaRajada(transcritas)
+        ? passarPorUrgencia()
+        : comUmAudioRuim();
+    }
+    const falha = feitas.find(({ feita }) => feita.tipo === "falhou")?.feita;
+    if (falha !== undefined && falha.tipo === "falhou") {
+      // A urgencia de outro audio do turno vence a falha tecnica deste: a
+      // conversa passa como urgente (o lado seguro; as duas passam). RR2 de
+      // 88e9560 (medio 2): tambem a urgencia do proprio audio que falhou
+      // depois de transcrito (a gravacao da leitura recusada, o corte
+      // durante a RPC). Rev4: e a da rajada com as transcricoes que
+      // voltaram, como no 1c (que este caminho nunca alcanca).
+      if (urgenciaNoAudio || urgenciaNaRajada(transcritas)) {
+        return passarPorUrgencia();
+      }
+      trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.transcricaoFalhou });
+      return fraseFixa({ tipo: "falhou", motivo: falha.motivo });
+    }
+    for (const { audio, feita } of feitas) {
+      const original = lista.find((m) => m.midia?.messageId === audio.messageId);
+      if (original?.midia === undefined) {
+        continue;
+      }
+      if (feita.tipo === "transcrita") {
+        trilha.push({ tipo: "outro", texto: PASSOS_DA_MIDIA.transcreveu });
+        trocarPendente(audio.messageId, {
+          ...original,
+          tipo: "texto",
+          origem: "audio",
+          texto: feita.textoParaOsModelos,
+          textoOriginal: feita.texto,
+          midia: { ...original.midia, situacao: "lida", leitura: feita.leitura },
+        });
+      } else if (feita.tipo === "sem_fala") {
+        trocarPendente(audio.messageId, {
+          ...original,
+          midia: { ...original.midia, situacao: "lida", leitura: feita.leitura },
+        });
+      }
+    }
+    return null;
+  };
+
+  /**
+   * 3b. Le os arquivos a ler (a figurinha, local) e decide pela leitura de
+   * cada arquivo pendente (a tabela 1.2, com a prioridade: o clinico, o
+   * documento do paciente, o nao identificado). Devolve o desfecho quando o
+   * turno passa ou para aqui, ou null para seguir com o agente (o pedido
+   * vira a descricao, a figurinha vira figurinha).
+   */
+  const lerOsArquivosPendentes = async (): Promise<ResultadoDoTurno | null> => {
+    const catalogoDaLeitura = itensDoCatalogo(entrada.catalogo);
+    const aLer = pendentesDoTurno().filter(
+      (m) => m.midia?.situacao === "a_ler",
+    );
+    if (aLer.length > 0) {
+      const porta = entrada.midia ?? null;
+      const passarComoMidia = () => {
+        trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.arquivoFora });
+        return fraseFixa({
+          tipo: "escalou",
+          motivo: MOTIVO_DO_GATILHO.midia,
+          gatilho: "midia",
+          origem: "portao",
+        });
+      };
+      if (porta === null) {
+        marcarComoFora(aLer);
+        return passarComoMidia();
+      }
+      // O classificador ja leu a legenda: so o agente e o filtro depois.
+      const prazoDoPreparo = prazoParaAMidia(false);
+      if (prazoDoPreparo < 1_000) {
+        return falhar("prazo");
+      }
+      const preparo = await cortarAMidia(
+        (prazo, sinal) =>
+          porta.preparar(
+            aLer.flatMap((m) => (m.midia === undefined ? [] : [m.midia])),
+            prazo,
+            sinal,
+          ),
+        prazoDoPreparo,
+      );
+      if (preparo.tipo !== "resultado") {
+        return preparoCortado(preparo, PASSOS_DA_MIDIA.leituraFalhou);
+      }
+      const prontas = preparo.valor;
+      if (prontas.some((p) => p.tipo === "falhou")) {
+        trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.leituraFalhou });
+        return fraseFixa({ tipo: "falhou", motivo: motivoDoPreparo(prontas) });
+      }
+      const legiveis = prontas.filter(
+        (p): p is Extract<MidiaPronta, { tipo: "arquivo" | "figurinha" }> =>
+          p.tipo === "arquivo" || p.tipo === "figurinha",
+      );
+      if (legiveis.length !== prontas.length || legiveis.length !== aLer.length) {
+        marcarComoFora(aLer);
+        return passarComoMidia();
+      }
+      const prazo = prazoParaAMidia(false);
+      if (prazo < 1_000) {
+        return falhar("prazo");
+      }
+      const feitas = await Promise.all(
+        legiveis.map(async (arquivo) => {
+          const corrida = await cortarAMidia(
+            (prazoDaPorta, sinal) =>
+              porta.ler(arquivo, catalogoDaLeitura, prazoDaPorta, sinal),
+            prazo,
+          );
+          return {
+            arquivo,
+            feita:
+              corrida.tipo === "resultado"
+                ? corrida.valor
+                : leituraCortada(arquivo, corrida, catalogoDaLeitura),
+          };
+        }),
+      );
+      for (const { feita } of feitas) {
+        if (feita.uso !== null) {
+          uso.push(feita.uso);
+        }
+      }
+      if (feitas.some(({ feita }) => feita.tipo === "job_antigo")) {
+        return jobAntigo();
+      }
+      if (feitas.some(({ feita }) => feita.tipo === "fora_da_ia")) {
+        return falhar("liberacao_suspensa");
+      }
+      const falha = feitas.find(({ feita }) => feita.tipo === "falhou")?.feita;
+      if (falha !== undefined && falha.tipo === "falhou") {
+        trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.leituraFalhou });
+        return fraseFixa({ tipo: "falhou", motivo: falha.motivo });
+      }
+      for (const { arquivo, feita } of feitas) {
+        const original = aLer.find(
+          (m) => m.midia?.messageId === arquivo.messageId,
+        );
+        if (original?.midia !== undefined && feita.tipo === "lido") {
+          trocarPendente(arquivo.messageId, {
+            ...original,
+            midia: {
+              ...original.midia,
+              situacao: "lida",
+              leitura: feita.leitura,
+            },
+          });
+        }
+      }
+    }
+    // A decisao do servidor por arquivo lido (os de agora e os que o job
+    // repetido ja tinha gravado), com a prioridade.
+    const lidas = pendentesDoTurno().filter(
+      (m): m is MensagemDaConversa & {
+        midia: MidiaDaConversa & { leitura: LeituraGravada };
+      } =>
+        m.midia !== undefined &&
+        m.midia.midia !== "audio" &&
+        m.midia.situacao === "lida" &&
+        m.midia.leitura !== undefined &&
+        (m.tipo ?? "texto") !== "texto" &&
+        m.tipo !== "figurinha",
+    );
+    const decisoes = lidas.map((m) => ({
+      mensagem: m,
+      decisao: decidirPelaLeitura(m.midia.leitura, catalogoDaLeitura),
+    }));
+    const motivo = motivoMaisForte(
+      decisoes.flatMap(({ decisao }): MotivoDaLeitura[] =>
+        decisao.tipo === "escala" ? [decisao.motivo] : [],
+      ),
+    );
+    if (motivo !== null) {
+      trilha.push({ tipo: "equipe", texto: PASSO_DO_MOTIVO_DA_LEITURA[motivo] });
+      return fraseFixa({
+        tipo: "escalou",
+        motivo,
+        gatilho: null,
+        origem: "leitor",
+      });
+    }
+    for (const { mensagem, decisao } of decisoes) {
+      if (decisao.tipo === "segue") {
+        trilha.push({
+          tipo: "outro",
+          texto: PASSOS_DA_MIDIA.leuPedido.replace("{}", () =>
+            String(decisao.itens.length),
+          ),
+        });
+        trocarPendente(mensagem.midia.messageId, {
+          ...mensagem,
+          tipo: "texto",
+          origem: "arquivo",
+          texto: mensagem.midia.legenda ?? "",
+          textoOriginal: mensagem.legendaOriginal ?? "",
+          arquivo: { descricao: decisao.descricao },
+        });
+      } else if (decisao.tipo === "figurinha") {
+        trilha.push({ tipo: "outro", texto: PASSOS_DA_MIDIA.figurinha });
+        trocarPendente(mensagem.midia.messageId, {
+          ...mensagem,
+          tipo: "figurinha",
+          texto: null,
+        });
+      }
+    }
+    return null;
+  };
+  // [AG6b mídia] fim
+
   try {
     const pendentes = mensagensPendentes(entrada.mensagens);
     if (pendentes.length === 0) {
@@ -1330,50 +2267,94 @@ async function turnoDoAgente(
     // 1. Portao deterministico, no texto ORIGINAL do contato (local, sem
     // rede): a mascara do nome so existe para a OpenAI e nao pode esconder
     // um gatilho. Os passos 3, 4 e 6 continuam so com o texto mascarado.
-    const gatilhos = detectarGatilhosDeEntrada({
-      mensagens: pendentes.map((m): MensagemDeEntrada => ({
-        tipo: m.tipo ?? "texto",
-        texto: m.textoOriginal ?? m.texto,
-      })),
-      dataDeNascimento: entrada.dataDeNascimento ?? null,
-      hojeNaClinica:
-        entrada.hojeNaClinica ?? hojeNoFuso(entrada.agoraMs, entrada.fuso),
-    });
-    const gatilho = gatilhos[0];
-    if (gatilho !== undefined) {
-      trilha.push({
-        tipo: "outro",
-        texto: "A mensagem foi conferida antes de chegar ao assistente.",
+    // [AG6b mídia] início
+    // AG6b (desenho 5.1): o portao roda nas pendentes do TURNO, com a midia
+    // pela situacao dela (entradaDoPortao): no 1a, o audio a transcrever e
+    // um texto vazio (conta na rajada e no numero de mensagens, nunca como
+    // midia) e o arquivo a ler (ou ja lido) e a legenda; a midia fora, o
+    // audio sem fala e o video continuam midia. Gatilho: nada sai. No 1c
+    // (depois da transcricao), roda de novo com o texto transcrito.
+    const passarPeloPortao = (): ResultadoDoTurno | null => {
+      const entradas = pendentesDoTurno().map(entradaDoPortao);
+      const gatilhos = detectarGatilhosDeEntrada({
+        mensagens: entradas,
+        dataDeNascimento: entrada.dataDeNascimento ?? null,
+        hojeNaClinica:
+          entrada.hojeNaClinica ?? hojeNoFuso(entrada.agoraMs, entrada.fuso),
       });
-      return escalar(
-        MOTIVO_DO_GATILHO[gatilho],
-        "portao",
-        gatilho,
-        textoDoGatilho(gatilho),
-      );
+      const gatilho = gatilhos[0];
+      // [AG6 urgência] início
+      // AG6a: o sinal de emergencia vem primeiro na ordem dos gatilhos. A
+      // conversa passa com o motivo urgencia (o banco marca como Urgente e
+      // nunca atribui) e a frase de sempre. No WhatsApp o executor ja passou
+      // antes do teto e da reserva; aqui e a segunda trava, o simulador e
+      // (AG6b) a urgencia falada no audio. Revisao R2 de d1a15f6 (M3): e a
+      // urgencia que a transcricao leu no texto descartado do audio (o
+      // portao nunca ve esse texto), pelo mesmo caminho.
+      if (gatilho === "urgencia" || urgenciaNoAudio) {
+        return passarPorUrgencia();
+      }
+      // [AG6 urgência] fim
+      if (gatilho !== undefined) {
+        trilha.push({
+          tipo: "outro",
+          texto: PASSO_DA_CONFERENCIA_DA_ENTRADA,
+        });
+        // O audio em que nao deu para entender fala (as travas da saida da
+        // transcricao): o passo proprio, o motivo de sempre da midia.
+        if (
+          gatilho === "midia" &&
+          pendentesDoTurno().some(
+            (m) =>
+              m.midia?.midia === "audio" &&
+              m.midia.leitura?.tipo === "sem_fala",
+          )
+        ) {
+          trilha.push({ tipo: "equipe", texto: PASSOS_DA_MIDIA.semFala });
+          return fraseFixa({
+            tipo: "escalou",
+            motivo: MOTIVO_DO_GATILHO.midia,
+            gatilho,
+            origem: "portao",
+          });
+        }
+        return escalar(
+          MOTIVO_DO_GATILHO[gatilho],
+          "portao",
+          gatilho,
+          textoDoGatilho(gatilho),
+        );
+      }
+      // Revisao final da AG3 (achado 15, D-8): o pedido de consulta para
+      // outra pessoa adulta ("para minha mae", "pro meu marido") passa para
+      // a equipe antes do modelo, com o motivo do banco e sem gatilho (o
+      // CHECK de gatilho_entrada nao muda). Filho e filha seguem pela regra
+      // do menor. AG6b: nos textos, nas transcricoes e nas legendas.
+      if (
+        pedidoDeConsultaParaOutraPessoa(
+          entradas
+            .filter((e) => e.tipo === "texto")
+            .map((e) => e.texto),
+        )
+      ) {
+        trilha.push({
+          tipo: "outro",
+          texto: "A mensagem foi conferida antes de chegar ao assistente.",
+        });
+        return escalar(
+          "consulta_para_outra_pessoa",
+          "portao",
+          null,
+          ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.consulta_para_outra_pessoa,
+        );
+      }
+      return null;
+    };
+    const doPortao = passarPeloPortao();
+    if (doPortao !== null) {
+      return doPortao;
     }
-    // Revisao final da AG3 (achado 15, D-8): o pedido de consulta para outra
-    // pessoa adulta ("para minha mae", "pro meu marido") passa para a equipe
-    // antes do modelo, com o motivo do banco e sem gatilho (o CHECK de
-    // gatilho_entrada nao muda). Filho e filha seguem pela regra do menor.
-    if (
-      pedidoDeConsultaParaOutraPessoa(
-        pendentes
-          .filter((m) => (m.tipo ?? "texto") === "texto")
-          .map((m) => m.textoOriginal ?? m.texto),
-      )
-    ) {
-      trilha.push({
-        tipo: "outro",
-        texto: "A mensagem foi conferida antes de chegar ao assistente.",
-      });
-      return escalar(
-        "consulta_para_outra_pessoa",
-        "portao",
-        null,
-        ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.consulta_para_outra_pessoa,
-      );
-    }
+    // [AG6b mídia] fim
 
     // 2. Configuracao.
     const { cliente, modelo } = entrada;
@@ -1388,15 +2369,44 @@ async function turnoDoAgente(
       return falhar("sem_identificador");
     }
 
+    // [AG6b mídia] início
+    // 2b. A transcricao dos audios a transcrever (a porta le o arquivo,
+    // prepara, chama a transcricao e grava a leitura) e, 1c, o portao de
+    // novo com o texto transcrito: a urgencia falada primeiro (a passagem
+    // com o motivo urgencia marca no banco), depois os outros; o audio sem
+    // fala ou fora da regra escala como midia.
+    const aTranscrever = pendentesDoTurno().filter(
+      (m) => m.midia?.situacao === "a_transcrever",
+    );
+    if (aTranscrever.length > 0) {
+      const transcricao = await transcreverAsPendentes(aTranscrever);
+      if (transcricao !== null) {
+        return transcricao;
+      }
+      const doPortaoDeNovo = passarPeloPortao();
+      if (doPortaoDeNovo !== null) {
+        return doPortaoDeNovo;
+      }
+    }
+    // [AG6b mídia] fim
+
     // 3. Classificador de entrada. AG3 (LGPD): com a carteirinha em jogo,
     // o codigo curto que a minimizacao deixa passar nao vai ao
     // classificador, ao agente nem ao verificador (o servidor acha a
     // carteirinha no texto original: registrar_dados_do_paciente).
+    // [AG6b mídia] O turno com a transcricao e com a legenda do arquivo a
+    // ler (vistaDaLegenda): a carteirinha falada ou escrita na legenda
+    // tambem conta.
     const opcoesDoTexto: OpcoesDoTextoParaOsModelos = {
-      esconderCodigos: esconderCodigosNoTurno(entrada),
+      esconderCodigos: esconderCodigosNoTurno({
+        mensagens: mensagensDoTurno.map(vistaDaLegenda),
+        atendimento: entrada.atendimento ?? null,
+      }),
     };
-    const textosPendentes = pendentes.map((m) =>
-      textoParaOsModelos(m, opcoesDoTexto),
+    // [AG6b mídia] As transcricoes e as legendas (mascaradas) vao ao
+    // classificador e ao verificador; a midia sem leitura, como texto vazio.
+    const textosPendentes = pendentesDoTurno().map((m) =>
+      textoParaOsModelos(vistaDaLegenda(m), opcoesDoTexto),
     );
     // Revisao curta das correcoes da AG3 (achado 1, ALTO, CFM): o
     // classificador le o texto SEM mascara de nome e de nascimento. A
@@ -1468,6 +2478,18 @@ async function turnoDoAgente(
       return falhar(ehMotivoDaFalha(motivo) ? motivo : "desconhecida");
     }
 
+    // [AG6b mídia] início
+    // 3b. O leitor de midia: so DEPOIS do portao e do classificador lerem a
+    // legenda (o arquivo nao sai quando a legenda ja passou a conversa).
+    const doLeitor = await lerOsArquivosPendentes();
+    if (doLeitor !== null) {
+      return doLeitor;
+    }
+    // A agenda le a transcricao e a legenda do pedido (o "sim" falado, D-97;
+    // o nome e o nascimento ditos, D-57; nunca a descricao do arquivo).
+    atualizarAgenda(mensagensDoTurno);
+    // [AG6b mídia] fim
+
     // 4. O agente.
     const ferramentas: FunctionTool[] = ferramentasDaChamada(entrada.config);
     const permitidas: ReadonlySet<string> = new Set(
@@ -1514,7 +2536,8 @@ async function turnoDoAgente(
       });
     }
     const historico: ResponseInputItem[] = historicoParaOModelo(
-      entrada.mensagens,
+      // [AG6b mídia] as mensagens do turno (a midia lida aplicada)
+      mensagensDoTurno,
       opcoesDoTexto,
     );
     const precosDoTurno: number[] = [];
@@ -1997,6 +3020,9 @@ async function turnoDoAgente(
             ? ferramentasDoTurno
             : [...ferramentasDoTurno, doEstado],
         respostasDaBase,
+        // [AG6b mídia] Os pedidos lidos na conversa (so os nomes do
+        // Cadastro), para o resumo dos fatos do verificador.
+        pedidos: pedidosDoTurno(mensagensDoTurno, entrada.catalogo),
       });
     } catch {
       log.warn("ia_agente_fatos_falharam", {

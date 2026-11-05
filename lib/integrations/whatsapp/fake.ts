@@ -177,17 +177,14 @@ export class FakeProvider implements WhatsAppProvider {
   async downloadMedia(
     _ref: InstanceRef,
     waMessageId: string,
-    options: { transcribe?: boolean } = {},
   ): Promise<MediaDownloadResult> {
     // Conteudo deterministico para os testes: um "arquivo" pequeno cujo texto
-    // carrega o id, e transcricao quando pedida.
+    // carrega o id. [AG6b mídia] Sem transcricao (o provedor nunca
+    // transcreve; AG6b, D-56 e D-94).
     return {
       ok: true,
       base64: Buffer.from(`fake-midia:${waMessageId}`).toString("base64"),
       mimetype: "audio/mpeg",
-      transcript: options.transcribe
-        ? `Transcrição de teste da mensagem ${waMessageId}`
-        : null,
     };
   }
 }

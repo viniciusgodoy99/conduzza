@@ -24,8 +24,30 @@ import {
   type FalhaDoAgente,
   type ResultadoDoTurno,
 } from "@/lib/agente/laco";
+// [AG6 urgência] início
+import {
+  mensagensPendentes,
+  PASSO_DA_CONFERENCIA_DA_ENTRADA,
+  PASSO_DA_URGENCIA,
+  type MensagemDaConversa,
+} from "@/lib/agente/laco";
+import { detectarUrgencia } from "@/lib/domain/conformidade/urgencia";
+// [AG6 urgência] fim
+// [AG6 passagem] início
+import {
+  motivoPodeAtribuir,
+  pedirAtribuicaoNaPassagem,
+  type RegrasDaPassagem,
+} from "@/lib/domain/agente/config";
+// [AG6 passagem] fim
 import { VERSAO_DO_PROMPT } from "@/lib/agente/prompt";
 import { lerPrecos } from "@/lib/agente/uso";
+// [AG6 passagem] início
+import {
+  atribuirConversaPassadaPelaIa,
+  PRAZO_DA_TRAVA_MS,
+} from "@/lib/agente/whatsapp";
+// [AG6 passagem] fim
 import {
   anotarPassagemParaAEquipe,
   conferirTravaDoWhatsapp,
@@ -101,6 +123,56 @@ import {
 } from "@/lib/integrations/whatsapp/send";
 import { log } from "@/lib/log";
 
+// [AG6b mídia] início
+import { mascararNome } from "@/lib/agente/historico";
+import {
+  entradaDoPortao,
+  hojeNoFuso,
+  RESERVA_DO_AGENTE_DEPOIS_DA_MIDIA_MS,
+  RESERVA_DO_FILTRO_MS,
+} from "@/lib/agente/laco";
+import { PRAZO_DO_CLASSIFICADOR_NO_PORTAO_MS } from "@/lib/domain/conformidade/prazo";
+import {
+  INTERVALO_DA_ESPERA_MS,
+  itensDoCatalogo,
+  lerLeiturasDoTurno,
+  midiaNaoLida,
+  planejarMidiasDoTurno,
+  portaDaMidiaDoWhatsapp,
+  semEspera,
+  telefoneLiberadoParaMidia,
+  type PlanoDaMidia,
+  type PortaDaMidia,
+} from "@/lib/agente/midia";
+import {
+  comPrecoDaTranscricao,
+  lerPrecoDaTranscricao,
+  linhasDoUso,
+  type PrecoDoModelo,
+} from "@/lib/agente/uso";
+import {
+  detectarGatilhosDeEntrada,
+  pedidoDeConsultaParaOutraPessoa,
+} from "@/lib/domain/conformidade/gatilhos-de-entrada";
+import {
+  lerArquivoComOModelo,
+  PRAZO_DO_LEITOR_MS,
+  TETO_DE_TOKENS_POR_IMAGEM,
+  TETO_DE_TOKENS_POR_PAGINA,
+} from "@/lib/integrations/llm/leitor-de-midia";
+import {
+  modeloDaTranscricao,
+  PRAZO_DA_TRANSCRICAO_MS,
+  TRANSCRICAO_CALIBRADA,
+  transcreverAudio,
+  VERSAO_DA_TRANSCRICAO,
+} from "@/lib/integrations/llm/transcricao";
+import {
+  lerArquivoParaAIa,
+  PRAZO_DO_ARQUIVO_NO_STORAGE_MS,
+} from "@/lib/integrations/storage/arquivo-para-a-ia";
+// [AG6b mídia] fim
+
 import { ErroComCodigoDeJob } from "./erro-de-job";
 import type { Job, ResultadoDeJob } from "./worker";
 
@@ -127,6 +199,15 @@ import type { Job, ResultadoDeJob } from "./worker";
 //     Onda 2: quantas vezes a IA ja respondeu fora do assunto na janela
 //     (P5b) e se ela ja respondeu na janela (o aviso de assistente virtual,
 //     P11a); o tipo do contato (lead ou paciente, item 4) vai ao prompt.
+//  7c. [AG6 urgência] A urgencia (AG6a, D-51 e D-52): o sinal de emergencia
+//     da lista deterministica nos textos originais das pendentes e na
+//     legenda da midia (cada um sozinho e a juncao deles, na ordem), ANTES
+//     do teto e da reserva: decisao, passagem sem atribuir (a marca
+//     Urgente) e a frase de sempre, sem modelo nenhum. A marca que nao
+//     gravou (urgente falso) deixa o aviso no log, so com ids e o codigo.
+//     [AG6b mídia] RR2 de 88e9560: de novo depois do plano da midia (7d),
+//     com a transcricao ja gravada que o plano aplicou como texto (o job
+//     repetido), ainda antes do teto e da reserva.
 //  8. Teto de respostas da conversa na ultima hora.
 //  9. Reserva do custo maximo do turno (origem whatsapp).
 //  8b. (AG3) O estado do atendimento (ler_atendimento_da_ia, pelo job):
@@ -135,7 +216,11 @@ import type { Job, ResultadoDeJob } from "./worker";
 //     sem chamar o modelo). E o nascimento informado na conversa (so para a
 //     idade atendida do profissional, nunca para o modelo).
 // 10. O turno (portao, classificador, agente, filtro), com a trava do
-//     WhatsApp entre as rodadas e o prazo da invocacao menos o envio. As
+//     WhatsApp entre as rodadas e o prazo da invocacao menos o envio (e as
+//     gravacoes; RR2 de 88e9560: o instante contado antes do passo 8b, que
+//     o laco recebe em prazoEmMs, com as idas ao banco dentro dele; o minimo
+//     conferido de novo logo antes do laco: abaixo dele, a fila, com a
+//     reserva solta). As
 //     ferramentas de agenda (E4) gravam pelas RPCs com o id DESTE job
 //     (portaDaAgendaDoWhatsapp): repetir o job devolve a mesma reserva e a
 //     mesma consulta, nunca uma segunda.
@@ -157,6 +242,16 @@ import type { Job, ResultadoDeJob } from "./worker";
 //     passagem para a equipe e a frase fixa (tentativa unica), ou nada.
 //     Erro na passagem nunca e engolido: o turno fica onde esta e o job
 //     tenta de novo (a retentativa passa e manda a frase).
+// 13b. [AG6 passagem] Depois da tentativa da frase (saiu ou nao), a conversa
+//     que este job passou COM a frase vai ao responsavel do lead quando a
+//     regra da versao publicada pede e o motivo pode atribuir
+//     (atribuir_conversa_passada_pela_ia; contrato do banco, Revisao R1.3).
+//     Revisao R2: a urgencia, o fora do horario, o sintoma, o assunto
+//     clinico, a midia e a conformidade nunca atribuem (a chamada nem sai),
+//     e o banco recusa tambem com mensagem_nova (o paciente escreveu o que o
+//     job nao leu). Nunca antes da frase: a guarda do envio so deixa a frase
+//     sair com a conversa na fila sem responsavel. Recusa ou erro: a fila,
+//     so o log.
 //
 // REGRA ABSOLUTA: nenhum texto (do paciente, da resposta, do rascunho) em
 // log. So ids, codigos e medidas.
@@ -172,6 +267,74 @@ export const RESERVA_DO_ENVIO_MS = 14_000;
 export const RESERVA_DAS_GRAVACOES_MS = 3_000;
 /** Abaixo disto de prazo para o turno, nem comeca: volta para a fila. */
 export const PRAZO_MINIMO_DO_TURNO_MS = 20_000;
+// [AG6b mídia] início
+/**
+ * AG6b (desenho 5.1): com audio a transcrever ou arquivo a ler, o turno
+ * precisa de mais prazo (a transcricao e o leitor vem antes do agente e do
+ * filtro). PROPOSTA, a calibrar na prova paga (D-100). Abaixo: volta para a
+ * fila, sem custo (orcamento_da_passagem).
+ *
+ * Revisao da AG6b, a conta (era 30 s, e so a transcricao, o classificador e
+ * a reserva do verificador no pior caso davam 30,5 s):
+ *  - o que a midia nunca usa (lib/agente/laco.ts, prazoParaAMidia): a
+ *    reserva do filtro (10 s), a janela minima do agente (3 s) e, no audio,
+ *    o classificador que vem depois da transcricao (8 s): 21 s
+ *    (TURNO_SEM_A_MIDIA_MS). No arquivo o classificador roda ANTES do leitor
+ *    e gasta do mesmo turno ate os mesmos 8 s: a conta e a mesma;
+ *  - o modelo da midia no pior caso: 12 s de prazo (PRAZO_DA_TRANSCRICAO_MS
+ *    e PRAZO_DO_LEITOR_MS, propostas) mais os cortes em ordem: o corte duro
+ *    da integracao (a folga dela, 0,5 s), a margem e a fatia da gravacao da
+ *    leitura antes do corte da porta (MARGEM_ENTRE_OS_CORTES_MS, 0,5 s, e
+ *    RESERVA_DA_GRAVACAO_DA_LEITURA_MS, 1,5 s; lib/agente/midia.ts) e o
+ *    corte do laco (FOLGA_DO_CORTE_DA_MIDIA_MS, 0,5 s): 15 s;
+ *  - 21 + 15 = 36 s. Revisao da juncao (30/10/2026): era 35 s, com o corte
+ *    duro da integracao caindo junto com o do laco e DEPOIS do da porta (a
+ *    porta cortava primeiro e o resultado da integracao, com a nova
+ *    tentativa dela, se perdia). Segunda rodada (R3 de d1a15f6, 1): a fatia
+ *    da gravacao da leitura (1,5 s) sai do prazo da integracao, e o minimo
+ *    continua 36 s. No minimo exato o Storage sai do prazo da integracao
+ *    (com 1,5 s de Storage, a transcricao tem 10,5 s); a integracao com os
+ *    12 s inteiros e 1,5 s de Storage pede 37,5 s, e o maior turno (38 s)
+ *    da os 12 s com ate 2 s de Storage.
+ * A MARGEM DE 2 s ANTES DO TURNO (R3 de d1a15f6, 5), a medir na prova paga
+ * (D-100): o turno com midia so comeca com 36 s, e o maior turno possivel e
+ * 38 s (os 55 s da invocacao menos os 14 s do envio e os 3 s das
+ * gravacoes). Tudo o que vem antes da conta do prazo do turno na invocacao
+ * (o claim, o historico, o plano da midia e o teto) tem de caber nos 2 s do
+ * comeco dela; senao o job volta para a fila (orcamento_da_passagem). RR2
+ * de 88e9560 (baixo 6): o que vem DEPOIS da conta e antes do laco (os
+ * precos e o catalogo sem midia, o estado, o nascimento, a reserva e o
+ * turno) sai do prazo do turno (o laco recebe o instante, prazoEmMs), nunca
+ * da reserva das gravacoes nem da do envio; e (rev4) o minimo e conferido
+ * de novo logo antes do laco: abaixo dele, o job volta para a fila sem
+ * custo (a reserva solta). Essas idas cabem, entao, na sobra do turno acima
+ * do minimo (no maior turno, os mesmos 2 s, menos o que veio antes da
+ * conta). Se esses 2 s bastam, e se o minimo fica em 36 s, so a prova paga
+ * diz. O minimo nunca pode passar do maior turno (o turno com midia nunca
+ * comecaria).
+ * O que NAO cabe, e depende da prova paga (medir o Storage e o modelo e
+ * baixar os prazos) ou de subir o maxDuration da rota da IA (decisao de
+ * infraestrutura, desenho 12): o Storage no pior caso proposto (8 s) junto
+ * com o modelo no pior caso, 44 s; e audio e arquivo no mesmo turno. Nesses
+ * casos a midia e cortada no prazo dela (falha fechada, a frase de sempre),
+ * sem pagar o agente, e a reserva das gravacoes e a do envio ficam
+ * inteiras. O classificador so fica sem pagar quando o corte e no audio (a
+ * transcricao vem antes dele, no 2b); no arquivo, sozinho ou com o audio no
+ * mesmo turno, o classificador ja rodou (e foi pago) quando o leitor (3b)
+ * falha por prazo.
+ */
+export const PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS = 36_000;
+/**
+ * Revisao da AG6b: a parte do turno que a midia nunca usa no pior caso (a
+ * conta de cima, para o teste conferir que o minimo cobre o modelo da
+ * midia no pior caso, com a fatia da gravacao, e cabe no maior turno
+ * possivel).
+ */
+export const TURNO_SEM_A_MIDIA_MS =
+  RESERVA_DO_FILTRO_MS +
+  RESERVA_DO_AGENTE_DEPOIS_DA_MIDIA_MS +
+  PRAZO_DO_CLASSIFICADOR_NO_PORTAO_MS;
+// [AG6b mídia] fim
 const UMA_HORA_MS = 60 * 60_000;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -197,7 +360,38 @@ export type DependenciasDoExecutorDaIa = {
   executarTurno: typeof executarTurnoDoAgente;
   enviarResposta: typeof enviarRespostaDaIa;
   enviarFrase: typeof enviarFraseFixaDaIa;
+  // [AG6b mídia] início
+  /**
+   * AG6b: a midia do turno (a calibragem, os tetos, o modelo da transcricao
+   * e a porta). Ausente: nenhuma midia sai (todo audio, foto e documento
+   * continua passando para a equipe, como antes da AG6b).
+   */
+  midia?: DependenciasDaMidiaDoTurno;
+  // [AG6b mídia] fim
 };
+
+// [AG6b mídia] início
+/** AG6b: o que o executor precisa para a midia do turno. */
+export type DependenciasDaMidiaDoTurno = {
+  /** TRANSCRICAO_CALIBRADA (a prova paga, D-100). */
+  transcricaoCalibrada: boolean;
+  /** Os tetos de tokens do leitor medidos na prova (nulos: nao le). */
+  tetosDoLeitor: { imagem: number | null; pagina: number | null };
+  /** O modelo da transcricao (IA_MODELO_TRANSCRICAO; null: fora da lista). */
+  modeloDaTranscricao: string | null;
+  /** O modelo do leitor (IA_MODELO_VERIFICADOR; null: fora da lista). */
+  modeloDoLeitor: string | null;
+  /** A porta da midia deste turno (o job, a posse e o HMAC do contato). */
+  criarPorta: (entrada: {
+    clinicId: string;
+    conversationId: string;
+    jobId: string;
+    workerId: string;
+    identificador: string | null;
+    mascarar: (texto: string) => string;
+  }) => PortaDaMidia;
+};
+// [AG6b mídia] fim
 
 /**
  * incluirClinicasDeTeste existe so para as suites (clinica e_de_teste com
@@ -219,14 +413,22 @@ export function dependenciasPadraoDaIa(entrada: {
   prazoFinalMs: number;
 }): DependenciasDoExecutorDaIa {
   const env = process.env;
-  let cliente: ClienteDoAgente | null | undefined;
-  const clienteDoAgente = (): ClienteDoAgente | null => {
+  // [AG6b mídia] O cliente inteiro (a transcricao usa audio; o agente,
+  // responses): o mesmo cliente e a mesma chave (D-94).
+  let cliente: ReturnType<typeof clienteOpenAiDoAmbiente> | undefined;
+  const clienteDoAgente = (): ReturnType<typeof clienteOpenAiDoAmbiente> => {
     if (cliente === undefined) {
       cliente = clienteOpenAiDoAmbiente(env);
     }
     return cliente;
   };
   const modeloDosClassificadores = modeloDoVerificador(env);
+  // [AG6b mídia] Revisao R3 de d1a15f6 (2): os tetos do leitor numa fonte
+  // so, para o plano, a reserva, o corte do laco e a porta.
+  const tetosDoLeitor = {
+    imagem: TETO_DE_TOKENS_POR_IMAGEM,
+    pagina: TETO_DE_TOKENS_POR_PAGINA,
+  };
   return {
     admin: entrada.admin,
     // Sem a lista: nenhuma clinica passa (falha fechada). A lista vem do
@@ -253,6 +455,74 @@ export function dependenciasPadraoDaIa(entrada: {
     executarTurno: executarTurnoDoAgente,
     enviarResposta: enviarRespostaDaIa,
     enviarFrase: enviarFraseFixaDaIa,
+    // [AG6b mídia] início
+    midia: {
+      transcricaoCalibrada: TRANSCRICAO_CALIBRADA,
+      tetosDoLeitor,
+      modeloDaTranscricao: modeloDaTranscricao(env),
+      modeloDoLeitor: modeloDosClassificadores,
+      criarPorta: (e) =>
+        portaDaMidiaDoWhatsapp(entrada.admin, {
+          clinicId: e.clinicId,
+          conversationId: e.conversationId,
+          jobId: e.jobId,
+          workerId: e.workerId,
+          mascarar: e.mascarar,
+          // Revisao da AG6b: o Storage nunca recebe mais que o prazo dele
+          // (a porta ja corta em PRAZO_MAXIMO_DO_STORAGE_MS; aqui de novo,
+          // com a constante da integracao) e recebe o sinal do corte.
+          lerArquivo: (a) =>
+            lerArquivoParaAIa(entrada.admin, {
+              clinicId: e.clinicId,
+              messageId: a.messageId,
+              mediaUrl: a.mediaUrl,
+              maximoDeBytes: a.maximoDeBytes,
+              prazoMs: Math.min(PRAZO_DO_ARQUIVO_NO_STORAGE_MS, a.prazoMs),
+              sinal: a.sinal,
+            }),
+          transcrever: (t) =>
+            transcreverAudio({
+              cliente: clienteDoAgente(),
+              modelo: modeloDaTranscricao(env),
+              bytes: t.bytes,
+              segundosMedidos: t.segundosMedidos,
+              prazoMs: Math.min(PRAZO_DA_TRANSCRICAO_MS, t.prazoMs),
+              ids: {
+                clinicId: e.clinicId,
+                conversationId: e.conversationId,
+                jobId: e.jobId,
+                messageId: t.messageId,
+              },
+              // Revisao da AG6b (a juncao): o sinal do corte da porta e do
+              // laco; a requisicao nao fica rodando depois deles.
+              sinal: t.sinal,
+            }),
+          lerComOModelo: (l) =>
+            lerArquivoComOModelo({
+              cliente: clienteDoAgente(),
+              modelo: modeloDosClassificadores,
+              identificadorDeSeguranca: e.identificador,
+              arquivo: l.arquivo,
+              catalogo: l.catalogo,
+              prazoMs: Math.min(PRAZO_DO_LEITOR_MS, l.prazoMs),
+              ids: {
+                clinicId: e.clinicId,
+                conversationId: e.conversationId,
+                jobId: e.jobId,
+                messageId: l.messageId,
+                midia: l.midia,
+              },
+              // Revisao da AG6b: o sinal do corte da porta e do laco.
+              sinal: l.sinal,
+            }),
+          versaoDaTranscricao: VERSAO_DA_TRANSCRICAO,
+          modeloDoLeitor: modeloDosClassificadores ?? "desconhecido",
+          // Revisao da AG6b: a estimativa da chamada cortada.
+          modeloDaTranscricao: modeloDaTranscricao(env),
+          tetosDoLeitor,
+        }),
+    },
+    // [AG6b mídia] fim
   };
 }
 
@@ -282,6 +552,24 @@ type Contexto = {
   workerId: string;
   clinicId: string;
   conversationId: string;
+  // [AG6 passagem] início
+  /**
+   * AG6a: para quem vai a conversa, da versao publicada que este turno leu
+   * (passo 6). Ausente: ainda nao lida (a retomada le depois da frase, so
+   * quando o motivo pode atribuir). Nulo: a leitura falhou (a fila, o lado
+   * seguro).
+   */
+  regras?: RegrasDaPassagem | null;
+  // [AG6 passagem] fim
+  // [AG6b mídia] início
+  /**
+   * AG6b (D-96): o turno leu midia do paciente que o assistente nao leu
+   * (sem leitura, sem fala, video): a atribuicao nem e pedida (o banco
+   * recusa de qualquer jeito, midia_nao_lida). Ausente: nao se sabe (a
+   * retomada; o banco decide).
+   */
+  midiaNaoLida?: boolean;
+  // [AG6b mídia] fim
 };
 
 const CONCLUIR: ResultadoDeJob = { ok: true };
@@ -416,7 +704,9 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
 
   // Retomadas que nao chamam o modelo.
   if (turnoAtual?.estado === "passou_para_equipe") {
-    return retomarAvisoDaFrase(c);
+    // [AG6 passagem] início
+    return retomarAPassagem(c, turnoAtual);
+    // [AG6 passagem] fim
   }
   if (turnoAtual?.estado === "decidido") {
     return retomarDecidido(c, turnoAtual, conversa);
@@ -488,6 +778,11 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
   if (config === null) {
     return passarSemFrase(c, turnoAtual, "sem_versao_publicada");
   }
+  // [AG6 passagem] início
+  // A regra da passagem da versao publicada lida agora (a atribuicao so
+  // vale nas passagens com a frase; o banco confere de novo).
+  c.regras = config.regras;
+  // [AG6 passagem] fim
   const agoraMs = c.deps.agora();
   if (config.horario.modo === "fallback") {
     return passarSemFrase(c, turnoAtual, "horario_nao_suportado");
@@ -541,6 +836,127 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
     whatsappAccountId: conversa.whatsapp_account_id,
   };
 
+  // [AG6 urgência] início
+  // 7c. A urgencia (AG6a, D-51 e D-52): a lista deterministica de sinais de
+  // emergencia nos textos ORIGINAIS das pendentes, ANTES do teto de
+  // respostas, da reserva do gasto e de qualquer modelo. Achou: a decisao
+  // (escalou, urgencia, origem portao, sem uso), a passagem SEM atribuir (o
+  // banco marca a conversa como Urgente) e a frase de sempre.
+  if (urgenciaNasPendentes(historico.mensagens)) {
+    return passarPorUrgencia(c, base, destino, config);
+  }
+  // [AG6 urgência] fim
+
+  // [AG6b mídia] início
+  // 7d. O plano da midia (desenho 5.1): so com midia do paciente no
+  // recorte. O portao do aviso (midia_da_ia_liberada, D-95), as leituras ja
+  // gravadas (o job repetido nunca chama o modelo de novo), o preco por
+  // minuto da transcricao e o catalogo; a situacao de cada midia pendente
+  // (lib/agente/midia.ts). Arquivo ainda baixando, dentro de 90 s: antes de
+  // esperar, o portao nos textos (a midia que baixa como texto vazio); se
+  // ele escala, segue sem esperar (o laco escala no 1a); senao, volta em
+  // 15 s, sem estado e sem reserva.
+  c.midiaNaoLida = mensagensPendentes(historico.mensagens).some(midiaNaoLida);
+  let mensagensDoTurno = historico.mensagens;
+  let plano: PlanoDaMidia | null = null;
+  let precosDaMidia: PrecoDoModelo[] | null = null;
+  let catalogoDaMidia: Awaited<
+    ReturnType<typeof carregarCatalogoDoAgente>
+  > | null = null;
+  if (historico.mensagens.some((m) => m.midia !== undefined)) {
+    const [precosLidos, catalogoLido] = await Promise.all([
+      lerOuFalhar(() => lerPrecos(admin)),
+      lerOuFalhar(() => carregarCatalogoDoAgente(admin, clinicId)),
+    ]);
+    const midiaDeps = c.deps.midia;
+    const modeloDoAudio = midiaDeps?.modeloDaTranscricao ?? null;
+    const [liberado, leituras, porMinuto] = await Promise.all([
+      telefoneLiberadoParaMidia(admin, { clinicId, telefone }),
+      lerLeiturasDoTurno(admin, {
+        clinicId,
+        conversationId: c.conversationId,
+        messageIds: historico.mensagens.flatMap((m) =>
+          m.midia === undefined ? [] : [m.midia.messageId],
+        ),
+      }),
+      modeloDoAudio === null
+        ? Promise.resolve(null)
+        : lerPrecoDaTranscricao(admin, modeloDoAudio),
+    ]);
+    precosDaMidia =
+      modeloDoAudio === null
+        ? precosLidos
+        : comPrecoDaTranscricao(precosLidos, modeloDoAudio, porMinuto);
+    catalogoDaMidia = catalogoLido;
+    const modeloDoLeitor = midiaDeps?.modeloDoLeitor ?? null;
+    plano = planejarMidiasDoTurno(
+      {
+        mensagens: historico.mensagens,
+        pendentes: historico.pendentes,
+        habilidades: config.habilidades,
+        telefoneLiberado: midiaDeps !== undefined && liberado,
+        leituras,
+        transcricaoComPreco:
+          modeloDoAudio !== null && (porMinuto ?? 0) > 0,
+        transcricaoCalibrada: midiaDeps?.transcricaoCalibrada === true,
+        leitorPronto:
+          midiaDeps !== undefined &&
+          modeloDoLeitor !== null &&
+          precosDaMidia.some((p) => p.modelo === modeloDoLeitor),
+        catalogo: itensDoCatalogo(catalogoLido),
+        mascarar: (texto) => mascararNome(texto, contato.name),
+        agoraMs,
+      },
+      midiaDeps?.tetosDoLeitor ?? { imagem: null, pagina: null },
+    );
+    mensagensDoTurno = plano.mensagens;
+    c.midiaNaoLida = plano.midiaNaoLida;
+    // RR2 de 88e9560 (medio 3): o 7c de novo, com a transcricao JA GRAVADA
+    // que o plano aplicou como texto (o job repetido depois da excecao, da
+    // posse perdida ou da invocacao que morreu; so com a habilidade e o
+    // aviso valendo agora). A urgencia no texto mantido passa a conversa
+    // ANTES do teto de respostas, da reserva e da leitura do estado, como no
+    // 7c: o teto do dia que a reserva perdida da tentativa anterior encheu
+    // nunca segura a marca Urgente. A urgencia so do texto descartado nunca
+    // foi gravada: o laco transcreve de novo e acha de novo.
+    if (urgenciaNasPendentes(mensagensDoTurno)) {
+      return passarPorUrgencia(c, base, destino, config);
+    }
+    if (plano.esperar) {
+      const pendentesNaEspera = mensagensPendentes(mensagensDoTurno).map((m) =>
+        m.midia?.situacao === "baixando"
+          ? { tipo: "texto", texto: "" }
+          : entradaDoPortao(m),
+      );
+      const escala =
+        detectarGatilhosDeEntrada({
+          mensagens: pendentesNaEspera,
+          dataDeNascimento: contato.birth_date,
+          // Revisao da AG6b: a data de hoje no fuso da clinica, a mesma do
+          // portao do laco (o menor pelo nascimento nao espera o download).
+          hojeNaClinica: hojeNoFuso(agoraMs, fuso),
+        }).length > 0 ||
+        pedidoDeConsultaParaOutraPessoa(
+          pendentesNaEspera
+            .filter((e) => e.tipo === "texto")
+            .map((e) => e.texto),
+        );
+      if (!escala) {
+        log.info("ia_esperando_midia", idsDoLog(c));
+        return {
+          reagendar: new Date(
+            c.deps.agora() + INTERVALO_DA_ESPERA_MS,
+          ).toISOString(),
+          motivo: "esperando_midia",
+        };
+      }
+      mensagensDoTurno = semEspera(mensagensDoTurno);
+    }
+  }
+  const comMidiaParaOModelo =
+    plano !== null && (plano.aTranscrever > 0 || plano.aLer.length > 0);
+  // [AG6b mídia] fim
+
   // 8. Teto de respostas da conversa na ultima hora.
   const teto = await tetoDeRespostasPorHora(admin, clinicId);
   if (teto !== null) {
@@ -558,18 +974,37 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
   // turno para antes do prazo da invocacao menos o envio E as gravacoes
   // depois dele (acerto, decisao, rascunho, turno, passagem): o turno que
   // vai ate o fim ainda passa e manda a frase (CLAUDE.md 3.2).
+  // RR2 de 88e9560 (baixo 6): o prazo conta DESTE instante, e o laco recebe
+  // o instante em que ele acaba (prazoEmMs, no mesmo relogio): as idas ao
+  // banco daqui ate o laco (os precos e o catalogo, o estado, o nascimento,
+  // a reserva e o turno) saem do prazo do turno, nunca da reserva das
+  // gravacoes nem da do envio. Antes o laco contava do proprio comeco.
+  const contaDoTurnoDesde = c.deps.agora();
   const prazoDoTurno = Math.min(
     PRAZO_DO_TURNO_MS,
-    restanteMs(c) - RESERVA_DO_ENVIO_MS - RESERVA_DAS_GRAVACOES_MS,
+    c.deps.prazoFinalMs -
+      contaDoTurnoDesde -
+      RESERVA_DO_ENVIO_MS -
+      RESERVA_DAS_GRAVACOES_MS,
   );
-  if (prazoDoTurno < PRAZO_MINIMO_DO_TURNO_MS) {
+  const prazoDoTurnoEm = contaDoTurnoDesde + prazoDoTurno;
+  // [AG6b mídia] Com midia para o modelo, o prazo minimo e o da midia.
+  const prazoMinimoDoTurno = comMidiaParaOModelo
+    ? PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS
+    : PRAZO_MINIMO_DO_TURNO_MS;
+  if (prazoDoTurno < prazoMinimoDoTurno) {
     return { reagendar: agoraIso(c), motivo: "orcamento_da_passagem" };
   }
 
-  const [precos, catalogo] = await Promise.all([
-    lerOuFalhar(() => lerPrecos(admin)),
-    lerOuFalhar(() => carregarCatalogoDoAgente(admin, clinicId)),
-  ]);
+  // [AG6b mídia] Os precos (com o da transcricao) e o catalogo ja lidos no
+  // plano da midia, ou lidos agora.
+  const [precos, catalogo] =
+    precosDaMidia !== null && catalogoDaMidia !== null
+      ? [precosDaMidia, catalogoDaMidia]
+      : await Promise.all([
+          lerOuFalhar(() => lerPrecos(admin)),
+          lerOuFalhar(() => carregarCatalogoDoAgente(admin, clinicId)),
+        ]);
 
   // 8b. (AG3) O estado do atendimento desta janela, pelo job.
   const leitura = await lerAtendimentoDaIa(admin, {
@@ -610,11 +1045,14 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
   // 9. A reserva do custo maximo (so quando o modelo pode ser chamado: sem
   // cliente, modelo ou identificador o laco falha antes de qualquer chamada).
   let reservaId: string | null = null;
+  // [AG6b mídia] O que foi reservado (para o log do uso acima da reserva).
+  let reservado: number | null = null;
   if (cliente !== null && modelo !== null && identificador !== null) {
     const custoMaximo = custoMaximoDoTurno({
       config,
       catalogo,
-      mensagens: historico.mensagens,
+      // [AG6b mídia] as mensagens do turno (com a midia do plano)
+      mensagens: mensagensDoTurno,
       agoraMs,
       fuso,
       modelo,
@@ -628,11 +1066,23 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
         agoraMs,
         fuso,
       }),
+      // [AG6b mídia] a transcricao e o leitor no pior caso (desenho 5.3)
+      midia:
+        plano === null || !comMidiaParaOModelo
+          ? null
+          : {
+              aTranscrever: plano.aTranscrever,
+              modeloDaTranscricao: c.deps.midia?.modeloDaTranscricao ?? "",
+              aLer: plano.aLer,
+              modeloDoLeitor: c.deps.midia?.modeloDoLeitor ?? "",
+            },
     });
     if (custoMaximo === null) {
       log.warn("ia_preco_ausente", idsDoLog(c));
       return falharSemModelo(c, base, destino, config);
     }
+    // [AG6b mídia]
+    reservado = custoMaximo;
     const reserva = await reservarGasto(admin, {
       clinicId,
       origem: "whatsapp",
@@ -652,6 +1102,49 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
   }
   await salvarTurnoComReserva(c, { ...base, reservaId }, precos);
 
+  // RR2 de 88e9560 (rev4): o minimo de novo, logo antes do laco. As idas ao
+  // banco depois da conta (os precos e o catalogo sem midia, o estado, o
+  // nascimento, a reserva e o turno) podem ter deixado o turno abaixo do
+  // minimo, e o laco falharia por prazo (a frase de sempre, com a midia
+  // cortada). Volta para a fila como no primeiro caso e sem custo: a reserva
+  // desta tentativa e solta (o acerto sem uso, como na gravacao do turno que
+  // falha) e fica nas reservas perdidas do turno (so auditoria); a
+  // retentativa reserva de novo. Nada foi lido nem gravado da midia.
+  if (prazoDoTurnoEm - c.deps.agora() < prazoMinimoDoTurno) {
+    if (reservaId !== null) {
+      const solta = await acertarGasto(admin, {
+        reservaId,
+        clinicId,
+        origem: "whatsapp",
+        usos: [],
+        precos,
+        conversationId: c.conversationId,
+        jobId: c.job.id,
+      });
+      log.warn(solta ? "ia_reserva_solta" : "ia_reserva_orfa", {
+        ...idsDoLog(c),
+        status: "prazo_antes_do_laco",
+      });
+    }
+    return { reagendar: agoraIso(c), motivo: "orcamento_da_passagem" };
+  }
+
+  // [AG6b mídia] início
+  // A porta da midia so com audio a transcrever ou arquivo a ler (as
+  // integracoes injetadas; a gravacao com a posse deste job).
+  const portaDaMidia =
+    comMidiaParaOModelo && c.deps.midia !== undefined
+      ? c.deps.midia.criarPorta({
+          clinicId,
+          conversationId: c.conversationId,
+          jobId: c.job.id,
+          workerId: c.workerId,
+          identificador,
+          mascarar: (texto) => mascararNome(texto, contato.name),
+        })
+      : null;
+  // [AG6b mídia] fim
+
   // 10. O turno.
   const inicio = c.deps.agora();
   let resultado: ResultadoDoTurno | null = null;
@@ -663,7 +1156,8 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
       identificadorDeSeguranca: identificador,
       config,
       catalogo,
-      mensagens: historico.mensagens,
+      // [AG6b mídia] as mensagens do turno (com a midia do plano)
+      mensagens: mensagensDoTurno,
       agoraMs,
       fuso,
       verificador: c.deps.criarVerificador(identificador ?? ""),
@@ -696,7 +1190,15 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
       nascimentoInformado,
       modeloDosClassificadores,
       prazoMs: prazoDoTurno,
+      // RR2 de 88e9560 (baixo 6): o instante da conta acima (a mesma
+      // referencia do executor), nao o comeco do laco.
+      prazoEmMs: prazoDoTurnoEm,
       agora: c.deps.agora,
+      // [AG6b mídia]
+      midia: portaDaMidia,
+      // Revisao R3 de d1a15f6 (2): os tetos do leitor do plano e da reserva
+      // tambem no corte da leitura pelo laco (uma fonte so).
+      tetosDoLeitor: c.deps.midia?.tetosDoLeitor,
     });
   } catch {
     // O laco tem a propria rede; isto nao deveria acontecer. A reserva fica
@@ -717,11 +1219,43 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
       conversationId: c.conversationId,
       jobId: c.job.id,
     });
+    // [AG6b mídia] início
+    // Desenho 5.3: o uso real com midia acima da reserva (o pior caso errou
+    // para baixo) vira log, so com a contagem. O teto conta o real.
+    if (comMidiaParaOModelo && reservado !== null) {
+      const real = linhasDoUso({
+        clinicId,
+        origem: "whatsapp",
+        usos: resultado.uso,
+        precos,
+      }).linhas.reduce((soma, linha) => soma + linha.custo_microdolar, 0);
+      if (real > reservado) {
+        log.warn("ia_midia_acima_da_reserva", {
+          ...idsDoLog(c),
+          count: resultado.uso.filter(
+            (u) => u.papel === "transcricao" || u.papel === "leitor_de_midia",
+          ).length,
+        });
+      }
+    }
+    // [AG6b mídia] fim
   }
 
   if (resultado === null) {
     return falharSemModelo(c, { ...base, reservaId }, destino, config);
   }
+  // [AG6b mídia] início
+  // Revisao da AG6b (D-A): a gravacao da leitura da midia disse job_antigo
+  // (alguem assumiu e devolveu depois deste job). O gasto ja foi acertado
+  // acima (a chamada saiu); o resto e o D-A de sempre: so conclui, sem
+  // estado, decisao, passagem, evento, frase nem envio. O job da janela nova
+  // cuida da conversa.
+  if (resultado.jobAntigo === true) {
+    return concluirJobAntigo(c, { ...base, reservaId });
+  }
+  // D-96: o que o turno deixou sem ler (a visao final do laco).
+  c.midiaNaoLida = resultado.midiaNaoLida === true;
+  // [AG6b mídia] fim
 
   // 11a. Revisao final da AG4 (M1 e B1): o turno parou pela mensagem nova
   // da pessoa (mensagem_nova_do_paciente). O estado NAO e gravado (nao
@@ -1418,11 +1952,210 @@ async function falharSemModelo(
   return passarEAvisar(c, destino, "falha_tecnica");
 }
 
+// [AG6 urgência] início
+/**
+ * AG6a (7c): algum texto ORIGINAL das pendentes (o texto do paciente, sem a
+ * mascara do nome, e a legenda que ele escreveu na midia), sozinho ou na
+ * juncao deles na ordem ("to com dor" e "no peito"; revisao de
+ * 28/10/2026), traz um sinal de emergencia da lista deterministica
+ * (urgencia.ts). Local, sem rede; nada vai para log.
+ */
+function urgenciaNasPendentes(
+  mensagens: readonly MensagemDaConversa[],
+): boolean {
+  return (
+    detectarUrgencia(
+      mensagensPendentes(mensagens).map((m) =>
+        (m.tipo ?? "texto") === "texto"
+          ? (m.textoOriginal ?? m.texto)
+          : (m.legendaOriginal ?? null),
+      ),
+    ) !== null
+  );
+}
+
+/**
+ * AG6a (7c): a urgencia, sem modelo nenhum e antes do teto e da reserva. A
+ * decisao (escalou, motivo e gatilho urgencia, origem portao, sem uso) e
+ * gravada ANTES da passagem, como em toda frase; a passagem nunca atribui
+ * (D-54: a fila de todos) e o banco marca a conversa (conversa_urgente). O
+ * contato recebe a frase de SEMPRE (a do 192 e da AG6c). A retomada em
+ * 'decidido' le o motivo urgencia da decisao e passa do mesmo jeito.
+ */
+async function passarPorUrgencia(
+  c: Contexto,
+  turno: TurnoDaIa,
+  destino: Destino,
+  config: ConfigDoAgente,
+): Promise<ResultadoDeJob> {
+  const decisionId = await gravarDecisao(c.admin, {
+    clinicId: c.clinicId,
+    conversationId: c.conversationId,
+    jobId: c.job.id,
+    desfecho: {
+      tipo: "escalou",
+      motivo: "urgencia",
+      gatilho: "urgencia",
+      origem: "portao",
+    },
+    textoSha256: null,
+    filtro: null,
+    trilha: [
+      { tipo: "outro", texto: PASSO_DA_CONFERENCIA_DA_ENTRADA },
+      { tipo: "equipe", texto: PASSO_DA_URGENCIA },
+    ],
+    uso: [],
+    versaoDoPrompt: VERSAO_DO_PROMPT,
+    configVersion: config.versao,
+    latenciaMs: null,
+  });
+  await salvarTurno(c.admin, {
+    ...turno,
+    estado: "decidido",
+    saida: "frase",
+    decisionId,
+  });
+  log.info("ia_turno_decidido", {
+    ...idsDoLog(c),
+    status: "escalou",
+    kind: "urgencia",
+    count: 0,
+  });
+  return passarEAvisar(c, destino, "urgencia");
+}
+// [AG6 urgência] fim
+
+// [AG6 passagem] início
+/**
+ * AG6a: as regras da passagem para pedir a atribuicao. O turno que leu a
+ * versao publicada ja as tem (passo 6); a retomada le agora (a ultima
+ * publicada, a mesma que o banco confere). Leitura que falha: a fila (o lado
+ * seguro; a frase ja foi tentada), com o log.
+ */
+async function regrasParaAPassagem(
+  c: Contexto,
+): Promise<RegrasDaPassagem | null> {
+  if (c.regras !== undefined) {
+    return c.regras;
+  }
+  try {
+    const publicada = await carregarConfigPublicada(c.admin, c.clinicId);
+    c.regras = publicada?.regras ?? null;
+  } catch {
+    c.regras = null;
+    log.warn("ia_regra_da_passagem_nao_lida", idsDoLog(c));
+  }
+  return c.regras;
+}
+
+/**
+ * Abaixo disto de prazo depois da frase, a atribuicao nem e tentada: a
+ * conversa fica na fila (o lado seguro), com o log "sem_tempo".
+ */
+export const PRAZO_MINIMO_DA_ATRIBUICAO_MS = 1_000;
+
+/**
+ * AG6a (contrato do banco, Revisao R1.3): DEPOIS da tentativa da frase (saiu
+ * ou nao, inclusive depois do evento "O aviso automático ao contato não foi
+ * enviado."), a conversa que este job passou COM a frase vai ao responsavel
+ * do lead: so quando o motivo pode atribuir (nunca a urgencia, o fora do
+ * horario e, pela Revisao R2 do contrato do banco, o sintoma, o assunto
+ * clinico, a midia e a conformidade: MOTIVOS_QUE_NUNCA_ATRIBUEM; nesses a
+ * chamada nem sai e a regra nem e lida) e a regra da versao publicada e
+ * "responsavel_do_lead" (pedirAtribuicaoNaPassagem). Quem chama garante que a passagem deste job
+ * devolveu "passou" com a frase (passarEAvisar, os tetos e a falha sem
+ * modelo) ou que o turno ja esta 'passou_para_equipe' com a saida 'frase'
+ * (a retomada); nunca na passagem sem frase nem no "ja_fora_da_ia" (outro
+ * caminho tirou a conversa da IA). O banco confere tudo de novo
+ * (atribuir_conversa_passada_pela_ia). Nunca lanca e nunca muda o resultado
+ * do job: recusa, erro, rede, prazo ou a funcao ausente (PGRST202) so
+ * deixam o log com ids e o codigo, e a conversa fica na fila.
+ */
+async function atribuirDepoisDaFrase(
+  c: Contexto,
+  motivo: MotivoDoEventoDaIa,
+): Promise<void> {
+  if (!motivoPodeAtribuir(motivo)) {
+    return;
+  }
+  if (!pedirAtribuicaoNaPassagem(motivo, await regrasParaAPassagem(c))) {
+    return;
+  }
+  // [AG6b mídia] início
+  // AG6b (D-96): com midia do paciente que o assistente nao leu (o audio que
+  // ninguem ouviu pode ser uma emergencia), a conversa fica na fila de
+  // todos: a chamada nem sai (o banco recusa de qualquer jeito,
+  // midia_nao_lida).
+  if (c.midiaNaoLida === true) {
+    log.info("ia_atribuicao_da_ia", { ...idsDoLog(c), status: "midia_nao_lida" });
+    return;
+  }
+  // [AG6b mídia] fim
+  const restante = restanteMs(c);
+  if (restante < PRAZO_MINIMO_DA_ATRIBUICAO_MS) {
+    log.warn("ia_atribuicao_falhou", {
+      ...idsDoLog(c),
+      error_code: "sem_tempo",
+    });
+    return;
+  }
+  await atribuirConversaPassadaPelaIa(c.admin, {
+    clinicId: c.clinicId,
+    conversationId: c.conversationId,
+    jobId: c.job.id,
+    workerId: c.workerId,
+    prazoMs: Math.min(PRAZO_DA_TRAVA_MS, restante),
+  });
+}
+
+/**
+ * AG6a: a retomada do turno 'passou_para_equipe' (a passagem ja aconteceu e
+ * a frase nao se repete). Sem a frase deste job na conversa, o evento do
+ * aviso nao enviado, como antes, e nada de atribuicao: o turno tambem fica
+ * 'passou_para_equipe' quando a passagem devolveu "ja_fora_da_ia" (outro
+ * caminho tirou a conversa da IA) e a tentativa caiu antes de concluir, e
+ * so a frase que saiu prova que a passagem foi DESTE job (ela so sai depois
+ * de "passou"). Com a frase que saiu e a saida 'frase', a atribuicao que a
+ * tentativa anterior pode nao ter feito (caiu entre a frase e a
+ * atribuicao). A saida 'resposta' (a retomada recusada, passada sem frase)
+ * nunca atribui. Leitura do motivo que falha: a fila, so o log.
+ */
+async function retomarAPassagem(
+  c: Contexto,
+  turno: TurnoDaIa,
+): Promise<ResultadoDeJob> {
+  if (!(await avisoDaFraseNaRetomada(c)) || turno.saida !== "frase") {
+    return CONCLUIR;
+  }
+  let motivo: MotivoDoEventoDaIa;
+  try {
+    motivo = await motivoDaDecisao(c, turno.decisionId);
+  } catch {
+    log.warn("ia_atribuicao_falhou", {
+      ...idsDoLog(c),
+      error_code: "motivo_nao_lido",
+    });
+    return CONCLUIR;
+  }
+  await atribuirDepoisDaFrase(c, motivo);
+  return CONCLUIR;
+}
+// [AG6 passagem] fim
+
 /**
  * A passagem do job, com D-A conferido aqui tambem (o banco confere de
  * novo): job anterior a janela atual devolve "job_antigo" sem chamar a
  * passagem. Lanca ErroComCodigoDeJob se a janela nao puder ser lida (o job
  * tenta de novo; o turno continua onde estava).
+ *
+ * [AG6 passagem] AG6a (Revisao R1.1): sempre os tres parametros; a passagem
+ * nunca atribui (a atribuicao vem depois da frase, atribuirDepoisDaFrase).
+ *
+ * [AG6 urgência] A passagem por urgencia que passou SEM a marca (o banco
+ * devolveu `urgente: false`: a gravacao em conversa_urgente falhou e virou
+ * WARNING la dentro) deixa o aviso no log, so com os ids e o codigo
+ * (revisao de 28/10/2026). A passagem vale do mesmo jeito: a conversa esta
+ * na fila e a frase sai; so a marca Urgente falta.
  */
 async function passarDoJob(
   c: Contexto,
@@ -1433,12 +2166,25 @@ async function passarDoJob(
     log.info("ia_job_anterior_a_janela", idsDoLog(c));
     return "job_antigo";
   }
-  return passarParaAEquipe(c.admin, {
+  const passagem = await passarParaAEquipe(c.admin, {
     clinicId: c.clinicId,
     jobId: c.job.id,
     workerId: c.workerId,
     motivo,
   });
+  // [AG6 urgência] início
+  if (
+    motivo === "urgencia" &&
+    passagem.resultado === "passou" &&
+    !passagem.urgente
+  ) {
+    log.warn("ia_urgencia_sem_marca", {
+      ...idsDoLog(c),
+      error_code: "marca_nao_gravada",
+    });
+  }
+  // [AG6 urgência] fim
+  return passagem.resultado;
 }
 
 /**
@@ -1448,6 +2194,10 @@ async function passarDoJob(
  * ja saiu da IA). Na RETOMADA de um turno 'decidido' com a frase, a
  * conversa ja fora da IA pode ser a passagem da tentativa que caiu antes de
  * fechar o turno: sem a frase na linha do job, fica o evento do aviso.
+ *
+ * [AG6 passagem] AG6a: so a passagem que aconteceu AGORA ("passou"), depois
+ * da tentativa da frase, pode levar a conversa ao responsavel do lead
+ * (atribuirDepoisDaFrase). O "ja_fora_da_ia" nunca atribui.
  */
 async function passarEAvisar(
   c: Contexto,
@@ -1500,7 +2250,13 @@ async function passarEAvisar(
       texto: nota,
     });
   }
-  return enviarAFrase(c, destino);
+  const resultado = await enviarAFrase(c, destino);
+  // [AG6 passagem] início
+  // A frase primeiro (a guarda do envio exige a conversa na fila sem
+  // responsavel), a atribuicao depois (R1.3).
+  await atribuirDepoisDaFrase(c, motivo);
+  // [AG6 passagem] fim
+  return resultado;
 }
 
 async function enviarAFrase(
@@ -1849,8 +2605,17 @@ async function fecharDepoisDeJaEnviado(c: Contexto): Promise<ResultadoDeJob> {
  * se repete. Se ela nao saiu, fica o evento do aviso nao enviado.
  */
 async function retomarAvisoDaFrase(c: Contexto): Promise<ResultadoDeJob> {
+  await avisoDaFraseNaRetomada(c);
+  return CONCLUIR;
+}
+
+/**
+ * O aviso da retomada: a frase deste job saiu (true), ou o evento "O aviso
+ * automático ao contato não foi enviado." foi pedido (false). Nunca lanca.
+ */
+async function avisoDaFraseNaRetomada(c: Contexto): Promise<boolean> {
   if (await fraseJaSaiu(c)) {
-    return CONCLUIR;
+    return true;
   }
   await gravarEventoDaIa(c.admin, {
     clinicId: c.clinicId,
@@ -1858,7 +2623,7 @@ async function retomarAvisoDaFrase(c: Contexto): Promise<ResultadoDeJob> {
     workerId: c.workerId,
     motivo: "aviso_nao_enviado",
   });
-  return CONCLUIR;
+  return false;
 }
 
 /** O motivo da passagem gravado na decisao (para retomar a frase). */

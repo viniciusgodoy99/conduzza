@@ -1047,9 +1047,13 @@ describe("formulário do telefone: LGPD e recusas", () => {
     expect(TEXTOS_DA_IA.avisoDaOpenaiObrigatorio).toBe(
       "Confirme o aviso sobre a OpenAI antes de adicionar o telefone.",
     );
+    // [AG6b mídia] início
+    // D-60 (desenho da AG6b, secao 6): o aviso cobre tudo o que a pessoa
+    // escreve ou manda (a versao 2, VERSAO_DO_AVISO_DA_OPENAI).
     expect(TEXTOS_DA_IA.confirmarAvisoDaOpenai).toBe(
-      "Quem usa este celular sabe que o que escrever vai para a OpenAI, nos EUA, e vai usar só dados de teste.",
+      "Quem usa este celular sabe que o que escrever ou mandar (texto, áudio, foto e documento) vai para a OpenAI, nos EUA, e vai usar só dados de teste.",
     );
+    // [AG6b mídia] fim
   });
 
   it("forçar contato de paciente: opcional, só booleano", () => {

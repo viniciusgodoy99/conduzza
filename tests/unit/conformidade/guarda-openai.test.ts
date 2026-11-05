@@ -63,7 +63,10 @@ describe("guarda: nenhum teste chama a OpenAI", () => {
     );
   });
 
-  it("a chave da transcricao e a antiga da Anthropic nunca viram cliente", () => {
+  // [AG6b mídia] A transcricao e do servidor, com a MESMA chave do agente
+  // (D-94): a chave antiga da uazapi saiu do codigo, e uma que ainda sobre no
+  // ambiente nunca vira cliente.
+  it("a chave antiga da transcricao pela uazapi e a antiga da Anthropic nunca viram cliente", () => {
     expect(
       clienteOpenAiDoAmbiente({ UAZAPI_OPENAI_KEY: "sk-uazapi" }),
     ).toBeNull();

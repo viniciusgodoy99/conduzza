@@ -160,8 +160,10 @@ describe("a habilidade Lista de espera", () => {
       const html = habilidades(props);
       const tag = chaveDa(html, LISTA);
       expect(tag).toMatch(/ disabled=""/);
+      // [AG6b mídia] Desde a revisao das telas da AG6b (item 7), a nota
+      // tambem descreve a chave, na ordem da tela: a nota, depois a dica.
       expect(tag).toContain(
-        `aria-describedby="agente-habilidade-${LISTA}-agenda"`,
+        `aria-describedby="agente-habilidade-${LISTA}-fase-de-teste agente-habilidade-${LISTA}-agenda"`,
       );
       expect(html).toContain(
         `<span id="agente-habilidade-${LISTA}-agenda" class="text-xs font-semibold text-text-secondary">${DICA_DA_LISTA_DE_ESPERA_INCOMPLETA}</span>`,
@@ -181,7 +183,11 @@ describe("a habilidade Lista de espera", () => {
     });
     const tag = chaveDa(html, LISTA);
     expect(tag).not.toMatch(/ disabled=""/);
-    expect(tag).not.toContain("aria-describedby");
+    // [AG6b mídia] So a nota descreve a chave (revisao das telas da AG6b,
+    // item 7); a dica da dependencia nao.
+    expect(tag).toContain(
+      `aria-describedby="agente-habilidade-${LISTA}-fase-de-teste"`,
+    );
     expect(texto(html)).not.toContain(DICA_DA_LISTA_DE_ESPERA_INCOMPLETA);
 
     const ligada = habilidades({
@@ -245,7 +251,13 @@ describe("a nota da fase de teste", () => {
       expect(notaDaFaseDeTeste(chave), chave).toBeNull();
     }
     const html = habilidades();
-    expect(html.match(/-fase-de-teste"/g)).toHaveLength(4);
+    // [AG6b mídia] início
+    // AG6b: "Entender áudio" e "Ler imagem e documento" tambem levam nota
+    // (a da configuracao, tests/unit/agente/telas-ag6b.test.tsx): 4 + 2. As
+    // notas escritas (o span com o id; o id tambem vai na descricao da
+    // chave desde a revisao das telas da AG6b).
+    expect(html.match(/<span id="[^"]*-fase-de-teste"/g)).toHaveLength(6);
+    // [AG6b mídia] fim
   });
 
   it("é nota, não status: só texto, sem chip nem cor própria", () => {

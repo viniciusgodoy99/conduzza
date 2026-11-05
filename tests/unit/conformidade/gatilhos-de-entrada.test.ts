@@ -400,3 +400,261 @@ describe("cancelar ou remarcar a consulta de outra pessoa adulta", () => {
     ).toBe(true);
   });
 });
+
+// [AG6 urgência] início
+// AG6a (D-51 e D-52): o sinal de emergencia (urgencia.ts) e o primeiro
+// gatilho do portao. Os casos de cada sinal estao em bateria-ag6.test.ts.
+describe("AG6a: a urgência no portão", () => {
+  it("vem antes do sintoma e de todos os outros gatilhos", () => {
+    expect(
+      detectarGatilhosDeEntrada({
+        mensagens: [
+          { tipo: "texto", texto: "estou com dor no peito, o que pode ser" },
+        ],
+      }),
+    ).toEqual(["urgencia", "sintoma", "assunto_clinico"]);
+    expect(
+      detectarGatilhosDeEntrada({
+        mensagens: [
+          { tipo: "texto", texto: "quero falar com um atendente" },
+          { tipo: "texto", texto: "e a garganta ta fechando" },
+        ],
+      })[0],
+    ).toBe("urgencia");
+  });
+
+  it("os casos de sintoma da bateria de sempre continuam com o sintoma (a urgência só vem antes)", () => {
+    for (const caso of deterministicos.filter((c) => c.gatilho === "sintoma")) {
+      const gatilhos = detectarGatilhosDeEntrada({ mensagens: caso.mensagens });
+      expect(gatilhos, caso.id).toContain("sintoma");
+    }
+  });
+
+  it("nenhum controle de entrada da bateria de sempre vira urgência", () => {
+    for (const caso of CONTROLES_DE_ENTRADA) {
+      expect(
+        detectarGatilhosDeEntrada({ mensagens: caso.mensagens }),
+        caso.id,
+      ).not.toContain("urgencia");
+    }
+  });
+
+  it("áudio, mesmo transcrito com um sinal, continua mídia nesta rodada", () => {
+    expect(
+      detectarGatilhosDeEntrada({
+        mensagens: [{ tipo: "audio", texto: "socorro, to com falta de ar" }],
+      }),
+    ).toEqual(["midia"]);
+  });
+
+  it("o nascimento de menor não esconde a urgência", () => {
+    expect(
+      detectarGatilhosDeEntrada({
+        mensagens: [{ tipo: "texto", texto: "ela desmaiou" }],
+        dataDeNascimento: "2015-01-01",
+        hojeNaClinica: "2026-10-28",
+      }),
+    ).toEqual(["urgencia", "sintoma", "menor_de_idade"]);
+  });
+});
+// [AG6 urgência] fim
+
+// S1 (31/10/2026): a rede de seguranca (padroes.ts) escala o risco de vida e
+// a emergencia aguda como sintoma, sem depender da lista de urgencia, e le
+// cada mensagem e a juncao das mensagens de texto do turno. A bateria dela
+// (as frases da revisao, as urgentes do rev4, as comuns e o tempo) esta em
+// portao-rede-de-seguranca.test.ts; aqui ficam as regras do portao.
+describe("S1: a rede de segurança no portão", () => {
+  const sintoma = (mensagens: { tipo: string; texto: string | null }[]) =>
+    detectarGatilhosDeEntrada({ mensagens }).includes("sintoma");
+
+  it("escala como sintoma o que antes não disparava gatilho nenhum", () => {
+    for (const texto of [
+      "peguei o cinto pra me enforcar",
+      "to na ponte, vou pular",
+      "escorpiao picou minha mae agora",
+      "minha mae tava vendo tv e apagou do nada",
+    ]) {
+      expect(sintoma([{ tipo: "texto", texto }]), texto).toBe(true);
+    }
+  });
+
+  it("lê a junção das mensagens de texto, na ordem; cada parte sozinha não escala", () => {
+    expect(
+      sintoma([
+        { tipo: "texto", texto: "quero" },
+        { tipo: "texto", texto: "morrer" },
+      ]),
+    ).toBe(true);
+    expect(sintoma([{ tipo: "texto", texto: "quero" }])).toBe(false);
+    expect(sintoma([{ tipo: "texto", texto: "morrer" }])).toBe(false);
+    // Na ordem: "morrer" e "quero" nao formam o risco.
+    expect(
+      sintoma([
+        { tipo: "texto", texto: "morrer" },
+        { tipo: "texto", texto: "quero" },
+      ]),
+    ).toBe(false);
+  });
+
+  it("a figurinha no meio não parte a junção", () => {
+    expect(
+      sintoma([
+        { tipo: "texto", texto: "quero" },
+        { tipo: "figurinha", texto: null },
+        { tipo: "texto", texto: "morrer" },
+      ]),
+    ).toBe(true);
+  });
+
+  it("a regra da junção entra na versão do portão", () => {
+    expect(
+      FONTES_DO_PORTAO_EM_CODIGO.some((fonte) =>
+        fonte.startsWith("rede de seguranca: "),
+      ),
+    ).toBe(true);
+  });
+});
+
+// [AG6b mídia] início
+// AG6b (D-98): a figurinha reconhecida (no servidor ou pelo leitor) nao
+// escala como midia e nao tem texto; o audio a transcrever chega ao portao
+// como texto vazio (conta no numero de mensagens) e o arquivo a ler, como a
+// legenda (quem monta e o laco).
+describe("AG6b: a figurinha e a mídia a ler no portão", () => {
+  it("a figurinha nao escala; o resto da midia continua escalando", () => {
+    expect(
+      detectarGatilhosDeEntrada({ mensagens: [{ tipo: "figurinha", texto: null }] }),
+    ).toEqual([]);
+    expect(
+      detectarGatilhosDeEntrada({
+        mensagens: [
+          { tipo: "figurinha", texto: null },
+          { tipo: "audio", texto: null },
+        ],
+      }),
+    ).toEqual(["midia"]);
+  });
+
+  it("o texto vazio do audio a transcrever conta no numero de mensagens", () => {
+    const seis = Array.from({ length: 6 }, () => ({ tipo: "texto", texto: "" }));
+    expect(detectarGatilhosDeEntrada({ mensagens: seis })).toEqual(["mensagem_longa"]);
+  });
+});
+
+// 3a rodada da AG6b (revisao de 6eae43d, item 6): o exame na legenda do
+// pedido. A bateria (bateria-ag6b.test.ts) tem as legendas da revisao; aqui
+// ficam as bordas de cada troca.
+//
+// Revisao R2 de d1a15f6 (M1): as trocas do item 6 (o demonstrativo, a
+// marcacao, o convenio, o pedido e so o exame) foram DESFEITAS e o portao
+// voltou ao da 6eae43d: elas abriam o conteudo clinico em volta ("minha
+// glicose ta alterada, quanto custa esses exames?"). As bordas abaixo agora
+// escalam; a troca na recepcao e PROPOSTA para o dono e para a D34. A guarda
+// da finalidade e do preparo ficou (so deixa a troca de preco mais estrita).
+describe("AG6b (3a rodada, desfeita na revisão R2): o exame na legenda do pedido", () => {
+  const portao = (texto: string) =>
+    detectarGatilhosDeEntrada({ mensagens: [{ tipo: "texto", texto }] });
+
+  it.each([
+    "esse",
+    "esses",
+    "este",
+    "estes",
+    "desse",
+    "desses",
+    "deste",
+    "destes",
+    "nesse",
+    "nesses",
+  ])(
+    "o demonstrativo %s antes do exame, na pergunta de preco, escala (R2)",
+    (d) => {
+      expect(portao(`quanto custa ${d} exames?`)).toEqual(["assunto_clinico"]);
+      expect(portao(`qual o valor ${d} exame?`)).toEqual(["assunto_clinico"]);
+    },
+  );
+
+  it.each([
+    "quero marcar esses exames",
+    "dá pra agendar os exames pra sexta?",
+    "preciso marcar esses exames",
+    "quero remarcar o exame de amanhã",
+    "pode cancelar o exame de sábado?",
+    "tem horário pra fazer esses exames amanhã?",
+    "vocês conseguem realizar esses dois exames no mesmo dia?",
+    "orçamento desses exames por favor",
+    "tem vaga pros exames na quinta?",
+    "aceita unimed pra esses exames?",
+    "a unimed cobre esses exames?",
+    "o convênio autoriza esse exame?",
+    "segue o pedido de exames",
+    "o pedido médico dos exames está aqui",
+    "exames",
+    "Exame.",
+    "seguem os exames",
+    "esses exames aqui",
+    "quero marcar um exame de sangue",
+    "tem horário pra que dia pra fazer esses exames?",
+  ])("a recepcao do exame escala (R2, proposta): %s", (texto) => {
+    expect(portao(texto)).toEqual(["assunto_clinico"]);
+  });
+
+  it.each([
+    "quanto custa o exame?",
+    "qual o preço do exame?",
+    "qual o valor dos exames?",
+    "vocês fazem o exame?",
+    "exame de vista, quanto custa?",
+    "quanto custa o exame de sangue?",
+    "o médico pediu esses exames, quanto fica?",
+    "o resultado do exame vem por e-mail?",
+  ])(
+    "R2: a troca da 6eae43d continua (o artigo e a pergunta de preco): %s",
+    (texto) => {
+      expect(portao(texto)).toEqual([]);
+    },
+  );
+
+  it.each([
+    "pra que serve o exame? quanto custa?",
+    "quanto custa o exame? pra que serve?",
+    "quanto custa o exame? precisa de jejum?",
+    "quero marcar esses exames pra semana que vem",
+    "Quero marcar esses exames pra semana que vem.",
+    "quero marcar o exame no mes que vem",
+  ])(
+    'R2: a guarda da finalidade e o "que vem" do tempo escalam: %s',
+    (texto) => {
+      expect(portao(texto)[0]).toBe("assunto_clinico");
+    },
+  );
+
+  it.each([
+    // A finalidade, o preparo e o que ele detecta, em qualquer ponto.
+    ["pra que serve esse exame?", "assunto_clinico"],
+    ["para que serve esses exames? quanto custa?", "assunto_clinico"],
+    ["o que é esse exame?", "assunto_clinico"],
+    ["o que faz esse exame?", "assunto_clinico"],
+    ["esse exame detecta o quê? quero marcar", "assunto_clinico"],
+    ["por que o médico pediu esses exames? quanto fica?", "assunto_clinico"],
+    ["precisa de jejum pra fazer esse exame?", "assunto_clinico"],
+    ["quero marcar esses exames, precisa de jejum?", "assunto_clinico"],
+    ["como é o preparo desses exames? quanto custa?", "assunto_clinico"],
+    // A necessidade e a permissao de fazer.
+    ["preciso fazer esse exame?", "assunto_clinico"],
+    ["devo fazer esses exames?", "assunto_clinico"],
+    ["tenho que fazer esse exame mesmo?", "assunto_clinico"],
+    ["posso fazer esse exame?", "assunto_clinico"],
+    // O resultado e o desfecho.
+    ["quero marcar esses exames pra ver o resultado", "assunto_clinico"],
+    ["quanto custa esse exame? o meu deu alterado", "assunto_clinico"],
+    ["quero marcar o exame depois do procedimento", "assunto_clinico"],
+    ["meus exames", "assunto_clinico"],
+    ["meu exame veio com glicemia alta", "assunto_clinico"],
+    ["esse exame deu alterado, é grave?", "sintoma"],
+  ] as const)("o exame clinico continua escalando: %s", (texto, gatilho) => {
+    expect(portao(texto)[0]).toBe(gatilho);
+  });
+});
+// [AG6b mídia] fim

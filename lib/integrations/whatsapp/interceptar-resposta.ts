@@ -6,6 +6,7 @@ import { ptBR } from "date-fns/locale";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { passoCondizComAgenda } from "@/lib/domain/cadence";
+import { detectarUrgencia } from "@/lib/domain/conformidade/urgencia";
 import {
   CHAVE_DO_LEMBRETE,
   lembreteDeixaSemResposta,
@@ -110,9 +111,25 @@ import {
 //    perguntou outra coisa, a IA respondeu, e so entao veio o SIM. O SIM pode
 //    responder a fala da IA; quem decide e quem atende. Citar a oferta ou o
 //    lembrete continua aceitando.
+// 7. A URGENCIA E DE QUEM ATENDE (AG6a com a AG5; CLAUDE.md 3.2). Na conversa
+//    com a IA, a mensagem com sinal de emergencia (detectarUrgencia, a mesma
+//    lista deterministica do passo 7c do executor da IA) nunca e tratada
+//    pelo sistema: o interceptador nao lembra a oferta, nao a deixa coberta
+//    pelo lembrete na fila, nao aceita nem recusa a oferta, nao confirma, nao
+//    cancela e nao pede remarcacao; devolve sem_intencao. A rota entao nao a
+//    marca e enfileira o turno, que a ve nas pendentes e passa a conversa
+//    para a equipe com a marca Urgente e a frase de sempre. Detectar aqui nao
+//    e triagem: so decide que a mensagem NAO e do sistema. A leitura e pura e
+//    vem antes de qualquer consulta ao banco, entao leitura nenhuma (nem a
+//    que falha) muda o destino; se ela lancasse, a rota passaria a conversa
+//    para a equipe (falha_tecnica). As frases fechadas do toque e da oferta
+//    (o botao, o SIM, o NAO QUERO) nao tem texto livre e nenhuma e sinal de
+//    emergencia: os botoes nao mudam. Fora da conversa com a IA nada muda (a
+//    recepcao le a mensagem, e o texto urgente nunca e frase fechada). O
+//    lembrete que outra mensagem ja pos na fila nao e tocado aqui.
 //
 // Regra 3.1 do CLAUDE.md: este arquivo nao loga nada. O corpo da mensagem do
-// paciente entra aqui e nao sai em lugar nenhum.
+// paciente entra aqui e nao sai em lugar nenhum (nem o sinal de emergencia).
 
 // Teto de toques lidos por resposta: tres passos por consulta e um ou outro
 // follow up cabem com folga numa semana.
@@ -151,7 +168,8 @@ export type EntradaDaResposta = {
    * AG5 (D-39): a conversa esta com a IA, como a ingestao a deixou
    * (ia_atendendo). So nela a mensagem que nao responde a oferta recebe o
    * lembrete fixo; ausente ou falso, nada muda. O status da conversa e
-   * conferido de novo antes do lembrete.
+   * conferido de novo antes do lembrete. AG6a: nela, a mensagem urgente
+   * nunca e tratada pelo sistema (cuidado 7).
    */
   conversaComAIa?: boolean;
 };
@@ -1603,7 +1621,9 @@ const ECO_DA_INTENCAO = {
  * resposta a oferta em que nao ha nada a fazer) fica sem turno, e na
  * conversa com a IA a rota marca a mensagem como tratada pelo sistema (ela
  * nao volta como pendente para a IA). Os outros desfechos deixam a mensagem
- * para quem atende (a IA ou a equipe).
+ * para quem atende (a IA ou a equipe). Na conversa com a IA a mensagem
+ * urgente nunca e tratou_com_eco: sai como sem_intencao, antes de qualquer
+ * leitura (cuidado 7).
  */
 export type DesfechoDoInterceptador =
   | "nao_texto"
@@ -1621,6 +1641,15 @@ export async function interceptarRespostaDePaciente(
   // recepcao. Botao interativo chega como texto (o id ou o rotulo).
   if (entrada.contentType !== "texto" || !entrada.body) {
     return "nao_texto";
+  }
+
+  // AG6a com a AG5 (cuidado 7): na conversa com a IA, a mensagem urgente e
+  // do turno da IA, que a passa para a equipe com a marca Urgente. Antes de
+  // tudo (leitura pura, nenhuma consulta): nenhum caminho abaixo (o
+  // lembrete, a cobertura pelo lembrete na fila, a oferta, o toque) a trata
+  // como do sistema, e a rota nao a marca.
+  if (entrada.conversaComAIa && detectarUrgencia([entrada.body]) !== null) {
+    return "sem_intencao";
   }
 
   // A leitura pura vem ANTES das consultas: mensagem comum ("bom dia") sai

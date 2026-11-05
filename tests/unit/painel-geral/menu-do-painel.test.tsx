@@ -55,6 +55,7 @@ function shell(role: Role, superAdmin: boolean | undefined): string {
         clinicName: "teste123",
         productName: "Conduzza Clínicas",
       }}
+      viewerId="0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a0a0a0a"
       clinicId="acd9c539-585e-4f2a-a195-712c70099564"
       timezone="America/Fortaleza"
       counts={{ conversas: 0, confirmacoes: 0 }}

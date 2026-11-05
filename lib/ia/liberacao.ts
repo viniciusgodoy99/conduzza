@@ -8,8 +8,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 //     OpenAI; so no escopo Production da Vercel, nunca no .env.local) e com
 //     IA_SEGREDO_DO_IDENTIFICADOR de 32 caracteres ou mais (o segredo do
 //     safety_identifier: sem ele todo turno falha em sem_identificador, entao
-//     a IA nao esta de pe; revisao do E3). UAZAPI_OPENAI_KEY, a da
-//     transcricao, nao conta. Apagar ou revogar a chave desliga tudo.
+//     a IA nao esta de pe; revisao do E3). [AG6b mídia] A transcricao de
+//     audio e do servidor, com a mesma chave (D-56 e D-94): a uazapi nao
+//     transcreve mais. Apagar ou revogar a chave desliga tudo.
 // T2, clinicas habilitadas: desde a onda 1 (decisao do dono de 20/10/2026)
 //     a lista fixa de duas clinicas saiu do codigo e do banco. A habilitacao
 //     do agente por clinica e DADO (ia_clinica_habilitada, estado 'teste'),

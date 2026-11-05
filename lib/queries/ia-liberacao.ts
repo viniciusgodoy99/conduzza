@@ -2,6 +2,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { cache } from "react";
 
 import {
+  // [AG6b mídia] início
+  HABILIDADE_DO_ARQUIVO,
+  HABILIDADE_DO_AUDIO,
+  habilidadesEfetivas,
+  // [AG6b mídia] fim
   horarioDoBanco,
   type HorarioDeOperacao,
 } from "@/lib/domain/agente/config";
@@ -114,6 +119,18 @@ export type TelefoneDaIa = {
   telefone: string;
   rotulo: string | null;
   ativo: boolean;
+  // [AG6b mídia] início
+  /**
+   * A versao do aviso da OpenAI que o telefone confirmou ao ligar
+   * (ia_contato_liberado.aviso_da_openai_versao, migration 20261030100000; so
+   * a funcao escreve): 1 = so texto, 2 = texto, audio, foto e documento
+   * (D-60). So a 2 deixa a midia ir a OpenAI (D-95). Opcional no tipo, como
+   * telefonesForaDoPublico: quem monta o telefone a mao (testes) pode deixar
+   * de fora, e ausente vale 1 (o lado seguro). A leitura do banco traz
+   * sempre.
+   */
+  avisoDaOpenaiVersao?: 1 | 2;
+  // [AG6b mídia] fim
 };
 
 /**
@@ -205,6 +222,19 @@ export type DadosDaIa = {
   telefones: TelefoneDaIa[];
   interruptorLigado: boolean;
   situacao: SituacaoDaIa;
+  // [AG6b mídia] início
+  /**
+   * Alguma habilidade de midia ("Entender áudio" ou "Ler imagem e
+   * documento") ligada no rascunho ou na ultima versao publicada (o skills
+   * das duas linhas de ai_agent_config, pela sessao). Com ela, o telefone
+   * ligado com o aviso antigo ganha o chip "Sem áudio, foto e documento",
+   * tambem no Painel geral, que nao le a configuracao do agente (revisao das
+   * telas da AG6b, item 5). Opcional no tipo, como telefonesForaDoPublico:
+   * quem monta os dados a mao (testes) pode deixar de fora (sem chip). A
+   * leitura do banco traz sempre.
+   */
+  midiaLigada?: boolean;
+  // [AG6b mídia] fim
 };
 
 type LinhaDaLiberacao = {
@@ -221,7 +251,83 @@ type LinhaDoTelefone = {
   phone_key: string;
   rotulo: string | null;
   ativo: boolean;
+  // [AG6b mídia] início
+  aviso_da_openai_versao?: unknown;
+  // [AG6b mídia] fim
 };
+
+// [AG6b mídia] início
+/**
+ * A versao do aviso gravada no telefone. So o 2 vale como o aviso novo;
+ * qualquer outro valor (o 1, ou um que o CHECK do banco nao deixaria) vale
+ * 1, o lado seguro: o telefone fica sem midia ate confirmar de novo.
+ */
+export function versaoDoAvisoDaLinha(valor: unknown): 1 | 2 {
+  return valor === 2 ? 2 : 1;
+}
+
+/**
+ * As colunas da lista de telefones. A versao do aviso nasce com a migration
+ * 20261030100000; antes dela (ou no rollback), o banco recusa a coluna com
+ * 42703, e a lista e lida de novo sem ela (COLUNAS_DOS_TELEFONES_SEM_O_AVISO),
+ * com todo telefone na versao 1: o lado seguro, sem midia, como o banco e o
+ * motor decidem sem a migration. Revisao das telas da AG6b (item 2): antes,
+ * a aba WhatsApp inteira da Tela 6 caia no erro. As leituras da midia
+ * (fetchLeiturasDaMidia) ja eram tolerantes do mesmo jeito.
+ */
+export const COLUNAS_DOS_TELEFONES =
+  "id, phone_key, rotulo, ativo, aviso_da_openai_versao";
+export const COLUNAS_DOS_TELEFONES_SEM_O_AVISO = "id, phone_key, rotulo, ativo";
+
+/** O codigo do Postgres para a coluna que nao existe (undefined_column). */
+const COLUNA_FORA_DO_BANCO = "42703";
+
+/** O evento do log quando a lista de telefones volta sem a versao do aviso. */
+export const EVENTO_DOS_TELEFONES_SEM_O_AVISO =
+  "ia_telefones_sem_a_versao_do_aviso";
+
+type RespostaDaLeitura = {
+  data: unknown;
+  error: { code?: string | null } | null;
+};
+
+/**
+ * Os telefones da clinica, na ordem de criacao, com a versao do aviso; sem
+ * a coluna (42703), de novo sem ela, com o rastro no servidor (so o codigo e
+ * a clinica, nunca telefone). Outro erro volta como veio (quem chama lanca).
+ */
+async function lerTelefones(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<RespostaDaLeitura> {
+  const ler = (colunas: string): PromiseLike<RespostaDaLeitura> =>
+    supabase
+      .from("ia_contato_liberado")
+      .select(colunas)
+      .eq("clinic_id", clinicId)
+      .order("created_at", { ascending: true });
+  const resposta = await ler(COLUNAS_DOS_TELEFONES);
+  if (resposta.error?.code !== COLUNA_FORA_DO_BANCO) {
+    return resposta;
+  }
+  log.warn(EVENTO_DOS_TELEFONES_SEM_O_AVISO, {
+    clinic_id: clinicId,
+    error_code: COLUNA_FORA_DO_BANCO,
+  });
+  return ler(COLUNAS_DOS_TELEFONES_SEM_O_AVISO);
+}
+
+/**
+ * Alguma habilidade de midia ligada no skills de uma linha de
+ * ai_agent_config? A mesma leitura da tela (habilidadesEfetivas: so o
+ * booleano verdadeiro liga; jsonb estranho ou ausente vale o padrao, que e
+ * desligada).
+ */
+function midiaLigadaNaLinha(skills: unknown): boolean {
+  const habilidades = habilidadesEfetivas(skills);
+  return habilidades[HABILIDADE_DO_AUDIO] || habilidades[HABILIDADE_DO_ARQUIVO];
+}
+// [AG6b mídia] fim
 
 function modoDaLinha(modo: string): ModoDaIa {
   if (
@@ -349,44 +455,65 @@ export async function fetchLiberacaoDaIa(
   supabase: SupabaseClient,
   clinicId: string,
 ): Promise<DadosDaIa> {
-  const [liberacao, numeros, telefones, interruptor, situacao, publicada] =
-    await Promise.all([
-      supabase
-        .from("ia_liberacao")
-        .select(
-          "liberada, modo, pausada_pela_clinica, teto_diario_centavos_usd",
-        )
-        .eq("clinic_id", clinicId)
-        .maybeSingle(),
-      supabase
-        .from("ia_numero_liberado")
-        .select("whatsapp_account_id")
-        .eq("clinic_id", clinicId)
-        .eq("ativo", true)
-        .order("created_at", { ascending: true }),
-      supabase
-        .from("ia_contato_liberado")
-        .select("id, phone_key, rotulo, ativo")
-        .eq("clinic_id", clinicId)
-        .order("created_at", { ascending: true }),
-      supabase.rpc("ia_interruptor_ligado"),
-      supabase.rpc("situacao_da_ia_na_clinica", { p_clinic_id: clinicId }),
-      supabase
-        .from("ai_agent_config")
-        .select("operating_mode, fallback_minutes, operating_hours")
-        .eq("clinic_id", clinicId)
-        .eq("status", "publicada")
-        .order("version", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-    ]);
+  const [
+    liberacao,
+    numeros,
+    telefones,
+    interruptor,
+    situacao,
+    publicada,
+    // [AG6b mídia] início
+    rascunho,
+    // [AG6b mídia] fim
+  ] = await Promise.all([
+    supabase
+      .from("ia_liberacao")
+      .select("liberada, modo, pausada_pela_clinica, teto_diario_centavos_usd")
+      .eq("clinic_id", clinicId)
+      .maybeSingle(),
+    supabase
+      .from("ia_numero_liberado")
+      .select("whatsapp_account_id")
+      .eq("clinic_id", clinicId)
+      .eq("ativo", true)
+      .order("created_at", { ascending: true }),
+    // [AG6b mídia] a versao do aviso confirmada (o chip "Sem áudio, foto e
+    // documento"); sem a coluna (antes da migration 20261030100000), todo
+    // telefone na versao 1, sem derrubar a aba (lerTelefones).
+    lerTelefones(supabase, clinicId),
+    supabase.rpc("ia_interruptor_ligado"),
+    supabase.rpc("situacao_da_ia_na_clinica", { p_clinic_id: clinicId }),
+    supabase
+      .from("ai_agent_config")
+      // [AG6b mídia] skills: a midia ligada na versao publicada.
+      .select("operating_mode, fallback_minutes, operating_hours, skills")
+      .eq("clinic_id", clinicId)
+      .eq("status", "publicada")
+      .order("version", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    // [AG6b mídia] início
+    // A midia ligada no rascunho (um por clinica, ou nenhum). O mesmo grant
+    // e a mesma policy da publicada (o super admin tambem le).
+    supabase
+      .from("ai_agent_config")
+      .select("skills")
+      .eq("clinic_id", clinicId)
+      .eq("status", "rascunho")
+      .order("version", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    // [AG6b mídia] fim
+  ]);
   if (
     liberacao.error ||
     numeros.error ||
     telefones.error ||
     interruptor.error ||
     situacao.error ||
-    publicada.error
+    publicada.error ||
+    // [AG6b mídia]
+    rascunho.error
   ) {
     throw new Error("leitura da liberacao da IA falhou");
   }
@@ -394,7 +521,11 @@ export async function fetchLiberacaoDaIa(
     throw new Error("estado do interruptor geral ilegivel");
   }
   const lidaDaSituacao = lerSituacaoDoBanco(situacao.data);
-  const linhaDoHorario = publicada.data as LinhaDoHorario | null;
+  const linhaDoHorario = publicada.data as
+    | (LinhaDoHorario & { skills?: unknown })
+    | null;
+  // [AG6b mídia]
+  const linhaDoRascunho = rascunho.data as { skills?: unknown } | null;
 
   const linha = liberacao.data as LinhaDaLiberacao | null;
   return {
@@ -415,6 +546,11 @@ export async function fetchLiberacaoDaIa(
         telefone: telefone.phone_key,
         rotulo: telefone.rotulo,
         ativo: telefone.ativo,
+        // [AG6b mídia] início
+        avisoDaOpenaiVersao: versaoDoAvisoDaLinha(
+          telefone.aviso_da_openai_versao,
+        ),
+        // [AG6b mídia] fim
       }),
     ),
     interruptorLigado: interruptor.data,
@@ -422,6 +558,10 @@ export async function fetchLiberacaoDaIa(
       ...lidaDaSituacao,
       horarioPublicado: linhaDoHorario ? horarioDoBanco(linhaDoHorario) : null,
     },
+    // [AG6b mídia] o rascunho ou a publicada (a regra da Tela 6, D-60)
+    midiaLigada:
+      midiaLigadaNaLinha(linhaDoRascunho?.skills) ||
+      midiaLigadaNaLinha(linhaDoHorario?.skills),
   };
 }
 

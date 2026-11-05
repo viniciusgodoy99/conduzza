@@ -31,20 +31,42 @@ import { Aviso } from "@/components/shared/aviso";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+// [AG6 urgência] início
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+// [AG6 urgência] fim
 import {
   AUTOR_DA_NOTA_DA_PASSAGEM,
   ehNotaDaPassagemDaIa,
 } from "@/lib/agente/nota-da-passagem";
-import { estadoVisualDaConversa } from "@/lib/design/status";
+import {
+  // [AG6 urgência] início
+  dicaDaUrgencia,
+  URGENCIA_DA_CONVERSA,
+  // [AG6 urgência] fim
+  estadoVisualDaConversa,
+} from "@/lib/design/status";
 import type { EnvioEmVoo } from "@/lib/domain/envios-em-voo";
 import type { AgendadasDoFio } from "@/lib/domain/mensagem-agendada";
 import type { NumeroDaConversa } from "@/lib/domain/numeros-do-inbox";
 import type { Role } from "@/lib/domain/permissions";
 import { formatarTelefone } from "@/lib/domain/telefone";
-import type {
-  ComplianceDecision,
-  ConversationListItem,
-  MessageItem,
+import {
+  // [AG6 urgência] início
+  urgenteAberta,
+  // [AG6 urgência] fim
+  // [AG6b mídia] início
+  leituraDaMensagem,
+  podeTerLeituraDaMidia,
+  SEM_LEITURAS_DO_FIO,
+  type LeiturasDoFio,
+  // [AG6b mídia] fim
+  type ComplianceDecision,
+  type ConversationListItem,
+  type MessageItem,
 } from "@/lib/queries/conversations";
 import { cn } from "@/lib/utils";
 
@@ -132,6 +154,36 @@ export function autorDaBolha(
   }
   return null;
 }
+
+// [AG6 urgência] início
+/**
+ * O chip "Urgente" do cabecalho (D-53), com a dica que diz o que fazer,
+ * certa por papel (so quem pode assumir ouve "Assuma para atender.").
+ * Focavel (o padrao do DisabledWithHint): a dica abre no foco do teclado e
+ * no mouse, e o leitor de tela ouve o chip e a dica. Nunca escondido pela
+ * largura do fio, como o estado: e o que mais importa nesta conversa.
+ */
+export function ChipDaUrgencia({
+  podeAssumir = true,
+}: {
+  /** canEdit do Atendimento: o Somente leitura nao assume. */
+  podeAssumir?: boolean;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          tabIndex={0}
+          className="hit-40 inline-flex shrink-0 rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
+        >
+          <StatusChip definition={URGENCIA_DA_CONVERSA} />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{dicaDaUrgencia(podeAssumir)}</TooltipContent>
+    </Tooltip>
+  );
+}
+// [AG6 urgência] fim
 
 function quandoDo(item: ThreadItem): string {
   return item.type === "message"
@@ -269,6 +321,9 @@ export function Thread({
   podeVerRascunho = false,
   erroNasDecisoes = false,
   aoRecarregarDecisoes,
+  // [AG6b mídia] início
+  leiturasDaMidia = SEM_LEITURAS_DO_FIO,
+  // [AG6b mídia] fim
 }: {
   conversation: ConversationListItem;
   messages: MessageItem[];
@@ -322,6 +377,14 @@ export function Thread({
    */
   erroNasDecisoes?: boolean;
   aoRecarregarDecisoes?: () => void;
+  // [AG6b mídia] início
+  /**
+   * O que o assistente transcreveu ou leu da midia do paciente (AG6b), da
+   * consulta separada do fio (fetchLeiturasDaMidia). Sem ela, nenhuma linha;
+   * com erro, a linha "indisponível agora" na midia que podia ter leitura.
+   */
+  leiturasDaMidia?: LeiturasDoFio;
+  // [AG6b mídia] fim
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const ultimaId = messages[messages.length - 1]?.id;
@@ -464,6 +527,11 @@ export function Thread({
           </span>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {/* [AG6 urgência] início */}
+          {urgenteAberta(conversation) ? (
+            <ChipDaUrgencia podeAssumir={podeEditar} />
+          ) : null}
+          {/* [AG6 urgência] fim */}
           <StatusChip
             className="@max-[599px]/fio:hidden"
             definition={estado.definition}
@@ -631,6 +699,16 @@ export function Thread({
                   }
                   timezone={timezone}
                   agendada={agendadaDaMensagem(agendadasDoFio, item.message.id)}
+                  // [AG6b mídia] início
+                  leituraDaMidia={leituraDaMensagem(
+                    leiturasDaMidia,
+                    item.message.id,
+                  )}
+                  leituraIndisponivel={
+                    leiturasDaMidia.estado === "erro" &&
+                    podeTerLeituraDaMidia(item.message)
+                  }
+                  // [AG6b mídia] fim
                 />
               );
             })}

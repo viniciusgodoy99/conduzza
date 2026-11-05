@@ -150,6 +150,11 @@ describe("Habilidades: Cancelar consulta e Remarcar consulta", () => {
       "remarcar",
       "lista_de_espera",
       "confirmar_presenca",
+      // [AG6b mídia] início
+      // AG6b: as duas de midia, antes de Passar para a equipe.
+      "ler_audio",
+      "ler_imagem_e_documento",
+      // [AG6b mídia] fim
       "passar_para_equipe",
     ]);
     const html = habilidades();
@@ -178,8 +183,10 @@ describe("Habilidades: Cancelar consulta e Remarcar consulta", () => {
     ] as const) {
       const tag = chaveDa(html, chave);
       expect(tag, chave).toMatch(/ disabled=""/);
+      // [AG6b mídia] Desde a revisao das telas da AG6b (item 7), a nota
+      // tambem descreve a chave, na ordem da tela: a nota, depois a dica.
       expect(tag, chave).toContain(
-        `aria-describedby="agente-habilidade-${chave}-agenda"`,
+        `aria-describedby="agente-habilidade-${chave}-fase-de-teste agente-habilidade-${chave}-agenda"`,
       );
       expect(html, chave).toContain(
         `<span id="agente-habilidade-${chave}-agenda" class="text-xs font-semibold text-text-secondary">${dica}</span>`,

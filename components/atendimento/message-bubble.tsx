@@ -51,6 +51,9 @@ import { CartaoDeDocumento } from "@/components/atendimento/media/cartao-de-docu
 import { impedimentoParaTodos } from "@/components/atendimento/dialogo-apagar";
 import { CitacaoDaBolha } from "@/components/atendimento/citacao";
 import { FotoDaConversa } from "@/components/atendimento/media/foto-da-conversa";
+// [AG6b mídia] início
+import { LeituraDoAssistente } from "@/components/atendimento/media/leitura-do-assistente";
+// [AG6b mídia] fim
 import { PlayerDeAudio } from "@/components/atendimento/media/player-de-audio";
 import { MarcaPeloCelular } from "@/components/atendimento/pelo-celular";
 import {
@@ -65,7 +68,12 @@ import {
   type EstadoDaMidia,
   type MotivoDeIndisponivel,
 } from "@/lib/domain/midia-recebida";
-import type { MessageItem } from "@/lib/queries/conversations";
+import type {
+  // [AG6b mídia] início
+  LeituraDaMidiaNaTela,
+  // [AG6b mídia] fim
+  MessageItem,
+} from "@/lib/queries/conversations";
 import { cn } from "@/lib/utils";
 
 // Bolhas da conversa na pele do ChatBubble do design system Conduzza (docs/06
@@ -219,7 +227,34 @@ function MidiaChegando({
   );
 }
 
-function AudioBody({ message }: { message: MessageItem }) {
+// [AG6b mídia] início
+/**
+ * A leitura da midia pelo assistente que a bolha recebe do fio (a consulta
+ * propria das leituras, fetchLeiturasDaMidia). `indisponivel`: a consulta
+ * falhou e esta mensagem podia ter leitura.
+ */
+type LeituraDaBolha = {
+  leitura: LeituraDaMidiaNaTela | null;
+  indisponivel: boolean;
+};
+
+const SEM_LEITURA_NA_BOLHA: LeituraDaBolha = {
+  leitura: null,
+  indisponivel: false,
+};
+// [AG6b mídia] fim
+
+function AudioBody({
+  message,
+  // [AG6b mídia] início
+  leitura = SEM_LEITURA_NA_BOLHA,
+  // [AG6b mídia] fim
+}: {
+  message: MessageItem;
+  // [AG6b mídia] início
+  leitura?: LeituraDaBolha;
+  // [AG6b mídia] fim
+}) {
   const [expanded, setExpanded] = useState(false);
   const estado = useEstadoDaMidia(message);
   const fromPatient = message.direction === "entrada";
@@ -262,6 +297,15 @@ function AudioBody({ message }: { message: MessageItem }) {
           </button>
         </div>
       ) : null}
+      {/* [AG6b mídia] início: a transcricao do assistente, embaixo do
+          player (so com o arquivo pronto: sem ele, nao ha leitura). */}
+      {estado.tipo === "pronta" ? (
+        <LeituraDoAssistente
+          leitura={leitura.leitura}
+          indisponivel={leitura.indisponivel}
+        />
+      ) : null}
+      {/* [AG6b mídia] fim */}
     </div>
   );
 }
@@ -397,7 +441,17 @@ function Legenda({ texto }: { texto: string | null }) {
   ) : null;
 }
 
-function MidiaBody({ message }: { message: MessageItem }) {
+function MidiaBody({
+  message,
+  // [AG6b mídia] início
+  leitura = SEM_LEITURA_NA_BOLHA,
+  // [AG6b mídia] fim
+}: {
+  message: MessageItem;
+  // [AG6b mídia] início
+  leitura?: LeituraDaBolha;
+  // [AG6b mídia] fim
+}) {
   const estado = useEstadoDaMidia(message);
   const fromPatient = message.direction === "entrada";
   const tipo = tipoDaMidia(message);
@@ -424,6 +478,12 @@ function MidiaBody({ message }: { message: MessageItem }) {
             }
           />
           <Legenda texto={legenda} />
+          {/* [AG6b mídia] início: o que o assistente leu do documento. */}
+          <LeituraDoAssistente
+            leitura={leitura.leitura}
+            indisponivel={leitura.indisponivel}
+          />
+          {/* [AG6b mídia] fim */}
         </div>
       );
     }
@@ -436,6 +496,12 @@ function MidiaBody({ message }: { message: MessageItem }) {
             daClinica={message.direction === "saida"}
           />
           <Legenda texto={message.body} />
+          {/* [AG6b mídia] início: o que o assistente leu da foto. */}
+          <LeituraDoAssistente
+            leitura={leitura.leitura}
+            indisponivel={leitura.indisponivel}
+          />
+          {/* [AG6b mídia] fim */}
         </div>
       );
     }
@@ -672,6 +738,10 @@ export function MessageBubble({
   deConversaAnterior = false,
   timezone = FUSO_PADRAO,
   agendada: agendadaDoFio = null,
+  // [AG6b mídia] início
+  leituraDaMidia = null,
+  leituraIndisponivel = false,
+  // [AG6b mídia] fim
 }: {
   message: MessageItem;
   authorName: string | null;
@@ -711,6 +781,18 @@ export function MessageBubble({
    * da consulta separada do fio (fetchAgendadasDoFio). Nula: resposta comum.
    */
   agendada?: AgendadaDoFio | null;
+  // [AG6b mídia] início
+  /**
+   * O que o assistente transcreveu ou leu desta midia do paciente (a
+   * consulta separada do fio, fetchLeiturasDaMidia). Nula: sem linha.
+   */
+  leituraDaMidia?: LeituraDaMidiaNaTela | null;
+  /**
+   * A consulta das leituras falhou e esta midia podia ter leitura: a linha
+   * "Leitura do assistente indisponível agora.".
+   */
+  leituraIndisponivel?: boolean;
+  // [AG6b mídia] fim
 }) {
   if (message.content_type === "evento") {
     return <SystemEventCard message={message} timezone={timezone} />;
@@ -800,6 +882,12 @@ export function MessageBubble({
   ) : null;
 
   const falhou = message.delivery_status === "falhou" && !apagada;
+  // [AG6b mídia] início
+  const leituraDaBolha: LeituraDaBolha = {
+    leitura: leituraDaMidia,
+    indisponivel: leituraIndisponivel,
+  };
+  // [AG6b mídia] fim
 
   return (
     <div
@@ -922,9 +1010,17 @@ export function MessageBubble({
                 citadaEstaNaTela={citadaEstaNaTela}
               />
               {message.content_type === "audio" ? (
-                <AudioBody message={message} />
+                <AudioBody
+                  message={message}
+                  // [AG6b mídia] a leitura do assistente vai junto
+                  leitura={leituraDaBolha}
+                />
               ) : ehMidia(message) ? (
-                <MidiaBody message={message} />
+                <MidiaBody
+                  message={message}
+                  // [AG6b mídia] a leitura do assistente vai junto
+                  leitura={leituraDaBolha}
+                />
               ) : (
                 <p className="break-words whitespace-pre-wrap">
                   {message.body}

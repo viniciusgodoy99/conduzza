@@ -2,6 +2,13 @@ import {
   horaNaClinica,
   dataNaClinica,
 } from "@/components/atendimento/fuso-da-clinica";
+// [AG6b mídia] início
+import {
+  HABILIDADE_DO_ARQUIVO,
+  HABILIDADE_DO_AUDIO,
+  type MidiaNoServidor,
+} from "@/lib/domain/agente/config";
+// [AG6b mídia] fim
 
 // Textos e regras puras da tela do Agente de IA (Tela 6). Modulo PURO: o
 // teste de tela confere a copia daqui (sem travessao, sem jargao) e a
@@ -150,6 +157,19 @@ export const CENARIOS_DO_SIMULADOR = [
     rotulo: "Paciente querendo remarcar",
     mensagem: "Oi, queria remarcar a minha consulta para outro dia.",
   },
+  // [AG6 urgência] início
+  // AG6a (desenho, secao 6): o sinal de emergencia. O simulador passa para a
+  // equipe com a frase de sempre (no WhatsApp, a conversa ainda ganha a
+  // marca Urgente); nada e gravado. A chave tambem entra no enum CENARIOS de
+  // app/(app)/agente/actions.ts (um teste confere os dois). Antes da lista
+  // de espera, que continua a ultima (o teste da AG5 confere).
+  {
+    chave: "urgencia",
+    rotulo: "Paciente com sinal de emergência",
+    mensagem:
+      "Fiz o preenchimento ontem e agora estou com falta de ar e a garganta fechando.",
+  },
+  // [AG6 urgência] fim
   // AG5 (desenho, secao 6): a IA coloca o paciente na lista de espera. No
   // simulador as duas fases (a pergunta e a entrada) so simulam, e nada e
   // gravado. A chave tambem entra no enum CENARIOS de
@@ -450,3 +470,138 @@ export const TEXTOS_DO_AGENTE = {
     "A conversa passou para a equipe. Reinicie para testar de novo.",
   paciente: "Paciente",
 } as const;
+
+// [AG6 passagem] início
+// AG6a (desenho, secao 6; D-15, e D-54 e D-55 pela recomendacao, pendentes
+// do dono): o cartao "Para quem vai a conversa" da aba Regras e limites. A
+// regra mora em escalation_rules.passagem_para (lib/domain/agente/config.ts,
+// PASSAGENS_DA_CONVERSA), grava no rascunho e vale ao publicar; quem
+// atribui e o banco, pela ultima versao publicada, LOGO DEPOIS da frase de
+// sempre (atribuir_conversa_passada_pela_ia): a conversa fica uns segundos
+// em "Aguardando você", a atribuicao e tentada mesmo quando a frase nao sai,
+// e quem assumir antes fica com ela (revisao da AG6a: o texto acompanha).
+// Nunca atribuem os motivos de MOTIVOS_QUE_NUNCA_ATRIBUEM
+// (lib/domain/agente/config.ts, o espelho de c_motivos_que_nunca_atribuem
+// do banco): a urgencia, o sintoma, o assunto clinico, a midia e a resposta
+// barrada pela conformidade (o fora do horario tambem, mas e passagem sem a
+// frase, fora deste cartao). A pessoa que escreve de novo antes da
+// atribuicao tambem fica na fila (o banco recusa com mensagem_nova). O teste
+// da Tela 6 monta a lista da ajuda a partir dessa constante, para o texto
+// nao descolar do banco. O "o que mudou" usa ROTULO_DO_CAMPO_DA_PASSAGEM e
+// ROTULO_DA_PASSAGEM da configuracao.
+export const TEXTOS_DA_PASSAGEM = {
+  titulo: "Para quem vai a conversa",
+  descricao:
+    "Salvo no rascunho, vale ao publicar. Conta quando o assistente passa a conversa para a equipe com a frase de sempre.",
+  opcoes: {
+    fila: {
+      rotulo: "Para a fila (Sem atendente)",
+      descricao:
+        "A conversa fica em Aguardando você, para quem estiver no Atendimento assumir.",
+    },
+    responsavel_do_lead: {
+      rotulo: "Para o responsável do lead, quando houver",
+      descricao:
+        "Logo depois da frase de sempre, a conversa passa para o responsável, em atendimento, em Minhas, com um aviso na tela.",
+    },
+  },
+  // [AG6b mídia] Revisao das telas da AG6b (item 1): o arquivo clinico
+  // (midia_clinica) e o resultado ou laudo, a receita e a foto do corpo
+  // (DECISAO_DO_TIPO_DO_LEITOR); "exame" sozinho se confundia com o pedido
+  // de exame, que a IA atende.
+  ajuda:
+    "O responsável é o do lead em Leads. Sem responsável, ou com ele fora da equipe ou só com leitura, a conversa vai para a fila. Se alguém assumir antes, a conversa fica com quem assumiu. Quando o motivo é urgência, sintoma, assunto clínico, resultado de exame, laudo, receita ou foto do corpo, arquivo que o assistente não leu ou não identificou, ou resposta barrada pela conformidade, a conversa vai sempre para a fila. Se a pessoa escrever de novo antes, também fica na fila.",
+  salvar: "Salvar regra",
+  salvando: "Salvando...",
+  salva: "Regra salva no rascunho.",
+  semMudanca: "Escolha outra opção para salvar.",
+  naoSalva: "Alterações ainda não salvas.",
+} as const;
+// [AG6 passagem] fim
+
+// [AG6 urgência] início
+// AG6a (desenho, secao 6; D-52 e D-53 pela recomendacao, pendentes do
+// dono): o cartao "Urgência" da aba Regras e limites, so o texto nesta
+// rodada (a chave do aviso do SAMU, 192, e da AG6c, com a aprovacao do
+// responsavel tecnico). O exemplo do chip e o do Atendimento
+// (URGENCIA_DA_CONVERSA, lib/design/status.ts).
+export const TEXTOS_DA_URGENCIA = {
+  titulo: "Urgência",
+  descricao: "Sempre ligada: não pode ser desligada.",
+  texto:
+    "Quando a pessoa descreve algo que pode ser uma emergência, a conversa passa para a equipe marcada como Urgente, no topo do Atendimento.",
+  marca: "A marca sai quando alguém assume, transfere ou resolve a conversa.",
+  exemplo: "No Atendimento, a conversa aparece com:",
+} as const;
+// [AG6 urgência] fim
+
+// [AG6b mídia] início
+// AG6b (desenho da AG6b, secao 6; D-60 e D-62 pela recomendacao, pendentes
+// do dono): "Entender áudio" e "Ler imagem e documento". O titulo, a
+// descricao e a nota de cada uma moram em lib/domain/agente/config.ts (a
+// tela so renderiza, como as outras habilidades); aqui ficam so o que a
+// tela decide e escreve fora dela.
+
+/**
+ * As duas habilidades de midia (as chaves de skills, contrato da AG6b). Com
+ * uma delas ligada no rascunho, o simulador ganha a nota de que audio, foto
+ * e documento so funcionam no WhatsApp (D-62); ligada no rascunho ou na
+ * versao publicada, o telefone da equipe com o aviso antigo ganha o chip
+ * "Sem áudio, foto e documento" na aba WhatsApp (D-60).
+ */
+export const HABILIDADES_DE_MIDIA = [
+  HABILIDADE_DO_AUDIO,
+  HABILIDADE_DO_ARQUIVO,
+] as const;
+
+/**
+ * Alguma das habilidades de midia esta ligada em alguma destas habilidades
+ * (o rascunho, a versao publicada)? Nula ou ausente nao liga nada. So o
+ * booleano verdadeiro vale (o jsonb da clinica nunca liga por engano).
+ */
+export function midiaLigadaNasHabilidades(
+  ...listas: readonly (Readonly<Record<string, boolean>> | null | undefined)[]
+): boolean {
+  return listas.some(
+    (habilidades) =>
+      habilidades !== null &&
+      habilidades !== undefined &&
+      HABILIDADES_DE_MIDIA.some((chave) => habilidades[chave] === true),
+  );
+}
+
+export const TEXTOS_DA_MIDIA = {
+  // D-62: o simulador nao manda audio, foto nem documento nesta etapa.
+  simulador:
+    "Áudio, foto e documento só no WhatsApp, com os telefones da equipe.",
+  // Revisao das telas da AG6b (item 3): enquanto o servidor nao foi
+  // calibrado pela prova paga (D-100), a habilidade ligada nao tem efeito, e
+  // a tela diz isso embaixo dela (dicaDaMidiaNoServidor).
+  audioSemAProva:
+    "Ainda não está valendo: falta a prova com áudios de verdade. Até lá, o áudio vai para a equipe.",
+  arquivoSemAProva:
+    "Ainda não está valendo: falta a prova com fotos e documentos de verdade. Até lá, foto e documento vão para a equipe.",
+} as const;
+
+/**
+ * A dica da habilidade de midia que o servidor ainda nao deixa valer, ou
+ * nula: as outras habilidades, a midia ja calibrada, ou sem a leitura do
+ * servidor (`midia` ausente: quem chama nao mandou, e a tela nao inventa a
+ * dica). Vale ligada ou desligada: ligar agora nao muda nada ate a prova.
+ */
+export function dicaDaMidiaNoServidor(
+  chave: string,
+  midia: MidiaNoServidor | null | undefined,
+): string | null {
+  if (!midia) {
+    return null;
+  }
+  if (chave === HABILIDADE_DO_AUDIO) {
+    return midia.audio ? null : TEXTOS_DA_MIDIA.audioSemAProva;
+  }
+  if (chave === HABILIDADE_DO_ARQUIVO) {
+    return midia.arquivo ? null : TEXTOS_DA_MIDIA.arquivoSemAProva;
+  }
+  return null;
+}
+// [AG6b mídia] fim

@@ -22,6 +22,9 @@ import type {
   DadosDaIa,
   LiberacaoDaClinica,
   ModoDaIa,
+  // [AG6b mídia] início
+  TelefoneDaIa,
+  // [AG6b mídia] fim
 } from "@/lib/queries/ia-liberacao";
 
 // Regras da aba "WhatsApp" da tela Agente de IA (Tela 6). Ate a onda 2 era a
@@ -632,6 +635,103 @@ export const TELEFONE_DA_EQUIPE_STATUS: Record<
   },
 };
 
+// [AG6b mídia] início
+/**
+ * A versao do aviso da OpenAI que a tela mostra
+ * (TEXTOS_DA_IA.confirmarAvisoDaOpenai) e grava no telefone ao adicionar e ao
+ * ligar de novo (definir_contato_liberado_da_ia, p_versao_do_aviso;
+ * migration 20261030100000). 1 = o aviso so de texto (ate a AG6b); 2 =
+ * texto, audio, foto e documento (D-60). So o telefone com a 2 manda midia a
+ * OpenAI (D-95): o banco (midia_da_ia_liberada) e o motor conferem antes.
+ */
+export const VERSAO_DO_AVISO_DA_OPENAI = 2;
+
+/**
+ * O telefone ligado que ainda nao confirmou o aviso novo, com alguma
+ * habilidade de midia ligada: o audio, a foto e o documento dele nao vao a
+ * OpenAI (a conversa vai para a equipe, como hoje). Hourglass warning: o
+ * mesmo sentido (pendencia, falta reconfirmar o aviso) e a mesma cor do
+ * "Não aciona o assistente" e do "Ligado, mas parado" (um icone, uma cor;
+ * docs/06 4.6). O mesmo telefone nunca leva os dois: este chip so vale no
+ * telefone ligado (telefoneSemMidia).
+ */
+export const TELEFONE_SEM_MIDIA_STATUS: StatusDefinition = {
+  label: "Sem áudio, foto e documento",
+  tone: "warning",
+  icon: Hourglass,
+};
+
+/** A versao do aviso que o telefone confirmou; ausente vale 1 (o lado seguro). */
+export function versaoDoAvisoDoTelefone(
+  telefone: Pick<TelefoneDaIa, "avisoDaOpenaiVersao">,
+): number {
+  return telefone.avisoDaOpenaiVersao ?? 1;
+}
+
+/**
+ * O telefone leva o chip "Sem áudio, foto e documento"? So o LIGADO (o que
+ * aciona o assistente) com o aviso antigo, e so com alguma habilidade de
+ * midia ligada no rascunho ou na versao publicada (`midiaLigada`; sem ela a
+ * midia nao vai a OpenAI de jeito nenhum, e o chip seria ruido).
+ */
+export function telefoneSemMidia(
+  dados: DadosDaIa,
+  telefone: TelefoneDaIa,
+  midiaLigada: boolean,
+): boolean {
+  return (
+    midiaLigada &&
+    estadoDoTelefone(dados, telefone.id) === "ligado" &&
+    versaoDoAvisoDoTelefone(telefone) < VERSAO_DO_AVISO_DA_OPENAI
+  );
+}
+
+/**
+ * Quem ve pode confirmar o aviso novo deste telefone? O comum: desligar
+ * (dicas.escolha) e ligar de novo pelo dialogo do aviso (dicas.telefone). O
+ * forcado: adicionar de novo pelo formulario (dicas.telefone), com o "Usar
+ * mesmo assim" (dicas.forcar). Na Tela 6, o gestor nao pode (so o
+ * administrador da clinica e o super admin; revisao das telas da AG6b, item
+ * 5). No Painel geral quem ve e sempre a equipe Conduzza, que pode: com a
+ * conta suspensa ou o agente desligado, os botoes ficam presos e o porque
+ * ja esta escrito no topo dos cartoes.
+ */
+export function podeConfirmarOAvisoNovo(entrada: {
+  dicas: Pick<Record<AcaoDaIa, string | null>, "escolha" | "telefone" | "forcar">;
+  forcado: boolean;
+  noPainel: boolean;
+}): boolean {
+  const { dicas, forcado, noPainel } = entrada;
+  if (noPainel) {
+    return true;
+  }
+  return forcado
+    ? dicas.telefone === null && dicas.forcar === null
+    : dicas.escolha === null && dicas.telefone === null;
+}
+
+/**
+ * O que fazer, escrito na linha do telefone sem midia. O usado mesmo sendo
+ * de paciente (o forcado) so volta pelo formulario, com o "Usar mesmo
+ * assim": desligar e ligar de novo nao serve para ele. Quem nao pode
+ * (podeConfirmar falso: o gestor) le a quem pedir, nunca uma instrucao para
+ * um botao preso.
+ */
+export function textoDoTelefoneSemMidia(
+  forcado: boolean,
+  podeConfirmar = true,
+): string {
+  if (!podeConfirmar) {
+    return forcado
+      ? TEXTOS_DA_IA.semMidiaNaLinhaForcadoSemPermissao
+      : TEXTOS_DA_IA.semMidiaNaLinhaSemPermissao;
+  }
+  return forcado
+    ? TEXTOS_DA_IA.semMidiaNaLinhaForcado
+    : TEXTOS_DA_IA.semMidiaNaLinha;
+}
+// [AG6b mídia] fim
+
 /**
  * A linha de cada numero em "Números do assistente" (decisao do dono de
  * 19/10/2026: varios numeros, cada um com o proprio estado), em 3 camadas,
@@ -797,8 +897,17 @@ export const TEXTOS_DA_IA = {
     "Este contato está fora do público escolhido em Regras e limites. O assistente não conversa com ele.",
   contatoDePaciente:
     "Este telefone é de um paciente da clínica. Só use mesmo assim se a pessoa aceitou testar o assistente.",
+  // [AG6b mídia] início
+  // D-60 (desenho da AG6b, secao 6; recomendacao, pendente do dono): o aviso
+  // cobre tudo o que a pessoa escreve ou manda, porque com "Entender áudio"
+  // e "Ler imagem e documento" o audio, a foto e o documento tambem vao para
+  // a OpenAI. E a VERSAO 2 do aviso (VERSAO_DO_AVISO_DA_OPENAI): a tela
+  // grava no telefone a versao que mostrou. Ate a AG6b: "Quem usa este
+  // celular sabe que o que escrever vai para a OpenAI, nos EUA, e vai usar
+  // só dados de teste."
   confirmarAvisoDaOpenai:
-    "Quem usa este celular sabe que o que escrever vai para a OpenAI, nos EUA, e vai usar só dados de teste.",
+    "Quem usa este celular sabe que o que escrever ou mandar (texto, áudio, foto e documento) vai para a OpenAI, nos EUA, e vai usar só dados de teste.",
+  // [AG6b mídia] fim
   avisoDaOpenaiObrigatorio:
     "Confirme o aviso sobre a OpenAI antes de adicionar o telefone.",
   // Revisao de producao de 19/10/2026: a linha do telefone com conversa
@@ -840,6 +949,37 @@ export const TEXTOS_DA_IA = {
     "O assistente volta a responder no modo escolhido: no simulador e, com o WhatsApp ligado, pelos números ligados.",
   pausado: "Assistente pausado.",
   retomado: "Assistente retomado.",
+  // [AG6b mídia] início
+  // D-60 e D-95 (recomendacao, pendentes do dono): o "Ligar de novo" pede o
+  // aviso da OpenAI, como o formulario de adicionar, e grava a versao dele
+  // no telefone. E o caminho para o telefone que ja estava ligado confirmar
+  // o aviso novo: desligar e ligar de novo pela tela. Titulo, texto e botao
+  // do dialogo sao PROPOSTA (esperam o dono).
+  religarTitulo: "Ligar este telefone de novo?",
+  religarTexto:
+    "Antes de ligar, confirme o aviso sobre a OpenAI. Ele vale para tudo o que a pessoa escrever ou mandar ao assistente.",
+  religar: "Ligar de novo",
+  religando: "Ligando...",
+  avisoDaOpenaiObrigatorioAoLigar:
+    "Confirme o aviso sobre a OpenAI antes de ligar o telefone de novo.",
+  // O telefone ligado com o aviso antigo (so texto), quando alguma habilidade
+  // de midia esta ligada no rascunho ou na versao publicada: o chip
+  // TELEFONE_SEM_MIDIA_STATUS e o que fazer, escrito na linha. O texto do
+  // telefone comum e o do desenho; o do telefone usado mesmo sendo de
+  // paciente (o forcado) e PROPOSTA: desligado, ele so volta pelo
+  // formulario, com o "Usar mesmo assim", entao "desligue e ligue de novo"
+  // levaria a um beco.
+  semMidiaNaLinha: "Desligue e ligue de novo para confirmar o aviso novo.",
+  semMidiaNaLinhaForcado:
+    "Para confirmar o aviso novo, adicione este telefone de novo pelo formulário acima.",
+  // Revisao das telas da AG6b (item 5; PROPOSTA, espera o dono): quem ve e
+  // nao pode desligar nem ligar (o gestor, na Tela 6) le a quem pedir, e nao
+  // a instrucao de um botao preso para ele.
+  semMidiaNaLinhaSemPermissao:
+    "Para confirmar o aviso novo, peça ao administrador da clínica para desligar e ligar de novo este telefone.",
+  semMidiaNaLinhaForcadoSemPermissao:
+    "Para confirmar o aviso novo, peça ao administrador da clínica para adicionar este telefone de novo.",
+  // [AG6b mídia] fim
 } as const;
 
 /**
@@ -855,9 +995,15 @@ export const TEXTOS_DO_TESTE_COM_PACIENTE = {
   // PROPOSTA (espera a aprovacao do dono).
   texto:
     "Este telefone é de um paciente da clínica. Use só com quem aceitou testar o assistente: a confirmação fica registrada no seu nome.",
-  // Texto do contrato (secao 9, P3).
+  // [AG6b mídia] início
+  // PROPOSTA da AG6b (D-60; desenho da AG6b, secao 6), espera o dono: o
+  // aviso do teste com paciente cobre tambem audio, foto e documento. O
+  // texto do contrato da onda 2 (secao 9, P3), ate a AG6b: "A pessoa deste
+  // telefone sabe que vai conversar com um assistente virtual de teste e
+  // que o que escrever vai para a OpenAI, nos EUA."
   confirmacao:
-    "A pessoa deste telefone sabe que vai conversar com um assistente virtual de teste e que o que escrever vai para a OpenAI, nos EUA.",
+    "A pessoa deste telefone sabe que vai conversar com um assistente virtual de teste e que o que escrever ou mandar (texto, áudio, foto e documento) vai para a OpenAI, nos EUA.",
+  // [AG6b mídia] fim
   // Texto do contrato (secao 4.9): o 23514 teste_com_paciente_nao_confirmado.
   naoConfirmado:
     "Confirme que a pessoa sabe que é um teste antes de usar este telefone.",

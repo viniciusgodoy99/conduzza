@@ -8,8 +8,11 @@
 //    chave, nao ha cliente (null): quem chama trata como falha fechada.
 //    organization, project, adminAPIKey e webhookSecret vao null de
 //    proposito: sem isso o SDK leria OPENAI_ORG_ID, OPENAI_PROJECT_ID,
-//    OPENAI_ADMIN_KEY e OPENAI_WEBHOOK_SECRET do ambiente. UAZAPI_OPENAI_KEY
-//    (transcricao pela uazapi) nunca e lida aqui.
+//    OPENAI_ADMIN_KEY e OPENAI_WEBHOOK_SECRET do ambiente. [AG6b mídia] A
+//    transcricao de audio (D-56, a excecao a Responses API,
+//    lib/integrations/llm/transcricao.ts) e o leitor de midia
+//    (lib/integrations/llm/leitor-de-midia.ts) usam este MESMO cliente e a
+//    MESMA chave (D-94); a uazapi nunca transcreve.
 //  - URL da OpenAI fixa no codigo: uma OPENAI_BASE_URL no ambiente nao desvia
 //    conversa de paciente para outro servidor. Regiao de processamento
 //    (dataResidency) e decisao pendente do dono; enquanto isso, Global.

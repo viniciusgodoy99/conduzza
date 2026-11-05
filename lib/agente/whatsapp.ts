@@ -324,11 +324,35 @@ export async function conferirTravaDoWhatsapp(
 export type ResultadoDaPassagem =
   "passou" | "ja_fora_da_ia" | "job_antigo" | "sem_posse" | "erro";
 
+// [AG6 passagem] início
+/**
+ * AG6a (contrato da frente de banco, Revisao R1.1): o que a passagem fez.
+ * `urgente`: passou pela urgencia e a marca gravou (conversa_urgente). So
+ * pode ser verdadeiro com "passou"; a resposta sem a chave (antes da
+ * migration) le falso. A passagem NUNCA atribui: a conversa que a IA passa
+ * com a frase vai ao responsavel do lead DEPOIS da frase, pela
+ * atribuirConversaPassadaPelaIa (R1.2), porque a guarda do envio so deixa
+ * a frase sair com a conversa na fila sem responsavel.
+ */
+export type PassagemDaIa = {
+  resultado: ResultadoDaPassagem;
+  urgente: boolean;
+};
+
+function passagemSem(resultado: ResultadoDaPassagem): PassagemDaIa {
+  return { resultado, urgente: false };
+}
+// [AG6 passagem] fim
+
 /**
  * passar_conversa_da_ia_para_equipe: com a posse do job, a conversa vai para
  * "Aguardando voce" com o evento do motivo e o pendente cancelado. A frase
  * fixa so sai quando devolve "passou". "job_antigo" (D-A): o job e anterior
  * a janela atual e o banco nao mexeu em nada.
+ *
+ * [AG6 passagem] AG6a (Revisao R1.1): sempre os tres parametros de antes, e
+ * a passagem nunca atribui. A urgencia: o banco marca a conversa
+ * (conversa_urgente) e devolve `urgente`.
  */
 export async function passarParaAEquipe(
   admin: SupabaseClient,
@@ -338,11 +362,15 @@ export async function passarParaAEquipe(
     workerId: string;
     motivo: MotivoDoEventoDaIa;
   },
-): Promise<ResultadoDaPassagem> {
+): Promise<PassagemDaIa> {
   try {
     const { data, error } = await admin.rpc(
       "passar_conversa_da_ia_para_equipe",
-      { p_job_id: e.jobId, p_worker: e.workerId, p_motivo: e.motivo },
+      {
+        p_job_id: e.jobId,
+        p_worker: e.workerId,
+        p_motivo: e.motivo,
+      },
     );
     if (error) {
       log.warn("ia_passagem_falhou", {
@@ -351,16 +379,35 @@ export async function passarParaAEquipe(
         status: e.motivo,
         error_code: (error as { code?: string }).code ?? null,
       });
-      return "erro";
+      return passagemSem("erro");
     }
-    const resposta = data as { passou?: unknown; codigo?: unknown } | null;
+    const resposta = data as {
+      passou?: unknown;
+      codigo?: unknown;
+      // [AG6 passagem] início
+      urgente?: unknown;
+      // [AG6 passagem] fim
+    } | null;
     if (resposta?.passou === true) {
-      return "passou";
+      // [AG6 passagem] início
+      const urgente = resposta.urgente === true;
+      if (urgente) {
+        log.info("ia_passagem_da_ia", {
+          clinic_id: e.clinicId,
+          job_id: e.jobId,
+          status: e.motivo,
+          kind: "urgente",
+        });
+      }
+      return { resultado: "passou", urgente };
+      // [AG6 passagem] fim
     }
     if (resposta?.codigo === "sem_posse") {
-      return "sem_posse";
+      return passagemSem("sem_posse");
     }
-    return resposta?.codigo === "job_antigo" ? "job_antigo" : "ja_fora_da_ia";
+    return passagemSem(
+      resposta?.codigo === "job_antigo" ? "job_antigo" : "ja_fora_da_ia",
+    );
   } catch {
     log.warn("ia_passagem_falhou", {
       clinic_id: e.clinicId,
@@ -368,9 +415,135 @@ export async function passarParaAEquipe(
       status: e.motivo,
       error_code: "excecao",
     });
-    return "erro";
+    return passagemSem("erro");
   }
 }
+
+// [AG6 passagem] início
+/**
+ * Os codigos de atribuir_conversa_passada_pela_ia (contrato da frente de
+ * banco, Revisao R1.2 com a R2), na ordem das recusas do banco. So
+ * "atribuida" muda alguma coisa ("Em atendimento" com o responsavel do lead
+ * e o evento "A conversa ficou com {nome}, responsável pelo lead."); "erro"
+ * e o erro de dentro da funcao, que o banco desfaz e devolve sem erro HTTP.
+ * "mensagem_nova" (R2.2): o paciente escreveu o que o job nao leu (depois
+ * da criacao do job e fora de ai_turno.mensagens_lidas dele); a conversa
+ * fica na fila, como em toda recusa.
+ */
+export const CODIGOS_DA_ATRIBUICAO = [
+  "atribuida",
+  "sem_posse",
+  "job_antigo",
+  "sem_passagem",
+  "motivo_nao_atribui",
+  "fora_da_fila",
+  "com_responsavel",
+  "urgente",
+  "mensagem_nova",
+  // [AG6b mídia] início
+  // AG6b (D-96; contrato do banco da AG6b): o job leu audio, imagem ou
+  // documento (ou video, localizacao, cartao) que o assistente nao
+  // transcreveu nem leu, ou o audio "sem fala": a conversa fica na fila.
+  "midia_nao_lida",
+  // [AG6b mídia] fim
+  "regra_fila",
+  "sem_responsavel",
+  "responsavel_inapto",
+  "erro",
+] as const;
+export type CodigoDaAtribuicao = (typeof CODIGOS_DA_ATRIBUICAO)[number];
+
+/**
+ * O que a atribuicao deu: a resposta do banco (o codigo dele), ou a falha da
+ * chamada (o erro HTTP, como o PGRST202 da funcao ausente, a excecao, o
+ * prazo, ou a resposta fora do formato). Nas duas, sem "atribuida", a
+ * conversa fica na fila.
+ */
+export type AtribuicaoDaIa =
+  | { tipo: "resposta"; codigo: CodigoDaAtribuicao }
+  | { tipo: "falha"; codigo: string };
+
+const CODIGOS_CONHECIDOS: ReadonlySet<string> = new Set(CODIGOS_DA_ATRIBUICAO);
+
+/**
+ * atribuir_conversa_passada_pela_ia (R1.2 com a R2): DEPOIS da tentativa da
+ * frase, a conversa que este job passou para a equipe vai ao responsavel do
+ * lead, quando o banco confere tudo (a posse, o D-A, a ULTIMA decisao do
+ * job de passagem com motivo que atribui, fora da urgencia, do horario, dos
+ * clinicos e da midia; a conversa em "Aguardando você" sem responsavel, sem
+ * a marca de urgencia aberta e sem mensagem do paciente que o job nao leu;
+ * a ULTIMA versao publicada com "responsavel_do_lead" e o responsavel ativo
+ * com papel que atende).
+ * Quem chama decide SE chama (so a passagem com a frase, com a regra lida e
+ * o motivo que pode atribuir). Nunca lanca. Log so com ids e o codigo:
+ * "atribuida" e as recusas no info; o erro do banco, a falha da chamada e a
+ * resposta fora do formato no warn.
+ */
+export async function atribuirConversaPassadaPelaIa(
+  admin: SupabaseClient,
+  e: {
+    clinicId: string;
+    conversationId: string;
+    jobId: string;
+    workerId: string;
+    /** Corte da chamada (padrao: o das travas, 3 s). */
+    prazoMs?: number;
+  },
+): Promise<AtribuicaoDaIa> {
+  const ids = {
+    clinic_id: e.clinicId,
+    conversation_id: e.conversationId,
+    job_id: e.jobId,
+  };
+  const corrida = await correrComPrazo(async () => {
+    const { data, error } = await admin.rpc(
+      "atribuir_conversa_passada_pela_ia",
+      { p_job_id: e.jobId, p_worker: e.workerId },
+    );
+    return {
+      data: data as unknown,
+      erro: error
+        ? ((error as { code?: string }).code ?? "erro_do_banco")
+        : null,
+    };
+  }, e.prazoMs ?? PRAZO_DA_TRAVA_MS);
+  if (corrida.tipo !== "resultado") {
+    const codigo = corrida.tipo === "prazo" ? "prazo" : "excecao";
+    log.warn("ia_atribuicao_falhou", { ...ids, error_code: codigo });
+    return { tipo: "falha", codigo };
+  }
+  if (corrida.valor.erro !== null) {
+    log.warn("ia_atribuicao_falhou", {
+      ...ids,
+      error_code: corrida.valor.erro,
+    });
+    return { tipo: "falha", codigo: corrida.valor.erro };
+  }
+  const resposta = corrida.valor.data as {
+    atribuida?: unknown;
+    codigo?: unknown;
+  } | null;
+  const codigo = resposta?.codigo;
+  if (
+    typeof resposta?.atribuida !== "boolean" ||
+    typeof codigo !== "string" ||
+    !CODIGOS_CONHECIDOS.has(codigo) ||
+    resposta.atribuida !== (codigo === "atribuida")
+  ) {
+    log.warn("ia_atribuicao_falhou", {
+      ...ids,
+      error_code: "resposta_fora_do_formato",
+    });
+    return { tipo: "falha", codigo: "resposta_fora_do_formato" };
+  }
+  if (codigo === "erro") {
+    log.warn("ia_atribuicao_falhou", { ...ids, error_code: "erro" });
+  } else {
+    log.info("ia_atribuicao_da_ia", { ...ids, status: codigo });
+  }
+  return { tipo: "resposta", codigo: codigo as CodigoDaAtribuicao };
+}
+// [AG6 passagem] fim
 
 /** gravar_evento_da_ia: so o evento, sem mexer no status. Nunca lanca. */
 export async function gravarEventoDaIa(
@@ -741,7 +914,9 @@ export function ferramentaDoTurno(d: {
  * coluna nova: versao_filtro e texto livre. A versao do texto do agente
  * (com as frases do bloco <atendimento>) continua em versao_prompt.
  */
-export function versaoDoFiltroDoTurno(regras: string = versaoDasRegras()): string {
+export function versaoDoFiltroDoTurno(
+  regras: string = versaoDasRegras(),
+): string {
   return [
     regras,
     versaoDoPortao(),

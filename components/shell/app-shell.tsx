@@ -47,6 +47,9 @@ function itemsForRole(
 
 export function AppShell({
   viewer,
+  // [AG6 passagem] início
+  viewerId,
+  // [AG6 passagem] fim
   clinicId,
   timezone,
   counts,
@@ -58,6 +61,14 @@ export function AppShell({
   children,
 }: {
   viewer: ViewerDoShell;
+  // [AG6 passagem] início
+  /**
+   * Quem esta logado (o id da sessao): o vigia do menu so pergunta pelo
+   * aviso "A IA passou para você" da conversa que entra em atendimento com
+   * esta pessoa.
+   */
+  viewerId: string;
+  // [AG6 passagem] fim
   /** Clinica ativa: os contadores do menu vigiam so ela. */
   clinicId: string;
   /** Fuso da clinica: o "amanha" das confirmacoes e o dela. */
@@ -89,6 +100,9 @@ export function AppShell({
     clinicId,
     timezone,
     iniciais: counts,
+    // [AG6 passagem] início
+    viewerId,
+    // [AG6 passagem] fim
     vigiarConversas: items.some((item) => item.badge === "conversas"),
     vigiarConfirmacoes: items.some((item) => item.badge === "confirmacoes"),
   });

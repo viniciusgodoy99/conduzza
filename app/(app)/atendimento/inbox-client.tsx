@@ -40,6 +40,9 @@ import { ResolverConversasParadas } from "@/components/atendimento/resolver-conv
 import { Thread } from "@/components/atendimento/thread";
 import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
+// [AG6 urgência e passagem] início
+import { ouvirPedidosDeAbrirConversa } from "@/components/shell/avisos-da-conversa";
+// [AG6 urgência e passagem] fim
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import {
   filtroDeSituacaoDaUrl,
@@ -58,6 +61,12 @@ import {
   fetchResolvedConversations,
   numerosKeys,
   RESOLVIDAS_LIMIT,
+  // [AG6b mídia] início
+  consultaDasLeiturasLigada,
+  fetchLeiturasDaMidia,
+  idsDasMidiasDoPaciente,
+  leiturasDoFio,
+  // [AG6b mídia] fim
   type ConversationListItem,
   type MessageItem,
   type NumerosDoInbox,
@@ -609,6 +618,43 @@ export function InboxClient({
     placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
   });
+  // [AG6b mídia] início
+  // O que o ASSISTENTE transcreveu ou leu da midia do paciente (AG6b):
+  // consulta SEPARADA do fio e tolerante (sem a tabela, a conversa abre sem
+  // as leituras; com erro, so a linha "indisponível agora" na midia, nunca o
+  // fio). So vao as midias do paciente da pagina. A chave mora debaixo da
+  // chave das mensagens da conversa: o mesmo evento de message que rele o
+  // fio rele as leituras, e a assinatura do recorte pede leitura nova quando
+  // chega midia ou pagina antiga. So na clinica da fase do agente (iaNaFase;
+  // revisao das telas da AG6b, item 6): nas outras nao ha leitura, e a
+  // consulta nem sai (antes, uma requisicao a mais por evento de message).
+  const idsDasLeituras = useMemo(
+    () => idsDasMidiasDoPaciente(messages),
+    [messages],
+  );
+  const leiturasLigadas = consultaDasLeiturasLigada({
+    iaNaFase,
+    conversaAberta: selected !== null,
+    ids: idsDasLeituras,
+  });
+  const leiturasQuery = useQuery({
+    queryKey: [
+      ...conversationKeys.leiturasDaMidia(selected?.id ?? "nenhuma"),
+      assinaturaDosIds(idsDasLeituras),
+    ] as const,
+    queryFn: () => fetchLeiturasDaMidia(supabase, clinicId, idsDasLeituras),
+    enabled: leiturasLigadas,
+    // Entre uma leitura e a outra, as linhas que ja existiam continuam.
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
+  });
+  const leiturasDaMidia = leiturasDoFio({
+    ligada: leiturasLigadas,
+    mostrarErro: iaNaFase,
+    data: leiturasQuery.data,
+    isError: leiturasQuery.isError,
+  });
+  // [AG6b mídia] fim
   // "Tentar de novo" volta a mostrar carregando enquanto busca.
   const estadoDasAgendadas = agendadasQuery.data
     ? ("pronto" as const)
@@ -655,6 +701,22 @@ export function InboxClient({
     }
     handleSelect(id);
   };
+
+  // [AG6 urgência e passagem] início O "Abrir" dos avisos na tela ("Conversa
+  // urgente de ...", "A IA passou para você ...") com o Atendimento ja
+  // aberto: o link so vale na montagem, entao o aviso pede pela janela
+  // (components/shell/avisos-da-conversa.ts) e a tela abre a conversa como o
+  // historico do fio abre (irParaConversa). A referencia leva sempre a versao
+  // atual da funcao, sem refazer a escuta a cada desenho.
+  const irParaConversaAtual = useRef(irParaConversa);
+  useEffect(() => {
+    irParaConversaAtual.current = irParaConversa;
+  });
+  useEffect(
+    () => ouvirPedidosDeAbrirConversa((id) => irParaConversaAtual.current(id)),
+    [],
+  );
+  // [AG6 urgência e passagem] fim
 
   // Zera a nao lida em TODAS as listas sob a chave-mae (ativa, resolvidas e a
   // conversa do link) e grava no banco.
@@ -1135,6 +1197,8 @@ export function InboxClient({
             temArquivo={temArquivo}
             ehProfissional={viewerRole === "profissional"}
             numeros={numeros}
+            // [AG6 urgência] A dica do chip "Urgente" certa por papel.
+            podeAssumir={podeEditar}
           />
         </div>
         {/* Onda 2 (decisao P11b do dono): resolver de uma vez as conversas
@@ -1180,6 +1244,8 @@ export function InboxClient({
             onLoadOlder={() => void messagesQuery.fetchNextPage()}
             authorNames={authorNames}
             agendadasDoFio={agendadasDoFioQuery.data}
+            // [AG6b mídia] o que o assistente transcreveu ou leu da midia
+            leiturasDaMidia={leiturasDaMidia}
             onBack={() => setSelectedId(null)}
             onToggleContext={abrirContexto}
             viewerId={viewerId}

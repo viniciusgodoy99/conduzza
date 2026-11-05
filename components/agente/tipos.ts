@@ -1,6 +1,9 @@
 import type {
   ConfigDoAgente,
   ItemDaBase,
+  // [AG6b mídia] início
+  MidiaNoServidor,
+  // [AG6b mídia] fim
   Mudanca,
 } from "@/lib/domain/agente/config";
 
@@ -69,6 +72,16 @@ export type DadosDoPainel = {
    * publicada".
    */
   emUsoNoWhatsapp: boolean;
+  // [AG6b mídia] início
+  /**
+   * O audio, e a foto e o documento, ja valem no servidor (a prova paga,
+   * D-100)? Calculado na pagina (lib/agente/midia-no-servidor.ts, so as
+   * constantes, sem o SDK no navegador). Com o falso, a aba Habilidades diz
+   * na habilidade que ela ainda nao vale (revisao das telas da AG6b, item
+   * 3). Ausente: a tela nao inventa a dica.
+   */
+  midiaNoServidor?: MidiaNoServidor;
+  // [AG6b mídia] fim
 };
 
 /** Quem falou na conversa do simulador. */

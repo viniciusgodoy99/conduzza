@@ -77,8 +77,9 @@ export type MediaDownloadResult =
       /** conteudo do arquivo; vai para o NOSSO Storage, nunca fica em URL do provedor */
       base64: string;
       mimetype: string;
-      /** transcricao quando for audio e o provedor transcrever */
-      transcript: string | null;
+      // [AG6b mídia] AG6b (D-56 e D-94): o provedor nunca transcreve; a
+      // transcricao e do servidor do Conduzza, no turno da IA
+      // (lib/integrations/llm/transcricao.ts). Sem `transcript` aqui.
     }
   | { ok: false; errorCode: string; message: string };
 
@@ -166,10 +167,11 @@ export interface WhatsAppProvider {
    * criptografada (.enc) e expira: o arquivo real so existe via download, que
    * roda como JOB (nunca no caminho do webhook).
    */
+  // [AG6b mídia] AG6b: sem a opcao de transcrever (o provedor nunca
+  // transcreve; o uazapi recebe transcribe: false sempre).
   downloadMedia(
     ref: InstanceRef,
     waMessageId: string,
-    options?: { transcribe?: boolean },
   ): Promise<MediaDownloadResult>;
 }
 

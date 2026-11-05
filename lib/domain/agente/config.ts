@@ -290,6 +290,13 @@ export type HabilidadeDoAgente = {
    * habilidade). Nula na habilidade sem dependencia.
    */
   dicaDaDependencia: string | null;
+  // [AG6b mídia] início
+  /**
+   * AG6b: a nota da fase de teste, escrita embaixo da descricao (a tela so
+   * renderiza; notaDaHabilidade). Ausente: sem nota daqui.
+   */
+  nota?: string;
+  // [AG6b mídia] fim
 };
 
 /**
@@ -432,6 +439,45 @@ export const HABILIDADES_DO_AGENTE = [
     precisaDoPrazo: null,
     dicaDaDependencia: null,
   },
+  // [AG6b mídia] início
+  // AG6b (desenho, secao 6; D-56, D-14 e D-58): o audio pela transcricao e a
+  // foto ou o PDF pelo leitor de midia. Desligadas por padrao, sem
+  // ferramenta (o motor le a midia antes do agente) e sem dependencia. So
+  // valem na versao PUBLICADA, com o telefone que confirmou o aviso novo
+  // (D-95) e, ate a prova paga (D-100), nunca de fato: TRANSCRICAO_CALIBRADA
+  // e os tetos do leitor fecham o plano do turno (lib/agente/midia.ts).
+  // Revisao das telas da AG6b (item 4): a nota diz "os telefones cadastrados
+  // na aba WhatsApp", e nao "da equipe": o telefone de paciente usado mesmo
+  // assim (o forcado) que confirmou o aviso novo tambem manda midia (D-95).
+  {
+    chave: "ler_audio",
+    titulo: "Entender áudio",
+    descricao:
+      "Transcreve o áudio que a pessoa manda e responde por escrito. Áudio sem fala, longo demais ou que não deu para transcrever passa para a equipe.",
+    nota: "A transcrição é feita pela OpenAI, nos EUA, com a chave do Conduzza, só nas conversas com o assistente. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
+    travada: false,
+    ferramentas: [],
+    padrao: false,
+    precisaDaAgenda: false,
+    precisaDaHabilidade: null,
+    precisaDoPrazo: null,
+    dicaDaDependencia: null,
+  },
+  {
+    chave: "ler_imagem_e_documento",
+    titulo: "Ler imagem e documento",
+    descricao:
+      "Lê a foto ou o PDF de um pedido de exame ou procedimento e responde sobre os itens que a clínica faz. Resultado, laudo, receita, foto do corpo, carteirinha, guia e documento pessoal passam para a equipe.",
+    nota: "A foto ou o PDF vai uma vez para a OpenAI, nos EUA, sem o nome do arquivo e sem a localização da foto. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
+    travada: false,
+    ferramentas: [],
+    padrao: false,
+    precisaDaAgenda: false,
+    precisaDaHabilidade: null,
+    precisaDoPrazo: null,
+    dicaDaDependencia: null,
+  },
+  // [AG6b mídia] fim
   {
     chave: "passar_para_equipe",
     titulo: "Passar para a equipe",
@@ -473,6 +519,43 @@ export function habilidadesEfetivas(valor: unknown): HabilidadesDoAgente {
   }
   return resultado;
 }
+
+// [AG6b mídia] início
+/**
+ * AG6b: a nota da fase de teste que mora na configuracao (as duas
+ * habilidades de midia), ou nula. A tela so renderiza.
+ */
+export function notaDaHabilidade(chave: string): string | null {
+  const habilidade: HabilidadeDoAgente | undefined = HABILIDADES_DO_AGENTE.find(
+    (h) => h.chave === chave,
+  );
+  return habilidade?.nota ?? null;
+}
+
+/** AG6b: as chaves das duas habilidades de midia (skills do jsonb). */
+export const HABILIDADE_DO_AUDIO = "ler_audio";
+export const HABILIDADE_DO_ARQUIVO = "ler_imagem_e_documento";
+
+/**
+ * AG6b (revisao das telas, item 3): o que o SERVIDOR ja deixa valer, mesmo
+ * com a habilidade ligada na versao publicada. Ate a prova paga (D-100), o
+ * plano do turno (lib/agente/midia.ts) marca todo audio, foto e documento
+ * como fora, e a conversa vai para a equipe. Calculado so no servidor
+ * (lib/agente/midia-no-servidor.ts, pelas constantes da calibragem), e a
+ * Tela 6 mostra a dica na habilidade enquanto falta.
+ */
+export type MidiaNoServidor = {
+  /** A transcricao foi calibrada (TRANSCRICAO_CALIBRADA). */
+  audio: boolean;
+  /**
+   * O leitor tem ALGUM teto de tokens medido, o da imagem ou o da pagina do
+   * PDF (TETO_DE_TOKENS_POR_IMAGEM, TETO_DE_TOKENS_POR_PAGINA): com qualquer
+   * um, parte dos arquivos ja sai para a OpenAI, e a tela nunca pode dizer
+   * que nada sai (revisao de d1a15f6, R3 3).
+   */
+  arquivo: boolean;
+};
+// [AG6b mídia] fim
 
 /**
  * As ferramentas que o modelo recebe, na ordem da lista (estavel para o
@@ -1464,6 +1547,26 @@ export const MOTIVOS_DE_ESCALONAMENTO = [
   "ja_tem_consulta",
   "faltam_dados",
   "fora_do_prazo",
+  // [AG6 urgência] início
+  // AG6a (migration 20261029120000, que redefine o CHECK com a lista da AG4
+  // mais este): a pessoa descreveu algo que pode ser uma emergencia (a lista
+  // deterministica de lib/domain/conformidade/urgencia.ts, D-51 e D-52). A
+  // conversa passa marcada como Urgente (conversa_urgente), nunca atribuida
+  // (D-54), com a frase de sempre. Motivo do SISTEMA (so o portao
+  // deterministico decide): fica fora de MOTIVOS_DO_AGENTE.
+  "urgencia",
+  // [AG6 urgência] fim
+  // [AG6b mídia] início
+  // AG6b (migration 20261030100000, que redefine o CHECK com a lista da AG6a
+  // mais estes tres): o leitor de midia identificou um arquivo que so a
+  // equipe pode avaliar (resultado, laudo, receita, foto do corpo: CFM), um
+  // documento do paciente (carteirinha, guia, documento pessoal: D-58) ou
+  // nao identificou o arquivo. Motivos do SISTEMA (o servidor decide pela
+  // leitura, nunca o modelo): ficam fora de MOTIVOS_DO_AGENTE.
+  "midia_clinica",
+  "documento_do_paciente",
+  "midia_nao_identificada",
+  // [AG6b mídia] fim
 ] as const;
 export type MotivoDeEscalonamento = (typeof MOTIVOS_DE_ESCALONAMENTO)[number];
 
@@ -1503,6 +1606,18 @@ export const ROTULO_DO_MOTIVO_DE_ESCALONAMENTO: Readonly<
   // AG4 (migration 20261028100000): o rotulo de rotulo_do_motivo_da_ia.
   fora_do_prazo:
     "o pedido de cancelar ou remarcar ficou dentro do prazo da clínica",
+  // [AG6 urgência] início
+  // AG6a (migration 20261029120000): o rotulo de rotulo_do_motivo_da_ia.
+  urgencia: "a pessoa descreveu algo que pode ser uma emergência",
+  // [AG6 urgência] fim
+  // [AG6b mídia] início
+  // AG6b (migration 20261030100000): os rotulos de rotulo_do_motivo_da_ia.
+  midia_clinica: "o paciente mandou um arquivo que só a equipe pode avaliar",
+  documento_do_paciente:
+    "o paciente mandou a carteirinha, uma guia do convênio ou um documento pessoal",
+  midia_nao_identificada:
+    "o assistente não identificou o arquivo que o paciente mandou",
+  // [AG6b mídia] fim
 };
 
 /**
@@ -1578,6 +1693,16 @@ export const TEXTO_DO_EVENTO_DA_IA: Readonly<
   ja_tem_consulta: passagemDaIa("ja_tem_consulta"),
   faltam_dados: passagemDaIa("faltam_dados"),
   fora_do_prazo: passagemDaIa("fora_do_prazo"),
+  // [AG6 urgência] início
+  // AG6a (migration 20261029120000).
+  urgencia: passagemDaIa("urgencia"),
+  // [AG6 urgência] fim
+  // [AG6b mídia] início
+  // AG6b (migration 20261030100000).
+  midia_clinica: passagemDaIa("midia_clinica"),
+  documento_do_paciente: passagemDaIa("documento_do_paciente"),
+  midia_nao_identificada: passagemDaIa("midia_nao_identificada"),
+  // [AG6b mídia] fim
   nao_individual:
     "Chegou uma mensagem de grupo ou de status. A conversa voltou para a equipe.",
   fora_do_horario: `${PASSAGEM_DA_IA}agora está fora do horário escolhido para o assistente.`,
@@ -1629,10 +1754,315 @@ export const GATILHOS_OBRIGATORIOS = [
     rotulo: "O assunto envolve valor fora da tabela",
   },
   { chave: "menor_de_idade", rotulo: "O paciente é menor de idade" },
+  // [AG6 urgência] início
+  // AG6a (desenho, secao 6): o sinal de emergencia passa sempre, marcado.
+  {
+    chave: "urgencia",
+    rotulo: "Algo que pode ser uma emergência (passa como Urgente)",
+  },
+  // [AG6 urgência] fim
 ] as const satisfies readonly {
   chave: MotivoDeEscalonamento;
   rotulo: string;
 }[];
+
+// [AG6 passagem] início
+// ---------------------------------------------------------------------------
+// Para quem vai a conversa que a IA passa (AG6a; D-15, e D-54 e D-55
+// PENDENTES, construidas com a recomendacao)
+// ---------------------------------------------------------------------------
+//
+// A regra mora em ai_agent_config.escalation_rules (jsonb que existe desde o
+// E0 e que a Tela 6 grava por coluna no rascunho; vale ao publicar):
+// escalation_rules.passagem_para e "fila" (o padrao: "Aguardando você", sem
+// responsavel) ou "responsavel_do_lead" (a conversa vai para o responsavel do
+// lead, contact.owner_user_id, ativo e com papel que atende conversa). Quem
+// atribui e o banco, numa RPC propria chamada DEPOIS da tentativa da frase
+// (atribuir_conversa_passada_pela_ia, migration 20261029120000; Revisao R1
+// do contrato do banco, 28/10/2026: a guarda do envio so deixa a frase sair
+// com a conversa na fila sem responsavel, entao a passagem,
+// passar_conversa_da_ia_para_equipe, nunca atribui), conferindo de novo a
+// ULTIMA versao publicada; o motor so chama na passagem com a frase que
+// passou agora e com a regra ligada na versao que leu. Nunca atribuem: a
+// urgencia (D-54, sempre a fila), o "fora do horario" (a retomada no horario
+// so pega conversa sem responsavel) e as passagens sem frase (liberacao
+// perdida, autorizacao revogada, versao sem publicacao, numero
+// desconectado, envio incerto).
+
+/** Os dois destinos da passagem (escalation_rules.passagem_para). */
+export const PASSAGENS_DA_CONVERSA = ["fila", "responsavel_do_lead"] as const;
+export type PassagemDaConversa = (typeof PASSAGENS_DA_CONVERSA)[number];
+
+export type RegrasDaPassagem = {
+  /** Para quem vai a conversa que a IA passa com a frase. */
+  passagemPara: PassagemDaConversa;
+  /**
+   * AG6c (o aviso do SAMU, 192, aprovado pelo responsavel tecnico): so lido
+   * de escalation_rules.aviso_de_urgencia. Nesta rodada (AG6a) o motor nunca
+   * usa (a urgencia recebe a frase de sempre) e nenhuma tela grava
+   * (regrasDaPassagemSchema nao o aceita).
+   */
+  avisoDeUrgencia: boolean;
+};
+
+/** O padrao: a fila, sem o aviso (escalation_rules = '{}'). */
+export function regrasDaPassagemPadrao(): RegrasDaPassagem {
+  return { passagemPara: "fila", avisoDeUrgencia: false };
+}
+
+/**
+ * escalation_rules para as regras (o mesmo criterio do banco: so o texto
+ * exato "responsavel_do_lead" atribui; qualquer outro valor, ausente ou fora
+ * do formato e a fila). Nunca lanca.
+ */
+export function regrasDaPassagemDoBanco(valor: unknown): RegrasDaPassagem {
+  if (!ehObjeto(valor)) {
+    return regrasDaPassagemPadrao();
+  }
+  return {
+    passagemPara:
+      valor.passagem_para === "responsavel_do_lead"
+        ? "responsavel_do_lead"
+        : "fila",
+    // O banco (AG6c) le escalation_rules ->> 'aviso_de_urgencia' = 'true':
+    // o booleano e o texto "true" valem.
+    avisoDeUrgencia:
+      valor.aviso_de_urgencia === true || valor.aviso_de_urgencia === "true",
+  };
+}
+
+/**
+ * A regra no jsonb do banco, PRESERVANDO as outras chaves que ja estao la
+ * (o aviso da AG6c, chaves de versoes futuras): o rascunho grava a coluna
+ * inteira.
+ */
+export function regrasDaPassagemParaOBanco(
+  regras: Pick<RegrasDaPassagem, "passagemPara">,
+  atual: unknown = {},
+): { escalation_rules: Record<string, unknown> } {
+  return {
+    escalation_rules: {
+      ...(ehObjeto(atual) ? atual : {}),
+      passagem_para: regras.passagemPara,
+    },
+  };
+}
+
+/**
+ * Entrada do cartao "Para quem vai a conversa" (aba Regras e limites). So a
+ * passagem: o aviso do SAMU e da AG6c.
+ */
+export const regrasDaPassagemSchema = z.object({
+  passagemPara: z.enum(PASSAGENS_DA_CONVERSA, {
+    error: "Escolha para quem vai a conversa.",
+  }),
+});
+
+/** O titulo do campo no "o que mudou" das Versoes. */
+export const ROTULO_DO_CAMPO_DA_PASSAGEM = "Passar a conversa para";
+
+/** Cada destino no "o que mudou" ("Passar a conversa para: a fila"). */
+export const ROTULO_DA_PASSAGEM: Readonly<Record<PassagemDaConversa, string>> =
+  {
+    fila: "a fila",
+    responsavel_do_lead: "o responsável do lead",
+  };
+
+/**
+ * Os motivos que nunca atribuem, com ou sem a regra (o banco confere de
+ * novo: c_motivos_que_nunca_atribuem de atribuir_conversa_passada_pela_ia,
+ * a MESMA lista na MESMA ordem; o espelho compara): a urgencia (D-54), o
+ * fora do horario (a retomada no horario so pega conversa sem responsavel)
+ * e, pela Revisao R2 do contrato do banco (28/10/2026), os clinicos e o
+ * conteudo que ninguem leu, onde cai a emergencia que a lista
+ * deterministica nao pega: o sintoma, o assunto clinico, a midia (o audio,
+ * mesmo transcrito, a imagem e o documento) e a resposta que o filtro do
+ * CFM barrou (conformidade). A mesma razao da D-54: o responsavel pode
+ * estar fora, e a conversa fica na fila de todos.
+ */
+export const MOTIVOS_QUE_NUNCA_ATRIBUEM = [
+  "urgencia",
+  "fora_do_horario",
+  "sintoma",
+  "assunto_clinico",
+  "midia_nao_suportada",
+  "conformidade",
+  // [AG6b mídia] início
+  // AG6b (D-96; migration 20261030100000, c_motivos_que_nunca_atribuem com
+  // os oito, nesta ordem): o arquivo clinico e o que o assistente nao
+  // identificou ficam na fila de todos. documento_do_paciente atribui (e
+  // administrativo).
+  "midia_clinica",
+  "midia_nao_identificada",
+  // [AG6b mídia] fim
+] as const satisfies readonly MotivoDoEventoDaIa[];
+
+/**
+ * O motivo pode levar a conversa ao responsavel (fora da urgencia, do
+ * horario, dos motivos clinicos e da midia; MOTIVOS_QUE_NUNCA_ATRIBUEM).
+ */
+export function motivoPodeAtribuir(motivo: MotivoDoEventoDaIa): boolean {
+  return !(MOTIVOS_QUE_NUNCA_ATRIBUEM as readonly string[]).includes(motivo);
+}
+
+/**
+ * O motor pede a atribuicao (atribuir_conversa_passada_pela_ia, depois da
+ * frase) so quando: a passagem e com a frase (quem chama diz), o motivo pode
+ * atribuir e a regra da versao publicada que ele leu e
+ * "responsavel_do_lead". Sem as regras (nao lidas): a fila. O banco decide
+ * de novo pela ultima versao publicada e pelo responsavel (ativo, com papel
+ * que atende conversa).
+ */
+export function pedirAtribuicaoNaPassagem(
+  motivo: MotivoDoEventoDaIa,
+  regras: RegrasDaPassagem | null | undefined,
+): boolean {
+  return (
+    regras?.passagemPara === "responsavel_do_lead" && motivoPodeAtribuir(motivo)
+  );
+}
+
+/** O teto do nome no evento da atribuicao (o do banco). */
+export const LIMITE_DO_NOME_NA_ATRIBUICAO = 80;
+
+/**
+ * Espelho do evento que o banco grava na atribuicao (contrato da AG6a,
+ * secao 5): "A conversa ficou com {nome}, responsável pelo lead.", com o
+ * nome do perfil numa linha e ate 80 caracteres; sem nome, "A conversa ficou
+ * com o responsável pelo lead.". O banco grava; isto e para o teste e para
+ * quem precisar do mesmo texto sem ir ao banco.
+ */
+export function textoDaAtribuicaoDaIa(nome: string | null | undefined): string {
+  const limpo = (nome ?? "").replace(/\s+/g, " ").trim();
+  if (limpo === "") {
+    return "A conversa ficou com o responsável pelo lead.";
+  }
+  // Como o banco: btrim(left(nome numa linha, 80)).
+  const cortado = Array.from(limpo)
+    .slice(0, LIMITE_DO_NOME_NA_ATRIBUICAO)
+    .join("")
+    .trim();
+  return `A conversa ficou com ${cortado}, responsável pelo lead.`;
+}
+// [AG6 passagem] fim
+
+// [AG6b mídia] início
+// ---------------------------------------------------------------------------
+// A midia lida pelo assistente (AG6b; desenho 1.2, 3.4 e 6): os tipos da
+// leitura (ia_leitura_da_midia), a decisao do servidor e o resumo que a
+// equipe ve embaixo da bolha. PURO: o motor (lib/agente/midia.ts), o leitor
+// (lib/integrations/llm/leitor-de-midia.ts) e a tela leem daqui.
+// ---------------------------------------------------------------------------
+
+/** A midia da mensagem lida (ia_leitura_da_midia.midia; message.content_type). */
+export const MIDIAS_LIDAS = ["audio", "imagem", "documento"] as const;
+export type MidiaLida = (typeof MIDIAS_LIDAS)[number];
+
+/** Os tipos da leitura do audio (a transcricao, ou "sem fala"). */
+export const TIPOS_DA_TRANSCRICAO = ["transcricao", "sem_fala"] as const;
+export type TipoDaTranscricao = (typeof TIPOS_DA_TRANSCRICAO)[number];
+
+/** Os 10 tipos do leitor de midia (a saida fechada do modelo). */
+export const TIPOS_DO_LEITOR = [
+  "pedido_de_exame_ou_procedimento",
+  "guia_ou_autorizacao",
+  "carteirinha",
+  "documento_de_identidade",
+  "resultado_ou_laudo",
+  "receita",
+  "foto_do_corpo",
+  "figurinha",
+  "outro",
+  "ilegivel",
+] as const;
+export type TipoDoLeitor = (typeof TIPOS_DO_LEITOR)[number];
+
+/** Todos os tipos de ia_leitura_da_midia.tipo (o CHECK do banco). */
+export const TIPOS_DE_MIDIA_LIDA = [
+  ...TIPOS_DA_TRANSCRICAO,
+  ...TIPOS_DO_LEITOR,
+] as const;
+export type TipoDaMidiaLida = (typeof TIPOS_DE_MIDIA_LIDA)[number];
+
+/** A confianca do leitor (obrigatoria em imagem e documento). */
+export const CONFIANCAS_DA_LEITURA = ["alta", "media", "baixa"] as const;
+export type ConfiancaDaLeitura = (typeof CONFIANCAS_DA_LEITURA)[number];
+
+/**
+ * Os motivos da passagem pela leitura do arquivo, NA ORDEM da prioridade
+ * (desenho 1.2: com varios arquivos no turno, o clinico primeiro, depois o
+ * documento do paciente, depois o nao identificado).
+ */
+export const MOTIVOS_DA_LEITURA = [
+  "midia_clinica",
+  "documento_do_paciente",
+  "midia_nao_identificada",
+] as const satisfies readonly MotivoDeEscalonamento[];
+export type MotivoDaLeitura = (typeof MOTIVOS_DA_LEITURA)[number];
+
+/**
+ * A tabela 1.2 do desenho, por tipo: "segue" (com a IA) ou o motivo da
+ * passagem. O pedido e a figurinha seguem so com confianca alta ou media (e
+ * o pedido, so com todos os itens no Cadastro): quem decide e
+ * decidirPelaLeitura (lib/agente/midia.ts). A decisao e do servidor, nunca
+ * do modelo.
+ */
+export const DECISAO_DO_TIPO_DO_LEITOR: Readonly<
+  Record<TipoDoLeitor, "segue" | MotivoDaLeitura>
+> = {
+  pedido_de_exame_ou_procedimento: "segue",
+  guia_ou_autorizacao: "documento_do_paciente",
+  carteirinha: "documento_do_paciente",
+  documento_de_identidade: "documento_do_paciente",
+  resultado_ou_laudo: "midia_clinica",
+  receita: "midia_clinica",
+  foto_do_corpo: "midia_clinica",
+  figurinha: "segue",
+  outro: "midia_nao_identificada",
+  ilegivel: "midia_nao_identificada",
+};
+
+/**
+ * O resumo da leitura (ia_leitura_da_midia.resumo), montado pelo SERVIDOR so
+ * com os nomes do Cadastro e estes textos fixos ("{}" e a lista dos nomes,
+ * ou a contagem). A tela mostra "Lido pelo assistente: {resumo}.". A
+ * figurinha (de qualquer confianca) e o audio gravam o resumo NULO (o CHECK
+ * ia_leitura_da_midia_resumo_coerente): sem linha na bolha. Nunca texto do
+ * arquivo.
+ */
+export const RESUMO_DA_LEITURA = {
+  pedido: "pedido com {}",
+  pedidoComMuitosItens: "pedido com {} itens do Cadastro",
+  pedidoForaDoCadastro:
+    "pedido com item fora do Cadastro, passado para a equipe",
+  pedidoSemSeguranca:
+    "pedido que o assistente não leu com segurança, passado para a equipe",
+  guia_ou_autorizacao: "guia ou autorização do convênio, passada para a equipe",
+  carteirinha: "carteirinha do convênio, passada para a equipe",
+  documento_de_identidade: "documento pessoal, passado para a equipe",
+  resultado_ou_laudo: "resultado de exame ou laudo, passado para a equipe",
+  receita: "receita, passada para a equipe",
+  foto_do_corpo: "foto do corpo, passada para a equipe",
+  outro: "arquivo que o assistente não identificou, passado para a equipe",
+  ilegivel: "arquivo ilegível, passado para a equipe",
+} as const;
+
+/** O teto do resumo (o CHECK de ia_leitura_da_midia.resumo). */
+export const LIMITE_DO_RESUMO_DA_LEITURA = 300;
+
+/**
+ * O que a tela do Atendimento le de cada leitura (QCONV, fetchLeiturasDaMidia;
+ * contrato B2 para B3). transcricao so no tipo "transcricao"; resumo so em
+ * imagem e documento.
+ */
+export type LeituraDaMidiaNaTela = {
+  messageId: string;
+  midia: MidiaLida;
+  tipo: TipoDaMidiaLida;
+  transcricao: string | null;
+  resumo: string | null;
+};
+// [AG6b mídia] fim
 
 // ---------------------------------------------------------------------------
 // Conformidade (caixa travada da aba Regras e limites)
@@ -2134,6 +2564,14 @@ export type ConfigDoAgente = {
    * select le nulo (prazosDoBanco).
    */
   prazos: PrazosDoAgente;
+  // [AG6 passagem] início
+  /**
+   * Para quem vai a conversa que a IA passa (AG6a, D-15 e D-55; coluna
+   * escalation_rules, jsonb). Coluna fora do select le a fila
+   * (regrasDaPassagemDoBanco).
+   */
+  regras: RegrasDaPassagem;
+  // [AG6 passagem] fim
   /**
    * So no servidor (motor) e para o super admin. Para os outros papeis chega
    * nulo: a sessao nao tem grant na coluna.
@@ -2162,6 +2600,9 @@ export function configPadraoDoAgente(): ConfigDoAgente {
     publico: null,
     dadosExigidos: dadosExigidosPadrao(),
     prazos: prazosPadrao(),
+    // [AG6 passagem] início
+    regras: regrasDaPassagemPadrao(),
+    // [AG6 passagem] fim
     instrucoes: null,
     base: [],
   };
@@ -2225,6 +2666,13 @@ export type LinhaDaConfigDoAgente = {
    */
   cancelar_antecedencia_horas?: number | null;
   remarcar_antecedencia_horas?: number | null;
+  // [AG6 passagem] início
+  /**
+   * AG6a: para quem vai a conversa (escalation_rules, jsonb que existe desde
+   * o E0: entra nos selects sem 42703). Fora do select le a fila.
+   */
+  escalation_rules?: unknown;
+  // [AG6 passagem] fim
 };
 
 function ehTom(valor: unknown): valor is TomDoAgente {
@@ -2397,6 +2845,9 @@ export function configDaLinha(
     publico: publicoDoBanco(linha.publico_atendido),
     dadosExigidos: dadosExigidosDoBanco(linha),
     prazos,
+    // [AG6 passagem] início
+    regras: regrasDaPassagemDoBanco(linha.escalation_rules),
+    // [AG6 passagem] fim
     instrucoes: textoOuNulo(extras.instrucoes),
     base: extras.base,
   };
@@ -2557,6 +3008,9 @@ export type CampoDaMudanca =
   | "publico"
   | "dados_exigidos"
   | "prazos"
+  // [AG6 passagem] início
+  | "passagem"
+  // [AG6 passagem] fim
   | "instrucoes"
   | "base"
   | "primeira_publicacao";
@@ -2879,6 +3333,21 @@ export function diferencasDoRascunho(
       }`,
     });
   }
+  // [AG6 passagem] início
+  // AG6a: para quem vai a conversa ("Passar a conversa para: o responsável
+  // do lead", ou "a fila"). Ausente num lado (uma configuracao montada a
+  // mao) vale a fila, o padrao da coluna.
+  const passagemNova = (rascunho.regras ?? regrasDaPassagemPadrao())
+    .passagemPara;
+  const passagemAntiga = (referencia.regras ?? regrasDaPassagemPadrao())
+    .passagemPara;
+  if (passagemNova !== passagemAntiga) {
+    mudancas.push({
+      campo: "passagem",
+      rotulo: `${ROTULO_DO_CAMPO_DA_PASSAGEM}: ${ROTULO_DA_PASSAGEM[passagemNova]}`,
+    });
+  }
+  // [AG6 passagem] fim
   // AG3: os dados para marcar consulta so contam contra uma versao
   // publicada de verdade. Contra os padroes nao: as versoes de antes da
   // migration leem os tres falsos e o padrao da primeira versao e outro

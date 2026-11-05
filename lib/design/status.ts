@@ -2,6 +2,9 @@ import {
   AlarmClock,
   Armchair,
   BadgePlus,
+  // [AG6 urgência] início: o dono novo do "Urgente" (abaixo)
+  BellRing,
+  // [AG6 urgência] fim
   Bot,
   Calendar,
   CalendarPlus,
@@ -164,6 +167,42 @@ export const CONVERSA_SEM_ATENDENTE: StatusDefinition = {
   tone: "neutral",
   icon: CircleDashed,
 };
+
+// [AG6 urgência] início (desenho da AG6, secao 6; decisao D-53 pela recomendacao,
+// pendente do dono). A MARCA de urgencia da conversa, que nao e status: o
+// status continua o de sempre ("Aguardando você"), e a marca vem junto. A IA
+// passou a conversa para a equipe porque a pessoa descreveu algo que pode ser
+// uma emergencia (conversa_urgente aberta, migration 20261029120000); a marca
+// sai quando alguem assume, transfere ou resolve. Dono novo, conferido em
+// 28/10/2026 (nenhuma tela nem mapa usava): BellRing, alert, SO o "Urgente":
+// o chip do cartao da lista e do cabecalho do fio, o chip de situacao
+// "Urgentes" da lista, o aviso na tela e o contador do menu em alerta. Nunca
+// o Siren (o "Em risco" do Painel geral) nem o Bell (o sino da barra
+// superior, sem cor semantica).
+export const URGENCIA_DA_CONVERSA: StatusDefinition = {
+  label: "Urgente",
+  tone: "alert",
+  icon: BellRing,
+};
+
+/**
+ * A dica do chip "Urgente" (cartao e cabecalho do fio), certa por papel
+ * (revisao da AG6a): so quem pode assumir ouve "Assuma para atender."; o
+ * Somente leitura, que acompanha sem assumir, ouve so o que aconteceu.
+ */
+export const DICA_DA_URGENCIA = {
+  podeAssumir:
+    "A pessoa descreveu algo que pode ser uma emergência. Assuma para atender.",
+  soAcompanha: "A pessoa descreveu algo que pode ser uma emergência.",
+} as const;
+
+/** A dica do chip para quem olha (pode assumir a conversa ou nao). */
+export function dicaDaUrgencia(podeAssumir: boolean): string {
+  return podeAssumir
+    ? DICA_DA_URGENCIA.podeAssumir
+    : DICA_DA_URGENCIA.soAcompanha;
+}
+// [AG6 urgência] fim
 
 export type EstadoVisualDaConversa = {
   definition: StatusDefinition;
@@ -565,6 +604,21 @@ export const MENSAGEM_AGENDADA_STATUS: Record<
 //   e tambem neutral (nunca destructive); o Square do gravador de audio e o
 //   botao de parar, controle e nao status. ListChecks e o item Atividades do
 //   menu (sem cor semantica).
+// [AG6 urgência] início
+// - BellRing: SO a urgencia da conversa (URGENCIA_DA_CONVERSA, alert): o chip
+//   "Urgente", o chip de situacao "Urgentes", o aviso na tela e o contador do
+//   menu do Atendimento em alerta. LifeBuoy e UserRoundCheck sao ladrilhos
+//   decorativos da Tela 6 (cartoes "Urgência" e "Para quem vai a conversa"),
+//   neutros, nunca status.
+// [AG6 urgência] fim
+// [AG6b mídia] início
+// - ScanText: SO a linha "Lido pelo assistente" embaixo da foto e do
+//   documento do paciente no Atendimento, no tom ia (dono novo e unico,
+//   conferido em 30/10/2026 que ninguem usava; nao e status e nao entra em
+//   mapa; components/atendimento/media/leitura-do-assistente.tsx). O chip
+//   "Sem áudio, foto e documento" do telefone da equipe (Tela 6) reaproveita
+//   o Hourglass warning, no sentido de pendencia que ele ja tem.
+// [AG6b mídia] fim
 // Trocas decorrentes, cada uma no lote da sua tela: toque "pulado" MailWarning
 // e "na fila" Mail; aviso de recurso do modal de agendamento e dialogo da
 // regua CircleAlert; erro de Confirmacoes OctagonAlert; Recuperadas com tom

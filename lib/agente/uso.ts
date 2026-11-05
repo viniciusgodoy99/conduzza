@@ -23,7 +23,17 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { UsoDoLlm } from "@/lib/domain/conformidade/veredicto";
 import { log } from "@/lib/log";
 
-export type PapelDoModelo = "agente" | "verificador" | "classificador";
+export type PapelDoModelo =
+  | "agente"
+  | "verificador"
+  | "classificador"
+  // [AG6b mídia] início
+  // AG6b (migration 20261030100000, CHECK ia_uso_papel_valido): a
+  // transcricao do audio (tokens 0, custo pelos segundos) e o leitor de
+  // midia (tokens).
+  | "transcricao"
+  | "leitor_de_midia";
+// [AG6b mídia] fim
 export type OrigemDoUso = "whatsapp" | "simulador" | "avaliacao";
 
 /** Uma chamada que a API respondeu (o uso pode vir zerado). */
@@ -31,6 +41,13 @@ export type UsoDoModelo = {
   papel: PapelDoModelo;
   modelo: string;
   uso: UsoDoLlm;
+  // [AG6b mídia] início
+  /**
+   * AG6b: os segundos de audio cobrados (so a transcricao). O custo e
+   * ceil(segundos x audioPorMinuto / 60), somado ao dos tokens.
+   */
+  segundosDeAudio?: number;
+  // [AG6b mídia] fim
 };
 
 /** Uma linha de llm_preco, em microdolar por milhao de tokens. */
@@ -40,6 +57,13 @@ export type PrecoDoModelo = {
   saida: number;
   cacheLeitura: number;
   cacheEscrita: number;
+  // [AG6b mídia] início
+  /**
+   * AG6b: microdolar por minuto de audio (llm_preco.audio_microdolar_por_
+   * minuto, lido a parte por lerPrecoDaTranscricao). Ausente: 0.
+   */
+  audioPorMinuto?: number;
+  // [AG6b mídia] fim
 };
 
 export const USO_ZERADO: UsoDoLlm = Object.freeze({
@@ -61,13 +85,27 @@ function inteiroNaoNegativo(valor: unknown): number {
  * Custo em microdolar: cada parte do uso vezes o preco por milhao, somadas
  * e arredondadas para cima. tokensEntrada ja vem sem o cache (usoDaResposta).
  */
-export function custoEmMicrodolar(uso: UsoDoLlm, preco: PrecoDoModelo): number {
+export function custoEmMicrodolar(
+  uso: UsoDoLlm,
+  preco: PrecoDoModelo,
+  // [AG6b mídia] início
+  segundosDeAudio = 0,
+  // [AG6b mídia] fim
+): number {
   const total =
     inteiroNaoNegativo(uso.tokensEntrada) * preco.entrada +
     inteiroNaoNegativo(uso.tokensSaida) * preco.saida +
     inteiroNaoNegativo(uso.tokensCacheLidos) * preco.cacheLeitura +
     inteiroNaoNegativo(uso.tokensCacheGravados) * preco.cacheEscrita;
-  return Math.ceil(total / UM_MILHAO);
+  // [AG6b mídia] início
+  // AG6b: o audio pelos segundos (a transcricao), arredondado para cima.
+  const audio = Math.ceil(
+    (Math.max(0, Math.ceil(segundosDeAudio)) *
+      inteiroNaoNegativo(preco.audioPorMinuto ?? 0)) /
+      60,
+  );
+  return Math.ceil(total / UM_MILHAO) + audio;
+  // [AG6b mídia] fim
 }
 
 /**
@@ -99,6 +137,9 @@ export function precoDoModelo(
       saida: Math.max(...precos.map((p) => p.saida)),
       cacheLeitura: Math.max(...precos.map((p) => p.cacheLeitura)),
       cacheEscrita: Math.max(...precos.map((p) => p.cacheEscrita)),
+      // [AG6b mídia] início
+      audioPorMinuto: Math.max(...precos.map((p) => p.audioPorMinuto ?? 0)),
+      // [AG6b mídia] fim
     },
     conhecido: false,
   };
@@ -165,6 +206,68 @@ export async function lerPrecos(
   return precos;
 }
 
+// [AG6b mídia] início
+/**
+ * AG6b: o preco por minuto da transcricao (llm_preco.audio_microdolar_por_
+ * minuto da linha do modelo), numa consulta PROPRIA e tolerante: a coluna
+ * nasce na migration 20261030100000, e lerPrecos (o turno inteiro) nunca
+ * pode cair se ela faltar. null em qualquer erro, sem a linha ou fora do
+ * formato: sem preco, o audio nao sai (o plano do turno o marca como fora).
+ */
+export async function lerPrecoDaTranscricao(
+  cliente: SupabaseClient,
+  modelo: string,
+): Promise<number | null> {
+  try {
+    const { data, error } = await cliente
+      .from("llm_preco")
+      .select("modelo, audio_microdolar_por_minuto")
+      .eq("modelo", modelo)
+      .maybeSingle();
+    if (error || data === null || typeof data !== "object") {
+      return null;
+    }
+    const valor = numeroDoBanco(
+      (data as { audio_microdolar_por_minuto?: number | string })
+        .audio_microdolar_por_minuto ?? -1,
+    );
+    return valor;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * AG6b: os precos com o da transcricao (o modelo com o preco por minuto; a
+ * linha que lerPrecos ja trouxe ganha o campo, ou entra uma com os tokens
+ * a zero). Sem preco por minuto (nulo), os precos voltam como estao.
+ */
+export function comPrecoDaTranscricao(
+  precos: readonly PrecoDoModelo[],
+  modelo: string,
+  audioPorMinuto: number | null,
+): PrecoDoModelo[] {
+  if (audioPorMinuto === null) {
+    return [...precos];
+  }
+  const existente = precos.find((p) => p.modelo === modelo);
+  if (existente === undefined) {
+    return [
+      ...precos,
+      {
+        modelo,
+        entrada: 0,
+        saida: 0,
+        cacheLeitura: 0,
+        cacheEscrita: 0,
+        audioPorMinuto,
+      },
+    ];
+  }
+  return precos.map((p) => (p === existente ? { ...p, audioPorMinuto } : p));
+}
+// [AG6b mídia] fim
+
 /** Linha de ia_uso pronta para o INSERT (sem texto nenhum). */
 export type LinhaDoUso = {
   clinic_id: string;
@@ -193,7 +296,8 @@ export function linhasDoUso(entrada: {
 }): { linhas: LinhaDoUso[]; semPreco: string[] } {
   const linhas: LinhaDoUso[] = [];
   const semPreco: string[] = [];
-  for (const { papel, modelo, uso } of entrada.usos) {
+  // [AG6b mídia] Os segundos de audio da transcricao entram no custo.
+  for (const { papel, modelo, uso, segundosDeAudio } of entrada.usos) {
     const nome = (modelo.trim() || "desconhecido").slice(
       0,
       TAMANHO_MAXIMO_DO_MODELO,
@@ -213,8 +317,11 @@ export function linhasDoUso(entrada: {
       tokens_saida: inteiroNaoNegativo(uso.tokensSaida),
       tokens_cache_lidos: inteiroNaoNegativo(uso.tokensCacheLidos),
       tokens_cache_gravados: inteiroNaoNegativo(uso.tokensCacheGravados),
+      // [AG6b mídia] com os segundos do audio (era sem o terceiro argumento).
       custo_microdolar:
-        achado === null ? 0 : custoEmMicrodolar(uso, achado.preco),
+        achado === null
+          ? 0
+          : custoEmMicrodolar(uso, achado.preco, segundosDeAudio ?? 0),
     });
   }
   return { linhas, semPreco };
