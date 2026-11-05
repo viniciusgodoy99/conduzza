@@ -3158,6 +3158,70 @@ describe("11. duas frentes, o efeito já feito e a conversa que sai da IA por fo
     });
   });
 
+  it("o 'sim' recusado depois de cancelar não apaga o cancelamento: a resposta verdadeira passa e a nota conta", async () => {
+    const c = clinicaComDuasUnidades();
+    await conversaFiada(c, ["Oi, tudo bem?", "Queria umas informações"]);
+    const { c1, confirma } = await cancelarNoMeioDaMarcacao(c);
+    const t = await modeloResponde(
+      c,
+      "Vai lá, manda ver",
+      confirma,
+      [ferramenta("agendar", {})],
+      UM_MINUTO_MS,
+    );
+    expect(saidasDoTurno(t)[0]).toEqual({
+      resultado: "sem_confirmacao_do_paciente",
+    });
+    expect(t.estado).toMatchObject({ intencao: "cancelar", appointment_id: C1 });
+    await modeloResponde(
+      c,
+      "Foi cancelada mesmo?",
+      "Sim, sua consulta de quinta, 22/10 às 14:00 foi cancelada.",
+      [],
+      UM_MINUTO_MS,
+    );
+    expect(c1.status).toBe("cancelado_paciente");
+    passou(
+      await c.fala(
+        { texto: "Quero falar com uma pessoa" },
+        UM_MINUTO_MS,
+      ),
+      { desfecho: "escalou", motivo: "pedido_humano" },
+      0,
+    );
+    expect(c.notasInternas.at(-1)).toContain(
+      "Consulta cancelada pelo assistente nesta conversa: quinta, 22/10 às 14:00.",
+    );
+  });
+
+  it("'Quero falar com uma pessoa' logo depois de cancelar: o portão passa e a nota conta o cancelamento", async () => {
+    const c = clinicaComDuasUnidades();
+    consultasDoContato(c.cenario.banco);
+    await conversaFiada(c, ["Oi, tudo bem?", "Queria umas informações", "Vou ver", "Já volto", "Voltei"]);
+    await sistemaResponde(
+      c,
+      "Preciso cancelar minha consulta de quinta",
+      T1_QUINTA,
+      pedirOCancelamento(),
+      UM_MINUTO_MS,
+    );
+    await sistemaResponde(
+      c,
+      "Sim",
+      T2_QUINTA,
+      [ferramenta("cancelar_consulta", {})],
+      UM_MINUTO_MS,
+    );
+    passou(
+      await c.fala({ texto: "Quero falar com uma pessoa" }, UM_MINUTO_MS),
+      { desfecho: "escalou", motivo: "pedido_humano" },
+      0,
+    );
+    expect(c.notasInternas.at(-1)).toContain(
+      "Consulta cancelada pelo assistente nesta conversa: quinta, 22/10 às 14:00.",
+    );
+  });
+
   it("a marcação feita com a resposta barrada: a consulta fica, o paciente recebe só a frase e a nota conta a consulta", async () => {
     const c = clinicaComDuasUnidades();
     await comAPerguntaConfirmaNoAr(c);

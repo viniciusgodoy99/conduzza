@@ -1776,6 +1776,24 @@ export function criarAgendaDoTurno(entrada: {
   // A reconferencia leve (AG3)
   // -------------------------------------------------------------------------
 
+  /**
+   * Revisao da AG4 (achado 7): a consulta que a IA cancelou nesta conversa,
+   * relida; so a que continua cancelada vira fato. Nunca lanca.
+   */
+  async function lerACancelada(): Promise<void> {
+    if (estado.appointment_id === null || porta?.lerConsulta === undefined) {
+      return;
+    }
+    try {
+      const lida = await porta.lerConsulta(estado.appointment_id);
+      if (lida !== null && lida.cancelada === true) {
+        canceladaLida = consultaComoFato(lida, { marcada: false });
+      }
+    } catch {
+      canceladaLida = null;
+    }
+  }
+
   async function preparar(): Promise<void> {
     if (!comEstado || porta === null) {
       return;
@@ -1881,16 +1899,7 @@ export function criarAgendaDoTurno(entrada: {
           remarcacaoLida = null;
         }
       } else if (modoInicial === "cancelou") {
-        // Revisao da AG4 (achado 7): a consulta que a IA cancelou nesta
-        // conversa, relida; so a que continua cancelada vira fato.
-        try {
-          const lida = await porta.lerConsulta(id);
-          if (lida !== null && lida.cancelada === true) {
-            canceladaLida = consultaComoFato(lida, { marcada: false });
-          }
-        } catch {
-          canceladaLida = null;
-        }
+        await lerACancelada();
       } else {
         try {
           const lida = await porta.lerConsulta(id);
@@ -2719,7 +2728,6 @@ export function criarAgendaDoTurno(entrada: {
       modoInicial === "remarcar" && estado.pedido_pendente === "remarcar"
         ? focoInicialId
         : null;
-    estado.intencao = remarcarId === null ? "agendar" : "remarcar";
     if (!entradaDoAgendarSchema.safeParse(argumentos ?? {}).success) {
       resultados.push("entrada_invalida");
       return saida(
@@ -2841,6 +2849,9 @@ export function criarAgendaDoTurno(entrada: {
         "Tentou marcar a consulta: a resposta não foi um sim claro",
       );
     }
+    // Nada comeca com o agendar recusado: a intencao de antes fica, e o fato do
+    // cancelamento feito (ehEstadoDoCancelamento) sobrevive.
+    estado.intencao = remarcarId === null ? "agendar" : "remarcar";
     chamouAgendar = true;
     let resposta: RespostaDoAgendar;
     try {
@@ -4939,7 +4950,16 @@ export function criarAgendaDoTurno(entrada: {
     falhasDepois,
     fechar,
     nota,
-    lerParaANota: () => (comEstado ? espera.ler() : Promise.resolve()),
+    // O portao passa antes do preparo: a nota ainda precisa da cancelada.
+    lerParaANota: async () => {
+      if (!comEstado) {
+        return;
+      }
+      await espera.ler();
+      if (modoInicial === "cancelou" && canceladaLida === null) {
+        await lerACancelada();
+      }
+    },
     nomesValidados: () => [...nomesValidados],
   };
 }
