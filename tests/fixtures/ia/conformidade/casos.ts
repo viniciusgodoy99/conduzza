@@ -5585,6 +5585,20 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
     "Sua consulta de limpeza de pele ficou marcada.",
     comFatos(MARCADA_PENDENTE),
   ),
+  // Revisao final da AG7 (achado 1): a outra pendencia isenta so a oracao dela,
+  // e o exame e o documento nunca isentam a aprovacao.
+  ...(
+    [
+      ["AG7F-S01", "A equipe já aprovou sua consulta, é só trazer os exames."],
+      ["AG7F-S02", "A clínica já confirmou sua consulta, traga o documento."],
+      ["AG7F-S03", "A equipe já aprovou o exame."],
+      ["AG7F-S04", "Aprovamos seu cadastro e sua consulta."],
+      ["AG7F-S05", "A consulta e os exames já foram aprovados."],
+      ["AG7F-S06", "A consulta com o convênio já foi aprovada."],
+    ] as const
+  ).map(([id, texto]) =>
+    saida(id, "acao_nao_executada", "contexto", texto, comFatos(MARCADA_PENDENTE)),
+  ),
   // Conversas longas, revisao (05/11/2026): a outra consulta, citada em parte
   // ou pedida no turno.
   saida(
@@ -8498,6 +8512,20 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
       id,
       rascunho,
       ...comFatos(fatos),
+    }),
+  ),
+  // Revisao final da AG7 (achado 1): a aprovacao de outra coisa, na oracao dela.
+  ...(
+    [
+      ["AG7F-B01", "Seu cadastro já foi aprovado."],
+      ["AG7F-B02", "O pagamento já foi aprovado, e sua consulta está pendente da aprovação da equipe."],
+      ["AG7F-B03", "A consulta ainda não foi aprovada, é só trazer os exames."],
+    ] as const
+  ).map(
+    ([id, rascunho]): CasoDeControle => ({
+      id,
+      rascunho,
+      ...comFatos(MARCADA_PENDENTE),
     }),
   ),
   // Conversas longas, revisao (05/11/2026): a cancelada nomeada pelo dia.

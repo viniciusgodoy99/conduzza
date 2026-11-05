@@ -3566,6 +3566,41 @@ const APROVACAO_AFIRMADA = new RegExp(
   ].join("|"),
 );
 
+/**
+ * Revisao final da AG7: o que a aprovacao pode ser em vez da consulta. O exame,
+ * o documento, a guia e o resto do pedido ficam de fora: "a equipe aprovou o
+ * exame" tambem barra (o custo e a conversa ir para a equipe; o paciente nunca
+ * le uma aprovacao que nao houve).
+ */
+const OUTRA_APROVACAO =
+  /\b(?:cadastros?|pagamentos?|pago|convenios?|carteirinhas?|cpf|reembolsos?|orcamentos?|boletos?|pix|sinal|depositos?)\b/;
+
+/**
+ * A frase afirma a aprovacao da consulta? Por oracao (SEPARA_ORACOES): "A
+ * equipe ja aprovou sua consulta, e so trazer os exames" barra pela primeira,
+ * e a outra coisa so isenta a oracao em que a aprovacao e dela, sem citar a
+ * consulta. Com toda aprovacao isenta, a consulta numa outra oracao sem a
+ * pendencia dita tambem barra ("Aprovamos seu cadastro e sua consulta"); a
+ * pendencia dita passa ("Seu cadastro ja foi aprovado, e sua consulta segue
+ * pendente da aprovacao da equipe").
+ */
+function afirmaAprovacaoDaConsulta(frase: string): boolean {
+  if (!APROVACAO_AFIRMADA.test(frase)) {
+    return false;
+  }
+  const oracoes = frase.split(SEPARA_ORACOES);
+  const queAfirmam = oracoes.filter((o) => APROVACAO_AFIRMADA.test(o));
+  return (
+    queAfirmam.length === 0 ||
+    queAfirmam.some(
+      (o) => !OUTRA_APROVACAO.test(o) || REFERENCIA_A_CONSULTA.test(o),
+    ) ||
+    oracoes.some(
+      (o) => REFERENCIA_A_CONSULTA.test(o) && !PENDENCIA_DA_REMARCACAO.test(o),
+    )
+  );
+}
+
 /** Negacao colada na afirmacao ("nao marquei", "ainda nao foi marcada"). */
 const NEGACAO_ANTES =
   /\b(?:nao|nem|nunca)\s+(?:(?:te|lhe|me|se|a|o|ainda|tinha)\s+)?$/;
@@ -6682,14 +6717,13 @@ export function regrasDosFatos(
 
   // Conversas longas (05/11/2026): a consulta que a IA marca nasce pendente, e
   // a equipe ainda pode recusar: dizer que ja foi aprovada barra, como na
-  // remarcacao. Por frase, sem a que fala de outra coisa ("o seu convenio ja
-  // foi aprovado"). A aprovada de verdade (relida) nao traz o fato e passa.
+  // remarcacao. A oracao que fala de outra coisa nao afirma a da consulta ("o
+  // seu convenio ja foi aprovado"; afirmaAprovacaoDaConsulta). A aprovada de
+  // verdade (relida) nao traz o fato e passa.
   const marcadas = fatos.consultasLidas.filter((c) => c.marcadaNestaConversa);
   if (
     (acoes.has("marcou") || marcadas.some((c) => c.aprovacaoPendente === true)) &&
-    frasesSemDiminutivo.some(
-      (f) => APROVACAO_AFIRMADA.test(f.texto) && !OUTRA_PENDENCIA.test(f.texto),
-    )
+    frasesSemDiminutivo.some((f) => afirmaAprovacaoDaConsulta(f.texto))
   ) {
     achados.push({
       categoria: "acao_nao_executada",
@@ -6990,7 +7024,7 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   // marcada nesta conversa e o eco do pedido.
   "acao e estado com dia ou hora: o par da acao (reservou, marcou, remarcou) ou da consulta lida",
   "marcou: tambem a consulta marcada nesta conversa, relida no turno",
-  "marcacao sem aprovacao: com a marcada do turno ou a relida ainda pendente, a aprovacao afirmada barra, por frase e sem outra pendencia",
+  `marcacao sem aprovacao: com a marcada do turno ou a relida ainda pendente, a aprovacao afirmada barra, por oracao; so ${OUTRA_APROVACAO.source} isenta a oracao que nao cita a consulta, e a consulta em outra oracao sem a pendencia dita barra`,
   `marcada nao citada: sem marcacao no turno, a frase sem dia e sem hora barra se a oracao dela cita outro procedimento (${SEPARA_ORACOES.source}), fora a oracao que nega ou traz ${VERBO_DE_OUTRO_ASSUNTO.source} sem marcar, ou se a pessoa pediu outro no turno e a mensagem nao traz ${REFERENCIA_A_CONSULTA.source}, o par nem o nome da marcada`,
   "fechamento licenciado: o par de uma acao ou de uma consulta lida",
   "eco do pedido: fonte so na frase que nega ou pergunta",
