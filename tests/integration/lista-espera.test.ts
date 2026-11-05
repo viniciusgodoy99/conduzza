@@ -299,7 +299,7 @@ async function executarUltimoJobCru(clinicId: string) {
   // Higiene: o job fica concluido para o motor real nao repeti-lo.
   await admin
     .from("job_queue")
-    .update({ status: "concluido", completed_at: new Date().toISOString() })
+    .update({ status: "concluido" })
     .eq("id", job.id as string);
   return resultado;
 }
@@ -1242,7 +1242,7 @@ describe("segunda vaga ao mesmo tempo", () => {
     for (const job of jobs) {
       await admin
         .from("job_queue")
-        .update({ status: "concluido", completed_at: new Date().toISOString() })
+        .update({ status: "concluido" })
         .eq("id", job.id as string);
     }
   });
