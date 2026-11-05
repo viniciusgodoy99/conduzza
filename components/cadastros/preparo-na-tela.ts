@@ -69,6 +69,8 @@ export const TEXTOS_DO_PREPARO = {
   semRtLink: "Definir em Configurações, Equipe",
   semRtSemLink:
     "Quem define é o administrador da clínica, em Configurações, Equipe.",
+  registroNaoConferido:
+    "Registro do RT ainda não conferido pela Conduzza. Nenhuma orientação de preparo é enviada até a conferência.",
   semOrientacao:
     "Nenhuma orientação de preparo escrita para este procedimento.",
   emVigor: "Em vigor",
@@ -100,9 +102,9 @@ export const TEXTOS_DO_PREPARO = {
   // A ajuda do editor (fechamento entre as frentes da AG7): o que e recusado
   // antes de chegar ao RT e o que so vira aviso para ele conferir (D-80).
   ajudaDoEditorRecusa:
-    "Não pode ter link, arroba, valor ou condição de pagamento, promessa de resultado, brinde ou oferta de outro procedimento, nem antes e depois de pacientes.",
+    "Não pode ter link, arroba, valor ou condição de pagamento, promessa de resultado, brinde ou oferta de outro procedimento, frase dizendo que um sintoma é normal ou passa sozinho, nem antes e depois de pacientes.",
   ajudaDoEditorAviso:
-    "Pode ter remédio, dose e jejum: antes de aprovar, o responsável técnico vê um aviso para conferir.",
+    "Pode ter remédio, dose e jejum: antes de aprovar, o responsável técnico vê um aviso para conferir. Remédio e dose, só com responsável técnico de CRM ou CRO.",
   enviarParaORt: "Enviar para o RT aprovar",
   enviando: "Enviando...",
   cancelar: "Cancelar",
@@ -176,6 +178,9 @@ export const TEXTOS_DO_PREPARO = {
   saiu: "Saiu",
   avisoRemedio:
     "Este texto cita remédio, dose ou jejum. Ao aprovar, você confirma que esta orientação vale para todo paciente deste procedimento, sem avaliação individual.",
+  avisoDoQueOTextoTem: "Confira o que este texto tem:",
+  avisoAoAprovar:
+    "Ao aprovar, você confirma que esta orientação vale para todo paciente deste procedimento, sem avaliação individual.",
   conferindo: "Conferindo o texto...",
   caixa:
     "Li o texto inteiro e aprovo esta orientação de preparo como responsável técnico da clínica.",
@@ -202,11 +207,37 @@ export const TEXTOS_DO_PREPARO = {
     "Não foi possível aprovar agora. O texto ficou aguardando o RT: feche e use Revisar e aprovar.",
   naoPodeSerAprovado: "Este texto não pode ser aprovado.",
   // O banco recusou o conteudo (texto_recusado) e o espelho dele
-  // (conteudoRecusadoPeloBanco) nao achou o que: as quatro coisas que ele
-  // recusa.
+  // (conteudoRecusadoPeloBanco) nao achou o que: as coisas que ele recusa.
   textoRecusadoPeloBanco:
-    "Tire o link, o arroba, o valor em reais e os caracteres invisíveis do texto: a orientação de preparo não pode ter nenhum deles.",
+    "Tire do texto o link, o arroba, o valor em reais, os caracteres invisíveis, a frase que diz que um sintoma é normal e a oferta de outro procedimento: a orientação de preparo não pode ter nenhum deles.",
+  conselhoNaoAceita:
+    "Este texto cita remédio ou dose, e só responsável técnico de CRM ou CRO pode salvar ou aprovar texto assim. Tire o remédio e a dose do texto ou peça ao administrador para definir um responsável técnico de CRM ou CRO.",
 } as const;
+
+/**
+ * O que o texto tem, em frase de recepcao, para o aviso do dialogo do RT (cada
+ * categoria nomeada, sem repetir: triagem e diagnostico sao "fala de sintoma").
+ * A categoria desconhecida nao some: vira a frase geral.
+ */
+const ROTULO_DO_AVISO: Readonly<Record<string, string>> = {
+  medicamento: "cita remédio",
+  dosagem: "cita dose",
+  triagem: "fala de sintoma",
+  diagnostico: "fala de sintoma",
+  orientacao_clinica: "cita jejum ou outro cuidado",
+};
+
+export function rotulosDosAvisos(avisos: readonly string[]): string[] {
+  return [
+    ...new Set(
+      avisos.map((categoria) =>
+        Object.hasOwn(ROTULO_DO_AVISO, categoria)
+          ? (ROTULO_DO_AVISO[categoria] as string)
+          : "tem conteúdo clínico",
+      ),
+    ),
+  ];
+}
 
 export function aprovarTitulo(procedimento: string): string {
   return `Aprovar orientação de preparo de ${procedimento}`;
@@ -494,6 +525,10 @@ const FRASE_DO_CONTEUDO_RECUSADO = {
   valor_em_reais:
     "tire o valor em reais: o preço não vai na orientação de preparo.",
   arroba: "tire o arroba (como @clinica): o paciente recebe só o texto.",
+  sintoma_normalizado:
+    "tire a avaliação de sintoma (dizer que um sintoma é normal, esperado ou passa sozinho): a orientação de preparo não avalia sintomas (Resolução CFM 2.314/2022).",
+  oferta_de_outro_procedimento:
+    "tire a oferta de outro procedimento: a orientação de preparo não oferece nada junto.",
 } as const;
 
 export function frasesDoConteudoRecusado(
@@ -545,14 +580,15 @@ export function problemaNoTextoDoPreparo(texto: string): string | null {
  * A frase de cada categoria que problemasDoTextoDoPreparo RECUSA (D-80: o
  * remedio, a dose e o jejum so avisam; promessa, oferta casada, antes e
  * depois, preco e link nunca entram, nem aprovados pelo RT), com exemplos
- * do que conta, para quem escreve achar o que tirar. Triagem e diagnostico
- * hoje so avisam; a frase existe para o dia em que recusarem (CFM-3).
+ * do que conta, para quem escreve achar o que tirar. Da triagem, a
+ * normalizacao de sintoma recusa desde 05/11/2026; o diagnostico so avisa, e a
+ * frase dele existe para o dia em que recusar (CFM-3).
  */
 const FRASE_DA_RECUSA: Record<string, string> = {
   promessa_resultado:
     "Tire a promessa de resultado (palavras como garantir, 100%, sem dor ou definitivo): a orientação de preparo não pode prometer resultado (Resolução CFM 2.336/2023).",
   oferta_casada:
-    "Tire a oferta de brinde ou de outro procedimento (palavras como grátis, brinde, pacote, combo, promoção ou kit): a orientação de preparo não oferece nada junto.",
+    "Tire a oferta de brinde ou de outro procedimento (palavras como grátis, brinde, pacote, combo, promoção ou kit, ou frases como aproveite e faça também): a orientação de preparo não oferece nada junto.",
   antes_depois:
     "Tire a menção a antes e depois (fotos, vídeos ou depoimentos de pacientes): a orientação de preparo não pode mostrar resultado (Resolução CFM 2.336/2023).",
   preco_nao_verificado:
@@ -560,7 +596,7 @@ const FRASE_DA_RECUSA: Record<string, string> = {
   formato_invalido:
     "Tire o link, o arroba e os caracteres fora do comum: o paciente recebe só o texto (escreva mcg no lugar de µg).",
   triagem:
-    "Tire a avaliação de sintoma (dizer se um sintoma é normal, esperado ou grave): a orientação de preparo não avalia sintomas (Resolução CFM 2.314/2022).",
+    "Tire a avaliação de sintoma (dizer se um sintoma é normal, esperado, grave ou passa sozinho): a orientação de preparo não avalia sintomas (Resolução CFM 2.314/2022).",
   diagnostico:
     "Tire o diagnóstico (dizer o que a pessoa tem ou pode ter): a orientação de preparo não faz diagnóstico.",
 };
@@ -625,7 +661,8 @@ export type CodigoDaRecusa =
   | "versao_inexistente"
   | "texto_novo_aguardando"
   | "ficou_aguardando"
-  | "texto_recusado";
+  | "texto_recusado"
+  | "conselho_nao_aceita_remedio_ou_dose";
 
 export type RecusaDoPreparo = {
   ok: false;
@@ -661,6 +698,7 @@ const FRASE_DO_CODIGO: Record<string, string> = {
   nome_do_procedimento_invalido:
     "Confira o nome do procedimento antes de escrever a orientação de preparo.",
   comentario_invalido: "Escreva o que precisa mudar, em até 300 caracteres.",
+  conselho_nao_aceita_remedio_ou_dose: TEXTOS_DO_PREPARO.conselhoNaoAceita,
 };
 
 const CODIGOS_DA_TELA: ReadonlySet<string> = new Set([
@@ -672,6 +710,7 @@ const CODIGOS_DA_TELA: ReadonlySet<string> = new Set([
   "sem_preparo_aprovado",
   "versao_inexistente",
   "texto_recusado",
+  "conselho_nao_aceita_remedio_ou_dose",
 ]);
 
 /** A frase 42501 de cada acao: a que a RPC dela manda. */

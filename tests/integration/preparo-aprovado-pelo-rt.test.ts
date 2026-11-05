@@ -324,7 +324,13 @@ async function emVigorPelaSessao(
     .throwOnError();
   const situacao = situacaoDoPreparoNaTela({
     versoes: lidas,
-    rtAberto: rt ? { id: rt.id, userId: rt.user_id } : null,
+    rtAberto: rt
+      ? {
+          id: rt.id,
+          userId: rt.user_id,
+          registroConferido: rt.registro_conferido_em !== null,
+        }
+      : null,
     rtComAcesso,
     nomeAtual: (proc as { name: string }).name,
   });

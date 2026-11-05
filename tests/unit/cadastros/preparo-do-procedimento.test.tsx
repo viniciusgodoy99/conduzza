@@ -120,6 +120,7 @@ const RT_ANA: ResponsavelTecnico = {
   uf: "CE",
   desde: "2026-10-01T12:00:00Z",
   ate: null,
+  registroConferidoEm: "2026-10-02T12:00:00Z",
 };
 const RT_ANTIGO: ResponsavelTecnico = {
   ...RT_ANA,

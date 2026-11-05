@@ -42,6 +42,8 @@ export type ResponsavelTecnico = {
   uf: string;
   desde: string;
   ate: string | null;
+  /** Quando a equipe Conduzza conferiu o registro; null: nada sai. */
+  registroConferidoEm: string | null;
 };
 
 export type OrigemDoPreparo = "cadastro" | "texto_antigo";
@@ -117,7 +119,8 @@ function ehSituacao(valor: unknown): valor is SituacaoDoPreparo {
   );
 }
 
-const COLUNAS_DO_RT = "id, user_id, nome, conselho, numero, uf, desde, ate";
+const COLUNAS_DO_RT =
+  "id, user_id, nome, conselho, numero, uf, desde, ate, registro_conferido_em";
 
 // Sem o texto: ele vem numa leitura propria, so das versoes que a tela
 // mostra (lerTextosDasVersoes).
@@ -145,6 +148,7 @@ function lerResponsavel(r: Linha): ResponsavelTecnico | null {
     uf: r.uf,
     desde: r.desde,
     ate: textoOuNulo(r.ate),
+    registroConferidoEm: textoOuNulo(r.registro_conferido_em),
   };
 }
 
@@ -414,7 +418,11 @@ export function situacaoDoProcedimento(
   return situacaoDoPreparoNaTela({
     versoes: versoesDoProcedimento(dados, procedimento.id).map(paraATela),
     rtAberto: dados.rtAberto
-      ? { id: dados.rtAberto.id, userId: dados.rtAberto.userId }
+      ? {
+          id: dados.rtAberto.id,
+          userId: dados.rtAberto.userId,
+          registroConferido: dados.rtAberto.registroConferidoEm !== null,
+        }
       : null,
     rtComAcesso: dados.rtComAcesso,
     nomeAtual: procedimento.name,

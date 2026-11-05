@@ -67,6 +67,7 @@ const RT_ABERTO: Linha = {
   uf: "CE",
   desde: "2026-11-01T12:00:00Z",
   ate: null,
+  registroConferidoEm: "2026-10-02T12:00:00Z",
 };
 
 const PROCEDIMENTOS: Linha[] = [
@@ -178,6 +179,7 @@ describe("versoesEmVigorDosAtivos", () => {
     uf: "CE",
     desde: "2026-11-01T12:00:00Z",
     ate: null,
+    registroConferidoEm: "2026-10-02T12:00:00Z",
   };
   const ativos = PROCEDIMENTOS.map((p) => ({
     id: p.id as string,

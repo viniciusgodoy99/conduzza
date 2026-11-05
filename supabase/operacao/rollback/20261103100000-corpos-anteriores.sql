@@ -28,12 +28,14 @@
 -- delas (preparo_texto_valido, preparo_nome_valido,
 -- responsavel_tecnico_vigente, responsavel_tecnico_nao_muda,
 -- preparo_do_procedimento_ao_inserir e preparo_do_procedimento_nao_muda);
--- a regra do conteudo das RPCs (preparo_texto_recusado); as funcoes de
+-- as regras do conteudo das RPCs (preparo_texto_recusado e
+-- preparo_conselho_recusa_texto); as funcoes de
 -- leitura e do servidor (user_e_responsavel_tecnico, preparo_em_vigor,
 -- mensagem_do_preparo, ler_preparo_para_envio,
 -- preparos_em_vigor_da_clinica, textos_de_preparo_da_clinica,
 -- preparo_em_vigor_do_procedimento); as RPCs das telas (salvar, aprovar,
--- devolver, descartar e suspender o preparo; definir e encerrar o RT); o
+-- devolver, descartar e suspender o preparo; definir e encerrar o RT;
+-- conferir o registro do RT); o
 -- corpo novo de mensagem_ia_exige_aprovacao (com um comentario); a copia do
 -- texto antigo (as versoes texto_antigo).
 --
@@ -43,7 +45,8 @@
 -- (NOTICE, so contagens) o que fica; devolve o corpo de antes de
 -- mensagem_ia_exige_aprovacao (sem comentario; os grants nao mudaram:
 -- CREATE OR REPLACE mantem) ANTES de tirar as funcoes que o corpo novo
--- chama; tira as funcoes do servidor, as RPCs e preparo_texto_recusado;
+-- chama; tira as funcoes do servidor, as RPCs, preparo_texto_recusado e
+-- preparo_conselho_recusa_texto;
 -- tira o CHECK ai_decision_log_preparo_coerente e a coluna
 -- preparo_versao_id (o grant sai junto); devolve os CHECKs de antes do
 -- desfecho e da saida (NOT VALID e VALIDATE, sem comentario), salvo com
@@ -56,7 +59,8 @@
 -- faltando ou diferente, falha e desfaz tudo.
 --
 -- O QUE FICA, DE PROPOSITO (o contrato, secao 1.8): AS DUAS TABELAS, com as
--- linhas (os RTs e as versoes, a prova de quem aprovou o que), os gatilhos,
+-- linhas (os RTs, a conferencia do registro e as versoes, a prova de quem
+-- aprovou e de quem conferiu o que), os gatilhos,
 -- os CHECKs, os indices, a RLS, as policies e as SEIS funcoes que elas usam
 -- (preparo_texto_valido e preparo_nome_valido, nos CHECKs;
 -- responsavel_tecnico_vigente, no gatilho de aprovacao; e as dos tres
@@ -353,8 +357,9 @@ $function$;
 
 comment on function public.mensagem_ia_exige_aprovacao() is null;
 
--- 4. As RPCs das telas, as funcoes do servidor e de leitura e a regra do
---    conteudo das RPCs (preparo_texto_recusado). Ficam as que as tabelas usam
+-- 4. As RPCs das telas, as funcoes do servidor e de leitura e as regras do
+--    conteudo das RPCs (preparo_texto_recusado e
+--    preparo_conselho_recusa_texto). Ficam as que as tabelas usam
 --    (preparo_texto_valido e preparo_nome_valido, nos CHECKs;
 --    responsavel_tecnico_vigente, no gatilho de aprovacao; as tres dos
 --    gatilhos).
@@ -365,6 +370,7 @@ drop function public.descartar_preparo_do_procedimento(uuid);
 drop function public.suspender_preparo_do_procedimento(uuid, text);
 drop function public.definir_responsavel_tecnico(uuid, uuid, text, text, text, text);
 drop function public.encerrar_responsavel_tecnico(uuid);
+drop function public.conferir_registro_do_responsavel_tecnico(uuid);
 drop function public.ler_preparo_para_envio(uuid, uuid, boolean);
 drop function public.preparos_em_vigor_da_clinica(uuid);
 drop function public.textos_de_preparo_da_clinica(uuid);
@@ -373,6 +379,7 @@ drop function public.mensagem_do_preparo(uuid);
 drop function public.preparo_em_vigor(uuid, uuid);
 drop function public.user_e_responsavel_tecnico(uuid);
 drop function public.preparo_texto_recusado(text);
+drop function public.preparo_conselho_recusa_texto(text, text);
 
 -- 5. ai_decision_log: o CHECK novo e a coluna (o grant da coluna sai junto).
 alter table public.ai_decision_log
@@ -440,7 +447,8 @@ begin
                                   'encerrar_responsavel_tecnico', 'ler_preparo_para_envio',
                                   'preparos_em_vigor_da_clinica', 'textos_de_preparo_da_clinica',
                                   'preparo_em_vigor_do_procedimento', 'mensagem_do_preparo', 'preparo_em_vigor',
-                                  'user_e_responsavel_tecnico', 'preparo_texto_recusado'))
+                                  'user_e_responsavel_tecnico', 'preparo_texto_recusado',
+                                  'conferir_registro_do_responsavel_tecnico', 'preparo_conselho_recusa_texto'))
      or exists (select 1 from information_schema.columns c
                  where c.table_schema = 'public' and c.table_name = 'ai_decision_log'
                    and c.column_name = 'preparo_versao_id')

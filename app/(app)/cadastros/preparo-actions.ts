@@ -17,7 +17,10 @@ import {
   type RecusaDoPreparo,
 } from "@/components/cadastros/preparo-na-tela";
 import { getSessionContext } from "@/lib/auth/active-clinic";
-import { problemasDoTextoDoPreparo } from "@/lib/domain/conformidade/preparo-aprovado";
+import {
+  problemasDoTextoDoPreparo,
+  recusaPeloConselho,
+} from "@/lib/domain/conformidade/preparo-aprovado";
 import { canEdit, type Role } from "@/lib/domain/permissions";
 import { conteudoRecusadoPeloBanco } from "@/lib/domain/preparo";
 import { createClient } from "@/lib/supabase/server";
@@ -231,6 +234,49 @@ function comentarioValido(texto: string): string | null {
   return tamanho >= 1 && tamanho <= LIMITE_DO_COMENTARIO ? aparado : null;
 }
 
+/**
+ * O conselho do RT recusa o texto? (remedio ou dose so de CRM ou CRO; decisao
+ * do dono de 05/11/2026.) So le o RT quando o texto cita remedio ou dose, e a
+ * RPC confere de novo. Sem RT aberto, salva (o aprovar confere). Erro na
+ * leitura e "recusa" (falha fechada).
+ */
+async function conselhoRecusa(
+  sessao: Sessao,
+  texto: string,
+): Promise<boolean> {
+  // Sem conselho: o texto cita remedio ou dose?
+  if (recusaPeloConselho(texto, null).length === 0) {
+    return false;
+  }
+  const { data, error } = await sessao.supabase
+    .from("responsavel_tecnico")
+    .select("conselho")
+    .eq("clinic_id", sessao.clinicId)
+    .is("ate", null)
+    .maybeSingle();
+  if (error) {
+    return true;
+  }
+  if (data === null) {
+    return false;
+  }
+  const { conselho } = data as { conselho?: unknown };
+  return (
+    recusaPeloConselho(texto, typeof conselho === "string" ? conselho : null)
+      .length > 0
+  );
+}
+
+function recusaDoConselho(comFrase?: string): RecusaDoPreparo {
+  return {
+    ok: false,
+    error: comFrase
+      ? `${comFrase} ${T.conselhoNaoAceita}`
+      : T.conselhoNaoAceita,
+    code: "conselho_nao_aceita_remedio_ou_dose",
+  };
+}
+
 function revalidar() {
   revalidatePath("/cadastros");
   revalidatePath("/agente");
@@ -390,6 +436,9 @@ export async function salvarPreparoAction(
   if (!texto.ok) {
     return texto;
   }
+  if (await conselhoRecusa(sessao, texto.texto)) {
+    return recusaDoConselho();
+  }
   const procedimento = await nomeDoProcedimento(sessao, lido.data.procedureId);
   if (procedimento === "erro" || procedimento === "nao") {
     return {
@@ -473,6 +522,9 @@ export async function aprovarPreparoAction(
       error: `${T.naoPodeSerAprovado} ${recusa}`,
       code: "texto_recusado",
     };
+  }
+  if (await conselhoRecusa(sessao, versao.texto)) {
+    return recusaDoConselho(T.naoPodeSerAprovado);
   }
   const { error } = await sessao.supabase.rpc(
     "aprovar_preparo_do_procedimento",
@@ -578,6 +630,9 @@ export async function aprovarDeNovoAction(
       error: `${T.naoPodeSerAprovado} ${texto.error}`,
       code: "texto_recusado",
     };
+  }
+  if (await conselhoRecusa(sessao, texto.texto)) {
+    return recusaDoConselho(T.naoPodeSerAprovado);
   }
   const salvo = await salvarNoBanco(
     sessao,
@@ -800,7 +855,11 @@ export async function avisosDoPreparoAction(
   return {
     ok: true,
     avisos: [...problemasDoTextoDoPreparo(versao.texto).avisos],
-    recusa: recusaDoTextoDoPreparo(versao.texto),
+    recusa:
+      recusaDoTextoDoPreparo(versao.texto) ??
+      ((await conselhoRecusa(sessao, versao.texto))
+        ? T.conselhoNaoAceita
+        : null),
   };
 }
 

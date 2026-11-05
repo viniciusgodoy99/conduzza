@@ -13,6 +13,7 @@ import {
 import {
   aprovarTitulo,
   diferencaDasLinhas,
+  rotulosDosAvisos,
   FRASE_DA_EQUIPE_CONDUZZA,
   TEXTOS_DO_PREPARO as T,
   type LinhaDaDiferenca,
@@ -225,7 +226,19 @@ export function ConteudoDoAprovarPreparo({
           </p>
         ) : mostraAvisoDeRemedio(avisos) ? (
           <Aviso tom="info" role="note">
-            {T.avisoRemedio}
+            {avisos === "falhou" ? (
+              T.avisoRemedio
+            ) : (
+              <>
+                <p>{T.avisoDoQueOTextoTem}</p>
+                <ul className="my-1 list-disc pl-5">
+                  {rotulosDosAvisos(avisos).map((rotulo) => (
+                    <li key={rotulo}>{rotulo}</li>
+                  ))}
+                </ul>
+                <p>{T.avisoAoAprovar}</p>
+              </>
+            )}
           </Aviso>
         ) : null}
 

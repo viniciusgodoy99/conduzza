@@ -34,15 +34,25 @@
 --      chaves duplas). preparo_texto_recusado (nova, sql, imutavel): o
 --      conteudo que o banco recusa sozinho, um pedaco do que
 --      problemasDoTextoDoPreparo recusa no TS (CFM-2): link, valor em reais,
---      arroba e os invisiveis que o filtro recusa e preparo_texto_valido nao
---      (promessa, oferta casada e antes e depois ficam so no TS). As RPCs de
---      salvar e de aprovar e a copia do texto antigo a usam.
+--      arroba, os invisiveis que o filtro recusa e preparo_texto_valido nao
+--      e, por decisao do dono de 05/11/2026, a normalizacao de sintoma ("e
+--      normal", "passa sozinho") e a oferta de outro procedimento (promessa,
+--      a oferta casada das regras do filtro e antes e depois ficam so no
+--      TS). As RPCs de salvar e de aprovar e a copia do texto antigo a usam.
+--      preparo_conselho_recusa_texto (nova, sql, imutavel; decisao de
+--      05/11/2026): o texto cita remedio ou dose e o conselho do RT nao e CRM
+--      nem CRO. Os padroes medicamento e dosagem do filtro
+--      (PADROES_DE_SAIDA), na visao base; o TS le mais visoes, entao o banco
+--      recusa um pedaco do que o TS recusa.
 --      preparo_nome_valido (nova, sql, imutavel): o nome do procedimento e o
 --      do RT, que vao no cabecalho da mensagem ao paciente (1 a 120,
 --      aparado, sem controle, sem invisivel e sem marca de direcao).
 --   4. responsavel_tecnico (tabela nova): o RT de cada clinica, uma linha por
 --      designacao, com o historico; so as RPCs gravam; o gatilho
---      responsavel_tecnico_nao_muda (so o encerramento, uma vez).
+--      responsavel_tecnico_nao_muda (so o encerramento e a conferencia do
+--      registro, cada um uma vez). registro_conferido_em e
+--      registro_conferido_por (decisao de 05/11/2026): sem conferencia da
+--      equipe Conduzza, nada esta em vigor, em toda clinica.
 --   5. preparo_do_procedimento (tabela nova): as versoes imutaveis do texto,
 --      com o hash, a situacao e a aprovacao; so as RPCs gravam; os gatilhos
 --      preparo_do_procedimento_ao_inserir (o hash; nasce aguardando o RT; o
@@ -55,8 +65,9 @@
 --      servidor (ler_preparo_para_envio, preparos_em_vigor_da_clinica,
 --      textos_de_preparo_da_clinica, preparo_em_vigor_do_procedimento) e as
 --      RPCs das telas (salvar, aprovar, devolver, descartar e suspender o
---      preparo; definir e encerrar o RT), com a trilha em audit_log (so ids e
---      o codigo do texto, nunca texto).
+--      preparo; definir e encerrar o RT; conferir o registro do RT, so o
+--      super admin), com a trilha em audit_log (so ids e o codigo do texto,
+--      nunca texto).
 --   7. mensagem_ia_exige_aprovacao (CREATE OR REPLACE do corpo do M1,
 --      20261013100000; a AG5 e a AG6 nao mexeram nele): o ramo `ia` byte a
 --      byte igual; o ramo do outro autor no job da IA ganha, depois da frase
@@ -91,6 +102,8 @@
 --   - EM VIGOR (preparo_em_vigor): a versao e da clinica, aprovada, o hash
 --     recalculado bate com texto_sha256 (falha fechada se alguem mexeu na
 --     linha com o gatilho desligado), rt_id e o vigente de agora (D-73), o
+--     registro desse RT foi conferido pela equipe Conduzza, o conselho dele
+--     aceita o texto (preparo_conselho_recusa_texto), o
 --     nome do procedimento e o da aprovacao (renomear tira a aprovacao) e o
 --     procedimento e da mesma clinica. O procedimento inativo continua em
 --     vigor para a regua das consultas que ja existem; a IA so ve o ativo.
@@ -106,13 +119,16 @@
 --   salvar: 22004 -> texto_invalido -> texto_recusado -> versao_lida_invalida
 --     -> procedimento_inexistente -> 42501 (escrever) -> (trava o
 --     procedimento) -> nome_do_procedimento_invalido -> (trava a aguardando)
---     -> texto_mudou -> texto_igual_ao_em_vigor -> {versao_id, versao,
---     texto_sha256}.
+--     -> texto_mudou -> texto_igual_ao_em_vigor ->
+--     conselho_nao_aceita_remedio_ou_dose (P0001: o RT vigente nao e de CRM
+--     nem de CRO; sem RT vigente, salva, e o aprovar confere) -> {versao_id,
+--     versao, texto_sha256}.
 --   aprovar: 22004 -> sha256_invalido -> versao_inexistente -> 42501
 --     (aprovar) -> (trava o procedimento, a versao, a aprovada e o RT) ->
 --     42501 de novo (o RT mudou) -> nao_aguarda_aprovacao -> texto_mudou ->
 --     nome_mudou -> texto_recusado (P0001: a versao que chegou sem passar
---     pelo salvar, como uma linha gravada pelo dono) -> (23505 do indice:
+--     pelo salvar, como uma linha gravada pelo dono) ->
+--     conselho_nao_aceita_remedio_ou_dose (P0001) -> (23505 do indice:
 --     outra_aprovacao) -> {versao_id, versao, texto_sha256, aprovado_em}.
 --   devolver: 22004 -> comentario_invalido -> versao_inexistente -> 42501
 --     (aprovar) -> (trava o procedimento e a versao) -> nao_aguarda_aprovacao.
@@ -132,12 +148,16 @@
 --   encerrar o RT: 22004 -> 42501 (RT) -> (trava a linha aberta) ->
 --     sem_responsavel_tecnico -> outra_definicao (a linha aberta nasceu
 --     depois do comeco desta transacao).
+--   conferir o registro do RT: 22004 -> 42501 (so o super admin) -> (trava a
+--     designacao) -> sem_responsavel_tecnico -> responsavel_encerrado ->
+--     42501 (o proprio RT) -> registro_ja_conferido -> quando conferiu.
 -- QUEM PASSA: escrever, descartar e suspender: administrador ou gestor
 -- ativo, o super admin ou o RT vigente (de qualquer papel; o pendente nunca,
 -- porque nao e ativo); aprovar e devolver: so o RT vigente (nem o
 -- administrador, nem o super admin: aprovar e ato clinico, D-71); definir e
 -- encerrar o RT: so o administrador pleno (sem a marca de Implementador) ou
--- o super admin. A sessao so age como RT (user_e_responsavel_tecnico) fora
+-- o super admin; conferir o registro do RT: so o super admin, nunca o proprio
+-- RT nem os papeis da clinica. A sessao so age como RT (user_e_responsavel_tecnico) fora
 -- da clinica de conta suspensa (como user_has_role: a equipe da clinica
 -- suspensa nao escreve nada) e nunca sendo super admin, mesmo com vinculo
 -- ativo e designada antes (D-71); e o super admin nunca e escolhido como RT.
@@ -154,8 +174,8 @@
 -- bloco, so pede travas que ja tem (ou mais fracas, ou das tabelas novas) e
 -- nunca espera; o lock_timeout de 3 s fica de rede. As funcoes que leem
 -- tabela sao plpgsql (o corpo nao e validado contra as tabelas no CREATE);
--- as tres sql (preparo_texto_valido, preparo_texto_recusado e
--- preparo_nome_valido) nao leem tabela. As policies novas so chamam
+-- as quatro sql (preparo_texto_valido, preparo_texto_recusado,
+-- preparo_conselho_recusa_texto e preparo_nome_valido) nao leem tabela. As policies novas so chamam
 -- funcoes. ZERO trava em message, conversation, contact,
 -- job_queue, audit_log, clinic_member, professional, ai_agent_config,
 -- ia_atendimento, slot_hold e waitlist. A copia do texto antigo (passo 10)
@@ -183,7 +203,7 @@
 -- aprovada). Suspender: o procedimento,
 -- depois a aprovada. Salvar: o procedimento, depois a aguardando. Devolver e
 -- descartar: o procedimento, depois a versao. Definir e encerrar o RT: so a
--- linha aberta do RT. Nenhum caminho trava o RT e depois a versao, nem a
+-- linha aberta do RT. Conferir o registro: so a designacao. Nenhum caminho trava o RT e depois a versao, nem a
 -- versao e depois o procedimento. JANELAS ACEITAS (o gatilho nao trava a
 -- linha): o rename do procedimento e o RT que perde o acesso (clinic_member)
 -- so sao vistos se o commit vier antes da conferencia do gatilho; a mensagem
@@ -193,9 +213,10 @@
 -- grava as acoes da conta pela sessao" de audit_log nao lista as acoes novas
 -- (escreveu_preparo, aprovou_preparo, devolveu_preparo, descartou_preparo,
 -- suspendeu_preparo, definiu_responsavel_tecnico,
--- encerrou_responsavel_tecnico). A sessao ainda consegue inserir uma linha
--- falsa na trilha, mas a aprovacao de verdade mora em
--- preparo_do_procedimento, que a sessao nao escreve. Fechar quando a trilha
+-- encerrou_responsavel_tecnico, conferiu_registro_do_responsavel_tecnico).
+-- A sessao ainda consegue inserir uma linha falsa na trilha, mas a aprovacao
+-- de verdade mora em preparo_do_procedimento e a conferencia em
+-- responsavel_tecnico, que a sessao nao escreve. Fechar quando a trilha
 -- for revista (AG8), sem pegar ACCESS EXCLUSIVE em audit_log agora.
 --
 -- Producao em 03/11/2026 (q.js e fndef.js, so leitura): a ultima migration
@@ -249,8 +270,8 @@
 -- desfecho e o da saida de antes, salvo com linha enviou_preparo ou
 -- preparo, quando ficam os da AG7, que so acrescentam o valor; sai o CHECK
 -- ai_decision_log_preparo_coerente; sai a coluna preparo_versao_id, e o
--- grant sai junto; saem as RPCs, as funcoes do servidor e
--- preparo_texto_recusado). AS DUAS TABELAS FICAM, com os gatilhos, as
+-- grant sai junto; saem as RPCs, as funcoes do servidor,
+-- preparo_texto_recusado e preparo_conselho_recusa_texto). AS DUAS TABELAS FICAM, com os gatilhos, as
 -- policies e as funcoes que elas usam (preparo_texto_valido,
 -- preparo_nome_valido, responsavel_tecnico_vigente e as dos gatilhos): sao
 -- a prova de quem aprovou o que. Opcional: copiar o texto em vigor para
@@ -434,16 +455,77 @@ as $function$
            -- U+E0000 a U+E007F) e o seletor de variacao colado numa letra
            -- ou digito (o "1" do emoji de tecla).
            or p_texto ~ '[\u034f\u061c\u115f\u1160\u180e\u2066-\u2069\u2800\u3164\uffa0\U000e0000-\U000e007f]'
-           or p_texto ~ '[0-9A-Za-z][\ufe00-\ufe0f]',
+           or p_texto ~ '[0-9A-Za-z][\ufe00-\ufe0f]'
+           -- A normalizacao de sintoma (decisao de 05/11/2026): "passa
+           -- sozinho", "efeito esperado", o sintoma com o adjetivo colado e o
+           -- que diz que e normal na mesma frase de um sintoma ou reacao. A
+           -- fonte e FONTE_DO_SINTOMA_NORMALIZADO (lib/domain/preparo.ts).
+           or b.frases ~ '\m(?:passa|passam|passar|passara|passarao|some|somem|sumir|sumira|sumirao|melhora|melhoram|melhorar|melhorara|melhorarao|desaparece|desaparecem|desaparecer|desaparecera|desaparecerao|cede|cedem|ceder|cedera|cederao)\M (?:[a-z]+ )?(?:sozinh[oa]s?|naturalmente|espontaneamente)\M|\mefeitos? esperados?\M|\m(?:colicas?|dor|dores|enjoos?|nauseas?|vomitos?|diarreias?|tonturas?|mal[- ]estar|inchacos?|vermelhid(?:ao|oes)|sangramentos?|coceiras?|ardencias?|ardor|queimac(?:ao|oes)|formigamentos?|febres?|fraquezas?|cansacos?|sonolencias?|gases|estufamentos?|desconfortos?|hematomas?|manchas?|reac(?:ao|oes)|sintomas?|efeitos? colaterais|efeito colateral|evacuac(?:ao|oes)|evacuar|sentir)\M (?:[a-z]+ )?(?:normal|normais|esperad[oa]s?|comum|comuns|natural|naturais|previst[oa]s?|habitual|habituais|passageir[oa]s?|transitori[oa]s?)\M|\m(?:colicas?|dor|dores|enjoos?|nauseas?|vomitos?|diarreias?|tonturas?|mal[- ]estar|inchacos?|vermelhid(?:ao|oes)|sangramentos?|coceiras?|ardencias?|ardor|queimac(?:ao|oes)|formigamentos?|febres?|fraquezas?|cansacos?|sonolencias?|gases|estufamentos?|desconfortos?|hematomas?|manchas?|reac(?:ao|oes)|sintomas?|efeitos? colaterais|efeito colateral|evacuac(?:ao|oes)|evacuar|sentir)\M[^.!?;\n]*(?:\m(?:e|eh|sao|ser|seja|sera|serao|considerad[oa]s?)\M (?:[a-z]+ ){0,2}(?:normal|normais|esperad[oa]s?|comum|comuns|natural|naturais|previst[oa]s?|habitual|habituais|passageir[oa]s?|transitori[oa]s?)\M|\mdentro d[oa] (?:normal|normalidade|esperado)\M|\m(?:vai|vao|deve|devem|costuma|costumam|tende a|tendem a) (?:passar|sumir|melhorar|desaparecer|ceder)\M|\m(?:nao se preocupe|nao precisa se preocupar|nao ha motivo para preocupac|sem motivo para preocupac|nao e grave|sem gravidade|faz parte))|(?:\m(?:e|eh|sao|ser|seja|sera|serao|considerad[oa]s?)\M (?:[a-z]+ ){0,2}(?:normal|normais|esperad[oa]s?|comum|comuns|natural|naturais|previst[oa]s?|habitual|habituais|passageir[oa]s?|transitori[oa]s?)\M|\mdentro d[oa] (?:normal|normalidade|esperado)\M|\m(?:vai|vao|deve|devem|costuma|costumam|tende a|tendem a) (?:passar|sumir|melhorar|desaparecer|ceder)\M|\m(?:nao se preocupe|nao precisa se preocupar|nao ha motivo para preocupac|sem motivo para preocupac|nao e grave|sem gravidade|faz parte))[^.!?;\n]*\m(?:colicas?|dor|dores|enjoos?|nauseas?|vomitos?|diarreias?|tonturas?|mal[- ]estar|inchacos?|vermelhid(?:ao|oes)|sangramentos?|coceiras?|ardencias?|ardor|queimac(?:ao|oes)|formigamentos?|febres?|fraquezas?|cansacos?|sonolencias?|gases|estufamentos?|desconfortos?|hematomas?|manchas?|reac(?:ao|oes)|sintomas?|efeitos? colaterais|efeito colateral|evacuac(?:ao|oes)|evacuar|sentir)\M'
+           -- A oferta de outro procedimento (decisao de 05/11/2026): a fonte
+           -- e FONTE_DA_OFERTA_DE_OUTRO_PROCEDIMENTO (lib/domain/preparo.ts).
+           or b.frases ~ '\m(?:aproveit[a-z]*|que tal)\M (?:[a-z]+ ){0,3}?(?:(?:faca|marque|agende|realize|inclua|adicione|conheca|experimente|contrate)|(?:fazer|marcar|agendar|realizar|incluir|adicionar|conhecer|experimentar|contratar))\M(?!(?: (?:[a-z]+ ){0,2}(?:jejum|dieta|preparo|preparacao|exames?|coleta|higiene|banho|lavagem|limpeza d[oa]|enema|hidratacao|repouso|retirada|remocao|assepsia|tricotomia|depilacao d[aeo]|refeic(?:ao|oes)|lanche|alimentacao|retorno)\M))|\m(?:faca|marque|agende|realize|inclua|adicione|conheca|experimente|contrate) (?:tambem|junto)\M(?!(?: (?:[a-z]+ ){0,2}(?:jejum|dieta|preparo|preparacao|exames?|coleta|higiene|banho|lavagem|limpeza d[oa]|enema|hidratacao|repouso|retirada|remocao|assepsia|tricotomia|depilacao d[aeo]|refeic(?:ao|oes)|lanche|alimentacao|retorno)\M))|\mtambem (?:faca|marque|agende|realize|inclua|adicione|conheca|experimente|contrate)\M(?!(?: (?:[a-z]+ ){0,2}(?:jejum|dieta|preparo|preparacao|exames?|coleta|higiene|banho|lavagem|limpeza d[oa]|enema|hidratacao|repouso|retirada|remocao|assepsia|tricotomia|depilacao d[aeo]|refeic(?:ao|oes)|lanche|alimentacao|retorno)\M))',
            false)
-    from (select regexp_replace(lower(normalize(p_texto, nfkd)), '[\u0300-\u036f]', '', 'g') as base) as b
+    from (select v.base, regexp_replace(v.base, ' +', ' ', 'g') as frases
+            from (select regexp_replace(lower(normalize(p_texto, nfkd)), '[\u0300-\u036f]', '', 'g') as base) as v) as b
 $function$;
 
 revoke all on function public.preparo_texto_recusado(text)
   from public, anon, authenticated, service_role;
 
 comment on function public.preparo_texto_recusado(text) is
-  'Interna (AG7, CFM-2; nenhum papel da API executa: as RPCs salvar_preparo_do_procedimento e aprovar_preparo_do_procedimento e a copia do texto antigo rodam como o dono). Verdadeiro se o texto da orientacao de preparo tem link ("://", http ou https, "www." ou dominio com uma das terminacoes do filtro), valor em reais ("R$" com numero ou numero com "reais"), arroba ("@" com 2 ou mais caracteres, fora de e-mail, ou a palavra) ou um invisivel que o filtro recusa e preparo_texto_valido nao. Um pedaco do que problemasDoTextoDoPreparo recusa no TS (tudo o que esta recusa, o TS recusa): promessa, oferta casada, antes e depois e o resto ficam so no TS. Nulo: falso. Pura.';
+  'Interna (AG7, CFM-2; nenhum papel da API executa: as RPCs salvar_preparo_do_procedimento e aprovar_preparo_do_procedimento e a copia do texto antigo rodam como o dono). Verdadeiro se o texto da orientacao de preparo tem link ("://", http ou https, "www." ou dominio com uma das terminacoes do filtro), valor em reais ("R$" com numero ou numero com "reais"), arroba ("@" com 2 ou mais caracteres, fora de e-mail, ou a palavra), um invisivel que o filtro recusa e preparo_texto_valido nao, a normalizacao de sintoma ("e normal", "passa sozinho") ou a oferta de outro procedimento ("aproveite e faca tambem a limpeza de pele"; as duas por decisao do dono de 05/11/2026). Um pedaco do que problemasDoTextoDoPreparo recusa no TS (tudo o que esta recusa, o TS recusa): promessa, a oferta casada das regras do filtro, antes e depois e o resto ficam so no TS. Nulo: falso. Pura.';
+
+-- O texto que so o RT de CRM ou de CRO aprova (decisao do dono de 05/11/2026):
+-- os padroes medicamento e dosagem do filtro de saida (PADROES_DE_SAIDA,
+-- lib/domain/conformidade/padroes.ts), a mesma deteccao do aviso de remedio e
+-- dose, byte a byte (o \b do JavaScript vira \y; o teste
+-- tests/unit/agente/ag7-espelhos.test.ts confere), na visao base, com os
+-- brancos juntados. O TS le mais visoes (letras soltas, leet, compacta), entao
+-- tudo o que esta recusa, o TS recusa. Nao le tabela.
+create function public.preparo_conselho_recusa_texto(p_conselho text, p_texto text)
+returns boolean
+language sql
+immutable
+parallel safe
+set search_path to ''
+as $function$
+  select coalesce(
+           p_conselho not in ('CRM', 'CRO')
+           and (-- medicamento, remedio_citado
+               b.base ~ '\y(?:dipir|dipi\y|novalgin|paracetamo|tylenol|ibuprof|advil|alivium|buscopan|escopolamin|nimesulid|diclofenac|cataflam|voltaren|cetoprof|profenid|naproxen|aspirin|acido acetilsalicilico|\yaas\y|amoxicil|amoxil\y|clavulanat|azitromicin|cefalexin|ciprofloxacin|doxiciclin|metronidazol|nistatin|fluconazol|cetoconazol|clotrimazol|aciclovir|valaciclovir|predniso|dexametason|betametason|hidrocortison|loratadin|desloratadin|cetirizin|fexofenadin|allegra\y|polaramine|dexclorfeniramin|hidroxizin|prometazin|fenergan|omeprazol|pantoprazol|ranitidin|dramin\y|dimenidrinat|ondansetron|plasil|metoclopramid|simeticon|luftal|loperamid|isotretinoin|roacutan|tretinoin|acido retinoico|adapalen|hidroquinon|acido tranexamico|minoxidil|finasterid|dutasterid|espironolacton|metformin|glifage|semaglutid|ozempic|wegovy|rybelsus|tirzepatid|mounjaro|liraglutid|saxenda|victoza|sibutramin|orlistat|topiramat|fluoxetin|sertralin|escitalopram|citalopram|paroxetin|venlafaxin|bupropion|amitriptilin|clonazepam|rivotril|alprazolam|diazepam|zolpidem|melatonin|varfarin|warfarin|marevan|clopidogrel|rivaroxaban|xarelto|apixaban|eliquis|heparin|enoxaparin|clexane|losartan|enalapril|captopril|atenolol|propranolol|anlodipin|hidroclorotiazid|furosemid|sinvastatin|atorvastatin|rosuvastatin|levotiroxin|puran t4|euthyrox|insulin|cortison|morfin|tramadol|tramal\y|codein|dorflex|neosaldin|torsilax|miosan|ciclobenzaprin|sildenafil|tadalafil|viagra|cialis|misoprostol|cytotec|lidocain|arnica|hirudoid|bepantol|nebacetin|neomicin|bacitracin|mupirocin|bactroban|fucidin|acido fusidico|sulfadiazin|emla\y|hialuronidas|triancinolon|kenalog|trombofob|thrombocid|decadron|diprospan|celestone|benzetacil|penicilin|bactrim|sulfametoxazol|benegrip|cimegrip|resfenol|melhoral|doril\y|nisulid|toragesic|cetorolac|lexotan|bromazepam|valium|ivermectin|albendazol|hipoglos|prozac|lexapro|pregabalin|gabapentin)'
+               or -- medicamento, remedio_do_preparo
+               b.base ~ '\y(?:bisacodil|dulcolax|bisalax|lacto purga|lactopurga|humectol|manitol|picossulfato|picosulfato|picoprep|pico prep|picolax|guttalax|macrogol|polietilenoglicol|muvinlax|muvilax|forlax|lactulos|lactulona|duphalac|sene\y|senosideo|tamarine|naturetti|agiolax|fosfato de sodio|phosfoenema|fleet\y|supositori|nujol|oleo mineral|oleo de ricino)'
+               or -- medicamento, classe_de_remedio
+               b.base ~ '\y(?:remedi|antitermic|antiacid|laxante|diuretic|antiemetic|antidiarreic|descongestionante|expectorante|soro fisiologico|cicatrizante|medicament|medicac|farmac|comprimid|capsul|pilul|pastilh|xarope|colirio|pomad|antibiot|anti-?inflamat|antinflamat|analges|anti-?alerg|anti-?histamin|corticoi|corticosteroi|anticoagul|antidepress|ansiolit|anticoncep|antiviral|antifung|antissept|anestesic|relaxante muscular|calmante|suplement|vitamina|polivitamin|hormoni|receita medica|receita de|receitar|receito|prescri|prescrev|automedic|painkiller|pain reliever|acetaminophen|antibiotic|antihistamine|ointment|medication|medicine|pills?\y|drugs?\y|prescription|pastilla|jarabe|receta\y)'
+               or -- medicamento, liberar_tomar
+               b.base ~ '\y(?:pode|podera|deve|devera|precisa|tem que|e so|basta)\y (?:\w+ )?(?:tomar|ingerir)\y'
+               or -- medicamento, tomar_algo_para
+               b.base ~ '\y(?:tome|toma|tomar)\y (?:alguma coisa|algo)\y(?: [a-z]+){0,2}? (?:para|pra) (?:aliviar|melhorar|passar|baixar|acalmar|dormir|relaxar|a dor|a febre|a alergia|o enjoo)\y'
+               or -- medicamento, tomar_en_es
+               b.base ~ '\y(?:take|taking)\y (?:\w+ ){0,2}?(?:ibuprofen|paracetamol|aspirin|pill|tablet|medicine|medication|antibiotic)|\ypuede tomar\y|\y(?:tome|tomar) (?:un|una|el|la)\y'
+               or -- dosagem, quantidade_com_unidade
+               b.base ~ '\y\d[\d.,o]*\s?(?:m\W{0,2}g|mcg|ug|m\W{0,2}l|g|u\W{0,2}i|ui|u|un|gotas?|gotinhas?|pingos?|comprimidos?|compr|capsulas?|cps?|caps|saches?|colher(?:es)?|colheradas?|doses?|ampolas?|jatos?|borrifadas?|puffs?|miligramas?|mililitros?|microgramas?|gramas?|seringas?|frascos?)\y|\y\d[\d.,o]*\s?unidades? (?:de |do |da )?(?:botox|toxina|dysport|xeomin|botulift|produto|acido|preenchimento)'
+               or -- dosagem, quantidade_por_extenso
+               b.base ~ '\y(?:um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|meio|meia|vinte|trinta|quarenta|cinquenta|cem|duzentos|quinhentos|mil)\y (?:\w+ )?(?:gotas?|gotinhas?|pingos?|comprimidos?|compr|capsulas?|colher(?:es)?|colheradas?|doses?|ampolas?|miligramas?|mililitros?|mg|ml|saches?|jatos?|borrifadas?)\y|\yquinhentinh|\ymeio grama\y'
+               or -- dosagem, unidades_na_regiao
+               b.base ~ '\y(?:\d+|uma?|duas|dois|tres|quatro|cinco|seis|sete|oito|nove|dez|quinze|vinte|trinta|quarenta|cinquenta|sessenta|setenta|oitenta|noventa|cem)\y (?:e \w+ )?unidades? (?:\w+ )?(?:na|no|nas|nos|em cada|de cada|por) (?:testa|glabela|lado|olhos?|regiao|area|ponto|rosto|face|labios?|pes de galinha|axilas?|bochechas?|queixo|pescoco|sobrancelhas?|pontos?)\y'
+               or -- dosagem, manha_e_noite
+               b.base ~ '\y(?:tome|toma|tomar|tomando|passe|passa|passar|aplique|aplica|aplicar|use|usa|usar|pingue|pinga|pingar|bote|bota|coloque|coloca)\y (?:\w+ ){0,3}?(?:uma|um|duas|dois|\d+|meia|meio) (?:de|pela) manha e (?:outr[ao]|uma|um|duas|dois|\d+|mais uma) (?:a|de|pela) noite\y'
+               or -- dosagem, frequencia
+               b.base ~ '\y(\d{1,2}) ?\/ ?\1 ?(?:h|hs|horas?)\y|\y\d+ ?x ?\/ ?dia\y|\yde \d+ em \d+ ?(?:h|hs|horas?)\y|\yde (?:duas|quatro|seis|oito|doze) em (?:duas|quatro|seis|oito|doze) horas\y|\ya cada \d+ ?(?:h|hs|horas?)\y|\ya cada (?:duas|quatro|seis|oito|doze|vinte e quatro) horas\y|\y\d+ ?(?:x|vezes) (?:ao|por|no) dia\y|\y(?:uma|duas|tres|quatro) vezes (?:ao|por|no) dia\y'
+               or -- dosagem, horario_de_uso
+               b.base ~ '\y(?:antes|depois|apos|durante|com) (?:das|as|de|da|do) refeic|\yem jejum\y|\yao deitar\y|\ydose (?:unica|diaria|dupla)\y|\y(?:dosagem|posologia)\y'
+               or -- dosagem, frequencia_en_es
+               b.base ~ '\y(?:twice|once|three times) a day\y|\yevery \d+ hours\y|\ycada \d+ horas\y|\y(?:una|dos|tres) veces al dia\y'),
+           false)
+    from (select regexp_replace(regexp_replace(lower(normalize(p_texto, nfkd)), '[\u0300-\u036f]', '', 'g'), '\s+', ' ', 'g') as base) as b
+$function$;
+
+revoke all on function public.preparo_conselho_recusa_texto(text, text)
+  from public, anon, authenticated, service_role;
+
+comment on function public.preparo_conselho_recusa_texto(text, text) is
+  'Interna (AG7; decisao do dono de 05/11/2026; nenhum papel da API executa: as RPCs salvar_preparo_do_procedimento e aprovar_preparo_do_procedimento e preparo_em_vigor rodam como o dono). Verdadeiro se o conselho nao e CRM nem CRO e o texto cita remedio ou dose (os padroes medicamento e dosagem do filtro, na visao base). "em jejum" conta como dose, porque o padrao horario_de_uso o traz (o limite esta no docs/03, secao 24). Qualquer nulo: falso. Pura.';
 
 -- O nome que vai no cabecalho da mensagem ao paciente: o do procedimento
 -- (preparo_do_procedimento.nome_do_procedimento) e o do RT
@@ -494,6 +576,8 @@ create table public.responsavel_tecnico (
   ate timestamptz,
   definido_por uuid,
   encerrado_por uuid,
+  registro_conferido_em timestamptz,
+  registro_conferido_por uuid,
   constraint responsavel_tecnico_nome_valido check (
     public.preparo_nome_valido(nome)),
   constraint responsavel_tecnico_conselho_valido check (
@@ -504,7 +588,9 @@ create table public.responsavel_tecnico (
     uf in ('AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA',
            'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO')),
   constraint responsavel_tecnico_encerramento_coerente check (
-    (ate is null) = (encerrado_por is null) and (ate is null or ate >= desde))
+    (ate is null) = (encerrado_por is null) and (ate is null or ate >= desde)),
+  constraint responsavel_tecnico_conferencia_coerente check (
+    (registro_conferido_em is null) = (registro_conferido_por is null))
 );
 
 -- Um RT aberto por clinica (D-86: uma unidade, um RT).
@@ -512,8 +598,10 @@ create unique index responsavel_tecnico_um_aberto
   on public.responsavel_tecnico (clinic_id)
   where ate is null;
 
--- So o encerramento muda a linha: ate e encerrado_por, de nulo para
--- preenchido, uma vez. Vale para todo papel (a service role e o dono
+-- So duas mudancas na linha, cada uma uma vez: o encerramento (ate e
+-- encerrado_por, de nulo para preenchido) e, na designacao aberta, a
+-- conferencia do registro (registro_conferido_em e registro_conferido_por, de
+-- nulo para preenchido). Vale para todo papel (a service role e o dono
 -- inclusive).
 create function public.responsavel_tecnico_nao_muda()
 returns trigger
@@ -532,6 +620,19 @@ begin
      or new.definido_por is distinct from old.definido_por
      or old.ate is not null
      or old.encerrado_por is not null
+  then
+    raise exception using errcode = '23514', message = 'responsavel_tecnico_nao_muda';
+  end if;
+  -- A conferencia: so as duas colunas dela, de nulas para preenchidas.
+  if old.registro_conferido_em is null and new.registro_conferido_em is not null then
+    if new.registro_conferido_por is null or new.ate is not null or new.encerrado_por is not null then
+      raise exception using errcode = '23514', message = 'responsavel_tecnico_nao_muda';
+    end if;
+    return new;
+  end if;
+  -- O encerramento: a conferencia fica como estava.
+  if new.registro_conferido_em is distinct from old.registro_conferido_em
+     or new.registro_conferido_por is distinct from old.registro_conferido_por
      or new.ate is null
      or new.encerrado_por is null
   then
@@ -545,7 +646,7 @@ revoke all on function public.responsavel_tecnico_nao_muda()
   from public, anon, authenticated, service_role;
 
 comment on function public.responsavel_tecnico_nao_muda() is
-  'Funcao do gatilho responsavel_tecnico_nao_muda (AG7): so o encerramento muda a linha do RT (ate e encerrado_por, de nulo para preenchido, uma vez); qualquer outra mudanca da 23514 responsavel_tecnico_nao_muda. Vale para todo papel. Ninguem executa direto.';
+  'Funcao do gatilho responsavel_tecnico_nao_muda (AG7): so o encerramento (ate e encerrado_por, de nulo para preenchido, uma vez) e, na designacao aberta, a conferencia do registro (registro_conferido_em e registro_conferido_por, de nulo para preenchido, uma vez) mudam a linha do RT; qualquer outra mudanca da 23514 responsavel_tecnico_nao_muda. Vale para todo papel. Ninguem executa direto.';
 
 create trigger responsavel_tecnico_nao_muda
   before update on public.responsavel_tecnico
@@ -553,7 +654,7 @@ create trigger responsavel_tecnico_nao_muda
   execute function public.responsavel_tecnico_nao_muda();
 
 comment on trigger responsavel_tecnico_nao_muda on public.responsavel_tecnico is
-  'AG7: a designacao do RT e imutavel; so o encerramento, uma vez (23514 responsavel_tecnico_nao_muda).';
+  'AG7: a designacao do RT e imutavel; so o encerramento e a conferencia do registro, cada um uma vez (23514 responsavel_tecnico_nao_muda).';
 
 alter table public.responsavel_tecnico enable row level security;
 
@@ -563,7 +664,7 @@ revoke all on table public.responsavel_tecnico from public, anon, authenticated,
 grant select on table public.responsavel_tecnico to authenticated, service_role;
 
 comment on table public.responsavel_tecnico is
-  'O responsavel tecnico (RT) de cada clinica (AG7, D-70, D-85, D-86): uma linha por designacao, com o historico (a encerrada fica). Um aberto por clinica (responsavel_tecnico_um_aberto). O VIGENTE e o aberto cujo user_id tem clinic_member ativo na clinica (responsavel_tecnico_vigente): o RT que perde o acesso deixa de ser vigente na hora. So definir_responsavel_tecnico e encerrar_responsavel_tecnico gravam (SECURITY DEFINER); a sessao e a service role so leem. RLS: membro ativo da clinica ou super admin. Nome, conselho, numero e UF sao os do conselho, informados pela clinica (nunca os do cadastro do profissional); a conferencia no portal do conselho e do checklist da producao (AG8). A AG6c reaproveita a tabela.';
+  'O responsavel tecnico (RT) de cada clinica (AG7, D-70, D-85, D-86): uma linha por designacao, com o historico (a encerrada fica). Um aberto por clinica (responsavel_tecnico_um_aberto). O VIGENTE e o aberto cujo user_id tem clinic_member ativo na clinica (responsavel_tecnico_vigente): o RT que perde o acesso deixa de ser vigente na hora. So definir_responsavel_tecnico, encerrar_responsavel_tecnico e conferir_registro_do_responsavel_tecnico gravam (SECURITY DEFINER); a sessao e a service role so leem. RLS: membro ativo da clinica ou super admin. Nome, conselho, numero e UF sao os do conselho, informados pela clinica (nunca os do cadastro do profissional); sem a conferencia no portal do conselho, pela equipe Conduzza, nada esta em vigor (preparo_em_vigor; decisao de 05/11/2026). A AG6c reaproveita a tabela.';
 comment on column public.responsavel_tecnico.clinic_id is
   'A clinica (FK em cascata).';
 comment on column public.responsavel_tecnico.user_id is
@@ -584,6 +685,10 @@ comment on column public.responsavel_tecnico.definido_por is
   'Quem definiu (auth.uid() de quem chamou definir_responsavel_tecnico).';
 comment on column public.responsavel_tecnico.encerrado_por is
   'Quem encerrou (auth.uid() de quem chamou encerrar_responsavel_tecnico ou definiu outro RT). Preenchido se e so se ate.';
+comment on column public.responsavel_tecnico.registro_conferido_em is
+  'Quando a equipe Conduzza conferiu o registro no portal do conselho (conferir_registro_do_responsavel_tecnico; nula: nao conferido, e nada esta em vigor). Toda designacao nova nasce sem conferencia.';
+comment on column public.responsavel_tecnico.registro_conferido_por is
+  'Quem conferiu (auth.uid() do super admin). Preenchido se e so se registro_conferido_em.';
 
 -- ---------------------------------------------------------------------------
 -- 5) preparo_do_procedimento: as versoes do texto
@@ -907,6 +1012,7 @@ declare
   v_versao record;
   v_nome text;
   v_clinica_do_procedimento uuid;
+  v_rt record;
 begin
   if p_clinic_id is null or p_versao_id is null then
     return false;
@@ -932,6 +1038,17 @@ begin
   then
     return false;
   end if;
+  -- O registro desse RT conferido pela equipe Conduzza, e o conselho dele
+  -- aceita o texto (decisao de 05/11/2026; falha fechada se a regra ou a
+  -- linha mudaram depois da aprovacao).
+  select r.conselho, r.registro_conferido_em into v_rt
+    from public.responsavel_tecnico r
+   where r.id = v_versao.rt_id;
+  if v_rt.registro_conferido_em is null
+     or public.preparo_conselho_recusa_texto(v_rt.conselho, v_versao.texto)
+  then
+    return false;
+  end if;
   -- O procedimento da mesma clinica, com o nome da aprovacao.
   select p.name, p.clinic_id into v_nome, v_clinica_do_procedimento
     from public.procedure p
@@ -950,7 +1067,7 @@ revoke all on function public.preparo_em_vigor(uuid, uuid)
   from public, anon, authenticated, service_role;
 
 comment on function public.preparo_em_vigor(uuid, uuid) is
-  'Interna (AG7; nenhum papel da API executa): verdadeiro so se a versao e da clinica, esta aprovada, o hash recalculado do texto bate com texto_sha256, rt_id e o RT vigente de agora (D-73), o procedimento e da mesma clinica e o nome dele e o nome_do_procedimento da versao (renomear tira a aprovacao). O procedimento inativo continua em vigor (a regua das consultas que ja existem). Qualquer nulo: falso.';
+  'Interna (AG7; nenhum papel da API executa): verdadeiro so se a versao e da clinica, esta aprovada, o hash recalculado do texto bate com texto_sha256, rt_id e o RT vigente de agora (D-73), o registro desse RT foi conferido pela equipe Conduzza, o conselho dele aceita o texto (preparo_conselho_recusa_texto), o procedimento e da mesma clinica e o nome dele e o nome_do_procedimento da versao (renomear tira a aprovacao). O procedimento inativo continua em vigor (a regua das consultas que ja existem). Qualquer nulo: falso.';
 
 -- A mensagem do preparo, montada pelo banco (o espelho TS e
 -- mensagemDoPreparo em lib/domain/preparo.ts).
@@ -1137,19 +1254,21 @@ declare
   v_id uuid;
   v_texto text;
   v_sha text;
+  v_conselho text;
 begin
   if p_clinic_id is null or p_procedure_id is null then
     return null;
   end if;
-  select v.id, v.texto, v.texto_sha256 into v_id, v_texto, v_sha
+  select v.id, v.texto, v.texto_sha256, r.conselho into v_id, v_texto, v_sha, v_conselho
     from public.preparo_do_procedimento v
+    left join public.responsavel_tecnico r on r.id = v.rt_id
    where v.clinic_id = p_clinic_id
      and v.procedure_id = p_procedure_id
      and v.situacao = 'aprovado';
   if v_id is null or not public.preparo_em_vigor(p_clinic_id, v_id) then
     return null;
   end if;
-  return jsonb_build_object('versao_id', v_id, 'texto', v_texto, 'texto_sha256', v_sha);
+  return jsonb_build_object('versao_id', v_id, 'texto', v_texto, 'texto_sha256', v_sha, 'conselho', v_conselho);
 end;
 $function$;
 
@@ -1159,7 +1278,7 @@ grant execute on function public.preparo_em_vigor_do_procedimento(uuid, uuid)
   to service_role;
 
 comment on function public.preparo_em_vigor_do_procedimento(uuid, uuid) is
-  'So o servidor (service_role; a regua, {{preparo}}). AG7: {versao_id, texto, texto_sha256} da versao em vigor (preparo_em_vigor) do procedimento da clinica, ou nulo (sem versao aprovada, fora de vigor ou algum parametro nulo). O procedimento inativo continua valendo para as consultas que ja existem. A regua confere o hash antes de renderizar.';
+  'So o servidor (service_role; a regua, {{preparo}}). AG7: {versao_id, texto, texto_sha256, conselho} (o conselho do RT que aprovou) da versao em vigor (preparo_em_vigor) do procedimento da clinica, ou nulo (sem versao aprovada, fora de vigor ou algum parametro nulo). O procedimento inativo continua valendo para as consultas que ja existem. A regua confere o hash antes de renderizar.';
 
 -- ---------------------------------------------------------------------------
 -- 7) As policies de leitura das duas tabelas (so chamam funcoes)
@@ -1202,6 +1321,7 @@ declare
   v_id uuid;
   v_numero integer;
   v_sha text;
+  v_conselho text;
 begin
   if p_procedure_id is null or p_texto is null or p_versao_lida is null then
     raise exception using errcode = '22004', message = 'parametro_nulo';
@@ -1261,6 +1381,14 @@ begin
   then
     raise exception using errcode = 'P0001', message = 'texto_igual_ao_em_vigor';
   end if;
+  -- Remedio ou dose so de RT de CRM ou de CRO (decisao de 05/11/2026). Sem RT
+  -- vigente, salva: o texto so anda com um RT, e o aprovar confere de novo.
+  select r.conselho into v_conselho
+    from public.responsavel_tecnico r
+   where r.id = public.responsavel_tecnico_vigente(v_clinica);
+  if public.preparo_conselho_recusa_texto(v_conselho, p_texto) then
+    raise exception using errcode = 'P0001', message = 'conselho_nao_aceita_remedio_ou_dose';
+  end if;
   if v_aguardando is not null then
     update public.preparo_do_procedimento
        set situacao = 'descartado',
@@ -1286,7 +1414,7 @@ grant execute on function public.salvar_preparo_do_procedimento(uuid, text, inte
   to authenticated;
 
 comment on function public.salvar_preparo_do_procedimento(uuid, text, integer) is
-  'Cadastros (authenticated). AG7: salva um texto novo da orientacao de preparo do procedimento como a versao seguinte (a maior mais 1), aguardando o RT, com nome_do_procedimento = o nome de agora, origem cadastro e escrito_por = auth.uid(); o texto aguardando que houver vira descartado ("Trocado por um texto novo."). Na ordem: 22004 parametro_nulo; 22023 texto_invalido (fora de preparo_texto_valido: o texto chega JA normalizado), texto_recusado (preparo_texto_recusado: link, valor em reais, arroba ou invisivel que o filtro recusa; CFM-2) e versao_lida_invalida (< 0); P0001 procedimento_inexistente; 42501 "Somente administradores, gestores ou o responsável técnico escrevem a orientação de preparo." (passam: administrador ou gestor ativo, super admin, RT vigente fora da clinica suspensa); a trava do procedimento (FOR NO KEY UPDATE); 22023 nome_do_procedimento_invalido (o nome de agora fora de preparo_nome_valido); a trava da aguardando (FOR UPDATE); P0001 texto_mudou (p_versao_lida diferente da maior versao; 0 sem versao); P0001 texto_igual_ao_em_vigor (o mesmo texto da aprovada EM VIGOR; fora de vigor, o mesmo texto entra: o "Aprovar de novo"). Trilha escreveu_preparo {procedure_id, versao, codigo}. Devolve {versao_id, versao, texto_sha256}. Nunca 40001 nem 40P01.';
+  'Cadastros (authenticated). AG7: salva um texto novo da orientacao de preparo do procedimento como a versao seguinte (a maior mais 1), aguardando o RT, com nome_do_procedimento = o nome de agora, origem cadastro e escrito_por = auth.uid(); o texto aguardando que houver vira descartado ("Trocado por um texto novo."). Na ordem: 22004 parametro_nulo; 22023 texto_invalido (fora de preparo_texto_valido: o texto chega JA normalizado), texto_recusado (preparo_texto_recusado: link, valor em reais, arroba, invisivel que o filtro recusa, normalizacao de sintoma ou oferta de outro procedimento; CFM-2) e versao_lida_invalida (< 0); P0001 procedimento_inexistente; 42501 "Somente administradores, gestores ou o responsável técnico escrevem a orientação de preparo." (passam: administrador ou gestor ativo, super admin, RT vigente fora da clinica suspensa); a trava do procedimento (FOR NO KEY UPDATE); 22023 nome_do_procedimento_invalido (o nome de agora fora de preparo_nome_valido); a trava da aguardando (FOR UPDATE); P0001 texto_mudou (p_versao_lida diferente da maior versao; 0 sem versao); P0001 texto_igual_ao_em_vigor (o mesmo texto da aprovada EM VIGOR; fora de vigor, o mesmo texto entra: o "Aprovar de novo"); P0001 conselho_nao_aceita_remedio_ou_dose (o texto cita remedio ou dose e o RT vigente nao e de CRM nem de CRO; sem RT vigente, salva). Trilha escreveu_preparo {procedure_id, versao, codigo}. Devolve {versao_id, versao, texto_sha256}. Nunca 40001 nem 40P01.';
 
 -- Aprovar: so o RT vigente.
 create function public.aprovar_preparo_do_procedimento(p_versao_id uuid, p_texto_sha256 text)
@@ -1303,6 +1431,7 @@ declare
   v_nome text;
   v_aprovada uuid;
   v_rt uuid;
+  v_conselho text;
   v_quando timestamptz := now();
 begin
   if p_versao_id is null or p_texto_sha256 is null then
@@ -1359,6 +1488,13 @@ begin
   if public.preparo_texto_recusado(v_versao.texto) then
     raise exception using errcode = 'P0001', message = 'texto_recusado';
   end if;
+  -- Remedio ou dose so de RT de CRM ou de CRO (decisao de 05/11/2026).
+  select r.conselho into v_conselho
+    from public.responsavel_tecnico r
+   where r.id = v_rt;
+  if public.preparo_conselho_recusa_texto(v_conselho, v_versao.texto) then
+    raise exception using errcode = 'P0001', message = 'conselho_nao_aceita_remedio_ou_dose';
+  end if;
   begin
     if v_aprovada is not null then
       update public.preparo_do_procedimento
@@ -1391,7 +1527,7 @@ grant execute on function public.aprovar_preparo_do_procedimento(uuid, text)
   to authenticated;
 
 comment on function public.aprovar_preparo_do_procedimento(uuid, text) is
-  'Cadastros (authenticated). AG7: o RT vigente aprova a versao aguardando (D-71). Na ordem: 22004 parametro_nulo; 22023 sha256_invalido (formato); P0001 versao_inexistente; 42501 "Só o responsável técnico da clínica aprova a orientação de preparo." (so o RT vigente, pela sessao: user_e_responsavel_tecnico; o super admin tambem recebe, mesmo designado RT, e o RT da clinica de conta suspensa tambem); as travas (o procedimento FOR NO KEY UPDATE, a versao FOR UPDATE, a aprovada de agora FOR UPDATE, a linha do RT vigente FOR SHARE); 42501 de novo se o RT mudou enquanto esperava; P0001 nao_aguarda_aprovacao; P0001 texto_mudou (p_texto_sha256 diferente do hash da versao); P0001 nome_mudou (o procedimento foi renomeado depois da versao: salvar de novo); P0001 texto_recusado (preparo_texto_recusado: a versao que chegou aguardando sem passar pelo salvar; CFM-2); a aprovada de agora vira substituido; a versao vira aprovado com aprovado_por = auth.uid(), aprovado_em = now() e rt_id = o vigente; o 23505 do indice vira P0001 outra_aprovacao. Trilha aprovou_preparo {procedure_id, versao, codigo}. Devolve {versao_id, versao, texto_sha256, aprovado_em}. Nunca 40001 nem 40P01.';
+  'Cadastros (authenticated). AG7: o RT vigente aprova a versao aguardando (D-71). Na ordem: 22004 parametro_nulo; 22023 sha256_invalido (formato); P0001 versao_inexistente; 42501 "Só o responsável técnico da clínica aprova a orientação de preparo." (so o RT vigente, pela sessao: user_e_responsavel_tecnico; o super admin tambem recebe, mesmo designado RT, e o RT da clinica de conta suspensa tambem); as travas (o procedimento FOR NO KEY UPDATE, a versao FOR UPDATE, a aprovada de agora FOR UPDATE, a linha do RT vigente FOR SHARE); 42501 de novo se o RT mudou enquanto esperava; P0001 nao_aguarda_aprovacao; P0001 texto_mudou (p_texto_sha256 diferente do hash da versao); P0001 nome_mudou (o procedimento foi renomeado depois da versao: salvar de novo); P0001 texto_recusado (preparo_texto_recusado: a versao que chegou aguardando sem passar pelo salvar; CFM-2); P0001 conselho_nao_aceita_remedio_ou_dose (o texto cita remedio ou dose e o RT nao e de CRM nem de CRO); a aprovada de agora vira substituido; a versao vira aprovado com aprovado_por = auth.uid(), aprovado_em = now() e rt_id = o vigente; o 23505 do indice vira P0001 outra_aprovacao. Trilha aprovou_preparo {procedure_id, versao, codigo}. Devolve {versao_id, versao, texto_sha256, aprovado_em}. Nunca 40001 nem 40P01.';
 
 -- Devolver: so o RT vigente, com o comentario.
 create function public.devolver_preparo_do_procedimento(p_versao_id uuid, p_comentario text)
@@ -1668,7 +1804,7 @@ grant execute on function public.definir_responsavel_tecnico(uuid, uuid, text, t
   to authenticated;
 
 comment on function public.definir_responsavel_tecnico(uuid, uuid, text, text, text, text) is
-  'Configuracoes (authenticated). AG7: define o RT da clinica (D-70): encerra a designacao aberta (ate, encerrado_por) e cria a nova (desde, definido_por = auth.uid()), na mesma transacao. As aprovacoes do anterior param de valer na hora (D-73). Na ordem: 22004 parametro_nulo; 22023 nome_invalido (preparo_nome_valido: 1 a 120, aparado, sem controle, sem invisivel e sem marca de direcao), conselho_invalido (CRM, CRO, CRBM, CRF, COREN, CREFITO, CRN, CRP, CRFa, CREF), numero_invalido (1 a 20 de letras, digitos, ponto, barra e hifen) e uf_invalida (as 27); 42501 "Só o administrador da clínica define o responsável técnico." (so o administrador pleno, sem a marca de Implementador, ou o super admin); P0001 responsavel_e_da_equipe_conduzza se a pessoa escolhida e super admin (product_admin; nem ele mesmo, nem com vinculo ativo: D-71, TELA-9; o codigo proprio, e nao o 42501, porque quem chegou aqui pode definir o RT); P0001 responsavel_nao_e_membro_ativo (a pessoa sem clinic_member ativo na clinica, de qualquer papel); a trava da linha aberta (FOR UPDATE); P0001 outra_definicao se a linha aberta nasceu depois do comeco desta transacao (outra definicao ganhou a corrida; BANCO-6); o 23505 vira P0001 outra_definicao. Trilha definiu_responsavel_tecnico {user_id}. Devolve o id da designacao nova. Nunca 40001 nem 40P01.';
+  'Configuracoes (authenticated). AG7: define o RT da clinica (D-70): encerra a designacao aberta (ate, encerrado_por) e cria a nova (desde, definido_por = auth.uid()), na mesma transacao. As aprovacoes do anterior param de valer na hora (D-73), e a designacao nova nasce sem a conferencia do registro. Na ordem: 22004 parametro_nulo; 22023 nome_invalido (preparo_nome_valido: 1 a 120, aparado, sem controle, sem invisivel e sem marca de direcao), conselho_invalido (CRM, CRO, CRBM, CRF, COREN, CREFITO, CRN, CRP, CRFa, CREF), numero_invalido (1 a 20 de letras, digitos, ponto, barra e hifen) e uf_invalida (as 27); 42501 "Só o administrador da clínica define o responsável técnico." (so o administrador pleno, sem a marca de Implementador, ou o super admin); P0001 responsavel_e_da_equipe_conduzza se a pessoa escolhida e super admin (product_admin; nem ele mesmo, nem com vinculo ativo: D-71, TELA-9; o codigo proprio, e nao o 42501, porque quem chegou aqui pode definir o RT); P0001 responsavel_nao_e_membro_ativo (a pessoa sem clinic_member ativo na clinica, de qualquer papel); a trava da linha aberta (FOR UPDATE); P0001 outra_definicao se a linha aberta nasceu depois do comeco desta transacao (outra definicao ganhou a corrida; BANCO-6); o 23505 vira P0001 outra_definicao. Trilha definiu_responsavel_tecnico {user_id}. Devolve o id da designacao nova. Nunca 40001 nem 40P01.';
 
 -- Encerrar o RT da clinica (a clinica fica sem RT: nada sai).
 create function public.encerrar_responsavel_tecnico(p_clinic_id uuid)
@@ -1718,6 +1854,64 @@ grant execute on function public.encerrar_responsavel_tecnico(uuid)
 
 comment on function public.encerrar_responsavel_tecnico(uuid) is
   'Configuracoes (authenticated). AG7: encerra a designacao aberta do RT (ate, encerrado_por = auth.uid()); a clinica fica sem RT e nenhuma orientacao de preparo sai ate definir outro e ele aprovar de novo (D-73). Na ordem: 22004 parametro_nulo; 42501 "Só o administrador da clínica define o responsável técnico." (so o administrador pleno ou o super admin); a trava da linha aberta (FOR UPDATE); P0001 sem_responsavel_tecnico; P0001 outra_definicao se a linha aberta nasceu depois do comeco desta transacao (um RT que quem clicou nunca viu; BANCO-6). Trilha encerrou_responsavel_tecnico {user_id}. Nunca 40001 nem 40P01.';
+
+-- Conferir o registro do RT no portal do conselho (decisao do dono de
+-- 05/11/2026): so a equipe Conduzza. A tela manda a designacao que mostrou:
+-- trocar o RT no meio cai em responsavel_encerrado, nunca confere um RT que
+-- quem clicou nao viu.
+create function public.conferir_registro_do_responsavel_tecnico(p_rt_id uuid)
+returns timestamptz
+language plpgsql
+security definer
+set search_path to ''
+as $function$
+declare
+  c_frase_conferir constant text := 'Só a equipe Conduzza confere o registro do responsável técnico.';
+  c_frase_proprio constant text := 'O próprio responsável técnico não confere o registro dele.';
+  v_rt record;
+  v_quando timestamptz := now();
+begin
+  if p_rt_id is null then
+    raise exception using errcode = '22004', message = 'parametro_nulo';
+  end if;
+  if not public.is_product_admin() then
+    raise exception using errcode = '42501', message = c_frase_conferir;
+  end if;
+  -- A trava: so a designacao.
+  select r.id, r.clinic_id, r.user_id, r.ate, r.registro_conferido_em into v_rt
+    from public.responsavel_tecnico r
+   where r.id = p_rt_id
+     for update;
+  if v_rt.id is null then
+    raise exception using errcode = 'P0001', message = 'sem_responsavel_tecnico';
+  end if;
+  if v_rt.ate is not null then
+    raise exception using errcode = 'P0001', message = 'responsavel_encerrado';
+  end if;
+  if v_rt.user_id = auth.uid() then
+    raise exception using errcode = '42501', message = c_frase_proprio;
+  end if;
+  if v_rt.registro_conferido_em is not null then
+    raise exception using errcode = 'P0001', message = 'registro_ja_conferido';
+  end if;
+  update public.responsavel_tecnico
+     set registro_conferido_em = v_quando,
+         registro_conferido_por = auth.uid()
+   where id = p_rt_id;
+  insert into public.audit_log (clinic_id, user_id, action, entity, entity_id, detalhes)
+  values (v_rt.clinic_id, auth.uid(), 'conferiu_registro_do_responsavel_tecnico', 'responsavel_tecnico', p_rt_id,
+          jsonb_build_object('user_id', v_rt.user_id));
+  return v_quando;
+end;
+$function$;
+
+revoke all on function public.conferir_registro_do_responsavel_tecnico(uuid)
+  from public, anon, authenticated, service_role;
+grant execute on function public.conferir_registro_do_responsavel_tecnico(uuid)
+  to authenticated;
+
+comment on function public.conferir_registro_do_responsavel_tecnico(uuid) is
+  'Painel geral (authenticated; so o super admin passa). AG7, decisao do dono de 05/11/2026: marca o registro do RT como conferido no portal do conselho (registro_conferido_em, registro_conferido_por = auth.uid()). Na ordem: 22004 parametro_nulo; 42501 "Só a equipe Conduzza confere o registro do responsável técnico." (is_product_admin; nem o proprio RT, nem os papeis da clinica); a trava da designacao (FOR UPDATE); P0001 sem_responsavel_tecnico; P0001 responsavel_encerrado (a designacao que a tela mostrou ja acabou); 42501 "O próprio responsável técnico não confere o registro dele." (conta antiga de super admin designada antes); P0001 registro_ja_conferido. Trilha conferiu_registro_do_responsavel_tecnico {user_id}. Devolve quando conferiu. Nunca 40001 nem 40P01.';
 
 -- ---------------------------------------------------------------------------
 -- 9) mensagem_ia_exige_aprovacao: o ramo do preparo
@@ -1951,7 +2145,7 @@ comment on function public.mensagem_ia_exige_aprovacao() is
 -- nome cabe na regra do nome (preparo_nome_valido) e o texto passa nas
 -- recusas de preparo_texto_recusado (CFM-2: o texto antigo nunca passou
 -- pelas recusas da tela, e nao pode chegar ao RT com link, valor em reais,
--- arroba ou invisivel). Fora disso, o texto fica so em prep_instructions (e
+-- arroba, invisivel, normalizacao de sintoma ou oferta de outro procedimento). Fora disso, o texto fica so em prep_instructions (e
 -- entra nos textos que o filtro e o historico escondem). prep_instructions
 -- fica onde esta, sem uso. O NOTICE so traz as contagens, nunca o texto.
 
@@ -1988,7 +2182,7 @@ begin
          (select count(*) from avaliados a where not a.cabe),
          (select count(*) from avaliados a where a.cabe and a.recusado)
     into v_copiados, v_fora, v_recusados;
-  raise notice 'Migration 20261103100000: % texto(s) antigo(s) de preparo copiado(s) como versao 1 aguardando o RT; % fora da regra e % recusado(s) por link, valor em reais, arroba ou invisivel (ficam so em prep_instructions).',
+  raise notice 'Migration 20261103100000: % texto(s) antigo(s) de preparo copiado(s) como versao 1 aguardando o RT; % fora da regra e % recusado(s) por link, valor em reais, arroba, invisivel, normalizacao de sintoma ou oferta de outro procedimento (ficam so em prep_instructions).',
     v_copiados, v_fora, v_recusados;
 end;
 $copia$;

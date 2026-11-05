@@ -1060,7 +1060,8 @@ export function SecaoDoPreparo({
         {linhaDaAprovacao(dados, versao, timezone)}
       </p>
       <div className="flex flex-wrap gap-2">
-        {situacao === "aprovada" && versao === aprovada ? (
+        {(situacao === "aprovada" || situacao === "aprovada_sem_envio") &&
+        versao === aprovada ? (
           <BotaoProtegido
             podeEditar={podeEscrever}
             dica={FRASES_SEM_PERMISSAO.suspender}
@@ -1170,6 +1171,11 @@ export function SecaoDoPreparo({
   return moldura(
     <>
       {rtVigente ? null : <AvisoSemRt podeDefinirRt={preparo.podeDefinirRt} />}
+      {rtVigente && dados.rtAberto?.registroConferidoEm === null ? (
+        <Aviso tom="warning" role="note">
+          {T.registroNaoConferido}
+        </Aviso>
+      ) : null}
 
       {devolvida && devolvida.comentario ? (
         <Aviso tom="warning" role="note">

@@ -35,7 +35,13 @@ import {
   type AchadoDaRegra,
 } from "@/lib/domain/conformidade/filtro-deterministico";
 import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
-import { partesDaMensagemDoPreparo } from "@/lib/domain/preparo";
+import {
+  conselhoDaLinhaDoRt,
+  CONSELHOS_DE_REMEDIO_E_DOSE,
+  normalizaSintoma,
+  ofereceOutroProcedimento,
+  partesDaMensagemDoPreparo,
+} from "@/lib/domain/preparo";
 
 export {
   TAMANHO_MINIMO_DO_TRECHO,
@@ -113,7 +119,9 @@ export function aprovarParaEnvio(lido: unknown): PreparoAprovado | null {
  *    recusa de problemasDoTextoDoPreparo. O banco so confere o formato; o
  *    texto que chegou aguardando o RT por outro caminho (a copia do texto
  *    antigo, a RPC chamada direto) e foi aprovado nunca sai com promessa,
- *    oferta casada, antes e depois, preco ou link. Falha fechada.
+ *    oferta casada, antes e depois, preco ou link. Falha fechada;
+ *  - decisao do dono de 05/11/2026: o conselho da linha do RT aceita o texto
+ *    (recusaPeloConselho).
  * O PreparoAprovado sai congelado.
  */
 export function conferirParaEnvio(lido: unknown): ConferenciaDoEnvio {
@@ -156,6 +164,13 @@ export function conferirParaEnvio(lido: unknown): ConferenciaDoEnvio {
   if (recusas.length > 0) {
     return { tipo: "recusado", recusas, versaoId, procedureId };
   }
+  const peloConselho = recusaPeloConselho(
+    partes.texto,
+    conselhoDaLinhaDoRt(partes.linhaDoRt),
+  );
+  if (peloConselho.length > 0) {
+    return { tipo: "recusado", recusas: peloConselho, versaoId, procedureId };
+  }
   return {
     tipo: "pronto",
     preparo: marcar({ mensagem, sha256, versaoId, procedureId, versao }),
@@ -194,7 +209,10 @@ const CATEGORIAS_QUE_RECUSAM: ReadonlySet<CategoriaDeConformidade> = new Set([
   "antes_depois",
 ]);
 
-/** Orientacao, remedio, dose, triagem e diagnostico: so avisam (D-80). */
+/**
+ * Orientacao, remedio, dose, triagem e diagnostico so avisam (D-80), menos a
+ * normalizacao de sintoma, que recusa como triagem (normalizaSintoma).
+ */
 const CATEGORIAS_QUE_AVISAM: ReadonlySet<CategoriaDeConformidade> = new Set([
   "triagem",
   "diagnostico",
@@ -288,7 +306,10 @@ function frasesDoTextoDaClinica(texto: string): string[] {
  *  - recusa: promessa, oferta casada, antes e depois, valor em reais
  *    (preco_nao_verificado com dinheiro escrito, moeda estrangeira ou
  *    desconto) e o formato que engana ou leva para fora (link, arroba,
- *    invisivel, alfabeto estranho, marcas empilhadas);
+ *    invisivel, alfabeto estranho, marcas empilhadas); e, por decisao do dono
+ *    de 05/11/2026, a normalizacao de sintoma (triagem) e a oferta de outro
+ *    procedimento (oferta_casada), as duas regras de lib/domain/preparo.ts,
+ *    que o banco tem byte a byte;
  *  - avisa, sem recusar: orientacao, remedio, dose, triagem e diagnostico,
  *    que sao o conteudo de um preparo (D-80);
  *  - ignora o resto (o tamanho, o telefone da clinica, o emoji, a fala de
@@ -342,8 +363,33 @@ function classificarOTexto(texto: string): {
       avisos.add(achado.categoria);
     }
   }
+  if (normalizaSintoma(texto)) {
+    recusas.add("triagem");
+    avisos.delete("triagem");
+  }
+  if (ofereceOutroProcedimento(texto)) {
+    recusas.add("oferta_casada");
+  }
   return {
     recusas: ordenarPorPrioridade(CATEGORIAS_DE_CONFORMIDADE, recusas),
     avisos: ordenarPorPrioridade(CATEGORIAS_DE_CONFORMIDADE, avisos),
   };
+}
+
+/**
+ * O que barra o texto pelo conselho do RT (decisao do dono de 05/11/2026): o
+ * remedio e a dose que o aviso do dialogo acusa, quando o conselho nao e CRM
+ * nem CRO (null: sem conselho conhecido, nao aceita). Vazia: o conselho aceita.
+ * O banco tem a mesma regra, em menos visoes (preparo_conselho_recusa_texto).
+ */
+export function recusaPeloConselho(
+  texto: string,
+  conselho: string | null,
+): readonly CategoriaDeConformidade[] {
+  if (conselho !== null && CONSELHOS_DE_REMEDIO_E_DOSE.includes(conselho)) {
+    return [];
+  }
+  return classificarOTexto(texto).avisos.filter(
+    (categoria) => categoria === "medicamento" || categoria === "dosagem",
+  );
 }

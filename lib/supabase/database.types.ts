@@ -15,6 +15,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      conferir_registro_do_responsavel_tecnico: {
+        Args: { p_rt_id: string }
+        Returns: string
+      }
       graphql: {
         Args: {
           extensions?: Json
@@ -4946,6 +4950,8 @@ export type Database = {
           id: string
           nome: string
           numero: string
+          registro_conferido_em: string | null
+          registro_conferido_por: string | null
           uf: string
           user_id: string
         }
@@ -4959,6 +4965,8 @@ export type Database = {
           id?: string
           nome: string
           numero: string
+          registro_conferido_em?: string | null
+          registro_conferido_por?: string | null
           uf: string
           user_id: string
         }
@@ -4972,6 +4980,8 @@ export type Database = {
           id?: string
           nome?: string
           numero?: string
+          registro_conferido_em?: string | null
+          registro_conferido_por?: string | null
           uf?: string
           user_id?: string
         }

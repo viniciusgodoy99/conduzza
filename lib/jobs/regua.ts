@@ -22,7 +22,10 @@ import {
 } from "@/lib/domain/modelo-mensagem";
 // [AG7 preparo]
 import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
-import { problemasDoTextoDoPreparo } from "@/lib/domain/conformidade/preparo-aprovado";
+import {
+  problemasDoTextoDoPreparo,
+  recusaPeloConselho,
+} from "@/lib/domain/conformidade/preparo-aprovado";
 import {
   CORPO_DO_MENU_APOS_MIDIA,
   MENU_CONFIRMACAO,
@@ -716,6 +719,7 @@ async function preparoDoToque(
     versao_id?: unknown;
     texto?: unknown;
     texto_sha256?: unknown;
+    conselho?: unknown;
   };
   const formatoOk =
     typeof data === "object" &&
@@ -740,7 +744,15 @@ async function preparoDoToque(
   // confere o formato; o texto que chegou aguardando o RT por outro caminho
   // e foi aprovado nunca sai. O campo some (falha fechada) e o log leva so
   // as categorias.
-  const { recusas } = problemasDoTextoDoPreparo(lido.texto as string);
+  // Decisao do dono de 05/11/2026: tambem o remedio ou a dose de RT que nao e
+  // de CRM nem de CRO.
+  const recusas = [
+    ...problemasDoTextoDoPreparo(lido.texto as string).recusas,
+    ...recusaPeloConselho(
+      lido.texto as string,
+      typeof lido.conselho === "string" ? lido.conselho : null,
+    ),
+  ];
   if (recusas.length > 0) {
     log.warn("regua_preparo_recusado", {
       clinic_id: e.clinicId,

@@ -417,6 +417,21 @@ export function controleNoNome(nome: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
+ * Os conselhos cujo RT salva e aprova texto com remedio ou dose (decisao do
+ * dono de 05/11/2026; a lista de CONSELHOS tem conselhos que nao prescrevem).
+ * O mesmo par de preparo_conselho_recusa_texto, na migration 20261103100000.
+ */
+export const CONSELHOS_DE_REMEDIO_E_DOSE: readonly string[] = ["CRM", "CRO"];
+
+/**
+ * O conselho na linha do RT da mensagem ("... Dra. Ana (CRM-CE 123)"), ou null
+ * (o envio recusa o texto que cita remedio ou dose, falha fechada).
+ */
+export function conselhoDaLinhaDoRt(linha: string): string | null {
+  return /\(([A-Za-z]+)-[A-Z]{2} [^()]*\)$/.exec(linha)?.[1] ?? null;
+}
+
+/**
  * O que preparo_texto_recusado (migration 20261103100000, CFM-2) recusa, com
  * o lugar: o link, o valor em reais e o arroba com a frase do texto (como a
  * clinica escreveu, aparada) que dispara sozinha (null quando so o texto
@@ -429,7 +444,15 @@ export function controleNoNome(nome: string): boolean {
  * diz o mesmo que a funcao do banco num corpus.
  */
 export type ConteudoRecusadoPeloBanco =
-  | { causa: "link" | "valor_em_reais" | "arroba"; trecho: string | null }
+  | {
+      causa:
+        | "link"
+        | "valor_em_reais"
+        | "arroba"
+        | "sintoma_normalizado"
+        | "oferta_de_outro_procedimento";
+      trecho: string | null;
+    }
   | { causa: "invisivel"; posicao: number };
 
 // O \m e o \M do Postgres (comeco e fim de palavra; a palavra e letra, digito
@@ -466,6 +489,82 @@ function baseDoBanco(texto: string): string {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
+// As duas recusas de 05/11/2026 (pontos 5 e 8 da AG7), na base com os espacos
+// repetidos juntados. As fontes abaixo estao na sintaxe do Postgres (\m e \M):
+// preparo_texto_recusado as traz byte a byte, e o teste
+// tests/unit/agente/ag7-espelhos.test.ts confere. So valem para o texto da
+// clinica: o filtro da resposta do modelo tem as regras dele (padroes.ts).
+
+// O limite de uma frase para a regra do sintoma (a virgula nao separa: "Se
+// tiver colica, e normal").
+const NA_MESMA_FRASE = "[^.!?;\\n]*";
+const SINTOMA_OU_REACAO =
+  "\\m(?:colicas?|dor|dores|enjoos?|nauseas?|vomitos?|diarreias?|tonturas?|mal[- ]estar|inchacos?|vermelhid(?:ao|oes)|sangramentos?|coceiras?|ardencias?|ardor|queimac(?:ao|oes)|formigamentos?|febres?|fraquezas?|cansacos?|sonolencias?|gases|estufamentos?|desconfortos?|hematomas?|manchas?|reac(?:ao|oes)|sintomas?|efeitos? colaterais|efeito colateral|evacuac(?:ao|oes)|evacuar|sentir)\\M";
+const COMO_NORMAL =
+  "(?:normal|normais|esperad[oa]s?|comum|comuns|natural|naturais|previst[oa]s?|habitual|habituais|passageir[oa]s?|transitori[oa]s?)\\M";
+const DIZ_QUE_E_NORMAL =
+  `(?:\\m(?:e|eh|sao|ser|seja|sera|serao|considerad[oa]s?)\\M (?:[a-z]+ ){0,2}${COMO_NORMAL}|` +
+  "\\mdentro d[oa] (?:normal|normalidade|esperado)\\M|\\m(?:vai|vao|deve|devem|costuma|costumam|tende a|tendem a) (?:passar|sumir|melhorar|desaparecer|ceder)\\M|\\m(?:nao se preocupe|nao precisa se preocupar|nao ha motivo para preocupac|sem motivo para preocupac|nao e grave|sem gravidade|faz parte))";
+/**
+ * "Colica leve depois do laxante e normal e passa sozinha." Triagem, fora da
+ * D-80 (CLAUDE.md 3.2): "passa sozinho" e "efeito esperado" em qualquer frase,
+ * o sintoma com o adjetivo colado ("reacao normal") e o que diz que e normal
+ * na mesma frase de um sintoma ou reacao. Sem o sintoma, a frase e administrativa e passa ("E normal levar um
+ * acompanhante.", "E comum haver fila na recepcao."). Sem tratar negacao, como
+ * o filtro: "nao e normal ter febre" tambem e triagem.
+ */
+export const FONTE_DO_SINTOMA_NORMALIZADO =
+  "\\m(?:passa|passam|passar|passara|passarao|some|somem|sumir|sumira|sumirao|melhora|melhoram|melhorar|melhorara|melhorarao|desaparece|desaparecem|desaparecer|desaparecera|desaparecerao|cede|cedem|ceder|cedera|cederao)\\M (?:[a-z]+ )?(?:sozinh[oa]s?|naturalmente|espontaneamente)\\M" +
+  "|\\mefeitos? esperados?\\M" +
+  `|${SINTOMA_OU_REACAO} (?:[a-z]+ )?${COMO_NORMAL}` +
+  `|${SINTOMA_OU_REACAO}${NA_MESMA_FRASE}${DIZ_QUE_E_NORMAL}` +
+  `|${DIZ_QUE_E_NORMAL}${NA_MESMA_FRASE}${SINTOMA_OU_REACAO}`;
+
+const OFERECE =
+  "(?:faca|marque|agende|realize|inclua|adicione|conheca|experimente|contrate)";
+const OFERECE_NO_INFINITIVO =
+  "(?:fazer|marcar|agendar|realizar|incluir|adicionar|conhecer|experimentar|contratar)";
+// O que continua sendo instrucao de preparo depois de "faca tambem" e de
+// "aproveite para fazer".
+const INSTRUCAO_DE_PREPARO =
+  "(?: (?:[a-z]+ ){0,2}(?:jejum|dieta|preparo|preparacao|exames?|coleta|higiene|banho|lavagem|limpeza d[oa]|enema|hidratacao|repouso|retirada|remocao|assepsia|tricotomia|depilacao d[aeo]|refeic(?:ao|oes)|lanche|alimentacao|retorno)\\M)";
+/**
+ * "Aproveite e faca tambem a limpeza de pele." Oferta casada, fora da D-80
+ * (CFM 2.336/2023): "aproveite" ou "que tal" com o verbo de oferta, e o verbo
+ * de oferta com "tambem" ou "junto". Instrucao de preparo depois disso passa
+ * ("faca tambem o jejum"), e "aproveite para trazer os exames" nem tem o verbo.
+ */
+export const FONTE_DA_OFERTA_DE_OUTRO_PROCEDIMENTO =
+  `\\m(?:aproveit[a-z]*|que tal)\\M (?:[a-z]+ ){0,3}?(?:${OFERECE}|${OFERECE_NO_INFINITIVO})\\M(?!${INSTRUCAO_DE_PREPARO})` +
+  `|\\m${OFERECE} (?:tambem|junto)\\M(?!${INSTRUCAO_DE_PREPARO})` +
+  `|\\mtambem ${OFERECE}\\M(?!${INSTRUCAO_DE_PREPARO})`;
+
+/** A fonte na sintaxe do Postgres, como RegExp do JavaScript. */
+function regexDoBanco(fonte: string): RegExp {
+  return new RegExp(
+    fonte.replaceAll("\\m", COMECO_DE_PALAVRA).replaceAll("\\M", FIM_DE_PALAVRA),
+    "u",
+  );
+}
+
+const SINTOMA_NORMALIZADO_DO_BANCO = regexDoBanco(FONTE_DO_SINTOMA_NORMALIZADO);
+const OFERTA_DO_BANCO = regexDoBanco(FONTE_DA_OFERTA_DE_OUTRO_PROCEDIMENTO);
+
+/** A base do banco com os espacos repetidos juntados (as quebras ficam). */
+function frasesDoBanco(texto: string): string {
+  return baseDoBanco(texto).replace(/ +/g, " ");
+}
+
+/** A regra de 05/11/2026: o texto diz que o sintoma e normal ou passa sozinho? */
+export function normalizaSintoma(texto: string): boolean {
+  return SINTOMA_NORMALIZADO_DO_BANCO.test(frasesDoBanco(texto));
+}
+
+/** A regra de 05/11/2026: o texto oferece outro procedimento? */
+export function ofereceOutroProcedimento(texto: string): boolean {
+  return OFERTA_DO_BANCO.test(frasesDoBanco(texto));
+}
+
 /** As frases do texto, como escritas e aparadas (o corte das recusas da tela). */
 function frasesParaORecorte(texto: string): string[] {
   return texto
@@ -494,6 +593,18 @@ export function conteudoRecusadoPeloBanco(
           regex.test(baseDoBanco(frase)),
         ) ?? null;
       achados.push({ causa, trecho });
+    }
+  }
+  const frases = [
+    ["sintoma_normalizado", normalizaSintoma],
+    ["oferta_de_outro_procedimento", ofereceOutroProcedimento],
+  ] as const;
+  for (const [causa, dispara] of frases) {
+    if (dispara(texto)) {
+      achados.push({
+        causa,
+        trecho: frasesParaORecorte(texto).find(dispara) ?? null,
+      });
     }
   }
   const invisivel = INVISIVEL_DO_BANCO.exec(texto);
@@ -1130,18 +1241,19 @@ export type VersaoNaTela = {
 
 export type SituacaoDoPreparoNaTela =
   | "aprovada"
+  /** Tudo em ordem, menos o registro do RT, que a Conduzza nao conferiu. */
+  | "aprovada_sem_envio"
   | "aguardando"
   | "precisa_de_nova_aprovacao"
   | "suspenso"
   | "sem_orientacao";
 
 /**
- * O chip da secao: as situacoes do banco e, revisao curta da AG7 (CURTA-5),
- * "aprovada_sem_envio", a versao aprovada cujo texto as regras de hoje
- * recusam (o servidor confere; o envio nao a deixa sair).
+ * O chip da secao: as situacoes do banco; "aprovada_sem_envio" tambem e a
+ * versao aprovada cujo texto as regras de hoje recusam (revisao curta da AG7,
+ * CURTA-5: o servidor confere; o envio nao a deixa sair).
  */
-export type SituacaoDoChipDoPreparo =
-  SituacaoDoPreparoNaTela | "aprovada_sem_envio";
+export type SituacaoDoChipDoPreparo = SituacaoDoPreparoNaTela;
 
 /**
  * A orientacao de preparo na Tela 6, para a nota de "Enviar orientação de
@@ -1178,7 +1290,9 @@ function maisNova(versoes: readonly VersaoNaTela[]): VersaoNaTela | null {
 /**
  * O chip do procedimento (os cinco do desenho, 5.1), na ordem de quem vale:
  *  1. ha versao aprovado: "aprovada" quando ela esta em vigor (o RT dela e o
- *     RT aberto, com acesso ativo, e o nome do procedimento nao mudou), e
+ *     RT aberto, com acesso ativo e o registro conferido, e o nome do
+ *     procedimento nao mudou); "aprovada_sem_envio" quando so falta a
+ *     conferencia do registro (o RT nao tem o que aprovar de novo); e
  *     "precisa_de_nova_aprovacao" quando nao esta (RT trocado ou sem acesso,
  *     nome mudado). O texto novo que espera o RT aparece no bloco proprio,
  *     sem trocar o chip;
@@ -1191,19 +1305,22 @@ function maisNova(versoes: readonly VersaoNaTela[]): VersaoNaTela | null {
  */
 export function situacaoDoPreparoNaTela(e: {
   versoes: readonly VersaoNaTela[];
-  rtAberto: { id: string; userId: string } | null;
+  rtAberto: { id: string; userId: string; registroConferido: boolean } | null;
   rtComAcesso: boolean;
   nomeAtual: string;
 }): SituacaoDoPreparoNaTela {
   const aprovada = maisNova(e.versoes.filter((v) => v.situacao === "aprovado"));
   if (aprovada !== null) {
-    const emVigor =
+    const valeria =
       aprovada.rtId !== null &&
       e.rtAberto !== null &&
       aprovada.rtId === e.rtAberto.id &&
       e.rtComAcesso &&
       aprovada.nomeDoProcedimento === e.nomeAtual;
-    return emVigor ? "aprovada" : "precisa_de_nova_aprovacao";
+    if (!valeria) {
+      return "precisa_de_nova_aprovacao";
+    }
+    return e.rtAberto?.registroConferido ? "aprovada" : "aprovada_sem_envio";
   }
   if (e.versoes.some((v) => v.situacao === "aguardando_rt")) {
     return "aguardando";
