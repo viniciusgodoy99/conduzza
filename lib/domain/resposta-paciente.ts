@@ -389,13 +389,49 @@ function semCortesia(mensagem: string): string {
 }
 
 /**
+ * Revisao final da AG7: os emojis que nao mudam o sim. O resto recusa, porque
+ * normalizar apaga emoji e "Sim 👎" viraria "sim". Lista do que passa, nunca do
+ * que nega: o emoji que ninguem previu cai no "nao entendi" (a pergunta volta).
+ */
+const EMOJIS_QUE_NAO_MUDAM_O_SIM = [
+  ...EMOJIS_DE_CONFIRMACAO,
+  "\u{1F642}", // sorriso
+  "\u{1F60A}", // sorriso com os olhos
+  "\u{1F600}", // risada
+  "\u{1F603}", // risada
+  "\u{1F604}", // risada
+  "\u{1F601}", // risada
+  "\u{1F609}", // piscada
+  "\u{1F970}", // coracoes
+  "\u{1F60D}", // olhos de coracao
+  "\u{2764}", // coracao
+  "\u{1F64F}", // maos juntas
+];
+const EMOJI = /\p{Extended_Pictographic}/u;
+/** O emoticon de texto que normalizar tambem apaga. */
+const EMOTICON_NEGATIVO = /[:;]-?[(/\\|]/;
+
+/** A mensagem traz um sinal que nao e de sim e que normalizar apagaria? */
+function temSinalQueNaoESim(mensagem: string): boolean {
+  let restante = mensagem.replace(MODIFICADORES, "");
+  for (const emoji of EMOJIS_QUE_NAO_MUDAM_O_SIM) {
+    restante = restante.split(emoji).join(" ");
+  }
+  return EMOJI.test(restante) || EMOTICON_NEGATIVO.test(restante);
+}
+
+/**
  * Tirada a cortesia, sobra ao menos uma mensagem e TODAS sao um sim da lista?
- * Qualquer negacao ou duvida na rajada recusa. PURA, nunca lanca.
+ * Qualquer negacao, duvida ou emoji fora da lista na rajada recusa. PURA, nunca
+ * lanca.
  */
 function todasSim(
   mensagens: readonly (string | null)[],
   sim: ReadonlySet<string>,
 ): boolean {
+  if (mensagens.some((m) => m !== null && temSinalQueNaoESim(m))) {
+    return false;
+  }
   const resposta = mensagens.filter(
     (m) => m === null || !CORTESIA.has(normalizar(m)),
   );
@@ -463,6 +499,9 @@ export const FONTES_DA_RESPOSTA_A_MARCACAO: readonly string[] = [
   CORTESIA_NO_COMECO.source,
   CORTESIA_NO_FIM.source,
   PEDE_O_DE_ACORDO.source,
+  EMOJIS_QUE_NAO_MUDAM_O_SIM.join(","),
+  EMOJI.source,
+  EMOTICON_NEGATIVO.source,
 ];
 
 // ---------------------------------------------------------------------------

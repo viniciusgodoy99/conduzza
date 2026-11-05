@@ -96,6 +96,35 @@ describe("o sim da marcação", () => {
     expect(confirmouAMarcacao([texto])).toBe(false);
   });
 
+  // Revisao final da AG7 (achado 3): normalizar apaga o emoji, entao "Sim 👎"
+  // lia "sim". Na marcacao e na remarcacao.
+  it.each([
+    "Sim \u{1F44E}",
+    "Sim \u{274C}",
+    "Pode \u{1F6AB}",
+    "\u{1F44D}\u{1F44E}",
+    "\u{1F44E}",
+    "\u{1F44E}\u{1F3FD}",
+    "Sim \u{1F621}",
+    "Sim \u{1F914}",
+    "Sim \u{2716}\u{FE0F}",
+    "Sim \u{26D4}",
+    "Sim :(",
+    "Obrigada \u{1F44E}",
+  ])("%s não marca nem remarca", (texto) => {
+    expect(confirmouAMarcacao([texto])).toBe(false);
+    expect(confirmouAMarcacao(["Sim", texto])).toBe(false);
+    expect(confirmouARemarcacao([texto])).toBe(false);
+  });
+
+  it.each(["Sim \u{1F60A}", "Pode marcar \u{1F64F}", "Sim \u{2764}\u{FE0F}", "\u{2705}", "Sim \u{1F44D}\u{1F3FD}"])(
+    "%s continua sendo sim",
+    (texto) => {
+      expect(confirmouAMarcacao([texto])).toBe(true);
+      expect(confirmouARemarcacao([texto])).toBe(true);
+    },
+  );
+
   it("a rajada: só marca com todas sim; sem mensagem ou sem texto, não", () => {
     expect(confirmouAMarcacao(["Sim", "Pode marcar"])).toBe(true);
     // O agradecimento junto do sim nao muda a resposta; sozinho, nao confirma.
