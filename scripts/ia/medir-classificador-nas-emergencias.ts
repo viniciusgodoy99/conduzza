@@ -1,6 +1,8 @@
-// Medicao PAGA do classificador nas emergencias das revisoes (D-52): das
-// frases que o portao deterministico deixa passar, quantas o classificador
-// real escala? So roda com o ok do dono, com teto duro:
+// Medicao PAGA do classificador nas emergencias das revisoes (D-52): quantas
+// ele escala SOZINHO? Le todas as frases, nao so as sem gatilho: o portao foi
+// ajustado com estas mesmas frases e pega quase todas, mas uma emergencia
+// escrita de outro jeito chega so ao classificador. So roda com o ok do dono,
+// com teto duro:
 //
 //   OPENAI_API_KEY_AVALIACAO=sk-... npx tsx scripts/ia/medir-classificador-nas-emergencias.ts \
 //     --orcamento-usd 2 --preco-entrada-usd-mtok 0.1 --preco-saida-usd-mtok 0.5
@@ -108,7 +110,7 @@ async function principal() {
   const naoEscalou: string[] = [];
   const falhou: string[] = [];
   let interrompido = false;
-  const fila = [...semGatilho];
+  const fila = [...frases];
   async function trabalhador() {
     for (let textos = fila.shift(); textos; textos = fila.shift()) {
       const custo = custoMaximo(textos.join(" "));
@@ -134,6 +136,9 @@ async function principal() {
     sem_gatilho_no_portao: semGatilho.length,
     classificador_escalou: escalou.length,
     classificador_nao_escalou: naoEscalou.length,
+    nem_portao_nem_classificador: semGatilho.filter((f) =>
+      naoEscalou.includes(f.join(" || ")),
+    ).length,
     falhas_tecnicas: falhou.length,
     interrompido_pelo_orcamento: interrompido,
     teto_reservado_usd: Number(reservado.toFixed(4)),
