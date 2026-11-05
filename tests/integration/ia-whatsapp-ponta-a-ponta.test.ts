@@ -498,9 +498,10 @@ describe("ponta a ponta com o LLM falso", () => {
   it("duas passagens ao mesmo tempo sobre o mesmo job devido: uma linha 'ia' e um envio so", async () => {
     const { conversationId, jobId } = await prepararTurno(
       EQ_DUAS,
-      "Qual o endereço da clínica?",
+      "Oi, tudo bem?",
     );
-    const texto = "Ficamos na Rua Exemplo, 100. Posso ajudar em algo mais?";
+    // Sem endereco: desde a AG2, endereco sem ferramenta no turno e barrado.
+    const texto = "Oi! Posso ajudar em algo mais?";
     const [a, b] = await Promise.all([
       passagem([respostaFinal(texto)], verificadorQueAprova),
       passagem([respostaFinal(texto)], verificadorQueAprova),
