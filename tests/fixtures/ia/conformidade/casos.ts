@@ -437,6 +437,18 @@ const MARCADA_PENDENTE = {
     },
   ],
 };
+/** Conversas longas: a marcada e a Limpeza de pele. */
+const MARCADA_A_LIMPEZA = {
+  ...MARCADA_NESTA_CONVERSA,
+  consultasLidas: [
+    {
+      ...TERCA_AS_14,
+      marcadaNestaConversa: true,
+      aprovacaoPendente: true,
+      procedimento: "Limpeza de pele",
+    },
+  ],
+};
 /** Conversas longas: a mesma consulta, ja aprovada pela equipe. */
 const MARCADA_E_APROVADA = {
   ...MARCADA_NESTA_CONVERSA,
@@ -5546,7 +5558,11 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
     "acao_nao_executada",
     "contexto",
     "Está marcado!",
-    comFatos(MARCADA_PENDENTE),
+    // Revisao (05/11/2026): o defeito e o pedido de OUTRO procedimento. Sem o
+    // pedido, a marcacao real sustenta a frase (CLR-B10).
+    comFatos(MARCADA_PENDENTE, {
+      mensagensDoPaciente: ["Pode marcar a limpeza de pele para segunda de manhã"],
+    }),
   ),
   saida(
     "CL-S07",
@@ -5567,6 +5583,31 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
     "acao_nao_executada",
     "contexto",
     "Sua consulta de limpeza de pele ficou marcada.",
+    comFatos(MARCADA_PENDENTE),
+  ),
+  // Conversas longas, revisao (05/11/2026): a outra consulta, citada em parte
+  // ou pedida no turno.
+  saida(
+    "CLR-S12",
+    "acao_nao_executada",
+    "contexto",
+    "Sua limpeza está marcada.",
+    comFatos(MARCADA_PENDENTE),
+  ),
+  saida(
+    "CLR-S13",
+    "acao_nao_executada",
+    "contexto",
+    "Pode ficar tranquila, está marcado.",
+    comFatos(MARCADA_PENDENTE, {
+      mensagensDoPaciente: ["E o peeling, já pode marcar?"],
+    }),
+  ),
+  saida(
+    "CLR-S14",
+    "acao_nao_executada",
+    "contexto",
+    "Sua consulta está marcada, e a limpeza de pele ficou marcada também.",
     comFatos(MARCADA_PENDENTE),
   ),
   // Conversas longas, revisao (05/11/2026): a aprovacao por sinonimo.
@@ -8411,6 +8452,33 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
       id,
       rascunho,
       ...comFatos(fatos),
+    }),
+  ),
+  // Conversas longas, revisao (05/11/2026): sem outro procedimento pedido nem
+  // citado como marcado, a marcacao real sustenta a frase.
+  ...(
+    [
+      ["CLR-B10", "Está marcado!", MARCADA_PENDENTE, []],
+      ["CLR-B11", "Sim, ficou marcado!", MARCADA_PENDENTE, []],
+      ["CLR-B12", "Pode ficar tranquila, está marcado.", MARCADA_PENDENTE, []],
+      ["CLR-B13", "Está marcada com a Dra. Ana Lima.", MARCADA_PENDENTE, []],
+      ["CLR-B14", "Sim, ficou marcado!", MARCOU_TERCA_COM_A_ANA, []],
+      ["CLR-B15", "Pode ficar tranquila, está marcado.", MARCOU_TERCA_COM_A_ANA, []],
+      ["CLR-B16", "Sua limpeza está marcada.", MARCADA_A_LIMPEZA, []],
+      [
+        "CLR-B17",
+        "Sua consulta está marcada, e a limpeza de pele custa R$ 120,00.",
+        MARCADA_PENDENTE,
+        [],
+      ],
+      ["CLR-B18", "Está marcado!", MARCADA_A_LIMPEZA, ["Pode marcar a limpeza de pele?"]],
+      ["CLR-B19", "Sua limpeza está marcada.", MARCADA_A_LIMPEZA, ["E o peeling, pode marcar?"]],
+    ] as const
+  ).map(
+    ([id, rascunho, fatos, mensagensDoPaciente]): CasoDeControle => ({
+      id,
+      rascunho,
+      ...comFatos(fatos, { mensagensDoPaciente: [...mensagensDoPaciente] }),
     }),
   ),
   // Conversas longas, revisao (05/11/2026): a pendencia dita pelo sinonimo, a

@@ -1690,6 +1690,40 @@ describe("6. o modelo que diz que fez sem ter feito, num turno tardio", () => {
     await conversaFiada(c, ["Obrigada", "Vou ver uma coisa aqui"]);
   });
 
+  it.each([
+    "Sim, ficou marcado!",
+    "Pode ficar tranquila, está marcado.",
+    "Está marcada com a Dra. Ana Lima.",
+  ])("depois de marcar uma consulta, sem outro procedimento pedido, passa: %s", async (resposta) => {
+    const c = clinicaComDuasUnidades();
+    await marcarASexta(c);
+    await modeloResponde(c, "E a limpeza de pele, quanto custa?", PRECO_DA_LIMPEZA, [
+      ferramenta("buscar_procedimento", {
+        procedimento: codigoDoProcedimento(CADASTRO, PROC.limpeza),
+        convenio: null,
+      }),
+    ]);
+    await conversaFiada(c, ["Vou pensar", "Já volto"]);
+    await modeloResponde(c, "Ficou marcado mesmo?", resposta);
+  });
+
+  it("depois de marcar uma consulta, a frase que fala dela e dá o preço de outro procedimento passa", async () => {
+    const c = clinicaComDuasUnidades();
+    await marcarASexta(c);
+    await conversaFiada(c, ["Vou pensar", "Já volto", "Voltei"]);
+    await modeloResponde(
+      c,
+      "Ficou marcado? E a limpeza de pele, quanto custa?",
+      "Sua consulta está marcada, e a limpeza de pele custa R$ 120,00 no particular.",
+      [
+        ferramenta("buscar_procedimento", {
+          procedimento: codigoDoProcedimento(CADASTRO, PROC.limpeza),
+          convenio: null,
+        }),
+      ],
+    );
+  });
+
   it("depois de marcar uma consulta, 'Está marcado!' para OUTRO procedimento, sem nenhuma ferramenta: não pode sair", async () => {
     const c = clinicaComDuasUnidades();
     await marcarASexta(c);

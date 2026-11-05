@@ -2827,6 +2827,21 @@ const CONSULTA = alternativas([
 ]);
 /** O compromisso com o possessivo: tambem "seu horario" (revisao da AG2). */
 const CONSULTA_OU_HORARIO = alternativas([CONSULTA, "horarios?"]);
+/** As oracoes da frase, sem cortar o preco ("R$ 80,00"). */
+const SEPARA_ORACOES = /,(?!\d)|;|\s(?:e|mas)\s/;
+/**
+ * A oracao que cita outro procedimento sem dizer que ele foi marcado: nega ("a
+ * limpeza de pele ainda nao") ou informa, com o verbo dela e sem marcar ("a
+ * limpeza de pele custa R$ 80,00").
+ */
+const VERBO_DE_OUTRO_ASSUNTO =
+  /\b(?:custa|custam|sai|saem|dura|duram|leva|levam|precisa|exige|requer|tem)\b/;
+function falaDeOutroAssunto(oracao: string): boolean {
+  return (
+    /\bnao\b/.test(oracao) ||
+    (VERBO_DE_OUTRO_ASSUNTO.test(oracao) && !/\b(?:marc|agend)/.test(oracao))
+  );
+}
 /** A frase cita a consulta ou o horario (a consulta marcada nesta conversa). */
 const REFERENCIA_A_CONSULTA = new RegExp(`\\b${CONSULTA_OU_HORARIO}\\b`);
 /**
@@ -5521,7 +5536,7 @@ const MINIMO_DA_PALAVRA_QUE_DISTINGUE = 4;
  * lista diz por outro motivo (profissionais, unidades e convenios).
  */
 function palavrasDeOutrosProcedimentos(
-  entrada: EntradaDaEsperaDoFato,
+  entrada: Pick<EntradaDaEsperaDoFato, "procedimento">,
   procedimentos: readonly string[],
   fatos: FatosDoTurno,
   entradas: readonly EntradaDaEsperaDoFato[],
@@ -6684,12 +6699,13 @@ export function regrasDosFatos(
 
   // Conversas longas (05/11/2026): "marcada nesta conversa" nao diz de QUAL
   // procedimento, e so a frase com dia ou hora e conferida contra o par. Sem
-  // marcacao no turno, a frase sem dia e sem hora tem de falar da consulta
-  // marcada: nao cita outro procedimento do Cadastro, e cita o dela ou a
-  // mensagem traz a palavra "consulta" (ou "horario") ou o par dela. "Esta marcado!"
-  // para a limpeza pedida agora nao sai. Com outra consulta lida no turno a
-  // frase pode ser dela: fica com o verificador, como as frases cuja contagem
-  // nao bate sem a mascara (o "Dr." separa a frase).
+  // marcacao no turno, a frase sem dia e sem hora barra em dois casos: a oracao
+  // dela cita outro procedimento do Cadastro, ou a pessoa pediu outro
+  // procedimento neste turno e a mensagem nao fala da consulta marcada (nem a
+  // palavra "consulta" ou "horario", nem o par, nem o nome dela). Sem outro
+  // procedimento pedido nem citado, a marcacao real sustenta a frase ("Sim,
+  // ficou marcado!"). Com outra consulta lida no turno a frase pode ser dela:
+  // fica com o verificador.
   if (
     marcadas.length > 0 &&
     marcadas.length === fatos.consultasLidas.length &&
@@ -6708,33 +6724,51 @@ export function regrasDosFatos(
     const nomesDasMarcadas = marcadas.flatMap((c) =>
       c.procedimento === undefined ? [] : [c.procedimento],
     );
-    const chavesDasMarcadas = new Set(
-      nomesDasMarcadas.map((nome) => palavrasDoProcedimento(nome).join(" ")),
+    const cita = (palavras: readonly string[], texto: string) =>
+      palavras.some((palavra) => regexDasPalavras([palavra]).test(texto));
+    const deOutros = palavrasDeOutrosProcedimentos(
+      { procedimento: nomesDasMarcadas.join(" ") },
+      fatos.procedimentos,
+      fatos,
+      [],
     );
-    const naoFalaDaMarcada =
-      frasesSemMascara.length === frasesSemDiminutivo.length &&
-      [...alegadas].some(([indice, daFrase]) => {
-        const frase = frasesSemDiminutivo[indice];
-        const semMascara = frasesSemMascara[indice];
-        if (
-          frase === undefined ||
-          semMascara === undefined ||
-          (!daFrase.has("marcou") && !daFrase.has("estado")) ||
-          paresDaFrase(frase).length > 0
-        ) {
-          return false;
-        }
-        const citados = procedimentosCitados(semMascara.texto, [
-          ...fatos.procedimentos,
-          ...nomesDasMarcadas,
-        ]);
-        const citaAMarcada = citados.some((m) =>
-          [...m.chaves].some((chave) => chavesDasMarcadas.has(chave)),
-        );
-        return citados.length > 0
-          ? !citaAMarcada
-          : !mensagemTemOPar && !REFERENCIA_A_CONSULTA.test(base);
-      });
+    const daMarcada = nomesDasMarcadas
+      .flatMap(palavrasDoProcedimento)
+      .filter(
+        (palavra) =>
+          palavra.length >= MINIMO_DA_PALAVRA_QUE_DISTINGUE &&
+          !PALAVRAS_QUE_NAO_DISTINGUEM.has(palavra),
+      );
+    const pediuOutro = contexto.mensagensDoPaciente.some((m) =>
+      cita(deOutros, normalizarBase(m)),
+    );
+    const mensagemFalaDaMarcada =
+      mensagemTemOPar || REFERENCIA_A_CONSULTA.test(base) || cita(daMarcada, base);
+    const naoFalaDaMarcada = [...alegadas].some(([indice, daFrase]) => {
+      const frase = frasesSemDiminutivo[indice];
+      if (
+        frase === undefined ||
+        (!daFrase.has("marcou") && !daFrase.has("estado")) ||
+        paresDaFrase(frase).length > 0
+      ) {
+        return false;
+      }
+      if (pediuOutro && !mensagemFalaDaMarcada) {
+        return true;
+      }
+      // O "Dr." separa a frase sem a mascara: sem a contagem igual, fica com o
+      // verificador.
+      const semMascara =
+        frasesSemMascara.length === frasesSemDiminutivo.length
+          ? frasesSemMascara[indice]
+          : undefined;
+      return (
+        semMascara !== undefined &&
+        semMascara.texto
+          .split(SEPARA_ORACOES)
+          .some((oracao) => cita(deOutros, oracao) && !falaDeOutroAssunto(oracao))
+      );
+    });
     if (naoFalaDaMarcada) {
       achados.push({
         categoria: "acao_nao_executada",
@@ -6957,7 +6991,7 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   "acao e estado com dia ou hora: o par da acao (reservou, marcou, remarcou) ou da consulta lida",
   "marcou: tambem a consulta marcada nesta conversa, relida no turno",
   "marcacao sem aprovacao: com a marcada do turno ou a relida ainda pendente, a aprovacao afirmada barra, por frase e sem outra pendencia",
-  `marcada nao citada: sem marcacao no turno, a frase sem dia e sem hora nao cita outro procedimento e cita o da marcada, ou a mensagem traz ${REFERENCIA_A_CONSULTA.source} ou o par dela`,
+  `marcada nao citada: sem marcacao no turno, a frase sem dia e sem hora barra se a oracao dela cita outro procedimento (${SEPARA_ORACOES.source}), fora a oracao que nega ou traz ${VERBO_DE_OUTRO_ASSUNTO.source} sem marcar, ou se a pessoa pediu outro no turno e a mensagem nao traz ${REFERENCIA_A_CONSULTA.source}, o par nem o nome da marcada`,
   "fechamento licenciado: o par de uma acao ou de uma consulta lida",
   "eco do pedido: fonte so na frase que nega ou pergunta",
   // Revisao curta das correcoes da AG3 (achados 3 a 7): o horario que nao esta
