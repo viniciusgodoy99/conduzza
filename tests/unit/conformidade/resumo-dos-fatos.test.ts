@@ -182,7 +182,13 @@ describe("o resumo dos fatos", () => {
         consultaLida: true,
         consultasLidas: [
           { dia: "terça, 27/10", hora: "10:00", unidade: null, marcadaNestaConversa: false },
-          { dia: "quarta, 21/10", hora: "14:00", unidade: "Centro", marcadaNestaConversa: true },
+          {
+            dia: "quarta, 21/10",
+            hora: "14:00",
+            unidade: "Centro",
+            marcadaNestaConversa: true,
+            aprovacaoPendente: true,
+          },
         ],
       }),
       "Oi!",
@@ -222,6 +228,43 @@ describe("o resumo dos fatos", () => {
         "Oi!",
       ),
     ).toEqual({ ok: false, motivo: "horario_fora_do_formato" });
+  });
+
+  // Revisao final da AG7 (achado 7): a situacao real e o procedimento da
+  // marcada; o nome fora do Cadastro do turno nao entra, e o profissional nunca.
+  it("a consulta marcada nesta conversa: pendente ou aprovada, com o procedimento do Cadastro", () => {
+    const marcada = {
+      dia: "quarta, 21/10",
+      hora: "14:00",
+      unidade: null,
+      profissional: "Dr. Zacarias Peixoto",
+      marcadaNestaConversa: true,
+    };
+    const texto = (consulta: typeof marcada & {
+      aprovacaoPendente?: boolean;
+      procedimento?: string;
+    }) => {
+      const resumo = resumirFatosDoTurno(
+        fatos({ consultaLida: true, consultasLidas: [consulta] }),
+        "Oi!",
+      );
+      return resumo.ok ? resumo.texto : "";
+    };
+    const pendente = texto({
+      ...marcada,
+      aprovacaoPendente: true,
+      procedimento: "Consulta dermatológica",
+    });
+    expect(pendente).toContain(
+      "- quarta, 21/10 às 14:00 (marcada pela assistente nesta conversa, pendente da aprovação da equipe, procedimento Consulta dermatológica)",
+    );
+    expect(pendente).not.toContain("Zacarias");
+    expect(texto({ ...marcada, procedimento: "Consulta dermatológica" })).toContain(
+      "- quarta, 21/10 às 14:00 (marcada pela assistente nesta conversa, já aprovada pela equipe, procedimento Consulta dermatológica)",
+    );
+    expect(texto({ ...marcada, procedimento: "Fora do Cadastro" })).toContain(
+      "- quarta, 21/10 às 14:00 (marcada pela assistente nesta conversa, já aprovada pela equipe)",
+    );
   });
 
   // Revisao final da AG3: o dia, a hora e a unidade da consulta entram pelo

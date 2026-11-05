@@ -247,8 +247,9 @@ export type ConsultaDoFato = HorarioDoFato & {
   aprovacaoPendente?: boolean;
   /**
    * Conversas longas (05/11/2026): o nome do Cadastro do procedimento da
-   * consulta marcada nesta conversa. So nas regras deterministicas (a frase
-   * sem dia e sem hora tem de falar DELA); nunca vai ao resumo do verificador.
+   * consulta marcada nesta conversa. Nas regras deterministicas (a frase sem
+   * dia e sem hora tem de falar DELA) e, desde a revisao final da AG7, no resumo
+   * do verificador, so se esta no Cadastro do turno.
    */
   procedimento?: string;
   /**

@@ -20,7 +20,10 @@
 //    conferido dos horarios livres ("reservou quarta, 21/10 as 14:00,
 //    unidade Centro, ainda nao marcada"; "consulta que a pessoa ja tem:
 //    terca, 27/10 as 10:00"). Da consulta, so o dia, a hora e a unidade:
-//    nunca o profissional nem o procedimento;
+//    nunca o profissional. Revisao final da AG7: da consulta marcada nesta
+//    conversa, tambem a situacao real (pendente ou aprovada) e o nome do
+//    procedimento no Cadastro, sem isso o verificador nao ve de qual consulta
+//    a frase fala;
 //  - os horarios livres da agenda, conferidos no formato exato que
 //    buscar_horario e reservar_horario escrevem ("terca, 21/10" e "14:00").
 //    Outro formato: o resumo nao monta. AG3 (27/10/2026): com a unidade do
@@ -34,8 +37,8 @@
 //    buscar_procedimento (o item e o texto ao paciente). Nada da agenda:
 //    buscar_horario, reservar_horario, agendar e confirmar_presenca so
 //    entram pelos horarios livres conferidos e pelas marcas de acao (com o
-//    dia, a hora e a unidade); o profissional e o procedimento da consulta
-//    da pessoa nunca entram;
+//    dia, a hora e a unidade); o profissional da consulta da pessoa nunca
+//    entra;
 //  - os textos publicados pela clinica: as frases com endereco, as
 //    respostas da base que o modelo disse ter usado e os textos fixos
 //    colados na resposta (saudacao, aviso, encerramento);
@@ -356,7 +359,18 @@ export function resumirFatosDoTurno(
     }
     consultas.push(
       c.marcadaNestaConversa
-        ? `${lido} (marcada pela assistente nesta conversa, pendente da aprovação da equipe)`
+        ? `${lido} (marcada pela assistente nesta conversa, ${
+            c.aprovacaoPendente === true
+              ? "pendente da aprovação da equipe"
+              : "já aprovada pela equipe"
+          }${
+            c.procedimento !== undefined &&
+            fatos.procedimentos.some(
+              (p) => normalizarBase(p) === normalizarBase(c.procedimento ?? ""),
+            )
+              ? `, procedimento ${c.procedimento}`
+              : ""
+          })`
         : c.remarcadaNestaConversa === true
           ? `${lido} (remarcação pedida pela assistente nesta conversa, pendente da aprovação da equipe)`
           : c.remarcacaoAprovada === true
@@ -529,7 +543,7 @@ export const FONTES_DO_RESUMO: readonly string[] = [
   // unidade.
   JSON.stringify(ROTULO_DA_ACAO_COM_HORARIO),
   SEM_HORARIO_DA_ACAO,
-  "resumo: consultas lidas com o dia, a hora e a unidade; a marcada nesta conversa avisada",
+  "resumo: consultas lidas com o dia, a hora e a unidade; a marcada nesta conversa avisada, com a situacao real e o procedimento do Cadastro",
   // AG4: a remarcacao pendente com a consulta antiga, e a remarcada nesta
   // conversa avisada.
   ROTULO_DA_REMARCACAO_COM_A_ANTIGA,

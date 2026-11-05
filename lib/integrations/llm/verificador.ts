@@ -90,6 +90,7 @@ import { zodTextFormat } from "openai/helpers/zod";
 import { CATEGORIAS_DO_VERIFICADOR } from "@/lib/domain/conformidade/categorias";
 import { MAXIMO_DE_MENSAGENS_NO_CONTEXTO } from "@/lib/domain/conformidade/gatilhos-de-entrada";
 import { minimizarParaLlm } from "@/lib/domain/conformidade/minimizar";
+import { FONTES_DO_RESUMO } from "@/lib/domain/conformidade/resumo-dos-fatos";
 import {
   EsquemaDoVeredicto,
   type MotivoDaFalha,
@@ -276,6 +277,8 @@ export const VERSAO_DA_POLITICA = `verificador-${createHash("sha256")
         nonce: "(codigo)",
       }),
       categorias: CATEGORIAS_DO_VERIFICADOR,
+      // Revisao final da AG7: o que o resumo diz tambem e o que ele le.
+      resumo: FONTES_DO_RESUMO,
     }),
     "utf8",
   )
