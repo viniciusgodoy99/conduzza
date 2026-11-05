@@ -60,6 +60,7 @@ import {
 import { numaLinha, semMarcadores } from "@/lib/integrations/llm/verificador";
 import {
   FONTES_DA_RESPOSTA_A_LISTA_DE_ESPERA,
+  FONTES_DA_RESPOSTA_A_MARCACAO,
   FONTES_DA_RESPOSTA_AO_CANCELAMENTO,
 } from "@/lib/domain/resposta-paciente";
 import {
@@ -615,6 +616,7 @@ export const FONTES_DA_VERSAO_DO_PROMPT = {
   respostasFechadas: [
     FONTES_DA_RESPOSTA_AO_CANCELAMENTO,
     FONTES_DA_RESPOSTA_A_LISTA_DE_ESPERA,
+    FONTES_DA_RESPOSTA_A_MARCACAO,
   ],
   blocos: ROTULOS_DOS_BLOCOS,
   limites: [

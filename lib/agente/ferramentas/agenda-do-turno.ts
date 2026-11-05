@@ -167,7 +167,11 @@ import type {
   HorarioLivreDoTurno,
 } from "@/lib/domain/conformidade/fatos-do-turno";
 import { pareceNomeDePessoa } from "@/lib/domain/conformidade/minimizar";
-import { interpretarRespostaAoCancelamento } from "@/lib/domain/resposta-paciente";
+import {
+  confirmouAMarcacao,
+  confirmouARemarcacao,
+  interpretarRespostaAoCancelamento,
+} from "@/lib/domain/resposta-paciente";
 
 import {
   comHorariosOferecidos,
@@ -294,6 +298,11 @@ export type ReservaLida = {
    * Ausente: so vale o "viva" da leitura.
    */
   expiraEm?: string | null;
+  /**
+   * A reserva ja virou consulta: a retomada do job que marcou e caiu. A RPC
+   * devolve a mesma consulta a esse job, e nunca marca outra com ela.
+   */
+  consumida?: boolean;
 };
 
 /**
@@ -625,6 +634,9 @@ const PAROU_EM: Readonly<Record<string, string>> = {
   horario_fora_da_remarcacao:
     "o horário escolhido não é do mesmo procedimento, profissional e pagamento",
   sem_confirmacao_clara: "a resposta do paciente à pergunta do cancelamento não ficou clara",
+  // Sem o texto da pessoa: ele nunca vai para a nota.
+  sim_nao_reconhecido:
+    "a pessoa respondeu à pergunta de confirmação de um jeito que o sistema não entendeu (nada foi marcado)",
   hora_pedida_ocupada: "a hora pedida não estava livre",
   sem_horario: "não havia horário livre no período pedido",
   agenda_nao_cadastrada: "a agenda do profissional não está cadastrada",
@@ -1049,16 +1061,20 @@ function emUtc(iso: string): string {
  * Revisao da AG4 (achado 7): o estado logo depois de a IA cancelar uma
  * consulta nesta conversa (cancelar_consulta deixa o id dela em
  * appointment_id, com o desfecho), e nada de outro atendimento comecou.
+ * A marcacao que ja estava em andamento antes do cancelamento (a reserva e os
+ * horarios oferecidos ficam) nao apaga o fato: sem isso, a resposta verdadeira
+ * "foi cancelada" era barrada no turno seguinte. Quem comeca outro atendimento
+ * depois (buscar, reservar) troca a intencao, e o id sai.
  */
 function ehEstadoDoCancelamento(e: EstadoDoAtendimento): boolean {
   return (
     e.desfecho === "cancelou" &&
     e.intencao === "cancelar" &&
-    e.etapa === "informacao" &&
+    (e.etapa === "informacao" ||
+      e.etapa === "oferta" ||
+      e.etapa === "aguardando_confirmacao") &&
     e.pedido_pendente === null &&
-    e.appointment_id !== null &&
-    e.slot_hold_id === null &&
-    e.horarios_oferecidos.length === 0
+    e.appointment_id !== null
   );
 }
 
@@ -1247,6 +1263,8 @@ export function criarAgendaDoTurno(entrada: {
     hora: string;
     unidade: string | null;
     profissional: string | null;
+    pendente: boolean;
+    procedimento: string | null;
   } | null = null;
   let consultaDoTurno: { dia: string; hora: string } | null = null;
   // [AG7 preparo] O procedimento que o agendar deste turno marcou (F2).
@@ -1763,6 +1781,24 @@ export function criarAgendaDoTurno(entrada: {
   // A reconferencia leve (AG3)
   // -------------------------------------------------------------------------
 
+  /**
+   * Revisao da AG4 (achado 7): a consulta que a IA cancelou nesta conversa,
+   * relida; so a que continua cancelada vira fato. Nunca lanca.
+   */
+  async function lerACancelada(): Promise<void> {
+    if (estado.appointment_id === null || porta?.lerConsulta === undefined) {
+      return;
+    }
+    try {
+      const lida = await porta.lerConsulta(estado.appointment_id);
+      if (lida !== null && lida.cancelada === true) {
+        canceladaLida = consultaComoFato(lida, { marcada: false });
+      }
+    } catch {
+      canceladaLida = null;
+    }
+  }
+
   async function preparar(): Promise<void> {
     if (!comEstado || porta === null) {
       return;
@@ -1868,16 +1904,7 @@ export function criarAgendaDoTurno(entrada: {
           remarcacaoLida = null;
         }
       } else if (modoInicial === "cancelou") {
-        // Revisao da AG4 (achado 7): a consulta que a IA cancelou nesta
-        // conversa, relida; so a que continua cancelada vira fato.
-        try {
-          const lida = await porta.lerConsulta(id);
-          if (lida !== null && lida.cancelada === true) {
-            canceladaLida = consultaComoFato(lida, { marcada: false });
-          }
-        } catch {
-          canceladaLida = null;
-        }
+        await lerACancelada();
       } else {
         try {
           const lida = await porta.lerConsulta(id);
@@ -1886,6 +1913,10 @@ export function criarAgendaDoTurno(entrada: {
               ...diaEHora(new Date(lida.inicio), fuso, agoraMs),
               unidade: nomeDaUnidade(lida.unidadeId),
               profissional: nomeDoProfissional(lida.profissionalId),
+              pendente: lida.pendente === true,
+              procedimento:
+                procedimentoDe(vinculoDe(lida.serviceLinkId ?? null)?.procedimentoId)
+                  ?.nome ?? null,
             };
           }
         } catch {
@@ -2702,7 +2733,6 @@ export function criarAgendaDoTurno(entrada: {
       modoInicial === "remarcar" && estado.pedido_pendente === "remarcar"
         ? focoInicialId
         : null;
-    estado.intencao = remarcarId === null ? "agendar" : "remarcar";
     if (!entradaDoAgendarSchema.safeParse(argumentos ?? {}).success) {
       resultados.push("entrada_invalida");
       return saida(
@@ -2796,6 +2826,40 @@ export function criarAgendaDoTurno(entrada: {
         }`,
       );
     }
+    // Conversas longas (05/11/2026): quem julgava a resposta da pessoa era so o
+    // modelo, e "Nao, melhor nao" com o agendar chamado marcava a consulta. O
+    // "sim" na lista fechada, como no cancelamento (D-30), antes da RPC. A
+    // pergunta volta pelo caminho de sempre de sem_confirmacao_do_paciente, e
+    // conta falha (na segunda seguida, a equipe). Com a reserva ja consumida, a
+    // RPC decide (a retomada do job que marcou, com mensagem nova nas pendentes:
+    // recusar aqui perguntaria de novo por uma consulta que ja existe).
+    const respostaDaPessoa = (entrada.mensagens?.pendentes ?? []).map(
+      (m) => m.original,
+    );
+    if (
+      comEstado &&
+      reserva?.leitura?.consumida !== true &&
+      !(remarcarId === null
+        ? confirmouAMarcacao(
+            respostaDaPessoa,
+            procedimentoDe(estado.procedure_id ?? undefined)?.nome ?? null,
+          )
+        : confirmouARemarcacao(respostaDaPessoa))
+    ) {
+      resultados.push(
+        "sem_confirmacao_do_paciente",
+        "resposta_fora_da_pergunta",
+        "sim_nao_reconhecido",
+      );
+      return saida(
+        "sem_confirmacao_do_paciente",
+        {},
+        "Tentou marcar a consulta: a resposta não foi um sim claro",
+      );
+    }
+    // Nada comeca com o agendar recusado: a intencao de antes fica, e o fato do
+    // cancelamento feito (ehEstadoDoCancelamento) sobrevive.
+    estado.intencao = remarcarId === null ? "agendar" : "remarcar";
     chamouAgendar = true;
     let resposta: RespostaDoAgendar;
     try {
@@ -4518,6 +4582,10 @@ export function criarAgendaDoTurno(entrada: {
               unidade: consultaLida.unidade,
               ...comOProfissional(consultaLida.profissional),
               marcadaNestaConversa: true,
+              ...(consultaLida.pendente ? { aprovacaoPendente: true } : {}),
+              ...(consultaLida.procedimento === null
+                ? {}
+                : { procedimento: consultaLida.procedimento }),
             },
           }),
       // AG4: a consulta em foco do pedido e a remarcacao pedida, relidas.
@@ -4751,12 +4819,19 @@ export function criarAgendaDoTurno(entrada: {
     const ultimo = [...resultados].reverse().find((c) => PAROU_EM[c] !== undefined);
     // AG4: o pedido de cancelar ou remarcar (a consulta, com os nomes do
     // Cadastro) e a remarcacao pedida; "fora do prazo" com o numero do prazo.
-    const doPedido =
+    const pedidoDoTurno =
       pedidoDaNota ??
       ((modoInicial === "cancelar" || modoInicial === "remarcar") &&
       foco !== null
         ? { acao: modoInicial, consulta: foco }
         : null);
+    // O pedido de cancelar que a RPC ja fez nao esta mais em aberto: quando a
+    // T2 nao sai, quem atende le a linha da cancelada, nunca "Pedido: cancelar".
+    const consultaCancelada =
+      canceladaNoTurno !== null && pedidoDoTurno?.consulta.id === canceladaNoTurno
+        ? pedidoDoTurno.consulta
+        : null;
+    const doPedido = consultaCancelada === null ? pedidoDoTurno : null;
     const pedidoDaConsulta =
       doPedido === null
         ? null
@@ -4810,8 +4885,8 @@ export function criarAgendaDoTurno(entrada: {
       idDaCancelada !== null && estado.appointment_id === idDaCancelada;
     const canceladaNaNota: { dia: string; hora: string } | null = !comACancelada
       ? null
-      : canceladaNoTurno !== null && foco !== null && foco.id === canceladaNoTurno
-        ? diaEHora(new Date(foco.inicio), fuso, agoraMs)
+      : consultaCancelada !== null
+        ? diaEHora(new Date(consultaCancelada.inicio), fuso, agoraMs)
         : canceladaLida === null
           ? null
           : { dia: canceladaLida.dia, hora: canceladaLida.hora };
@@ -4883,7 +4958,16 @@ export function criarAgendaDoTurno(entrada: {
     falhasDepois,
     fechar,
     nota,
-    lerParaANota: () => (comEstado ? espera.ler() : Promise.resolve()),
+    // O portao passa antes do preparo: a nota ainda precisa da cancelada.
+    lerParaANota: async () => {
+      if (!comEstado) {
+        return;
+      }
+      await espera.ler();
+      if (modoInicial === "cancelou" && canceladaLida === null) {
+        await lerACancelada();
+      }
+    },
     nomesValidados: () => [...nomesValidados],
   };
 }
