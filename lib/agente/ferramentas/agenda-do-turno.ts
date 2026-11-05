@@ -169,6 +169,7 @@ import type {
 import { pareceNomeDePessoa } from "@/lib/domain/conformidade/minimizar";
 import {
   confirmouAMarcacao,
+  confirmouARemarcacao,
   interpretarRespostaAoCancelamento,
 } from "@/lib/domain/resposta-paciente";
 
@@ -628,6 +629,9 @@ const PAROU_EM: Readonly<Record<string, string>> = {
   horario_fora_da_remarcacao:
     "o horário escolhido não é do mesmo procedimento, profissional e pagamento",
   sem_confirmacao_clara: "a resposta do paciente à pergunta do cancelamento não ficou clara",
+  // Sem o texto da pessoa: ele nunca vai para a nota.
+  sim_nao_reconhecido:
+    "a pessoa respondeu à pergunta de confirmação de um jeito que o sistema não entendeu (nada foi marcado)",
   hora_pedida_ocupada: "a hora pedida não estava livre",
   sem_horario: "não havia horário livre no período pedido",
   agenda_nao_cadastrada: "a agenda do profissional não está cadastrada",
@@ -2814,13 +2818,23 @@ export function criarAgendaDoTurno(entrada: {
     // "sim" na lista fechada, como no cancelamento (D-30), antes da RPC. A
     // pergunta volta pelo caminho de sempre de sem_confirmacao_do_paciente, e
     // conta falha (na segunda seguida, a equipe).
+    const respostaDaPessoa = (entrada.mensagens?.pendentes ?? []).map(
+      (m) => m.original,
+    );
     if (
       comEstado &&
-      !confirmouAMarcacao(
-        (entrada.mensagens?.pendentes ?? []).map((m) => m.original),
-      )
+      !(remarcarId === null
+        ? confirmouAMarcacao(
+            respostaDaPessoa,
+            procedimentoDe(estado.procedure_id ?? undefined)?.nome ?? null,
+          )
+        : confirmouARemarcacao(respostaDaPessoa))
     ) {
-      resultados.push("sem_confirmacao_do_paciente", "resposta_fora_da_pergunta");
+      resultados.push(
+        "sem_confirmacao_do_paciente",
+        "resposta_fora_da_pergunta",
+        "sim_nao_reconhecido",
+      );
       return saida(
         "sem_confirmacao_do_paciente",
         {},

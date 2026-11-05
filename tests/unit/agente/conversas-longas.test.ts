@@ -2494,6 +2494,103 @@ describe("9. o 'sim' solto não confirma nada", () => {
     },
   );
 
+  it.each([
+    ["'fechado'", ["fechado"]],
+    ["'beleza'", ["beleza"]],
+    ["'tá bom'", ["tá bom"]],
+    ["'perfeito'", ["perfeito"]],
+    ["'ok, obrigada'", ["ok, obrigada"]],
+    ["'Confirmo a consulta'", ["Confirmo a consulta"]],
+    ["'Pode marcar a consulta'", ["Pode marcar a consulta"]],
+    ["'Oi' e 'Sim' na mesma rajada", ["Oi", "Sim"]],
+    ["o áudio 'Sim, pode confirmar, tá bom? Obrigada'", ["Sim, pode confirmar, tá bom? Obrigada"]],
+  ])("marcação: %s marca a consulta reservada", async (_nome, mensagens) => {
+    const c = clinicaComDuasUnidades();
+    await comAPerguntaConfirmaNoAr(c);
+    c.passa(20_000);
+    const t = await c.rajada(mensagens, {
+      roteiro: [ferramenta("agendar", {}), final(MARCOU_QUARTA)],
+    });
+    respondeu(t, MARCOU_QUARTA);
+    expect(c.consultas).toHaveLength(1);
+  });
+
+  it("marcação: 'Pode marcar a limpeza' marca a limpeza reservada", async () => {
+    const c = clinicaComDuasUnidades();
+    await conversaFiada(c, [
+      "Oi, tudo bem?",
+      "Queria umas informações",
+      "Vou ver uma coisa aqui",
+      "Já volto",
+    ]);
+    await modeloResponde(
+      c,
+      "Quero marcar limpeza de pele de manhã",
+      "Tenho quarta, 21/10 às 08:00 com a Dra. Ana Lima na unidade Aldeota. Pode ser?",
+      [
+        ferramenta(
+          "buscar_horario",
+          busca({ procedimento: codigoDoProcedimento(CADASTRO, PROC.limpeza), periodo: "manha" }),
+        ),
+      ],
+    );
+    await modeloResponde(
+      c,
+      "Pode",
+      "Reservei quarta, 21/10 às 08:00 com a Dra. Ana Lima, na unidade Aldeota, por 10 minutos. Para marcar, me envie seu nome completo e sua data de nascimento.",
+      [ferramenta("reservar_horario", { horario: "h1" })],
+      UM_MINUTO_MS,
+    );
+    await modeloResponde(
+      c,
+      "Maria da Silva Souza, nascida em 12/03/1985",
+      "Obrigada! Confirma a Limpeza de pele com a Dra. Ana Lima na quarta, 21/10 às 08:00, na unidade Aldeota, no particular?",
+      [dadosCompletos()],
+      UM_MINUTO_MS,
+    );
+    await modeloResponde(
+      c,
+      "Pode marcar a limpeza",
+      "Pronto! Sua Limpeza de pele de quarta, 21/10 às 08:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe.",
+      [ferramenta("agendar", {})],
+      UM_MINUTO_MS,
+    );
+    expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toHaveLength(1);
+  });
+
+  it.each([
+    "Remarcar",
+    "Agenda",
+    "Pode marcar a limpeza", // a reserva e da Consulta
+  ])("marcação: %s não marca", async (texto) => {
+    const c = clinicaComDuasUnidades();
+    await comAPerguntaConfirmaNoAr(c);
+    const t = await c.fala(
+      { texto, roteiro: [ferramenta("agendar", {}), final(CONFIRMA_QUARTA)] },
+      20_000,
+    );
+    respondeu(t, CONFIRMA_QUARTA);
+    expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
+  });
+
+  it("marcação: a afirmação recusada duas vezes passa para a equipe, e a nota diz que o sistema não entendeu, sem o texto da pessoa", async () => {
+    const c = clinicaComDuasUnidades();
+    await comAPerguntaConfirmaNoAr(c);
+    const roteiro = () => [ferramenta("agendar", {}), final(CONFIRMA_QUARTA)];
+    const t1 = await c.fala({ texto: "Manda ver, moça", roteiro: roteiro() }, 20_000);
+    respondeu(t1, CONFIRMA_QUARTA);
+    expect(t1.estado.falhas_seguidas).toBe(1);
+    const t2 = await c.fala({ texto: "Vai lá, manda ver", roteiro: roteiro() }, 20_000);
+    expect(t2.enviadas).toEqual([FRASE_DE_ESCALONAMENTO]);
+    expect(c.consultas).toEqual([]);
+    const nota = c.notasInternas.at(-1) ?? "";
+    expect(nota).toContain(
+      "a pessoa respondeu à pergunta de confirmação de um jeito que o sistema não entendeu",
+    );
+    expect(nota).not.toContain("Manda ver");
+    expect(nota).not.toContain("manda ver");
+  });
+
   it("marcação: 'Pode cancelar' nunca marca, a pergunta volta, e o 'sim' seguinte marca", async () => {
     const c = clinicaComDuasUnidades();
     await comAPerguntaConfirmaNoAr(c);

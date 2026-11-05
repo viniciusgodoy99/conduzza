@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   confirmouAMarcacao,
+  confirmouARemarcacao,
   FONTES_DA_RESPOSTA_A_MARCACAO,
   interpretarRespostaAoCancelamento,
 } from "@/lib/domain/resposta-paciente";
@@ -34,6 +35,19 @@ describe("o sim da marcação", () => {
     "Por favor",
     "\u{1F44D}",
     "Sim \u{1F44D}",
+    // Revisao (05/11/2026): o sim dito de outro jeito.
+    "Fechado",
+    "beleza",
+    "Tá bom",
+    "tá bom!",
+    "perfeito",
+    "ok, obrigada",
+    "Confirmo a consulta",
+    "Pode marcar a consulta",
+    "Oi, sim",
+    "Bom dia, pode marcar",
+    "Sim, pode confirmar, tá bom? Obrigada",
+    "Sim, pode marcar, ok?",
   ])("%s marca", (texto) => {
     expect(confirmouAMarcacao([texto])).toBe(true);
   });
@@ -59,6 +73,25 @@ describe("o sim da marcação", () => {
     "cancela",
     "Quero cancelar",
     "pode desmarcar",
+    // Revisao (05/11/2026): remarcar nao e marcar, e "agenda" e o substantivo.
+    "Remarcar",
+    "Agenda",
+    "Pode remarcar",
+    "Quero remarcar",
+    "Remarca",
+    // A negacao e a duvida com a cortesia ou o "ta bom?" em volta.
+    "Não, obrigada",
+    "Oi, não",
+    "Tá bom?",
+    "Ok?",
+    "Não, tá bom?",
+    "Fechado?",
+    "Sim, mas não hoje",
+    "Tá bom, mas espera",
+    "Oi",
+    "Bom dia",
+    "beleza, mas e o preço?",
+    "Pode marcar a limpeza de pele não",
   ])("%s não marca", (texto) => {
     expect(confirmouAMarcacao([texto])).toBe(false);
   });
@@ -74,6 +107,43 @@ describe("o sim da marcação", () => {
     expect(confirmouAMarcacao([])).toBe(false);
     expect(confirmouAMarcacao([null])).toBe(false);
     expect(confirmouAMarcacao(["Sim", null])).toBe(false);
+  });
+
+  it("a rajada com o cumprimento: 'Oi' e 'Sim' marca; a negação ou a dúvida na rajada recusa", () => {
+    expect(confirmouAMarcacao(["Oi", "Sim"])).toBe(true);
+    expect(confirmouAMarcacao(["Sim", "Oi"])).toBe(true);
+    expect(confirmouAMarcacao(["Oi"])).toBe(false);
+    expect(confirmouAMarcacao(["Oi", "Obrigada!"])).toBe(false);
+    expect(confirmouAMarcacao(["Oi", "Não"])).toBe(false);
+    expect(confirmouAMarcacao(["Sim", "Melhor não"])).toBe(false);
+    expect(confirmouAMarcacao(["Beleza", "Espera"])).toBe(false);
+    expect(confirmouAMarcacao(["Sim", "Quanto custa?"])).toBe(false);
+  });
+
+  it("o procedimento só vale quando é o da reserva", () => {
+    const limpeza = "Limpeza de pele";
+    for (const texto of [
+      "Pode marcar a limpeza",
+      "Pode marcar a limpeza de pele",
+      "Sim, pode agendar a limpeza",
+      "Confirmo a limpeza de pele",
+    ]) {
+      expect(confirmouAMarcacao([texto], limpeza)).toBe(true);
+      // A reserva e de outro procedimento (ou nao se sabe): nao e sim.
+      expect(confirmouAMarcacao([texto], "Consulta dermatológica")).toBe(false);
+      expect(confirmouAMarcacao([texto])).toBe(false);
+    }
+    expect(confirmouAMarcacao(["Não pode marcar a limpeza"], limpeza)).toBe(false);
+    expect(confirmouAMarcacao(["Pode marcar a limpeza?"], limpeza)).toBe(false);
+  });
+
+  it("na remarcação, os verbos de remarcar continuam valendo, sem nenhum de cancelar", () => {
+    for (const texto of ["Remarcar", "Pode remarcar", "Agenda", "Sim", "Tá bom"]) {
+      expect(confirmouARemarcacao([texto])).toBe(true);
+    }
+    for (const texto of ["Não, melhor não", "Pode cancelar", "Sim?"]) {
+      expect(confirmouARemarcacao([texto])).toBe(false);
+    }
   });
 
   it("a lista do cancelamento não mudou: 'pode marcar' não cancela", () => {
