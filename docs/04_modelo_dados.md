@@ -4539,7 +4539,7 @@ A clínica sem atividade recebe zeros e mediana nula, e quem pede a clínica de 
 
 ### 40.2 Onde a regra construída difere da escrita antes
 
-- **Passada para a equipe não é resolvida** (o comentário antigo de `METRICAS_DO_AGENTE` só tirava a saída da equipe). Decisão a confirmar com o dono, com a recomendação no `docs/05`, entrada "Resto da AG0".
+- **Passada para a equipe não é resolvida** (o comentário antigo de `METRICAS_DO_AGENTE` só tirava a saída da equipe). Confirmada pelo dono em 05/11/2026 (`docs/05`, entrada "Resto da AG0").
 - **Consulta recusada não conta.** Idem. `approval_status` é nulo no fluxo sem aprovação: por isso `is distinct from`, e não `<> 'recusado'`, que tiraria essas linhas em silêncio.
 - **Resposta da IA só conta com recibo.** O envio que falhou fica em `message` com `author='ia'`, com a decisão `respondeu` (sem motivo), e o motor passa a conversa para a equipe sem gravar `escalation_reason` (`passarSemFraseEFechar`, `lib/jobs/responder-com-ia.ts`). Pelas regras de antes, ela contaria como atendida e resolvida sem o paciente ter recebido nada. Os recibos são os de `RECIBOS_DE_ENVIADA` (`lib/agente/whatsapp.ts`). Mesmo ponto para o dono.
 - **`ai_decision_log` pela sessão:** a tabela tem grant por coluna (sem `blocked_draft`); a função só lê `clinic_id`, `conversation_id`, `escalation_reason` e `created_at`. Recepção e leitura veem o mesmo que administrador e gestor (a policy só restringe o `profissional`, que recebe null antes).

@@ -1486,7 +1486,7 @@ Troca o "Ainda não medido" do desempenho da recepcionista de IA, em Resultados,
 - **Telas:** a aba Agente de IA e o resumo da Visão geral mostram o número quando há atividade da IA no período (`atendidas`, `transferidas` ou `agendamentos` maiores que zero); sem atividade, o "Ainda não medido" e a dica de hoje, nunca zero. Satisfação fica sempre em "Ainda não medido". Resolvidas sem humano traz "de N conversas atendidas pela IA"; as contagens comparam com o período anterior quando ele também teve atividade (Transferidas e Escalonadas com "menor é melhor"); a duração não compara, como a primeira resposta da equipe. A regra mora em `lerMetricaDoAgente` (`lib/domain/exportacao-de-resultados.ts`), a mesma conta na tela e no CSV.
 - **O que continua fora:** o cartão "Resolvidas pela IA" do Início segue em "Ainda não medido" (não fazia parte deste pedido).
 
-**Pontos para o dono, cada um com a recomendação:**
+**Decisões do dono:** os quatro critérios abaixo confirmados como construídos em 05/11/2026 ("confirmo os 4 critérios"), junto do ok para publicar.
 1. **Passada para a equipe conta como resolvida?** A regra escrita antes só tirava a conversa que a equipe respondeu. Construído assim: a conversa com `escalation_reason` na janela também sai de Resolvidas sem humano, porque conversa passada que ninguém respondeu ainda não foi resolvida. Recomendação: manter.
 2. **Consulta recusada pela equipe conta como agendamento da IA?** Construído assim: não conta. Recomendação: manter; a consulta não aconteceu e o número não pode premiar o que a recepção desfez.
 3. **Resposta da IA que não saiu conta?** Achado na construção, fora do pedido: o envio que falhou fica em `message` com `author='ia'`, e o motor passa a conversa para a equipe **sem** `escalation_reason`. Pela regra literal, ela contaria como atendida e resolvida sem o paciente ter recebido nada. Construído assim: só conta resposta com recibo (`enviada`, `entregue`, `lida`), e a conversa com resposta `falhou` ou `enviando` na janela não é resolvida. Recomendação: manter.
@@ -1494,7 +1494,7 @@ Troca o "Ainda não medido" do desempenho da recepcionista de IA, em Resultados,
 
 **O que não foi rodado:** o ensaio na produção, `tests/rls/relatorios.test.ts` e `tests/integration/relatorios.test.ts` (os casos novos estão escritos e só passam depois da migration) e o e2e. A prova foi o ensaio no Postgres local (`docs/04`, 40.4).
 
-**A aplicar, com o ok do dono:** o ensaio na produção, a migration, `npm run test:rls -- relatorios`, `npm run test:integration -- relatorios` e a publicação do código, em qualquer ordem entre o código e a migration.
+**A aplicar, com o ok do dono de 05/11/2026 e depois da AG5 no ar:** o ensaio na produção, a migration, `npm run test:rls -- relatorios`, `npm run test:integration -- relatorios` e a publicação do código, em qualquer ordem entre o código e a migration.
 
 ### [ ] Contrato dos pacotes
 Migration de contrato do pacote com vários procedimentos (a `20260929120000` foi o expand). **Só roda depois do código novo publicado**: até lá, o código antigo depende dos gatilhos legados.
