@@ -2503,12 +2503,22 @@ describe("9. o 'sim' solto não confirma nada", () => {
     ["'Confirmo a consulta'", ["Confirmo a consulta"]],
     ["'Pode marcar a consulta'", ["Pode marcar a consulta"]],
     ["'Oi' e 'Sim' na mesma rajada", ["Oi", "Sim"]],
-    ["o áudio 'Sim, pode confirmar, tá bom? Obrigada'", ["Sim, pode confirmar, tá bom? Obrigada"]],
   ])("marcação: %s marca a consulta reservada", async (_nome, mensagens) => {
     const c = clinicaComDuasUnidades();
     await comAPerguntaConfirmaNoAr(c);
     c.passa(20_000);
     const t = await c.rajada(mensagens, {
+      roteiro: [ferramenta("agendar", {}), final(MARCOU_QUARTA)],
+    });
+    respondeu(t, MARCOU_QUARTA);
+    expect(c.consultas).toHaveLength(1);
+  });
+
+  it("marcação: o áudio 'Sim, pode confirmar, tá bom? Obrigada' marca a consulta reservada", async () => {
+    const c = clinicaComDuasUnidades();
+    await comAPerguntaConfirmaNoAr(c);
+    c.passa(20_000);
+    const t = await c.audio("Sim, pode confirmar, tá bom? Obrigada", {
       roteiro: [ferramenta("agendar", {}), final(MARCOU_QUARTA)],
     });
     respondeu(t, MARCOU_QUARTA);
