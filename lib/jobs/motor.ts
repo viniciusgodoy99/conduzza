@@ -66,7 +66,10 @@ import { log } from "@/lib/log";
  * Serve para NAO comecar um job que nao caberia no orcamento da invocacao.
  *
  * Envio: 3s de espera curta de slot + ~0,2s de RPCs + 20s de provedor
- * (sendMenu faz DOIS requests de 10s quando o botao degrada para texto).
+ * (sendMenu faz DOIS requests de 10s quando o botao degrada para texto). O
+ * lembrete da oferta (trilho 1:1, ESPERA_MAXIMA_DO_LEMBRETE_MS em
+ * lib/jobs/worker.ts) espera ate 8 s pelo intervalo curto, mas sai num texto
+ * so (10 s de provedor): cabe nos mesmos 25 s.
  * Midia: 25s de orcamento de download + parse + upload.
  */
 export const CUSTO_ESTIMADO_MS: Record<string, number> = {

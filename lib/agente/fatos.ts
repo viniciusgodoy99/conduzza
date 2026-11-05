@@ -43,20 +43,28 @@
 //    consultas, a consulta em foco do pedido de cancelar ou remarcar, a
 //    antiga da remarcacao), cada uma com o profissional relido (o limite da
 //    21.15), e, na remarcacao, o horario da consulta antiga junto da acao
-//    (o resumo do verificador diz que ela continua marcada).
+//    (o resumo do verificador diz que ela continua marcada);
+//  - AG5 (27/10/2026): as entradas da lista de espera que o turno conhece (a
+//    criada no turno, a desta conversa relida e a que ja existia no grupo) e
+//    se a habilidade "Lista de espera" vale na versao do turno (so com ela,
+//    "vaga" numa condicao futura sem dia nem hora nao e horario livre).
 // As mensagens novas do paciente (fonte de data e hora) o filtro ja recebe
 // em mensagensDoPaciente. Quem chama (lib/agente/laco.ts) falha fechado se
 // montar os fatos lancar.
 
 import { TZDate } from "@date-fns/tz";
 
-import type { ConfigDoAgente } from "@/lib/domain/agente/config";
+import {
+  ferramentasDoAgente,
+  type ConfigDoAgente,
+} from "@/lib/domain/agente/config";
 import type {
   AcaoComHorario,
   AcaoDoTurno,
   CoberturaDoTurno,
   ConsultaDoFato,
   DiaDaClinica,
+  EntradaDaEsperaDoFato,
   FatosDaFerramenta,
   FatosDoTurno,
   HorarioDoFato,
@@ -241,8 +249,26 @@ export function montarFatosDoTurno(entrada: {
   // turno anterior (o estado), so para a frase do cancelamento.
   const consultasCanceladas: HorarioDoFato[] = [];
   const ecosDoPedido: string[] = [];
+  // AG5: as entradas da lista de espera (sem repetir).
+  const entradasDaEspera: EntradaDaEsperaDoFato[] = [];
   let consultaLida = false;
   for (const { saida, fatos } of entrada.ferramentas) {
+    for (const e of fatos?.entradasDaEspera ?? []) {
+      const chave = JSON.stringify([e.procedimento, e.profissional, e.turnos, e.dias, e.origem]);
+      if (
+        !entradasDaEspera.some(
+          (j) =>
+            JSON.stringify([j.procedimento, j.profissional, j.turnos, j.dias, j.origem]) ===
+            chave,
+        )
+      ) {
+        entradasDaEspera.push({
+          ...e,
+          turnos: [...e.turnos],
+          dias: [...e.dias],
+        });
+      }
+    }
     coberturas.push(...(fatos?.coberturas ?? []));
     horariosLivres.push(...(fatos?.horarios ?? []));
     ecosDoPedido.push(...(fatos?.ecos ?? []));
@@ -318,5 +344,12 @@ export function montarFatosDoTurno(entrada: {
     unidades: (catalogo.unidades ?? [])
       .map((u) => u.nome.trim())
       .filter((nome) => nome !== ""),
+    // AG5: as entradas da lista de espera e a habilidade.
+    entradasDaEspera,
+    listaDeEsperaLigada: ferramentasDoAgente(
+      config.habilidades,
+      config.agenda,
+      config.prazos,
+    ).includes("pedir_lista_de_espera"),
   };
 }

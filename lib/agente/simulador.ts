@@ -47,6 +47,7 @@ import {
   portaDaAgendaDoSimulador,
   type MemoriaDoSimulador,
 } from "./agenda";
+import { pedidoDeEsperaLido } from "./ferramentas/lista-de-espera";
 import {
   dadosQueFaltam,
   dadosVazios,
@@ -120,6 +121,12 @@ import { lerPrecos, type PrecoDoModelo } from "./uso";
 // recusado como o historico alterado. Os dados que a pessoa informa sao
 // conferidos pelas regras do banco e o valor nao fica em lugar nenhum. A
 // nota para a equipe, quando o turno passa a conversa, aparece na trilha.
+//
+// AG5 (27/10/2026): a lista de espera no simulador, SEM GRAVAR NADA: o
+// pedido (a pergunta T-E1) e a entrada simulados ficam na memoria do pacote
+// assinado (portaDaAgendaDoSimulador), conferida na forma como a reserva e
+// a consulta. O cenario "lista_de_espera" da tela (components/agente/
+// textos.ts) so preenche a primeira mensagem.
 
 type Ambiente = Readonly<Record<string, string | undefined>>;
 
@@ -421,7 +428,33 @@ function estadoDoSimuladorLido(valor: unknown): EstadoDoSimulador | null {
         (consultaSimuladaValida(consulta.remarcacaoDe) &&
           ehObjeto(consulta.remarcacaoDe) &&
           consulta.remarcacaoDe.remarcacaoDe === undefined)));
-  if (!reservaValida || !consultaValida) {
+  // AG5: a lista de espera simulada (opcional): o pedido vivo e as
+  // entradas, na forma que a porta le (pedidoDeEsperaLido confere cada um).
+  const espera = memoria.espera;
+  const pedidoSimuladoValido = (p: unknown): boolean =>
+    pedidoDeEsperaLido(
+      ehObjeto(p)
+        ? {
+            id: p.id,
+            job_id: p.jobId,
+            procedure_id: p.procedimentoId,
+            professional_id: p.profissionalId,
+            insurance_id: p.convenioId,
+            particular: p.particular,
+            preferred_shifts: p.turnos,
+            preferred_weekdays: p.dias,
+            created_at: p.criadoEm,
+          }
+        : null,
+    ) !== null;
+  const esperaValida =
+    espera === undefined ||
+    (ehObjeto(espera) &&
+      (espera.pedido === null || pedidoSimuladoValido(espera.pedido)) &&
+      Array.isArray(espera.entradas) &&
+      espera.entradas.length <= 20 &&
+      espera.entradas.every(pedidoSimuladoValido));
+  if (!reservaValida || !consultaValida || !esperaValida) {
     return null;
   }
   return {
@@ -600,6 +633,10 @@ export async function simularTurno(
   const memoria: MemoriaDoSimulador = {
     reserva: anterior.memoria.reserva,
     consulta: anterior.memoria.consulta,
+    // AG5: a lista de espera simulada.
+    ...(anterior.memoria.espera === undefined
+      ? {}
+      : { espera: anterior.memoria.espera }),
   };
   const reservaViva =
     memoria.reserva !== null && Date.parse(memoria.reserva.expiraEm) > entrada.agoraMs

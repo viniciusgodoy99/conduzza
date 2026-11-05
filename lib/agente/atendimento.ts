@@ -943,6 +943,13 @@ export const RESULTADOS_QUE_SAO_FALHA: ReadonlySet<string> = new Set([
   // depois da pergunta do cancelamento (o sistema pergunta de novo). Conta
   // como falha para a pergunta que nunca confere nao repetir sem fim.
   "resposta_fora_da_pergunta",
+  // AG5 (a lista de espera): pedir sem a busca de horario antes, entrar sem
+  // a pergunta feita numa mensagem anterior, o segundo pedido na mesma
+  // resposta e o "sim" que nao foi claro (a pergunta volta).
+  "sem_busca_antes",
+  "sem_pergunta_de_espera",
+  "um_pedido_de_espera_por_resposta",
+  "espera_sem_confirmacao_clara",
 ]);
 
 /** O que conta como AVANCO: um passo do atendimento que deu certo. */
@@ -958,6 +965,8 @@ export const RESULTADOS_QUE_AVANCAM: ReadonlySet<string> = new Set([
   "consultas",
   "cancelada",
   "remarcado",
+  // AG5: a entrada na lista de espera.
+  "entrou_na_lista",
 ]);
 
 /**
@@ -1053,6 +1062,19 @@ export type EntradaDaNota = {
    * a consulta marcada nesta conversa).
    */
   cancelada?: { dia: string; hora: string } | null;
+  /**
+   * AG5: a lista de espera nesta conversa: o pedido em texto ("Limpeza de
+   * pele, com Dra. Ana Lima, no particular, de manhã, às segundas") e a
+   * situacao (a pergunta feita e ainda sem a confirmacao, ou a entrada
+   * feita). So nomes do Cadastro e listas fechadas. Revisao da AG5 (achado
+   * 3): so quando a lista e o pedido vivo do turno (quem monta decide; com
+   * outra marcacao depois da entrada, nulo e a nota de sempre); e
+   * "nao_entrou", o pedido que o turno tentou sem perguntar nem colocar.
+   */
+  listaDeEspera?: {
+    pedido: string;
+    situacao: "perguntada" | "entrou" | "nao_entrou";
+  } | null;
 };
 
 const NOME_DO_PERIODO: Readonly<Record<string, string>> = {
@@ -1101,16 +1123,31 @@ export function notaDaPassagem(entrada: EntradaDaNota): string | null {
   const { estado, dados } = entrada;
   const doPedido = entrada.pedidoDaConsulta ?? null;
   const remarcacao = entrada.remarcacao ?? null;
+  const espera = entrada.listaDeEspera ?? null;
   if (
     !temAtendimentoParaContar(estado, dados) &&
     doPedido === null &&
-    remarcacao === null
+    remarcacao === null &&
+    espera === null
   ) {
     return null;
   }
   // D-20: o cabecalho fixo e o que faz o Atendimento assinar a nota como do
   // assistente (lib/agente/nota-da-passagem.ts).
   const linhas: string[] = [CABECALHO_DA_NOTA_DA_PASSAGEM];
+  // AG5: a lista de espera (o pedido, a situacao e onde parou).
+  if (espera !== null && doPedido === null && remarcacao === null) {
+    linhas.push(`Pedido: entrar na lista de espera para ${espera.pedido}.`);
+    linhas.push(
+      espera.situacao === "entrou"
+        ? "Entrou na lista de espera pelo assistente nesta conversa."
+        : espera.situacao === "nao_entrou"
+          ? "Não entrou na lista de espera."
+          : "A pergunta da lista de espera foi feita; a pessoa ainda não confirmou.",
+    );
+    linhas.push(`Parou em: ${entrada.parouEm}.`);
+    return linhas.join("\n");
+  }
   // AG4: o pedido de cancelar ou remarcar uma consulta que a pessoa ja tem.
   if (doPedido !== null) {
     const nomes = [doPedido.procedimento, doPedido.profissional].filter(

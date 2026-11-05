@@ -19,8 +19,11 @@ import {
   ArrowUp,
   GripVertical,
   ListOrdered,
+  MessageSquareText,
+  Sparkles,
   UserRoundMinus,
 } from "lucide-react";
+import Link from "next/link";
 import { useTransition } from "react";
 import { toast } from "sonner";
 
@@ -31,6 +34,7 @@ import {
 import { ContactAvatar } from "@/components/atendimento/contact-avatar";
 import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
+import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -39,8 +43,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import type { StatusDefinition } from "@/lib/design/status";
 import { formatarTelefone } from "@/lib/domain/telefone";
-import type { EntradaDaEspera } from "@/lib/queries/espera";
+import { pagamentoDaEntrada, type EntradaDaEspera } from "@/lib/queries/espera";
 import { cn } from "@/lib/utils";
 
 // A fila da Tela 10, agrupada por profissional e procedimento (brief).
@@ -67,6 +77,40 @@ const GRADE =
   "grid grid-cols-[0px_40px_44px_minmax(0,1fr)_auto_0px] gap-x-3 @min-[880px]/fila:grid-cols-[0px_40px_44px_minmax(0,1.4fr)_144px_minmax(0,1fr)_104px_auto_0px]";
 const LINHA = "col-span-full grid grid-cols-subgrid";
 const SO_LARGA = "hidden @min-[880px]/fila:block";
+
+// AG5 (a IA coloca o paciente na lista de espera; desenho, secao 6):
+// - a entrada que a IA criou pela conversa leva o selo "Pela IA" em 3
+//   camadas (Sparkles, tom ai e o rotulo), o mesmo sentido do selo da IA no
+//   Atendimento ("IA atendendo"): o Sparkles e sempre do tom ai. Fica ao lado
+//   de "entrou em"; o leitor de tela le a frase inteira;
+// - o pagamento declarado ("Particular" ou "Unimed, Plano Ouro") entra na
+//   linha da preferencia. A entrada da recepcao nao declara: nada aparece;
+// - "Abrir conversa" (40px) na entrada da IA com conversa, para quem ve todas
+//   as conversas do Atendimento. O profissional so le a conversa atribuida a
+//   ele: visivel, desabilitado e com a dica. Fica FORA das acoes de editar a
+//   fila (quem so le a fila tambem abre a conversa).
+
+/** O selo da entrada que a IA criou (AG5). */
+export const ORIGEM_PELA_IA: StatusDefinition = {
+  label: "Pela IA",
+  tone: "ai",
+  icon: Sparkles,
+};
+
+/** O que o leitor de tela le no lugar do selo. */
+export const LEITURA_DA_ORIGEM_PELA_IA =
+  "Entrou pela conversa com o assistente";
+
+function SeloPelaIa() {
+  return (
+    <>
+      <span aria-hidden className="inline-flex shrink-0">
+        <StatusChip definition={ORIGEM_PELA_IA} size="sm" />
+      </span>
+      <span className="sr-only">{LEITURA_DA_ORIGEM_PELA_IA}</span>
+    </>
+  );
+}
 
 const TURNO_ROTULO: Record<string, string> = {
   manha: "manhã",
@@ -149,12 +193,18 @@ export function FilaDeEspera({
   timezone,
   podeEditar,
   dicaSemPermissao,
+  podeAbrirConversa,
+  dicaAbrirConversa,
   aoMudar,
 }: {
   entradas: EntradaDaEspera[];
   timezone: string;
   podeEditar: boolean;
   dicaSemPermissao: string;
+  /** AG5: quem ve todas as conversas do Atendimento abre a da IA. */
+  podeAbrirConversa: boolean;
+  /** A dica do "Abrir conversa" desabilitado ("" quando pode). */
+  dicaAbrirConversa: string;
   aoMudar: () => Promise<unknown> | void;
 }) {
   const [pendente, iniciarTransicao] = useTransition();
@@ -229,7 +279,7 @@ export function FilaDeEspera({
         <EmptyState
           icon={ListOrdered}
           title="Ninguém na lista de espera"
-          description="A fila aparece quando o primeiro paciente entrar na espera. Dá para adicionar por aqui, pela ficha do paciente ou pela conversa."
+          description="A fila aparece quando o primeiro paciente entrar na espera. Dá para adicionar por aqui, pela ficha do paciente, pela conversa ou pelo assistente."
         />
       ) : (
         <div
@@ -284,6 +334,8 @@ export function FilaDeEspera({
                       podeEditar={podeEditar}
                       pendente={pendente}
                       dicaSemPermissao={dicaSemPermissao}
+                      podeAbrirConversa={podeAbrirConversa}
+                      dicaAbrirConversa={dicaAbrirConversa}
                       aoSubir={() => mover(entrada.id, indice)}
                       aoDescer={() => mover(entrada.id, indice + 2)}
                       aoRemover={() => remover(entrada)}
@@ -299,6 +351,49 @@ export function FilaDeEspera({
   );
 }
 
+/**
+ * "Abrir conversa" da entrada da IA (AG5): leva ao Atendimento na conversa
+ * em que a IA criou a entrada. Sem permissao, visivel e desabilitado com a
+ * dica (regra do brief).
+ */
+function AbrirConversa({
+  conversationId,
+  nome,
+  pode,
+  dica,
+}: {
+  conversationId: string;
+  nome: string;
+  pode: boolean;
+  dica: string;
+}) {
+  const rotulo = `Abrir conversa de ${nome}`;
+  if (!pode) {
+    return (
+      <DisabledWithHint hint={dica}>
+        <Button variant="ghost" size="icon" aria-label={rotulo} disabled>
+          <MessageSquareText aria-hidden />
+        </Button>
+      </DisabledWithHint>
+    );
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button variant="ghost" size="icon" asChild>
+          <Link
+            href={`/atendimento?conversa=${encodeURIComponent(conversationId)}`}
+            aria-label={rotulo}
+          >
+            <MessageSquareText aria-hidden />
+          </Link>
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>Abrir conversa</TooltipContent>
+    </Tooltip>
+  );
+}
+
 function ItemDaFila({
   entrada,
   timezone,
@@ -307,6 +402,8 @@ function ItemDaFila({
   podeEditar,
   pendente,
   dicaSemPermissao,
+  podeAbrirConversa,
+  dicaAbrirConversa,
   aoSubir,
   aoDescer,
   aoRemover,
@@ -319,6 +416,8 @@ function ItemDaFila({
   /** Acao em andamento: desabilita SEM trocar para o ramo de sem permissao. */
   pendente: boolean;
   dicaSemPermissao: string;
+  podeAbrirConversa: boolean;
+  dicaAbrirConversa: string;
   aoSubir: () => void;
   aoDescer: () => void;
   aoRemover: () => void;
@@ -343,6 +442,8 @@ function ItemDaFila({
     ? formatarTelefone(entrada.contact.phone_e164)
     : null;
   const pref = preferencia(entrada);
+  const pagamento = pagamentoDaEntrada(entrada);
+  const daIa = entrada.origem === "ia";
   const entrouEm = format(
     new TZDate(new Date(entrada.created_at).getTime(), timezone),
     "dd/MM/yyyy",
@@ -425,14 +526,20 @@ function ItemDaFila({
           <span className="truncate text-[13.5px] font-semibold text-text-strong">
             {nome}
           </span>
-          {/* Grade estreita: telefone, preferencia e entrada numa linha so. */}
-          <span className="truncate text-xs text-text-secondary @min-[880px]/fila:hidden">
-            {telefone ? (
-              <>
-                <span className="cz-num">{telefone}</span> ·{" "}
-              </>
-            ) : null}
-            {pref} · entrou em <span className="cz-num">{entrouEm}</span>
+          {/* Grade estreita: telefone, preferencia, pagamento e entrada numa
+              linha so. O selo da IA fica fora do corte, sempre visivel. */}
+          <span className="flex min-w-0 items-center gap-1.5 @min-[880px]/fila:hidden">
+            <span className="min-w-0 truncate text-xs text-text-secondary">
+              {telefone ? (
+                <>
+                  <span className="cz-num">{telefone}</span> ·{" "}
+                </>
+              ) : null}
+              {pref}
+              {pagamento ? ` · ${pagamento}` : null} · entrou em{" "}
+              <span className="cz-num">{entrouEm}</span>
+            </span>
+            {daIa ? <SeloPelaIa /> : null}
           </span>
         </div>
       </div>
@@ -443,18 +550,38 @@ function ItemDaFila({
       </span>
       <span
         className={cn(SO_LARGA, "truncate text-[13px] text-foreground")}
-        title={pref}
+        title={pagamento ? `${pref} · ${pagamento}` : pref}
       >
         <span className="sr-only">Preferência: </span>
         {pref}
+        {pagamento ? (
+          <>
+            {" · "}
+            <span className="sr-only">pagamento: </span>
+            {pagamento}
+          </>
+        ) : null}
       </span>
       <span
         className={cn(SO_LARGA, "text-right text-[13px] text-text-secondary")}
       >
         <span className="sr-only">Entrou em </span>
         <span className="cz-num">{entrouEm}</span>
+        {daIa ? (
+          <span className="mt-0.5 flex justify-end">
+            <SeloPelaIa />
+          </span>
+        ) : null}
       </span>
-      <span className="flex justify-end">
+      <span className="flex items-center justify-end gap-1">
+        {daIa && entrada.conversation_id ? (
+          <AbrirConversa
+            conversationId={entrada.conversation_id}
+            nome={nome}
+            pode={podeAbrirConversa}
+            dica={dicaAbrirConversa}
+          />
+        ) : null}
         {podeEditar ? (
           acoes(false)
         ) : (

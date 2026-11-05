@@ -287,6 +287,158 @@ export const FONTES_DA_RESPOSTA_AO_CANCELAMENTO: readonly string[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// AG5 (27/10/2026, D-30 e o desenho da AG5, 4.7): o "sim" da pergunta da
+// lista de espera (T-E1, "Confirma a sua entrada na lista de espera ...?"),
+// numa lista FECHADA PROPRIA. A do cancelamento nao serve: "cancela", "pode
+// cancelar" e "quero cancelar" seriam um sim para entrar na lista. Por frase
+// inteira, como interpretarResposta; a pergunta ("Sim, mas demora?") nunca e
+// sim nem nao. Errar para o lado do "nao entendi" e barato (a pergunta volta
+// e conta uma falha; na segunda seguida, a equipe); por na lista sem querer,
+// nao.
+// ---------------------------------------------------------------------------
+
+export type RespostaAListaDeEspera = "sim" | "nao" | "nao_reconhecida";
+
+const SIM_DA_LISTA_DE_ESPERA = new Set([
+  "sim",
+  "s",
+  "ss",
+  "sim sim",
+  "isso",
+  "isso mesmo",
+  "isso ai",
+  "exato",
+  "exatamente",
+  "confirmo",
+  "confirmado",
+  "confirmada",
+  "confirma",
+  "sim confirmo",
+  "confirmo sim",
+  "pode",
+  "pode sim",
+  "sim pode",
+  "pode colocar",
+  "pode colocar sim",
+  "sim pode colocar",
+  "pode me colocar",
+  "sim pode me colocar",
+  "pode me colocar na lista",
+  "pode colocar na lista",
+  "coloca",
+  "coloca sim",
+  "sim coloca",
+  "me coloca",
+  "me coloca na lista",
+  "quero",
+  "quero sim",
+  "sim quero",
+  "eu quero",
+  "quero entrar",
+  "quero entrar na lista",
+  "sim quero entrar",
+  "claro",
+  "sim claro",
+  "com certeza",
+  "ok",
+  "okay",
+  "ok pode colocar",
+  "certo",
+  "por favor",
+  "sim por favor",
+  "pode por favor",
+  "sim obrigado",
+  "sim obrigada",
+]);
+
+const NAO_DA_LISTA_DE_ESPERA = new Set([
+  "nao",
+  "n",
+  "nao nao",
+  "nao obrigado",
+  "nao obrigada",
+  "nao quero",
+  "nao quero entrar",
+  "nao quero entrar na lista",
+  "nao precisa",
+  "nao precisa colocar",
+  "nao coloca",
+  "nao me coloca",
+  "deixa",
+  "deixa assim",
+  "deixa pra la",
+  "nao deixa",
+  "nao deixa assim",
+  "esquece",
+  "melhor nao",
+  "mudei de ideia",
+  "agora nao",
+]);
+
+/** Uma mensagem so, pela lista fechada da lista de espera. */
+function respostaDeUmaMensagemAListaDeEspera(
+  body: string,
+): RespostaAListaDeEspera {
+  if (PERGUNTA_NA_MENSAGEM.test(body)) {
+    return "nao_reconhecida";
+  }
+  let restante = body.replace(MODIFICADORES, "");
+  let temEmojiDeConfirmacao = false;
+  for (const emoji of EMOJIS_DE_CONFIRMACAO) {
+    if (restante.includes(emoji)) {
+      temEmojiDeConfirmacao = true;
+      restante = restante.split(emoji).join(" ");
+    }
+  }
+  const texto = normalizar(restante);
+  if (texto.length === 0) {
+    return temEmojiDeConfirmacao ? "sim" : "nao_reconhecida";
+  }
+  if (SIM_DA_LISTA_DE_ESPERA.has(texto)) {
+    return "sim";
+  }
+  if (NAO_DA_LISTA_DE_ESPERA.has(texto)) {
+    return "nao";
+  }
+  return "nao_reconhecida";
+}
+
+/**
+ * A resposta do paciente a pergunta da lista de espera (as mensagens dele
+ * depois da pergunta, ainda nao respondidas). "sim" so quando TODAS sao um
+ * sim da lista fechada; "nao" so quando todas sao um nao; qualquer outra
+ * mistura, mensagem vazia ou sem texto e "nao_reconhecida". PURA, nunca
+ * lanca.
+ */
+export function interpretarRespostaAListaDeEspera(
+  mensagens: readonly (string | null)[],
+): RespostaAListaDeEspera {
+  if (mensagens.length === 0) {
+    return "nao_reconhecida";
+  }
+  const lidas = mensagens.map((m) =>
+    m === null || m.trim() === ""
+      ? "nao_reconhecida"
+      : respostaDeUmaMensagemAListaDeEspera(m),
+  );
+  if (lidas.every((r) => r === "sim")) {
+    return "sim";
+  }
+  if (lidas.every((r) => r === "nao")) {
+    return "nao";
+  }
+  return "nao_reconhecida";
+}
+
+/** As listas do "sim" e do "nao" da lista de espera (para a versao). */
+export const FONTES_DA_RESPOSTA_A_LISTA_DE_ESPERA: readonly string[] = [
+  [...SIM_DA_LISTA_DE_ESPERA].join(","),
+  [...NAO_DA_LISTA_DE_ESPERA].join(","),
+  EMOJIS_DE_CONFIRMACAO.join(","),
+  PERGUNTA_NA_MENSAGEM.source,
+];
+
+// ---------------------------------------------------------------------------
 // A QUE PERGUNTA o paciente respondeu (revisao de liberacao de 24/09).
 //
 // Ler "ok" como confirmacao so e seguro quando o "ok" responde ao toque. O

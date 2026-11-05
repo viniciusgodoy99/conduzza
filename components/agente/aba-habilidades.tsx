@@ -50,10 +50,28 @@ import {
 // dicaDaHabilidade, e vale como a da agenda: escrita embaixo da descricao e
 // no cursor). As duas levam a nota da fase de teste: quem tem consulta ja e
 // paciente, e o telefone comum de paciente nao aciona o assistente.
+//
+// AG5 (27/10/2026; decisoes D-36, D-39 e D-45 pela recomendacao, pendentes
+// do dono): "Lista de espera", desligada por padrao, so com "Agendar
+// consulta" valendo (titulo, descricao e dica vem da configuracao, como as
+// outras). A nota da fase de teste dela e outra: o SIM a oferta marca a
+// consulta na hora, e o contato vira paciente ali (sem a aprovacao da
+// equipe). Nota, nao status, como as outras.
 
 /** As habilidades que, nesta fase de teste, levam a nota do telefone. */
 export const HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA: ReadonlySet<string> =
   new Set(["cancelar", "remarcar", "confirmar_presenca"]);
+
+/** A nota da fase de teste da habilidade, ou nula quando ela nao leva nota. */
+export function notaDaFaseDeTeste(chave: string): string | null {
+  if (HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA.has(chave)) {
+    return T.habilidadeNaFaseDeTeste;
+  }
+  if (chave === "lista_de_espera") {
+    return T.listaDeEsperaNaFaseDeTeste;
+  }
+  return null;
+}
 
 /**
  * Por que a chave nao muda: sem permissao vence; depois, o que falta para a
@@ -135,6 +153,7 @@ export function AbaHabilidades({
               contexto,
               dica,
             );
+            const nota = notaDaFaseDeTeste(habilidade.chave);
             const chave = (
               <Switch
                 checked={ligada}
@@ -162,14 +181,12 @@ export function AbaHabilidades({
                   <span className="text-xs text-text-secondary">
                     {habilidade.descricao}
                   </span>
-                  {HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA.has(
-                    habilidade.chave,
-                  ) ? (
+                  {nota ? (
                     <span
                       id={`${idRotulo}-fase-de-teste`}
                       className="text-xs text-text-secondary"
                     >
-                      {T.habilidadeNaFaseDeTeste}
+                      {nota}
                     </span>
                   ) : null}
                   {falta ? (

@@ -197,13 +197,14 @@ describe("tom de voz", () => {
 });
 
 describe("habilidades", () => {
-  it("e a lista fechada (E4: agendar e confirmar presenca; AG4: cancelar e remarcar)", () => {
+  it("e a lista fechada (E4: agendar e confirmar presenca; AG4: cancelar e remarcar; AG5: lista de espera)", () => {
     expect(HABILIDADES_DO_AGENTE.map((h) => h.chave)).toEqual([
       "responder_duvidas",
       "informar_preco_e_convenio",
       "agendar",
       "cancelar",
       "remarcar",
+      "lista_de_espera",
       "confirmar_presenca",
       "passar_para_equipe",
     ]);
@@ -300,6 +301,9 @@ describe("habilidades", () => {
       "pedir_cancelamento",
       "cancelar_consulta",
       "buscar_horario_para_remarcar",
+      // AG5: a lista de espera.
+      "pedir_lista_de_espera",
+      "entrar_na_lista_de_espera",
     ]);
     expect(ehFerramentaDeAgenda("agendar")).toBe(true);
     expect(ehFerramentaDeAgenda("buscar_procedimento")).toBe(false);
@@ -331,9 +335,10 @@ describe("habilidades", () => {
       responder_duvidas: true,
       informar_preco_e_convenio: false,
       agendar: true,
-      // AG4: remarcar virou chave conhecida (lista_de_espera, nao).
+      // AG4: remarcar virou chave conhecida; AG5: lista_de_espera tambem.
       cancelar: false,
       remarcar: true,
+      lista_de_espera: true,
       confirmar_presenca: false,
       passar_para_equipe: true,
     });
@@ -343,6 +348,7 @@ describe("habilidades", () => {
       agendar: false,
       cancelar: false,
       remarcar: false,
+      lista_de_espera: false,
       confirmar_presenca: false,
       passar_para_equipe: true,
     });
@@ -444,6 +450,7 @@ describe("habilidades", () => {
       agendar: false,
       cancelar: false,
       remarcar: false,
+      lista_de_espera: false,
       confirmar_presenca: false,
       passar_para_equipe: true,
     });
@@ -1544,6 +1551,7 @@ describe("leitura do banco", () => {
         agendar: false,
         cancelar: false,
         remarcar: false,
+        lista_de_espera: false,
         confirmar_presenca: false,
         passar_para_equipe: true,
       },
@@ -1619,6 +1627,7 @@ describe("leitura do banco", () => {
         agendar: false,
         cancelar: false,
         remarcar: false,
+        lista_de_espera: false,
         confirmar_presenca: false,
         passar_para_equipe: true,
       },
@@ -2431,5 +2440,116 @@ describe("AG4: prazos para cancelar e remarcar", () => {
         publicada,
       ),
     ).toContainEqual({ campo: "habilidades", rotulo: "Cancelar consulta: ligada" });
+  });
+});
+
+describe("AG5: a lista de espera pela IA (D-36, recomendação)", () => {
+  const agenda = { antecedenciaHoras: 2, horizonteDias: 30 };
+  const habilidade = HABILIDADES_DO_AGENTE.find(
+    (h) => h.chave === "lista_de_espera",
+  );
+
+  it("o contrato com as telas: a chave, o título, a descrição e a dica", () => {
+    expect(habilidade).toMatchObject({
+      chave: "lista_de_espera",
+      titulo: "Lista de espera",
+      descricao:
+        "Coloca o paciente na lista de espera quando não há horário que sirva, com a confirmação dele numa mensagem nova. Quando um horário assim vagar, a oferta sai pela reoferta automática da Lista de espera.",
+      travada: false,
+      padrao: false,
+      precisaDaAgenda: false,
+      precisaDaHabilidade: "agendar",
+      precisaDoPrazo: null,
+      dicaDaDependencia: "Ligue Agendar consulta para usar a lista de espera.",
+      ferramentas: ["pedir_lista_de_espera", "entrar_na_lista_de_espera"],
+    });
+    for (const texto of [
+      habilidade?.titulo ?? "",
+      habilidade?.descricao ?? "",
+      habilidade?.dicaDaDependencia ?? "",
+    ]) {
+      expect(texto).not.toMatch(TRAVESSAO);
+    }
+  });
+
+  it("vem depois de Remarcar e depois da habilidade de que depende", () => {
+    const chaves = HABILIDADES_DO_AGENTE.map((h) => h.chave as string);
+    expect(chaves.indexOf("lista_de_espera")).toBe(
+      chaves.indexOf("remarcar") + 1,
+    );
+    expect(chaves.indexOf("agendar")).toBeLessThan(
+      chaves.indexOf("lista_de_espera"),
+    );
+  });
+
+  it("nasce desligada; só vale com Agendar consulta valendo", () => {
+    expect(habilidadesEfetivas({}).lista_de_espera).toBe(false);
+    expect(
+      habilidadesComAgenda({ agendar: true, lista_de_espera: true }, agenda)
+        .lista_de_espera,
+    ).toBe(true);
+    // Agendar desligada, ou ligada sem a antecedencia e o horizonte.
+    expect(
+      habilidadesComAgenda({ agendar: false, lista_de_espera: true }, agenda)
+        .lista_de_espera,
+    ).toBe(false);
+    expect(
+      habilidadesComAgenda(
+        { agendar: true, lista_de_espera: true },
+        { antecedenciaHoras: null, horizonteDias: 30 },
+      ).lista_de_espera,
+    ).toBe(false);
+    // A dica so enquanto Agendar nao vale.
+    expect(
+      dicaDaHabilidade("lista_de_espera", {
+        habilidades: { agendar: true },
+        agenda,
+      }),
+    ).toBeNull();
+    expect(
+      dicaDaHabilidade("lista_de_espera", {
+        habilidades: { agendar: false },
+        agenda,
+      }),
+    ).toBe("Ligue Agendar consulta para usar a lista de espera.");
+    // Ligar com Agendar desligada nao e erro do schema (como remarcar): a
+    // escolha fica gravada e vale desligada.
+    expect(
+      habilidadesComAgendaSchema(agenda).safeParse({
+        agendar: false,
+        lista_de_espera: true,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("as duas ferramentas vêm juntas, depois das de remarcar e antes de confirmar presença", () => {
+    const todas = ferramentasDoAgente(
+      {
+        agendar: true,
+        cancelar: true,
+        remarcar: true,
+        lista_de_espera: true,
+        confirmar_presenca: true,
+      },
+      agenda,
+      { cancelarHoras: 24, remarcarHoras: 24 },
+    );
+    expect(todas).toHaveLength(19);
+    const i = todas.indexOf("pedir_lista_de_espera");
+    expect(todas.slice(i, i + 2)).toEqual([
+      "pedir_lista_de_espera",
+      "entrar_na_lista_de_espera",
+    ]);
+    expect(todas.indexOf("buscar_horario_para_remarcar")).toBeLessThan(i);
+    expect(todas.indexOf("confirmar_presenca")).toBeGreaterThan(i);
+    expect(
+      ferramentasDoAgente({ agendar: false, lista_de_espera: true }, agenda, null),
+    ).not.toContain("pedir_lista_de_espera");
+    expect(FERRAMENTAS_DE_AGENDA).toContain("pedir_lista_de_espera");
+    expect(FERRAMENTAS_DE_AGENDA).toContain("entrar_na_lista_de_espera");
+  });
+
+  it("os motivos de escalonamento não mudam (a passagem usa os que existem)", () => {
+    expect(MOTIVOS_DE_ESCALONAMENTO).toHaveLength(22);
   });
 });

@@ -12,6 +12,19 @@ import {
 
 export type Turno = "manha" | "tarde" | "noite";
 
+/** waitlist.origem (AG5): quem criou a entrada. */
+export type OrigemDaEntrada = "equipe" | "ia";
+
+/**
+ * AG5, D-37 (DECISAO DO DONO A CONFIRMAR): o pagamento DECLARADO na entrada
+ * (waitlist.particular nao nulo) e estrito, e a entrada da IA so vale para o
+ * vinculo que a IA marca. E o espelho exato de c_regra_da_entrada_da_ia em
+ * aceitar_oferta_de_espera (migration 20261029100000): trocar e trocar nos
+ * dois. false: toda entrada volta a regra de antes (o convenio do contato,
+ * senao o particular, com qualquer vinculo ativo).
+ */
+export const REGRA_DA_ENTRADA_DA_IA = true;
+
 export type EntradaDaFila = {
   id: string;
   contactId: string;
@@ -23,6 +36,17 @@ export type EntradaDaFila = {
   createdAt: string;
   /** Convenio do contato (contact.insurance_id); null = particular. */
   insuranceId: string | null;
+  /** waitlist.origem (AG5). Ausente = "equipe" (as entradas de antes). */
+  origem?: OrigemDaEntrada;
+  /**
+   * waitlist.particular (AG5, D-37): o pagamento declarado na entrada. true:
+   * so o vinculo particular; false: so o do convenio insuranceIdDeclarado;
+   * null ou ausente: nao declarado (a regra de antes, pelo convenio do
+   * contato).
+   */
+  particularDeclarado?: boolean | null;
+  /** waitlist.insurance_id (AG5): o convenio declarado na entrada. */
+  insuranceIdDeclarado?: string | null;
 };
 
 export type SlotVago = {
@@ -49,7 +73,91 @@ export type VinculoDaVaga = {
   durationMin: number;
   /** Sala ou equipamento que o procedimento exige, se exigir. */
   resourceId: string | null;
+  /**
+   * AG5 (D-37): o vinculo que a IA marca: o vinculo e o procedimento com "IA
+   * pode agendar" (bookable_by_ai) e, com convenio, o convenio ativo. Ausente
+   * = falso. So a entrada de origem "ia" exige.
+   */
+  daIa?: boolean;
 };
+
+/**
+ * Como a entrada escolhe o vinculo (AG5, D-37). "do_contato": a regra de
+ * antes (o convenio do contato, senao o particular). "declarado": so o
+ * vinculo do pagamento declarado (convenioId null = o particular). soDaIa:
+ * so vinculo com daIa.
+ */
+export type RegraDoVinculo = {
+  pagamento: "do_contato" | "declarado";
+  soDaIa: boolean;
+};
+
+const REGRA_DE_ANTES: RegraDoVinculo = { pagamento: "do_contato", soDaIa: false };
+
+/**
+ * A regra e o convenio com que a entrada escolhe o vinculo, a mesma de
+ * aceitar_oferta_de_espera: pagamento declarado estrito; a entrada da IA so
+ * com o vinculo da IA; sem declaracao e sem origem "ia", a regra de antes.
+ * `convenio: undefined` = a entrada declarou convenio sem dizer qual (o
+ * banco nao deixa gravar assim): nenhum vinculo serve.
+ */
+export function regraDaEntrada(entrada: EntradaDaFila): {
+  regra: RegraDoVinculo;
+  convenio: string | null | undefined;
+} {
+  if (!REGRA_DA_ENTRADA_DA_IA) {
+    return { regra: REGRA_DE_ANTES, convenio: entrada.insuranceId };
+  }
+  const soDaIa = entrada.origem === "ia";
+  const declarado = entrada.particularDeclarado;
+  if (declarado === true) {
+    return { regra: { pagamento: "declarado", soDaIa }, convenio: null };
+  }
+  if (declarado === false) {
+    return {
+      regra: { pagamento: "declarado", soDaIa },
+      convenio: entrada.insuranceIdDeclarado ?? undefined,
+    };
+  }
+  return {
+    regra: { pagamento: "do_contato", soDaIa },
+    convenio: entrada.insuranceId,
+  };
+}
+
+/**
+ * Uma consulta futura do contato que conta como "ja tem consulta" (AG5,
+ * revisao de 28/10/2026, R1): o procedimento dela. O job le pelo predicado
+ * de D-41 (consulta_futura_do_procedimento no banco, a mesma regra do
+ * aceite).
+ */
+export type ConsultaFuturaDoContato = {
+  contactId: string;
+  procedureId: string;
+};
+
+/**
+ * AG5 (revisao de 28/10/2026, R1): a entrada da IA cujo contato ja tem
+ * consulta futura do MESMO procedimento sai da onda. O SIM dela seria a
+ * segunda consulta do procedimento, e o aceite (aceitar_oferta_de_espera)
+ * recusa com sem_vinculo: ofertar so queimaria a vez de quem pode aceitar.
+ * As entradas da equipe nao mudam (a paridade: o aceite delas e o de
+ * antes). PURO.
+ */
+export function semEntradasDaIaComConsulta(
+  entradas: readonly EntradaDaFila[],
+  consultas: readonly ConsultaFuturaDoContato[],
+): EntradaDaFila[] {
+  const comConsulta = new Set(
+    consultas.map((consulta) => `${consulta.contactId}|${consulta.procedureId}`),
+  );
+  return entradas.filter(
+    (entrada) =>
+      entrada.origem !== "ia" ||
+      entrada.procedureId === null ||
+      !comConsulta.has(`${entrada.contactId}|${entrada.procedureId}`),
+  );
+}
 
 /** Repouso entre ofertas de SLOTS DIFERENTES para a mesma pessoa. */
 export const REPOUSO_POS_OFERTA_MS = 2 * 60 * 60 * 1000;
@@ -62,21 +170,37 @@ export const FOLGA_DO_FECHAMENTO_MS = 2 * 60 * 1000;
 
 /**
  * O vinculo com que a entrada seria agendada, na MESMA regra do aceite
- * (aceitar_oferta_de_espera): o do convenio do contato, senao o particular.
- * service_link e unico por (profissional, procedimento, convenio), entao ha
- * no maximo um de cada e a escolha e deterministica.
+ * (aceitar_oferta_de_espera). Sem `regra` (ou com a de antes): o do convenio
+ * do contato, senao o particular. Com o pagamento "declarado" (AG5, D-37):
+ * SO o vinculo do convenio dado (null = o particular). Com soDaIa: so
+ * vinculo da IA (daIa). service_link e unico por (profissional,
+ * procedimento, convenio), entao ha no maximo um de cada e a escolha e
+ * deterministica. `insuranceId: undefined` com o pagamento declarado:
+ * nenhum.
  */
 export function escolherVinculo(
   vinculos: readonly VinculoDaVaga[],
   procedureId: string | null,
-  insuranceId: string | null,
+  insuranceId: string | null | undefined,
+  regra: RegraDoVinculo = REGRA_DE_ANTES,
 ): VinculoDaVaga | null {
   if (!procedureId) {
     return null;
   }
   const doProcedimento = vinculos.filter(
-    (vinculo) => vinculo.procedureId === procedureId,
+    (vinculo) =>
+      vinculo.procedureId === procedureId &&
+      (!regra.soDaIa || vinculo.daIa === true),
   );
+  if (regra.pagamento === "declarado") {
+    if (insuranceId === undefined) {
+      return null;
+    }
+    return (
+      doProcedimento.find((vinculo) => vinculo.insuranceId === insuranceId) ??
+      null
+    );
+  }
   if (insuranceId) {
     const doConvenio = doProcedimento.find(
       (vinculo) => vinculo.insuranceId === insuranceId,
@@ -88,16 +212,21 @@ export function escolherVinculo(
   return doProcedimento.find((vinculo) => vinculo.insuranceId === null) ?? null;
 }
 
-/** O vinculo da entrada nesta vaga (procedimento pedido ou o da vaga). */
+/**
+ * O vinculo da entrada nesta vaga (procedimento pedido ou o da vaga), com a
+ * regra da entrada (regraDaEntrada: o pagamento declarado e a origem).
+ */
 export function vinculoDaEntrada(
   entrada: EntradaDaFila,
   slot: SlotVago,
   vinculos: readonly VinculoDaVaga[],
 ): VinculoDaVaga | null {
+  const { regra, convenio } = regraDaEntrada(entrada);
   return escolherVinculo(
     vinculos,
     entrada.procedureId ?? slot.procedimentoDaVaga,
-    entrada.insuranceId,
+    convenio,
+    regra,
   );
 }
 

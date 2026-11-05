@@ -578,6 +578,188 @@ async function moverPorTermoDoCelular(
 }
 
 /**
+ * A marcacao tenta ate 3 vezes, com esperas curtas entre as tentativas, e
+ * nunca passa do prazo total: cada tentativa espera no maximo 1,5 s (a
+ * chamada presa ainda deixa tempo para outra) e nunca mais que o que sobra
+ * do prazo. A falha que fica sem nova tentativa devolve o "SIM" ja tratado
+ * como pendente para a IA no turno seguinte (revisao da AG5, achado 6). O
+ * 200 so atrasa quando o banco falha, e no maximo o prazo.
+ */
+const TENTATIVAS_DA_MARCACAO = 3;
+const ESPERAS_ENTRE_MARCACOES_MS = [200, 500] as const;
+const PRAZO_POR_TENTATIVA_MS = 1_500;
+const PRAZO_DA_MARCACAO_MS = 3_000;
+
+/**
+ * Erro que outra tentativa nao muda: os de quem chama do contrato (22004
+ * parametro_nulo, 22023 mensagem_invalida), dado e integridade (22, 23),
+ * permissao e funcao inexistente (42, a migration fora do ar) e os do
+ * PostgREST que nao sao de conexao (PGRST1xx a PGRST3xx). Sem codigo (rede,
+ * excecao), prazo estourado, conexao (08, PGRST0xx), concorrencia (40),
+ * recurso ou cancelamento (53, 57) e o resto: nova tentativa.
+ */
+function falhaDefinitivaDaMarcacao(codigo: string | null | undefined): boolean {
+  if (!codigo) {
+    return false;
+  }
+  if (codigo.startsWith("PGRST")) {
+    return !codigo.startsWith("PGRST0");
+  }
+  return /^(22|23|42)/.test(codigo);
+}
+
+type TentativaDaMarcacao =
+  | { tipo: "ok"; marcada: boolean }
+  | { tipo: "fora_da_ia" }
+  | { tipo: "recusada"; status: string }
+  | { tipo: "erro"; errorCode: string | null; definitivo: boolean };
+
+/** Uma chamada a RPC, com o tempo que sobra do prazo. Nunca lanca. */
+async function tentarMarcar(
+  admin: SupabaseClient,
+  alvo: { clinicId: string; conversationId: string; messageId: string },
+  prazoMs: number,
+): Promise<TentativaDaMarcacao> {
+  let relogio: ReturnType<typeof setTimeout> | undefined;
+  const estourou = new Promise<"prazo">((resolve) => {
+    relogio = setTimeout(() => resolve("prazo"), prazoMs);
+  });
+  try {
+    // A RPC e idempotente: a chamada abandonada pelo prazo que ainda grava
+    // so faz a seguinte responder "ja_respondida".
+    const chamada = admin.rpc("marcar_mensagem_tratada_pelo_sistema", {
+      p_clinic_id: alvo.clinicId,
+      p_conversation_id: alvo.conversationId,
+      p_message_id: alvo.messageId,
+    });
+    const r = await Promise.race([chamada, estourou]);
+    if (r === "prazo") {
+      return { tipo: "erro", errorCode: "prazo", definitivo: false };
+    }
+    if (r.error) {
+      const codigo = r.error.code || null;
+      return {
+        tipo: "erro",
+        errorCode: codigo,
+        definitivo: falhaDefinitivaDaMarcacao(codigo),
+      };
+    }
+    const resultado = r.data as {
+      ok?: unknown;
+      marcada?: unknown;
+      motivo?: unknown;
+    } | null;
+    if (resultado?.ok === true) {
+      return { tipo: "ok", marcada: resultado.marcada === true };
+    }
+    if (resultado?.motivo === "fora_da_ia") {
+      return { tipo: "fora_da_ia" };
+    }
+    return {
+      tipo: "recusada",
+      status:
+        typeof resultado?.motivo === "string"
+          ? resultado.motivo
+          : "desconhecido",
+    };
+  } catch {
+    return { tipo: "erro", errorCode: "excecao", definitivo: false };
+  } finally {
+    clearTimeout(relogio);
+  }
+}
+
+/**
+ * A mensagem que o SISTEMA tratou numa conversa da IA (AG5, decisao D-39 pela
+ * recomendacao, pendente do dono): o SIM ou o NAO QUERO da oferta da lista
+ * de espera, a mensagem que recebeu (ou que ficou coberta pelo) lembrete da
+ * oferta e a resposta ao toque de confirmacao (Confirmar, Cancelar,
+ * Remarcar). Ela nao vira turno da IA (o interceptador ja respondeu, ou pos
+ * o lembrete na fila) e, marcada aqui, deixa de voltar como pendente no turno
+ * seguinte: antes, a IA lia o "SIM" ja tratado no fim do historico e reagia
+ * a ele. A marca nao mexe no contador do Atendimento: com o lembrete na
+ * fila, a conversa fica nele ate o lembrete sair (lib/jobs/worker.ts), e se
+ * ele morrer sem sair a varredura de 3 minutos passa a conversa para a
+ * equipe (revisao da AG5). O banco confere
+ * tudo (a mensagem e do paciente, desta conversa, e a conversa esta com a
+ * IA) e e idempotente, o que permite a nova tentativa (TENTATIVAS_DA_
+ * MARCACAO). Nunca lanca e nunca derruba o 200; log so com ids e codigos.
+ */
+async function marcarComoTratadaPeloSistema(
+  admin: SupabaseClient,
+  alvo: {
+    clinicId: string;
+    accountId: string;
+    conversationId: string;
+    messageId: string;
+  },
+): Promise<void> {
+  const ids = {
+    clinic_id: alvo.clinicId,
+    whatsapp_account_id: alvo.accountId,
+    conversation_id: alvo.conversationId,
+    message_id: alvo.messageId,
+  };
+  const inicio = Date.now();
+  let ultima: TentativaDaMarcacao | null = null;
+  let feitas = 0;
+  while (feitas < TENTATIVAS_DA_MARCACAO) {
+    if (feitas > 0) {
+      // A espera tambem conta no prazo: sem tempo para tentar depois dela,
+      // desiste agora.
+      const espera = ESPERAS_ENTRE_MARCACOES_MS[feitas - 1] ?? 500;
+      if (PRAZO_DA_MARCACAO_MS - (Date.now() - inicio) <= espera) {
+        break;
+      }
+      await esperar(espera);
+    }
+    const resta = PRAZO_DA_MARCACAO_MS - (Date.now() - inicio);
+    if (resta <= 0) {
+      break;
+    }
+    feitas += 1;
+    ultima = await tentarMarcar(
+      admin,
+      alvo,
+      Math.min(resta, PRAZO_POR_TENTATIVA_MS),
+    );
+    if (ultima.tipo === "ok") {
+      log.info("webhook_ia_tratada_pelo_sistema", {
+        ...ids,
+        status: ultima.marcada ? "marcada" : "ja_respondida",
+        attempt: feitas,
+      });
+      return;
+    }
+    if (ultima.tipo === "fora_da_ia") {
+      // A conversa saiu da IA no meio (o "Remarcar" a deixa esperando a
+      // recepcao): nada a marcar, quem le e a equipe. Esperado, nao alerta
+      // (achado 7).
+      log.info("webhook_ia_tratada_nao_marcada", {
+        ...ids,
+        status: "fora_da_ia",
+      });
+      return;
+    }
+    if (ultima.tipo === "recusada" || ultima.definitivo) {
+      break;
+    }
+  }
+  // Resposta inesperada, erro que outra tentativa nao muda, ou as
+  // tentativas e o prazo esgotados: a mensagem volta pendente para a IA.
+  log.warn("webhook_ia_tratada_nao_marcada", {
+    ...ids,
+    ...(ultima?.tipo === "recusada"
+      ? { status: ultima.status }
+      : {
+          error_code:
+            ultima?.tipo === "erro" ? (ultima.errorCode ?? null) : "prazo",
+        }),
+    attempt: feitas,
+  });
+}
+
+/**
  * A mensagem recebida numa conversa da IA (E3): enfileira o turno, ou tira a
  * conversa da IA. Decide pelo que a ingestao devolveu (ia_atendendo), pelo
  * parser (individual) e pelo interceptador (desfecho). O banco confere tudo
@@ -585,6 +767,10 @@ async function moverPorTermoDoCelular(
  * service role). Nunca lanca e nunca derruba o 200: a mensagem ja esta
  * salva, e a varredura de 3 minutos (motor_manutencao) e a rede de
  * seguranca. Log so com ids e codigos.
+ *
+ * AG5 (D-39): o desfecho "tratou_com_eco" continua sem turno e, desde
+ * agora, marca a mensagem como tratada pelo sistema
+ * (marcarComoTratadaPeloSistema).
  */
 async function encaminharParaAIa(
   admin: SupabaseClient,
@@ -640,12 +826,22 @@ async function encaminharParaAIa(
     await tirar("falha_tecnica");
     return;
   }
-  if (
-    !data.inserted ||
-    data.ignorada ||
-    !data.message_id ||
-    desfecho === "tratou_com_eco"
-  ) {
+  if (!data.inserted || data.ignorada || !data.message_id) {
+    return;
+  }
+  // O interceptador respondeu (eco, recusa educada, pedido de remarcacao, o
+  // lembrete da oferta ou o lembrete que ainda esta na fila e cobre esta
+  // mensagem) ou viu que nao ha nada a fazer (o vencedor agradecendo, o NAO
+  // QUERO da oferta encerrada): sem turno da IA, e a mensagem sai das
+  // pendentes. O contador fica com o interceptador e o executor: a mensagem
+  // do lembrete continua nele ate o lembrete sair.
+  if (desfecho === "tratou_com_eco") {
+    await marcarComoTratadaPeloSistema(admin, {
+      clinicId,
+      accountId,
+      conversationId: data.conversation_id,
+      messageId: data.message_id,
+    });
     return;
   }
   try {
@@ -809,6 +1005,11 @@ export async function POST(request: NextRequest) {
           // O numero que recebeu delimita o contexto (D2) e e por ele que o
           // eco sai (D4). Sem ele o interceptador usaria o da conversa.
           whatsappAccountId: accountId,
+          // AG5 (D-39): na conversa com a IA, a mensagem que nao responde a
+          // oferta de pe recebe o lembrete fixo do sistema. Grupo, status e
+          // canal nunca contam: a conversa sai da IA logo abaixo.
+          conversaComAIa:
+            data.ia_atendendo === true && event.individual === true,
         });
       } catch {
         desfecho = "erro";

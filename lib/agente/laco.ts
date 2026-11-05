@@ -1240,6 +1240,11 @@ export async function executarTurnoDoAgente(
       resultado.desfecho.tipo === "falhou" &&
       resultado.desfecho.motivo === "sem_mensagem";
     const passou = resultado.tipo === "frase_fixa" && !semEnvio;
+    // AG5: a lista de espera desta conversa mora fora do estado; na passagem
+    // antes do preparo (o portao), le so para a nota (nunca lanca).
+    if (passou) {
+      await agendaDoTurno.lerParaANota();
+    }
     const atendimento = agendaDoTurno.fechar({
       mensagemFinal: resultado.tipo === "resposta" ? resultado.resposta : null,
       passou,

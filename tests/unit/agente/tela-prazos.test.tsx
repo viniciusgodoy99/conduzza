@@ -141,12 +141,14 @@ function painel(
 
 describe("Habilidades: Cancelar consulta e Remarcar consulta", () => {
   it("as duas aparecem depois de Agendar, com o título e a descrição do desenho, desligadas por padrão", () => {
+    // AG5: Lista de espera entra logo depois de Remarcar (desenho, 4.7).
     expect(HABILIDADES_DO_AGENTE.map((h) => h.chave)).toEqual([
       "responder_duvidas",
       "informar_preco_e_convenio",
       "agendar",
       "cancelar",
       "remarcar",
+      "lista_de_espera",
       "confirmar_presenca",
       "passar_para_equipe",
     ]);
@@ -162,8 +164,9 @@ describe("Habilidades: Cancelar consulta e Remarcar consulta", () => {
     );
     expect(chaveDa(html, "cancelar")).toContain('aria-checked="false"');
     expect(chaveDa(html, "remarcar")).toContain('aria-checked="false"');
+    // AG5: a lista de espera saiu da frase (a IA coloca na lista).
     expect(visivel).toContain(
-      "O que o assistente pode fazer na conversa. Lista de espera e encaixe continuam com a equipe.",
+      "O que o assistente pode fazer na conversa. Encaixe continua com a equipe.",
     );
   });
 
@@ -481,7 +484,9 @@ describe("no painel", () => {
 describe("simulador: os cenários de cancelar e remarcar", () => {
   it("existem, depois dos quatro do brief, e não têm dado pessoal", () => {
     const chaves = CENARIOS_DO_SIMULADOR.map((c) => c.chave);
-    expect(chaves.slice(-2)).toEqual(["cancelar", "remarcar"]);
+    // Logo depois dos quatro do brief (a AG5 acrescenta a lista de espera
+    // depois deles).
+    expect(chaves.slice(4, 6)).toEqual(["cancelar", "remarcar"]);
     for (const chave of ["cancelar", "remarcar"]) {
       const cenario = CENARIOS_DO_SIMULADOR.find((c) => c.chave === chave);
       expect(cenario?.mensagem, chave).not.toMatch(/\d{4,}|@/);

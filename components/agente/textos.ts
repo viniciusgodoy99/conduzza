@@ -150,6 +150,15 @@ export const CENARIOS_DO_SIMULADOR = [
     rotulo: "Paciente querendo remarcar",
     mensagem: "Oi, queria remarcar a minha consulta para outro dia.",
   },
+  // AG5 (desenho, secao 6): a IA coloca o paciente na lista de espera. No
+  // simulador as duas fases (a pergunta e a entrada) so simulam, e nada e
+  // gravado. A chave tambem entra no enum CENARIOS de
+  // app/(app)/agente/actions.ts (um teste confere os dois).
+  {
+    chave: "lista_de_espera",
+    rotulo: "Paciente querendo lista de espera",
+    mensagem: "Oi, queria entrar na lista de espera para um horário de manhã.",
+  },
 ] as const;
 
 export type CenarioDoSimulador =
@@ -249,10 +258,11 @@ export const TEXTOS_DO_AGENTE = {
   habilidadesTitulo: "Habilidades",
   // E4 (20/10/2026): o assistente marca consulta (pendente da aprovacao da
   // equipe, D12). AG4 (27/10/2026): tambem cancela e remarca (a remarcacao
-  // fica pendente da aprovacao da equipe, D-10); lista de espera e encaixe
-  // continuam com a equipe (o pedido passa para ela).
+  // fica pendente da aprovacao da equipe, D-10). AG5 (27/10/2026, D-11 e
+  // D-36): tambem coloca na lista de espera; o encaixe continua com a equipe
+  // (o pedido passa para ela).
   habilidadesDescricao:
-    "O que o assistente pode fazer na conversa. Lista de espera e encaixe continuam com a equipe.",
+    "O que o assistente pode fazer na conversa. Encaixe continua com a equipe.",
   // Decisao do dono de 20/10/2026 (E4), revista na onda 2 (item 10, depois
   // da migration da conversao na aprovacao): a consulta da IA so transforma
   // o contato em paciente quando a equipe APROVA, e so entao o telefone da
@@ -264,6 +274,11 @@ export const TEXTOS_DO_AGENTE = {
   // nao status.
   habilidadeNaFaseDeTeste:
     "Nesta fase de teste, só com telefone da equipe cadastrado pela equipe Conduzza: depois que a equipe aprova a consulta, o contato vira paciente e um telefone comum deixa de acionar o assistente.",
+  // AG5 (desenho, secao 6; nota proposta, pendente do dono): o SIM a oferta
+  // da lista de espera marca a consulta na hora (D-45, sem a aprovacao da
+  // D-2), e o contato vira paciente ja ali. Nota, nao status.
+  listaDeEsperaNaFaseDeTeste:
+    "Nesta fase de teste, o SIM à oferta da lista de espera marca a consulta na hora: o contato vira paciente, e um telefone comum deixa de acionar o assistente.",
   habilidadeLigada: (titulo: string) => `${titulo}: ligada no rascunho.`,
   habilidadeDesligada: (titulo: string) => `${titulo}: desligada no rascunho.`,
   // Conhecimento
@@ -401,9 +416,10 @@ export const TEXTOS_DO_AGENTE = {
   simuladorTitulo: "Simulador",
   // O buscar horario le a Agenda de verdade; reservar e marcar no simulador
   // so devolvem a resposta simulada, sem gravar (contrato da E4, secao 2).
-  // AG4: cancelar e remarcar tambem so simulam (desenho, secao 4.7).
+  // AG4: cancelar e remarcar tambem so simulam (desenho, secao 4.7). AG5: a
+  // lista de espera tambem (as duas fases, sem gravar; desenho, secao 4.1).
   simuladorDescricao:
-    "Converse como se fosse o paciente. Usa o rascunho e nada vai para o WhatsApp: os horários vêm da Agenda, mas reservar, marcar, cancelar e remarcar aqui não gravam nada.",
+    "Converse como se fosse o paciente. Usa o rascunho e nada vai para o WhatsApp: os horários vêm da Agenda, mas reservar, marcar, cancelar, remarcar e colocar na lista de espera aqui não gravam nada.",
   simuladorAviso: "Use dados de teste. Não escreva dados de pacientes reais.",
   cenario: "Cenário",
   cenarioPlaceholder: "Escolha um cenário",

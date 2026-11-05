@@ -191,6 +191,14 @@ export const RESPOSTA_OFERTA_GANHOU =
 export const RESPOSTA_OFERTA_PERDIDA =
   "Poxa, esse horário não está mais disponível. Você continua na nossa lista de espera e a gente avisa quando abrir outra vaga.";
 
+/**
+ * A entrada da IA de quem ja marcou o mesmo procedimento (sem_vinculo com
+ * motivo ja_tem_consulta): "voce continua na lista" nao vale para ela. Texto
+ * aprovado pelo dono em 04/11/2026.
+ */
+export const RESPOSTA_OFERTA_JA_TEM_CONSULTA =
+  "Você já tem uma consulta marcada para esse procedimento, então este horário não foi reservado. Se quiser trocar a data, é só avisar aqui.";
+
 /** Quem respondeu que nao quer ESTA vaga. */
 export const RESPOSTA_OFERTA_RECUSADA =
   "Tudo bem! Você continua na lista de espera para a próxima vaga.";
