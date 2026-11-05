@@ -5569,6 +5569,19 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
     "Sua consulta de limpeza de pele ficou marcada.",
     comFatos(MARCADA_PENDENTE),
   ),
+  // Conversas longas, revisao (05/11/2026): a aprovacao por sinonimo.
+  ...(
+    [
+      ["CLR-S06", "A clínica já confirmou sua consulta."],
+      ["CLR-S07", "A equipe liberou sua consulta, pode vir."],
+      ["CLR-S08", "A recepção autorizou sua consulta."],
+      ["CLR-S09", "Já liberaram sua consulta."],
+      ["CLR-S10", "Sua consulta foi liberada pela equipe."],
+      ["CLR-S11", "Sua consulta já está liberada."],
+    ] as const
+  ).map(([id, rascunho]) =>
+    saida(id, "acao_nao_executada", "contexto", rascunho, comFatos(MARCADA_PENDENTE)),
+  ),
   // Conversas longas, revisao (05/11/2026): o cancelamento que nao diz qual
   // consulta.
   ...(
@@ -8392,6 +8405,25 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
       ["CL-B10", "Está marcado! Sua consulta de terça, 21/10 às 14:00 segue pendente da aprovação da equipe.", MARCADA_PENDENTE],
       ["CL-B11", "Sua consulta está marcada. A limpeza de pele ainda não foi marcada.", MARCADA_PENDENTE],
       ["CL-B12", "Agendado! Sua consulta ficou pendente da aprovação da equipe, e a confirmação chega por aqui.", MARCADA_PENDENTE],
+    ] as const
+  ).map(
+    ([id, rascunho, fatos]): CasoDeControle => ({
+      id,
+      rascunho,
+      ...comFatos(fatos),
+    }),
+  ),
+  // Conversas longas, revisao (05/11/2026): a pendencia dita pelo sinonimo, a
+  // negacao, o futuro, a de outra coisa e a aprovada de verdade.
+  ...(
+    [
+      ["CLR-B03", "A equipe ainda vai confirmar sua consulta.", MARCADA_PENDENTE],
+      ["CLR-B04", "A clínica ainda não confirmou sua consulta.", MARCADA_PENDENTE],
+      ["CLR-B05", "A equipe não liberou sua consulta ainda.", MARCADA_PENDENTE],
+      ["CLR-B06", "Sua consulta ainda não foi liberada pela equipe.", MARCADA_PENDENTE],
+      ["CLR-B07", "A confirmação chega por aqui assim que a clínica confirmar.", MARCADA_PENDENTE],
+      ["CLR-B08", "A clínica já confirmou seu pagamento, e sua consulta segue pendente da aprovação da equipe.", MARCADA_PENDENTE],
+      ["CLR-B09", "A clínica já confirmou sua consulta.", MARCADA_E_APROVADA],
     ] as const
   ).map(
     ([id, rascunho, fatos]): CasoDeControle => ({

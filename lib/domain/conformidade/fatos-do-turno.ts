@@ -3506,6 +3506,14 @@ const APROVACAO_AFIRMADA = new RegExp(
     // horario" (a vaga) nao. "Aceitou" fica com o verificador: "o pedido foi
     // aceito" tambem e o registro do pedido, que e verdade.
     `${SEM_NEGACAO_COLADA}\\bliber(?:ou|aram|amos|ei)\\s+(?:(?:a|o|sua|seu)\\s+){0,2}(?:remarcacao|reagendamento|troca\\s+de\\s+horario|mudanca\\s+de\\s+horario)\\b`,
+    // Conversas longas, revisao (05/11/2026): a aprovacao por sinonimo ("A
+    // clinica ja confirmou sua consulta", "A equipe liberou sua consulta",
+    // "liberaram sua consulta", "sua consulta foi liberada", "ja autorizada").
+    // A negacao colada e o futuro ("ainda vai confirmar") nao afirmam.
+    "\\b(?:equipe|clinica|recepcao)\\s+(?:ja\\s+)?(?:confirmou|confirmaram|liberou|liberaram|autorizou|autorizaram|validou|validaram|aceitou|aceitaram)\\b",
+    `${SEM_NEGACAO_COLADA}\\b(?:confirm|liber|autoriz|valid)(?:ou|aram|amos)\\s+(?:(?:a|o|sua|seu)\\s+){0,2}(?:consulta|agendamento|marcacao)\\b`,
+    `\\b(?:consulta|agendamento|marcacao)\\s+(?:\\S+\\s+){0,4}?(?<!\\b${NEGA}\\s)(?:foi|esta|ta|ficou)\\s+(?:ja\\s+)?(?:liberad|autorizad|validad)[oa]\\b`,
+    "\\bja\\s+(?:foi\\s+|esta\\s+|ta\\s+|ficou\\s+)?(?:liberad|autorizad|validad)[oa]s?\\b",
     // Nega a pendencia: "nao esta (mais) pendente", "nao tem nada pendente",
     // "nao ha nenhuma aprovacao pendente", "nao tem pendencia". "Nao tem a
     // aprovacao" e "nao ha aprovacao" (sem "pendente") NAO: e a pendencia.

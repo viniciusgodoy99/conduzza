@@ -1619,6 +1619,30 @@ describe("6. o modelo que diz que fez sem ter feito, num turno tardio", () => {
     );
   });
 
+  it.each([
+    "A clínica já confirmou sua consulta.",
+    "A equipe liberou sua consulta, pode vir.",
+  ])("com a consulta pendente, a aprovação por sinônimo não pode sair: %s", async (alucinou) => {
+    const c = clinicaComDuasUnidades();
+    const consulta = await marcarASexta(c);
+    await modeloResponde(c, "Qual é mesmo o horário?", HORARIO_DA_SEXTA);
+    await conversaFiada(c, ["Vou ver uma coisa aqui", "Já volto"]);
+    barrado(
+      c,
+      await c.fala({ texto: "Já aprovaram?", roteiro: [final(alucinou)] }),
+      alucinou,
+    );
+    expect(consulta.status).toBe("agendado");
+  });
+
+  it("com a consulta pendente, o futuro e a negação do sinônimo passam", async () => {
+    const c = clinicaComDuasUnidades();
+    await marcarASexta(c);
+    await modeloResponde(c, "Já confirmaram?", "A equipe ainda vai confirmar sua consulta.");
+    await modeloResponde(c, "E agora?", "A clínica ainda não confirmou sua consulta.");
+    await conversaFiada(c, ["Obrigada", "Vou ver uma coisa aqui"]);
+  });
+
   it("com a consulta pendente, a negação passa; a equipe aprovou de verdade, a frase passa", async () => {
     const c = clinicaComDuasUnidades();
     const consulta = await marcarASexta(c);
