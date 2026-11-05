@@ -3218,6 +3218,18 @@ const PADROES_DE_ACAO: readonly PadraoDeAcao[] = [
     "cancelou",
     "\\b(?:tirei|retirei|removi|exclui|apaguei|tiramos|retiramos|removemos|excluimos|apagamos)\\s+(?:\\S+\\s+){0,3}?(?:da|de)\\s+(?:\\S+\\s+)?agenda\\b",
   ),
+  // Revisao final da AG7: "Sua consulta foi excluida", "Seu horario foi
+  // liberado", "Exclui sua consulta": cancelar por outra palavra.
+  padraoDeAcao(
+    "cancelamento",
+    "cancelou",
+    `\\b${POSSESSIVO}\\s+${CONSULTA_OU_HORARIO}\\s+(?:(?!(?:nao|nem|nunca)\\b)\\S+\\s+){0,6}?${alternativas([...JA_ACONTECEU, ...ESTA])}\\s+(?:\\w+\\s+)?(?:excluid|apagad|removid|retirad|liberad)[oa]s?\\b`,
+  ),
+  padraoDeAcao(
+    "cancelamento",
+    "cancelou",
+    `\\b(?:exclui|apaguei|removi|retirei|tirei|excluimos|apagamos|removemos|retiramos|tiramos)\\s+${POSSESSIVO}\\s+${CONSULTA_OU_HORARIO}\\b`,
+  ),
   // O estado da consulta que ja existia (fora de pergunta: "voce tem
   // consulta amanha?" pergunta, nao afirma). Sem "horario" e "vaga" no
   // "voce tem": "voce tem horario amanha" e oferta.

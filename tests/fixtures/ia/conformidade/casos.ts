@@ -5599,6 +5599,25 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
   ).map(([id, texto]) =>
     saida(id, "acao_nao_executada", "contexto", texto, comFatos(MARCADA_PENDENTE)),
   ),
+  // Revisao final da AG7 (item 10): cancelar por outra palavra, sem o fato do
+  // cancelamento. "Sua consulta esta garantida" ja barrava (garantia).
+  ...(
+    [
+      ["AG7F-S20", "Sua consulta foi excluída."],
+      ["AG7F-S21", "Excluí sua consulta."],
+      ["AG7F-S22", "Seu horário foi liberado."],
+      ["AG7F-S23", "Sua consulta foi removida da agenda."],
+      ["AG7F-S24", "Sua consulta foi apagada."],
+    ] as const
+  ).map(([id, texto]) =>
+    saida(id, "acao_nao_executada", "contexto", texto, comFatos(MARCADA_PENDENTE)),
+  ),
+  saida(
+    "AG7F-S25",
+    "promessa_resultado",
+    "contexto",
+    "Sua consulta está garantida.",
+  ),
   // Revisao final da AG7 (achado 6): desde a marcacao, o pedido de marcar em
   // qualquer turno, por qualquer palavra, tira a sustentacao da frase sem o par
   // e sem o nome da marcada.
@@ -8561,6 +8580,22 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
       id,
       rascunho,
       ...comFatos(fatos),
+    }),
+  ),
+  // Revisao final da AG7 (item 10): a negacao, a condicao e outra coisa
+  // excluida ou liberada passam.
+  ...(
+    [
+      ["AG7F-B20", "Sua consulta não foi excluída."],
+      ["AG7F-B21", "Assim que seu horário for liberado, te aviso por aqui."],
+      ["AG7F-B22", "Seu exame foi retirado na recepção."],
+      ["AG7F-B23", "A recepção foi liberada para atendimento."],
+    ] as const
+  ).map(
+    ([id, rascunho]): CasoDeControle => ({
+      id,
+      rascunho,
+      ...comFatos(MARCADA_PENDENTE),
     }),
   ),
   // Revisao final da AG7 (achado 1): a aprovacao de outra coisa, na oracao dela.
