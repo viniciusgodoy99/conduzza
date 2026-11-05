@@ -81,7 +81,7 @@ import {
 // job, a decisao com o mesmo texto do envio, as ferramentas pedidas, o estado na
 // forma do banco, nunca duas consultas de pe, nada do paciente na decisao, na
 // nota, no log e (o nome, o telefone, o preparo) na OpenAI. Os testes conferem o
-// que muda a cada fala. O it.fails e o defeito achado: ver o comentario dele.
+// que muda a cada fala.
 // Nenhum teste chama a OpenAI, a rede ou o banco. Tudo sintetico.
 
 // Cada conversa roda dezenas de turnos inteiros: com a maquina ocupada, os 5 s
@@ -1605,12 +1605,7 @@ describe("6. o modelo que diz que fez sem ter feito, num turno tardio", () => {
     await nadaMaisSai(c, ["Sim"]);
   });
 
-  // achado: "A equipe já aprovou sua consulta." passa pela regra com a consulta
-  // ainda pendente (a mesma frase da remarcacao e barrada). Nenhuma regra
-  // confere a aprovacao afirmada na marcacao: o paciente le que esta aprovada,
-  // e a equipe ainda pode recusar. Devia barrar (acao_nao_executada). Sobra so
-  // o verificador por modelo, que aqui e o falso que aprova.
-  it.fails("com a consulta pendente, dizer que a equipe já aprovou não pode sair", async () => {
+  it("com a consulta pendente, dizer que a equipe já aprovou não pode sair", async () => {
     const c = clinicaComDuasUnidades();
     const consulta = await marcarASexta(c);
     await modeloResponde(c, "Qual é mesmo o horário?", HORARIO_DA_SEXTA);
@@ -1624,15 +1619,54 @@ describe("6. o modelo que diz que fez sem ter feito, num turno tardio", () => {
     );
   });
 
-  // achado: depois de marcar UMA consulta de verdade, a resposta sem dia e sem
-  // hora que afirma outra marcacao ("Está marcado!", "Marquei sua limpeza de
-  // pele.", "Sua limpeza de pele está marcada.") passa pela regra: o fato
-  // "marcada nesta conversa" nao diz de QUAL procedimento (fatos-do-turno.ts,
-  // sustentada por marcadaNestaConversa) e so a frase com dia ou hora e
-  // conferida contra o par. Devia barrar (acao_nao_executada): nenhuma
-  // ferramenta rodou no turno e o procedimento pedido nao foi marcado. Sobra
-  // so o verificador por modelo, que aqui e o falso que aprova.
-  it.fails("depois de marcar uma consulta, 'Está marcado!' para OUTRO procedimento, sem nenhuma ferramenta: não pode sair", async () => {
+  it("com a consulta pendente, a negação passa; a equipe aprovou de verdade, a frase passa", async () => {
+    const c = clinicaComDuasUnidades();
+    const consulta = await marcarASexta(c);
+    await modeloResponde(
+      c,
+      "Já aprovaram?",
+      "Sua consulta ainda não foi aprovada pela equipe.",
+    );
+    await modeloResponde(
+      c,
+      "E quando aprovam?",
+      "A equipe vai aprovar e a confirmação chega por aqui.",
+    );
+    await conversaFiada(c, ["Obrigada"]);
+    c.equipeAprova(consulta);
+    await modeloResponde(c, "E agora?", "A equipe já aprovou sua consulta.");
+  });
+
+  it.each(["Marquei sua limpeza de pele.", "Sua limpeza de pele está marcada."])(
+    "depois de marcar uma consulta, sem nenhuma ferramenta: %s não pode sair",
+    async (alucinou) => {
+      const c = clinicaComDuasUnidades();
+      await marcarASexta(c);
+      await conversaFiada(c, ["Vou pensar", "Já volto", "Voltei"]);
+      barrado(
+        c,
+        await c.fala({
+          texto: "Pode marcar a limpeza de pele para segunda de manhã",
+          roteiro: [final(alucinou)],
+        }),
+        alucinou,
+      );
+    },
+  );
+
+  it("depois de marcar uma consulta, a frase que fala dela passa, com e sem o dia", async () => {
+    const c = clinicaComDuasUnidades();
+    await marcarASexta(c);
+    await modeloResponde(
+      c,
+      "Qual é mesmo o horário?",
+      "Sua Consulta está marcada para sexta, 30/10 às 14:00.",
+    );
+    await modeloResponde(c, "Ficou marcada?", "Sua Consulta ficou marcada.");
+    await conversaFiada(c, ["Obrigada", "Vou ver uma coisa aqui"]);
+  });
+
+  it("depois de marcar uma consulta, 'Está marcado!' para OUTRO procedimento, sem nenhuma ferramenta: não pode sair", async () => {
     const c = clinicaComDuasUnidades();
     await marcarASexta(c);
     await modeloResponde(c, "E a limpeza de pele, quanto custa?", PRECO_DA_LIMPEZA, [

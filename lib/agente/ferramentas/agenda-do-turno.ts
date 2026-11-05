@@ -1254,6 +1254,8 @@ export function criarAgendaDoTurno(entrada: {
     hora: string;
     unidade: string | null;
     profissional: string | null;
+    pendente: boolean;
+    procedimento: string | null;
   } | null = null;
   let consultaDoTurno: { dia: string; hora: string } | null = null;
   // [AG7 preparo] O procedimento que o agendar deste turno marcou (F2).
@@ -1893,6 +1895,10 @@ export function criarAgendaDoTurno(entrada: {
               ...diaEHora(new Date(lida.inicio), fuso, agoraMs),
               unidade: nomeDaUnidade(lida.unidadeId),
               profissional: nomeDoProfissional(lida.profissionalId),
+              pendente: lida.pendente === true,
+              procedimento:
+                procedimentoDe(vinculoDe(lida.serviceLinkId ?? null)?.procedimentoId)
+                  ?.nome ?? null,
             };
           }
         } catch {
@@ -4543,6 +4549,10 @@ export function criarAgendaDoTurno(entrada: {
               unidade: consultaLida.unidade,
               ...comOProfissional(consultaLida.profissional),
               marcadaNestaConversa: true,
+              ...(consultaLida.pendente ? { aprovacaoPendente: true } : {}),
+              ...(consultaLida.procedimento === null
+                ? {}
+                : { procedimento: consultaLida.procedimento }),
             },
           }),
       // AG4: a consulta em foco do pedido e a remarcacao pedida, relidas.

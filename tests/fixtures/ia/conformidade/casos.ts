@@ -425,6 +425,29 @@ const MARCADA_NESTA_CONVERSA = {
   consultaLida: true,
   consultasLidas: [{ ...TERCA_AS_14, marcadaNestaConversa: true }],
 };
+/** Conversas longas: a marcada e relida, ainda pendente, com o procedimento. */
+const MARCADA_PENDENTE = {
+  ...MARCADA_NESTA_CONVERSA,
+  consultasLidas: [
+    {
+      ...TERCA_AS_14,
+      marcadaNestaConversa: true,
+      aprovacaoPendente: true,
+      procedimento: "Consulta dermatológica",
+    },
+  ],
+};
+/** Conversas longas: a mesma consulta, ja aprovada pela equipe. */
+const MARCADA_E_APROVADA = {
+  ...MARCADA_NESTA_CONVERSA,
+  consultasLidas: [
+    {
+      ...TERCA_AS_14,
+      marcadaNestaConversa: true,
+      procedimento: "Consulta dermatológica",
+    },
+  ],
+};
 /** A busca com a hora pedida (quarta 22/10 15:00) ocupada: o eco. */
 const ECO_DE_QUARTA_AS_15 = {
   saidasDasFerramentas: [SAIDA_DA_BUSCA_DE_HORARIO],
@@ -5481,6 +5504,71 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
       textosDePreparo: [TEXTO_DO_PREPARO_DE_TESTE],
     }),
   ),
+  // Conversas longas (05/11/2026): a aprovacao afirmada com a consulta marcada
+  // ainda pendente, e a marcacao que nao fala da consulta marcada de verdade.
+  saida(
+    "CL-S01",
+    "acao_nao_executada",
+    "contexto",
+    "A equipe já aprovou sua consulta.",
+    comFatos(MARCADA_PENDENTE),
+  ),
+  saida(
+    "CL-S02",
+    "acao_nao_executada",
+    "contexto",
+    "Sua consulta já foi aprovada.",
+    comFatos(MARCADA_PENDENTE),
+  ),
+  saida(
+    "CL-S03",
+    "acao_nao_executada",
+    "contexto",
+    "Sua consulta está aprovada, pode ficar tranquila.",
+    comFatos(MARCADA_PENDENTE),
+  ),
+  saida(
+    "CL-S04",
+    "acao_nao_executada",
+    "contexto",
+    "Aprovada! Pode vir tranquila.",
+    comFatos(MARCADA_PENDENTE),
+  ),
+  saida(
+    "CL-S05",
+    "acao_nao_executada",
+    "contexto",
+    "Pronto! Sua consulta ficou marcada para terça, 21/10 às 14:00, e a equipe já aprovou.",
+    comFatos(MARCOU_TERCA_COM_A_ANA),
+  ),
+  saida(
+    "CL-S06",
+    "acao_nao_executada",
+    "contexto",
+    "Está marcado!",
+    comFatos(MARCADA_PENDENTE),
+  ),
+  saida(
+    "CL-S07",
+    "acao_nao_executada",
+    "contexto",
+    "Marquei sua limpeza de pele.",
+    comFatos(MARCADA_PENDENTE),
+  ),
+  saida(
+    "CL-S08",
+    "acao_nao_executada",
+    "contexto",
+    "Sua limpeza de pele está marcada.",
+    comFatos(MARCADA_PENDENTE),
+  ),
+  saida(
+    "CL-S09",
+    "acao_nao_executada",
+    "contexto",
+    "Sua consulta de limpeza de pele ficou marcada.",
+    comFatos(MARCADA_PENDENTE),
+  ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -8268,6 +8356,30 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
     ] as const
   ).map(
     ([id, rascunho]): CasoDeControle => ({ id, rascunho, ...comPreparo() }),
+  ),
+  // Conversas longas (05/11/2026): a pendencia dita, a negacao, a aprovada de
+  // verdade e a frase que fala da consulta marcada passam.
+  ...(
+    [
+      ["CL-B01", "Sua consulta ainda não foi aprovada pela equipe.", MARCADA_PENDENTE],
+      ["CL-B02", "A equipe vai aprovar e a confirmação chega por aqui.", MARCADA_PENDENTE],
+      ["CL-B03", "Ainda não aprovaram. Te aviso por aqui assim que sair.", MARCADA_PENDENTE],
+      ["CL-B04", "Sua consulta está pendente da aprovação da equipe.", MARCADA_PENDENTE],
+      ["CL-B05", "Seu cadastro já foi aprovado, e sua consulta segue pendente da aprovação da equipe.", MARCADA_PENDENTE],
+      ["CL-B06", "A equipe já aprovou sua consulta.", MARCADA_E_APROVADA],
+      ["CL-B07", "Sua consulta está marcada para terça, 21/10 às 14:00.", MARCADA_PENDENTE],
+      ["CL-B08", "Sua consulta está marcada, pendente da aprovação da equipe.", MARCADA_PENDENTE],
+      ["CL-B09", "Sua consulta dermatológica está marcada.", MARCADA_PENDENTE],
+      ["CL-B10", "Está marcado! Sua consulta de terça, 21/10 às 14:00 segue pendente da aprovação da equipe.", MARCADA_PENDENTE],
+      ["CL-B11", "Sua consulta está marcada. A limpeza de pele ainda não foi marcada.", MARCADA_PENDENTE],
+      ["CL-B12", "Agendado! Sua consulta ficou pendente da aprovação da equipe, e a confirmação chega por aqui.", MARCADA_PENDENTE],
+    ] as const
+  ).map(
+    ([id, rascunho, fatos]): CasoDeControle => ({
+      id,
+      rascunho,
+      ...comFatos(fatos),
+    }),
   ),
 ];
 

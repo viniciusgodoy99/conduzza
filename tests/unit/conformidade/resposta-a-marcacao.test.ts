@@ -80,12 +80,16 @@ describe("o sim da marcação", () => {
     expect(interpretarRespostaAoCancelamento(["Pode marcar"])).toBe(
       "nao_reconhecida",
     );
-    expect(interpretarRespostaAoCancelamento(["Marca"])).toBe("nao_reconhecida");
+    expect(interpretarRespostaAoCancelamento(["Marca"])).toBe(
+      "nao_reconhecida",
+    );
     expect(interpretarRespostaAoCancelamento(["Pode cancelar"])).toBe("sim");
   });
 
   it("a lista entra na versão, sem verbo de cancelar", () => {
     expect(FONTES_DA_RESPOSTA_A_MARCACAO.join("|")).toContain("pode marcar");
-    expect(FONTES_DA_RESPOSTA_A_MARCACAO.join("|")).not.toMatch(/cancel|desmarc/);
+    expect(FONTES_DA_RESPOSTA_A_MARCACAO.join("|")).not.toMatch(
+      /cancel|desmarc/,
+    );
   });
 });

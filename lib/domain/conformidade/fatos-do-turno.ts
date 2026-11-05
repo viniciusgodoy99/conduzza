@@ -240,6 +240,17 @@ export type ConsultaDoFato = HorarioDoFato & {
    * Nunca junto de remarcadaNestaConversa (fato incoerente bloqueia).
    */
   remarcacaoAprovada?: boolean;
+  /**
+   * Conversas longas (05/11/2026): a consulta marcada nesta conversa, relida
+   * agora, ainda espera a aprovacao da equipe. Dizer que ja foi aprovada barra.
+   */
+  aprovacaoPendente?: boolean;
+  /**
+   * Conversas longas (05/11/2026): o nome do Cadastro do procedimento da
+   * consulta marcada nesta conversa. So nas regras deterministicas (a frase
+   * sem dia e sem hora tem de falar DELA); nunca vai ao resumo do verificador.
+   */
+  procedimento?: string;
 };
 
 /**
@@ -556,6 +567,8 @@ function consultaDoFatoValida(valor: unknown): boolean {
     ?.remarcadaNestaConversa;
   const aprovada = (valor as Record<string, unknown> | null)
     ?.remarcacaoAprovada;
+  const pendente = (valor as Record<string, unknown> | null)?.aprovacaoPendente;
+  const procedimento = (valor as Record<string, unknown> | null)?.procedimento;
   return (
     horarioDoFatoValido(valor) &&
     typeof (valor as Record<string, unknown>).marcadaNestaConversa ===
@@ -564,7 +577,9 @@ function consultaDoFatoValida(valor: unknown): boolean {
     // Revisao da AG4 (achado 7): aprovada, opcional, nunca junto da
     // pendente.
     (aprovada === undefined || typeof aprovada === "boolean") &&
-    !(remarcada === true && aprovada === true)
+    !(remarcada === true && aprovada === true) &&
+    (pendente === undefined || typeof pendente === "boolean") &&
+    (procedimento === undefined || typeof procedimento === "string")
   );
 }
 
@@ -2812,6 +2827,8 @@ const CONSULTA = alternativas([
 ]);
 /** O compromisso com o possessivo: tambem "seu horario" (revisao da AG2). */
 const CONSULTA_OU_HORARIO = alternativas([CONSULTA, "horarios?"]);
+/** A frase cita a consulta ou o horario (a consulta marcada nesta conversa). */
+const REFERENCIA_A_CONSULTA = new RegExp(`\\b${CONSULTA_OU_HORARIO}\\b`);
 /**
  * O objeto da agenda no singular, sem artigo, no comeco da frase
  * ("Consulta cancelada", "Horario marcado: ..."). O plural sem artigo e
@@ -6618,6 +6635,84 @@ export function regrasDosFatos(
     }
   }
 
+  // Conversas longas (05/11/2026): a consulta que a IA marca nasce pendente, e
+  // a equipe ainda pode recusar: dizer que ja foi aprovada barra, como na
+  // remarcacao. Por frase, sem a que fala de outra coisa ("o seu convenio ja
+  // foi aprovado"). A aprovada de verdade (relida) nao traz o fato e passa.
+  const marcadas = fatos.consultasLidas.filter((c) => c.marcadaNestaConversa);
+  if (
+    (acoes.has("marcou") || marcadas.some((c) => c.aprovacaoPendente === true)) &&
+    frasesSemDiminutivo.some(
+      (f) => APROVACAO_AFIRMADA.test(f.texto) && !OUTRA_PENDENCIA.test(f.texto),
+    )
+  ) {
+    achados.push({
+      categoria: "acao_nao_executada",
+      regra: "marcacao_sem_aprovacao",
+    });
+  }
+
+  // Conversas longas (05/11/2026): "marcada nesta conversa" nao diz de QUAL
+  // procedimento, e so a frase com dia ou hora e conferida contra o par. Sem
+  // marcacao no turno, a frase sem dia e sem hora tem de falar da consulta
+  // marcada: nao cita outro procedimento do Cadastro, e cita o dela ou a
+  // mensagem traz a palavra "consulta" (ou "horario") ou o par dela. "Esta marcado!"
+  // para a limpeza pedida agora nao sai. Com outra consulta lida no turno a
+  // frase pode ser dela: fica com o verificador, como as frases cuja contagem
+  // nao bate sem a mascara (o "Dr." separa a frase).
+  if (
+    marcadas.length > 0 &&
+    marcadas.length === fatos.consultasLidas.length &&
+    !acoes.has("marcou") &&
+    !acoes.has("remarcou")
+  ) {
+    const frasesSemMascara = frasesComPosicao(semFlexaoDoParticipio(base));
+    const paresDaFrase = (frase: Frase) =>
+      paresDaOferta(partesDaOferta(semDiminutivo, frase, fatos.hoje));
+    const paresDasMarcadas = lidos(marcadas);
+    const mensagemTemOPar = frasesSemDiminutivo.some((f) =>
+      paresDaFrase(f).some((par) =>
+        paresDasMarcadas.some((h) => parNoHorarioLivre(par, h)),
+      ),
+    );
+    const nomesDasMarcadas = marcadas.flatMap((c) =>
+      c.procedimento === undefined ? [] : [c.procedimento],
+    );
+    const chavesDasMarcadas = new Set(
+      nomesDasMarcadas.map((nome) => palavrasDoProcedimento(nome).join(" ")),
+    );
+    const naoFalaDaMarcada =
+      frasesSemMascara.length === frasesSemDiminutivo.length &&
+      [...alegadas].some(([indice, daFrase]) => {
+        const frase = frasesSemDiminutivo[indice];
+        const semMascara = frasesSemMascara[indice];
+        if (
+          frase === undefined ||
+          semMascara === undefined ||
+          (!daFrase.has("marcou") && !daFrase.has("estado")) ||
+          paresDaFrase(frase).length > 0
+        ) {
+          return false;
+        }
+        const citados = procedimentosCitados(semMascara.texto, [
+          ...fatos.procedimentos,
+          ...nomesDasMarcadas,
+        ]);
+        const citaAMarcada = citados.some((m) =>
+          [...m.chaves].some((chave) => chavesDasMarcadas.has(chave)),
+        );
+        return citados.length > 0
+          ? !citaAMarcada
+          : !mensagemTemOPar && !REFERENCIA_A_CONSULTA.test(base);
+      });
+    if (naoFalaDaMarcada) {
+      achados.push({
+        categoria: "acao_nao_executada",
+        regra: "marcada_nao_citada",
+      });
+    }
+  }
+
   // Revisao curta das correcoes da AG3 (achado 5): a frase da acao, do estado
   // da consulta ou do fechamento licenciado que cita OUTRO profissional do
   // Cadastro ou OUTRA unidade ("Sua consulta esta marcada com o Dr. Bruno",
@@ -6831,6 +6926,8 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   // marcada nesta conversa e o eco do pedido.
   "acao e estado com dia ou hora: o par da acao (reservou, marcou, remarcou) ou da consulta lida",
   "marcou: tambem a consulta marcada nesta conversa, relida no turno",
+  "marcacao sem aprovacao: com a marcada do turno ou a relida ainda pendente, a aprovacao afirmada barra, por frase e sem outra pendencia",
+  `marcada nao citada: sem marcacao no turno, a frase sem dia e sem hora nao cita outro procedimento e cita o da marcada, ou a mensagem traz ${REFERENCIA_A_CONSULTA.source} ou o par dela`,
   "fechamento licenciado: o par de uma acao ou de uma consulta lida",
   "eco do pedido: fonte so na frase que nega ou pergunta",
   // Revisao curta das correcoes da AG3 (achados 3 a 7): o horario que nao esta
