@@ -2884,19 +2884,13 @@ describe("11. duas frentes, o efeito já feito e a conversa que sai da IA por fo
     await nadaMaisSai(c, ["Cancelou?", "Sim"]);
   });
 
-  // achado: o cancelamento FEITO no turno e a T2 que nao sai (o filtro barrou ou
-  // o verificador caiu): a nota da equipe diz "Pedido: cancelar a consulta de
-  // quinta..." e "Parou em: a resposta não passou na conformidade", como se o
-  // pedido estivesse em aberto. O paciente so recebeu a frase; quem atende pode
-  // nao saber que a consulta ja saiu da agenda. Devia dizer "Consulta cancelada
-  // pelo assistente nesta conversa" (notaDaPassagem volta no ramo do pedido,
-  // antes da linha da cancelada; a passagem do turno SEGUINTE diz).
-  it.fails("o cancelamento feito com a T2 barrada: a nota da equipe tem de dizer que cancelou", async () => {
+  it("o cancelamento feito com a T2 barrada: a nota da equipe tem de dizer que cancelou", async () => {
     const c = clinicaComDuasUnidades();
     await cancelarComOVerificadorForaDoAr(c);
     expect(c.notasInternas.at(-1)).toContain(
       "Consulta cancelada pelo assistente nesta conversa: quinta, 22/10 às 14:00.",
     );
+    expect(c.notasInternas.at(-1)).not.toContain("Pedido: cancelar");
   });
 
   it("a remarcação pedida com o verificador fora do ar: a nova fica pendente, a antiga de pé, e a nota conta o par", async () => {

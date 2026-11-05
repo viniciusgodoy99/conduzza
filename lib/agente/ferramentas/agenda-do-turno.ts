@@ -4751,12 +4751,19 @@ export function criarAgendaDoTurno(entrada: {
     const ultimo = [...resultados].reverse().find((c) => PAROU_EM[c] !== undefined);
     // AG4: o pedido de cancelar ou remarcar (a consulta, com os nomes do
     // Cadastro) e a remarcacao pedida; "fora do prazo" com o numero do prazo.
-    const doPedido =
+    const pedidoDoTurno =
       pedidoDaNota ??
       ((modoInicial === "cancelar" || modoInicial === "remarcar") &&
       foco !== null
         ? { acao: modoInicial, consulta: foco }
         : null);
+    // O pedido de cancelar que a RPC ja fez nao esta mais em aberto: quando a
+    // T2 nao sai, quem atende le a linha da cancelada, nunca "Pedido: cancelar".
+    const consultaCancelada =
+      canceladaNoTurno !== null && pedidoDoTurno?.consulta.id === canceladaNoTurno
+        ? pedidoDoTurno.consulta
+        : null;
+    const doPedido = consultaCancelada === null ? pedidoDoTurno : null;
     const pedidoDaConsulta =
       doPedido === null
         ? null
@@ -4810,8 +4817,8 @@ export function criarAgendaDoTurno(entrada: {
       idDaCancelada !== null && estado.appointment_id === idDaCancelada;
     const canceladaNaNota: { dia: string; hora: string } | null = !comACancelada
       ? null
-      : canceladaNoTurno !== null && foco !== null && foco.id === canceladaNoTurno
-        ? diaEHora(new Date(foco.inicio), fuso, agoraMs)
+      : consultaCancelada !== null
+        ? diaEHora(new Date(consultaCancelada.inicio), fuso, agoraMs)
         : canceladaLida === null
           ? null
           : { dia: canceladaLida.dia, hora: canceladaLida.hora };
