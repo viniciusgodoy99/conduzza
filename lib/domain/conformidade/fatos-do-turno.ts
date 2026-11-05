@@ -6479,6 +6479,28 @@ export function regrasDosFatos(
     achados.push({ categoria: "acao_nao_executada", regra });
   }
 
+  // Conversas longas, revisao (05/11/2026): o cancelamento de um turno anterior
+  // e o de UMA consulta, e so a frase com dia ou hora e conferida contra o par.
+  // A frase sem nenhum dos dois ("Sim, foi cancelada" sobre a de terca, "Suas
+  // consultas foram canceladas", "Sua reserva foi cancelada") nao diz qual:
+  // barra. No turno que cancela, a acao sustenta a frase (a resposta e a T2).
+  if (
+    !acoes.has("cancelou") &&
+    [...alegadas].some(([indice, daFrase]) => {
+      const frase = frasesSemDiminutivo[indice];
+      return (
+        frase !== undefined &&
+        daFrase.has("cancelou") &&
+        paresDaOferta(partesDaOferta(semDiminutivo, frase, fatos.hoje)).length === 0
+      );
+    })
+  ) {
+    achados.push({
+      categoria: "acao_nao_executada",
+      regra: "cancelada_nao_citada",
+    });
+  }
+
   // Revisao 2 (regra estrutural), com a licenca pela acao (revisao final da
   // AG3, item 3): a frase com dia ou hora e marca de fechamento ("pronto",
   // "combinado", "ficou para", "te esperamos"...) afirma que algo foi feito
@@ -6991,6 +7013,7 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   "aprovacao afirmada (revisao da revisao final): o participio sem o auxiliar nao barra a hipotese, o infinitivo sem promessa, o habito depois da conjuncao de tempo nem a negacao colada; a pendencia negada so com a negacao colada no verbo e sem a palavra de duracao; aprovamos (menos o do habito), ta aprovado, o participio sozinho no comeco da frase e liberaram a remarcacao barram",
   "remarcou: tambem a remarcacao pedida nesta conversa e ja aprovada, relida, com o par dela e sem a pendencia",
   "cancelou: tambem a consulta cancelada nesta conversa num turno anterior, relida e ainda cancelada, com o par dela; nunca consulta lida",
+  "cancelada nao citada: sem o cancelamento no turno, a frase do cancelamento sem dia e sem hora barra, com ou sem reserva viva",
   "acao com horario: o anterior so na remarcacao",
   CONVENIO_GENERICO,
   DETERMINANTES,

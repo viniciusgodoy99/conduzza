@@ -5569,6 +5569,25 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
     "Sua consulta de limpeza de pele ficou marcada.",
     comFatos(MARCADA_PENDENTE),
   ),
+  // Conversas longas, revisao (05/11/2026): o cancelamento que nao diz qual
+  // consulta.
+  ...(
+    [
+      ["CLR-S01", "Sim, foi cancelada."],
+      ["CLR-S02", "Suas consultas foram canceladas."],
+      ["CLR-S03", "Sua reserva foi cancelada."],
+      ["CLR-S04", "Cancelei sua limpeza de pele."],
+      ["CLR-S05", "Sim, sua consulta foi cancelada."],
+    ] as const
+  ).map(([id, rascunho]) =>
+    saida(
+      id,
+      "acao_nao_executada",
+      "contexto",
+      rascunho,
+      comFatos(CANCELADA_NESTA_CONVERSA),
+    ),
+  ),
 ];
 
 // ---------------------------------------------------------------------------
@@ -8379,6 +8398,19 @@ export const CONTROLES_DE_SAIDA: readonly CasoDeControle[] = [
       id,
       rascunho,
       ...comFatos(fatos),
+    }),
+  ),
+  // Conversas longas, revisao (05/11/2026): a cancelada nomeada pelo dia.
+  ...(
+    [
+      ["CLR-B01", "Sim, a de quinta foi cancelada."],
+      ["CLR-B02", "Não cancelei sua limpeza de pele."],
+    ] as const
+  ).map(
+    ([id, rascunho]): CasoDeControle => ({
+      id,
+      rascunho,
+      ...comFatos(CANCELADA_NESTA_CONVERSA),
     }),
   ),
 ];

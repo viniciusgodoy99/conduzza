@@ -2945,6 +2945,64 @@ describe("11. duas frentes, o efeito já feito e a conversa que sai da IA por fo
     expect(c2.status).toBe("agendado");
   });
 
+  describe.each([
+    ["com a reserva viva", cancelarNoMeioDaMarcacao],
+    [
+      "sem reserva",
+      async (c: ConversaLonga) => {
+        const { c1, c2 } = consultasDoContato(c.cenario.banco);
+        await conversaFiada(c, ["Vou ver uma coisa aqui", "Já volto", "Voltei"]);
+        await sistemaResponde(
+          c,
+          "Preciso cancelar minha consulta de quinta",
+          T1_QUINTA,
+          pedirOCancelamento(),
+          UM_MINUTO_MS,
+        );
+        await sistemaResponde(
+          c,
+          "Sim",
+          T2_QUINTA,
+          [ferramenta("cancelar_consulta", {})],
+          UM_MINUTO_MS,
+        );
+        expect(c1.status).toBe("cancelado_paciente");
+        return { c2 };
+      },
+    ],
+  ] as const)("o cancelamento feito, %s", (_nome, cancelar) => {
+    it.each([
+      ["E a de terça, foi cancelada?", "Sim, foi cancelada."],
+      ["Cancelou tudo?", "Suas consultas foram canceladas."],
+      ["E a reserva?", "Sua reserva foi cancelada."],
+      ["E a limpeza?", "Cancelei sua limpeza de pele."],
+    ])("%s %s não diz qual consulta: é barrada", async (texto, alucinou) => {
+      const c = clinicaComDuasUnidades();
+      await conversaFiada(c, ["Oi, tudo bem?", "Queria umas informações"]);
+      const { c2 } = await cancelar(c);
+      const t = await c.fala({ texto, roteiro: [final(alucinou)] }, UM_MINUTO_MS);
+      passou(t, {
+        desfecho: "bloqueou",
+        regra: "acao_nao_executada",
+        camada: "regra",
+      });
+      expect(c2.status).toBe("agendado");
+    });
+
+    it("a resposta que nomeia a cancelada, pelo dia, passa", async () => {
+      const c = clinicaComDuasUnidades();
+      await conversaFiada(c, ["Oi, tudo bem?", "Queria umas informações"]);
+      await cancelar(c);
+      await modeloResponde(
+        c,
+        "A de quinta foi cancelada?",
+        "Sim, a de quinta foi cancelada.",
+        [],
+        UM_MINUTO_MS,
+      );
+    });
+  });
+
   it("a marcação feita com a resposta barrada: a consulta fica, o paciente recebe só a frase e a nota conta a consulta", async () => {
     const c = clinicaComDuasUnidades();
     await comAPerguntaConfirmaNoAr(c);
