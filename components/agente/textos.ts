@@ -661,6 +661,9 @@ export const TEXTOS_DO_PREPARO = {
   // em vigor, mas as regras de hoje recusam o de todos.
   aprovadaSemEnvio:
     "Nenhuma orientação aprovada pelo responsável técnico pode ser enviada: as regras de hoje não deixam o texto sair (em Cadastros, aparece como “Aprovada, sem envio”). Com a chave ligada, o pedido de preparo passa para a equipe.",
+  // Revisao final da AG7: ha texto aprovado, e so falta a conferencia.
+  registroNaoConferido:
+    "Registro do RT ainda não conferido pela Conduzza: nenhuma orientação aprovada pode ser enviada até a conferência. Com a chave ligada, o pedido de preparo passa para a equipe.",
   marcaDoSimulador:
     "Enviado pelo sistema: texto aprovado pelo responsável técnico",
 } as const;
@@ -668,8 +671,9 @@ export const TEXTOS_DO_PREPARO = {
 /**
  * A nota de "Enviar orientação de preparo" quando nenhum procedimento ativo
  * tem orientacao aprovada em vigor que possa sair: sem texto aprovado
- * ("sem_texto_aprovado") ou com todos recusados pelas regras de hoje
- * ("aprovada_sem_envio"). Nula para as outras habilidades, com algum texto
+ * ("sem_texto_aprovado"), com todos recusados pelas regras de hoje
+ * ("aprovada_sem_envio") ou esperando a conferencia do registro do RT
+ * ("registro_nao_conferido"). Nula para as outras habilidades, com algum texto
  * que sai, ou sem a leitura (`preparoDaHabilidade` nulo ou ausente: a pagina
  * nao conferiu, e a tela nao inventa a nota). Vale ligada ou desligada.
  */
@@ -682,6 +686,9 @@ export function notaDoPreparoSemTextoAprovado(
   }
   if (preparoDaHabilidade === "sem_texto_aprovado") {
     return TEXTOS_DO_PREPARO.semTextoAprovado;
+  }
+  if (preparoDaHabilidade === "registro_nao_conferido") {
+    return TEXTOS_DO_PREPARO.registroNaoConferido;
   }
   return preparoDaHabilidade === "aprovada_sem_envio"
     ? TEXTOS_DO_PREPARO.aprovadaSemEnvio

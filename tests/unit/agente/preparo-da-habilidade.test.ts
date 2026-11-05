@@ -355,6 +355,26 @@ describe("fetchPreparoDaHabilidade: as regras de hoje conferidas no servidor", (
     }
   });
 
+  // Revisao final da AG7 (achado 8): sem a conferencia, a nota nao pode dizer
+  // que nao ha orientacao aprovada.
+  it("o texto aprovado sem a conferencia do registro: registro nao conferido", async () => {
+    const semConferencia = tabelas([versao({ id: "v1" })]);
+    semConferencia.responsavel_tecnico = semConferencia.responsavel_tecnico.map(
+      (r: Record<string, unknown>) => ({ ...r, registro_conferido_em: null }),
+    );
+    const { cliente } = clienteCom(semConferencia);
+    await expect(
+      fetchPreparoDaHabilidade(cliente, CLINICA, recusadoPelasRegrasDeHoje),
+    ).resolves.toBe("registro_nao_conferido");
+    const semTexto = tabelas([]);
+    semTexto.responsavel_tecnico = semTexto.responsavel_tecnico.map(
+      (r: Record<string, unknown>) => ({ ...r, registro_conferido_em: null }),
+    );
+    await expect(
+      fetchPreparoDaHabilidade(clienteCom(semTexto).cliente, CLINICA, recusadoPelasRegrasDeHoje),
+    ).resolves.toBe("sem_texto_aprovado");
+  });
+
   it("a leitura que falha lanca (a pagina nao mostra a nota sem conferir)", async () => {
     const { cliente } = clienteCom(tabelas([versao({ id: "v1" })]), {
       tabela: "procedure",

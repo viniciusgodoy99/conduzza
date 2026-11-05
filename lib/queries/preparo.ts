@@ -556,7 +556,20 @@ export async function fetchPreparoDaHabilidade(
     ativos,
   );
   if (emVigor.length === 0) {
-    return "sem_texto_aprovado";
+    // Revisao final da AG7: sem a conferencia, "Nenhum procedimento tem
+    // orientacao aprovada" seria falso quando o texto aprovado existe e so
+    // falta conferir o registro.
+    const seConferido = versoesEmVigorDosAtivos(
+      {
+        versoes: aprovadas,
+        rtAberto: { ...rt, registroConferidoEm: "conferido" },
+        rtComAcesso,
+      },
+      ativos,
+    );
+    return rt.registroConferidoEm === null && seConferido.length > 0
+      ? "registro_nao_conferido"
+      : "sem_texto_aprovado";
   }
   const textos = await lerTextosDasVersoes(supabase, clinicId, emVigor);
   return preparoDaHabilidade(emVigor, textos, recusado);

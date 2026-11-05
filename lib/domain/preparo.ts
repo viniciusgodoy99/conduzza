@@ -1264,11 +1264,16 @@ export type SituacaoDoChipDoPreparo = SituacaoDoPreparoNaTela;
  *    recusam o de todos: o envio e a regua nao os deixam sair, e Cadastros
  *    os mostra como "Aprovada, sem envio" (revisao curta da AG7, a sobra da
  *    CURTA-5 na Tela 6);
+ *  - "registro_nao_conferido": ha texto aprovado que estaria em vigor, e so
+ *    falta a equipe Conduzza conferir o registro do RT (revisao final da AG7);
  *  - "sem_texto_aprovado": nenhum procedimento ativo tem texto aprovado em
  *    vigor.
  */
 export type PreparoDaHabilidade =
-  "sai" | "aprovada_sem_envio" | "sem_texto_aprovado";
+  | "sai"
+  | "aprovada_sem_envio"
+  | "registro_nao_conferido"
+  | "sem_texto_aprovado";
 
 /** As situacoes de quem ja foi aprovado um dia (a linha do envio). */
 const JA_APROVADAS: ReadonlySet<SituacaoDoPreparo> = new Set([
