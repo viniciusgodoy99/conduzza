@@ -184,7 +184,15 @@ describe("conferirParaEnvio: o texto aprovado com recusa nunca vira PreparoAprov
     ],
     [
       "Venha em jejum de 8 horas. Aproveite e faça também a limpeza de pele com 20% de desconto.",
+      ["oferta_casada", "preco_nao_verificado"],
+    ],
+    [
+      "Venha em jejum de 8 horas. O exame tem 20% de desconto.",
       ["preco_nao_verificado"],
+    ],
+    [
+      "Venha em jejum de 8 horas. Cólica leve é normal e passa sozinha.",
+      ["triagem"],
     ],
     [
       "Jejum de 8 horas. Veja o vídeo em https://exemplo.com/preparo.",

@@ -74,6 +74,7 @@ const estado = {
   rpcs: [] as { nome: string; args: Linha }[],
   souRt: false,
   respostas: {} as Record<string, { data: unknown; error: Erro | null }>,
+  erroNaLeitura: null as string | null,
 };
 
 function consulta(tabela: string) {
@@ -95,7 +96,14 @@ function consulta(tabela: string) {
       return api;
     },
     order: () => api,
+    is: (coluna: string, valor: unknown) => {
+      filtros.push((linha) => (linha[coluna] ?? null) === valor);
+      return api;
+    },
     maybeSingle: async () => {
+      if (estado.erroNaLeitura === tabela) {
+        return { data: null, error: { code: "XX000", message: "falhou" } };
+      }
       const r = resolver();
       return { data: r.data[0] ?? null, error: r.error };
     },
@@ -182,6 +190,7 @@ beforeEach(() => {
   };
   sessao.isProductAdmin = false;
   estado.souRt = false;
+  estado.erroNaLeitura = null;
   estado.rpcs = [];
   estado.respostas = {
     salvar_preparo_do_procedimento: {
@@ -937,6 +946,84 @@ describe("descartar e suspender", () => {
       ok: false,
       error: "Não há orientação aprovada para suspender.",
       code: "sem_preparo_aprovado",
+    });
+  });
+});
+
+describe("remédio ou dose só de RT de CRM ou CRO (decisão de 05/11/2026)", () => {
+  const COM_REMEDIO = "Tome 2 comprimidos de bisacodil às 18h.";
+  const comRt = (conselho: string) => {
+    estado.tabelas.responsavel_tecnico = [
+      { id: "rt", clinic_id: CLINICA, conselho, ate: null },
+    ];
+  };
+
+  it("salvar: o RT de CRN recusa antes da RPC; CRM, CRO e a clínica sem RT passam", async () => {
+    comRt("CRN");
+    expect(
+      await salvarPreparoAction({ ...SALVAR, texto: COM_REMEDIO }),
+    ).toEqual({
+      ok: false,
+      error: T.conselhoNaoAceita,
+      code: "conselho_nao_aceita_remedio_ou_dose",
+    });
+    expect(escritas()).toEqual([]);
+    for (const conselho of ["CRM", "CRO"]) {
+      comRt(conselho);
+      const r = await salvarPreparoAction({ ...SALVAR, texto: COM_REMEDIO });
+      expect(r.ok).toBe(true);
+    }
+    estado.tabelas.responsavel_tecnico = [];
+    const r = await salvarPreparoAction({ ...SALVAR, texto: COM_REMEDIO });
+    expect(r.ok).toBe(true);
+  });
+
+  it("salvar: texto sem remédio nem dose nem lê o RT; a leitura que falha recusa", async () => {
+    comRt("CRN");
+    const r = await salvarPreparoAction({
+      ...SALVAR,
+      texto: "Traga o pedido médico.",
+    });
+    expect(r.ok).toBe(true);
+    estado.erroNaLeitura = "responsavel_tecnico";
+    const falhou = await salvarPreparoAction({
+      ...SALVAR,
+      texto: COM_REMEDIO,
+    });
+    expect(falhou).toMatchObject({
+      ok: false,
+      code: "conselho_nao_aceita_remedio_ou_dose",
+    });
+  });
+
+  it("aprovar e o aviso do diálogo: o RT de CRN recusa", async () => {
+    comRt("CRN");
+    papel("leitura", { rt: true });
+    expect(
+      await aprovarPreparoAction({ versaoId: V2, textoSha256: SHA_V2 }),
+    ).toEqual({
+      ok: false,
+      error: `${T.naoPodeSerAprovado} ${T.conselhoNaoAceita}`,
+      code: "conselho_nao_aceita_remedio_ou_dose",
+    });
+    expect(escritas()).toEqual([]);
+    expect(await avisosDoPreparoAction({ versaoId: V2 })).toMatchObject({
+      ok: true,
+      recusa: T.conselhoNaoAceita,
+    });
+  });
+
+  it("o banco recusa pelo conselho: a mesma frase", async () => {
+    estado.respostas.salvar_preparo_do_procedimento = {
+      data: null,
+      error: { code: "P0001", message: "conselho_nao_aceita_remedio_ou_dose" },
+    };
+    expect(
+      await salvarPreparoAction({ ...SALVAR, texto: "Traga o pedido médico." }),
+    ).toEqual({
+      ok: false,
+      error: T.conselhoNaoAceita,
+      code: "conselho_nao_aceita_remedio_ou_dose",
     });
   });
 });

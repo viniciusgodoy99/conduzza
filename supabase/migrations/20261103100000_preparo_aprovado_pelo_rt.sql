@@ -493,30 +493,30 @@ as $function$
            p_conselho not in ('CRM', 'CRO')
            and (-- medicamento, remedio_citado
                b.base ~ '\y(?:dipir|dipi\y|novalgin|paracetamo|tylenol|ibuprof|advil|alivium|buscopan|escopolamin|nimesulid|diclofenac|cataflam|voltaren|cetoprof|profenid|naproxen|aspirin|acido acetilsalicilico|\yaas\y|amoxicil|amoxil\y|clavulanat|azitromicin|cefalexin|ciprofloxacin|doxiciclin|metronidazol|nistatin|fluconazol|cetoconazol|clotrimazol|aciclovir|valaciclovir|predniso|dexametason|betametason|hidrocortison|loratadin|desloratadin|cetirizin|fexofenadin|allegra\y|polaramine|dexclorfeniramin|hidroxizin|prometazin|fenergan|omeprazol|pantoprazol|ranitidin|dramin\y|dimenidrinat|ondansetron|plasil|metoclopramid|simeticon|luftal|loperamid|isotretinoin|roacutan|tretinoin|acido retinoico|adapalen|hidroquinon|acido tranexamico|minoxidil|finasterid|dutasterid|espironolacton|metformin|glifage|semaglutid|ozempic|wegovy|rybelsus|tirzepatid|mounjaro|liraglutid|saxenda|victoza|sibutramin|orlistat|topiramat|fluoxetin|sertralin|escitalopram|citalopram|paroxetin|venlafaxin|bupropion|amitriptilin|clonazepam|rivotril|alprazolam|diazepam|zolpidem|melatonin|varfarin|warfarin|marevan|clopidogrel|rivaroxaban|xarelto|apixaban|eliquis|heparin|enoxaparin|clexane|losartan|enalapril|captopril|atenolol|propranolol|anlodipin|hidroclorotiazid|furosemid|sinvastatin|atorvastatin|rosuvastatin|levotiroxin|puran t4|euthyrox|insulin|cortison|morfin|tramadol|tramal\y|codein|dorflex|neosaldin|torsilax|miosan|ciclobenzaprin|sildenafil|tadalafil|viagra|cialis|misoprostol|cytotec|lidocain|arnica|hirudoid|bepantol|nebacetin|neomicin|bacitracin|mupirocin|bactroban|fucidin|acido fusidico|sulfadiazin|emla\y|hialuronidas|triancinolon|kenalog|trombofob|thrombocid|decadron|diprospan|celestone|benzetacil|penicilin|bactrim|sulfametoxazol|benegrip|cimegrip|resfenol|melhoral|doril\y|nisulid|toragesic|cetorolac|lexotan|bromazepam|valium|ivermectin|albendazol|hipoglos|prozac|lexapro|pregabalin|gabapentin)'
-               or -- medicamento, remedio_do_preparo
-               b.base ~ '\y(?:bisacodil|dulcolax|bisalax|lacto purga|lactopurga|humectol|manitol|picossulfato|picosulfato|picoprep|pico prep|picolax|guttalax|macrogol|polietilenoglicol|muvinlax|muvilax|forlax|lactulos|lactulona|duphalac|sene\y|senosideo|tamarine|naturetti|agiolax|fosfato de sodio|phosfoenema|fleet\y|supositori|nujol|oleo mineral|oleo de ricino)'
-               or -- medicamento, classe_de_remedio
-               b.base ~ '\y(?:remedi|antitermic|antiacid|laxante|diuretic|antiemetic|antidiarreic|descongestionante|expectorante|soro fisiologico|cicatrizante|medicament|medicac|farmac|comprimid|capsul|pilul|pastilh|xarope|colirio|pomad|antibiot|anti-?inflamat|antinflamat|analges|anti-?alerg|anti-?histamin|corticoi|corticosteroi|anticoagul|antidepress|ansiolit|anticoncep|antiviral|antifung|antissept|anestesic|relaxante muscular|calmante|suplement|vitamina|polivitamin|hormoni|receita medica|receita de|receitar|receito|prescri|prescrev|automedic|painkiller|pain reliever|acetaminophen|antibiotic|antihistamine|ointment|medication|medicine|pills?\y|drugs?\y|prescription|pastilla|jarabe|receta\y)'
-               or -- medicamento, liberar_tomar
-               b.base ~ '\y(?:pode|podera|deve|devera|precisa|tem que|e so|basta)\y (?:\w+ )?(?:tomar|ingerir)\y'
-               or -- medicamento, tomar_algo_para
-               b.base ~ '\y(?:tome|toma|tomar)\y (?:alguma coisa|algo)\y(?: [a-z]+){0,2}? (?:para|pra) (?:aliviar|melhorar|passar|baixar|acalmar|dormir|relaxar|a dor|a febre|a alergia|o enjoo)\y'
-               or -- medicamento, tomar_en_es
-               b.base ~ '\y(?:take|taking)\y (?:\w+ ){0,2}?(?:ibuprofen|paracetamol|aspirin|pill|tablet|medicine|medication|antibiotic)|\ypuede tomar\y|\y(?:tome|tomar) (?:un|una|el|la)\y'
-               or -- dosagem, quantidade_com_unidade
-               b.base ~ '\y\d[\d.,o]*\s?(?:m\W{0,2}g|mcg|ug|m\W{0,2}l|g|u\W{0,2}i|ui|u|un|gotas?|gotinhas?|pingos?|comprimidos?|compr|capsulas?|cps?|caps|saches?|colher(?:es)?|colheradas?|doses?|ampolas?|jatos?|borrifadas?|puffs?|miligramas?|mililitros?|microgramas?|gramas?|seringas?|frascos?)\y|\y\d[\d.,o]*\s?unidades? (?:de |do |da )?(?:botox|toxina|dysport|xeomin|botulift|produto|acido|preenchimento)'
-               or -- dosagem, quantidade_por_extenso
-               b.base ~ '\y(?:um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|meio|meia|vinte|trinta|quarenta|cinquenta|cem|duzentos|quinhentos|mil)\y (?:\w+ )?(?:gotas?|gotinhas?|pingos?|comprimidos?|compr|capsulas?|colher(?:es)?|colheradas?|doses?|ampolas?|miligramas?|mililitros?|mg|ml|saches?|jatos?|borrifadas?)\y|\yquinhentinh|\ymeio grama\y'
-               or -- dosagem, unidades_na_regiao
-               b.base ~ '\y(?:\d+|uma?|duas|dois|tres|quatro|cinco|seis|sete|oito|nove|dez|quinze|vinte|trinta|quarenta|cinquenta|sessenta|setenta|oitenta|noventa|cem)\y (?:e \w+ )?unidades? (?:\w+ )?(?:na|no|nas|nos|em cada|de cada|por) (?:testa|glabela|lado|olhos?|regiao|area|ponto|rosto|face|labios?|pes de galinha|axilas?|bochechas?|queixo|pescoco|sobrancelhas?|pontos?)\y'
-               or -- dosagem, manha_e_noite
-               b.base ~ '\y(?:tome|toma|tomar|tomando|passe|passa|passar|aplique|aplica|aplicar|use|usa|usar|pingue|pinga|pingar|bote|bota|coloque|coloca)\y (?:\w+ ){0,3}?(?:uma|um|duas|dois|\d+|meia|meio) (?:de|pela) manha e (?:outr[ao]|uma|um|duas|dois|\d+|mais uma) (?:a|de|pela) noite\y'
-               or -- dosagem, frequencia
-               b.base ~ '\y(\d{1,2}) ?\/ ?\1 ?(?:h|hs|horas?)\y|\y\d+ ?x ?\/ ?dia\y|\yde \d+ em \d+ ?(?:h|hs|horas?)\y|\yde (?:duas|quatro|seis|oito|doze) em (?:duas|quatro|seis|oito|doze) horas\y|\ya cada \d+ ?(?:h|hs|horas?)\y|\ya cada (?:duas|quatro|seis|oito|doze|vinte e quatro) horas\y|\y\d+ ?(?:x|vezes) (?:ao|por|no) dia\y|\y(?:uma|duas|tres|quatro) vezes (?:ao|por|no) dia\y'
-               or -- dosagem, horario_de_uso
-               b.base ~ '\y(?:antes|depois|apos|durante|com) (?:das|as|de|da|do) refeic|\yem jejum\y|\yao deitar\y|\ydose (?:unica|diaria|dupla)\y|\y(?:dosagem|posologia)\y'
-               or -- dosagem, frequencia_en_es
-               b.base ~ '\y(?:twice|once|three times) a day\y|\yevery \d+ hours\y|\ycada \d+ horas\y|\y(?:una|dos|tres) veces al dia\y'),
+               -- medicamento, remedio_do_preparo
+               or b.base ~ '\y(?:bisacodil|dulcolax|bisalax|lacto purga|lactopurga|humectol|manitol|picossulfato|picosulfato|picoprep|pico prep|picolax|guttalax|macrogol|polietilenoglicol|muvinlax|muvilax|forlax|lactulos|lactulona|duphalac|sene\y|senosideo|tamarine|naturetti|agiolax|fosfato de sodio|phosfoenema|fleet\y|supositori|nujol|oleo mineral|oleo de ricino)'
+               -- medicamento, classe_de_remedio
+               or b.base ~ '\y(?:remedi|antitermic|antiacid|laxante|diuretic|antiemetic|antidiarreic|descongestionante|expectorante|soro fisiologico|cicatrizante|medicament|medicac|farmac|comprimid|capsul|pilul|pastilh|xarope|colirio|pomad|antibiot|anti-?inflamat|antinflamat|analges|anti-?alerg|anti-?histamin|corticoi|corticosteroi|anticoagul|antidepress|ansiolit|anticoncep|antiviral|antifung|antissept|anestesic|relaxante muscular|calmante|suplement|vitamina|polivitamin|hormoni|receita medica|receita de|receitar|receito|prescri|prescrev|automedic|painkiller|pain reliever|acetaminophen|antibiotic|antihistamine|ointment|medication|medicine|pills?\y|drugs?\y|prescription|pastilla|jarabe|receta\y)'
+               -- medicamento, liberar_tomar
+               or b.base ~ '\y(?:pode|podera|deve|devera|precisa|tem que|e so|basta)\y (?:\w+ )?(?:tomar|ingerir)\y'
+               -- medicamento, tomar_algo_para
+               or b.base ~ '\y(?:tome|toma|tomar)\y (?:alguma coisa|algo)\y(?: [a-z]+){0,2}? (?:para|pra) (?:aliviar|melhorar|passar|baixar|acalmar|dormir|relaxar|a dor|a febre|a alergia|o enjoo)\y'
+               -- medicamento, tomar_en_es
+               or b.base ~ '\y(?:take|taking)\y (?:\w+ ){0,2}?(?:ibuprofen|paracetamol|aspirin|pill|tablet|medicine|medication|antibiotic)|\ypuede tomar\y|\y(?:tome|tomar) (?:un|una|el|la)\y'
+               -- dosagem, quantidade_com_unidade
+               or b.base ~ '\y\d[\d.,o]*\s?(?:m\W{0,2}g|mcg|ug|m\W{0,2}l|g|u\W{0,2}i|ui|u|un|gotas?|gotinhas?|pingos?|comprimidos?|compr|capsulas?|cps?|caps|saches?|colher(?:es)?|colheradas?|doses?|ampolas?|jatos?|borrifadas?|puffs?|miligramas?|mililitros?|microgramas?|gramas?|seringas?|frascos?)\y|\y\d[\d.,o]*\s?unidades? (?:de |do |da )?(?:botox|toxina|dysport|xeomin|botulift|produto|acido|preenchimento)'
+               -- dosagem, quantidade_por_extenso
+               or b.base ~ '\y(?:um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|meio|meia|vinte|trinta|quarenta|cinquenta|cem|duzentos|quinhentos|mil)\y (?:\w+ )?(?:gotas?|gotinhas?|pingos?|comprimidos?|compr|capsulas?|colher(?:es)?|colheradas?|doses?|ampolas?|miligramas?|mililitros?|mg|ml|saches?|jatos?|borrifadas?)\y|\yquinhentinh|\ymeio grama\y'
+               -- dosagem, unidades_na_regiao
+               or b.base ~ '\y(?:\d+|uma?|duas|dois|tres|quatro|cinco|seis|sete|oito|nove|dez|quinze|vinte|trinta|quarenta|cinquenta|sessenta|setenta|oitenta|noventa|cem)\y (?:e \w+ )?unidades? (?:\w+ )?(?:na|no|nas|nos|em cada|de cada|por) (?:testa|glabela|lado|olhos?|regiao|area|ponto|rosto|face|labios?|pes de galinha|axilas?|bochechas?|queixo|pescoco|sobrancelhas?|pontos?)\y'
+               -- dosagem, manha_e_noite
+               or b.base ~ '\y(?:tome|toma|tomar|tomando|passe|passa|passar|aplique|aplica|aplicar|use|usa|usar|pingue|pinga|pingar|bote|bota|coloque|coloca)\y (?:\w+ ){0,3}?(?:uma|um|duas|dois|\d+|meia|meio) (?:de|pela) manha e (?:outr[ao]|uma|um|duas|dois|\d+|mais uma) (?:a|de|pela) noite\y'
+               -- dosagem, frequencia
+               or b.base ~ '\y(\d{1,2}) ?\/ ?\1 ?(?:h|hs|horas?)\y|\y\d+ ?x ?\/ ?dia\y|\yde \d+ em \d+ ?(?:h|hs|horas?)\y|\yde (?:duas|quatro|seis|oito|doze) em (?:duas|quatro|seis|oito|doze) horas\y|\ya cada \d+ ?(?:h|hs|horas?)\y|\ya cada (?:duas|quatro|seis|oito|doze|vinte e quatro) horas\y|\y\d+ ?(?:x|vezes) (?:ao|por|no) dia\y|\y(?:uma|duas|tres|quatro) vezes (?:ao|por|no) dia\y'
+               -- dosagem, horario_de_uso
+               or b.base ~ '\y(?:antes|depois|apos|durante|com) (?:das|as|de|da|do) refeic|\yem jejum\y|\yao deitar\y|\ydose (?:unica|diaria|dupla)\y|\y(?:dosagem|posologia)\y'
+               -- dosagem, frequencia_en_es
+               or b.base ~ '\y(?:twice|once|three times) a day\y|\yevery \d+ hours\y|\ycada \d+ horas\y|\y(?:una|dos|tres) veces al dia\y'),
            false)
     from (select regexp_replace(regexp_replace(lower(normalize(p_texto, nfkd)), '[\u0300-\u036f]', '', 'g'), '\s+', ' ', 'g') as base) as b
 $function$;

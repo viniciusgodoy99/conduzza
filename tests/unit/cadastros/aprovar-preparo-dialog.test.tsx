@@ -353,10 +353,21 @@ describe("o que mudou desde o texto em vigor", () => {
 
 describe("o aviso de remédio, dose ou jejum (D-80)", () => {
   it("aparece quando o servidor aponta algum aviso", () => {
-    const html = conteudo({ avisos: ["medicamento", "dosagem"] });
-    expect(html).toContain(
-      "Este texto cita remédio, dose ou jejum. Ao aprovar, você confirma que esta orientação vale para todo paciente deste procedimento, sem avaliação individual.",
-    );
+    const html = conteudo({
+      avisos: ["triagem", "diagnostico", "orientacao_clinica", "medicamento", "dosagem"],
+    });
+    // Cada categoria com o nome dela, sem repetir (triagem e diagnostico sao a
+    // mesma linha), e o que o RT confirma ao aprovar.
+    for (const rotulo of [
+      "cita remédio",
+      "cita dose",
+      "fala de sintoma",
+      "cita jejum ou outro cuidado",
+    ]) {
+      expect(html.split(`<li>${rotulo}</li>`)).toHaveLength(2);
+    }
+    expect(html).toContain(T.avisoAoAprovar);
+    expect(html).not.toContain(T.avisoRemedio);
     expect(html).toContain('data-tom="info"');
   });
 

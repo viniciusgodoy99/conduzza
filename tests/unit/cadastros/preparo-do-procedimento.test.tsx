@@ -459,6 +459,29 @@ describe("sem responsável técnico ativo", () => {
     });
   });
 
+  it("o registro do RT não conferido: o aviso, o chip sem envio, sem pedir nova aprovação, e Suspender continua", () => {
+    const html = semEntidades(
+      secao({
+        dados: dados({
+          rtAberto: { ...RT_ANA, registroConferidoEm: null },
+        }),
+        podeEditarCadastros: true,
+      }),
+    );
+    expect(html).toContain(
+      "Registro do RT ainda não conferido pela Conduzza",
+    );
+    expect(html).toContain("Aprovada, sem envio");
+    expect(html).not.toContain("Precisa de nova aprovação");
+    expect(html).toContain(T.suspender);
+  });
+
+  it("o registro conferido: nenhum aviso de conferência", () => {
+    expect(semEntidades(secao({ dados: dados() }))).not.toContain(
+      "ainda não conferido",
+    );
+  });
+
   it("o RT sem acesso ativo também conta como sem RT", () => {
     const html = semEntidades(secao({ dados: dados({ rtComAcesso: false }) }));
     expect(html).toContain(T.semRt);

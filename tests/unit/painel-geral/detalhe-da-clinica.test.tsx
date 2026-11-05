@@ -34,6 +34,7 @@ vi.mock("@/app/(admin)/painel-geral/actions", () => ({
   definirInterruptorGeralAction: vi.fn(),
   escreverNotaDaClinicaAction: vi.fn(),
   excluirNotaDaClinicaAction: vi.fn(),
+  conferirRegistroDoRtAction: vi.fn(),
 }));
 vi.mock("@/app/(app)/agente/whatsapp-actions", () => ({
   adicionarTelefoneDaIaAction: vi.fn(),
@@ -52,7 +53,11 @@ import {
   numerosDosCartoes,
   type DetalheDaClinicaProps,
 } from "@/components/painel-geral/detalhe-da-clinica";
-import { TEXTOS_DO_PAINEL } from "@/components/painel-geral/painel-geral";
+import {
+  PORTAL_DO_CONSELHO,
+  TEXTOS_DO_PAINEL,
+} from "@/components/painel-geral/painel-geral";
+import { CONSELHOS } from "@/lib/domain/preparo";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { DadosDaIa } from "@/lib/queries/ia-liberacao";
 import type {
@@ -1013,5 +1018,61 @@ describe("segunda leva do detalhe (pedido do dono de 26/10/2026)", () => {
         }),
       }),
     ).not.toMatch(/[—–]/);
+  });
+});
+
+describe("o responsavel tecnico no painel (AG7, decisao de 05/11/2026)", () => {
+  const RT = {
+    id: "a4444444-4444-4444-8444-444444444444",
+    userId: "b4444444-4444-4444-8444-444444444444",
+    nome: "Dra. Ana Souza",
+    conselho: "CRM",
+    numero: "12345",
+    uf: "CE",
+    desde: "2026-10-01T12:00:00Z",
+    ate: null,
+    registroConferidoEm: null,
+  };
+
+  it("sem conferir: nome, conselho, numero, UF, o portal do conselho e o botao", () => {
+    const html = detalhe({ responsavelTecnico: RT });
+    for (const valor of ["Dra. Ana Souza", "CRM", "12345", "CE"]) {
+      expect(html).toContain(valor);
+    }
+    expect(html).toContain('href="https://portal.cfm.org.br/busca-medicos"');
+    expect(html).toContain(TEXTOS_DO_PAINEL.rtNaoConferido);
+    expect(html).toContain(TEXTOS_DO_PAINEL.marcarRegistroConferido);
+  });
+
+  it("o proprio RT ve o botao desabilitado", () => {
+    const html = detalhe({ responsavelTecnico: RT, sessaoUserId: RT.userId });
+    expect(html).toContain(TEXTOS_DO_PAINEL.marcarRegistroConferido);
+    expect(html).toMatch(/cursor-not-allowed/);
+    expect(html).toMatch(/<button[^>]*disabled/);
+  });
+
+  it("conferido: a data no fuso da clinica e nenhum botao", () => {
+    const html = detalhe({
+      responsavelTecnico: { ...RT, registroConferidoEm: "2026-11-05T15:00:00Z" },
+    });
+    expect(html).toContain("Registro conferido em");
+    expect(html).toContain("12:00");
+    expect(html).not.toContain(TEXTOS_DO_PAINEL.conferindoRegistro);
+    expect(html).not.toContain(TEXTOS_DO_PAINEL.rtNaoConferido);
+  });
+
+  it("os estados de vazio e de erro", () => {
+    expect(detalhe({ responsavelTecnico: null })).toContain(
+      TEXTOS_DO_PAINEL.rtVazio,
+    );
+    expect(detalhe({ responsavelTecnico: "erro" })).toContain(
+      TEXTOS_DO_PAINEL.rtErroAoCarregar,
+    );
+  });
+
+  it("todo conselho da lista tem o portal", () => {
+    for (const conselho of CONSELHOS) {
+      expect(PORTAL_DO_CONSELHO[conselho]).toMatch(/^https:\/\//);
+    }
   });
 });

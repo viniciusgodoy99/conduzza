@@ -164,6 +164,7 @@ function emVigor(texto = APROVADO) {
     versao_id: VERSAO,
     texto,
     texto_sha256: sha256DoTexto(texto),
+    conselho: "CRM",
   };
 }
 
@@ -283,6 +284,30 @@ describe("o {{preparo}} do toque", () => {
       );
     },
   );
+
+  it.each([["CRN"], [undefined]])(
+    "remedio ou dose de RT de %s (nem CRM nem CRO): o toque sai sem o texto, e o log so com as categorias",
+    async (conselho) => {
+      const b = montar({ preparo: { ...emVigor(), conselho } });
+      expect(await executarPassoDeRegua(b.admin, job(), WORKER)).toEqual({
+        ok: true,
+      });
+      expect(corpoEnviado()).not.toContain("bisacodil");
+      expect(vi.mocked(log.warn)).toHaveBeenCalledWith(
+        "regua_preparo_recusado",
+        { clinic_id: CLINICA, job_id: JOB, kind: "medicamento,dosagem" },
+      );
+    },
+  );
+
+  it("o texto sem remedio nem dose sai com RT de qualquer conselho", async () => {
+    const texto = "Traga o pedido médico e um documento com foto.";
+    const b = montar({ preparo: { ...emVigor(texto), conselho: "CRN" } });
+    expect(await executarPassoDeRegua(b.admin, job(), WORKER)).toEqual({
+      ok: true,
+    });
+    expect(corpoEnviado()).toContain(texto);
+  });
 
   it("a pos-condicao: o renderizador mexeu no texto (as chaves duplas que ele apaga): o toque sai sem ele e loga", async () => {
     const comChaves = "Venha em jejum de 8 horas {{e}} traga o pedido.";

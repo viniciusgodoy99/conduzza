@@ -67,7 +67,7 @@ const RT_ABERTO: Linha = {
   uf: "CE",
   desde: "2026-11-01T12:00:00Z",
   ate: null,
-  registroConferidoEm: "2026-10-02T12:00:00Z",
+  registro_conferido_em: "2026-11-02T12:00:00Z",
 };
 
 const PROCEDIMENTOS: Linha[] = [

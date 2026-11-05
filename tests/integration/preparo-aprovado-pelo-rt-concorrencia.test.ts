@@ -73,6 +73,7 @@ const pessoa = (apelido: string) => usuarios.get(apelido)!;
 const como = (apelido: string) => sessoes.get(apelido)!;
 
 let clinica = "";
+let conferente: SupabaseClient | null = null;
 let numero = "";
 let telefones = 0;
 let procedimentos = 0;
@@ -142,6 +143,80 @@ function semCicloNemRepeticao(...respostas: unknown[]): void {
     expect(texto).not.toContain("40P01");
     expect(texto).not.toContain("40001");
   }
+}
+
+
+// Decisao do dono de 05/11/2026: sem o registro do RT conferido, nada esta em
+// vigor, e so o super admin confere. Por isso esta suite exige
+// INTEGRACAO_COM_SUPER_ADMIN=1 (o usuario sintetico com product_admin NO BANCO
+// DE PRODUCAO, sem vinculo, como em super-admin-sem-clinica.test.ts; sai no
+// afterAll). Se uma execucao morrer antes do afterAll:
+//   delete from public.product_admin p using auth.users u
+//    where u.id = p.user_id and u.email like 'preparo-conc-super-%@example.com';
+async function criarConferente(): Promise<void> {
+  if (process.env.INTEGRACAO_COM_SUPER_ADMIN !== "1") {
+    throw new Error(
+      "Rode com INTEGRACAO_COM_SUPER_ADMIN=1: sem a conferencia do registro do RT, nenhum preparo fica em vigor.",
+    );
+  }
+  const email = `preparo-conc-super-${sufixo}@example.com`;
+  const { data, error } = await admin.auth.admin.createUser({
+    email,
+    password: SENHA,
+    email_confirm: true,
+    user_metadata: { name: "Conferente sintético" },
+  });
+  if (error || !data.user) {
+    throw new Error(`criar o conferente: ${error?.message ?? "sem usuário"}`);
+  }
+  usuarios.set("conferente", data.user.id);
+  await admin
+    .from("product_admin")
+    .insert({ user_id: data.user.id })
+    .throwOnError();
+  const cliente = anonClient();
+  const { error: erroLogin } = await cliente.auth.signInWithPassword({
+    email,
+    password: SENHA,
+  });
+  if (erroLogin) {
+    throw new Error(`login do conferente: ${erroLogin.message}`);
+  }
+  conferente = cliente;
+}
+
+async function tirarConferente(): Promise<void> {
+  const id = usuarios.get("conferente");
+  if (id) {
+    await admin.from("product_admin").delete().eq("user_id", id);
+  }
+}
+
+/** A designacao aberta, com o registro conferido pelo super admin. */
+async function conferirRtAberto(): Promise<string> {
+  const { data } = await admin
+    .from("responsavel_tecnico")
+    .select("id")
+    .eq("clinic_id", clinica)
+    .is("ate", null)
+    .single()
+    .throwOnError();
+  const id = (data as { id: string }).id;
+  const { error } = await conferente!.rpc(
+    "conferir_registro_do_responsavel_tecnico",
+    { p_rt_id: id },
+  );
+  expect(error, "conferir o registro do RT").toBeNull();
+  return id;
+}
+
+async function definirRtConferido(
+  apelido: string,
+  quem: string,
+  nome: string,
+): Promise<void> {
+  expect(await definirRt(apelido, quem, nome)).toBeNull();
+  await conferirRtAberto();
 }
 
 async function definirRt(
@@ -360,7 +435,8 @@ beforeAll(async () => {
   await criarPessoa("gestor", "gestor");
   await criarPessoa("rt", "profissional");
   await criarPessoa("rt2", "recepcao");
-  expect(await definirRt("admin", "rt", "Dra. Ana Souza")).toBeNull();
+  await criarConferente();
+  await definirRtConferido("admin", "rt", "Dra. Ana Souza");
 }, 300_000);
 
 afterAll(async () => {
@@ -373,6 +449,7 @@ afterAll(async () => {
   if (clinica) {
     await admin.from("clinic").delete().eq("id", clinica);
   }
+  await tirarConferente();
   for (const id of usuarios.values()) {
     await admin.auth.admin.deleteUser(id);
   }
@@ -464,7 +541,7 @@ describe("P3, a aprovacao contra o fim do RT", () => {
         expect(await situacao(salvo.versao_id)).toBe("aprovado");
       }
       expect(await emVigor(salvo.versao_id)).toBe(false);
-      expect(await definirRt("admin", "rt", "Dra. Ana Souza")).toBeNull();
+      await definirRtConferido("admin", "rt", "Dra. Ana Souza");
     }
   });
 });
@@ -515,7 +592,7 @@ describe("P6, o envio contra a troca do RT", () => {
       expect(await emVigor(salvo.versao_id)).toBe(false);
       await rpcOk("concluir_job", { p_id: cena.job, p_worker: WORKER });
       // O RT de antes de volta, para o proximo caso aprovar.
-      expect(await definirRt("admin", "rt", "Dra. Ana Souza")).toBeNull();
+      await definirRtConferido("admin", "rt", "Dra. Ana Souza");
     }
   });
 });
@@ -542,7 +619,7 @@ describe("P7, definir o RT duas vezes", () => {
         .is("ate", null)
         .throwOnError();
       expect(count).toBe(1);
-      expect(await definirRt("admin", "rt", "Dra. Ana Souza")).toBeNull();
+      await definirRtConferido("admin", "rt", "Dra. Ana Souza");
     }
   });
 });
@@ -571,7 +648,7 @@ describe("P7b, definir contra encerrar (BANCO-6)", () => {
         .throwOnError();
       expect(count ?? 0).toBeLessThanOrEqual(1);
       // De volta ao RT de sempre.
-      expect(await definirRt("admin", "rt", "Dra. Ana Souza")).toBeNull();
+      await definirRtConferido("admin", "rt", "Dra. Ana Souza");
     }
   });
 });

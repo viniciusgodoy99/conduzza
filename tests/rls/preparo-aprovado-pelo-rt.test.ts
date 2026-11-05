@@ -574,6 +574,76 @@ describe("o conteudo que o banco recusa sozinho (CFM-2)", () => {
   });
 });
 
+describe("as recusas de 05/11/2026 e a conferencia do registro", () => {
+  it("o sintoma normalizado e a oferta: 22023 texto_recusado para todo papel, antes da permissao", async () => {
+    const antes = await maiorVersao(procedimento("pA3"));
+    for (const recusado of [
+      "Cólica leve depois do laxante é normal e passa sozinha.",
+      "Aproveite e faça também a limpeza de pele.",
+    ]) {
+      for (const apelido of ["admin-a", "rt-a", "recepcao-a", "admin-b"]) {
+        const { error } = await salvar(
+          como(apelido),
+          procedimento("pA3"),
+          recusado,
+        );
+        expect(error?.code, `${apelido}: ${recusado}`).toBe("22023");
+        expect(error?.message).toBe("texto_recusado");
+      }
+    }
+    expect(await maiorVersao(procedimento("pA3"))).toBe(antes);
+  });
+
+  it("os papeis da clinica e o proprio RT nao conferem; a service role tambem nao; o membro le a coluna", async () => {
+    const { data: rt } = await como("leitura-a")
+      .from("responsavel_tecnico")
+      .select("id, registro_conferido_em, registro_conferido_por")
+      .eq("clinic_id", clinicaA)
+      .is("ate", null)
+      .single()
+      .throwOnError();
+    const linha = rt as { id: string; registro_conferido_em: string | null };
+    expect(linha.registro_conferido_em).toBeNull();
+    for (const cliente of [
+      como("admin-a"),
+      como("gestor-a"),
+      como("rt-a"),
+      como("recepcao-a"),
+      como("admin-b"),
+      admin,
+    ]) {
+      const { error } = await cliente.rpc(
+        "conferir_registro_do_responsavel_tecnico",
+        { p_rt_id: linha.id },
+      );
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
+      const direto = await cliente
+        .from("responsavel_tecnico")
+        .update({ registro_conferido_em: new Date().toISOString() })
+        .eq("id", linha.id);
+      expect(direto.error?.code).toBe(PERMISSAO_NEGADA);
+    }
+    const { data: depois } = await admin
+      .from("responsavel_tecnico")
+      .select("registro_conferido_em")
+      .eq("id", linha.id)
+      .single()
+      .throwOnError();
+    expect(
+      (depois as { registro_conferido_em: string | null }).registro_conferido_em,
+    ).toBeNull();
+  });
+
+  it("a clinica B nao le a conferencia da A", async () => {
+    const { data, error } = await como("admin-b")
+      .from("responsavel_tecnico")
+      .select("registro_conferido_em")
+      .eq("clinic_id", clinicaA);
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+  });
+});
+
 describe("aprovar e devolver: so o RT vigente", () => {
   it("o administrador, o gestor, o Implementador, a leitura e o RT da B nao aprovam; o RT aprova", async () => {
     const salvo = await salvarOk("admin-a", procedimento("pA4"), texto(10));
@@ -1067,6 +1137,45 @@ describe.skipIf(!COM_SUPER_ADMIN)("o super admin (opt-in)", () => {
         .eq("user_id", superAdmin);
       expect(error, "tirar o product_admin sintetico").toBeNull();
     }
+  });
+
+  it("confere o registro do RT uma vez, com a trilha; a segunda vez recusa", async () => {
+    const sessao = sessaoDoSuper!;
+    const { data: rt } = await sessao
+      .from("responsavel_tecnico")
+      .select("id, user_id")
+      .eq("clinic_id", clinicaB)
+      .is("ate", null)
+      .single()
+      .throwOnError();
+    const linha = rt as { id: string; user_id: string };
+    const primeira = await sessao.rpc(
+      "conferir_registro_do_responsavel_tecnico",
+      { p_rt_id: linha.id },
+    );
+    expect(primeira.error).toBeNull();
+    const { data: lida } = await como("admin-b")
+      .from("responsavel_tecnico")
+      .select("registro_conferido_em, registro_conferido_por")
+      .eq("id", linha.id)
+      .single()
+      .throwOnError();
+    expect(lida).toMatchObject({ registro_conferido_por: superAdmin });
+    const { data: trilha } = await admin
+      .from("audit_log")
+      .select("user_id, detalhes")
+      .eq("entity_id", linha.id)
+      .eq("action", "conferiu_registro_do_responsavel_tecnico")
+      .throwOnError();
+    expect(trilha).toEqual([
+      { user_id: superAdmin, detalhes: { user_id: linha.user_id } },
+    ]);
+    const segunda = await sessao.rpc(
+      "conferir_registro_do_responsavel_tecnico",
+      { p_rt_id: linha.id },
+    );
+    expect(segunda.error?.code).toBe("P0001");
+    expect(segunda.error?.message).toBe("registro_ja_conferido");
   });
 
   it("nao grava nas duas tabelas pela API (so pelas RPCs)", async () => {

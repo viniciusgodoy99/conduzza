@@ -463,9 +463,19 @@ describe("o turno do preparo", () => {
       "oferta_casada",
     ],
     [
-      "preco (desconto)",
+      "oferta de outro procedimento (com desconto, a oferta vem primeiro)",
       "Venha em jejum de 8 horas. Aproveite e faça também a limpeza de pele com 20% de desconto.",
+      "oferta_casada",
+    ],
+    [
+      "preco (desconto)",
+      "Venha em jejum de 8 horas. O exame tem 20% de desconto.",
       "preco_nao_verificado",
+    ],
+    [
+      "normalizacao de sintoma",
+      "Venha em jejum de 8 horas. Cólica leve é normal e passa sozinha.",
+      "triagem",
     ],
     [
       "link",
