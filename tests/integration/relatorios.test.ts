@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { agenteComAtividade } from "@/lib/domain/exportacao-de-resultados";
 import { diaCivil, somarDias } from "@/lib/domain/horarios";
 import {
   fetchAgendaDoPeriodo,
@@ -8,7 +9,7 @@ import {
   fetchLinhaDeBase,
 } from "@/lib/queries/relatorios";
 import { criarNumeroDeTeste } from "../rls/numeros";
-import { adminClient } from "../rls/stack";
+import { adminClient, anonClient } from "../rls/stack";
 
 // Fase 5.1/5.2 contra o banco REAL: as tres RPCs de agregados por periodo
 // (migration 20260918100000) com fixtures determinadas data a data. O aceite
@@ -389,6 +390,360 @@ describe("atendimento_do_periodo", () => {
     expect(atendimento.anterior!.conversasIniciadas).toBe(0);
     // Zero conversas no anterior: mediana null ("sem dados"), nunca 0.
     expect(atendimento.anterior!.primeiraResposta.medianaSegundos).toBeNull();
+  });
+});
+
+// O bloco "agente" de atendimento_do_periodo (migration 20261104120000). Escrito
+// em 04/11/2026 com a migration NAO aplicada e NAO rodado: bate no banco de
+// verdade e so passa depois dela (npm run test:integration -- relatorios). A
+// conta inteira, cenario a cenario, esta no ensaio da migration
+// (~/.claude/plans/agente-completo/ag0/ensaio-20261104120000.sql).
+describe("atendimento_do_periodo: o desempenho do agente", () => {
+  const SENHA = "Agente!Relatorios2026";
+  const usuarios: string[] = [];
+  let clinicaA = "";
+  let clinicaB = "";
+
+  async function criarClinica(nome: string): Promise<string> {
+    const { data } = await admin
+      .from("clinic")
+      .insert({
+        name: `Agente ${nome} ${sufixo}`,
+        slug: `agente-${nome}-${sufixo}`,
+        e_de_teste: true,
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    await criarNumeroDeTeste(admin, data!.id as string);
+    return data!.id as string;
+  }
+
+  /** Conversa com contato proprio, a primeira entrada em deltaMs. */
+  async function conversa(
+    clinica: string,
+    telefone: string,
+    deltaMs: number,
+  ): Promise<{ id: string; contato: string }> {
+    const { data: contato } = await admin
+      .from("contact")
+      .insert({
+        clinic_id: clinica,
+        phone_e164: `+5584912${sufixo.slice(0, 5)}${telefone}`,
+        first_contact_at: iso(deltaMs),
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    const { data: linha } = await admin
+      .from("conversation")
+      .insert({
+        clinic_id: clinica,
+        contact_id: contato!.id,
+        created_at: iso(deltaMs),
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    await mensagem(
+      clinica,
+      linha!.id as string,
+      "entrada",
+      "paciente",
+      deltaMs,
+    );
+    return { id: linha!.id as string, contato: contato!.id as string };
+  }
+
+  async function mensagem(
+    clinica: string,
+    conversaId: string,
+    direction: "entrada" | "saida",
+    author: "paciente" | "ia" | "usuario",
+    deltaMs: number,
+    deliveryStatus: string | null = null,
+  ) {
+    await admin
+      .from("message")
+      .insert({
+        clinic_id: clinica,
+        conversation_id: conversaId,
+        direction,
+        author,
+        body: "Mensagem de teste",
+        delivery_status: deliveryStatus,
+        created_at: iso(deltaMs),
+      })
+      .throwOnError();
+  }
+
+  async function passagem(
+    clinica: string,
+    conversaId: string,
+    motivo: string,
+    deltaMs: number,
+  ) {
+    await admin
+      .from("ai_decision_log")
+      .insert({
+        clinic_id: clinica,
+        conversation_id: conversaId,
+        escalation_reason: motivo,
+        created_at: iso(deltaMs),
+      })
+      .throwOnError();
+  }
+
+  async function logado(papel: string, clinica: string, profissional?: string) {
+    const email = `agente-relat-${papel}-${sufixo}@teste.dev`;
+    const { data } = await admin.auth.admin.createUser({
+      email,
+      password: SENHA,
+      email_confirm: true,
+      user_metadata: { name: papel },
+    });
+    usuarios.push(data.user!.id);
+    await admin
+      .from("clinic_member")
+      .insert({
+        clinic_id: clinica,
+        user_id: data.user!.id,
+        role: papel,
+        status: "ativo",
+        ...(profissional ? { professional_id: profissional } : {}),
+      })
+      .throwOnError();
+    const cliente = anonClient();
+    const { error } = await cliente.auth.signInWithPassword({
+      email,
+      password: SENHA,
+    });
+    if (error) {
+      throw new Error(`login ${email}: ${error.message}`);
+    }
+    return cliente;
+  }
+
+  let profissionalDaA = "";
+
+  beforeAll(async () => {
+    clinicaA = await criarClinica("a");
+    clinicaB = await criarClinica("b");
+
+    // Periodo atual da A. Resolvida em 60 s.
+    const resolvida = await conversa(clinicaA, "1", -5 * DIA);
+    await mensagem(
+      clinicaA,
+      resolvida.id,
+      "saida",
+      "ia",
+      -5 * DIA + 60_000,
+      "enviada",
+    );
+    // Passou para a equipe e ninguem respondeu: nao foi resolvida (180 s).
+    const transferida = await conversa(clinicaA, "2", -4 * DIA);
+    await mensagem(
+      clinicaA,
+      transferida.id,
+      "saida",
+      "ia",
+      -4 * DIA + 180_000,
+      "enviada",
+    );
+    await passagem(
+      clinicaA,
+      transferida.id,
+      "pedido_humano",
+      -4 * DIA + 200_000,
+    );
+    // A equipe respondeu depois da IA (300 s).
+    const comEquipe = await conversa(clinicaA, "3", -3 * DIA);
+    await mensagem(
+      clinicaA,
+      comEquipe.id,
+      "saida",
+      "ia",
+      -3 * DIA + 300_000,
+      "entregue",
+    );
+    await mensagem(
+      clinicaA,
+      comEquipe.id,
+      "saida",
+      "usuario",
+      -3 * DIA + 400_000,
+      "enviada",
+    );
+    // O envio da IA falhou: nao foi atendida, nem resolvida, nem entra na mediana.
+    const falhou = await conversa(clinicaA, "4", -2 * DIA);
+    await mensagem(
+      clinicaA,
+      falhou.id,
+      "saida",
+      "ia",
+      -2 * DIA + 5_000,
+      "falhou",
+    );
+    // Periodo anterior da A: respondeu em 30 s e passou por insatisfacao.
+    const anterior = await conversa(clinicaA, "5", -40 * DIA);
+    await mensagem(
+      clinicaA,
+      anterior.id,
+      "saida",
+      "ia",
+      -40 * DIA + 30_000,
+      "enviada",
+    );
+    await passagem(clinicaA, anterior.id, "insatisfacao", -40 * DIA + 40_000);
+
+    // Consultas da A: a recusada e a da equipe nao contam.
+    const { data: prof } = await admin
+      .from("professional")
+      .insert({ clinic_id: clinicaA, name: "Dra. Agente" })
+      .select("id")
+      .single()
+      .throwOnError();
+    profissionalDaA = prof!.id as string;
+    const { data: proc } = await admin
+      .from("procedure")
+      .insert({
+        clinic_id: clinicaA,
+        name: "Avaliação",
+        default_duration_min: 30,
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    const { data: vinculo } = await admin
+      .from("service_link")
+      .insert({
+        clinic_id: clinicaA,
+        professional_id: profissionalDaA,
+        procedure_id: proc!.id,
+        insurance_id: null,
+        price_cents: null,
+        duration_min: 30,
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    const consulta = (
+      createdBy: string,
+      approvalStatus: string | null,
+      createdDelta: number,
+      horasAFrente: number,
+    ) => ({
+      clinic_id: clinicaA,
+      contact_id: resolvida.contato,
+      professional_id: profissionalDaA,
+      service_link_id: vinculo!.id,
+      status: "agendado",
+      starts_at: iso(horasAFrente * HORA),
+      ends_at: iso(horasAFrente * HORA + 30 * MINUTO),
+      created_at: iso(createdDelta),
+      created_by: createdBy,
+      approval_status: approvalStatus,
+    });
+    await admin
+      .from("appointment")
+      .insert([
+        consulta("ia", "pendente", -1 * DIA, 100),
+        consulta("ia", "recusado", -1 * DIA, 101),
+        consulta("usuario", null, -1 * DIA, 102),
+        consulta("ia", "pendente", -40 * DIA, 103),
+      ])
+      .throwOnError();
+
+    // A B tem atividade da IA: nada disso pode aparecer para quem e da A.
+    const daB = await conversa(clinicaB, "6", -5 * DIA);
+    await mensagem(
+      clinicaB,
+      daB.id,
+      "saida",
+      "ia",
+      -5 * DIA + 90_000,
+      "enviada",
+    );
+  });
+
+  afterAll(async () => {
+    await admin.from("clinic").delete().in("id", [clinicaA, clinicaB]);
+    for (const id of usuarios) {
+      await admin.auth.admin.deleteUser(id);
+    }
+  });
+
+  it("conta cada número nas duas janelas", async () => {
+    const lido = await fetchAtendimentoDoPeriodo(
+      admin,
+      clinicaA,
+      TZ,
+      diaDe,
+      diaAte,
+    );
+    expect(lido.atual.agente).toEqual({
+      atendidas: 3,
+      resolvidasSemHumano: 1,
+      transferidas: 1,
+      insatisfacao: 0,
+      primeiraRespostaMedianaSegundos: 180,
+      agendamentos: 1,
+    });
+    expect(lido.anterior?.agente).toEqual({
+      atendidas: 1,
+      resolvidasSemHumano: 0,
+      transferidas: 1,
+      insatisfacao: 1,
+      primeiraRespostaMedianaSegundos: 30,
+      agendamentos: 1,
+    });
+  });
+
+  it("um usuário da A não lê o bloco da B: zeros, e a tela lê como Ainda não medido", async () => {
+    const recepcao = await logado("recepcao", clinicaA);
+    const lido = await fetchAtendimentoDoPeriodo(
+      recepcao,
+      clinicaB,
+      TZ,
+      diaDe,
+      diaAte,
+    );
+    expect(lido.atual.agente).toEqual({
+      atendidas: 0,
+      resolvidasSemHumano: 0,
+      transferidas: 0,
+      insatisfacao: 0,
+      primeiraRespostaMedianaSegundos: null,
+      agendamentos: 0,
+    });
+    expect(agenteComAtividade(lido.atual.agente)).toBe(false);
+    // Contraprova: a mesma pessoa le a propria clinica.
+    const daPropria = await fetchAtendimentoDoPeriodo(
+      recepcao,
+      clinicaA,
+      TZ,
+      diaDe,
+      diaAte,
+    );
+    expect(daPropria.atual.agente?.atendidas).toBe(3);
+  });
+
+  it("o profissional recebe null: o recorte fica indisponível, nunca números parciais", async () => {
+    const profissional = await logado(
+      "profissional",
+      clinicaA,
+      profissionalDaA,
+    );
+    const { data, error } = await profissional.rpc("atendimento_do_periodo", {
+      p_clinic_id: clinicaA,
+      p_de: iso(-29 * DIA),
+      p_ate: iso(HORA),
+    });
+    expect(error).toBeNull();
+    expect(data).toBeNull();
+    await expect(
+      fetchAtendimentoDoPeriodo(profissional, clinicaA, TZ, diaDe, diaAte),
+    ).rejects.toThrow("Recorte indisponível");
   });
 });
 
