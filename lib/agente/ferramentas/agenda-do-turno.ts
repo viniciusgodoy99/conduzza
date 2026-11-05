@@ -1049,16 +1049,20 @@ function emUtc(iso: string): string {
  * Revisao da AG4 (achado 7): o estado logo depois de a IA cancelar uma
  * consulta nesta conversa (cancelar_consulta deixa o id dela em
  * appointment_id, com o desfecho), e nada de outro atendimento comecou.
+ * A marcacao que ja estava em andamento antes do cancelamento (a reserva e os
+ * horarios oferecidos ficam) nao apaga o fato: sem isso, a resposta verdadeira
+ * "foi cancelada" era barrada no turno seguinte. Quem comeca outro atendimento
+ * depois (buscar, reservar) troca a intencao, e o id sai.
  */
 function ehEstadoDoCancelamento(e: EstadoDoAtendimento): boolean {
   return (
     e.desfecho === "cancelou" &&
     e.intencao === "cancelar" &&
-    e.etapa === "informacao" &&
+    (e.etapa === "informacao" ||
+      e.etapa === "oferta" ||
+      e.etapa === "aguardando_confirmacao") &&
     e.pedido_pendente === null &&
-    e.appointment_id !== null &&
-    e.slot_hold_id === null &&
-    e.horarios_oferecidos.length === 0
+    e.appointment_id !== null
   );
 }
 

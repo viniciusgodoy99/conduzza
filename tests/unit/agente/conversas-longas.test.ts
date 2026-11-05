@@ -2796,14 +2796,7 @@ describe("11. duas frentes, o efeito já feito e a conversa que sai da IA por fo
     await modeloResponde(c, "Obrigada", TCHAU);
   });
 
-  // achado: com uma marcacao em andamento, o cancelamento feito sai do estado no
-  // mesmo turno (ehEstadoDoCancelamento exige a reserva vazia e nenhum horario
-  // oferecido; fechar apaga o id): no turno seguinte a IA nao sabe mais que
-  // cancelou, e a resposta VERDADEIRA ("sua consulta ... foi cancelada") e
-  // barrada (acao_nao_executada) e a conversa cai para a equipe. Nada errado
-  // chega ao paciente: ele recebe a frase fixa no lugar da resposta. Devia
-  // passar, como passa sem a marcacao em andamento (cenario 2).
-  it.fails("com a marcação em andamento, a resposta verdadeira sobre o cancelamento feito tem de passar", async () => {
+  it("com a marcação em andamento, a resposta verdadeira sobre o cancelamento feito tem de passar", async () => {
     const c = clinicaComDuasUnidades();
     await conversaFiada(c, ["Oi, tudo bem?", "Queria umas informações"]);
     await cancelarNoMeioDaMarcacao(c);
@@ -2814,6 +2807,71 @@ describe("11. duas frentes, o efeito já feito e a conversa que sai da IA por fo
       [],
       UM_MINUTO_MS,
     );
+  });
+
+  it("com a marcação em andamento e o cancelamento que NÃO aconteceu: 'foi cancelada' é barrada", async () => {
+    const c = clinicaComDuasUnidades();
+    await conversaFiada(c, [
+      "Oi, tudo bem?",
+      "Queria umas informações",
+      "Vou ver uma coisa aqui",
+      "Já volto",
+    ]);
+    const { c1 } = consultasDoContato(c.cenario.banco);
+    await modeloResponde(
+      c,
+      "Quero marcar limpeza de pele de manhã",
+      "Tenho quarta, 21/10 às 08:00 com a Dra. Ana Lima na unidade Aldeota. Pode ser?",
+      [
+        ferramenta(
+          "buscar_horario",
+          busca({ procedimento: P_LIMPEZA_DO_CADASTRO, periodo: "manha" }),
+        ),
+      ],
+    );
+    await sistemaResponde(
+      c,
+      "Antes, preciso cancelar minha consulta de quinta",
+      T1_QUINTA,
+      pedirOCancelamento(),
+      UM_MINUTO_MS,
+    );
+    await modeloResponde(
+      c,
+      "Não",
+      "Tudo bem, sua consulta continua marcada.",
+      [ferramenta("cancelar_consulta", {})],
+      UM_MINUTO_MS,
+    );
+    expect(c1.status).toBe("agendado");
+    const alucinou = "Sim, sua consulta de quinta, 22/10 às 14:00 foi cancelada.";
+    const t = await c.fala(
+      { texto: "Foi cancelada mesmo?", roteiro: [final(alucinou)] },
+      UM_MINUTO_MS,
+    );
+    passou(t, {
+      desfecho: "bloqueou",
+      regra: "acao_nao_executada",
+      camada: "regra",
+    });
+    expect(c1.status).toBe("agendado");
+  });
+
+  it("com a marcação em andamento, o fato do cancelamento é só o da consulta cancelada: a outra consulta 'foi cancelada' é barrada", async () => {
+    const c = clinicaComDuasUnidades();
+    await conversaFiada(c, ["Oi, tudo bem?", "Queria umas informações"]);
+    const { c2 } = await cancelarNoMeioDaMarcacao(c);
+    const alucinou = "Sim, sua consulta de terça, 27/10 às 09:00 foi cancelada.";
+    const t = await c.fala(
+      { texto: "E a de terça, foi cancelada?", roteiro: [final(alucinou)] },
+      UM_MINUTO_MS,
+    );
+    passou(t, {
+      desfecho: "bloqueou",
+      regra: "acao_nao_executada",
+      camada: "regra",
+    });
+    expect(c2.status).toBe("agendado");
   });
 
   it("a marcação feita com a resposta barrada: a consulta fica, o paciente recebe só a frase e a nota conta a consulta", async () => {
