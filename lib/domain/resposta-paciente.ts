@@ -226,7 +226,10 @@ const NAO_DO_CANCELAMENTO = new Set([
 const PERGUNTA_NA_MENSAGEM = /[?¿؟？]/u;
 
 /** Uma mensagem so, pela lista fechada. */
-function respostaDeUmaMensagem(body: string): RespostaAoCancelamento {
+function respostaDeUmaMensagem(
+  body: string,
+  sim: ReadonlySet<string> = SIM_DO_CANCELAMENTO,
+): RespostaAoCancelamento {
   if (PERGUNTA_NA_MENSAGEM.test(body)) {
     return "nao_reconhecida";
   }
@@ -243,7 +246,7 @@ function respostaDeUmaMensagem(body: string): RespostaAoCancelamento {
   if (texto.length === 0) {
     return temEmojiDeConfirmacao ? "sim" : "nao_reconhecida";
   }
-  if (SIM_DO_CANCELAMENTO.has(texto)) {
+  if (sim.has(texto)) {
     return "sim";
   }
   if (NAO_DO_CANCELAMENTO.has(texto)) {
@@ -284,6 +287,86 @@ export const FONTES_DA_RESPOSTA_AO_CANCELAMENTO: readonly string[] = [
   EMOJIS_DE_CONFIRMACAO.join(","),
   // Revisao da AG4 (achado 8): a pergunta nunca e sim nem nao.
   PERGUNTA_NA_MENSAGEM.source,
+];
+
+// ---------------------------------------------------------------------------
+// Conversas longas (05/11/2026): o "sim" do "Confirma ...?" da marcacao e da
+// remarcacao, pela mesma leitura e pela mesma lista do cancelamento, sem os
+// verbos de cancelar ("pode cancelar" nunca marca consulta) e com os de marcar.
+// So o sim claro chega a RPC: o resto (o "nao" inclusive) nao marca.
+// ---------------------------------------------------------------------------
+
+const SIM_DA_MARCACAO: ReadonlySet<string> = new Set([
+  ...[...SIM_DO_CANCELAMENTO].filter((f) => !/cancel|desmarc/.test(f)),
+  "confirmar",
+  "isso confirmo",
+  "quero",
+  "pode ser",
+  "sim pode ser",
+  "pode marcar",
+  "pode marcar sim",
+  "sim pode marcar",
+  "pode agendar",
+  "pode agendar sim",
+  "sim pode agendar",
+  "pode confirmar",
+  "sim pode confirmar",
+  "pode remarcar",
+  "sim pode remarcar",
+  "marca",
+  "marca sim",
+  "sim marca",
+  "marcar",
+  "agenda",
+  "agendar",
+  "remarca",
+  "remarcar",
+  "quero marcar",
+  "sim quero marcar",
+  "ok pode marcar",
+  "quero agendar",
+  "quero remarcar",
+]);
+
+/**
+ * O agradecimento que chega junto do sim ("Sim" e "Obrigada!" na mesma rajada)
+ * nao muda a resposta, e sozinho nao confirma nada.
+ */
+const AGRADECIMENTO = new Set([
+  "obrigado",
+  "obrigada",
+  "muito obrigado",
+  "muito obrigada",
+  "obg",
+  "valeu",
+]);
+
+/**
+ * A pessoa confirmou a marcacao (as mensagens dela depois da pergunta, ainda
+ * nao respondidas)? So quando, tirado o agradecimento, sobra ao menos uma e
+ * TODAS sao um sim da lista fechada. PURA, nunca lanca.
+ */
+export function confirmouAMarcacao(
+  mensagens: readonly (string | null)[],
+): boolean {
+  const resposta = mensagens.filter(
+    (m) => m === null || !AGRADECIMENTO.has(normalizar(m)),
+  );
+  return (
+    resposta.length > 0 &&
+    resposta.every(
+      (m) =>
+        m !== null &&
+        m.trim() !== "" &&
+        respostaDeUmaMensagem(m, SIM_DA_MARCACAO) === "sim",
+    )
+  );
+}
+
+/** As listas do "sim" da marcacao (para a versao das regras do agente). */
+export const FONTES_DA_RESPOSTA_A_MARCACAO: readonly string[] = [
+  [...SIM_DA_MARCACAO].join(","),
+  [...AGRADECIMENTO].join(","),
 ];
 
 // ---------------------------------------------------------------------------

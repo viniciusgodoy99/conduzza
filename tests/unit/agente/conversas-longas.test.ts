@@ -2384,13 +2384,7 @@ describe("9. o 'sim' solto não confirma nada", () => {
     expect(c.cenario.fila).toEqual([]);
   });
 
-  // achado: na marcacao o "sim" nao tem a lista fechada do cancelamento e da
-  // lista de espera (D-30): quem julga a resposta da pessoa e so o modelo. A
-  // pessoa escreve "Não, melhor não" (sozinho, ou "Sim" e "Não, espera" na mesma
-  // rajada, lidos pelo mesmo job), o modelo chama agendar e a consulta nasce,
-  // pendente da equipe, com a resposta "ficou marcada". Devia recusar
-  // (sem_confirmacao_do_paciente), como no cancelamento.
-  it.fails.each([
+  it.each([
     ["'Não, melhor não'", ["Não, melhor não"]],
     ["'Sim' e 'Não, espera' na mesma rajada", ["Sim", "Não, espera"]],
   ])(
@@ -2404,8 +2398,51 @@ describe("9. o 'sim' solto não confirma nada", () => {
         20_000,
       );
       expect(c.consultas).toEqual([]);
+      expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
     },
   );
+
+  it("marcação: 'Pode cancelar' nunca marca, a pergunta volta, e o 'sim' seguinte marca", async () => {
+    const c = clinicaComDuasUnidades();
+    await comAPerguntaConfirmaNoAr(c);
+    const t = await c.fala(
+      {
+        texto: "Pode cancelar",
+        roteiro: [ferramenta("agendar", {}), final(CONFIRMA_QUARTA)],
+      },
+      20_000,
+    );
+    respondeu(t, CONFIRMA_QUARTA);
+    expect(saidasDoTurno(t)[0]).toEqual({
+      resultado: "sem_confirmacao_do_paciente",
+    });
+    expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
+    expect(t.estado.falhas_seguidas).toBe(1);
+    expect(t.estado.etapa).toBe("aguardando_confirmacao");
+    await modeloResponde(c, "Sim", MARCOU_QUARTA, [ferramenta("agendar", {})], 20_000);
+    expect(c.consultas).toHaveLength(1);
+  });
+
+  it("remarcação: 'Não, melhor não' com o modelo que chama agendar não pede a remarcação", async () => {
+    const c = clinicaComDuasUnidades();
+    const consulta = await marcarASexta(c);
+    c.equipeAprova(consulta);
+    await modeloResponde(
+      c,
+      "Qual é mesmo o horário?",
+      "Sua Consulta está marcada para sexta, 30/10 às 14:00.",
+    );
+    await pedirARemarcacaoParaTerca(c);
+    await c.fala(
+      {
+        texto: "Não, melhor não",
+        roteiro: [ferramenta("agendar", {}), final("Tudo bem, nada mudou.")],
+      },
+      20_000,
+    );
+    expect(c.consultas.find((a) => a.remarcacao_de === consulta.id)).toBeUndefined();
+    expect(consulta.status).toBe("agendado");
+  });
 
   it("cancelamento: 'Sim' e 'Não, espera' na mesma rajada: a lista fechada não cancela, e a pergunta volta", async () => {
     const c = clinicaComDuasUnidades();

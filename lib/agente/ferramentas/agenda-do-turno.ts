@@ -167,7 +167,10 @@ import type {
   HorarioLivreDoTurno,
 } from "@/lib/domain/conformidade/fatos-do-turno";
 import { pareceNomeDePessoa } from "@/lib/domain/conformidade/minimizar";
-import { interpretarRespostaAoCancelamento } from "@/lib/domain/resposta-paciente";
+import {
+  confirmouAMarcacao,
+  interpretarRespostaAoCancelamento,
+} from "@/lib/domain/resposta-paciente";
 
 import {
   comHorariosOferecidos,
@@ -2798,6 +2801,24 @@ export function criarAgendaDoTurno(entrada: {
             ? "não deu para conferir a que mensagem a pessoa respondeu (a conversa não foi lida)"
             : PASSO_DA_RESPOSTA_A_OUTRA_MENSAGEM
         }`,
+      );
+    }
+    // Conversas longas (05/11/2026): quem julgava a resposta da pessoa era so o
+    // modelo, e "Nao, melhor nao" com o agendar chamado marcava a consulta. O
+    // "sim" na lista fechada, como no cancelamento (D-30), antes da RPC. A
+    // pergunta volta pelo caminho de sempre de sem_confirmacao_do_paciente, e
+    // conta falha (na segunda seguida, a equipe).
+    if (
+      comEstado &&
+      !confirmouAMarcacao(
+        (entrada.mensagens?.pendentes ?? []).map((m) => m.original),
+      )
+    ) {
+      resultados.push("sem_confirmacao_do_paciente", "resposta_fora_da_pergunta");
+      return saida(
+        "sem_confirmacao_do_paciente",
+        {},
+        "Tentou marcar a consulta: a resposta não foi um sim claro",
       );
     }
     chamouAgendar = true;
