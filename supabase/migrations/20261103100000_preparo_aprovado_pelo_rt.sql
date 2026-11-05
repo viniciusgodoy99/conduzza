@@ -236,6 +236,15 @@
 -- nome de preparo ou de RT existe.
 -- Nenhuma linha muda de valor.
 --
+-- ATUALIZACAO DE 05/11/2026 (decisoes do dono, pontos 5, 6 e 8 da entrada da
+-- AG7 no docs/05): a AG5, a AG6a, a AG6b e a 20261104120000 ja estao aplicadas e
+-- publicadas (docs/05); esta migration continua sem aplicar e sem ensaio na
+-- producao, e o ensaio local roda sobre essa base. Nenhuma trava nova: as
+-- colunas, o CHECK e as funcoes novas sao das tabelas novas ou so leem. O RT que
+-- sai conferido e a recusa pelo conselho valem em toda clinica, de teste
+-- inclusive; antes de testar o envio numa clinica, a equipe Conduzza confere o
+-- registro no Painel geral.
+--
 -- ORDEM DE PUBLICACAO: a AG5, a AG6a e a AG6b aplicadas e publicadas antes;
 -- esta migration (ensaio na producao em horario calmo, ENSAIO OK, md5 dos
 -- corpos, tipos gerados conferidos com ferramentas/canon-tipos.cjs); as

@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, IdCard, ShieldCheck } from "lucide-react";
+import { Check, ExternalLink } from "lucide-react";
 import { useTransition } from "react";
 import { toast } from "sonner";
 
@@ -82,7 +82,7 @@ export function ResponsavelTecnicoNoPainel({
         disabled={proprioRt || conferindo}
         onClick={proprioRt ? undefined : () => conferir(leitura.id)}
       >
-        <ShieldCheck aria-hidden />
+        <Check aria-hidden />
         {conferindo ? T.conferindoRegistro : T.marcarRegistroConferido}
       </Button>
     );
@@ -107,11 +107,12 @@ export function ResponsavelTecnicoNoPainel({
           <a
             href={portal}
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             className="inline-flex min-h-10 w-fit items-center gap-1.5 text-[13px] font-medium text-text-strong underline"
           >
             <ExternalLink aria-hidden className="size-3.5" />
             {T.rtPortal(leitura.conselho)}
+            <span className="sr-only"> (abre em outra aba)</span>
           </a>
         ) : (
           <p className="text-[13px] text-text-secondary">
@@ -145,10 +146,7 @@ export function ResponsavelTecnicoNoPainel({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <IdCard aria-hidden className="size-4" />
-          {T.rtTitulo}
-        </CardTitle>
+        <CardTitle>{T.rtTitulo}</CardTitle>
         <CardDescription>{T.rtDescricao}</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">{corpo()}</CardContent>
