@@ -3,6 +3,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
 import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
 import type { TextoAprovado } from "@/lib/domain/conformidade/texto-aprovado";
+// [AG7 preparo] início
+import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
+import type { PreparoAprovado } from "@/lib/domain/conformidade/preparo-aprovado";
+// [AG7 preparo] fim
 import { canSendDecision } from "@/lib/domain/messaging";
 import { log } from "@/lib/log";
 import { falhaPermiteRetry } from "./falhas-do-envio";
@@ -829,6 +833,10 @@ async function enviarPeloCanal(
   // (envio_incerto: a agendada fechava como nao confirmada sem ter saido).
   let messageId: string | null = null;
   let reaproveitada = false;
+  // [AG7 preparo] Revisao da AG7 (MOTOR-5): o corpo da linha reaproveitada,
+  // para gravar o corpo de AGORA quando ele mudou (a regua re-renderiza a
+  // cada tentativa).
+  let corpoDaLinha: string | null = null;
   if (input.jobId) {
     const { data: existente } = await supabase
       .from("message")
@@ -866,6 +874,7 @@ async function enviarPeloCanal(
       }
       messageId = existente.id as string;
       reaproveitada = true;
+      corpoDaLinha = typeof existente.body === "string" ? existente.body : null;
     }
   }
 
@@ -1078,9 +1087,23 @@ async function enviarPeloCanal(
   // marca, nada sai: uma linha 'falhou' (codigo retentavel) com o envio
   // feito faria o retry mandar de novo.
   if (reaproveitada) {
+    // Revisao da AG7 (MOTOR-5): sem a guarda da IA (a regua, a agendada), o
+    // retry re-renderiza o corpo (o texto do preparo em vigor AGORA, a
+    // suspensao do RT no meio) e o provedor manda o corpo de agora; a linha
+    // passa a registrar exatamente o que saiu. Com a guarda da IA, o corpo
+    // ja e o mesmo (conteudo_divergente, acima). O gatilho de update de
+    // message so olha o job responder_com_ia.
     const { error: erroDaMarca } = await supabase
       .from("message")
-      .update({ delivery_status: "enviando", error_code: null })
+      .update(
+        corpoDaLinha !== null && corpoDaLinha !== despacho.bodyRegistrado
+          ? {
+              delivery_status: "enviando",
+              error_code: null,
+              body: despacho.bodyRegistrado,
+            }
+          : { delivery_status: "enviando", error_code: null },
+      )
       .eq("id", messageId);
     if (erroDaMarca) {
       return {
@@ -1320,6 +1343,99 @@ export async function enviarRespostaDaIa(
   }
   return resultado;
 }
+
+// [AG7 preparo] início
+/** AG7: a recusa do envio do preparo cujo hash nao confere (nada sai). */
+function recusaDoPreparoDivergente(): SendTextResult {
+  return {
+    ok: false,
+    reason: "falha_envio",
+    code: "conteudo_divergente",
+    message:
+      "A orientação de preparo não confere com o texto aprovado. Nada foi enviado.",
+  };
+}
+
+/**
+ * AG7 (D-80, autorizada pelo dono em 03/11/2026): a orientacao de preparo
+ * aprovada pelo responsavel tecnico, palavra por palavra (author 'sistema',
+ * no job da IA). So aceita PreparoAprovado (so aprovarParaEnvio produz um, da
+ * leitura de ler_preparo_para_envio conferida por hash) e NUNCA converte para
+ * TextoAprovado: nao e texto da IA e nao passa pelo filtro. Tres travas:
+ *  1. o tipo marcado PreparoAprovado;
+ *  2. sha256DoTexto(mensagem) === sha256 conferido antes de tudo e de novo
+ *     logo antes do provedor (diferente: nada sai, conteudo_divergente);
+ *  3. o gatilho de message (migration 20261103100000), que remonta a
+ *     mensagem da versao em vigor e confere com a decisao 'enviou_preparo'
+ *     do mesmo job e hash (CZIA3 frase_divergente; fora da liberacao, CZIA2).
+ * O resto e o de todo envio da IA: o trilho 1:1 (envioAutomatico false), a
+ * guarda ia_pode_enviar_agora com p_tipo 'resposta' (a conversa tem de estar
+ * na IA) antes do slot e logo antes do provedor, a autorizacao para receber
+ * mensagens e o custo (0 e billable false no uazapi). Ok: ia_marcar_respondida.
+ */
+export async function enviarPreparoAprovadoDaIa(
+  admin: SupabaseClient,
+  input: EnvioDaIaInput & { preparo: PreparoAprovado },
+): Promise<SendTextResult> {
+  // Le o preparo e confere o hash AGORA, a cada vez: a mensagem so vale se
+  // o sha256 do UTF-8 dela e o que o banco calculou.
+  const conferida = (): string | null => {
+    const mensagem: unknown = input.preparo?.mensagem;
+    const sha256: unknown = input.preparo?.sha256;
+    return typeof mensagem === "string" &&
+      typeof sha256 === "string" &&
+      sha256DoTexto(mensagem) === sha256
+      ? mensagem
+      : null;
+  };
+  const mensagem = conferida();
+  if (
+    typeof input.jobId !== "string" ||
+    input.jobId === "" ||
+    mensagem === null
+  ) {
+    return recusaDoPreparoDivergente();
+  }
+  const resultado = await enviarPeloCanal(
+    admin,
+    {
+      clinicId: input.clinicId,
+      conversationId: input.conversationId,
+      contactId: input.contactId,
+      body: mensagem,
+      authorUserId: null,
+      author: "sistema",
+      envioAutomatico: false,
+      esperaMaximaMs: ESPERA_MAXIMA_DA_IA_MS,
+      jobId: input.jobId,
+      whatsappAccountId: input.whatsappAccountId,
+    },
+    {
+      bodyRegistrado: mensagem,
+      enviar: async (provider, ref, to, extra) => {
+        // A segunda conferencia, logo antes do provedor, com o que vai a
+        // ele: diferente da gravada ou fora do hash, nada sai (a linha fica
+        // 'falhou' com conteudo_divergente).
+        const agora = conferida();
+        if (agora === null || agora !== mensagem) {
+          return {
+            ok: false,
+            errorCode: "conteudo_divergente",
+            message:
+              "A orientação de preparo não confere com o texto aprovado. Nada foi enviado.",
+          };
+        }
+        return provider.sendText(ref, to, agora, extra);
+      },
+    },
+    { tipo: "resposta", jobId: input.jobId, workerId: input.workerId },
+  );
+  if (resultado.ok) {
+    await marcarRespondida(admin, input);
+  }
+  return resultado;
+}
+// [AG7 preparo] fim
 
 /**
  * A frase fixa de escalonamento (author 'sistema'), com o mesmo job_id. O

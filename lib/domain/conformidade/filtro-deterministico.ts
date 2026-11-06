@@ -30,6 +30,11 @@
 //    so das vedacoes clinicas que a mascara do catalogo cobre, como o nome
 //    do catalogo (trechosDeEnderecoDasFerramentas); o resto do rascunho
 //    continua lido.
+//  - [AG7 preparo] o trecho do preparo: com os textos de preparo da
+//    clinica (textosDePreparo, opcional como os fatos), a resposta que copia
+//    uma frase de um deles e orientacao clinica (trechoDePreparoNaResposta,
+//    lib/domain/preparo.ts). O texto aprovado pelo RT sai pelo sistema,
+//    palavra por palavra (D-80); pelo modelo, nunca.
 
 import {
   CATEGORIAS_DE_CONFORMIDADE,
@@ -39,6 +44,8 @@ import {
 import {
   FONTES_DOS_FATOS,
   regrasDosFatos,
+  // [AG7 preparo] A resposta a pergunta do preparo sem os textos colados.
+  semTextosColados,
   trechosDeEnderecoDasFerramentas,
   type FatosDoTurno,
 } from "@/lib/domain/conformidade/fatos-do-turno";
@@ -50,6 +57,9 @@ import {
   distanciaDeEdicao,
   FONTES_DA_NORMALIZACAO,
   frasesDasVisoes,
+  // [AG7 preparo] A pergunta e a resposta do preparo (CFM-5).
+  mascararNomes,
+  normalizarBase,
   neutralizador,
   ocorreNoInicioDePalavra,
   sinaisDeOfuscacao,
@@ -66,6 +76,16 @@ import {
   NEUTRALIZACOES_DE_SAIDA,
   PADROES_DE_SAIDA,
 } from "@/lib/domain/conformidade/padroes";
+// [AG7 preparo] início
+// A regra do trecho mora no modulo puro (lib/domain/preparo.ts) e
+// preparo-aprovado.ts a reexporta: este arquivo nao importa
+// preparo-aprovado.ts, que importa este (ciclo de import).
+import {
+  PALAVRAS_DA_JANELA_DO_TRECHO,
+  TAMANHO_MINIMO_DO_TRECHO,
+  trechoDePreparoNaResposta,
+} from "@/lib/domain/preparo";
+// [AG7 preparo] fim
 
 /** Rascunho acima disso e formato invalido (plano de seguranca 2.2). */
 export const LIMITE_DO_RASCUNHO = 700;
@@ -85,6 +105,22 @@ export type ContextoDasRegras = {
    * estatico, retomada do envio). O turno da IA sempre passa.
    */
   fatos?: FatosDoTurno;
+  // [AG7 preparo] início
+  /**
+   * Os textos de preparo da clinica (textos_de_preparo_da_clinica: toda
+   * versao e o prep_instructions que a regua mandou antes da AG7), que NUNCA
+   * vao ao modelo. Ausente: a regra do trecho nao roda (texto estatico,
+   * retomada do envio, o texto do proprio preparo). O turno da IA passa.
+   */
+  textosDePreparo?: readonly string[];
+  /**
+   * Revisao curta da AG7 (CURTA-1): a habilidade "Enviar orientacao de
+   * preparo" valendo no turno (o mesmo comPreparo do classificador). So com
+   * ela a regra resposta_ao_preparo roda. Ausente: sem a habilidade (os
+   * textos estaticos, a retomada do envio, o texto do proprio preparo).
+   */
+  comPreparo?: boolean;
+  // [AG7 preparo] fim
 };
 
 export type AchadoDaRegra = {
@@ -387,6 +423,245 @@ function temDadoPessoalAlemDoCnpj(texto: string): boolean {
 // R$ 200", "cortesia do estacionamento"), trocada antes dos padroes.
 const neutralizarSaida = neutralizador(NEUTRALIZACOES_DE_SAIDA);
 
+// [AG7 preparo] início
+/**
+ * AG7: a resposta da IA que copia um trecho de um texto de preparo da
+ * clinica (orientacao_clinica, camada regra). So roda com textosDePreparo.
+ */
+export const REGRA_DO_TRECHO_DO_PREPARO = "trecho_do_preparo_da_clinica";
+
+/**
+ * Revisao da AG7 (CFM-5) e revisao curta (CURTA-1): a resposta da IA que
+ * afirma ou nega o jejum ou o preparo depois da pergunta do paciente (D-75;
+ * orientacao_clinica, camada regra). So com a habilidade "Enviar orientacao
+ * de preparo" (contexto.comPreparo): com ela, o classificador deixa a
+ * pergunta geral chegar ao modelo (D-81: o portao nao muda), e o turno certo
+ * e enviar_preparo (sem rascunho), a oferta, a pergunta do procedimento ou a
+ * passagem. Sem a habilidade, a pergunta escala no classificador, como
+ * sempre, e a regra nao roda.
+ *
+ * A pergunta conta frase a frase: a frase da pendente que pergunta (ou pede)
+ * tem de ter o assunto ("Ja fiz o preparo. Qual o endereco?" nao conta), e a
+ * dieta so conta com o exame, a vespera ou o procedimento na frase (a
+ * clinica de nutricao). Com a pergunta, barra so a frase do rascunho que
+ * responde a ela: a que comeca respondendo, termina em ", sim" ou ", nao",
+ * diz a necessidade, qualifica o preparo, libera ou da as horas ("Precisa
+ * sim.", "Nao precisa.", "Sim, 8 horas.", "Pode comer normalmente."), a
+ * pergunta que comeca respondendo ("Sim, quer receber...?") e a frase que
+ * fala do assunto fora da oferta e da pergunta do procedimento ("Para a
+ * endoscopia e so jejum."). A frase que so fala de outra coisa ("Chegue as
+ * 7h30.", "Aceitamos Unimed.") e a pergunta do procedimento ("E a
+ * colonoscopia ou a endoscopia?", "Qual e o seu exame?") passam. Antes da
+ * revisao da AG7, so o verificador barrava a resposta curta (AG7-S07).
+ */
+export const REGRA_DA_RESPOSTA_AO_PREPARO = "resposta_ao_preparo";
+
+// O assunto: o preparo, o jejum e o laxante, ou o "posso comer" aplicado ao
+// procedimento. Lido na visao base (minusculas, sem acento), com os nomes do
+// catalogo mascarados ("Glicemia de jejum" e procedimento) e sem o nome do
+// exame de sangue de jejum.
+const ASSUNTO_DO_PREPARO =
+  "\\b(?:jejum|preparo|preparos|preparacao|preparar|laxantes?)\\b|\\b(?:posso|pode|podem|devo|deve|tenho que|tem que|precisa|preciso|da pra|da para)\\b (?:\\w+ ){0,3}?(?:comer|beber|tomar|ingerir|almocar|jantar|lanchar|mastigar)\\b";
+// Revisao curta (CURTA-1): a dieta so e assunto do preparo com o exame, a
+// vespera ou o procedimento do catalogo (mascarado) na mesma frase: a
+// clinica de nutricao fala de dieta o tempo todo ("Voces fazem dieta?"). As
+// duas conferidas a parte (a mensagem do paciente nao tem teto de tamanho).
+const DIETA = "\\bdieta\\b";
+const CONTEXTO_DA_DIETA =
+  "\\u00a7|\\b(?:vespera|dia anterior|exames?|procedimentos?|cirurgias?)\\b";
+// A pergunta ou o pedido (a frase que so cita o preparo, "obrigada pelo
+// preparo", nao conta).
+const PERGUNTA_OU_PEDIDO =
+  "\\?|\\b(?:qual|quais|como|quanto|quantas|quantos|precisa|preciso|tem|posso|pode|devo|deve|manda|mande|envia|envie|passa|passe|quero|queria|gostaria|orientac(?:ao|oes)|me diz|me fala|sabe|sabia)\\b";
+// O exame que tem jejum no nome nao e pergunta de jejum.
+const EXAME_DE_JEJUM = "\\b(?:glicemia|glicose) (?:de|em) jejum\\b";
+// As formas permitidas: a oferta do envio ("Quer receber a orientacao de
+// preparo da colonoscopia?", "Voce quer a orientacao de preparo?", "Posso te
+// enviar a orientacao de preparo?") e a pergunta do procedimento.
+const OFERTA_DO_PREPARO = [
+  "\\b(?:quer|queria|gostaria|deseja|prefere)\\b (?:\\w+ ){0,3}?(?:receber|que (?:eu )?(?:te |lhe )?(?:envie|mande|encaminhe))\\b.*\\b(?:orientac(?:ao|oes)|preparo)\\b",
+  "\\b(?:quer|queria|gostaria|deseja|prefere)\\b (?:\\w+ ){0,2}?(?:a|as|o|os) (?:orientac(?:ao|oes)|preparo)\\b",
+  "\\bposso (?:te |lhe )?(?:enviar|mandar|encaminhar)\\b.*\\b(?:orientac(?:ao|oes)|preparo)\\b",
+].join("|");
+const PERGUNTA_DO_PROCEDIMENTO =
+  "\\b(?:qual|quais|que|de qual|para qual|pra qual|em qual)\\b (?:\\w+ ){0,2}?(?:procedimentos?|exames?|consultas?)\\b";
+// As palavras de abertura que nao mudam a frase ("Claro!", "Olha,").
+const ABERTURA =
+  "^(?:(?:oi|ola|claro|certo|entao|olha|bom|pois e|ah|perfeito|otimo|beleza|tudo bem|isso)\\b[ ,!.]*)*";
+// A frase afirmativa que responde: comeca pela resposta (sim, nao, o verbo
+// da pergunta), termina nela (", nao."), diz a necessidade, qualifica o
+// preparo (tranquilo, simples, rapido), libera ("sem restricao",
+// "liberado") ou da um tempo de jejum (o numero de horas sem "as" na
+// frente, que e hora do dia).
+const COMECA_RESPONDENDO = `${ABERTURA}(?:sim|nao|precisa|precisam|necessita|e necessario|e preciso|tem|tem que|pode|podem|deve|devem|basta|bastam|so|apenas|somente|nenhum|nenhuma|nada|exige|dispensa)\\b`;
+const RESPOSTA_NA_FRASE = [
+  COMECA_RESPONDENDO,
+  ",? (?:sim|nao)[ .!]*$",
+  "\\b(?:precisa|precisam|necessari[oa]s?|preciso|exige|exigem|dispensa|obrigatori[oa]s?)\\b",
+  "\\b(?:e|eh|fica|vai ser|sera|bem|super)\\b (?:bem |bastante |super |mais )?(?:tranquil\\w*|simples|rapid\\w*|levinh\\w*|facil|faceis|suave)\\b",
+  "\\b(?:sem restric\\w*|nenhuma restric\\w*|liberad[oa]s?)\\b",
+  "(?<!\\b(?:as|das|pelas|ate as|a partir das|por volta das) )\\b(?:\\d{1,2}|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|doze)\\s?(?:h|hs|horas?)\\b",
+].join("|");
+// A pergunta que comeca respondendo ("Sim, quer receber...?", "Precisa sim,
+// posso enviar?"); "Pode ser amanha?" e pergunta de agenda.
+const PERGUNTA_QUE_RESPONDE = `${ABERTURA}(?:sim|nao|(?:precisa|tem|pode|deve|e) (?:sim|nao))\\b`;
+// O assunto na resposta: o preparo, a orientacao, o jejum, a dieta, o
+// laxante, comer e beber e a restricao. Fora da oferta e da pergunta do
+// procedimento, a frase que fala disso depois da pergunta responde a ela.
+const ASSUNTO_NA_RESPOSTA =
+  "\\b(?:jejum|preparo|preparos|preparacao|preparar|orientac(?:ao|oes)|laxantes?|dieta|comer|coma|come|comendo|comida|comidas|beber|beba|bebe|bebendo|bebida|bebidas|alimentac\\w*|alimentos?|refeic\\w*|liquidos?|restric\\w*)\\b";
+
+const REGEX_DO_ASSUNTO = new RegExp(ASSUNTO_DO_PREPARO);
+const REGEX_DA_DIETA = new RegExp(DIETA);
+const REGEX_DO_CONTEXTO_DA_DIETA = new RegExp(CONTEXTO_DA_DIETA);
+const REGEX_DA_PERGUNTA = new RegExp(PERGUNTA_OU_PEDIDO);
+const REGEX_DO_EXAME_DE_JEJUM = new RegExp(EXAME_DE_JEJUM, "g");
+const REGEX_DA_OFERTA = new RegExp(OFERTA_DO_PREPARO);
+const REGEX_DA_PERGUNTA_DO_PROCEDIMENTO = new RegExp(PERGUNTA_DO_PROCEDIMENTO);
+const REGEX_DA_RESPOSTA = new RegExp(RESPOSTA_NA_FRASE);
+const REGEX_DA_PERGUNTA_QUE_RESPONDE = new RegExp(PERGUNTA_QUE_RESPONDE);
+const REGEX_DO_ASSUNTO_NA_RESPOSTA = new RegExp(ASSUNTO_NA_RESPOSTA);
+
+/**
+ * As frases de um texto (o do paciente ou o rascunho) na visao base, com os
+ * nomes do catalogo mascarados (linha a linha, antes do corte: "Dra. Ana"
+ * nao corta o nome) e sem o nome do exame de jejum, com o sinal de que
+ * terminam em pergunta.
+ */
+function frasesDoTexto(
+  texto: string,
+  nomesDoCatalogo: readonly string[],
+): { frase: string; pergunta: boolean }[] {
+  const frases: { frase: string; pergunta: boolean }[] = [];
+  for (const linha of texto.split(/[\r\n\u2028\u2029]+/u)) {
+    const base = mascararNomes(normalizarBase(linha), nomesDoCatalogo).replace(
+      REGEX_DO_EXAME_DE_JEJUM,
+      " ",
+    );
+    for (const pedaco of base.split(/(?<=[.!?])\s+/u)) {
+      const frase = pedaco.trim();
+      if (/[a-z0-9]/.test(frase)) {
+        frases.push({ frase, pergunta: /\?$/.test(frase) });
+      }
+    }
+  }
+  return frases;
+}
+
+/**
+ * Alguma frase das mensagens pendentes do paciente pergunta (ou pede) o
+ * preparo ou o jejum? A frase que pergunta tem de ter o assunto.
+ */
+export function perguntaDePreparo(
+  mensagensDoPaciente: readonly string[],
+  nomesDoCatalogo: readonly string[],
+): boolean {
+  return mensagensDoPaciente.some((mensagem) =>
+    frasesDoTexto(mensagem, nomesDoCatalogo).some(
+      ({ frase }) =>
+        (REGEX_DO_ASSUNTO.test(frase) ||
+          (REGEX_DA_DIETA.test(frase) &&
+            REGEX_DO_CONTEXTO_DA_DIETA.test(frase))) &&
+        REGEX_DA_PERGUNTA.test(frase),
+    ),
+  );
+}
+
+/** A frase do rascunho (base, mascarada) responde a pergunta do preparo? */
+function fraseQueResponde(frase: string, pergunta: boolean): boolean {
+  if (
+    pergunta
+      ? REGEX_DA_PERGUNTA_QUE_RESPONDE.test(frase)
+      : REGEX_DA_RESPOSTA.test(frase)
+  ) {
+    return true;
+  }
+  return (
+    REGEX_DO_ASSUNTO_NA_RESPOSTA.test(frase) &&
+    !REGEX_DA_OFERTA.test(frase) &&
+    !REGEX_DA_PERGUNTA_DO_PROCEDIMENTO.test(frase)
+  );
+}
+
+/**
+ * Revisao da AG7 (CFM-6): o pedido do preparo que vem junto de uma situacao
+ * da pessoa (um sintoma, uma doenca, um remedio que toma, o que comeu ou
+ * esqueceu, a permissao para comer ou beber, outra pessoa, a idade) passa
+ * para a equipe ANTES do envio (lib/agente/laco.ts, o ramo enviar_preparo).
+ * O protocolo generico, com dose, em resposta a um sintoma funciona como
+ * resposta clinica. O portao de entrada nao muda (D-81): a conferencia e so
+ * do envio do preparo, deterministica, nas pendentes do turno (o texto como
+ * chegou), com os nomes do catalogo mascarados ("tenho Colonoscopia amanha"
+ * e o pedido de sempre).
+ */
+export const REGRA_DO_PEDIDO_COM_SITUACAO_PESSOAL =
+  "pedido_do_preparo_com_situacao_pessoal";
+
+// O que nao e situacao da pessoa depois de "to com" e "tenho": o
+// procedimento do catalogo (mascarado), o exame, a consulta, o horario, a
+// duvida e o "tenho que".
+const NAO_E_SITUACAO =
+  "(?:(?:um|uma|o|a|os|as|meu|minha|meus|minhas) )?(?:\\u00a7|(?:exames?|consultas?|procedimentos?|horarios?|agendamentos?|retornos?|pedidos?|guias?|encaminhamentos?|duvidas?|uma pergunta|pressa|tempo|horario marcado)\\b)";
+const SITUACAO_PESSOAL = [
+  // O estado ou o sintoma ("to com intestino preso", "estou com diarreia").
+  `\\b(?:to|tou|estou|ando|fiquei|tava|estava|estive) com\\b(?! ${NAO_E_SITUACAO})`,
+  `\\btenho\\b(?! (?:que|q|de)\\b)(?! ${NAO_E_SITUACAO})`,
+  "\\b(?:sinto|senti|sentindo|sofro|sofri)\\b",
+  "\\b(?:intestino preso|prisao de ventre|constipad\\w*|constipacao|diarreia|enjoo|enjoad[oa]|nausea|vomit\\w*|dor|dores|febre|sangr\\w*|colica|azia|gases|inchad[oa]|inchaco|alergi\\w*|tontura|desmai\\w*|fraqueza|tosse|gripe|gripad[oa]|resfriad[oa]|infeccao|menstruad[oa]|menstruacao|hemorroida)\\b",
+  // A condicao ("sou diabetica", "pressao alta", "gravida").
+  "\\b(?:diabet\\w*|hipertens\\w*|pressao alta|pressao baixa|cardiac\\w*|marca-?passo|insuficiencia|renal|figado|tireoide|epilep\\w*|convuls\\w*|anemi\\w*|gravida|gestante|gravidez|amamenta\\w*|lactante|operad[oa]|cirurgia|transplant\\w*)\\b",
+  // O remedio que toma, o que comeu, bebeu ou esqueceu.
+  "\\b(?:tomo|tomei|tomando|uso|usei|usando|comi|bebi|fumo|fumei|mastiguei|masco|mascando|esqueci|esquecer|vomitei|nao consegui|nao consigo|nao vou conseguir)\\b",
+  // A permissao aplicada a pessoa ("posso mascar chiclete no jejum?").
+  "\\b(?:posso|pode|devo|deve|da pra|da para|consigo)\\b (?:\\w+ ){0,3}?(?:comer|beber|tomar|mascar|chupar|fumar|usar|mastigar|ingerir|almocar|jantar|lanchar|dirigir|trabalhar|malhar|treinar)\\b",
+  // Outra pessoa e a idade ("pra minha mae que tem 80 anos").
+  "\\b(?:minha|meu) (?:mae|pai|filh[oa]s?|marido|esposa|esposo|mulher|avo|vo|vovo|tia|tio|irma|irmao|sogra|sogro|namorad[oa]|bebe|crianca|net[oa]|parente)\\b",
+  "\\b\\d{1,3} ?anos\\b",
+].join("|");
+const REGEX_DA_SITUACAO_PESSOAL = new RegExp(SITUACAO_PESSOAL);
+
+/**
+ * Revisao da AG7 (CFM-6): alguma pendente do paciente (o texto como chegou)
+ * traz uma situacao da pessoa junto do pedido do preparo?
+ */
+export function situacaoPessoalNoPedidoDoPreparo(
+  textos: readonly string[],
+  nomesDoCatalogo: readonly string[],
+): boolean {
+  return textos.some((texto) =>
+    REGEX_DA_SITUACAO_PESSOAL.test(
+      mascararNomes(normalizarBase(texto), nomesDoCatalogo),
+    ),
+  );
+}
+
+/**
+ * Revisao da AG7 (CFM-5) e revisao curta (CURTA-1): o rascunho responde a
+ * pergunta de preparo ou de jejum do paciente? So com a habilidade do
+ * preparo e com a pergunta. Os textos colados pelo sistema (a saudacao, o
+ * aviso, a F2, o encerramento) saem antes; a F2 escrita pelo modelo, nao.
+ */
+export function respondeAPerguntaDePreparo(
+  rascunho: string,
+  contexto: Pick<
+    ContextoDasRegras,
+    "mensagensDoPaciente" | "nomesDoCatalogo" | "fatos" | "comPreparo"
+  >,
+): boolean {
+  if (
+    contexto.comPreparo !== true ||
+    !perguntaDePreparo(contexto.mensagensDoPaciente, contexto.nomesDoCatalogo)
+  ) {
+    return false;
+  }
+  const colados = contexto.fatos?.textosColados ?? [];
+  return frasesDoTexto(
+    semTextosColados(rascunho, colados),
+    contexto.nomesDoCatalogo,
+  ).some(({ frase, pergunta }) => fraseQueResponde(frase, pergunta));
+}
+// [AG7 preparo] fim
+
 /**
  * As regras que vivem em codigo (preco, formato estrutural, catalogo sem
  * mascara, expressoes permitidas), para a versao das regras (filtro.ts)
@@ -408,6 +683,15 @@ export const FONTES_DAS_REGRAS_EM_CODIGO: readonly string[] = [
   `sem o endereco da ferramenta: ${[...CATEGORIAS_SEM_O_ENDERECO].join(",")}`,
   // Revisao final de 31/10/2026: a saida cedo do rascunho longo.
   `com os fatos, acima de ${LIMITE_DO_RASCUNHO} caracteres: so formato_invalido/longo, sem ler o resto`,
+  // [AG7 preparo] início
+  `${REGRA_DO_TRECHO_DO_PREPARO}: com os textos de preparo da clinica, a frase de ${TAMANHO_MINIMO_DO_TRECHO} caracteres ou mais de um deles (ou o texto inteiro) que aparece inteira no rascunho, e (revisao da AG7, CFM-8) a oracao entre virgulas de ${TAMANHO_MINIMO_DO_TRECHO} caracteres ou mais, inteira, e ${PALAVRAS_DA_JANELA_DO_TRECHO} palavras seguidas de um deles, com ${TAMANHO_MINIMO_DO_TRECHO} caracteres ou mais, que aparecem seguidas no rascunho, os dois lados em minusculas, sem acento, sem pontuacao e com espaco unico (orientacao_clinica)`,
+  // Revisao da AG7 (CFM-6): a situacao da pessoa no pedido do preparo (a
+  // conferencia do envio, no laco).
+  `${REGRA_DO_PEDIDO_COM_SITUACAO_PESSOAL}: nas pendentes do turno do envio do preparo (o texto como chegou, os nomes do catalogo mascarados), ${SITUACAO_PESSOAL} passa para a equipe (assunto_clinico) antes do envio`,
+  // Revisao da AG7 (CFM-5) e revisao curta (CURTA-1): a resposta que
+  // afirma ou nega o jejum ou o preparo, so com a habilidade.
+  `${REGRA_DA_RESPOSTA_AO_PREPARO}: so com a habilidade do preparo (comPreparo) e com a pergunta numa frase das mensagens do paciente (${ASSUNTO_DO_PREPARO}, ou ${DIETA} com ${CONTEXTO_DA_DIETA}, e ${PERGUNTA_OU_PEDIDO} na mesma frase, sem ${EXAME_DE_JEJUM}, os nomes do catalogo mascarados), barra a frase do rascunho sem os textos colados que responde (${RESPOSTA_NA_FRASE}), a pergunta que comeca respondendo (${PERGUNTA_QUE_RESPONDE}) e a frase que fala do assunto (${ASSUNTO_NA_RESPOSTA}) fora da oferta (${OFERTA_DO_PREPARO}) e da pergunta do procedimento (${PERGUNTA_DO_PROCEDIMENTO}) (orientacao_clinica)`,
+  // [AG7 preparo] fim
   CNPJ_COM_MASCARA.source,
   ...NEUTRALIZACOES_DE_SAIDA.map(({ nome, fonte, troca }) =>
     [nome, fonte, troca].join(" "),
@@ -701,6 +985,30 @@ export function avaliarRegras(
       }),
     );
   }
+
+  // [AG7 preparo] início
+  // O trecho do preparo (AG7): a resposta que copia uma frase de um texto de
+  // preparo da clinica e barrada, mesmo sem palavra nenhuma dos padroes. O
+  // texto aprovado so sai pela mensagem do sistema, nunca pelo modelo.
+  if (
+    contexto.textosDePreparo !== undefined &&
+    trechoDePreparoNaResposta(rascunho, contexto.textosDePreparo)
+  ) {
+    achados.push({
+      categoria: "orientacao_clinica",
+      regra: REGRA_DO_TRECHO_DO_PREPARO,
+    });
+  }
+  // Revisao da AG7 (CFM-5): a resposta a pergunta de preparo ou de jejum
+  // do paciente (a resposta curta, "Precisa sim.", que so o verificador
+  // barrava).
+  if (respondeAPerguntaDePreparo(rascunho, contexto)) {
+    achados.push({
+      categoria: "orientacao_clinica",
+      regra: REGRA_DA_RESPOSTA_AO_PREPARO,
+    });
+  }
+  // [AG7 preparo] fim
 
   // Contexto: o paciente falou de saude.
   for (const gatilho of gatilhosDosTextos(contexto.mensagensDoPaciente)) {

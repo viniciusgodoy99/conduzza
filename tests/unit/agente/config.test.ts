@@ -226,6 +226,8 @@ describe("habilidades", () => {
     expect(HABILIDADES_DO_AGENTE.map((h) => h.chave)).toEqual([
       "responder_duvidas",
       "informar_preco_e_convenio",
+      // [AG7 preparo] A orientacao de preparo aprovada pelo RT.
+      "enviar_preparo",
       "agendar",
       "cancelar",
       "remarcar",
@@ -279,6 +281,37 @@ describe("habilidades", () => {
     expect(porChave.passar_para_equipe?.ferramentas).toEqual([
       "escalar_humano",
     ]);
+    // [AG7 preparo] início
+    // AG7 (D-79): desligada por padrao, sem dependencia, so a ferramenta do
+    // envio; o texto da tela mora aqui.
+    expect(porChave.enviar_preparo).toEqual({
+      chave: "enviar_preparo",
+      titulo: "Enviar orientação de preparo",
+      descricao:
+        "Quando o paciente pede, manda a orientação de preparo do procedimento exatamente como o responsável técnico aprovou no Cadastro. Dúvida sobre o preparo passa para a equipe.",
+      travada: false,
+      ferramentas: ["enviar_preparo"],
+      padrao: false,
+      precisaDaAgenda: false,
+      precisaDaHabilidade: null,
+      precisaDoPrazo: null,
+      dicaDaDependencia: null,
+    });
+    expect(
+      ferramentasDoAgente(
+        { enviar_preparo: true },
+        { antecedenciaHoras: null, horizonteDias: null },
+        null,
+      ),
+    ).toContain("enviar_preparo");
+    expect(
+      ferramentasDoAgente(
+        {},
+        { antecedenciaHoras: null, horizonteDias: null },
+        null,
+      ),
+    ).not.toContain("enviar_preparo");
+    // [AG7 preparo] fim
     // AG4: cancelar e remarcar, com as dependencias (o prazo; remarcar
     // tambem "Agendar consulta").
     expect(porChave.cancelar).toMatchObject({
@@ -363,6 +396,8 @@ describe("habilidades", () => {
     ).toEqual({
       responder_duvidas: true,
       informar_preco_e_convenio: false,
+      // [AG7 preparo] A orientacao de preparo, desligada por padrao.
+      enviar_preparo: false,
       agendar: true,
       // AG4: remarcar virou chave conhecida; AG5: lista_de_espera tambem.
       cancelar: false,
@@ -377,6 +412,8 @@ describe("habilidades", () => {
     expect(habilidadesEfetivas({})).toEqual({
       responder_duvidas: true,
       informar_preco_e_convenio: true,
+      // [AG7 preparo] A orientacao de preparo, desligada por padrao.
+      enviar_preparo: false,
       agendar: false,
       cancelar: false,
       remarcar: false,
@@ -482,6 +519,8 @@ describe("habilidades", () => {
     ).toEqual({
       responder_duvidas: true,
       informar_preco_e_convenio: false,
+      // [AG7 preparo] A orientacao de preparo, desligada por padrao.
+      enviar_preparo: false,
       agendar: false,
       cancelar: false,
       remarcar: false,
@@ -1598,6 +1637,8 @@ describe("leitura do banco", () => {
       habilidades: {
         responder_duvidas: true,
         informar_preco_e_convenio: false,
+        // [AG7 preparo] A orientacao de preparo, desligada por padrao.
+        enviar_preparo: false,
         agendar: false,
         cancelar: false,
         remarcar: false,
@@ -1681,6 +1722,8 @@ describe("leitura do banco", () => {
       habilidades: {
         responder_duvidas: true,
         informar_preco_e_convenio: true,
+        // [AG7 preparo] A orientacao de preparo, desligada por padrao.
+        enviar_preparo: false,
         agendar: false,
         cancelar: false,
         remarcar: false,

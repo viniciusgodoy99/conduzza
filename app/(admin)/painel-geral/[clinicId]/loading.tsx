@@ -57,6 +57,7 @@ export default function CarregandoClinicaNoPainel() {
           <CartaoEsqueleto linhas={3} />
           <CartaoEsqueleto linhas={6} />
         </div>
+        <CartaoEsqueleto linhas={2} />
         <div className="grid items-start gap-4 lg:grid-cols-2">
           <CartaoEsqueleto linhas={4} />
           <CartaoEsqueleto linhas={4} />

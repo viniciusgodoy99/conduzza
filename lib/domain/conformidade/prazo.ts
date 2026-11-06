@@ -70,14 +70,23 @@ function falhaDoCorte(motivo: FalhaDoCorte["motivo"]): FalhaDoCorte {
  * devolveu ou uma falha; nunca rejeita e nunca fica pendurado. O resultado
  * vai para decidirPeloClassificador, que escala tudo que nao for
  * exatamente "nenhum" com confianca alta ou media.
+ *
+ * [AG7 preparo] AG7: `opcoes.comPreparo` (a habilidade "Enviar orientacao
+ * de preparo" valendo no turno) vai ao classificador, que roda a variante da
+ * politica com preparo. Sem ela, a chamada e a de sempre, byte a byte
+ * ({ mensagens, sinal }).
  */
 export async function classificarComPrazo<R>(
   classificador: (entrada: {
     mensagens: readonly string[];
     sinal?: AbortSignal;
+    // [AG7 preparo]
+    comPreparo?: boolean;
   }) => Promise<R>,
   mensagens: readonly string[],
   prazoMs: number = PRAZO_DO_CLASSIFICADOR_NO_PORTAO_MS,
+  // [AG7 preparo]
+  opcoes: { comPreparo?: boolean } = {},
 ): Promise<R | FalhaDoCorte> {
   if (typeof classificador !== "function") {
     return falhaDoCorte("sem_cliente");
@@ -86,7 +95,13 @@ export async function classificarComPrazo<R>(
     return falhaDoCorte("prazo");
   }
   const corrida = await correrComPrazo(
-    (sinal) => classificador({ mensagens, sinal }),
+    (sinal) =>
+      classificador(
+        // [AG7 preparo] comPreparo so quando vale (sem ela, a de sempre).
+        opcoes.comPreparo === true
+          ? { mensagens, sinal, comPreparo: true }
+          : { mensagens, sinal },
+      ),
     prazoMs,
   );
   if (corrida.tipo === "prazo") {

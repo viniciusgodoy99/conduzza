@@ -31,6 +31,19 @@ import {
   type CadastroParaOAgente,
 } from "@/lib/queries/cadastro-para-o-agente";
 import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
+// [AG7 preparo] início
+import type {
+  EstadoDosPreparos,
+  PreparoDaAba,
+} from "@/components/cadastros/preparo-do-procedimento";
+import {
+  fetchPreparosDaClinica,
+  preparosDaClinicaKey,
+  type PreparosDaClinica,
+} from "@/lib/queries/preparo";
+
+import { recusasDosPreparosAction } from "./preparo-actions";
+// [AG7 preparo] fim
 import { createClient } from "@/lib/supabase/client";
 
 import { ABAS_DE_CADASTROS, abaDeCadastros, type AbaDeCadastros } from "./abas";
@@ -73,6 +86,12 @@ export function CadastrosClient({
   podeEditar,
   dica,
   timezone,
+  // [AG7 preparo] início
+  preparoInicial = null,
+  recusasIniciais = null,
+  superAdmin = false,
+  podeDefinirRt = false,
+  // [AG7 preparo] fim
 }: {
   clinicId: string;
   catalogoInicial: Catalogo;
@@ -84,6 +103,19 @@ export function CadastrosClient({
   podeEditar: boolean;
   dica: string;
   timezone: string;
+  // [AG7 preparo] início
+  /** null quando a leitura no servidor falhou: a secao tenta de novo aqui. */
+  preparoInicial?: PreparosDaClinica | null;
+  /**
+   * Revisao curta da AG7 (CURTA-5): as versoes aprovadas e suspensas que as
+   * regras de hoje recusam (conferidas no servidor). null: confere aqui.
+   */
+  recusasIniciais?: Record<string, string> | null;
+  /** A equipe Conduzza: escreve, descarta e suspende; nunca aprova (D-71). */
+  superAdmin?: boolean;
+  /** O administrador pleno e a equipe Conduzza definem o RT. */
+  podeDefinirRt?: boolean;
+  // [AG7 preparo] fim
 }) {
   const supabase = useMemo(() => createClient(), []);
   const queryClient = useQueryClient();
@@ -143,6 +175,55 @@ export function CadastrosClient({
     staleTime: 30_000,
   });
 
+  // [AG7 preparo] início
+  // A orientacao de preparo (versoes e RT), sob o prefixo do catalogo: o
+  // aoMudar recarrega junto (renomear muda o chip). Cada acao do preparo
+  // recarrega so ela.
+  useDadosDoServidor(
+    preparosDaClinicaKey(clinicId),
+    preparoInicial ?? undefined,
+  );
+  const preparoQuery = useQuery({
+    queryKey: preparosDaClinicaKey(clinicId),
+    queryFn: () => fetchPreparosDaClinica(supabase, clinicId),
+    initialData: preparoInicial ?? undefined,
+    staleTime: 30_000,
+  });
+  const estadoDoPreparo: EstadoDosPreparos = preparoQuery.data
+    ? { tipo: "pronto", dados: preparoQuery.data }
+    : preparoQuery.isError
+      ? { tipo: "erro" }
+      : { tipo: "carregando" };
+  // Revisao curta da AG7 (CURTA-5): o texto aprovado que as regras de hoje
+  // recusam, conferido no servidor (o navegador nunca roda o filtro). Sob o
+  // prefixo do preparo: cada acao do preparo confere de novo.
+  const chaveDasRecusas = [...preparosDaClinicaKey(clinicId), "recusas"];
+  useDadosDoServidor(chaveDasRecusas, recusasIniciais ?? undefined);
+  const recusasQuery = useQuery({
+    queryKey: chaveDasRecusas,
+    queryFn: async () => {
+      const resultado = await recusasDosPreparosAction();
+      if (!resultado.ok) {
+        throw new Error(resultado.error);
+      }
+      return resultado.recusas;
+    },
+    initialData: recusasIniciais ?? undefined,
+    staleTime: 30_000,
+  });
+  const preparo: PreparoDaAba = {
+    estado: estadoDoPreparo,
+    superAdmin,
+    podeDefinirRt,
+    ...(recusasQuery.data ? { recusas: recusasQuery.data } : {}),
+    recarregar: () => {
+      void queryClient.invalidateQueries({
+        queryKey: preparosDaClinicaKey(clinicId),
+      });
+    },
+  };
+  // [AG7 preparo] fim
+
   // Invalida o PREFIXO ["catalogo", clinicId]: catalogo, matriz de
   // convenios e uso dos pacotes. As telas chamam tambem quando a RPC recusa
   // a aba parada (code "cadastro_mudou"), para o modal reabrir com o atual.
@@ -191,7 +272,12 @@ export function CadastrosClient({
         <ProfissionaisTab {...tabProps} />
       </TabsContent>
       <TabsContent value="procedimentos">
-        <ProcedimentosTab {...tabProps} />
+        <ProcedimentosTab
+          {...tabProps}
+          // [AG7 preparo] início
+          preparo={preparo}
+          // [AG7 preparo] fim
+        />
       </TabsContent>
       <TabsContent value="convenios">
         <ConveniosTab {...tabProps} />

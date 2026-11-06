@@ -53,6 +53,13 @@ import type { EnvioEmVoo } from "@/lib/domain/envios-em-voo";
 import type { AgendadasDoFio } from "@/lib/domain/mensagem-agendada";
 import type { NumeroDaConversa } from "@/lib/domain/numeros-do-inbox";
 import type { Role } from "@/lib/domain/permissions";
+// [AG7 preparo] início
+import {
+  ehMensagemDoPreparo,
+  SEM_ENVIOS_DO_PREPARO,
+  type EnviosDoPreparo,
+} from "@/lib/domain/preparo";
+// [AG7 preparo] fim
 import { formatarTelefone } from "@/lib/domain/telefone";
 import {
   // [AG6 urgência] início
@@ -126,8 +133,16 @@ export function autorDaBolha(
     MessageItem,
     "author" | "author_user_id" | "is_internal_note" | "pelo_celular"
   > &
-    Partial<Pick<MessageItem, "body" | "direction" | "content_type">>,
+    Partial<
+      Pick<
+        MessageItem,
+        "body" | "direction" | "content_type" | "job_id" | "media_url"
+      >
+    >,
   authorNames: Record<string, string>,
+  // [AG7 preparo] os envios do preparo confirmados (TELA-13); sem eles, nao
+  // ha preparo (falha fechada).
+  enviosDoPreparo: EnviosDoPreparo = SEM_ENVIOS_DO_PREPARO,
 ): string | null {
   if (message.author === "ia") {
     return "Assistente";
@@ -143,6 +158,18 @@ export function autorDaBolha(
   if (ehNotaDaPassagemDaIa(message)) {
     return AUTOR_DA_NOTA_DA_PASSAGEM;
   }
+  // [AG7 preparo] início
+  // A orientacao de preparo aprovada pelo responsavel tecnico (AG7), que o
+  // sistema envia palavra por palavra pelo job da IA (author 'sistema', sem
+  // pessoa, fora de nota), assina "Assistente", como a IA. Ela se reconhece
+  // pelo formato inteiro do corpo (cabecalho, linha do RT, texto e rodape;
+  // lib/domain/preparo.ts) E pelo envio confirmado: o job dela tem a decisao
+  // 'enviou_preparo' no ai_decision_log (TELA-13 e CFM-10a). Um passo de
+  // regua no mesmo formato fica sem linha de autor, como a regua.
+  if (ehMensagemDoPreparo(message, enviosDoPreparo)) {
+    return "Assistente";
+  }
+  // [AG7 preparo] fim
   if (message.author === "sistema" && message.is_internal_note) {
     return AUTOR_DA_AUTOMACAO;
   }
@@ -324,6 +351,9 @@ export function Thread({
   // [AG6b mídia] início
   leiturasDaMidia = SEM_LEITURAS_DO_FIO,
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  enviosDoPreparo = SEM_ENVIOS_DO_PREPARO,
+  // [AG7 preparo] fim
 }: {
   conversation: ConversationListItem;
   messages: MessageItem[];
@@ -385,6 +415,14 @@ export function Thread({
    */
   leiturasDaMidia?: LeiturasDoFio;
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  /**
+   * Os envios da orientacao de preparo confirmados no ai_decision_log (a
+   * consulta separada do fio, fetchEnviosDoPreparo; TELA-13). Sem eles,
+   * nenhuma mensagem do fio e o preparo.
+   */
+  enviosDoPreparo?: EnviosDoPreparo;
+  // [AG7 preparo] fim
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const ultimaId = messages[messages.length - 1]?.id;
@@ -679,7 +717,12 @@ export function Thread({
                 <MessageBubble
                   key={linha.chave}
                   message={item.message}
-                  authorName={autorDaBolha(item.message, authorNames)}
+                  authorName={autorDaBolha(
+                    item.message,
+                    authorNames,
+                    // [AG7 preparo] o preparo so com o envio confirmado
+                    enviosDoPreparo,
+                  )}
                   authorNames={authorNames}
                   contato={
                     conversation.contact.name ??
@@ -709,6 +752,8 @@ export function Thread({
                     podeTerLeituraDaMidia(item.message)
                   }
                   // [AG6b mídia] fim
+                  // [AG7 preparo] os envios do preparo confirmados (TELA-13)
+                  enviosDoPreparo={enviosDoPreparo}
                 />
               );
             })}

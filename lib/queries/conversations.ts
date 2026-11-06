@@ -12,6 +12,12 @@ import type {
 // [AG6b mídia] fim
 import { corDoNumero, type CorDoNumero } from "@/lib/domain/cor-do-numero";
 import { recencia } from "@/lib/domain/filtros-da-conversa";
+// [AG7 preparo] início
+import {
+  podeSerAMensagemDoPreparo,
+  type EnviosDoPreparo,
+} from "@/lib/domain/preparo";
+// [AG7 preparo] fim
 import { log } from "@/lib/log";
 
 // Tipos e fetchers do Inbox. Sem tipos gerados do banco (pendencia
@@ -235,6 +241,10 @@ export type QuotedMessage = {
   deleted_at: string | null;
   /** enviada direto pelo WhatsApp da clinica (ver MessageItem.pelo_celular) */
   pelo_celular?: boolean;
+  // [AG7 preparo] início
+  /** o job da fila que enviou (ver MessageItem.job_id) */
+  job_id?: string | null;
+  // [AG7 preparo] fim
 };
 
 export type MessageItem = {
@@ -288,6 +298,16 @@ export type MessageItem = {
    * sempre.
    */
   pelo_celular?: boolean;
+  // [AG7 preparo] início
+  /**
+   * O job da fila que enviou a mensagem (nulo: nenhum). A orientacao de
+   * preparo sai sempre pelo job da IA: o corpo no formato do preparo SEM job
+   * nao e o preparo e nao ganha a linha "Texto aprovado pelo responsavel
+   * tecnico" (ehMensagemDoPreparo; revisao das telas, TELA-13). Opcional so
+   * para os testes que montam mensagem na mao; o select traz sempre.
+   */
+  job_id?: string | null;
+  // [AG7 preparo] fim
   /**
    * A citada, embutida na mesma consulta.
    *
@@ -432,6 +452,16 @@ export const conversationKeys = {
   leiturasDaMidia: (conversationId: string) =>
     ["messages", conversationId, "leituras-da-midia"] as const,
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  /**
+   * Os envios da orientacao de preparo confirmados no ai_decision_log
+   * (fetchEnviosDoPreparo), DEBAIXO da chave das mensagens da conversa: o
+   * mesmo evento de message que rele o fio rele os envios (a decisao e
+   * gravada antes da mensagem, e a mensagem nova chega pelo canal).
+   */
+  enviosDoPreparo: (conversationId: string) =>
+    ["messages", conversationId, "envios-do-preparo"] as const,
+  // [AG7 preparo] fim
   decisions: (conversationId: string) => ["decisions", conversationId] as const,
   consent: (contactId: string) => ["consent", contactId] as const,
 };
@@ -735,14 +765,16 @@ export async function contarConversasResolvidas(
   return count ?? 0;
 }
 
+// [AG7 preparo] O job_id vai no fio e na citada (TELA-13): sem job, o corpo no
+// formato da orientacao de preparo nao e o preparo (ehMensagemDoPreparo).
 const MESSAGE_SELECT =
-  "id, conversation_id, direction, author, author_user_id, content_type, body, media_url, media_filename, media_mimetype, transcript, is_internal_note, delivery_status, error_code, created_at, deleted_at, deleted_by, deleted_source, deleted_escopo, reply_to_message_id, reply_to_wa_message_id, pelo_celular, " +
+  "id, conversation_id, direction, author, author_user_id, content_type, body, media_url, media_filename, media_mimetype, transcript, is_internal_note, delivery_status, error_code, created_at, deleted_at, deleted_by, deleted_source, deleted_escopo, reply_to_message_id, reply_to_wa_message_id, pelo_celular, job_id, " +
   // Auto-juncao: a citada e outra linha da MESMA tabela. O apelido aponta para
   // a COLUNA, nao para o nome da chave estrangeira: numa relacao de uma tabela
   // com ela mesma, o nome da chave nao diz qual ponta seguir, e o PostgREST
   // devolve a lista das mensagens que citam esta, que e o contrario do que a
   // bolha precisa. Conferido contra o banco em 02/09/2026.
-  "reply_to:reply_to_message_id(id, author, author_user_id, content_type, body, is_internal_note, deleted_at, pelo_celular)";
+  "reply_to:reply_to_message_id(id, author, author_user_id, content_type, body, is_internal_note, deleted_at, pelo_celular, job_id)";
 // SEM embed de mensagem_agendada, de proposito (achado 16 da revisao): uma
 // tabela que falte ou um embed recusado pelo PostgREST derrubaria o fio de
 // todas as conversas. A autoria da agendada vem de fetchAgendadasDoFio.
@@ -1120,6 +1152,99 @@ export function leituraDaMensagem(
     : null;
 }
 // [AG6b mídia] fim
+
+// [AG7 preparo] início
+// OS ENVIOS DA ORIENTACAO DE PREPARO (revisao da AG7, TELA-13 e CFM-10a). A
+// bolha so diz "Texto aprovado pelo responsavel tecnico" (e assina
+// "Assistente") quando o job da mensagem tem a decisao 'enviou_preparo' no
+// ai_decision_log: o gatilho de message so deixa essa linha do job da IA
+// passar com a decisao do mesmo job e o corpo igual a mensagem remontada da
+// versao em vigor. Um passo de regua ou uma automacao escritos no mesmo
+// formato tem o job da regua, sem essa decisao, e ficam como mensagem comum
+// do sistema.
+//
+// Consulta PROPRIA, fora do select do fio (a licao do achado 16), pela
+// SESSAO: a policy de leitura de ai_decision_log e a mesma da mensagem
+// (membro ativo da clinica; o profissional so na conversa atribuida a ele;
+// a clinica de conta suspensa fora), e as colunas job_id e desfecho estao no
+// grant da sessao (M1). So vao os jobs das mensagens que podem ser o preparo
+// (o formato inteiro, do sistema, com job): numa conversa sem preparo, a
+// consulta nem sai. Falha fechada: carregando ou com erro, nenhum envio
+// confirmado, e a mensagem aparece como mensagem comum do sistema. Nada
+// daqui vai para log.
+
+/** Os ids de job validos (a bolha otimista nao tem job). */
+const UUID_DO_JOB =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Os job_id do fio que podem ser do preparo, sem repetir e na ordem do fio:
+ * as mensagens e as citadas delas (a citacao tambem assina "Assistente").
+ */
+export function jobsQuePodemSerDoPreparo(
+  mensagens: readonly MessageItem[],
+): string[] {
+  const jobs = new Set<string>();
+  for (const mensagem of mensagens) {
+    for (const candidata of [mensagem, mensagem.reply_to]) {
+      if (
+        candidata &&
+        podeSerAMensagemDoPreparo(candidata) &&
+        typeof candidata.job_id === "string" &&
+        UUID_DO_JOB.test(candidata.job_id)
+      ) {
+        jobs.add(candidata.job_id);
+      }
+    }
+  }
+  return [...jobs];
+}
+
+/** Jobs por consulta: o filtro in.(...) vai na URL. */
+const LOTE_DOS_ENVIOS = 100;
+
+/**
+ * Os jobs, entre os dados, que tem a decisao 'enviou_preparo' da clinica
+ * (pela sessao, com a RLS). Erro LANCA, sem nada do erro do banco no texto:
+ * a tela fica sem a confirmacao (falha fechada), e o fio continua.
+ */
+export async function fetchEnviosDoPreparo(
+  supabase: SupabaseClient,
+  clinicId: string,
+  jobIds: readonly string[],
+): Promise<EnviosDoPreparo> {
+  const ids = [...new Set(jobIds.filter((id) => UUID_DO_JOB.test(id)))];
+  if (ids.length === 0) {
+    return new Set<string>();
+  }
+  const lotes: string[][] = [];
+  for (let inicio = 0; inicio < ids.length; inicio += LOTE_DOS_ENVIOS) {
+    lotes.push(ids.slice(inicio, inicio + LOTE_DOS_ENVIOS));
+  }
+  const respostas = await Promise.all(
+    lotes.map((lote) =>
+      supabase
+        .from("ai_decision_log")
+        .select("job_id")
+        .eq("clinic_id", clinicId)
+        .eq("desfecho", "enviou_preparo")
+        .in("job_id", lote),
+    ),
+  );
+  const envios = new Set<string>();
+  for (const { data, error } of respostas) {
+    if (error) {
+      throw new Error("envios do preparo ilegiveis");
+    }
+    for (const linha of (data ?? []) as { job_id?: unknown }[]) {
+      if (typeof linha.job_id === "string") {
+        envios.add(linha.job_id);
+      }
+    }
+  }
+  return envios;
+}
+// [AG7 preparo] fim
 
 export async function fetchComplianceDecisions(
   supabase: SupabaseClient,

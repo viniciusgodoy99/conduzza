@@ -122,6 +122,14 @@ import {
   type SendTextResult,
 } from "@/lib/integrations/whatsapp/send";
 import { log } from "@/lib/log";
+// [AG7 preparo] início
+import { lerPreparoParaEnvio } from "@/lib/agente/contexto";
+import { PASSO_DO_PREPARO_FORA_DE_VIGOR } from "@/lib/agente/ferramentas/enviar-preparo";
+import { lerDecisaoDoPreparo } from "@/lib/agente/whatsapp";
+import { passoDoPreparoRecusado } from "@/lib/agente/laco";
+import type { PreparoAprovado } from "@/lib/domain/conformidade/preparo-aprovado";
+import { enviarPreparoAprovadoDaIa } from "@/lib/integrations/whatsapp/send";
+// [AG7 preparo] fim
 
 // [AG6b mídia] início
 import { mascararNome } from "@/lib/agente/historico";
@@ -240,6 +248,12 @@ import type { Job, ResultadoDeJob } from "./worker";
 //     bloqueado no lugar restrito e ai_turno 'decidido'.
 // 13. Saida: a resposta (enviarRespostaDaIa, so TextoAprovado), ou a
 //     passagem para a equipe e a frase fixa (tentativa unica), ou nada.
+//     [AG7 preparo] Ou a orientacao de preparo aprovada pelo RT
+//     (enviarPreparoAprovadoDaIa, so PreparoAprovado): ler_preparo_para_envio
+//     e aprovarParaEnvio ANTES da decisao (fora de vigor: a passagem com
+//     assunto_clinico e a frase); a decisao 'enviou_preparo' com a versao e
+//     o hash; o turno 'decidido' com a saida 'preparo'; o envio. A retomada
+//     reconfere a aprovacao no executor (o reenvio nao passa pelo gatilho).
 //     Erro na passagem nunca e engolido: o turno fica onde esta e o job
 //     tenta de novo (a retentativa passa e manda a frase).
 // 13b. [AG6 passagem] Depois da tentativa da frase (saiu ou nao), a conversa
@@ -368,6 +382,13 @@ export type DependenciasDoExecutorDaIa = {
    */
   midia?: DependenciasDaMidiaDoTurno;
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  /**
+   * AG7: o envio da orientacao de preparo aprovada pelo RT (so
+   * PreparoAprovado). Ausente: o de verdade (enviarPreparoAprovadoDaIa).
+   */
+  enviarPreparo?: typeof enviarPreparoAprovadoDaIa;
+  // [AG7 preparo] fim
 };
 
 // [AG6b mídia] início
@@ -455,6 +476,8 @@ export function dependenciasPadraoDaIa(entrada: {
     executarTurno: executarTurnoDoAgente,
     enviarResposta: enviarRespostaDaIa,
     enviarFrase: enviarFraseFixaDaIa,
+    // [AG7 preparo]
+    enviarPreparo: enviarPreparoAprovadoDaIa,
     // [AG6b mídia] início
     midia: {
       transcricaoCalibrada: TRANSCRICAO_CALIBRADA,
@@ -1163,6 +1186,9 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
       verificador: c.deps.criarVerificador(identificador ?? ""),
       classificador: c.deps.criarClassificador(identificador ?? ""),
       dataDeNascimento: contato.birth_date,
+      // [AG7 preparo] O nome da mascara do historico: o laco a refaz na fala
+      // da clinica depois de trocar o texto do preparo (CFM-1).
+      nomeDoContato: contato.name,
       contato: tipoDoContato,
       foraDoAssuntoNaJanela: foraDoAssunto,
       primeiraRespostaDaIa: !historico.iaRespondeuNaJanela,
@@ -1778,6 +1804,18 @@ async function decidirEEnviar(
   resultado: ResultadoDoTurno,
   latenciaMs: number,
 ): Promise<ResultadoDeJob> {
+  // [AG7 preparo] início
+  if (resultado.tipo === "preparo") {
+    return decidirEEnviarOPreparo(
+      c,
+      turno,
+      destino,
+      config,
+      resultado,
+      latenciaMs,
+    );
+  }
+  // [AG7 preparo] fim
   const desfecho = resultado.desfecho;
   const textoSha256 =
     resultado.tipo === "resposta" ? sha256DoTexto(resultado.resposta) : null;
@@ -1796,6 +1834,8 @@ async function decidirEEnviar(
     configVersion: config.versao,
     latenciaMs,
     ferramentasUsadas: resultado.ferramentasUsadas ?? [],
+    // [AG7 preparo] A versao da variante do classificador do turno.
+    versaoDoClassificador: resultado.versaoDoClassificador,
   });
   if (desfecho.tipo === "bloqueou" && resultado.rascunhoBloqueado !== null) {
     await gravarRascunhoBloqueado(c.admin, {
@@ -1830,7 +1870,13 @@ async function decidirEEnviar(
       textoSha256,
       decisionId,
     });
-    return enviarResposta(c, destino, resultado.resposta, decisionId);
+    // [AG7 preparo] O despacho generico (a resposta ou o preparo).
+    return enviarResposta(
+      c,
+      destino,
+      { tipo: "resposta", texto: resultado.resposta },
+      decisionId,
+    );
   }
 
   // A liberacao caiu no meio (Assumir, interruptor, telefone desligado,
@@ -1871,6 +1917,166 @@ async function decidirEEnviar(
     resultado.notaParaAEquipe ?? null,
   );
 }
+
+// [AG7 preparo] início
+/**
+ * AG7 (contrato, secao 3.1, EXEC): o turno escolheu enviar a orientacao de
+ * preparo. Nesta ordem:
+ *  1. ler_preparo_para_envio da versao do turno (a ultima versao publicada
+ *     com a habilidade) e aprovarParaEnvio (o hash e o formato);
+ *  2. nulo: a versao saiu de vigor entre o catalogo e a decisao. A decisao
+ *     vira 'escalou' com assunto_clinico (origem "sistema", nunca atribui) e
+ *     o passo; o turno 'decidido' com a frase; a passagem e a frase;
+ *  3. senao: a decisao 'enviou_preparo' (a versao e o hash da mensagem que
+ *     o banco montou) ANTES do envio (o gatilho de message a le), o turno
+ *     'decidido' com a saida 'preparo' (sem texto) e o envio.
+ * Erro da leitura: o job tenta de novo (leitura_falhou), como toda leitura.
+ */
+async function decidirEEnviarOPreparo(
+  c: Contexto,
+  turno: TurnoDaIa,
+  destino: Destino,
+  config: ConfigDoAgente,
+  resultado: Extract<ResultadoDoTurno, { tipo: "preparo" }>,
+  latenciaMs: number,
+): Promise<ResultadoDeJob> {
+  const leitura = await lerOuFalhar(() =>
+    lerPreparoParaEnvio(c.admin, {
+      clinicId: c.clinicId,
+      versaoId: resultado.preparo.versaoId,
+      procedimentoId: resultado.preparo.procedimentoId,
+    }),
+  );
+  const comum = {
+    clinicId: c.clinicId,
+    conversationId: c.conversationId,
+    jobId: c.job.id,
+    filtro: null,
+    uso: resultado.uso,
+    versaoDoPrompt: resultado.versaoDoPrompt,
+    configVersion: config.versao,
+    latenciaMs,
+    ferramentasUsadas: resultado.ferramentasUsadas ?? [],
+    versaoDoClassificador: resultado.versaoDoClassificador,
+  };
+  // Revisao da AG7 (CFM-2): o texto aprovado com recusa (promessa, oferta
+  // casada, antes e depois, preco, link) nunca sai. A decisao e um bloqueio
+  // da conformidade (camada regra, a primeira categoria), com o passo so
+  // com os rotulos; a passagem e a frase. Nada do texto em log nem na
+  // decisao.
+  if (leitura.tipo === "recusado") {
+    const [categoria = "orientacao_clinica"] = leitura.recusas;
+    const decisionId = await gravarDecisao(c.admin, {
+      ...comum,
+      desfecho: {
+        tipo: "bloqueou",
+        categoria,
+        camada: "regra",
+        motivoDaFalha: null,
+      },
+      textoSha256: null,
+      trilha: [
+        ...resultado.trilha,
+        { tipo: "bloqueio", texto: passoDoPreparoRecusado(leitura.recusas) },
+        {
+          tipo: "equipe",
+          texto: `Passou para a equipe: ${ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.conformidade}`,
+        },
+      ],
+    });
+    log.warn("ia_preparo_recusado", {
+      ...idsDoLog(c),
+      kind: leitura.recusas.join(","),
+    });
+    log.info("ia_turno_decidido", {
+      ...idsDoLog(c),
+      status: "bloqueou",
+      kind: categoria,
+      duration_ms: latenciaMs,
+      count: resultado.uso.length,
+    });
+    await salvarTurno(c.admin, {
+      ...turno,
+      estado: "decidido",
+      saida: "frase",
+      decisionId,
+    });
+    // MOTOR-7: a nota da AG3 da passagem, como em toda passagem do turno.
+    return passarEAvisar(
+      c,
+      destino,
+      "conformidade",
+      false,
+      resultado.notasSeOPreparoNaoSair?.conformidade ?? null,
+    );
+  }
+  if (leitura.tipo === "fora_de_vigor") {
+    const decisionId = await gravarDecisao(c.admin, {
+      ...comum,
+      desfecho: {
+        tipo: "escalou",
+        motivo: "assunto_clinico",
+        gatilho: null,
+        origem: "sistema",
+      },
+      textoSha256: null,
+      trilha: [
+        ...resultado.trilha,
+        { tipo: "cadastro", texto: PASSO_DO_PREPARO_FORA_DE_VIGOR },
+        {
+          tipo: "equipe",
+          texto: `Passou para a equipe: ${ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.assunto_clinico}`,
+        },
+      ],
+    });
+    log.info("ia_turno_decidido", {
+      ...idsDoLog(c),
+      status: "escalou",
+      kind: "assunto_clinico",
+      duration_ms: latenciaMs,
+      count: resultado.uso.length,
+    });
+    await salvarTurno(c.admin, {
+      ...turno,
+      estado: "decidido",
+      saida: "frase",
+      decisionId,
+    });
+    // Revisao da AG7 (MOTOR-7): a nota da AG3 da passagem (procedimento,
+    // profissional, reserva, lista de espera), como na passagem pela
+    // ferramenta.
+    return passarEAvisar(
+      c,
+      destino,
+      "assunto_clinico",
+      false,
+      resultado.notasSeOPreparoNaoSair?.assunto_clinico ?? null,
+    );
+  }
+  const preparo = leitura.preparo;
+  const decisionId = await gravarDecisao(c.admin, {
+    ...comum,
+    desfecho: resultado.desfecho,
+    textoSha256: preparo.sha256,
+    trilha: resultado.trilha,
+  });
+  log.info("ia_turno_decidido", {
+    ...idsDoLog(c),
+    status: "enviou_preparo",
+    duration_ms: latenciaMs,
+    count: resultado.uso.length,
+  });
+  await salvarTurno(c.admin, {
+    ...turno,
+    estado: "decidido",
+    saida: "preparo",
+    texto: null,
+    textoSha256: preparo.sha256,
+    decisionId,
+  });
+  return enviarResposta(c, destino, { tipo: "preparo", preparo }, decisionId);
+}
+// [AG7 preparo] fim
 
 /**
  * Teto de respostas ou de gasto: a decisao (escalou) e gravada para toda
@@ -2303,6 +2509,9 @@ async function fraseJaSaiu(c: Contexto): Promise<boolean> {
     return (
       linha !== null &&
       linha.author === "sistema" &&
+      // [AG7 preparo] A linha 'sistema' do job e a frase OU o preparo: so o
+      // corpo da frase prova que ela saiu (contrato, secao 0, item 19).
+      linha.body === FRASE_DE_ESCALONAMENTO &&
       linha.deliveryStatus !== null &&
       RECIBOS_DE_ENVIADA.has(linha.deliveryStatus)
     );
@@ -2412,10 +2621,21 @@ const CODIGOS_DE_NUMERO: ReadonlySet<string> = new Set([
   "sem_numero",
 ]);
 
+// [AG7 preparo] início
+/**
+ * AG7: o que o despacho manda: a resposta da IA (so TextoAprovado) ou a
+ * orientacao de preparo (so PreparoAprovado), com as mesmas recusas.
+ */
+type SaidaParaEnviar =
+  | { tipo: "resposta"; texto: TextoAprovado }
+  | { tipo: "preparo"; preparo: PreparoAprovado };
+// [AG7 preparo] fim
+
 async function enviarResposta(
   c: Contexto,
   destino: Destino,
-  texto: TextoAprovado,
+  // [AG7 preparo] a resposta ou o preparo (era texto: TextoAprovado)
+  saida: SaidaParaEnviar,
   decisionId: string | null,
 ): Promise<ResultadoDeJob> {
   // Sem tempo para o envio inteiro: o texto aprovado fica no turno e o job
@@ -2423,15 +2643,22 @@ async function enviarResposta(
   if (restanteMs(c) < RESERVA_DO_ENVIO_MS) {
     return { reagendar: agoraIso(c), motivo: "retomar_envio" };
   }
-  const resultado = await c.deps.enviarResposta(c.admin, {
+  const ids = {
     clinicId: c.clinicId,
     conversationId: c.conversationId,
     contactId: destino.contactId,
     jobId: c.job.id,
     workerId: c.workerId,
     whatsappAccountId: destino.whatsappAccountId,
-    texto,
-  });
+  };
+  // [AG7 preparo] O despacho: a resposta ou o preparo.
+  const resultado =
+    saida.tipo === "resposta"
+      ? await c.deps.enviarResposta(c.admin, { ...ids, texto: saida.texto })
+      : await (c.deps.enviarPreparo ?? enviarPreparoAprovadoDaIa)(c.admin, {
+          ...ids,
+          preparo: saida.preparo,
+        });
 
   if (resultado.ok) {
     await fecharTurno(c.admin, {
@@ -2484,7 +2711,13 @@ async function enviarResposta(
     // Liberacao ou janela cairam: sem frase.
     return passarSemFraseDepoisDeDecidir(c, "liberacao_perdida");
   }
-  if (code === "ia_sem_aprovacao") {
+  if (
+    code === "ia_sem_aprovacao" ||
+    // [AG7 preparo] O gatilho de message recusou o conteudo do preparo
+    // (CZIA3: a versao saiu de vigor, ou a mensagem nao e a remontada): a
+    // linha nao nasceu, como no ia_sem_aprovacao.
+    (saida.tipo === "preparo" && code === "frase_divergente")
+  ) {
     // O banco nao achou a decisao aprovada com o mesmo hash: nada saiu e a
     // linha nao nasceu, entao a frase pode usar o mesmo job. O turno passa
     // a esperar a frase ANTES da passagem: se ela falhar, a retentativa
@@ -2678,6 +2911,11 @@ async function retomarDecidido(
     // tentativa anterior: passa agora, sem frase.
     return passarSemFraseDepoisDeDecidir(c, "liberacao_perdida");
   }
+  // [AG7 preparo] início
+  if (turno.saida === "preparo") {
+    return retomarOPreparo(c, turno, destino);
+  }
+  // [AG7 preparo] fim
   if (
     turno.saida !== "resposta" ||
     turno.texto === null ||
@@ -2739,8 +2977,93 @@ async function retomarDecidido(
     await apagarTextoDoTurno(c);
     return CONCLUIR;
   }
-  return enviarResposta(c, destino, texto, turno.decisionId);
+  // [AG7 preparo] O despacho generico (a resposta).
+  return enviarResposta(
+    c,
+    destino,
+    { tipo: "resposta", texto },
+    turno.decisionId,
+  );
 }
+
+// [AG7 preparo] início
+/**
+ * AG7 (contrato, secao 0, item 20): a retomada do turno 'decidido' com a
+ * saida 'preparo'. O modelo nao e chamado de novo. A linha do job que ja
+ * existe diz o que aconteceu (como na resposta); a que vai ser reaproveitada
+ * (o retry de "nada saiu", um UPDATE que NAO passa pelo gatilho de message)
+ * so sai depois da RECONFERENCIA aqui: a decisao 'enviou_preparo' do job, e
+ * ler_preparo_para_envio da versao dela com o mesmo hash. Diferente, nulo
+ * ou sem a decisao: a passagem sem frase (contrato 3.6), como a retomada
+ * recusada da resposta.
+ */
+async function retomarOPreparo(
+  c: Contexto,
+  turno: TurnoDaIa,
+  destino: Destino,
+): Promise<ResultadoDeJob> {
+  const jaGravada = await lerMensagemDoJob(c.admin, c.clinicId, c.job.id);
+  const retryDoEnvio =
+    jaGravada !== null &&
+    jaGravada.deliveryStatus === "falhou" &&
+    falhaPermiteRetry(jaGravada.errorCode);
+  if (jaGravada !== null && !retryDoEnvio) {
+    return fecharDepoisDeJaEnviado(c);
+  }
+  if (restanteMs(c) < RESERVA_DO_ENVIO_MS) {
+    return { reagendar: agoraIso(c), motivo: "retomar_envio" };
+  }
+  const decisao =
+    turno.decisionId === null
+      ? null
+      : await lerDecisaoDoPreparo(c.admin, {
+          clinicId: c.clinicId,
+          decisionId: turno.decisionId,
+          jobId: c.job.id,
+        });
+  // Revisao da AG7 (CFM-2): a leitura reconfere tambem as recusas do texto
+  // (recusado e fora de vigor nao saem).
+  const leitura =
+    decisao === null
+      ? null
+      : await lerOuFalhar(() =>
+          lerPreparoParaEnvio(c.admin, {
+            clinicId: c.clinicId,
+            versaoId: decisao.versaoId,
+          }),
+        );
+  const preparo = leitura?.tipo === "pronto" ? leitura.preparo : null;
+  if (
+    decisao === null ||
+    preparo === null ||
+    preparo.sha256 !== decisao.sha256 ||
+    (turno.textoSha256 !== null && turno.textoSha256 !== decisao.sha256)
+  ) {
+    log.warn("ia_retomada_recusada", { ...idsDoLog(c), kind: "preparo" });
+    const passagem = await passarDoJob(c, "falha_tecnica");
+    if (passagem === "sem_posse") {
+      return { ok: false, erro: "sem_posse" };
+    }
+    if (passagem === "erro") {
+      // O turno continua 'decidido': a retentativa passa de novo.
+      throw new ErroComCodigoDeJob("passagem_falhou");
+    }
+    // Sem frase (contrato 3.6).
+    await fecharTurno(c.admin, {
+      clinicId: c.clinicId,
+      jobId: c.job.id,
+      estado: passagem === "job_antigo" ? "sem_envio" : "passou_para_equipe",
+    });
+    return CONCLUIR;
+  }
+  return enviarResposta(
+    c,
+    destino,
+    { tipo: "preparo", preparo },
+    turno.decisionId,
+  );
+}
+// [AG7 preparo] fim
 
 /** Tira o texto pendente da linha do turno (retencao). Nunca lanca. */
 async function apagarTextoDoTurno(c: Contexto): Promise<void> {

@@ -6,6 +6,7 @@ vi.mock("server-only", () => ({}));
 
 import {
   lerSaidaAntesDaRespostaDaIa,
+  portaDaAgendaDoWhatsapp,
   respostaCitaOutraMensagem,
 } from "@/lib/agente/agenda";
 import {
@@ -13,10 +14,12 @@ import {
   estadoVazio,
   type EstadoDoAtendimento,
 } from "@/lib/agente/atendimento";
+import { criarAgendaDoTurno } from "@/lib/agente/ferramentas/agenda-do-turno";
 import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
 
 import {
   C1,
+  CATALOGO_DA_AG4,
   CenarioDaAg4,
   configDaAg4,
   consultasDoContato,
@@ -29,6 +32,7 @@ import {
   CLINICA,
   CONTATO,
   CONVERSA,
+  FUSO,
   iso,
   PROF,
   VINC,
@@ -522,5 +526,83 @@ describe('remarcar (T3): o botao de uma mensagem antiga nao e o "sim"', () => {
     expect(cenario.banco.chamadasDe("agendar_pela_ia")).toHaveLength(1);
     expect(r2.resposta).toBe(T4_SEGUNDA);
     expect(cenario.estado.desfecho).toBe("remarcou");
+  });
+});
+
+describe("o mesmo job repetido com mensagem nova (a lista do sim antes da idempotencia da RPC)", () => {
+  const JOB = randomUUID();
+
+  /** O turno do job JOB com as mensagens que ele le agora. */
+  function turnoDoJob(
+    cenario: CenarioDaAg4,
+    estado: EstadoDoAtendimento,
+    pendentes: readonly string[],
+  ) {
+    const mensagens = pendentes.map((m) => ({ mascarado: m, original: m }));
+    return criarAgendaDoTurno({
+      porta: portaDaAgendaDoWhatsapp(cenario.banco.cliente(), {
+        clinicId: CLINICA,
+        conversationId: CONVERSA,
+        contactId: CONTATO,
+        jobId: JOB,
+        agora: () => AGORA,
+      }),
+      catalogo: CATALOGO_DA_AG4,
+      config: configDaAg4({ dadosExigidos: SEM_DADOS }),
+      agoraMs: AGORA,
+      fuso: FUSO,
+      atendimento: { estado, dados: dadosVazios() },
+      mensagens: {
+        doPaciente: mensagens,
+        pendentes: mensagens,
+        antesDasPendentes: null,
+      },
+      agora: () => AGORA,
+    });
+  }
+
+  it.each([
+    ["uma pergunta", ["Sim", "E qual é o endereço?"]],
+    ["uma negação", ["Sim", "Não, espera"]],
+  ])(
+    "o job marcou e caiu antes de gravar o turno; na retomada a pessoa já escreveu %s: a RPC decide, a consulta é a mesma, e nada diz que não marcou",
+    async (_nome, pendentes) => {
+      const { cenario } = marcacaoJaPerguntada();
+      const estado = cenario.atendimento!.estado;
+      const primeira = cenario.escreve("Sim", cenario.agora + 1_000);
+      cenario.lidasPorJob.set(JOB, [primeira]);
+      const primeiro = turnoDoJob(cenario, estado, ["Sim"]);
+      await primeiro.preparar();
+      expect(await primeiro.executar("agendar", {})).toMatchObject({
+        resultado: "marcado",
+      });
+      const criada = cenario.banco.linhas("appointment");
+      expect(criada).toHaveLength(1);
+
+      const retomada = turnoDoJob(cenario, estado, pendentes);
+      await retomada.preparar();
+      expect(await retomada.executar("agendar", {})).toMatchObject({
+        resultado: "marcado",
+      });
+      expect(cenario.banco.linhas("appointment")).toEqual(criada);
+      expect(retomada.fechar({ mensagemFinal: null, passou: false }).estado).toMatchObject({
+        etapa: "pos_marcacao",
+        desfecho: "marcou",
+      });
+    },
+  );
+
+  it("a reserva viva, com a mesma rajada: a lista recusa, e a RPC nem é chamada", async () => {
+    const { cenario } = marcacaoJaPerguntada();
+    const turno = turnoDoJob(cenario, cenario.atendimento!.estado, [
+      "Sim",
+      "Não, espera",
+    ]);
+    await turno.preparar();
+    expect(await turno.executar("agendar", {})).toMatchObject({
+      resultado: "sem_confirmacao_do_paciente",
+    });
+    expect(cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
+    expect(cenario.banco.linhas("appointment")).toEqual([]);
   });
 });

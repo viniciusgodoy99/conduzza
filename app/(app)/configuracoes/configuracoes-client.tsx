@@ -28,6 +28,12 @@ import {
   type DadosDasOrigens,
 } from "@/components/configuracoes/origem-dos-leads-tab";
 import { PainelPapeis } from "@/components/configuracoes/painel-papeis";
+// [AG7 preparo] início
+import {
+  ResponsavelTecnicoCard,
+  type ResponsavelTecnicoCardProps,
+} from "@/components/configuracoes/responsavel-tecnico-card";
+// [AG7 preparo] fim
 import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Button } from "@/components/ui/button";
@@ -163,6 +169,9 @@ export function ConfiguracoesClient({
   ehAdmin,
   ehAdminPleno = ehAdmin,
   dica,
+  // [AG7 preparo] início
+  responsavelTecnico,
+  // [AG7 preparo] fim
   clinica,
   codigo,
   codigoAtivo,
@@ -195,6 +204,14 @@ export function ConfiguracoesClient({
    */
   ehAdminPleno?: boolean;
   dica: string;
+  // [AG7 preparo] início
+  /**
+   * O cartao "Responsavel tecnico" da aba Equipe (AG7): os dados (nulos
+   * quando a leitura do RT falhou), quem define (administrador pleno ou
+   * equipe Conduzza) e o fuso da clinica. Ausente: o cartao nao aparece.
+   */
+  responsavelTecnico?: ResponsavelTecnicoCardProps;
+  // [AG7 preparo] fim
   /** nulo: a leitura da clinica falhou */
   clinica: { nome: string; timezone: string } | null;
   /** nulo: a leitura do codigo falhou */
@@ -330,6 +347,15 @@ export function ConfiguracoesClient({
               dica={dica}
               profissionais={equipe.profissionais}
             />
+
+            {/* [AG7 preparo] início */}
+            {/* Antes de "Usuarios e permissoes" (contrato 3.3, EQ): o
+                formulario escolhe entre as pessoas ativas da equipe, entao
+                o cartao so aparece com a equipe lida. */}
+            {responsavelTecnico ? (
+              <ResponsavelTecnicoCard {...responsavelTecnico} />
+            ) : null}
+            {/* [AG7 preparo] fim */}
 
             <Card>
               <CardHeader>

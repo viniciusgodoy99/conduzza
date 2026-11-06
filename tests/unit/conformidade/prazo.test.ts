@@ -67,4 +67,26 @@ describe("classificarComPrazo", () => {
       classificarComPrazo(() => new Promise(() => undefined), ["oi"], 10),
     ).resolves.toMatchObject({ tipo: "falha", motivo: "timeout" });
   });
+
+  // [AG7 preparo] início
+  it("AG7: a habilidade do preparo vai ao classificador (a variante da politica); sem ela, a chamada de sempre", async () => {
+    const pedidos: Record<string, unknown>[] = [];
+    const classificar = async (entrada: Record<string, unknown>) => {
+      pedidos.push(entrada);
+      return { tipo: "classificacao" };
+    };
+    await classificarComPrazo(classificar, ["oi"], 50, { comPreparo: true });
+    await classificarComPrazo(classificar, ["oi"], 50, { comPreparo: false });
+    await classificarComPrazo(classificar, ["oi"], 50);
+    expect(pedidos[0]).toMatchObject({ mensagens: ["oi"], comPreparo: true });
+    // Sem a habilidade: so as mensagens e o sinal, byte a byte como antes.
+    for (const pedido of pedidos.slice(1)) {
+      expect(Object.keys(pedido).sort()).toEqual(["mensagens", "sinal"]);
+    }
+    // O classificador ausente continua falha fechada, com ou sem ela.
+    await expect(
+      classificarComPrazo(undefined as never, ["oi"], 50, { comPreparo: true }),
+    ).resolves.toMatchObject({ tipo: "falha", motivo: "sem_cliente" });
+  });
+  // [AG7 preparo] fim
 });

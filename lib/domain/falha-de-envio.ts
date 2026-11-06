@@ -92,6 +92,9 @@ const ROTULO_POR_CODIGO: Readonly<Record<string, string>> = {
   // reativar_clinica (onda 1) fecha assim o toque cujo job venceu durante a
   // suspensao: a perda veio da conta suspensa, nao do WhatsApp.
   vencido_na_suspensao: CONTA_SUSPENSA,
+  // [AG7 preparo] Revisao curta (CURTA-4): o passo da regua que so tinha o
+  // {{preparo}} ficou vazio sem texto aprovado em vigor (regua.ts).
+  sem_preparo_aprovado: "Sem orientação de preparo aprovada",
 };
 
 const CODIGO_DO_PROVEDOR = /^uazapi_(\d{3})$/;

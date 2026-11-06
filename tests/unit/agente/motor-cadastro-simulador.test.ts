@@ -93,7 +93,10 @@ function bancoDoSimulador(): AgendaEmMemoria {
     }))
     .rpc("ia_pode_simular", () => ({ data: true, error: null }))
     .rpc("reservar_gasto_da_ia", () => ({ data: RESERVA, error: null }))
-    .rpc("acertar_gasto_da_ia", () => ({ data: null, error: null }));
+    .rpc("acertar_gasto_da_ia", () => ({ data: null, error: null }))
+    // [AG7 preparo] O catalogo le o preparo em vigor e os textos (nenhum).
+    .rpc("preparos_em_vigor_da_clinica", () => ({ data: [], error: null }))
+    .rpc("textos_de_preparo_da_clinica", () => ({ data: [], error: null }));
   banco.inserir("procedure", ...daClinica(linhas.procedimentos));
   banco.inserir("service_link", ...daClinica(linhas.vinculos));
   banco.inserir("professional", ...daClinica(linhas.profissionais));
@@ -186,6 +189,9 @@ describe("simulador com as consultas do Cadastro", () => {
         "ia_pode_simular",
         "reservar_gasto_da_ia",
         "acertar_gasto_da_ia",
+        // [AG7 preparo] As leituras do preparo do catalogo (so leitura).
+        "preparos_em_vigor_da_clinica",
+        "textos_de_preparo_da_clinica",
       ]),
     );
     // O Cadastro foi lido pela clinica, nunca uma tabela de paciente.

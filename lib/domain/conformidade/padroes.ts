@@ -250,6 +250,55 @@ export const MEDICAMENTOS = [
   "gabapentin",
 ] as const;
 
+// [AG7 preparo] início
+/**
+ * Revisao da AG7 (CFM-4): os agentes do preparo intestinal (colonoscopia) e
+ * os laxantes comuns no Brasil, pelo principio ativo e pela marca, no mesmo
+ * formato de MEDICAMENTOS (prefixo). SO NA SAIDA (o remedio que o modelo
+ * escreve, e o lexico compacto da saida): o portao de entrada nao muda
+ * (D-81), e a duvida do paciente sobre o remedio do preparo continua com o
+ * classificador e com a conferencia do pedido do preparo (CFM-6). Sem eles,
+ * "Toma o bisacodil as 18h" passava na camada deterministica e so o
+ * verificador barrava. Nomes pedidos na revisao da AG7 (a pendencia da lista
+ * oficial da Anvisa, acima, continua do dono).
+ */
+export const MEDICAMENTOS_DO_PREPARO = [
+  "bisacodil",
+  "dulcolax",
+  "bisalax",
+  "lacto purga",
+  "lactopurga",
+  "humectol",
+  "manitol",
+  "picossulfato",
+  "picosulfato",
+  "picoprep",
+  "pico prep",
+  "picolax",
+  "guttalax",
+  "macrogol",
+  "polietilenoglicol",
+  "muvinlax",
+  "muvilax",
+  "forlax",
+  "lactulos",
+  "lactulona",
+  "duphalac",
+  "sene\\b",
+  "senosideo",
+  "tamarine",
+  "naturetti",
+  "agiolax",
+  "fosfato de sodio",
+  "phosfoenema",
+  "fleet\\b",
+  "supositori",
+  "nujol",
+  "oleo mineral",
+  "oleo de ricino",
+] as const;
+// [AG7 preparo] fim
+
 /** Classes e palavras genericas de remedio (pt, en, es). */
 const REMEDIO_GENERICO = [
   "remedi",
@@ -1038,6 +1087,85 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
     "cuidados_do_procedimento",
     "\\bcuidados? (?:pos|pre|antes|depois|apos|com a pele|com o local|com a regiao|especiais)",
   ),
+  // [AG7 preparo] início
+  // AG7 (03/11/2026). A D-80 vale so para o texto aprovado pelo RT, que o
+  // SISTEMA manda palavra por palavra; o preparo escrito pelo MODELO continua
+  // barrado. Alem do jejum, do suspender o remedio, do beber liquido e dos
+  // cuidados (acima), o preparo dito com outras palavras: a dieta ("dieta
+  // liquida", "a dieta e leve", "sem residuos"), os liquidos claros, comer e
+  // beber negados ("nao coma", "sem comer", "nao pode beber", "nao tome
+  // nada"), o que evitar comer, a bexiga cheia, a lavagem intestinal e a
+  // quantidade de liquido ("beba os 4 litros"). E o anuncio do preparo
+  // ("Segue o preparo abaixo"): o turno do preparo nunca leva texto do
+  // modelo, entao essa frase dele nunca e verdadeira. Nenhum dos dois pega a
+  // frase F2 do sistema, a oferta ("Quer receber a orientacao de preparo da
+  // colonoscopia?") nem a pergunta ("Para qual procedimento voce quer a
+  // orientacao de preparo?"), nem a recepcao de sempre ("Nao precisa levar
+  // nada", "Evite chegar atrasado", "tome um copo de agua enquanto espera"):
+  // os controles AG7-C da bateria.
+  p(
+    "orientacao_clinica",
+    "preparo_alimentar",
+    [
+      "\\bdieta (?:\\w+ )?(?:liquidas?|leves?|pastosas?|brandas?|restritas?|sem (?:residuos?|fibras?|gorduras?|lactose|gluten)|pobre em|livre de)\\b",
+      "\\bliquidos? (?:claros?|coados?|ralos?|sem residuos?)\\b",
+      "\\b(?:nao|sem) (?:coma|comer|beba|beber|ingira|ingerir|mastigue|mastigar|fume|fumar)\\b",
+      "\\bnao (?:pode|deve|podera|devera|precisa) (?:\\w+ )?(?:comer|beber|ingerir|mastigar|fumar|se alimentar)\\b",
+      "\\bnao (?:tome|tomar) (?:nada|cafe|leite|agua|liquidos?|sucos?|chas?|bebidas?)\\b",
+      "\\bevit(?:e|em|ar|a)\\b (?:\\w+ ){0,2}?(?:comer|beber|ingerir|alimentos?|comidas?|frituras?|gordur\\w*|leite|laticinios|derivados|graos?|sementes?|verduras?|legumes|frutas?|refeic\\w*|carnes?|fibras?|refrigerantes?)\\b",
+      "\\bbexiga (?:cheia|vazia)\\b|\\b(?:nao|sem) urin(?:e|ar)\\b",
+      "\\blavagem intestinal\\b|\\benemas?\\b|\\bclister\\b",
+      "\\b(?:beba|beber|bebe|tome|tomar|toma|ingira|ingerir)\\b (?:\\w+ ){0,3}?(?:\\d+(?:[.,]\\d+)?|meio|meia|um|uma|dois|duas|tres|quatro|cinco|seis) ?(?:litros?|l)\\b",
+      // Revisao da AG7 (CFM-4): a giria e o jeito curto de falar o preparo.
+      // A barriga vazia; o "nada de" comer; o xixi negado, segurado ou
+      // antes; a comida leve ou liquida; o "so" caldo, sopa, gelatina ou
+      // cha; o "sem" e o "corta" ou "tira" de um alimento; a quantidade de
+      // copos (dois ou mais: "tome um copo de agua enquanto espera" e
+      // recepcao, o controle AG7-C). Revisao curta (CURTA-3): o "algo" e a
+      // "coisa" leve so com comer por perto ou com a vespera depois ("a
+      // limpeza de pele e uma coisa leve" e catalogo), e a gordura so com o
+      // "corte" ou o "tire" de quem manda, ou com o "corta" e o "tira" no
+      // comeco da frase ("a criolipolise tira a gordura localizada" descreve
+      // o procedimento).
+      "\\bbarriga (?:vazia|vaziinha)\\b",
+      "\\bnada de (?:comida|comidas|comer|beber|bebida|bebidas|alimento|alimentos|liquido|liquidos|agua|folhas?|fibras?|sementes?|cascas?|verduras?|frutas?|graos?|leite|carnes?)\\b",
+      "\\b(?:nao|sem|nem) (?:\\w+ )?xixi\\b|\\bsegur(?:e|a|ar|em|ando) (?:o |seu |teu )?xixi\\b|\\bxixi\\b (?:\\w+ ){0,2}?antes\\b",
+      "\\b(?:alimentacao|alimentacoes|refeicao|refeicoes|comida|comidas) (?:bem |mais |bem mais )?(?:leves?|levinh\\w*|liquid\\w*|pastos\\w*)\\b",
+      "\\b(?:come|coma|comam|comer|almoce|almoca|almocar|jante|janta|jantar|lanche|lancha|lanchar)\\b (?:\\w+ ){0,2}?(?:algo|coisa|coisas|coisinha|coisinhas) (?:bem |mais |bem mais )?(?:leves?|levinh\\w*|liquid\\w*|pastos\\w*)\\b",
+      "\\b(?:algo|coisa|coisas|coisinha|coisinhas) (?:bem |mais |bem mais )?(?:leves?|levinh\\w*|liquid\\w*|pastos\\w*) (?:\\w+ ){0,3}?(?:na vespera|no dia anterior|antes d[oa] (?:\\u00a7|exames?|procedimentos?))\\b",
+      "\\b(?:so|apenas|somente)\\b (?:\\w+ )?(?:caldos?|caldinhos?|sopas?|sopinhas?|gelatinas?|chas?|agua de coco|liquidos?)\\b",
+      "\\bsem (?:\\w+ )?(?:verduras?|frutas?|folhas?|sementes?|cascas?|fibras?|graos?|legumes|feijao|carnes?|leite|laticinios)\\b",
+      "\\b(?:corta|corte|cortar|tira|tire|tirar|retire|retirar)\\b (?:\\w+ ){0,2}?(?:fibras?|carnes?|verduras?|frutas?|folhas?|sementes?|cascas?|graos?|feijao|saladas?|leite|laticinios|frituras?|doces?|acucar|cafe|alcool)\\b",
+      "(?:\\b(?:corte|cortar|tire|tirar|retire|retirar)|(?:^|[.!?;:,] )(?:corta|tira))\\b (?:\\w+ ){0,2}?gordur\\w*",
+      "\\b(?:\\d+|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez)\\b (?:\\w+ )?copos (?:de )?(?:agua|liquido|liquidos|suco|sucos|cha|chas)\\b",
+    ].join("|"),
+  ),
+  p(
+    "orientacao_clinica",
+    "cuidado_antes_do_procedimento",
+    // Revisao da AG7 (CFM-4): o cuidado com a pele antes do procedimento
+    // dito curto ("Nao faca depilacao nem use acidos 7 dias antes").
+    // Revisao curta (CURTA-3): so a instrucao, e nao a descricao do
+    // catalogo ("a clinica nao faz depilacao", "o peeling nao usa acidos",
+    // "nao fazemos depilacao a laser"): o imperativo e o infinitivo
+    // ("nao faca", "nem use", "nao usar", "evite passar"), com o "deve",
+    // "pode" ou "precisa" no meio; e o "nao faz" ou "nao usa" (o
+    // imperativo falado) e o "sem usar" so com o antes ou a vespera na
+    // frase ("Nao faz depilacao 7 dias antes").
+    [
+      "\\b(?:nao|nem|evite|evitem|evitar)\\b (?:(?:deve|devem|pode|podem|precisa|precisam|devera|podera)\\b )?(?:faca|facam|fazer|use|usem|usar|passe|passem|passar|aplique|apliquem|aplicar)\\b (?:\\w+ ){0,2}?(?:depilac\\w*|esfolia\\w*|acidos?\\b|retinoi\\w*|clareador\\w*|bronzea\\w*|autobronzead\\w*)",
+      "\\b(?:nao|nem) (?:faz|usa|passa|aplica)\\b (?:\\w+ ){0,2}?(?:depilac\\w*|esfolia\\w*|acidos?\\b|retinoi\\w*|clareador\\w*|bronzea\\w*|autobronzead\\w*)[^.!?;]{0,60}?\\b(?:antes|vespera|dia anterior)\\b",
+      "\\bsem (?:fazer|usar|passar|aplicar)\\b (?:\\w+ ){0,2}?(?:depilac\\w*|esfolia\\w*|acidos?\\b|retinoi\\w*|clareador\\w*|bronzea\\w*|autobronzead\\w*)[^.!?;]{0,60}?\\b(?:antes|vespera|dia anterior)\\b",
+    ].join("|"),
+  ),
+  p(
+    "orientacao_clinica",
+    "anuncia_preparo",
+    // "Segue", "abaixo" ou "a seguir" colado no preparo (ate quatro palavras
+    // entre eles, sem pontuacao no meio).
+    "\\bseguem?\\b(?: \\w+){0,4}? preparo\\b|\\bpreparo\\b(?: \\w+){0,4}? (?:seguem?|abaixo|a seguir)\\b|\\b(?:abaixo|a seguir)\\b,?(?: \\w+){0,4}? preparo\\b",
+  ),
+  // [AG7 preparo] fim
   // [AG6 urgência] início
   // AG6a (revisao de 28/10/2026, caso AG6-S12): a conduta com o corpo e os
   // primeiros socorros. A IA nunca diz o que fazer com o corpo, nem para
@@ -1089,6 +1217,12 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
 
   // ---- medicamento ---------------------------------------------------------
   p("medicamento", "remedio_citado", `\\b${alternativas(MEDICAMENTOS)}`),
+  // [AG7 preparo] Revisao da AG7 (CFM-4): o remedio do preparo (so a saida).
+  p(
+    "medicamento",
+    "remedio_do_preparo",
+    `\\b${alternativas(MEDICAMENTOS_DO_PREPARO)}`,
+  ),
   p("medicamento", "classe_de_remedio", `\\b${alternativas(REMEDIO_GENERICO)}`),
   p(
     "medicamento",
@@ -1117,12 +1251,14 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
     "quantidade_com_unidade",
     // "Unidades" so com o produto ("50 unidades de toxina") ou na regiao
     // (unidades_na_regiao): "temos 2 unidades" sao filiais.
-    "\\b\\d[\\d.,o]*\\s?(?:m\\W{0,2}g|mcg|ug|m\\W{0,2}l|g|u\\W{0,2}i|ui|u|un|gotas?|gotinhas?|pingos?|comprimidos?|capsulas?|cps?|caps|saches?|colher(?:es)?|colheradas?|doses?|ampolas?|jatos?|borrifadas?|puffs?|miligramas?|mililitros?|microgramas?|gramas?|seringas?|frascos?)\\b|\\b\\d[\\d.,o]*\\s?unidades? (?:de |do |da )?(?:botox|toxina|dysport|xeomin|botulift|produto|acido|preenchimento)",
+    "\\b\\d[\\d.,o]*\\s?(?:m\\W{0,2}g|mcg|ug|m\\W{0,2}l|g|u\\W{0,2}i|ui|u|un|gotas?|gotinhas?|pingos?|comprimidos?|compr|capsulas?|cps?|caps|saches?|colher(?:es)?|colheradas?|doses?|ampolas?|jatos?|borrifadas?|puffs?|miligramas?|mililitros?|microgramas?|gramas?|seringas?|frascos?)\\b|\\b\\d[\\d.,o]*\\s?unidades? (?:de |do |da )?(?:botox|toxina|dysport|xeomin|botulift|produto|acido|preenchimento)",
   ),
   p(
     "dosagem",
     "quantidade_por_extenso",
-    "\\b(?:um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|meio|meia|vinte|trinta|quarenta|cinquenta|cem|duzentos|quinhentos|mil)\\b (?:\\w+ )?(?:gotas?|gotinhas?|pingos?|comprimidos?|capsulas?|colher(?:es)?|colheradas?|doses?|ampolas?|miligramas?|mililitros?|mg|ml|saches?|jatos?|borrifadas?)\\b|\\bquinhentinh|\\bmeio grama\\b",
+    // [AG7 preparo] Revisao da AG7 (CFM-4): a abreviacao "compr." ("toma
+    // dois compr. as 18h").
+    "\\b(?:um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|meio|meia|vinte|trinta|quarenta|cinquenta|cem|duzentos|quinhentos|mil)\\b (?:\\w+ )?(?:gotas?|gotinhas?|pingos?|comprimidos?|compr|capsulas?|colher(?:es)?|colheradas?|doses?|ampolas?|miligramas?|mililitros?|mg|ml|saches?|jatos?|borrifadas?)\\b|\\bquinhentinh|\\bmeio grama\\b",
   ),
   p(
     "dosagem",
@@ -1631,7 +1767,8 @@ const FORA_DO_COMPACTO = new Set(["voltaren", "melhoral"]);
  */
 function medicamentosParaOCompacto(): TermoCompacto[] {
   const termos = new Set<string>();
-  for (const termo of MEDICAMENTOS) {
+  // [AG7 preparo] E os remedios do preparo (so a saida, CFM-4).
+  for (const termo of [...MEDICAMENTOS, ...MEDICAMENTOS_DO_PREPARO]) {
     if (/[^a-z ]/.test(termo)) {
       continue;
     }

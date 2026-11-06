@@ -15,6 +15,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      conferir_registro_do_responsavel_tecnico: {
+        Args: { p_rt_id: string }
+        Returns: string
+      }
       graphql: {
         Args: {
           extensions?: Json
@@ -156,6 +160,7 @@ export type Database = {
           latency_ms: number | null
           message_id: string | null
           motivo_da_falha: string | null
+          preparo_versao_id: string | null
           texto_sha256: string | null
           tokens_cache: number | null
           tokens_entrada: number | null
@@ -185,6 +190,7 @@ export type Database = {
           latency_ms?: number | null
           message_id?: string | null
           motivo_da_falha?: string | null
+          preparo_versao_id?: string | null
           texto_sha256?: string | null
           tokens_cache?: number | null
           tokens_entrada?: number | null
@@ -214,6 +220,7 @@ export type Database = {
           latency_ms?: number | null
           message_id?: string | null
           motivo_da_falha?: string | null
+          preparo_versao_id?: string | null
           texto_sha256?: string | null
           tokens_cache?: number | null
           tokens_entrada?: number | null
@@ -4347,6 +4354,88 @@ export type Database = {
           },
         ]
       }
+      preparo_do_procedimento: {
+        Row: {
+          aprovado_em: string | null
+          aprovado_por: string | null
+          clinic_id: string
+          comentario: string | null
+          encerrado_em: string | null
+          encerrado_por: string | null
+          escrito_em: string
+          escrito_por: string | null
+          id: string
+          nome_do_procedimento: string
+          origem: string
+          procedure_id: string
+          rt_id: string | null
+          situacao: string
+          texto: string
+          texto_sha256: string
+          versao: number
+        }
+        Insert: {
+          aprovado_em?: string | null
+          aprovado_por?: string | null
+          clinic_id: string
+          comentario?: string | null
+          encerrado_em?: string | null
+          encerrado_por?: string | null
+          escrito_em?: string
+          escrito_por?: string | null
+          id?: string
+          nome_do_procedimento: string
+          origem: string
+          procedure_id: string
+          rt_id?: string | null
+          situacao: string
+          texto: string
+          texto_sha256: string
+          versao: number
+        }
+        Update: {
+          aprovado_em?: string | null
+          aprovado_por?: string | null
+          clinic_id?: string
+          comentario?: string | null
+          encerrado_em?: string | null
+          encerrado_por?: string | null
+          escrito_em?: string
+          escrito_por?: string | null
+          id?: string
+          nome_do_procedimento?: string
+          origem?: string
+          procedure_id?: string
+          rt_id?: string | null
+          situacao?: string
+          texto?: string
+          texto_sha256?: string
+          versao?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "preparo_do_procedimento_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "preparo_do_procedimento_procedure_id_fkey"
+            columns: ["procedure_id"]
+            isOneToOne: false
+            referencedRelation: "procedure"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "preparo_do_procedimento_rt_id_fkey"
+            columns: ["rt_id"]
+            isOneToOne: false
+            referencedRelation: "responsavel_tecnico"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       procedure: {
         Row: {
           active: boolean
@@ -4846,6 +4935,62 @@ export type Database = {
             columns: ["unit_id"]
             isOneToOne: false
             referencedRelation: "unit"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      responsavel_tecnico: {
+        Row: {
+          ate: string | null
+          clinic_id: string
+          conselho: string
+          definido_por: string | null
+          desde: string
+          encerrado_por: string | null
+          id: string
+          nome: string
+          numero: string
+          registro_conferido_em: string | null
+          registro_conferido_por: string | null
+          uf: string
+          user_id: string
+        }
+        Insert: {
+          ate?: string | null
+          clinic_id: string
+          conselho: string
+          definido_por?: string | null
+          desde?: string
+          encerrado_por?: string | null
+          id?: string
+          nome: string
+          numero: string
+          registro_conferido_em?: string | null
+          registro_conferido_por?: string | null
+          uf: string
+          user_id: string
+        }
+        Update: {
+          ate?: string | null
+          clinic_id?: string
+          conselho?: string
+          definido_por?: string | null
+          desde?: string
+          encerrado_por?: string | null
+          id?: string
+          nome?: string
+          numero?: string
+          registro_conferido_em?: string | null
+          registro_conferido_por?: string | null
+          uf?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "responsavel_tecnico_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
             referencedColumns: ["id"]
           },
         ]
@@ -5690,6 +5835,10 @@ export type Database = {
         Args: { p_escopo: string; p_message_id: string }
         Returns: Json
       }
+      aprovar_preparo_do_procedimento: {
+        Args: { p_texto_sha256: string; p_versao_id: string }
+        Returns: Json
+      }
       arquivar_e_limpar_mensagem: {
         Args: {
           p_escopo: string
@@ -6061,6 +6210,17 @@ export type Database = {
         }
         Returns: boolean
       }
+      definir_responsavel_tecnico: {
+        Args: {
+          p_clinic_id: string
+          p_conselho: string
+          p_nome: string
+          p_numero: string
+          p_uf: string
+          p_user_id: string
+        }
+        Returns: string
+      }
       definir_teto_da_ia: {
         Args: {
           p_clinic_id: string
@@ -6081,9 +6241,17 @@ export type Database = {
         Args: { p_dias: number[]; p_turnos: string[] }
         Returns: string
       }
+      descartar_preparo_do_procedimento: {
+        Args: { p_versao_id: string }
+        Returns: undefined
+      }
       devolver_conversa_da_consulta_recusada: {
         Args: { p_appointment_id: string; p_clinic_id: string }
         Returns: boolean
+      }
+      devolver_preparo_do_procedimento: {
+        Args: { p_comentario: string; p_versao_id: string }
+        Returns: undefined
       }
       definir_entrada_por_codigo: {
         Args: { p_ativo: boolean; p_clinic_id: string }
@@ -6124,6 +6292,10 @@ export type Database = {
       encerrar_envios_da_oferta: {
         Args: { p_clinic_id: string; p_offer_id: string }
         Returns: number
+      }
+      encerrar_responsavel_tecnico: {
+        Args: { p_clinic_id: string }
+        Returns: undefined
       }
       devolver_para_ia: { Args: { p_conversation_id: string }; Returns: Json }
       disparar_ciclo_da_ia: { Args: never; Returns: boolean }
@@ -6471,6 +6643,14 @@ export type Database = {
         }
         Returns: Json
       }
+      ler_preparo_para_envio: {
+        Args: {
+          p_clinic_id: string
+          p_simulador?: boolean
+          p_versao_id: string
+        }
+        Returns: Json
+      }
       ler_rascunho_bloqueado: {
         Args: { p_decision_id: string }
         Returns: Json
@@ -6525,6 +6705,7 @@ export type Database = {
           sem_contato_6m: number
         }[]
       }
+      mensagem_do_preparo: { Args: { p_versao_id: string }; Returns: string }
       midia_da_ia_liberada: {
         Args: { p_clinic_id: string; p_telefone: string }
         Returns: boolean
@@ -6671,6 +6852,21 @@ export type Database = {
           p_etapa: string
           p_gatilho: string
         }
+        Returns: Json
+      }
+      preparo_em_vigor: {
+        Args: { p_clinic_id: string; p_versao_id: string }
+        Returns: boolean
+      }
+      preparo_em_vigor_do_procedimento: {
+        Args: { p_clinic_id: string; p_procedure_id: string }
+        Returns: Json
+      }
+      preparo_nome_valido: { Args: { p_nome: string }; Returns: boolean }
+      preparo_texto_recusado: { Args: { p_texto: string }; Returns: boolean }
+      preparo_texto_valido: { Args: { p_texto: string }; Returns: boolean }
+      preparos_em_vigor_da_clinica: {
+        Args: { p_clinic_id: string }
         Returns: Json
       }
       processar_pendencias_do_funil: {
@@ -6918,6 +7114,10 @@ export type Database = {
         Args: { p_id: string; p_motivo: string }
         Returns: Json
       }
+      responsavel_tecnico_vigente: {
+        Args: { p_clinic_id: string }
+        Returns: string
+      }
       salvar_automacao_de_fluxo: {
         Args: { p_clinic_id: string; p_id: string; p_regra: Json }
         Returns: string
@@ -6933,6 +7133,10 @@ export type Database = {
           p_validity_days: number
         }
         Returns: string
+      }
+      salvar_preparo_do_procedimento: {
+        Args: { p_procedure_id: string; p_texto: string; p_versao_lida: number }
+        Returns: Json
       }
       salvar_requisitos_do_procedimento: {
         Args: {
@@ -6981,9 +7185,17 @@ export type Database = {
         Args: { p_clinic_id: string; p_motivo: string }
         Returns: undefined
       }
+      suspender_preparo_do_procedimento: {
+        Args: { p_comentario?: string; p_procedure_id: string }
+        Returns: Json
+      }
       telefone_e_numero_da_plataforma: {
         Args: { p_telefone: string }
         Returns: boolean
+      }
+      textos_de_preparo_da_clinica: {
+        Args: { p_clinic_id: string }
+        Returns: string[]
       }
       tipo_de_envio_do_job: {
         Args: { p_kind: string; p_payload: Json }
@@ -7011,6 +7223,10 @@ export type Database = {
       user_clinic_ids: { Args: never; Returns: string[] }
       user_e_admin_pleno: { Args: { p_clinic_id: string }; Returns: boolean }
       user_e_implementador: { Args: { p_clinic_id: string }; Returns: boolean }
+      user_e_responsavel_tecnico: {
+        Args: { p_clinic_id: string }
+        Returns: boolean
+      }
       user_has_role: {
         Args: { p_clinic_id: string; p_roles: string[] }
         Returns: boolean

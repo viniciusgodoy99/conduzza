@@ -32,6 +32,7 @@ import {
   USO_DA_CLINICA_STATUS,
 } from "@/components/painel-geral/painel-geral";
 import { RequisitosDaProducaoCartao } from "@/components/painel-geral/requisitos-da-producao";
+import { ResponsavelTecnicoNoPainel } from "@/components/painel-geral/responsavel-tecnico-no-painel";
 import { SaudeDaClinicaCartao } from "@/components/painel-geral/sinais-da-clinica";
 import { TendenciaNaLinha } from "@/components/painel-geral/tendencia";
 import { TetoDaIa } from "@/components/painel-geral/teto-da-ia";
@@ -52,6 +53,7 @@ import type {
   RequisitosDaProducao,
   TetosDaIa,
 } from "@/lib/queries/painel-geral";
+import type { ResponsavelTecnico } from "@/lib/queries/preparo";
 
 // O detalhe de uma clinica no Painel geral (onda 1, decisao do dono de
 // 20/10/2026; desde 26/10/2026, o acompanhamento de cliente): as metricas
@@ -112,6 +114,10 @@ export type DetalheDaClinicaProps = {
   notas: LeituraDoDetalhe<Notas>;
   /** O historico da conta, o mais novo primeiro. */
   historico: LeituraDoDetalhe<Historico>;
+  /** O RT aberto (AG7); null ou ausente: sem RT; "erro": a leitura falhou. */
+  responsavelTecnico?: ResponsavelTecnico | null | "erro";
+  /** Quem esta vendo: o proprio RT nao confere o registro dele. */
+  sessaoUserId?: string | null;
 };
 
 /**
@@ -198,6 +204,8 @@ export function DetalheDaClinica({
   versoes,
   notas,
   historico,
+  responsavelTecnico = null,
+  sessaoUserId = null,
 }: DetalheDaClinicaProps) {
   const { numeros, finais } = numerosDosCartoes(clinica);
   const ambienteLigado = agenteAtendeNoAmbiente(clinica, ambienteDaIa);
@@ -334,6 +342,17 @@ export function DetalheDaClinica({
         <SaudeDaClinicaCartao clinica={clinica} />
         <ImplantacaoDaClinicaCartao clinica={clinica} />
       </div>
+
+      <ResponsavelTecnicoNoPainel
+        clinicId={clinica.id}
+        leitura={responsavelTecnico}
+        proprioRt={
+          responsavelTecnico !== null &&
+          responsavelTecnico !== "erro" &&
+          responsavelTecnico.userId === sessaoUserId
+        }
+        fuso={clinica.fuso}
+      />
 
       <div className="grid items-start gap-4 lg:grid-cols-2">
         <NotasDaClinica

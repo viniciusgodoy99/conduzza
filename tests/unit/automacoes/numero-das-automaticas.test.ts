@@ -253,6 +253,32 @@ describe("testarEnvioAction: por qual número", () => {
     });
   });
 
+  // Revisao curta da AG7 (CURTA-4): o teste mostra o toque como a regua o
+  // manda sem texto de preparo aprovado (a amostra nunca leva texto clinico).
+  it("o {{preparo}} no texto: saem o campo e a frase que só o apresenta, como na régua", async () => {
+    const passo = banco
+      .linhas("cadence_step")
+      .find((linha) => linha.id === PASSO);
+    if (passo === undefined) {
+      throw new Error("passo");
+    }
+    passo.fixed_body =
+      "Oi, {{nome}}! Confirma {{procedimento}} amanhã? Siga o preparo: {{preparo}}";
+    await testarEnvioAction({ cadence_step_id: PASSO });
+    expect(fakeSentMessages()).toEqual([
+      expect.objectContaining({
+        body: "Teste da régua: Oi, Maria! Confirma Consulta amanhã?",
+      }),
+    ]);
+
+    resetFakeProvider();
+    passo.fixed_body = "Siga o preparo abaixo:\n{{preparo}}";
+    await testarEnvioAction({ cadence_step_id: PASSO });
+    expect(fakeSentMessages()).toEqual([
+      expect.objectContaining({ body: "Teste da régua" }),
+    ]);
+  });
+
   it("sem política, sai pelo principal para ele mesmo", async () => {
     const resultado = await testarEnvioAction({ cadence_step_id: PASSO });
 

@@ -1135,6 +1135,9 @@ describe("retomadas", () => {
       clinic_id: CLINICA,
       job_id: JOB,
       author: "sistema",
+      // [AG7 preparo] A linha 'sistema' do job so e a frase com o corpo dela
+      // (a do preparo tambem e 'sistema').
+      body: FRASE_DE_ESCALONAMENTO,
       delivery_status: "enviada",
     });
     expect(await rodar()).toEqual({ ok: true });
@@ -1487,6 +1490,9 @@ describe("revisão: retomada da frase com a passagem já gravada (achado 7)", ()
       clinic_id: CLINICA,
       job_id: JOB,
       author: "sistema",
+      // [AG7 preparo] A linha 'sistema' do job so e a frase com o corpo dela
+      // (a do preparo tambem e 'sistema').
+      body: FRASE_DE_ESCALONAMENTO,
       delivery_status: "enviada",
     });
     expect(await rodar()).toEqual({ ok: true });

@@ -24,6 +24,9 @@ import {
   type ClienteDoVerificador,
 } from "@/lib/integrations/llm/verificador";
 import { CONTEXTO_PADRAO } from "@/tests/fixtures/ia/conformidade/casos";
+// [AG7 preparo] início
+import { PERMITIDO_OFERECER_O_PREPARO } from "@/lib/integrations/llm/verificador";
+// [AG7 preparo] fim
 
 // O verificador real (lib/integrations/llm/verificador.ts) com um cliente
 // FALSO no lugar do SDK da OpenAI: prova os parametros da chamada (Responses
@@ -388,6 +391,7 @@ describe("chamada ao SDK", () => {
 // continuam orientacao clinica. A rodada paga D34 tem de rodar de novo
 // (a VERSAO_DA_POLITICA mudou).
 describe("politica do verificador na AG2", () => {
+  // [AG7 preparo] A AG7 nao muda as vedacoes: as nove linhas continuam.
   it("as linhas das categorias (as vedacoes) sao as de antes, byte a byte", () => {
     const categorias = POLITICA_DO_VERIFICADOR.split("\n").filter((l) =>
       l.startsWith("- "),
@@ -421,6 +425,12 @@ describe("politica do verificador na AG2", () => {
     expect(POLITICA_DO_VERIFICADOR).toContain(
       "Nada disso libera as categorias acima: jejum, preparo do corpo e cuidados antes ou depois do procedimento continuam sendo orientacao_clinica.",
     );
+    // [AG7 preparo] início
+    // A frase da AG7 vem logo depois, e o "Nada disso libera" fica igual.
+    expect(POLITICA_DO_VERIFICADOR).toContain(
+      `continuam sendo orientacao_clinica. ${PERMITIDO_OFERECER_O_PREPARO}\n\nFatos desta resposta:`,
+    );
+    // [AG7 preparo] fim
     expect(POLITICA_DO_VERIFICADOR).toContain("Na dúvida, reprove");
     expect(POLITICA_DO_VERIFICADOR).not.toMatch(/[–—]/);
   });
@@ -1012,3 +1022,43 @@ describe("falha fechada: toda anomalia do SDK bloqueia no filtro", () => {
     expect(decisao.aprovado).toBe(true);
   });
 });
+
+// [AG7 preparo] início
+// AG7 (03/11/2026; D-80): o "e permitido" ganha uma frase, para toda clinica:
+// oferecer o envio da orientacao de preparo aprovada pela clinica e dizer
+// que o sistema vai envia-la, sem dizer nada do conteudo. O preparo continua
+// orientacao_clinica e as vedacoes nao mudam. A versao muda (a rodada D34
+// roda de novo).
+describe("AG7: oferecer o envio do preparo aprovado nao e orientacao", () => {
+  it("a frase nova, no fim do paragrafo do permitido, depois de 'Nada disso libera'", () => {
+    expect(PERMITIDO_OFERECER_O_PREPARO).toBe(
+      "Também é permitido oferecer o envio da orientação de preparo aprovada pela clínica e dizer que o sistema vai enviá-la, sem dizer nada do conteúdo dela.",
+    );
+    const paragrafo = POLITICA_DO_VERIFICADOR.split("\n").find((linha) =>
+      linha.startsWith("É permitido:"),
+    );
+    expect(paragrafo?.endsWith(` ${PERMITIDO_OFERECER_O_PREPARO}`)).toBe(true);
+    expect(paragrafo?.indexOf("Nada disso libera")).toBeLessThan(
+      paragrafo?.indexOf(PERMITIDO_OFERECER_O_PREPARO) ?? -1,
+    );
+    expect(
+      POLITICA_DO_VERIFICADOR.split(PERMITIDO_OFERECER_O_PREPARO),
+    ).toHaveLength(2);
+    expect(PERMITIDO_OFERECER_O_PREPARO).not.toMatch(/[–—]/);
+  });
+
+  it("o preparo continua orientacao_clinica nas vedacoes", () => {
+    const linha = POLITICA_DO_VERIFICADOR.split("\n").find((l) =>
+      l.startsWith("- orientacao_clinica:"),
+    );
+    expect(linha).toContain("jejum");
+    expect(linha).toContain("cuidados antes ou depois de procedimento");
+  });
+
+  it("a versao da politica mudou (a rodada D34 roda de novo)", () => {
+    expect(VERSAO_DA_POLITICA).toMatch(/^verificador-[0-9a-f]{12}$/);
+    // A versao de antes da AG7 (a da AG5, AG6a e AG6b na branch).
+    expect(VERSAO_DA_POLITICA).not.toBe("verificador-23c719377463");
+  });
+});
+// [AG7 preparo] fim

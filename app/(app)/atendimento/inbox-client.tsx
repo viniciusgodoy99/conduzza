@@ -67,6 +67,10 @@ import {
   idsDasMidiasDoPaciente,
   leiturasDoFio,
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  fetchEnviosDoPreparo,
+  jobsQuePodemSerDoPreparo,
+  // [AG7 preparo] fim
   type ConversationListItem,
   type MessageItem,
   type NumerosDoInbox,
@@ -81,6 +85,9 @@ import {
   variosNumeros,
 } from "@/lib/domain/numeros-do-inbox";
 import { formatarTelefone } from "@/lib/domain/telefone";
+// [AG7 preparo] início
+import { SEM_ENVIOS_DO_PREPARO } from "@/lib/domain/preparo";
+// [AG7 preparo] fim
 import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
 import {
   etiquetasKeys,
@@ -655,6 +662,32 @@ export function InboxClient({
     isError: leiturasQuery.isError,
   });
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  // Os envios da orientacao de preparo (TELA-13 e CFM-10a): a bolha so diz
+  // "Texto aprovado pelo responsavel tecnico" com a decisao 'enviou_preparo'
+  // do job da mensagem. Consulta SEPARADA do fio, so com os jobs das
+  // mensagens no formato do preparo (sem nenhuma, nem sai), debaixo da chave
+  // das mensagens (o evento de message rele). Em toda clinica, e nao so na da
+  // fase: a conversa antiga guarda o preparo de quando a clinica estava nela.
+  // Falha fechada: carregando ou com erro, a mensagem fica como mensagem
+  // comum do sistema.
+  const jobsDoPreparo = useMemo(
+    () => jobsQuePodemSerDoPreparo(messages),
+    [messages],
+  );
+  const enviosQuery = useQuery({
+    queryKey: [
+      ...conversationKeys.enviosDoPreparo(selected?.id ?? "nenhuma"),
+      assinaturaDosIds(jobsDoPreparo),
+    ] as const,
+    queryFn: () => fetchEnviosDoPreparo(supabase, clinicId, jobsDoPreparo),
+    enabled: selected !== null && jobsDoPreparo.length > 0,
+    // Entre uma leitura e a outra, as confirmacoes que ja existiam continuam.
+    placeholderData: keepPreviousData,
+    refetchOnWindowFocus: false,
+  });
+  const enviosDoPreparo = enviosQuery.data ?? SEM_ENVIOS_DO_PREPARO;
+  // [AG7 preparo] fim
   // "Tentar de novo" volta a mostrar carregando enquanto busca.
   const estadoDasAgendadas = agendadasQuery.data
     ? ("pronto" as const)
@@ -1246,6 +1279,8 @@ export function InboxClient({
             agendadasDoFio={agendadasDoFioQuery.data}
             // [AG6b mídia] o que o assistente transcreveu ou leu da midia
             leiturasDaMidia={leiturasDaMidia}
+            // [AG7 preparo] os envios do preparo confirmados (TELA-13)
+            enviosDoPreparo={enviosDoPreparo}
             onBack={() => setSelectedId(null)}
             onToggleContext={abrirContexto}
             viewerId={viewerId}
@@ -1363,6 +1398,8 @@ export function InboxClient({
                   }
                   timezone={timezone}
                   citando={citandoVivo}
+                  // [AG7 preparo] a citada do preparo, so com o envio confirmado
+                  enviosDoPreparo={enviosDoPreparo}
                   aoCancelarCitacao={() => setCitando(null)}
                   aoCancelarCitacaoSeFor={(id) =>
                     setCitando((atual) => (atual?.id === id ? null : atual))

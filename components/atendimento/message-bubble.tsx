@@ -68,6 +68,13 @@ import {
   type EstadoDaMidia,
   type MotivoDeIndisponivel,
 } from "@/lib/domain/midia-recebida";
+// [AG7 preparo] início
+import {
+  ehMensagemDoPreparo,
+  SEM_ENVIOS_DO_PREPARO,
+  type EnviosDoPreparo,
+} from "@/lib/domain/preparo";
+// [AG7 preparo] fim
 import type {
   // [AG6b mídia] início
   LeituraDaMidiaNaTela,
@@ -90,6 +97,16 @@ import { cn } from "@/lib/utils";
 // direita na pele neutra do sistema (a mesma superficie do evento no fio),
 // assinada "Aviso automático" com o UsersRound neutro (o "passou para a
 // equipe" da tabela 4.6). Autoria nunca so por cor: lado, rotulo e pele.
+//
+// [AG7 preparo] início
+// A orientacao de preparo aprovada pelo responsavel tecnico, que o sistema
+// envia palavra por palavra pelo job da IA (author 'sistema'), fica a direita
+// na pele da IA, com a linha de autoria da IA e, dentro da bolha, a linha
+// "Texto aprovado pelo responsável técnico" na cor de apoio. So com o envio
+// confirmado: o job da mensagem tem a decisao 'enviou_preparo' no
+// ai_decision_log (TELA-13 e CFM-10a). Sem ela, a mesma mensagem fica como
+// mensagem comum do sistema (o passo de regua escrito no mesmo formato).
+// [AG7 preparo] fim
 //
 // --bolha-meta e a cor de apoio de cada pele (hora, legenda, rotulos de
 // midia). Tudo o que fica DENTRO da bolha usa ela, e nao text-text-secondary:
@@ -722,6 +739,18 @@ function AcoesDaBolha({
   );
 }
 
+// [AG7 preparo] início
+/**
+ * A linha dentro da bolha da orientacao de preparo (AG7, desenho 5.5): o
+ * texto saiu palavra por palavra como o responsavel tecnico aprovou no
+ * Cadastro. So texto, na cor de apoio da pele (--bolha-meta), no molde das
+ * linhas da leitura da midia (media/leitura-do-assistente.tsx). Sem icone:
+ * nao e status, e o ScanText e so do "Lido pelo assistente".
+ */
+export const LINHA_DO_PREPARO_APROVADO =
+  "Texto aprovado pelo responsável técnico";
+// [AG7 preparo] fim
+
 export function MessageBubble({
   message,
   authorName,
@@ -742,6 +771,9 @@ export function MessageBubble({
   leituraDaMidia = null,
   leituraIndisponivel = false,
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  enviosDoPreparo = SEM_ENVIOS_DO_PREPARO,
+  // [AG7 preparo] fim
 }: {
   message: MessageItem;
   authorName: string | null;
@@ -793,6 +825,14 @@ export function MessageBubble({
    */
   leituraIndisponivel?: boolean;
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  /**
+   * Os envios da orientacao de preparo confirmados no ai_decision_log (a
+   * consulta separada do fio, fetchEnviosDoPreparo). Sem o job desta
+   * mensagem entre eles, ela nao e o preparo (TELA-13).
+   */
+  enviosDoPreparo?: EnviosDoPreparo;
+  // [AG7 preparo] fim
 }) {
   if (message.content_type === "evento") {
     return <SystemEventCard message={message} timezone={timezone} />;
@@ -815,6 +855,15 @@ export function MessageBubble({
   // A frase fixa da IA ao contato: mensagem automatica do sistema, com pele
   // e linha de autor proprias (nunca a pele da atendente).
   const avisoAutomatico = !fromPatient && ehAvisoAutomaticoDaIa(message);
+  // [AG7 preparo] início
+  // A orientacao de preparo aprovada pelo responsavel tecnico (AG7), que o
+  // sistema envia palavra por palavra pelo job da IA (author 'sistema', sem
+  // pessoa, fora de nota): a pele e a linha de autor da IA (o brilho,
+  // "Assistente" e o selo "IA") e, dentro da bolha, a linha do texto
+  // aprovado. So com o envio confirmado (a decisao 'enviou_preparo' do job;
+  // TELA-13): sem ele, o 'sistema' fora de nota fica na pele de sempre.
+  const preparo = ehMensagemDoPreparo(message, enviosDoPreparo);
+  // [AG7 preparo] fim
   // Saiu de uma mensagem agendada (A1 do desenho final): a linha de autor
   // diz quem assina e que ela saiu sozinha na hora marcada, com o relogio
   // da agendada (neutro). Quem editou por ultimo assina; quem criou aparece
@@ -822,17 +871,24 @@ export function MessageBubble({
   // A autoria vem de fora da mensagem: o fio nao embute a agendada, e se a
   // consulta dela falhar a bolha so fica como uma resposta comum.
   const agendada =
-    !fromPatient && !fromIa && !note && !peloCelular && !avisoAutomatico
+    !fromPatient &&
+    !fromIa &&
+    !note &&
+    !peloCelular &&
+    !avisoAutomatico &&
+    // [AG7 preparo] nem o preparo, que sai pelo job da IA
+    !preparo
       ? agendadaDoFio
       : null;
   const autoriaAgendada = agendada
     ? autoriaDaBolha(agendada, authorNames)
     : null;
+  // [AG7 preparo] o preparo do sistema na pele da IA (fromIa || preparo)
   const pele: keyof typeof PELES_DA_BOLHA = fromPatient
     ? "paciente"
     : note
       ? "nota"
-      : fromIa
+      : fromIa || preparo
         ? "ia"
         : avisoAutomatico
           ? "aviso"
@@ -916,6 +972,22 @@ export function MessageBubble({
             </span>
           </span>
         ) : null}
+        {/* [AG7 preparo] início: a orientacao de preparo assina como a IA
+            (o brilho, "Assistente" e o selo "IA"); o texto aprovado vai na
+            linha de dentro da bolha. */}
+        {preparo && !apagada ? (
+          <span
+            data-preparo
+            className="flex items-center gap-1 px-1 text-[11px] font-semibold text-text-secondary"
+          >
+            <Sparkles aria-hidden className="size-3 text-ai-text" />
+            {authorName ?? "Assistente"}
+            <span className="inline-flex h-4 items-center rounded-full bg-ai-bg px-1.5 text-[10px] font-bold text-ai-text">
+              IA
+            </span>
+          </span>
+        ) : null}
+        {/* [AG7 preparo] fim */}
         {notaDaIa && !apagada ? (
           <span
             data-nota-da-ia
@@ -968,6 +1040,8 @@ export function MessageBubble({
         !notaDaIa &&
         !peloCelular &&
         !avisoAutomatico &&
+        // [AG7 preparo] o preparo tem a linha propria, acima
+        !preparo &&
         !autoriaAgendada &&
         authorName &&
         !apagada ? (
@@ -1008,6 +1082,8 @@ export function MessageBubble({
                 nomes={authorNames}
                 aoIrParaCitada={onIrParaCitada}
                 citadaEstaNaTela={citadaEstaNaTela}
+                // [AG7 preparo] a citada do preparo, so com o envio confirmado
+                enviosDoPreparo={enviosDoPreparo}
               />
               {message.content_type === "audio" ? (
                 <AudioBody
@@ -1026,6 +1102,18 @@ export function MessageBubble({
                   {message.body}
                 </p>
               )}
+              {/* [AG7 preparo] início: embaixo do texto (as quebras de linha
+                  preservadas acima), a linha do texto aprovado, na cor de
+                  apoio da pele, no molde da leitura da midia. So texto. */}
+              {preparo ? (
+                <p
+                  data-preparo-aprovado
+                  className="text-[12px] leading-snug text-(--bolha-meta)"
+                >
+                  {LINHA_DO_PREPARO_APROVADO}
+                </p>
+              ) : null}
+              {/* [AG7 preparo] fim */}
             </>
           )}
 

@@ -35,6 +35,8 @@ import {
   MAX_TOKENS_DO_CLASSIFICADOR,
   montarEnvelopeDeEntrada,
   POLITICA_DO_CLASSIFICADOR,
+  // [AG7 preparo]
+  POLITICA_DO_CLASSIFICADOR_COM_PREPARO,
 } from "@/lib/integrations/llm/classificador-de-entrada";
 import {
   MAX_TOKENS_DO_VERIFICADOR,
@@ -88,12 +90,28 @@ function usoDeEstimativa(entrada: number, saida: number): UsoDoLlm {
   };
 }
 
+// [AG7 preparo] início
+/**
+ * AG7 (03/11/2026): a maior das variantes da politica do classificador. A
+ * com a habilidade "Enviar orientacao de preparo" tem 332 bytes a mais
+ * (3.654 contra 3.322), e a FOLGA_DA_CHAMADA (1.024) ja paga os papeis, os
+ * separadores e o esquema da saida estruturada (489 bytes): a variante
+ * comeria dois tercos do que sobra. A estimativa conta a maior das duas, e
+ * a folga fica so para o que nao esta no texto, como antes.
+ */
+export const BYTES_DA_MAIOR_POLITICA_DO_CLASSIFICADOR = Math.max(
+  tokensNoMaximo(POLITICA_DO_CLASSIFICADOR),
+  tokensNoMaximo(POLITICA_DO_CLASSIFICADOR_COM_PREPARO),
+);
+// [AG7 preparo] fim
+
 /** O maximo de uma chamada do classificador de entrada. */
 export function usoEstimadoDoClassificador(
   mensagens: readonly string[],
 ): UsoDoLlm {
   return usoDeEstimativa(
-    tokensNoMaximo(POLITICA_DO_CLASSIFICADOR) +
+    // [AG7 preparo] a maior variante (era a politica sem a habilidade)
+    BYTES_DA_MAIOR_POLITICA_DO_CLASSIFICADOR +
       tokensNoMaximo(
         montarEnvelopeDeEntrada({ mensagens, nonce: NONCE_DE_MEDIDA }),
       ) +

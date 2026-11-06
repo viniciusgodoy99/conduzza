@@ -71,6 +71,16 @@
 // horario vai abrir, quando, a posicao na lista ou que o horario sera da
 // pessoa reprova (nenhum resumo sustenta). As vedacoes nao mudam; a versao
 // muda sozinha (a rodada D34 roda de novo).
+//
+// [AG7 preparo] início
+// AG7 (03/11/2026; D-80): o "e permitido" ganha uma frase, para toda clinica
+// (nao e variante): oferecer o envio da orientacao de preparo aprovada pela
+// clinica e dizer que o sistema vai envia-la, sem dizer nada do conteudo. O
+// preparo continua orientacao_clinica (a frase "Nada disso libera", logo
+// antes, fica igual): o texto aprovado sai pelo sistema e nunca passa por
+// aqui. As vedacoes nao mudam; a versao muda sozinha (a rodada D34 roda de
+// novo).
+// [AG7 preparo] fim
 
 import { createHash, randomBytes } from "node:crypto";
 
@@ -80,6 +90,7 @@ import { zodTextFormat } from "openai/helpers/zod";
 import { CATEGORIAS_DO_VERIFICADOR } from "@/lib/domain/conformidade/categorias";
 import { MAXIMO_DE_MENSAGENS_NO_CONTEXTO } from "@/lib/domain/conformidade/gatilhos-de-entrada";
 import { minimizarParaLlm } from "@/lib/domain/conformidade/minimizar";
+import { FONTES_DO_RESUMO } from "@/lib/domain/conformidade/resumo-dos-fatos";
 import {
   EsquemaDoVeredicto,
   type MotivoDaFalha,
@@ -138,6 +149,15 @@ export const PARAMETROS_FIXOS_DE_CLASSIFICACAO = {
   prompt_cache_options: { mode: "explicit" },
 } as const;
 
+// [AG7 preparo] início
+/**
+ * A frase da AG7 no "e permitido", logo depois de "Nada disso libera ...":
+ * a oferta do envio do texto aprovado pela clinica nao e orientacao.
+ */
+export const PERMITIDO_OFERECER_O_PREPARO =
+  "Também é permitido oferecer o envio da orientação de preparo aprovada pela clínica e dizer que o sistema vai enviá-la, sem dizer nada do conteúdo dela.";
+// [AG7 preparo] fim
+
 export const POLITICA_DO_VERIFICADOR = `Você é o verificador de conformidade de uma recepcionista virtual de clínica médica e de estética no Brasil. A recepcionista conversa com pacientes pelo WhatsApp. Antes de cada envio, você decide se o RASCUNHO dela pode ser enviado ao paciente.
 
 O rascunho só pode ser aprovado se não fizer NENHUMA das coisas abaixo (Resoluções CFM 2.314/2022 e 2.336/2023). As categorias:
@@ -153,7 +173,7 @@ O rascunho só pode ser aprovado se não fizer NENHUMA das coisas abaixo (Resolu
 
 O contexto importa. Considere as mensagens do paciente: uma resposta curta como "pode sim", "claro" ou "fique tranquila" depois de uma pergunta sobre saúde, sintoma ou remédio é orientação clínica ou triagem.
 
-É permitido: informar preço e convênio, horários disponíveis, endereço, duração, como agendar, remarcar ou cancelar, confirmar consulta, colocar na lista de espera, cumprimentar, agradecer e dizer que vai passar a conversa para a equipe. Também é permitido dizer que é a assistente virtual da clínica e oferecer falar com uma pessoa da equipe, e dizer que só ajuda com assuntos da clínica, desde que não diga qual tecnologia, empresa ou modelo está por trás. Também é permitido informar os requisitos administrativos da consulta ou do procedimento: levar documento com foto, a carteirinha do convênio ou o pedido médico, levar os exames anteriores, precisar de encaminhamento, de guia ou de autorização do convênio, a idade mínima para o atendimento, precisar de uma avaliação antes do procedimento, chegar com alguns minutos de antecedência e ir com acompanhante; e o endereço completo de uma unidade da clínica (rua, número, complemento, bairro, cidade, ponto de referência, estacionamento e acessibilidade). Nada disso libera as categorias acima: jejum, preparo do corpo e cuidados antes ou depois do procedimento continuam sendo orientacao_clinica.
+É permitido: informar preço e convênio, horários disponíveis, endereço, duração, como agendar, remarcar ou cancelar, confirmar consulta, colocar na lista de espera, cumprimentar, agradecer e dizer que vai passar a conversa para a equipe. Também é permitido dizer que é a assistente virtual da clínica e oferecer falar com uma pessoa da equipe, e dizer que só ajuda com assuntos da clínica, desde que não diga qual tecnologia, empresa ou modelo está por trás. Também é permitido informar os requisitos administrativos da consulta ou do procedimento: levar documento com foto, a carteirinha do convênio ou o pedido médico, levar os exames anteriores, precisar de encaminhamento, de guia ou de autorização do convênio, a idade mínima para o atendimento, precisar de uma avaliação antes do procedimento, chegar com alguns minutos de antecedência e ir com acompanhante; e o endereço completo de uma unidade da clínica (rua, número, complemento, bairro, cidade, ponto de referência, estacionamento e acessibilidade). Nada disso libera as categorias acima: jejum, preparo do corpo e cuidados antes ou depois do procedimento continuam sendo orientacao_clinica. ${PERMITIDO_OFERECER_O_PREPARO}
 
 Fatos desta resposta: junto do rascunho vem o RESUMO DOS FATOS, montado pelo sistema da clínica com o que as ferramentas fizeram e consultaram nesta resposta e com os textos publicados pela clínica. O resumo não tem dado de paciente. Se ele vier como "sem resumo", não julgue as quatro categorias abaixo. Com o resumo, reprove o rascunho que AFIRMAR um destes fatos sem o resumo sustentar, mesmo que o permitido acima cite o assunto:
 1. acao_nao_executada: dizer ou dar a entender que marcou, agendou, encaixou, reservou, confirmou, cancelou, desmarcou, remarcou, registrou, anotou ou colocou na lista de espera, ou dar a consulta como feita ou certa ("ficou para quinta", "te esperamos amanhã às 10h", "está tudo certo para sexta"), sem essa ação entre as ações do resumo. Falar da consulta que a pessoa já tem só vale com a consulta lida pelo sistema, ou marcada ou remarcada nesta resposta. Quando o resumo traz o dia e a hora (e a unidade) de uma ação ou de uma consulta, dizer outro dia, outra hora ou outra unidade para ela também é acao_nao_executada. A reserva de 10 minutos não marca a consulta: só com a reserva, dar a consulta como marcada, combinada ou certa ("te esperamos", "nos vemos", "até terça", "sua consulta será terça") também é acao_nao_executada. A remarcação pedida fica pendente da aprovação da equipe e a consulta de antes continua marcada até lá: dar a remarcação como feita, aprovada ou confirmada sem dizer que depende da aprovação, ou dizer que a consulta de antes foi cancelada, também é acao_nao_executada. A consulta que o resumo traz como cancelada pela assistente nesta conversa pode ser dada como cancelada, e a remarcação que ele traz como já aprovada pela equipe pode ser dada como remarcada, só com o dia e a hora delas; dar uma delas como marcada ou de pé é acao_nao_executada. A lista de espera não marca consulta: dizer que a pessoa está ou entrou na lista de espera só vale com essa ação ou com a pessoa na lista de espera no resumo, e dar consulta ou horário como marcado por causa da lista é acao_nao_executada.
@@ -257,6 +277,8 @@ export const VERSAO_DA_POLITICA = `verificador-${createHash("sha256")
         nonce: "(codigo)",
       }),
       categorias: CATEGORIAS_DO_VERIFICADOR,
+      // Revisao final da AG7: o que o resumo diz tambem e o que ele le.
+      resumo: FONTES_DO_RESUMO,
     }),
     "utf8",
   )

@@ -1,5 +1,6 @@
 import {
   AlarmClock,
+  BellRing,
   Circle,
   CircleAlert,
   CircleCheck,
@@ -9,10 +10,17 @@ import {
   ClockAlert,
   ClockFading,
   ClockPlus,
+  Hourglass,
+  LifeBuoy,
+  ShieldBan,
   OctagonAlert,
+  ScanText,
   SendHorizonal,
   TriangleAlert,
+  Umbrella,
+  UserRoundCheck,
   WifiOff,
+  ZapOff,
 } from "lucide-react";
 import { describe, expect, it } from "vitest";
 
@@ -30,6 +38,9 @@ import {
   IA_AGENDA_STATUS,
   MENSAGEM_AGENDADA_STATUS,
   PATIENT_TAG,
+  // [AG7 preparo] início
+  PREPARO_DO_PROCEDIMENTO_STATUS,
+  // [AG7 preparo] fim
   RECORD_STATUS,
   REGUA_STATUS,
   TOKEN_META_STATUS,
@@ -54,6 +65,9 @@ const MAPAS_NOVOS = {
   CONSENT_STATUS,
   ATIVIDADE_STATUS,
   MENSAGEM_AGENDADA_STATUS,
+  // [AG7 preparo] início
+  PREPARO_DO_PROCEDIMENTO_STATUS,
+  // [AG7 preparo] fim
 };
 
 const TODOS: StatusDefinition[] = [
@@ -174,6 +188,65 @@ describe("mapas novos de estado", () => {
       }
     }
   });
+
+  // [AG7 preparo] início
+  it("orientação de preparo: os cinco chips do desenho, com ícones que já têm dono", () => {
+    const m = PREPARO_DO_PROCEDIMENTO_STATUS;
+    expect(m.aprovada).toMatchObject({
+      label: "Aprovada pelo RT",
+      tone: "success",
+      icon: CircleCheck,
+    });
+    expect(m.aguardando).toMatchObject({
+      label: "Aguardando o RT",
+      tone: "warning",
+      icon: Hourglass,
+    });
+    expect(m.precisa_de_nova_aprovacao).toMatchObject({
+      label: "Precisa de nova aprovação",
+      tone: "warning",
+      icon: CircleAlert,
+    });
+    expect(m.suspenso).toMatchObject({
+      label: "Envio suspenso",
+      tone: "neutral",
+      icon: CirclePause,
+    });
+    expect(m.sem_orientacao).toMatchObject({
+      label: "Sem orientação",
+      tone: "neutral",
+      icon: CircleDashed,
+    });
+    // Revisao curta da AG7 (CURTA-5): o texto aprovado que as regras de hoje
+    // nao deixam sair, com o icone do bloqueio de conformidade, em alerta.
+    expect(m.aprovada_sem_envio).toMatchObject({
+      label: "Aprovada, sem envio",
+      tone: "alert",
+      icon: ShieldBan,
+    });
+    for (const definicao of TODOS.filter((d) => d.icon === ShieldBan)) {
+      expect(definicao.tone).toBe("alert");
+    }
+    // Os donos travados por teste nunca entram (contrato 3.3, STATUS).
+    const icones = Object.values(m).map((d) => d.icon);
+    for (const proibido of [
+      BellRing,
+      LifeBuoy,
+      UserRoundCheck,
+      ScanText,
+      Umbrella,
+      ZapOff,
+      TriangleAlert,
+      Clock,
+    ]) {
+      expect(icones).not.toContain(proibido);
+    }
+    // O Hourglass e sempre pendencia, em aviso, em todo mapa.
+    for (const definicao of TODOS.filter((d) => d.icon === Hourglass)) {
+      expect(definicao.tone).toBe("warning");
+    }
+  });
+  // [AG7 preparo] fim
 
   it("consentimento revogado é alerta, nunca neutro", () => {
     expect(CONSENT_STATUS.revogado.tone).toBe("alert");

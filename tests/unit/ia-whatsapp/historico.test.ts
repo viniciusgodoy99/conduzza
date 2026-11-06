@@ -762,8 +762,11 @@ describe("o portão lê o texto original do contato; a OpenAI, só o mascarado",
       tipo: "texto",
       textoOriginal: "socorro, me ajuda",
     });
-    // A fala da clinica e a midia nao levam o original (o portao so le as
-    // mensagens do contato, e midia ja escala).
+    // A fala da clinica e a midia nao levam o original do contato (o portao
+    // so le as mensagens do contato, e midia ja escala). [AG7 preparo] A
+    // fala da clinica leva o corpo como saiu num campo proprio
+    // (textoOriginalDaClinica): so o laco le, para trocar o texto do preparo
+    // antes da mascara (CFM-1); a OpenAI continua lendo so o `texto`.
     const daClinica = mensagemDaLinha(
       {
         author: "usuario",
@@ -780,8 +783,13 @@ describe("o portão lê o texto original do contato; a OpenAI, só o mascarado",
       autoria: "usuario",
       texto: `Olá ${MARCA_DO_NOME}, tudo bem?`,
       tipo: "texto",
+      textoOriginalDaClinica: "Olá Socorro, tudo bem?",
     });
     expect(daClinica).not.toHaveProperty("textoOriginal");
+    // O que vai ao modelo e o mascarado (sem preparo na fala, nada trocado).
+    expect(
+      historicoParaOModelo([daClinica], { nomeDoContato: "Socorro" }),
+    ).toEqual([{ role: "assistant", content: `Olá ${MARCA_DO_NOME}, tudo bem?` }]);
     for (const [author, autoria] of [
       ["ia", "ia"],
       ["sistema", "sistema"],

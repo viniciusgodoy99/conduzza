@@ -60,6 +60,7 @@ import {
 import { numaLinha, semMarcadores } from "@/lib/integrations/llm/verificador";
 import {
   FONTES_DA_RESPOSTA_A_LISTA_DE_ESPERA,
+  FONTES_DA_RESPOSTA_A_MARCACAO,
   FONTES_DA_RESPOSTA_AO_CANCELAMENTO,
 } from "@/lib/domain/resposta-paciente";
 import {
@@ -90,6 +91,19 @@ import { FERRAMENTA_CONFIRMAR_PRESENCA } from "./ferramentas/confirmar-presenca"
 import { FERRAMENTA_CONSULTAR_REQUISITOS } from "./ferramentas/consultar-requisitos";
 import { FERRAMENTA_CONSULTAR_UNIDADES } from "./ferramentas/consultar-unidades";
 import { FERRAMENTA_ESCALAR_HUMANO } from "./ferramentas/escalar-humano";
+// [AG7 preparo] início
+import {
+  CABECALHO_DO_PREPARO,
+  FRASE_DO_PREPARO_DEPOIS_DE_MARCAR,
+  LINHA_DO_RT,
+  RODAPE_DO_PREPARO,
+  SUBSTITUTO_DA_FALA_SEM_A_MASCARA,
+  SUBSTITUTO_DO_TEXTO_DO_PREPARO,
+  substitutoDaFalaNoFormatoDoPreparo,
+  substitutoDaMensagemDoPreparo,
+} from "@/lib/domain/preparo";
+import { FERRAMENTA_ENVIAR_PREPARO } from "./ferramentas/enviar-preparo";
+// [AG7 preparo] fim
 import {
   FERRAMENTA_FORA_DO_ASSUNTO,
   FERRAMENTA_SOU_ASSISTENTE_VIRTUAL,
@@ -112,6 +126,34 @@ import {
 export const NUNCA_DA_MIDIA = "- peça foto, áudio, documento ou arquivo;";
 // [AG6b mídia] fim
 
+// [AG7 preparo] início
+/**
+ * AG7 (desenho 4.3 e contrato, secao 3.1): a condicao que entra nas tres
+ * frases que mandam o preparo para a equipe (o requisito, o assunto clinico
+ * e o "Nunca" da orientacao de cuidado). Com a ferramenta ligada, o pedido
+ * da orientacao de preparo e ela; a duvida sobre o preparo continua com a
+ * equipe.
+ */
+export const CONDICAO_DO_PREPARO =
+  "com a ferramenta enviar_preparo ligada no bloco <atendimento>, o pedido da orientação de preparo é ela";
+
+/**
+ * AG7 (03/11/2026; D-75, D-76, D-78 e D-80): a secao "Orientacao de preparo"
+ * do texto fixo. O modelo nunca escreve, le nem resume o preparo: ele so
+ * chama enviar_preparo, sozinha, e o sistema manda o texto aprovado pelo
+ * responsavel tecnico. A duvida sobre o preparo continua assunto_clinico.
+ */
+export const SECAO_DA_ORIENTACAO_DE_PREPARO = `Orientação de preparo (só com a ferramenta enviar_preparo; o bloco <atendimento> diz se ela está ligada):
+- Você nunca escreve orientação de preparo: jejum, dieta, o que comer ou beber, remédio, laxante, dose, horário de tomar ou cuidados antes ou depois do procedimento, nem resumida, nem em parte, nem copiada de uma mensagem anterior, nem respondendo só "sim" ou "não" a uma pergunta sobre preparo.
+- Quando a pessoa pedir o preparo ou as orientações antes de um procedimento, ou perguntar de forma geral se ele exige jejum, chame enviar_preparo sozinha, com o código do procedimento no bloco <procedimentos>: o sistema manda o texto aprovado pelo responsável técnico da clínica, exatamente como está, então não escreva mais nada. Se não souber qual é o procedimento, pergunte antes.
+- Chame enviar_preparo sozinha: nunca junto de outra ferramenta nem depois de outra ferramenta na mesma resposta. Se a pessoa pediu outra coisa junto (o valor, um horário), responda essa parte e pergunte se ela quer receber a orientação de preparo, por exemplo "Quer receber a orientação de preparo da colonoscopia?"; se ela disser que quer, chame enviar_preparo na resposta seguinte. Se enviar_preparo disser "vai_sozinha", faça isso.
+- Depois de uma marcação, o sistema avisa quando o procedimento tem orientação de preparo aprovada; se a pessoa pedir para receber, chame enviar_preparo.
+- Se enviar_preparo disser "procedimento_nao_encontrado", pergunte qual é o procedimento; se ele não estiver no bloco <procedimentos>, passe para a equipe com o motivo "agente_pediu".
+- Se enviar_preparo disser "procedimento_nao_confirmado", a pessoa ainda não disse de qual procedimento é a orientação: pergunte qual é, pelo nome, e só chame enviar_preparo de novo depois da resposta dela. Nunca escolha o procedimento por conta própria.
+- A dúvida sobre o preparo aplicada à pessoa (um remédio que ela toma, uma doença, gravidez, se pode comer ou beber algo, o que fazer se esqueceu ou não conseguiu seguir), a dúvida sobre o texto que ela recebeu e os cuidados depois do procedimento vão para a equipe com o motivo "assunto_clinico".
+- Nunca diga que a orientação de preparo foi enviada, que segue abaixo ou que está a seguir: quem manda é o sistema, quando você chama enviar_preparo.`;
+// [AG7 preparo] fim
+
 /**
  * Identidade, escopo e limites do agente. Mudar este texto muda
  * VERSAO_DO_PROMPT (gravada junto de cada decisao no E3).
@@ -125,6 +167,7 @@ O que você faz:
 - Marca consulta pelas ferramentas de agenda (consultar_cadastro_do_contato, buscar_horario, reservar_horario, registrar_dados_do_paciente e agendar), quando elas estiverem disponíveis, seguindo "Marcar consulta" abaixo.
 - Cancela e remarca a consulta que a pessoa já tem pelas ferramentas consultar_minhas_consultas, pedir_cancelamento, cancelar_consulta e buscar_horario_para_remarcar (com reservar_horario e agendar), quando estiverem disponíveis, seguindo "Cancelar e remarcar" abaixo.
 - Coloca a pessoa na lista de espera pelas ferramentas pedir_lista_de_espera e entrar_na_lista_de_espera, quando estiverem disponíveis, seguindo "Lista de espera" abaixo.
+- Manda a orientação de preparo aprovada pela clínica, só pela ferramenta enviar_preparo, quando ela estiver ligada, seguindo "Orientação de preparo" abaixo.
 - Confirma a presença do paciente numa consulta já marcada pela ferramenta confirmar_presenca, quando ela estiver disponível.
 - Passa a conversa para a equipe com a ferramenta escalar_humano quando não pode ou não deve responder.
 - Responde à mensagem fora do assunto e à pergunta sobre quem está respondendo pelas ferramentas fora_do_assunto e sou_assistente_virtual, seguindo "Fora do assunto e perguntas sobre você" abaixo.
@@ -194,6 +237,8 @@ Lista de espera (só com as ferramentas da lista de espera; o bloco <atendimento
 - Fale só da entrada que você fez nesta conversa (o bloco <atendimento_em_andamento> diz). Para sair da lista, mudar a preferência de uma entrada que já existe ou saber de uma entrada de antes desta conversa, passe para a equipe com o motivo "pedido_de_agenda". Se a lista de espera for para outra pessoa (filho, mãe, amigo), passe para a equipe com o motivo "consulta_para_outra_pessoa".
 - Encaixe nunca: não ofereça, não sugira e não prometa; se a pessoa pedir, passe para a equipe com o motivo "pedido_de_agenda".
 
+${SECAO_DA_ORIENTACAO_DE_PREPARO}
+
 Confirmar presença: quando o paciente disser que vai à consulta já marcada, chame confirmar_presenca. Se ela disser "sem_consulta" ou "mais_de_uma", passe para a equipe com o motivo "pedido_de_agenda". Se ela disser "reserva_em_andamento", a pessoa tem um horário reservado nesta conversa esperando a confirmação: se ela respondeu à pergunta de confirmação desse horário, chame agendar; se não ficou claro, pergunte se ela confirma o horário reservado.
 
 Fora do assunto e perguntas sobre você:
@@ -204,7 +249,7 @@ Fora do assunto e perguntas sobre você:
 
 Unidades, requisitos e profissionais (nunca de cabeça nem de uma resposta anterior: sempre pela ferramenta, nesta resposta):
 - Endereço, horário de funcionamento, ponto de referência, estacionamento, acessibilidade e observações de uma unidade: consulte consultar_unidades e diga só o que ela trouxer, com o endereço e os horários exatamente como vieram. Se ela disser "sem_unidade_cadastrada", ou se a unidade vier sem o que a pessoa pediu, use a pergunta do bloco <base_da_clinica> que responda; se nenhuma responder, passe para a equipe com o motivo "agente_pediu". Nunca diga que a clínica não tem endereço.
-- O que o paciente precisa levar ou fazer para um procedimento (documento, carteirinha, pedido médico, autorização do convênio, exames anteriores, chegar antes, acompanhante, idade mínima ou avaliação antes): consulte consultar_requisitos, com o convênio da pessoa quando ela disser, e diga só os itens que vierem. consultar_requisitos não confirma que a clínica atende o convênio: diga os itens sem dizer que atende pelo convênio da pessoa, a não ser que buscar_procedimento tenha confirmado o convênio nesta resposta. Se ela trouxer "ha_requisitos_por_convenio", pergunte se a pessoa vai pelo convênio. Se ela disser "sem_requisitos_cadastrados", nunca diga que não precisa de nada: use a pergunta do bloco <base_da_clinica> que responda ou passe para a equipe com o motivo "agente_pediu". Jejum, preparo do corpo, cuidados antes ou depois e remédio nunca são requisito: passe para a equipe com o motivo "assunto_clinico".
+- O que o paciente precisa levar ou fazer para um procedimento (documento, carteirinha, pedido médico, autorização do convênio, exames anteriores, chegar antes, acompanhante, idade mínima ou avaliação antes): consulte consultar_requisitos, com o convênio da pessoa quando ela disser, e diga só os itens que vierem. consultar_requisitos não confirma que a clínica atende o convênio: diga os itens sem dizer que atende pelo convênio da pessoa, a não ser que buscar_procedimento tenha confirmado o convênio nesta resposta. Se ela trouxer "ha_requisitos_por_convenio", pergunte se a pessoa vai pelo convênio. Se ela disser "sem_requisitos_cadastrados", nunca diga que não precisa de nada: use a pergunta do bloco <base_da_clinica> que responda ou passe para a equipe com o motivo "agente_pediu". Jejum, preparo do corpo, cuidados antes ou depois e remédio nunca são requisito: passe para a equipe com o motivo "assunto_clinico" (${CONDICAO_DO_PREPARO}).
 - Quem atende, quem faz um procedimento, quem atende um convênio, em que unidade, a especialidade e a idade atendida: consulte buscar_profissionais e diga só o que ela trouxer. A especialidade vai como aparece no bloco <profissionais>; se ela disser "especialidade_nao_encontrada", consulte de novo com a de especialidades_cadastradas que for a mesma que a pessoa pediu ou, se nenhuma for, passe para a equipe com o motivo "agente_pediu". Nunca escolha especialidade ou profissional a partir de sintoma: sintoma passa para a equipe com o motivo "sintoma". Se ela disser "nenhum_profissional", nunca diga que a clínica não tem ou não atende: passe para a equipe com o motivo "agente_pediu". Com marca_pela_ia false, você não marca com aquele profissional: se a pessoa quiser marcar com ele, passe para a equipe com o motivo "pedido_de_agenda". O código da unidade (u1, u2...) vem de consultar_unidades nesta resposta.
 - Quando consultar_requisitos ou buscar_profissionais trouxerem opções ou planos para escolher, pergunte qual é o da pessoa, citando as opções, e consulte de novo com o chamar_com da opção que ela confirmar. Se disserem "informar_convenio_desligado", não fale do convênio: passe para a equipe com o motivo "agente_pediu". Se buscar_profissionais disser "so_com_a_equipe", não fale de convênio nem de quem faz esse procedimento: passe para a equipe com o motivo "agente_pediu".
 
@@ -214,7 +259,7 @@ Tipo do contato: a última linha das instruções ("Contato desta conversa") diz
 
 Passe para a equipe (escalar_humano) com o motivo certo quando:
 - o paciente descrever ou perguntar sobre sintoma, dor, reação, mal-estar ou alteração no corpo: "sintoma";
-- a dúvida for clínica (remédio, cuidados antes ou depois de procedimento, riscos, efeitos, resultados, gravidez, amamentação, o resultado ou a necessidade de um exame, contraindicações): "assunto_clinico";
+- a dúvida for clínica (remédio, cuidados antes ou depois de procedimento, riscos, efeitos, resultados, gravidez, amamentação, o resultado ou a necessidade de um exame, contraindicações): "assunto_clinico" (${CONDICAO_DO_PREPARO});
 - o paciente pedir para falar com uma pessoa ou pedir uma ligação: "pedido_humano";
 - o paciente reclamar, demonstrar irritação ou ameaçar: "insatisfacao";
 - o paciente pedir desconto, negociação, outro valor ou uma condição de pagamento que não esteja no bloco <base_da_clinica>: "valor_fora_da_tabela";
@@ -231,7 +276,7 @@ Ao passar para a equipe, não escreva mais nada: o sistema avisa o paciente. Nun
 
 Nunca:
 - avalie, interprete ou tranquilize sobre sintoma, nem diga que algo é normal, comum, esperado ou passageiro;
-- dê orientação de cuidado com a saúde ou com o corpo;
+- dê orientação de cuidado com a saúde ou com o corpo (${CONDICAO_DO_PREPARO});
 - cite, indique ou comente remédio, pomada, suplemento ou dose;
 - diga ou sugira diagnóstico;
 - prometa ou sugira resultado, segurança, ausência de dor, de risco ou de efeito, nem elogie profissional, clínica ou resultado com superlativo;
@@ -335,6 +380,12 @@ export const FRASES_DO_ATENDIMENTO = {
   listaDeEsperaLigada: "Lista de espera: ligado.",
   listaDeEsperaDesligada:
     'Lista de espera: desligado. Se a pessoa quiser entrar na lista de espera, passe para a equipe com o motivo "pedido_de_agenda".',
+  // [AG7 preparo] início
+  // AG7: a orientacao de preparo aprovada pelo responsavel tecnico.
+  preparoLigado: "Enviar orientação de preparo: ligado.",
+  preparoDesligado:
+    'Enviar orientação de preparo: desligado. Se a pessoa pedir o preparo ou as orientações antes de um procedimento, passe para a equipe com o motivo "assunto_clinico".',
+  // [AG7 preparo] fim
   // AG3: os dados que a clinica pede para a IA marcar (D-6).
   dadosExigidos:
     "Dados que a clínica pede para marcar: {}, e o número da carteirinha quando o convênio ou o procedimento pede.",
@@ -517,6 +568,8 @@ export const FONTES_DA_VERSAO_DO_PROMPT = {
     FERRAMENTA_CONSULTAR_REQUISITOS,
     FERRAMENTA_BUSCAR_PROFISSIONAIS,
     FERRAMENTA_BUSCAR_PROCEDIMENTO,
+    // [AG7 preparo] A orientacao de preparo aprovada pelo RT.
+    FERRAMENTA_ENVIAR_PREPARO,
     // AG3: o cadastro da pessoa (so sinais) e os dados para marcar.
     FERRAMENTA_CONSULTAR_CADASTRO_DO_CONTATO,
     FERRAMENTA_BUSCAR_HORARIO,
@@ -541,9 +594,29 @@ export const FONTES_DA_VERSAO_DO_PROMPT = {
   // fechadas do "sim" (a da AG4 e a da lista): mudar uma delas muda o que o
   // agente faz, entao muda a versao.
   listaDeEspera: [PERGUNTA_DA_LISTA_DE_ESPERA, RESPOSTA_DA_LISTA_DE_ESPERA],
+  // [AG7 preparo] início
+  // AG7: o cabecalho, a linha do RT e o rodape da mensagem do sistema, a
+  // frase colada depois da marcacao (F2) e os substitutos que o modelo le no
+  // historico no lugar do preparo (mudar um deles muda o que o modelo ve).
+  preparo: [
+    CABECALHO_DO_PREPARO,
+    LINHA_DO_RT,
+    RODAPE_DO_PREPARO,
+    FRASE_DO_PREPARO_DEPOIS_DE_MARCAR,
+    SUBSTITUTO_DO_TEXTO_DO_PREPARO,
+    substitutoDaMensagemDoPreparo("{}"),
+    substitutoDaMensagemDoPreparo(""),
+    // Revisao da AG7 (CFM-1 e CFM-10): a fala no formato que nao e a do
+    // sistema e a fala sem a mascara refeita.
+    substitutoDaFalaNoFormatoDoPreparo("{}"),
+    substitutoDaFalaNoFormatoDoPreparo(""),
+    SUBSTITUTO_DA_FALA_SEM_A_MASCARA,
+  ],
+  // [AG7 preparo] fim
   respostasFechadas: [
     FONTES_DA_RESPOSTA_AO_CANCELAMENTO,
     FONTES_DA_RESPOSTA_A_LISTA_DE_ESPERA,
+    FONTES_DA_RESPOSTA_A_MARCACAO,
   ],
   blocos: ROTULOS_DOS_BLOCOS,
   limites: [
@@ -770,6 +843,10 @@ function blocoDoAtendimento(
     remarcarLigado ? frases.remarcarLigado : frases.remarcarDesligado,
     // AG5: a lista de espera.
     esperaLigada ? frases.listaDeEsperaLigada : frases.listaDeEsperaDesligada,
+    // [AG7 preparo] A orientacao de preparo aprovada pelo RT.
+    ferramentas.includes("enviar_preparo")
+      ? frases.preparoLigado
+      : frases.preparoDesligado,
     // [AG6b mídia] início
     // AG6b: o audio e o arquivo, so com a habilidade valendo (a versao
     // publicada; o plano do turno ainda confere o telefone e a calibragem).
@@ -1071,6 +1148,8 @@ const DEFINICAO_DA_FERRAMENTA: Readonly<
   consultar_requisitos: FERRAMENTA_CONSULTAR_REQUISITOS,
   buscar_profissionais: FERRAMENTA_BUSCAR_PROFISSIONAIS,
   buscar_procedimento: FERRAMENTA_BUSCAR_PROCEDIMENTO,
+  // [AG7 preparo]
+  enviar_preparo: FERRAMENTA_ENVIAR_PREPARO,
   consultar_cadastro_do_contato: FERRAMENTA_CONSULTAR_CADASTRO_DO_CONTATO,
   buscar_horario: FERRAMENTA_BUSCAR_HORARIO,
   reservar_horario: FERRAMENTA_RESERVAR_HORARIO,

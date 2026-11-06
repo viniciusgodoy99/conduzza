@@ -1112,6 +1112,12 @@ No desenho de então, a coluna **IA** era a chave "o agente pode agendar isso so
 
 ---
 
+
+**Orientação de preparo no procedimento, decisões do dono de 05/11/2026 (AG7, não publicada; `docs/04`, 38.11):**
+- **O registro do RT:** com o responsável técnico ativo e o registro ainda não conferido, a seção mostra o aviso (ícone `circle-alert`, tom de atenção) "Registro do RT ainda não conferido pela Conduzza. Nenhuma orientação de preparo é enviada até a conferência.", para todo papel que abre o procedimento. O texto aprovado fica com o chip "Aprovada, sem envio", sem pedir nova aprovação, e "Suspender o envio" continua disponível.
+- **O diálogo do RT** nomeia cada categoria do aviso em lista ("cita remédio", "cita dose", "fala de sintoma", "cita jejum ou outro cuidado"), seguida do que ele confirma ao aprovar. Sem conseguir conferir o texto, fica a frase geral.
+- **O texto recusado diz o que tirar:** a frase que diz que um sintoma é normal, esperado ou passa sozinho, e a oferta de outro procedimento. Com remédio ou dose e um RT que não é de CRM nem de CRO (o jejum, tomar água e pedir para informar os medicamentos em uso não contam), a frase cita o trecho que barrou: "Este texto cita remédio ou dose, e só responsável técnico de CRM ou CRO pode salvar ou aprovar texto assim. Tire o remédio e a dose do texto ou peça ao administrador para definir um responsável técnico de CRM ou CRO."
+
 ### TELA 9. PACIENTES E FICHA
 
 **Lista:** tabela com Nome, Telefone, Convênio, Última consulta, Próxima, Comparecimento (percentual com barra fina), Saldo de pacote, Etiquetas. Filtros: com falta, inativos, com pacote ativo, por convênio, por profissional.
@@ -1489,6 +1495,8 @@ Tela só para o Administrador do produto, fora do contexto de uma clínica.
 - **Equipe Conduzza no painel:** a conta antiga, depois da limpeza (sem o super admin, marcada como equipe Conduzza), continua aparecendo como "(equipe Conduzza)" no último acesso e em "Inclui N da equipe Conduzza", como hoje.
 
 ---
+
+**O registro do responsável técnico, no detalhe da clínica (AG7, decisão do dono de 05/11/2026, não publicada):** o cartão "Responsável técnico" mostra nome, conselho, número e UF, o link "Consultar o registro no portal ({conselho})" e o botão "Registro conferido", que só a equipe Conduzza usa. A própria pessoa designada RT vê o botão visível e desabilitado, com a dica. Conferido, o cartão diz "Registro conferido em {data e hora}", no fuso da clínica. Estados: carregando (o esqueleto da rota), vazio ("A clínica não tem responsável técnico ativo.") e erro ("Não foi possível carregar o responsável técnico."), só nesse cartão. Toda conferência vai para a trilha. Trocar o RT começa sem conferência.
 
 ### CONTA SUSPENSA (o que a equipe da clínica vê; onda 1, decisão do dono de 20/10/2026, junto com a Tela 14)
 

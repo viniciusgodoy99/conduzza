@@ -226,7 +226,10 @@ const NAO_DO_CANCELAMENTO = new Set([
 const PERGUNTA_NA_MENSAGEM = /[?¿؟？]/u;
 
 /** Uma mensagem so, pela lista fechada. */
-function respostaDeUmaMensagem(body: string): RespostaAoCancelamento {
+function respostaDeUmaMensagem(
+  body: string,
+  sim: ReadonlySet<string> = SIM_DO_CANCELAMENTO,
+): RespostaAoCancelamento {
   if (PERGUNTA_NA_MENSAGEM.test(body)) {
     return "nao_reconhecida";
   }
@@ -243,7 +246,7 @@ function respostaDeUmaMensagem(body: string): RespostaAoCancelamento {
   if (texto.length === 0) {
     return temEmojiDeConfirmacao ? "sim" : "nao_reconhecida";
   }
-  if (SIM_DO_CANCELAMENTO.has(texto)) {
+  if (sim.has(texto)) {
     return "sim";
   }
   if (NAO_DO_CANCELAMENTO.has(texto)) {
@@ -284,6 +287,221 @@ export const FONTES_DA_RESPOSTA_AO_CANCELAMENTO: readonly string[] = [
   EMOJIS_DE_CONFIRMACAO.join(","),
   // Revisao da AG4 (achado 8): a pergunta nunca e sim nem nao.
   PERGUNTA_NA_MENSAGEM.source,
+];
+
+// ---------------------------------------------------------------------------
+// Conversas longas (05/11/2026): o "sim" do "Confirma ...?" da marcacao e da
+// remarcacao, pela mesma leitura e pela mesma lista do cancelamento, sem os
+// verbos de cancelar ("pode cancelar" nunca marca consulta) e com os de marcar.
+// So o sim claro chega a RPC: o resto (o "nao" inclusive) nao marca.
+// ---------------------------------------------------------------------------
+
+const SIM_DA_MARCACAO: ReadonlySet<string> = new Set([
+  ...[...SIM_DO_CANCELAMENTO].filter((f) => !/cancel|desmarc/.test(f)),
+  "confirmar",
+  "isso confirmo",
+  "confirmo a consulta",
+  "sim confirmo a consulta",
+  "quero",
+  "pode ser",
+  "sim pode ser",
+  "pode marcar",
+  "pode marcar sim",
+  "sim pode marcar",
+  "pode marcar a consulta",
+  "sim pode marcar a consulta",
+  "pode agendar",
+  "pode agendar sim",
+  "sim pode agendar",
+  "pode agendar a consulta",
+  "sim pode agendar a consulta",
+  "pode confirmar",
+  "sim pode confirmar",
+  "pode confirmar a consulta",
+  "sim pode confirmar a consulta",
+  "marca",
+  "marca sim",
+  "sim marca",
+  "marcar",
+  "agendar",
+  "quero marcar",
+  "sim quero marcar",
+  "ok pode marcar",
+  "quero agendar",
+  // Revisao (05/11/2026): o sim dito de outro jeito.
+  "fechado",
+  "beleza",
+  "blz",
+  "ta bom",
+  "sim ta bom",
+  "ta bom sim",
+  "ta certo",
+  "perfeito",
+  "combinado",
+]);
+
+/**
+ * Os verbos de marcar so na remarcacao: "remarcar" na marcacao nao e sim, e
+ * "agenda" e o substantivo. A trava da remarcacao fica como estava (decisao do
+ * dono pendente, docs/03).
+ */
+const SIM_DA_REMARCACAO: ReadonlySet<string> = new Set([
+  ...SIM_DA_MARCACAO,
+  "pode remarcar",
+  "sim pode remarcar",
+  "agenda",
+  "remarca",
+  "remarcar",
+  "quero remarcar",
+]);
+
+/**
+ * O agradecimento e o cumprimento que chegam junto do sim ("Sim" e "Obrigada!",
+ * "Oi" e "Sim" na mesma rajada) nao mudam a resposta, e sozinhos nao confirmam
+ * nada.
+ */
+const CORTESIA = new Set([
+  "obrigado",
+  "obrigada",
+  "muito obrigado",
+  "muito obrigada",
+  "obg",
+  "valeu",
+  "oi",
+  "ola",
+  "bom dia",
+  "boa tarde",
+  "boa noite",
+]);
+const CORTESIA_NO_COMECO =
+  /^\s*(?:oi|ol[aá]|bom dia|boa tarde|boa noite)(?=[\s,.!]|$)[\s,.!]*/iu;
+const CORTESIA_NO_FIM =
+  /[\s,.!]*(?:muito\s+)?(?:obrigad[oa]|obg|valeu)[\s.!]*$/iu;
+/** "..., ta bom?" no fim do sim nao e duvida: so pede o de acordo. */
+const PEDE_O_DE_ACORDO = /[\s,]+(?:t[aá] bom|ok|certo)\s*\?/giu;
+
+/** A mensagem sem a cortesia em volta e sem o "ta bom?". */
+function semCortesia(mensagem: string): string {
+  return mensagem
+    .replace(PEDE_O_DE_ACORDO, " ")
+    .replace(CORTESIA_NO_COMECO, "")
+    .replace(CORTESIA_NO_FIM, "");
+}
+
+/**
+ * Revisao final da AG7: os emojis que nao mudam o sim. O resto recusa, porque
+ * normalizar apaga emoji e "Sim 👎" viraria "sim". Lista do que passa, nunca do
+ * que nega: o emoji que ninguem previu cai no "nao entendi" (a pergunta volta).
+ */
+const EMOJIS_QUE_NAO_MUDAM_O_SIM = [
+  ...EMOJIS_DE_CONFIRMACAO,
+  "\u{1F642}", // sorriso
+  "\u{1F60A}", // sorriso com os olhos
+  "\u{1F600}", // risada
+  "\u{1F603}", // risada
+  "\u{1F604}", // risada
+  "\u{1F601}", // risada
+  "\u{1F609}", // piscada
+  "\u{1F970}", // coracoes
+  "\u{1F60D}", // olhos de coracao
+  "\u{2764}", // coracao
+  "\u{1F64F}", // maos juntas
+];
+const EMOJI = /\p{Extended_Pictographic}/u;
+/** O emoticon de texto que normalizar tambem apaga. */
+const EMOTICON_NEGATIVO = /[:;]-?[(/\\|]/;
+
+/** A mensagem traz um sinal que nao e de sim e que normalizar apagaria? */
+function temSinalQueNaoESim(mensagem: string): boolean {
+  let restante = mensagem.replace(MODIFICADORES, "");
+  for (const emoji of EMOJIS_QUE_NAO_MUDAM_O_SIM) {
+    restante = restante.split(emoji).join(" ");
+  }
+  return EMOJI.test(restante) || EMOTICON_NEGATIVO.test(restante);
+}
+
+/**
+ * Tirada a cortesia, sobra ao menos uma mensagem e TODAS sao um sim da lista?
+ * Qualquer negacao, duvida ou emoji fora da lista na rajada recusa. PURA, nunca
+ * lanca.
+ */
+function todasSim(
+  mensagens: readonly (string | null)[],
+  sim: ReadonlySet<string>,
+): boolean {
+  if (mensagens.some((m) => m !== null && temSinalQueNaoESim(m))) {
+    return false;
+  }
+  const resposta = mensagens.filter(
+    (m) => m === null || !CORTESIA.has(normalizar(m)),
+  );
+  return (
+    resposta.length > 0 &&
+    resposta.every((m) => {
+      if (m === null || m.trim() === "") {
+        return false;
+      }
+      return respostaDeUmaMensagem(semCortesia(m), sim) === "sim";
+    })
+  );
+}
+
+/** "Pode marcar a limpeza": os verbos que levam o nome do procedimento. */
+const VERBOS_COM_O_PROCEDIMENTO = [
+  "confirmo",
+  "pode marcar",
+  "pode agendar",
+  "pode confirmar",
+  "marca",
+  "quero marcar",
+  "quero agendar",
+];
+
+/**
+ * A pessoa confirmou a marcacao (as mensagens dela depois da pergunta, ainda
+ * nao respondidas)? `procedimento` (o nome do Cadastro do que foi reservado)
+ * libera "Pode marcar a limpeza" para a Limpeza de pele; sem ele, ou para outro
+ * procedimento, a frase nao e sim: o "sim" e sobre o que a pergunta mostrou.
+ */
+export function confirmouAMarcacao(
+  mensagens: readonly (string | null)[],
+  procedimento: string | null = null,
+): boolean {
+  const palavras = procedimento === null ? [] : normalizar(procedimento).split(" ");
+  const nomes = [palavras.join(" "), palavras[0] ?? ""].filter((n) => n !== "");
+  const lista = new Set([
+    ...SIM_DA_MARCACAO,
+    ...nomes.flatMap((nome) =>
+      VERBOS_COM_O_PROCEDIMENTO.flatMap((verbo) =>
+        ["a", "o"].flatMap((artigo) => [
+          `${verbo} ${artigo} ${nome}`,
+          `sim ${verbo} ${artigo} ${nome}`,
+        ]),
+      ),
+    ),
+  ]);
+  return todasSim(mensagens, lista);
+}
+
+/** A mesma leitura na remarcacao, com os verbos de remarcar. */
+export function confirmouARemarcacao(
+  mensagens: readonly (string | null)[],
+): boolean {
+  return todasSim(mensagens, SIM_DA_REMARCACAO);
+}
+
+/** As listas do "sim" da marcacao (para a versao das regras do agente). */
+export const FONTES_DA_RESPOSTA_A_MARCACAO: readonly string[] = [
+  [...SIM_DA_MARCACAO].join(","),
+  [...SIM_DA_REMARCACAO].join(","),
+  VERBOS_COM_O_PROCEDIMENTO.join(","),
+  [...CORTESIA].join(","),
+  CORTESIA_NO_COMECO.source,
+  CORTESIA_NO_FIM.source,
+  PEDE_O_DE_ACORDO.source,
+  EMOJIS_QUE_NAO_MUDAM_O_SIM.join(","),
+  EMOJI.source,
+  EMOTICON_NEGATIVO.source,
 ];
 
 // ---------------------------------------------------------------------------

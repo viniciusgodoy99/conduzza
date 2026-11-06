@@ -28,6 +28,22 @@ import {
   VazioDaAba,
 } from "@/components/cadastros/comum";
 import { ListaDeConvenios } from "@/components/cadastros/lista-de-convenios";
+// [AG7 preparo] início
+import {
+  AvisoDoNomeDoProcedimento,
+  AvisoSemRt,
+  avisoDoNomeDoPreparo,
+  ConfirmarDescarteDoRascunho,
+  FaixaDoRt,
+  resumoDoPreparo,
+  SecaoDoPreparo,
+  type PreparoDaAba,
+} from "@/components/cadastros/preparo-do-procedimento";
+import {
+  problemaNoNomeDoProcedimento,
+  TEXTOS_DO_PREPARO,
+} from "@/components/cadastros/preparo-na-tela";
+// [AG7 preparo] fim
 import {
   nomeDoConvenioDoRequisito,
   requisitosParaEdicao,
@@ -105,6 +121,9 @@ import type {
   Procedimento,
   Profissional,
 } from "@/lib/queries/catalogo";
+// [AG7 preparo] início
+import { procedimentosEsperandoORt, temRtVigente } from "@/lib/queries/preparo";
+// [AG7 preparo] fim
 import { cn } from "@/lib/utils";
 import {
   centavosParaReais,
@@ -134,7 +153,10 @@ type FormProcedimento = {
   default_duration_min: string;
   preco_reais: string;
   requires_evaluation: boolean;
-  prep_instructions: string;
+  // [AG7 preparo] início
+  // prep_instructions saiu do formulario: a orientacao de preparo e a secao
+  // propria (SecaoDoPreparo), com versoes aprovadas pelo RT.
+  // [AG7 preparo] fim
   bookable_by_ai: boolean;
   /** "A IA pode informar o preco e o que o procedimento exige" (AG1) */
   ia_pode_informar: boolean;
@@ -147,7 +169,6 @@ const FORM_VAZIO: FormProcedimento = {
   default_duration_min: "40",
   preco_reais: "",
   requires_evaluation: false,
-  prep_instructions: "",
   bookable_by_ai: true,
   ia_pode_informar: true,
   active: true,
@@ -198,6 +219,9 @@ const idDoRemover = (professionalId: string) => `qf-${professionalId}-remover`;
 // Alvos de foco do aviso de consultas (D4): o proprio aviso, quando ele
 // entra no lugar do Salvar, e o Salvar do rodape, quando o aviso sai.
 const ID_DO_AVISO = "proc-aviso-de-consultas";
+// [AG7 preparo] início
+const ID_DO_AVISO_DO_NOME = "proc-nome-aviso-do-preparo";
+// [AG7 preparo] fim
 const ID_DO_SALVAR = "proc-salvar";
 
 const MODOS_DE_PRECO: { valor: ModoPreco; rotulo: string }[] = [
@@ -323,7 +347,10 @@ export type CamposDoProcedimento = {
   default_duration_min: number;
   base_price_cents: number | null;
   requires_evaluation: boolean;
-  prep_instructions: string | null;
+  // [AG7 preparo] início
+  // Sem prep_instructions: ausente, a action nao mexe na coluna (que fica
+  // sem uso ate a limpeza depois da AG8, D-83).
+  // [AG7 preparo] fim
   bookable_by_ai: boolean;
   /** AG1. Ausente: a action nao mexe na coluna. */
   ia_pode_informar?: boolean;
@@ -1288,6 +1315,16 @@ function CobremSomenteLeitura({
   );
 }
 
+// [AG7 preparo] início
+/** Sem o preparo de Cadastros (um chamador antigo): a secao espera. */
+const PREPARO_ESPERANDO: PreparoDaAba = {
+  estado: { tipo: "carregando" },
+  superAdmin: false,
+  podeDefinirRt: false,
+  recarregar: () => undefined,
+};
+// [AG7 preparo] fim
+
 export function ProcedimentosTab({
   catalogo,
   matriz,
@@ -1296,7 +1333,15 @@ export function ProcedimentosTab({
   dica,
   aoMudar,
   timezone,
-}: TabProps) {
+  // [AG7 preparo] início
+  preparo = PREPARO_ESPERANDO,
+  // [AG7 preparo] fim
+}: TabProps & {
+  // [AG7 preparo] início
+  /** A orientacao de preparo (AG7): as versoes, o RT e quem pode o que. */
+  preparo?: PreparoDaAba;
+  // [AG7 preparo] fim
+}) {
   const [aberto, setAberto] = useState(false);
   const [form, setForm] = useState<FormProcedimento>(FORM_VAZIO);
   // "Quem faz e convenios" do procedimento aberto (vinculos de tres pontas).
@@ -1338,6 +1383,23 @@ export function ProcedimentosTab({
   const [requisitosNaAbertura, setRequisitosNaAbertura] = useState<
     RequisitoDoProcedimento[]
   >([]);
+  // [AG7 preparo] início
+  // O nome gravado quando o modal abriu (nulo no novo): renomear o
+  // procedimento com orientacao em vigor tira a aprovacao (o aviso do nome).
+  const [nomeNaAbertura, setNomeNaAbertura] = useState<string | null>(null);
+  // A faixa do RT filtra a tabela pelos que esperam a aprovacao dele.
+  const [soAguardandoORt, setSoAguardandoORt] = useState(false);
+  // Ha texto da orientacao de preparo digitado e nao enviado para o RT (a
+  // secao avisa): o Salvar e o fechar do modal pedem confirmacao antes de
+  // descartar (revisao das telas, TELA-4).
+  const [rascunhoDoPreparo, setRascunhoDoPreparo] = useState(false);
+  // A confirmacao do descarte e o que vem depois dela (o "depois" fica ao
+  // fechar, para o texto nao trocar durante a saida do dialogo).
+  const [descarteDoRascunho, setDescarteDoRascunho] = useState<{
+    aberto: boolean;
+    depois: "fechar" | "salvar";
+  }>({ aberto: false, depois: "fechar" });
+  // [AG7 preparo] fim
 
   const nomes = useMemo<NomesDoCatalogo>(() => {
     const profissionais = new Map(catalogo.profissionais.map((p) => [p.id, p]));
@@ -1425,6 +1487,11 @@ export function ProcedimentosTab({
     setAviso(null);
     focoDeVolta.esquecer();
     setSomenteLeitura(leitura);
+    // [AG7 preparo] início
+    setNomeNaAbertura(procedimento?.name ?? null);
+    setRascunhoDoPreparo(false);
+    setDescarteDoRascunho({ aberto: false, depois: "fechar" });
+    // [AG7 preparo] fim
     const gravados = procedimento
       ? requisitosDoProcedimento(cadastroDoAgente, procedimento.id)
       : [];
@@ -1439,7 +1506,6 @@ export function ProcedimentosTab({
             default_duration_min: String(procedimento.default_duration_min),
             preco_reais: centavosParaReais(procedimento.base_price_cents),
             requires_evaluation: procedimento.requires_evaluation,
-            prep_instructions: procedimento.prep_instructions ?? "",
             bookable_by_ai: procedimento.bookable_by_ai,
             ia_pode_informar:
               cadastroDoProcedimento(cadastroDoAgente, procedimento.id)
@@ -1507,6 +1573,15 @@ export function ProcedimentosTab({
       recusar("Informe o nome do procedimento.");
       return;
     }
+    // [AG7 preparo] Revisao curta da AG7 (a sobra da CURTA-6): o caractere
+    // invisivel, a marca de direcao ou a tabulacao colados no nome (o banco
+    // recusa no preparo). Nada e gravado, e a frase diz o que tirar; a
+    // action confere de novo.
+    const problemaDoNome = problemaNoNomeDoProcedimento(form.name.trim());
+    if (problemaDoNome !== null) {
+      recusar(problemaDoNome);
+      return;
+    }
     const centavos = lerReais(form.preco_reais);
     if (centavos === undefined) {
       recusar("Informe o preço em reais, por exemplo 150,00, ou deixe vazio.");
@@ -1566,7 +1641,6 @@ export function ProcedimentosTab({
           default_duration_min: duracao,
           base_price_cents: centavos,
           requires_evaluation: form.requires_evaluation,
-          prep_instructions: form.prep_instructions.trim() || null,
           bookable_by_ai: form.bookable_by_ai,
           ia_pode_informar: form.ia_pode_informar,
           active: form.active,
@@ -1670,6 +1744,53 @@ export function ProcedimentosTab({
     setAberto(false);
     aoMudar();
   };
+
+  // [AG7 preparo] início
+  const dadosDoPreparo =
+    preparo.estado.tipo === "pronto" ? preparo.estado.dados : null;
+  // So o RT ve a faixa (e o filtro) do que espera a aprovacao dele: o texto
+  // aguardando e a aprovacao que parou de valer (TELA-7). A equipe Conduzza
+  // nunca aprova (TELA-9), entao nao ve a faixa.
+  const aguardandoORt =
+    dadosDoPreparo && dadosDoPreparo.souRt && !preparo.superAdmin
+      ? procedimentosEsperandoORt(dadosDoPreparo, catalogo.procedimentos)
+      : [];
+  const filtrandoORt = soAguardandoORt && aguardandoORt.length > 0;
+  const procedimentosDaTabela = filtrandoORt
+    ? catalogo.procedimentos.filter((p) => aguardandoORt.includes(p.id))
+    : catalogo.procedimentos;
+  const procedimentoGravado = form.id
+    ? (catalogo.procedimentos.find((p) => p.id === form.id) ?? null)
+    : null;
+  // O procedimento da secao: o nome GRAVADO (o banco compara com ele).
+  const procedimentoDoPreparo = form.id
+    ? {
+        id: form.id,
+        nome: procedimentoGravado?.name ?? nomeNaAbertura ?? form.name.trim(),
+      }
+    : null;
+  // Renomear tira a aprovacao do texto em vigor e obriga a enviar de novo o
+  // texto que espera o RT (a aprovacao prende o nome; TELA-6): o aviso sob o
+  // Nome, antes do Salvar e antes de o RT ler o texto inteiro.
+  const resumoNaAbertura =
+    !somenteLeitura &&
+    form.id !== undefined &&
+    nomeNaAbertura !== null &&
+    form.name.trim() !== nomeNaAbertura &&
+    dadosDoPreparo !== null
+      ? resumoDoPreparo(dadosDoPreparo, { id: form.id, nome: nomeNaAbertura })
+      : null;
+  const avisoDoNome =
+    resumoNaAbertura === null
+      ? null
+      : avisoDoNomeDoPreparo({
+          emVigor: resumoNaAbertura.situacao === "aprovada",
+          aguardando:
+            resumoNaAbertura.aguardando !== null &&
+            resumoNaAbertura.aguardando.nomeDoProcedimento === nomeNaAbertura,
+        });
+  const avisaONome = avisoDoNome !== null;
+  // [AG7 preparo] fim
 
   const colunas: ColumnDef<Procedimento>[] = [
     {
@@ -1788,10 +1909,62 @@ export function ProcedimentosTab({
     },
   ];
 
-  const fechar = () => setAberto(false);
+  // [AG7 preparo] início: com texto do preparo digitado e nao enviado, o
+  // fechar (Cancelar, o X, o Esc e o clique fora) pede confirmacao (TELA-4).
+  const fechar = () => {
+    if (rascunhoDoPreparo) {
+      setDescarteDoRascunho({ aberto: true, depois: "fechar" });
+      return;
+    }
+    setAberto(false);
+  };
+  const mudarAberto = (abrirModal: boolean) => {
+    if (abrirModal) {
+      setAberto(true);
+      return;
+    }
+    fechar();
+  };
+  // O Salvar grava o procedimento e fecha o modal: o texto do preparo nao
+  // enviado se perderia, entao ele pergunta antes.
+  const pedirSalvar = () => {
+    if (rascunhoDoPreparo) {
+      setDescarteDoRascunho({ aberto: true, depois: "salvar" });
+      return;
+    }
+    void salvar();
+  };
+  const continuarEditando = () =>
+    setDescarteDoRascunho((atual) => ({ ...atual, aberto: false }));
+  // "Salvar sem o texto" grava o procedimento (o texto some quando o modal
+  // fecha); "Descartar e fechar" fecha.
+  const descartarRascunho = () => {
+    continuarEditando();
+    if (descarteDoRascunho.depois === "salvar") {
+      void salvar();
+      return;
+    }
+    setRascunhoDoPreparo(false);
+    setAberto(false);
+  };
+  // [AG7 preparo] fim
 
   return (
     <div className="grid gap-3">
+      {/* [AG7 preparo] início */}
+      {dadosDoPreparo !== null &&
+      catalogo.procedimentos.length > 0 &&
+      !temRtVigente(dadosDoPreparo) ? (
+        <AvisoSemRt podeDefinirRt={preparo.podeDefinirRt} />
+      ) : null}
+      {aguardandoORt.length > 0 ? (
+        <FaixaDoRt
+          quantos={aguardandoORt.length}
+          filtrando={filtrandoORt}
+          aoAlternar={() => setSoAguardandoORt((atual) => !atual)}
+        />
+      ) : null}
+      {/* [AG7 preparo] fim */}
       <div className="flex justify-end">
         <BotaoProtegido
           podeEditar={podeEditar}
@@ -1815,12 +1988,18 @@ export function ProcedimentosTab({
           dica={dica}
         />
       ) : (
-        <DataTable columns={colunas} data={catalogo.procedimentos} />
+        <DataTable
+          columns={colunas}
+          // [AG7 preparo] início: o filtro da faixa do RT
+          data={procedimentosDaTabela}
+          // [AG7 preparo] fim
+        />
       )}
 
       <PainelDeCadastro
         aberto={aberto}
-        aoMudarAberto={setAberto}
+        // [AG7 preparo] o fechar confere o rascunho do preparo (TELA-4)
+        aoMudarAberto={mudarAberto}
         // Largo: a secao "Quem faz e convenios" tem uma linha por
         // profissional, com os convenios e as excecoes de cada um.
         larga
@@ -1859,7 +2038,8 @@ export function ProcedimentosTab({
               {aviso ? null : (
                 <Button
                   id={ID_DO_SALVAR}
-                  onClick={() => void salvar()}
+                  // [AG7 preparo] o Salvar confere o rascunho do preparo
+                  onClick={pedirSalvar}
                   disabled={salvando}
                 >
                   {salvando ? "Salvando..." : "Salvar"}
@@ -1873,10 +2053,6 @@ export function ProcedimentosTab({
           <DetalheSomenteLeitura
             itens={[
               { rotulo: "Descrição", valor: form.description },
-              {
-                rotulo: "Orientação de preparo enviada ao paciente",
-                valor: form.prep_instructions,
-              },
               {
                 rotulo: "Duração padrão",
                 valor: (
@@ -1947,6 +2123,18 @@ export function ProcedimentosTab({
             ]}
           />
         ) : null}
+        {/* [AG7 preparo] início: no modo leitura, a secao inteira (o RT de
+            papel profissional ou leitura revisa, aprova e escreve aqui) */}
+        {somenteLeitura ? (
+          <SecaoDoPreparo
+            procedimento={procedimentoDoPreparo}
+            preparo={preparo}
+            podeEditarCadastros={podeEditar}
+            timezone={timezone}
+            aoMudarRascunho={setRascunhoDoPreparo}
+          />
+        ) : null}
+        {/* [AG7 preparo] fim */}
         {/* O formulario fica fora da arvore visivel no modo leitura
             (atributo hidden, que o preflight do Tailwind forca). */}
         <div className="grid gap-4" hidden={somenteLeitura}>
@@ -1957,7 +2145,18 @@ export function ProcedimentosTab({
               value={form.name}
               maxLength={120}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
+              // [AG7 preparo] início
+              aria-describedby={avisaONome ? ID_DO_AVISO_DO_NOME : undefined}
+              // [AG7 preparo] fim
             />
+            {/* [AG7 preparo] início */}
+            {avisoDoNome !== null ? (
+              <AvisoDoNomeDoProcedimento
+                id={ID_DO_AVISO_DO_NOME}
+                texto={avisoDoNome}
+              />
+            ) : null}
+            {/* [AG7 preparo] fim */}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="proc-descricao">Descrição</Label>
@@ -2010,20 +2209,9 @@ export function ProcedimentosTab({
               setForm({ ...form, requires_evaluation: marcado })
             }
           />
-          <div className="grid gap-1.5">
-            <Label htmlFor="proc-preparo">
-              Orientação de preparo enviada ao paciente
-            </Label>
-            <Textarea
-              id="proc-preparo"
-              value={form.prep_instructions}
-              onChange={(e) =>
-                setForm({ ...form, prep_instructions: e.target.value })
-              }
-              maxLength={4000}
-              rows={3}
-            />
-          </div>
+          {/* [AG7 preparo] início: o campo de texto livre saiu; a
+              orientacao de preparo e a secao propria, la embaixo */}
+          {/* [AG7 preparo] fim */}
           <CampoDeMarcar
             id="proc-ia"
             rotulo="IA pode agendar"
@@ -2076,10 +2264,37 @@ export function ProcedimentosTab({
                 convenios={catalogo.convenios}
                 novaChave={novaChaveDoRequisito}
               />
+              {/* [AG7 preparo] início */}
+              <SecaoDoPreparo
+                procedimento={procedimentoDoPreparo}
+                preparo={preparo}
+                podeEditarCadastros={podeEditar}
+                timezone={timezone}
+                aoMudarRascunho={setRascunhoDoPreparo}
+              />
+              {/* [AG7 preparo] fim */}
             </>
           )}
         </div>
       </PainelDeCadastro>
+      {/* [AG7 preparo] início: o texto do preparo nao enviado nunca some
+          calado no Salvar nem no fechar do modal (TELA-4) */}
+      <ConfirmarDescarteDoRascunho
+        aberto={descarteDoRascunho.aberto}
+        corpo={
+          descarteDoRascunho.depois === "salvar"
+            ? TEXTOS_DO_PREPARO.rascunhoAoSalvar
+            : TEXTOS_DO_PREPARO.rascunhoAoFechar
+        }
+        rotuloDescartar={
+          descarteDoRascunho.depois === "salvar"
+            ? TEXTOS_DO_PREPARO.salvarSemOTexto
+            : TEXTOS_DO_PREPARO.descartarEFechar
+        }
+        aoContinuar={continuarEditando}
+        aoDescartar={descartarRascunho}
+      />
+      {/* [AG7 preparo] fim */}
     </div>
   );
 }

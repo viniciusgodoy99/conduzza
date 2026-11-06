@@ -30,6 +30,17 @@ vi.mock("@/app/(app)/cadastros/actions", () => ({
   salvarProcedimentoAction: vi.fn(),
   sincronizarVinculosDoProcedimentoAction: vi.fn(),
 }));
+// [AG7 preparo] início: a aba importa as actions do preparo (servidor)
+vi.mock("@/app/(app)/cadastros/preparo-actions", () => ({
+  salvarPreparoAction: vi.fn(),
+  aprovarPreparoAction: vi.fn(),
+  aprovarDeNovoAction: vi.fn(),
+  devolverPreparoAction: vi.fn(),
+  descartarPreparoAction: vi.fn(),
+  suspenderPreparoAction: vi.fn(),
+  avisosDoPreparoAction: vi.fn(),
+}));
+// [AG7 preparo] fim
 
 import {
   AJUDA_DE_QUEM_FAZ,

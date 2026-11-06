@@ -9,7 +9,7 @@ import {
 } from "@/lib/integrations/whatsapp/fake";
 import { processarLote } from "@/lib/jobs/worker";
 import { MENU_CONFIRMACAO } from "@/lib/domain/textos-padrao";
-import { adminClient } from "../rls/stack";
+import { adminClient, anonClient } from "../rls/stack";
 
 // Aceite da tarefa 4.6 contra o banco REAL: a regua nao duplica envio,
 // respeita a janela, pula quem nao autorizou e para na condicao de parada,
@@ -104,6 +104,98 @@ async function montarCenario(nome: string): Promise<Cenario> {
     timezone: clinica!.timezone as string,
   };
 }
+
+// [AG7 preparo] início
+// O preparo aprovado pelo RT (AG7, migration 20261103100000): o {{preparo}}
+// da régua é só o texto em vigor (aprovado pelo responsável técnico e
+// conferido por hash), nunca prep_instructions (o texto da linha 80 deixa de
+// sair). O RT é um administrador sintético da clínica do cenário, com sessão
+// de verdade (as RPCs não aceitam a service role): ele se define RT, salva e
+// aprova. Os usuários saem no afterAll, DEPOIS das clínicas (a trilha das
+// RPCs aponta para eles).
+const SENHA_DO_RT = `ReguaRt!${sufixo}`;
+const usuariosCriados: string[] = [];
+
+async function sessaoDoRt(clinicId: string, apelido: string) {
+  const email = `regua-rt-${apelido}-${sufixo}@teste.dev`;
+  const { data, error } = await admin.auth.admin.createUser({
+    email,
+    password: SENHA_DO_RT,
+    email_confirm: true,
+    user_metadata: { name: "RT sintético" },
+  });
+  if (error || !data.user) {
+    throw new Error(`criar o RT: ${error?.message ?? "sem usuário"}`);
+  }
+  usuariosCriados.push(data.user.id);
+  await admin
+    .from("clinic_member")
+    .insert({
+      clinic_id: clinicId,
+      user_id: data.user.id,
+      role: "admin",
+      status: "ativo",
+    })
+    .throwOnError();
+  const sessao = anonClient();
+  const { error: erroLogin } = await sessao.auth.signInWithPassword({
+    email,
+    password: SENHA_DO_RT,
+  });
+  if (erroLogin) {
+    throw new Error(`login do RT: ${erroLogin.message}`);
+  }
+  const { error: erroRt } = await sessao.rpc("definir_responsavel_tecnico", {
+    p_clinic_id: clinicId,
+    p_user_id: data.user.id,
+    p_nome: "Dra. Régua",
+    p_conselho: "CRM",
+    p_numero: "12345",
+    p_uf: "CE",
+  });
+  expect(erroRt).toBeNull();
+  return sessao;
+}
+
+/** O procedimento do cenário (um só por clínica). */
+async function procedimentoDoCenario(clinicId: string): Promise<string> {
+  const { data } = await admin
+    .from("procedure")
+    .select("id")
+    .eq("clinic_id", clinicId)
+    .single()
+    .throwOnError();
+  return (data as { id: string }).id;
+}
+
+/** Salva o texto; com aprovar, o RT aprova (fica em vigor). */
+async function preparoDoCenario(
+  cenario: Cenario,
+  texto: string,
+  aprovar: boolean,
+): Promise<void> {
+  const sessao = await sessaoDoRt(
+    cenario.clinicId,
+    cenario.clinicId.slice(0, 8),
+  );
+  const procedureId = await procedimentoDoCenario(cenario.clinicId);
+  // A copia do texto antigo so acontece na migration: este procedimento
+  // nasceu depois dela, sem versao.
+  const { data: salvo, error } = await sessao.rpc(
+    "salvar_preparo_do_procedimento",
+    { p_procedure_id: procedureId, p_texto: texto, p_versao_lida: 0 },
+  );
+  expect(error).toBeNull();
+  if (aprovar) {
+    const versao = salvo as { versao_id: string; texto_sha256: string };
+    const { error: erroAprovar } = await sessao.rpc(
+      "aprovar_preparo_do_procedimento",
+      { p_versao_id: versao.versao_id, p_texto_sha256: versao.texto_sha256 },
+    );
+    expect(erroAprovar).toBeNull();
+  }
+}
+// [AG7 preparo] fim
 
 async function criarContato(
   clinicId: string,
@@ -255,6 +347,11 @@ afterAll(async () => {
   for (const clinicId of clinicasCriadas) {
     await admin.from("clinic").delete().eq("id", clinicId);
   }
+  // [AG7 preparo] início
+  for (const id of usuariosCriados) {
+    await admin.auth.admin.deleteUser(id);
+  }
+  // [AG7 preparo] fim
 });
 
 describe("planner das réguas", () => {
@@ -552,3 +649,65 @@ describe("os seis passos do toque", () => {
     });
   });
 });
+
+// [AG7 preparo] início
+describe("o preparo no toque de 24 horas (AG7)", () => {
+  it("com o texto em vigor: o toque leva o texto aprovado inteiro, nunca prep_instructions", async () => {
+    resetFakeProvider();
+    const cenario = await montarCenario("preparo-ok");
+    await ligarConfirmacao(cenario.clinicId, JANELA_AMPLA);
+    const aprovado =
+      "Venha sem maquiagem e com o rosto limpo.\nNão use ácido na pele 3 dias antes.";
+    await preparoDoCenario(cenario, aprovado, true);
+    const telefone = "+5584961000008";
+    const contactId = await criarContato(cenario.clinicId, telefone, {
+      consentimento: "ativo",
+    });
+    // O passo de 24 horas vence daqui a 10 minutos (o de 3 horas e o de 72
+    // ficam fora do horizonte do planner).
+    await criarConsulta(
+      cenario,
+      contactId,
+      new Date(Date.now() + 24 * HORA + 10 * MINUTO),
+    );
+
+    await planejar();
+    await adiantarEProcessar(cenario.clinicId, ["worker-preparo-ok"]);
+
+    const enviadas = fakeSentMessages().filter((m) => m.to === telefone);
+    expect(enviadas).toHaveLength(1);
+    expect(enviadas[0]?.body).toContain(aprovado);
+    expect(enviadas[0]?.body).not.toContain("Venha sem maquiagem, por favor.");
+    expect(enviadas[0]?.body).not.toContain("{{");
+  });
+
+  it("sem texto em vigor (so o aguardando e o antigo): a linha do preparo some", async () => {
+    resetFakeProvider();
+    const cenario = await montarCenario("preparo-sem");
+    await ligarConfirmacao(cenario.clinicId, JANELA_AMPLA);
+    const aguardando = "Venha sem maquiagem e sem creme no rosto.";
+    await preparoDoCenario(cenario, aguardando, false);
+    const telefone = "+5584961000009";
+    const contactId = await criarContato(cenario.clinicId, telefone, {
+      consentimento: "ativo",
+    });
+    await criarConsulta(
+      cenario,
+      contactId,
+      new Date(Date.now() + 24 * HORA + 10 * MINUTO),
+    );
+
+    await planejar();
+    await adiantarEProcessar(cenario.clinicId, ["worker-preparo-sem"]);
+
+    const enviadas = fakeSentMessages().filter((m) => m.to === telefone);
+    expect(enviadas).toHaveLength(1);
+    const corpo = enviadas[0]?.body ?? "";
+    expect(corpo).not.toContain("Venha sem maquiagem");
+    expect(corpo).not.toContain(aguardando);
+    // A linha some inteira: nenhuma linha em branco no lugar dela.
+    expect(corpo).not.toContain("\n\n");
+    expect(corpo).toContain("\nPodemos confirmar sua presença?");
+  });
+});
+// [AG7 preparo] fim

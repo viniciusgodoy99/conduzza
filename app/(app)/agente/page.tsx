@@ -1,6 +1,9 @@
 import { Sparkles } from "lucide-react";
 import { redirect } from "next/navigation";
 
+// [AG7 preparo] início
+import { recusadoPelasRegrasDeHoje } from "@/app/(app)/cadastros/recusas-do-preparo";
+// [AG7 preparo] fim
 import { CartaoDaProntidao } from "@/components/agente/cartao-da-prontidao";
 import { PainelDoAgente } from "@/components/agente/painel-do-agente";
 import {
@@ -42,6 +45,9 @@ import {
 } from "@/lib/queries/agente";
 import { iaLiberadaNoAmbiente } from "@/lib/ia/liberacao";
 import { fetchProntidaoDoCadastro } from "@/lib/queries/cadastro-para-o-agente";
+// [AG7 preparo] início
+import { fetchPreparoDaHabilidade } from "@/lib/queries/preparo";
+// [AG7 preparo] fim
 import {
   abaDaIaVisivel,
   configDaIaDaRequisicao,
@@ -74,6 +80,17 @@ import { createClient } from "@/lib/supabase/server";
 // e super admin), o cartao "Prontidao do cadastro" acima do painel, lido
 // pela sessao (prontidao_do_cadastro_da_ia; o banco recusa os outros
 // papeis). Leitura que falha vira o erro do cartao, nunca um "pronto".
+//
+// [AG7 preparo] início
+// Orientacao de preparo (AG7): para TODO papel que abre a tela, se algum
+// procedimento ativo tem orientacao aprovada pelo responsavel tecnico em
+// vigor que as regras de hoje deixam sair (fetchPreparoDaHabilidade, pela
+// sessao; as regras conferidas aqui no servidor, recusadoPelasRegrasDeHoje,
+// o mesmo criterio do "Aprovada, sem envio" de Cadastros). Sem nenhuma, a
+// habilidade "Enviar orientação de preparo" diz que o pedido passa para a
+// equipe; com todas recusadas pelas regras de hoje, diz isso tambem.
+// Leitura que falha vira nulo, e a dica nao aparece (a tela nao inventa).
+// [AG7 preparo] fim
 //
 // A casca do painel ocupa a altura do main (o rodape de publicacao fica no
 // pe nas abas curtas) e reserva no main a altura do rodape fixo na rolagem
@@ -313,6 +330,19 @@ export default async function AgentePage({
   const lendoAProntidao = podeEditar
     ? ouNulo(() => fetchProntidaoDoCadastro(supabase, clinicId))
     : Promise.resolve(null);
+  // [AG7 preparo] início
+  // A dica de "Enviar orientação de preparo" (nenhum procedimento ativo com
+  // orientacao aprovada pelo responsavel tecnico em vigor, ou todas
+  // recusadas pelas regras de hoje), tambem em paralelo: pela SESSAO e para
+  // TODO papel que abre a Tela 6 (a recepcao inclusive; as tabelas do
+  // preparo tem a policy "membro ativo le"). Nunca lanca: erro vira nulo
+  // (nao conferiu, e a dica nao aparece).
+  const lendoOPreparo = fetchPreparoDaHabilidade(
+    supabase,
+    clinicId,
+    recusadoPelasRegrasDeHoje,
+  ).catch(() => null);
+  // [AG7 preparo] fim
   const [lido, versoes, extras, motivo, abaWhatsapp] = await Promise.all([
     seguro(
       fetchConfigDoAgente(supabase, clinicId, { lerInstrucoes: superAdmin }),
@@ -342,6 +372,9 @@ export default async function AgentePage({
       : Promise.resolve(null),
   ]);
   const prontidao = await lendoAProntidao;
+  // [AG7 preparo] início
+  const preparoDaHabilidade = await lendoOPreparo;
+  // [AG7 preparo] fim
   const emUso = abaWhatsapp ? emUsoNoWhatsapp(abaWhatsapp) : false;
 
   if (lido === null) {
@@ -408,6 +441,9 @@ export default async function AgentePage({
     // prova paga, D-100)? So as constantes da calibragem, calculadas aqui:
     // o SDK nunca vai ao navegador (revisao das telas da AG6b, item 3).
     midiaNoServidor: midiaNoServidor(),
+    // [AG7 preparo] início
+    preparoDaHabilidade,
+    // [AG7 preparo] fim
   };
 
   return cascaDoPainel(

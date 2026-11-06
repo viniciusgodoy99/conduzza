@@ -6,6 +6,9 @@ import type {
   // [AG6b mídia] fim
   Mudanca,
 } from "@/lib/domain/agente/config";
+// [AG7 preparo] início
+import type { PreparoDaHabilidade } from "@/lib/domain/preparo";
+// [AG7 preparo] fim
 
 // Tipos da tela do Agente de IA (Tela 6): o que a pagina (servidor) monta e
 // o painel (cliente) desenha. Ficam aqui, e nao nas queries, para a tela nao
@@ -82,6 +85,18 @@ export type DadosDoPainel = {
    */
   midiaNoServidor?: MidiaNoServidor;
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  /**
+   * A orientacao de preparo aprovada pelo responsavel tecnico na clinica,
+   * para a nota de "Enviar orientação de preparo": lida na pagina pela
+   * sessao, com as regras de hoje conferidas no servidor
+   * (fetchPreparoDaHabilidade, lib/queries/preparo.ts), para todo papel que
+   * abre a Tela 6. "sem_texto_aprovado" ou "aprovada_sem_envio": a nota diz
+   * que o pedido passa para a equipe (e por que). Nulo ou ausente: nao
+   * conferiu (a tela nao inventa a nota).
+   */
+  preparoDaHabilidade?: PreparoDaHabilidade | null;
+  // [AG7 preparo] fim
 };
 
 /** Quem falou na conversa do simulador. */
@@ -105,7 +120,11 @@ export type FalaDoSimulador = {
   autor: AutorNoSimulador;
   texto: string;
   /** So nas falas do assistente: resposta propria ou a frase fixa. */
-  tipo?: "resposta" | "frase_fixa";
+  // [AG7 preparo] início
+  // Ou a orientacao de preparo: a mensagem que o sistema monta com o texto
+  // aprovado pelo responsavel tecnico (so a frase fixa encerra a conversa).
+  tipo?: "resposta" | "frase_fixa" | "preparo";
+  // [AG7 preparo] fim
   /** So nas falas do assistente. */
   trilha?: PassoDaTrilha[];
   /**
@@ -138,7 +157,11 @@ export type ResultadoDaSimulacao =
   | {
       ok: true;
       resposta: string;
-      tipo: "resposta" | "frase_fixa";
+      // [AG7 preparo] início
+      // No preparo, `resposta` e a mensagem montada pelo sistema (contrato
+      // da AG7, 4.6, ResultadoDoSimulador).
+      tipo: "resposta" | "frase_fixa" | "preparo";
+      // [AG7 preparo] fim
       trilha: PassoDaTrilha[];
       /** So para o super admin; nulo para os outros. */
       rascunhoBloqueado: string | null;

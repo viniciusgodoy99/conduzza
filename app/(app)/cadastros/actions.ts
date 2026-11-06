@@ -3,6 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+// [AG7 preparo] início
+import { problemaNoNomeDoProcedimento } from "@/components/cadastros/preparo-na-tela";
+// [AG7 preparo] fim
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import {
   camposDaUnidadeParaOAgenteSchema,
@@ -566,7 +569,12 @@ const procedimentoSchema = z.object({
   default_duration_min: z.number().int().min(5).max(600),
   base_price_cents: centavosSchema,
   requires_evaluation: z.boolean(),
-  prep_instructions: z.string().trim().max(4000).nullable(),
+  // [AG7 preparo] início
+  // prep_instructions saiu do schema (contrato da AG7, 3.3): a orientacao de
+  // preparo e versionada e aprovada pelo RT (./preparo-actions.ts). O Zod
+  // tira a chave que um cliente antigo ainda mande, e o update nao toca a
+  // coluna, que fica sem uso ate a limpeza depois da AG8 (D-83).
+  // [AG7 preparo] fim
   // Recursos sairam da tela (decisao do dono em 29/09/2026), mas a coluna e
   // a trava do banco ficam: sem o campo no formulario, o update NAO toca
   // procedure.resource_id (a chave ausente fica fora do update), e o
@@ -705,6 +713,10 @@ async function salvarEntidade(
   tabela: string,
   schema: z.ZodType<Record<string, unknown>>,
   input: unknown,
+  // [AG7 preparo] A recusa propria da entidade, depois do Zod e antes de
+  // gravar, com a frase da tela (o nome do procedimento: revisao curta da
+  // AG7, a sobra da CURTA-6). Ausente: so o Zod.
+  recusa?: (dados: Record<string, unknown>) => string | null,
 ): Promise<CadastroActionResult> {
   const guard = await requireEditor();
   if ("error" in guard) {
@@ -714,6 +726,12 @@ async function salvarEntidade(
   if (!parsed.success) {
     return { ok: false, error: "Confira os campos informados." };
   }
+  // [AG7 preparo] início
+  const recusado = recusa ? recusa(parsed.data) : null;
+  if (recusado !== null) {
+    return { ok: false, error: recusado };
+  }
+  // [AG7 preparo] fim
   const supabase = await createClient();
   const { id, ...campos } = parsed.data as { id?: string } & Record<
     string,
@@ -776,6 +794,13 @@ async function salvarEntidade(
 // A RPC copia a chave do procedimento como estava gravada, entao, quando a
 // pessoa mudou a chave no mesmo Salvar, e este alinhamento que a leva aos
 // vinculos: o erro dele agora e conferido e volta como gravacao parcial.
+//
+// [AG7 preparo] Revisao curta da AG7 (a sobra da CURTA-6): o nome vai no
+// cabecalho da orientacao de preparo, e o banco recusa no preparo o nome com
+// caractere invisivel, marca de direcao ou controle colado de outro lugar
+// (preparo_nome_valido). O Salvar recusa aqui, antes de gravar, com a frase
+// que diz o que tirar (problemaNoNomeDoProcedimento, pelo espelho
+// nomeDoPreparoValido); a tela confere o mesmo antes de chamar.
 export async function salvarProcedimentoAction(
   input: unknown,
 ): Promise<CadastroActionResult> {
@@ -783,6 +808,11 @@ export async function salvarProcedimentoAction(
     "procedure",
     procedimentoSchema,
     input,
+    // [AG7 preparo]
+    (dados) =>
+      typeof dados.name === "string"
+        ? problemaNoNomeDoProcedimento(dados.name)
+        : null,
   );
   if (!resultado.ok || !resultado.id) {
     return resultado;

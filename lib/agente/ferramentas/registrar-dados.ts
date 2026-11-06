@@ -360,6 +360,8 @@ export type MensagemDoPaciente = {
    */
   origem?: "audio" | "arquivo";
   // [AG6b mídia] fim
+  /** Revisao final da AG7: message.created_at (ISO; ausente no simulador). */
+  criadaEm?: string;
 };
 
 const PARTICULAS = new Set(["da", "das", "de", "do", "dos", "e"]);

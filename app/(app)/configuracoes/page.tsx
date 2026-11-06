@@ -58,6 +58,13 @@ import {
 import { fetchRegrasDeOrigem } from "@/lib/queries/regras-de-origem";
 import { fetchRespostasRapidas } from "@/lib/queries/respostas-rapidas";
 import type { Pendente } from "./equipe-client";
+// [AG7 preparo] início
+import type { DadosDoResponsavelTecnico } from "@/components/configuracoes/responsavel-tecnico-card";
+import {
+  fetchResponsavelTecnicoAberto,
+  type ResponsavelTecnico,
+} from "@/lib/queries/preparo";
+// [AG7 preparo] fim
 
 // O "Testar leitura" e o "Salvar token" da aba Anuncios da Meta falam com a
 // Meta durante a Server Action (pior caso perto de 15 s), e a action herda o
@@ -75,6 +82,28 @@ async function seguro<T>(promessa: Promise<T>): Promise<T | null> {
     return null;
   }
 }
+
+// [AG7 preparo] início
+/**
+ * A designacao aberta do responsavel tecnico (AG7), lida pela sessao de forma
+ * tolerante: a falha vira { ok: false } (o cartao diz que nao carregou e a
+ * lista fica sem o selo), nunca derruba a aba. Dentro do ok, nulo e a
+ * clinica sem RT (o seguro() acima juntaria os dois casos).
+ */
+async function lerResponsavelTecnico(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  clinicId: string,
+): Promise<{ ok: true; rt: ResponsavelTecnico | null } | { ok: false }> {
+  try {
+    return {
+      ok: true,
+      rt: await fetchResponsavelTecnicoAberto(supabase, clinicId),
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+// [AG7 preparo] fim
 
 /**
  * Dos candidatos (membros cujo perfil mostra um nome escolhido), quem foi
@@ -185,6 +214,9 @@ export default async function ConfiguracoesPage({
     rastreioResult,
     situacaoDoRastreioResult,
     comAgenteDeIa,
+    // [AG7 preparo] início
+    responsavelTecnicoLido,
+    // [AG7 preparo] fim
   ] = await Promise.all([
     supabase
       .from("clinic_member")
@@ -283,6 +315,11 @@ export default async function ConfiguracoesPage({
     // O agente habilitado nesta clinica: so decide o aviso da aba WhatsApp
     // (os numeros do assistente moram na Tela 6 desde a onda 2).
     abaDaIaVisivel(active.clinicId),
+    // [AG7 preparo] início
+    // O responsavel tecnico aberto (o cartao e o selo da lista), junto do
+    // lote: a policy deixa todo membro ativo ler. Tolerante.
+    lerResponsavelTecnico(supabase, active.clinicId),
+    // [AG7 preparo] fim
   ]);
 
   type MemberRow = {
@@ -380,6 +417,11 @@ export default async function ConfiguracoesPage({
   // e estavel, entao dentro de cada grupo a ordem de entrada na clinica se
   // mantem. A marca de Implementador so vale com o papel admin.
   const implementadores = marcadosOuNinguem(marcasDaEquipe);
+  // [AG7 preparo] início
+  // A designacao aberta do RT (nula sem RT ou com a leitura que falhou: sem
+  // o selo na lista).
+  const rtAberto = responsavelTecnicoLido.ok ? responsavelTecnicoLido.rt : null;
+  // [AG7 preparo] fim
   const membros: MembroEquipe[] = rows
     .filter((row) => row.status !== "pendente")
     .map((row) => ({
@@ -390,6 +432,9 @@ export default async function ConfiguracoesPage({
       implementador: row.role === "admin" && implementadores.has(row.user_id),
       ativo: row.status === "ativo",
       professionalId: row.professional_id ?? null,
+      // [AG7 preparo] início
+      responsavelTecnico: rtAberto !== null && rtAberto.userId === row.user_id,
+      // [AG7 preparo] fim
     }))
     .sort((a, b) => Number(b.ativo) - Number(a.ativo));
 
@@ -423,6 +468,45 @@ export default async function ConfiguracoesPage({
   // outras abas, o Implementador faz tudo como o administrador (ehAdmin).
   const ehAdminPleno = ehAdministradorPleno(active.role, active.implementador);
   const dica = permissionHint(active.role, "configuracoes");
+
+  // [AG7 preparo] início
+  // O cartao "Responsavel tecnico" da aba Equipe (desenho 5.3): o RT aberto,
+  // com o e-mail do membro e se o vinculo dele esta ativo (a regra do RT
+  // vigente: sem acesso ativo, nada do que ele aprovou sai), e as pessoas
+  // ATIVAS de qualquer papel para o formulario. Nulo: a leitura do RT falhou
+  // (o cartao diz isso). Quem define e a mesma guarda da action: o
+  // administrador pleno ou a equipe Conduzza; na duvida da marca de
+  // Implementador (a leitura falhou), so o super admin.
+  const dadosDoResponsavelTecnico: DadosDoResponsavelTecnico | null =
+    responsavelTecnicoLido.ok
+      ? {
+          rt: rtAberto
+            ? {
+                nome: rtAberto.nome,
+                conselho: rtAberto.conselho,
+                numero: rtAberto.numero,
+                uf: rtAberto.uf,
+                desde: rtAberto.desde,
+                email: emailById.get(rtAberto.userId) ?? null,
+                comAcesso: rows.some(
+                  (row) =>
+                    row.user_id === rtAberto.userId && row.status === "ativo",
+                ),
+              }
+            : null,
+          pessoas: membros
+            .filter((membro) => membro.ativo)
+            .map((membro) => ({
+              userId: membro.userId,
+              nome: membro.nome,
+              email: membro.email,
+            })),
+        }
+      : null;
+  const podeDefinirRt =
+    context.isProductAdmin === true ||
+    (ehAdminPleno && context.marcaDeImplementadorIndisponivel !== true);
+  // [AG7 preparo] fim
 
   // Aba de WhatsApp: um cartao por numero ativo. Leitura dos numeros que
   // falhou vira o erro da aba (nunca uma lista vazia, que diria "nenhum
@@ -485,6 +569,15 @@ export default async function ConfiguracoesPage({
         ehAdmin={ehAdmin}
         ehAdminPleno={ehAdminPleno}
         dica={dica ?? "Seu perfil não altera as configurações"}
+        // [AG7 preparo] início
+        responsavelTecnico={{
+          dados: dadosDoResponsavelTecnico,
+          podeDefinir: podeDefinirRt,
+          timezone: active.timezone,
+          // A conta da equipe Conduzza nunca e o RT (TELA-9).
+          contaDaEquipeConduzza: context.isProductAdmin ? context.userId : null,
+        }}
+        // [AG7 preparo] fim
         clinica={
           clinicResult.error || !clinica
             ? null

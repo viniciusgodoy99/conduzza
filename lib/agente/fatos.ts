@@ -245,6 +245,16 @@ export function montarFatosDoTurno(entrada: {
    */
   pedidos?: readonly (readonly string[])[];
   // [AG6b mídia] fim
+  // [AG7 preparo] início
+  /**
+   * AG7 (D-76): a frase F2 que o sistema colou na resposta deste turno (o
+   * procedimento marcado tem orientacao de preparo em vigor). Entra nos
+   * textos colados: so escapa das regras dos fatos; os padroes de saida, os
+   * lexicos e o verificador continuam lendo a frase. Ausente ou nula: nao
+   * foi colada.
+   */
+  fraseDoPreparo?: string | null;
+  // [AG7 preparo] fim
 }): FatosDoTurno {
   const { config, catalogo } = entrada;
   const coberturas: CoberturaDoTurno[] = [];
@@ -320,6 +330,8 @@ export function montarFatosDoTurno(entrada: {
     config.encerramento,
     FRASE_DO_ASSISTENTE_VIRTUAL,
     FRASE_FORA_DO_ASSUNTO,
+    // [AG7 preparo] A F2, quando o turno a colou.
+    entrada.fraseDoPreparo,
   ].filter((texto): texto is string => (texto?.trim() ?? "") !== "");
   return {
     // Revisao final da AG3: sem o eco do pedido (que so vale na frase que

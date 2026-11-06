@@ -84,7 +84,14 @@ function banco() {
     starts_at: iso(inicioDaConsulta),
     send_confirmation: true,
     remarcacao_pedida_em: null,
-    service_link: { procedure: { name: "Consulta", prep_instructions: null } },
+    // [AG7 preparo] O procedimento com o id (o preparo em vigor dele); o
+    // prep_instructions nem e lido desde a AG7.
+    service_link: {
+      procedure: {
+        id: "00000000-0000-4000-8000-0000000000a7",
+        name: "Consulta",
+      },
+    },
     professional: { name: "Dra. Teste" },
   };
   return bancoFalso({
