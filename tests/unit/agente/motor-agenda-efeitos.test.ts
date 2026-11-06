@@ -745,7 +745,7 @@ describe("agendar", () => {
     // os fatos e o foco; nunca ao modelo).
     const leitura = banco.leituras.find((l) => l.tabela === "appointment");
     expect(leitura?.colunas).toBe(
-      "starts_at, status, approval_status, unit_id, professional_id, service_link_id, remarcacao_de",
+      "starts_at, status, approval_status, unit_id, professional_id, service_link_id, remarcacao_de, created_at",
     );
     expect(leitura?.filtros).toEqual(
       expect.arrayContaining([

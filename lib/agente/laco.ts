@@ -1784,7 +1784,10 @@ function mensagensDoPacienteParaOsDados(
             original: m.textoOriginal ?? m.texto,
             // [AG6b mídia]
             ...(m.origem === undefined ? {} : { origem: m.origem }),
-            ...(m.criadaEm === undefined ? {} : { criadaEm: m.criadaEm }),
+            // O audio transcrito traz o horario so na midia.
+            ...((m.criadaEm ?? m.midia?.criadaEm) === undefined
+              ? {}
+              : { criadaEm: m.criadaEm ?? m.midia?.criadaEm }),
           },
         ]
       : [],
