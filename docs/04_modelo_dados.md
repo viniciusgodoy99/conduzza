@@ -4996,3 +4996,46 @@ A clínica sem atividade recebe zeros e mediana nula, e quem pede a clínica de 
 - **O que o ensaio prova:** cada número contado à mão, com 18 conversas na janela atual; a janela anterior; as bordas `[de, ate)`; a conversa transferida fora de resolvidas; a consulta recusada fora e a de `approval_status` nulo dentro; o envio que falhou ou ficou em `enviando` fora; a nota interna fora; o celular da clínica como pessoa e a resposta automática não; os quatro papéis que veem a clínica lendo o mesmo; a clínica A sem ver a B, nos dois sentidos; o pendente sem ver nada; o `profissional` recebendo null; `anon` sem EXECUTE; o catálogo igual; as chaves de antes iguais; e o rollback.
 - **Postgres local** (`~/.claude/plans/agente-completo/ag0/banco/`, Postgres 18 do Homebrew, 127.0.0.1:55621, com as 125 migrations do repositório sobre os stubs do Supabase, sem ler a produção; a produção é 17.6): o ensaio passa, e 36 sabotagens da migration (`sabotagens/rodar.py`, um defeito por vez) são todas pegas por um assert.
 - **Provas de banco que rodam depois de aplicar:** `npm run test:rls -- relatorios` e `npm run test:integration -- relatorios`, com os casos novos (um usuário da clínica A não lê o bloco da B, o `profissional` recebe null e, na integração, a conta das duas janelas). **Escritos e não rodados:** batem no banco de verdade e só passam com a migration.
+
+## 43. Os remédios do preparo e a introdução da IA (06/11/2026, migration `20261106120000_remedios_do_preparo.sql`; escrita na branch `agente-remedios` e provada só num Postgres local; **NÃO aplicada**)
+
+Decisão do dono em 06/11/2026, opção A: "a IA escreve a conversa em volta e o sistema envia a orientação exata". O pedido: "Ter um canto para a clínica colocar os remédios que a IA pode citar, até porque tem remédios necessários para fazer exames. Poderia colocar o nome do remédio, como tomar, uma breve descrição." A regra do CLAUDE.md 3.2 não muda: a IA nunca escreve, resume nem parafraseia remédio, dose ou como tomar; só o texto cadastrado e aprovado pelo RT, enviado pelo sistema, palavra por palavra.
+
+### 43.1 Os remédios: sem coluna
+
+Os remédios moram no **texto da versão** (`preparo_do_procedimento.texto`), composto por `comporTextoDoPreparo` (`lib/domain/preparo.ts`), depois da orientação livre:
+
+```
+{orientação livre}
+
+Remédios do preparo:
+
+Bisacodil 5 mg: tomar 2 comprimidos às 20h da véspera do exame.
+Laxante usado para limpar o intestino.
+```
+
+Nenhuma coluna e nenhuma tabela: a mesma aprovação do RT, o mesmo hash, as mesmas recusas (`preparo_texto_recusado`, `problemasDoTextoDoPreparo`) e o mesmo limite de 3.500 caracteres no texto inteiro. Remédio continua só de RT de CRM ou CRO: o cabeçalho "Remédios do preparo:" já cai em `preparo_conselho_recusa_texto`, mesmo com um nome que a lista não conhece. Para editar, `separarRemediosDoTexto` lê os campos do próprio texto e só reconhece o bloco que `comporTextoDoPreparo` escreveria de novo, byte a byte; fora disso (o texto escrito à mão, o texto antigo), o texto inteiro fica como orientação livre e nada se perde.
+
+### 43.2 A introdução: o corpo da mensagem
+
+Com a introdução, o corpo de `message` é `{introdução}\n\n{mensagem_do_preparo}`, autor `sistema`, no mesmo job (`message_job_id_key`). `ler_preparo_para_envio` e `mensagem_do_preparo` não mudam: devolvem só o bloco. A decisão `enviou_preparo` guarda em `texto_sha256` o hash do **corpo inteiro** e continua sem `aprovado` (`ai_decision_log_preparo_coerente` não muda: o texto do preparo não passa pelo filtro); a passagem da introdução pelo filtro aparece na trilha (`context_read`), em `versao_filtro` e em `verificador_modelo`.
+
+### 43.3 O que a migration muda
+
+- **CHECK `ai_turno_texto_coerente`** (drop e add, NOT VALID e VALIDATE): `texto is null or (saida in ('resposta', 'preparo') and texto_sha256 is not null)`. Na saída `preparo`, o texto é **só a introdução**, enquanto o envio está pendente, para a retomada remontar o mesmo corpo; o texto do preparo continua relido do banco. Sai como o de sempre: no envio, em `sem_envio`, na troca para a frase e na varredura de 1 hora.
+- **`preparo_introducao_valida(p_texto text)`** (nova, `sql`, `immutable`, `parallel safe`, `search_path` vazio, nenhum papel da API executa): uma linha de até 160 caracteres, em `preparo_texto_valido`, sem o que `preparo_texto_recusado` recusa e sem o que `FONTE_DO_QUE_A_INTRODUCAO_NAO_DIZ` (`lib/domain/conformidade/filtro-deterministico.ts`, byte a byte; `tests/unit/conformidade/preparo-introducao.test.ts` confere) lista: qualquer dígito, unidade, número por extenso, como tomar, o assunto do remédio, `MEDICAMENTOS_DO_PREPARO` e sintoma. Tudo o que ela recusa, `problemaDaIntroducao` também recusa, e o TS lê ainda os nomes de remédio do texto aprovado (`nomesDeRemedioDoTexto`), o filtro inteiro e o verificador.
+- **`mensagem_ia_exige_aprovacao`**: só o passo 8 do ramo do preparo. O corpo é a mensagem remontada da versão em vigor, sozinha, ou depois de uma introdução válida e de uma linha em branco. O resto do corpo fica igual, byte a byte (blocos `[remedios do preparo]`).
+
+**Não mudam:** `preparo_em_vigor`, `ia_pode_falar_com`, `ler_preparo_para_envio`, `mensagem_do_preparo`, `ai_decision_log` e os CHECKs dela. Nenhuma linha muda de valor.
+
+### 43.4 Travas e ordem
+
+ACCESS EXCLUSIVE em `ai_turno`, até o commit, pelo CHECK trocado (poucas linhas). As funções só mexem no catálogo: `message` não é travada. `lock_timeout` de 3 s. **A migration vai antes do código.** O código de antes funciona com ela. O código novo sem ela falha fechado: o turno com introdução não grava (CHECK), ou o gatilho recusa (CZIA3), e a conversa passa para a equipe.
+
+### 43.5 Rollback e ensaio
+
+- **Rollback:** `supabase/operacao/rollback/20261106120000-corpos-anteriores.sql`, depois de voltar o código. Devolve o corpo, o comentário e o CHECK de antes, tira a função e limpa o texto dos turnos do preparo pendentes. Os remédios ficam: são texto da versão aprovada.
+- **Ensaio:** `~/.claude/plans/agente-completo/remedios/ensaio-20261106120000.sql` (termina em ROLLBACK, com `ENSAIO OK`; só linhas sintéticas de uma clínica `e_de_teste`), montado com a migration e o rollback copiados byte a byte. Postgres local em `~/.claude/plans/agente-completo/remedios/banco` (127.0.0.1:55626, `max_wal_size=64MB`), todas as migrations do repositório sobre os stubs do Supabase, sem ler a produção. `rodar-tudo.sh` refaz tudo e desliga o servidor no fim.
+- **O que o ensaio prova:** o catálogo e os grants; o corpus da regra (o mesmo do TS); a mensagem com o bloco dos remédios; **sabotagens no gatilho**, com a decisão do mesmo hash: o bloco com uma letra trocada, a menos ou a mais, com e sem introdução, é recusado; a introdução com remédio, dose ou sintoma é recusada; sem a linha em branco, duas introduções, a introdução depois do bloco, a decisão de outro corpo, autor `ia`, autor humano, a conversa com a equipe e a versão suspensa; o CHECK do turno; aplicar, voltar e aplicar. `sabotagens/rodar.py`: 21 defeitos, um por vez, todos pegos.
+- **Não rodaram:** os casos novos em `tests/rls/preparo-aprovado-pelo-rt.test.ts` e `tests/integration/preparo-aprovado-pelo-rt.test.ts` (precisam da migration aplicada num banco com a API) e a OpenAI de verdade, inclusive a rodada paga do verificador com a frase nova.
+

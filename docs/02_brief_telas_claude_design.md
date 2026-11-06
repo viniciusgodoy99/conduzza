@@ -1118,6 +1118,10 @@ No desenho de então, a coluna **IA** era a chave "o agente pode agendar isso so
 - **O diálogo do RT** nomeia cada categoria do aviso em lista ("cita remédio", "cita dose", "fala de sintoma", "cita jejum ou outro cuidado"), seguida do que ele confirma ao aprovar. Sem conseguir conferir o texto, fica a frase geral.
 - **O texto recusado diz o que tirar:** a frase que diz que um sintoma é normal, esperado ou passa sozinho, e a oferta de outro procedimento. Com remédio ou dose e um RT que não é de CRM nem de CRO (o jejum, tomar água e pedir para informar os medicamentos em uso não contam), a frase cita o trecho que barrou: "Este texto cita remédio ou dose, e só responsável técnico de CRM ou CRO pode salvar ou aprovar texto assim. Tire o remédio e a dose do texto ou peça ao administrador para definir um responsável técnico de CRM ou CRO."
 
+**Remédios do preparo, no editor da orientação (decisão do dono de 06/11/2026; não publicada; `docs/04`, seção 43):** abaixo do texto, o quadro "Remédios do preparo", com a ajuda dizendo que eles vão ao paciente exatamente como estão, depois que o responsável técnico aprovar, e que a dúvida que o texto não responde vai para a equipe. Vazio: "Nenhum remédio neste preparo." e o botão "Adicionar remédio". Cada remédio: "Nome do remédio", "Como tomar", "Breve descrição (opcional)" e "Tirar este remédio". O contador conta o texto inteiro. O remédio pela metade e os dois pontos no nome barram o envio, com a frase no aviso do editor. Eles não têm botão de salvar nem aprovação próprios: entram no texto que vai para o RT.
+
+**No Atendimento:** a mensagem com a introdução da IA assina "Assistente" como o preparo, e a linha de dentro da bolha diz "A primeira frase é do assistente. O resto é o texto aprovado pelo responsável técnico".
+
 ### TELA 9. PACIENTES E FICHA
 
 **Lista:** tabela com Nome, Telefone, Convênio, Última consulta, Próxima, Comparecimento (percentual com barra fina), Saldo de pacote, Etiquetas. Filtros: com falta, inativos, com pacote ativo, por convênio, por profissional.
