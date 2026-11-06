@@ -50,6 +50,18 @@ describe("a normalizacao de sintoma e recusada", () => {
     "A cólica é um efeito esperado do laxante.",
   ])("%s", (texto) => {
     const { recusas, trechosDasRecusas } = problemasDoTextoDoPreparo(texto);
+    // Revisao final da AG7 (achado 2): o verbo do sintoma, o sintoma que passa
+    // e a frase que se refere a anterior.
+    "É normal doer.",
+    "Não se preocupe se doer.",
+    "A dor passa rápido.",
+    "Não se preocupe se arder.",
+    "Fique tranquila se sangrar um pouco.",
+    "Isso é normal.",
+    "Tudo isso é esperado.",
+    "Isso passa logo.",
+    "É comum coçar.",
+    "O inchaço diminui em dois dias.",
     expect(recusas).toContain("triagem");
     expect(trechosDasRecusas.find((t) => t.categoria === "triagem")?.trecho).toBe(
       texto,
@@ -72,6 +84,14 @@ describe("a normalizacao de sintoma e recusada", () => {
     "Não venha sozinho.",
   ])("passa: %s", (texto) => {
     expect(normalizaSintoma(texto)).toBe(false);
+    // Revisao final da AG7 (achado 2): os falsos positivos, e o alerta.
+    "Você não pode passar sozinha pela recepção.",
+    "Em caso de febre, é comum remarcar o exame.",
+    "É comum remarcar o exame em caso de febre.",
+    "Em caso de dor que não passa, procure atendimento.",
+    "Se a dor não melhora, procure atendimento.",
+    "Pode haver cólica. É normal levar um acompanhante.",
+    "Em caso de dor forte, procure atendimento. Não se preocupe com a chegada.",
   });
 
   it("o sintoma em outra frase nao conta, e os espacos repetidos nao escapam", () => {
@@ -82,6 +102,17 @@ describe("a normalizacao de sintoma e recusada", () => {
   });
 });
 
+
+  it.each([
+    "Pode haver cólica. Isso é normal.",
+    "Pode haver cólica. É normal.",
+    "Pode haver cólica.\nÉ normal.",
+    "Pode ter enjoo. Não se preocupe.",
+    "Pode arder. Não se preocupe com isso.",
+    "Pode haver cólica. Faz parte do preparo.",
+  ])("a frase que se refere à anterior: %s", (texto) => {
+    expect(normalizaSintoma(texto)).toBe(true);
+  });
 describe("a oferta de outro procedimento e recusada", () => {
   it.each([
     "Aproveite e faça também a limpeza de pele.",

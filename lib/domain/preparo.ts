@@ -499,26 +499,46 @@ function baseDoBanco(texto: string): string {
 // tiver colica, e normal").
 const NA_MESMA_FRASE = "[^.!?;\\n]*";
 const SINTOMA_OU_REACAO =
-  "\\m(?:colicas?|dor|dores|enjoos?|nauseas?|vomitos?|diarreias?|tonturas?|mal[- ]estar|inchacos?|vermelhid(?:ao|oes)|sangramentos?|coceiras?|ardencias?|ardor|queimac(?:ao|oes)|formigamentos?|febres?|fraquezas?|cansacos?|sonolencias?|gases|estufamentos?|desconfortos?|hematomas?|manchas?|reac(?:ao|oes)|sintomas?|efeitos? colaterais|efeito colateral|evacuac(?:ao|oes)|evacuar|sentir)\\M";
+  "\\m(?:colicas?|dor|dores|enjoos?|nauseas?|vomitos?|diarreias?|tonturas?|mal[- ]estar|inchacos?|vermelhid(?:ao|oes)|sangramentos?|coceiras?|ardencias?|ardor|queimac(?:ao|oes)|formigamentos?|febres?|fraquezas?|cansacos?|sonolencias?|gases|estufamentos?|desconfortos?|hematomas?|manchas?|reac(?:ao|oes)|sintomas?|efeitos? colaterais|efeito colateral|evacuac(?:ao|oes)|evacuar|sentir|doer|doi|doem|doendo|arder|arde|ardem|ardendo|cocar|coca|cocam|cocando|sangrar|sangra|sangram|sangrando|inchar|incha|incham|inchad[oa]|inchando|enjoar|enjoad[oa]|vomitar|formigar|formigando|latejar|lateja|latejando|queimar|queimando|incomodar|incomodo)\\M";
 const COMO_NORMAL =
   "(?:normal|normais|esperad[oa]s?|comum|comuns|natural|naturais|previst[oa]s?|habitual|habituais|passageir[oa]s?|transitori[oa]s?)\\M";
+// "Em caso de febre, e comum remarcar o exame": depois do adjetivo, o que a
+// pessoa faz na recepcao nao normaliza o sintoma.
+const SEM_ATO_ADMINISTRATIVO =
+  "(?! (?:remarcar|reagendar|adiar|cancelar|desmarcar|agendar|marcar|avisar|ligar|retornar|voltar|trazer|levar|esperar|aguardar|chegar|vir|ir|pedir|solicitar|procurar|comunicar|informar)\\M)";
+const NAO_SE_PREOCUPE =
+  "(?:nao se preocupe|nao precisa se preocupar|fique tranquil[oa]|pode ficar tranquil[oa])";
 const DIZ_QUE_E_NORMAL =
-  `(?:\\m(?:e|eh|sao|ser|seja|sera|serao|considerad[oa]s?)\\M (?:[a-z]+ ){0,2}${COMO_NORMAL}|` +
-  "\\mdentro d[oa] (?:normal|normalidade|esperado)\\M|\\m(?:vai|vao|deve|devem|costuma|costumam|tende a|tendem a) (?:passar|sumir|melhorar|desaparecer|ceder)\\M|\\m(?:nao se preocupe|nao precisa se preocupar|nao ha motivo para preocupac|sem motivo para preocupac|nao e grave|sem gravidade|faz parte))";
+  `(?:\\m(?:e|eh|sao|ser|seja|sera|serao|considerad[oa]s?)\\M (?:[a-z]+ ){0,2}${COMO_NORMAL}${SEM_ATO_ADMINISTRATIVO}|` +
+  `\\mdentro d[oa] (?:normal|normalidade|esperado)\\M|\\m(?:vai|vao|deve|devem|costuma|costumam|tende a|tendem a) (?:passar|sumir|melhorar|desaparecer|ceder)\\M|\\m(?:${NAO_SE_PREOCUPE}|nao ha motivo para preocupac|sem motivo para preocupac|nao e grave|sem gravidade|faz parte))`;
+// O fim de uma frase, e o comeco da seguinte.
+const FIM_DA_FRASE_ANTERIOR = "[.!?;\\n]+[ \\n]*";
+const FRASE_ACABA = " *(?:[.!?;\\n]|$)";
 /**
  * "Colica leve depois do laxante e normal e passa sozinha." Triagem, fora da
  * D-80 (CLAUDE.md 3.2): "passa sozinho" e "efeito esperado" em qualquer frase,
- * o sintoma com o adjetivo colado ("reacao normal") e o que diz que e normal
- * na mesma frase de um sintoma ou reacao. Sem o sintoma, a frase e administrativa e passa ("E normal levar um
+ * o sintoma (ou o verbo dele: "e normal doer") com o adjetivo colado, o que diz
+ * que e normal na mesma frase de um sintoma, o sintoma que passa ("a dor passa
+ * rapido", menos "a dor que nao passa", que e o alerta), "isso e normal" sozinho
+ * e a frase seguinte que so diz que e normal ("Pode haver colica. E normal.").
+ * Sem o sintoma, a frase e administrativa e passa ("E normal levar um
  * acompanhante.", "E comum haver fila na recepcao."). Sem tratar negacao, como
- * o filtro: "nao e normal ter febre" tambem e triagem.
+ * o filtro: "nao e normal ter febre" tambem e triagem. Sobra: a normalizacao
+ * sem sintoma nem pronome ("Acontece com todo mundo") e a que so fala do tempo
+ * ("Em dois dias voce esta nova").
  */
 export const FONTE_DO_SINTOMA_NORMALIZADO =
-  "\\m(?:passa|passam|passar|passara|passarao|some|somem|sumir|sumira|sumirao|melhora|melhoram|melhorar|melhorara|melhorarao|desaparece|desaparecem|desaparecer|desaparecera|desaparecerao|cede|cedem|ceder|cedera|cederao)\\M (?:[a-z]+ )?(?:sozinh[oa]s?|naturalmente|espontaneamente)\\M" +
+  "\\m(?:passa|passam|passara|passarao|some|somem|sumira|sumirao|melhora|melhoram|melhorara|melhorarao|desaparece|desaparecem|desaparecera|desaparecerao|cede|cedem|cedera|cederao)\\M (?:[a-z]+ )?(?:sozinh[oa]s?|naturalmente|espontaneamente)\\M" +
+  // "pode passar sozinha" fica de fora: "nao pode passar sozinha pela recepcao".
+  "|\\m(?:vai|vao|deve|devem|costuma|costumam|tende a|tendem a|ira|irao) (?:passar|sumir|melhorar|desaparecer|ceder) (?:[a-z]+ )?(?:sozinh[oa]s?|naturalmente|espontaneamente)\\M" +
   "|\\mefeitos? esperados?\\M" +
+  `|\\m(?:isso|isto|tudo isso)\\M (?:e|eh|sera) (?:[a-z]+ ){0,2}${COMO_NORMAL}` +
+  "|\\m(?:isso|isto) (?:passa|some|melhora|cede)\\M" +
   `|${SINTOMA_OU_REACAO} (?:[a-z]+ )?${COMO_NORMAL}` +
   `|${SINTOMA_OU_REACAO}${NA_MESMA_FRASE}${DIZ_QUE_E_NORMAL}` +
-  `|${DIZ_QUE_E_NORMAL}${NA_MESMA_FRASE}${SINTOMA_OU_REACAO}`;
+  `|${DIZ_QUE_E_NORMAL}${NA_MESMA_FRASE}${SINTOMA_OU_REACAO}` +
+  `|${SINTOMA_OU_REACAO}${NA_MESMA_FRASE}(?<!nao )\\m(?:passa|passam|some|somem|melhora|melhoram|desaparece|desaparecem|cede|cedem|alivia|aliviam|diminui|diminuem)\\M` +
+  `|${SINTOMA_OU_REACAO}${NA_MESMA_FRASE}${FIM_DA_FRASE_ANTERIOR}(?:(?:e|sao|sera) (?:[a-z]+ ){0,2}${COMO_NORMAL}|(?:${NAO_SE_PREOCUPE})(?: com isso)?|faz parte(?: d[oa] [a-z]+)?)${FRASE_ACABA}`;
 
 const OFERECE =
   "(?:faca|marque|agende|realize|inclua|adicione|conheca|experimente|contrate)";
