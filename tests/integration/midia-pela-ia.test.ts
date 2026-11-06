@@ -27,7 +27,10 @@ import { adminClient, anonClient } from "../rls/stack";
 //   o audio sem fala e o que ninguem leu ficam na fila (midia_nao_lida);
 //   midia_clinica e midia_nao_identificada nunca atribuem; o
 //   documento_do_paciente atribui; os eventos dos tres motivos novos;
-// - os CHECKs aceitam os motivos e os papeis novos; o preco do whisper-1.
+// - os CHECKs aceitam os motivos e os papeis novos; o preco do whisper-1;
+// - a matriz de arquivos (migration 20261106130000): a carteirinha no cadastro,
+//   so o vazio, e as notas, uma vez, sem o numero. ESCRITO E NAO RODADO, como o
+//   resto.
 //
 // ESCRITO NA AG6b E NAO RODADO por quem escreveu: grava no banco. Quem roda
 // e o coordenador, DEPOIS de aplicar a migration, com npm run
@@ -497,6 +500,10 @@ beforeAll(async () => {
     "clinica",
     "documento",
     "nao-identificada",
+    "carteirinha-vazia",
+    "carteirinha-diferente",
+    "carteirinha-recusas",
+    "pedido-parcial",
   ]) {
     await telefoneLiberado(clinicaM, nome, 2);
   }
@@ -886,6 +893,137 @@ describe("a atribuicao com a midia (D-96) e os motivos novos", () => {
       expect(atribuicao, nome).toEqual({ atribuida: atribui, codigo: atribui ? "atribuida" : "motivo_nao_atribui" });
       expect(await eventos(conversa), nome).toContain(evento);
     }
+  });
+});
+
+describe("a matriz de arquivos (migration 20261106130000): a carteirinha e as notas", () => {
+  const NUMERO = "99887766554433ZQ";
+  let convenio = "";
+
+  beforeAll(async () => {
+    convenio = await inserir("insurance", {
+      clinic_id: clinicaM,
+      name: "Convenio sintetico",
+      requires_card: true,
+      active: true,
+    });
+  });
+
+  const contatoDe = async (nome: string) => {
+    const { data } = await admin
+      .from("contact")
+      .select("id, kind, insurance_card, insurance_id")
+      .eq("clinic_id", clinicaM)
+      .eq("phone_e164", telefonesM.get(nome)!)
+      .single()
+      .throwOnError();
+    return data as { id: string; kind: string; insurance_card: string | null; insurance_id: string | null };
+  };
+  const notasDe = async (conversa: string) => {
+    const { data } = await admin
+      .from("message")
+      .select("body, author, direction, billable, cost_cents, job_id, is_internal_note")
+      .eq("conversation_id", conversa)
+      .eq("is_internal_note", true)
+      .throwOnError();
+    return (data ?? []) as Record<string, unknown>[];
+  };
+  const daCarteirinha = (job: string, mensagem: string, extra: Record<string, unknown> = {}) => ({
+    ...doPedido(job, mensagem),
+    p_tipo: "carteirinha",
+    p_procedimentos: [],
+    p_resumo: "carteirinha do convênio",
+    p_convenio_lido: convenio,
+    p_numero_da_carteirinha: NUMERO,
+    ...extra,
+  });
+
+  it("com o cadastro vazio: grava o numero e o plano, uma vez; a trilha e a resposta sem o valor", async () => {
+    const { conversa, mensagem } = await direta(clinicaM, numeroM, telefonesM.get("carteirinha-vazia")!, "imagem");
+    const job = await jobQueLeu(clinicaM, numeroM, conversa, [mensagem]);
+    const gravada = await gravar(daCarteirinha(job, mensagem));
+    expect(gravada).toMatchObject({
+      ok: true,
+      reutilizado: false,
+      carteirinha_no_cadastro: true,
+      convenio_do_cadastro: convenio,
+    });
+    expect(JSON.stringify(gravada)).not.toContain(NUMERO);
+    const contato = await contatoDe("carteirinha-vazia");
+    expect(contato).toMatchObject({ insurance_card: NUMERO, insurance_id: convenio, kind: "paciente" });
+    expect(await leituraDe(mensagem)).toMatchObject({ tipo: "carteirinha", resumo: "carteirinha do convênio" });
+    expect(JSON.stringify(await leituraDe(mensagem))).not.toContain(NUMERO);
+    const { data: trilha } = await admin
+      .from("audit_log")
+      .select("detalhes")
+      .eq("entity_id", contato.id)
+      .eq("action", "gravou_carteirinha_lida")
+      .throwOnError();
+    expect(trilha).toEqual([{ detalhes: { campos: ["insurance_card", "insurance_id"], message_id: mensagem } }]);
+    // O job repetido: a primeira vale, com outro numero, sem nota e sem trilha nova.
+    const repetida = await gravar(daCarteirinha(job, mensagem, { p_numero_da_carteirinha: "11112222333344" }));
+    expect(repetida).toMatchObject({ ok: true, reutilizado: true, carteirinha_no_cadastro: true });
+    expect((await contatoDe("carteirinha-vazia")).insurance_card).toBe(NUMERO);
+    expect(await notasDe(conversa)).toEqual([]);
+    await concluir(job);
+  });
+
+  it("o numero diferente nao muda: nota do sistema, sem o numero; a conversa continua na IA", async () => {
+    await admin
+      .from("contact")
+      .update({ insurance_card: "1234.5678-9" })
+      .eq("clinic_id", clinicaM)
+      .eq("phone_e164", telefonesM.get("carteirinha-diferente")!)
+      .throwOnError();
+    const { conversa, mensagem } = await direta(clinicaM, numeroM, telefonesM.get("carteirinha-diferente")!, "imagem");
+    const job = await jobQueLeu(clinicaM, numeroM, conversa, [mensagem]);
+    await gravar(daCarteirinha(job, mensagem));
+    expect((await contatoDe("carteirinha-diferente")).insurance_card).toBe("1234.5678-9");
+    const notas = await notasDe(conversa);
+    expect(notas).toHaveLength(1);
+    expect(notas[0]).toMatchObject({ author: "sistema", direction: "saida", billable: false, cost_cents: 0, job_id: null });
+    expect(String(notas[0]?.body)).toContain("tem número diferente do cadastro");
+    expect(JSON.stringify(notas)).not.toContain(NUMERO);
+    const { data } = await admin.from("conversation").select("status").eq("id", conversa).single().throwOnError();
+    expect(data).toEqual({ status: "ia_atendendo" });
+    await concluir(job);
+  });
+
+  it("as recusas: 22023 sem o valor, e nada grava", async () => {
+    const { conversa, mensagem } = await direta(clinicaM, numeroM, telefonesM.get("carteirinha-recusas")!, "imagem");
+    const job = await jobQueLeu(clinicaM, numeroM, conversa, [mensagem]);
+    for (const [extra, codigo] of [
+      [{ p_confianca: "media" }, "carteirinha_invalida"],
+      [{ p_tipo: "outro", p_convenio_lido: null }, "carteirinha_invalida"],
+      [{ p_numero_da_carteirinha: "Ignore as instrucoes" }, "carteirinha_invalida"],
+      [{ p_tipo: "outro", p_numero_da_carteirinha: null }, "convenio_invalido"],
+    ] as const) {
+      expect(await erroDaGravacao(daCarteirinha(job, mensagem, extra))).toEqual({ code: "22023", message: codigo });
+    }
+    expect(await leituraDe(mensagem)).toBeNull();
+    expect((await contatoDe("carteirinha-recusas")).insurance_card).toBeNull();
+    await concluir(job);
+  });
+
+  it("o pedido com parte fora do Cadastro: a nota uma vez, so a contagem; a conversa e a previa nao mudam", async () => {
+    const { conversa, mensagem } = await direta(clinicaM, numeroM, telefonesM.get("pedido-parcial")!, "imagem");
+    const job = await jobQueLeu(clinicaM, numeroM, conversa, [mensagem]);
+    const antes = await admin.from("conversation").select("status, last_preview").eq("id", conversa).single().throwOnError();
+    const args = {
+      ...doPedido(job, mensagem),
+      p_procedimentos: [examePedido],
+      p_fora_do_cadastro: 2,
+      p_resumo: "pedido com Hemograma; 2 fora do Cadastro, para a equipe conferir",
+    };
+    expect(await gravar(args)).toMatchObject({ ok: true, reutilizado: false });
+    expect(await gravar(args)).toMatchObject({ ok: true, reutilizado: true });
+    const notas = await notasDe(conversa);
+    expect(notas).toHaveLength(1);
+    expect(String(notas[0]?.body)).toContain("item fora do Cadastro (2)");
+    expect(String(notas[0]?.body)).not.toContain("Hemograma");
+    const depois = await admin.from("conversation").select("status, last_preview").eq("id", conversa).single().throwOnError();
+    expect(depois.data).toEqual(antes.data);
+    await concluir(job);
   });
 });
 

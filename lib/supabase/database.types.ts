@@ -2622,6 +2622,7 @@ export type Database = {
           clinic_id: string
           confianca: string | null
           conversation_id: string
+          convenio_lido_id: string | null
           created_at: string
           fora_do_cadastro: number
           id: string
@@ -2640,6 +2641,7 @@ export type Database = {
           clinic_id: string
           confianca?: string | null
           conversation_id: string
+          convenio_lido_id?: string | null
           created_at?: string
           fora_do_cadastro?: number
           id?: string
@@ -2658,6 +2660,7 @@ export type Database = {
           clinic_id?: string
           confianca?: string | null
           conversation_id?: string
+          convenio_lido_id?: string | null
           created_at?: string
           fora_do_cadastro?: number
           id?: string
@@ -6004,6 +6007,10 @@ export type Database = {
       chave_de_especialidade: { Args: { p_texto: string }; Returns: string }
       chave_de_etiqueta: { Args: { p_texto: string }; Returns: string }
       chave_telefone: { Args: { p_phone: string }; Returns: string }
+      carteirinha_na_resposta_da_leitura: {
+        Args: { p_clinic_id: string; p_contato: string; p_tipo: string }
+        Returns: Json
+      }
       chaves_de_etiqueta_do_contato: {
         Args: { p_contact_id: string }
         Returns: string[]
@@ -6151,6 +6158,7 @@ export type Database = {
         Args: {
           p_carteirinha: string
           p_clinic_id: string
+          p_contato?: string
           p_cpf: string
           p_data_nascimento: string
           p_nome_completo: string
@@ -6475,11 +6483,13 @@ export type Database = {
       gravar_leitura_da_midia: {
         Args: {
           p_confianca: string
+          p_convenio_lido?: string
           p_fora_do_cadastro: number
           p_job_id: string
           p_message_id: string
           p_midia: string
           p_modelo: string
+          p_numero_da_carteirinha?: string
           p_procedimentos: string[]
           p_resumo: string
           p_segundos: number

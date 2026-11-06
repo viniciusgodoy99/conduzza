@@ -497,8 +497,8 @@ export const HABILIDADES_DO_AGENTE = [
     chave: "ler_imagem_e_documento",
     titulo: "Ler imagem e documento",
     descricao:
-      "Lê a foto ou o PDF de um pedido de exame ou procedimento e responde sobre os itens que a clínica faz. Resultado, laudo, receita, foto do corpo, carteirinha, guia e documento pessoal passam para a equipe.",
-    nota: "A foto ou o PDF vai uma vez para a OpenAI, nos EUA, sem o nome do arquivo e sem a localização da foto. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
+      "Lê a foto ou o PDF de um pedido de exame ou procedimento e responde sobre os itens que a clínica faz. Guarda no cadastro o número e o convênio da carteirinha, se estiverem vazios. Pede uma foto mais nítida do arquivo que não deu para ler. Resultado, laudo, receita, foto do corpo, guia e o que ficar em dúvida passam para a equipe.",
+    nota: "A foto ou o PDF vai uma vez para a OpenAI, nos EUA, sem o nome do arquivo e sem a localização da foto. O número da carteirinha também passa por lá. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
     travada: false,
     ferramentas: [],
     padrao: false,
@@ -2061,25 +2061,27 @@ export const MOTIVOS_DA_LEITURA = [
 export type MotivoDaLeitura = (typeof MOTIVOS_DA_LEITURA)[number];
 
 /**
- * A tabela 1.2 do desenho, por tipo: "segue" (com a IA) ou o motivo da
- * passagem. O pedido e a figurinha seguem so com confianca alta ou media (e
- * o pedido, so com todos os itens no Cadastro): quem decide e
- * decidirPelaLeitura (lib/agente/midia.ts). A decisao e do servidor, nunca
- * do modelo.
+ * A tabela 1.2 do desenho, por tipo, com a matriz do dono de 06/11/2026 ("nem
+ * tudo vá para a equipe"): "segue" (com a IA) ou o motivo da passagem. Quem
+ * segue, segue so com confianca alta ou media (o ilegivel, com qualquer uma);
+ * o pedido, com pelo menos um item no Cadastro; o ilegivel, na primeira vez
+ * da janela: quem decide e decidirPelaLeitura (lib/agente/midia.ts). A decisao
+ * e do servidor, nunca do modelo. Resultado, laudo, receita e foto do corpo
+ * vao sempre para a equipe: interpretar e ato medico (CLAUDE.md 3.2).
  */
 export const DECISAO_DO_TIPO_DO_LEITOR: Readonly<
   Record<TipoDoLeitor, "segue" | MotivoDaLeitura>
 > = {
   pedido_de_exame_ou_procedimento: "segue",
   guia_ou_autorizacao: "documento_do_paciente",
-  carteirinha: "documento_do_paciente",
-  documento_de_identidade: "documento_do_paciente",
+  carteirinha: "segue",
+  documento_de_identidade: "segue",
   resultado_ou_laudo: "midia_clinica",
   receita: "midia_clinica",
   foto_do_corpo: "midia_clinica",
   figurinha: "segue",
-  outro: "midia_nao_identificada",
-  ilegivel: "midia_nao_identificada",
+  outro: "segue",
+  ilegivel: "segue",
 };
 
 /**
@@ -2088,23 +2090,32 @@ export const DECISAO_DO_TIPO_DO_LEITOR: Readonly<
  * ou a contagem). A tela mostra "Lido pelo assistente: {resumo}.". A
  * figurinha (de qualquer confianca) e o audio gravam o resumo NULO (o CHECK
  * ia_leitura_da_midia_resumo_coerente): sem linha na bolha. Nunca texto do
- * arquivo.
+ * arquivo, nunca o numero da carteirinha. Matriz de 06/11/2026: so diz
+ * "passado para a equipe" o que foi.
  */
 export const RESUMO_DA_LEITURA = {
   pedido: "pedido com {}",
   pedidoComMuitosItens: "pedido com {} itens do Cadastro",
+  // Pelo menos um item achado e o resto fora: a conversa fica com a IA.
+  pedidoParcial: "pedido com {nomes}; {fora} fora do Cadastro, para a equipe conferir",
+  pedidoParcialComMuitosItens:
+    "pedido com {itens} itens do Cadastro; {fora} fora dele, para a equipe conferir",
   pedidoForaDoCadastro:
     "pedido com item fora do Cadastro, passado para a equipe",
   pedidoSemSeguranca:
     "pedido que o assistente não leu com segurança, passado para a equipe",
+  arquivoSemSeguranca:
+    "arquivo que o assistente não leu com segurança, passado para a equipe",
   guia_ou_autorizacao: "guia ou autorização do convênio, passada para a equipe",
-  carteirinha: "carteirinha do convênio, passada para a equipe",
-  documento_de_identidade: "documento pessoal, passado para a equipe",
+  carteirinha: "carteirinha do convênio",
+  carteirinhaComPlano: "carteirinha do convênio {}",
+  documento_de_identidade: "documento pessoal, guardado para a equipe",
   resultado_ou_laudo: "resultado de exame ou laudo, passado para a equipe",
   receita: "receita, passada para a equipe",
   foto_do_corpo: "foto do corpo, passada para a equipe",
-  outro: "arquivo que o assistente não identificou, passado para a equipe",
-  ilegivel: "arquivo ilegível, passado para a equipe",
+  outro: "arquivo que não é pedido nem documento",
+  ilegivel: "arquivo ilegível",
+  ilegivelDeNovo: "arquivo ilegível de novo, passado para a equipe",
 } as const;
 
 /** O teto do resumo (o CHECK de ia_leitura_da_midia.resumo). */

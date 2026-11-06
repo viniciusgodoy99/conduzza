@@ -39,6 +39,14 @@
 //    com ferramenta) contam: a IA nao volta sozinha, e o paciente fica
 //    esperando. A oferta em pergunta ("posso verificar?") e a conferencia
 //    com o resultado logo depois ("vou verificar: tenho terca as 14h") nao.
+//
+// Matriz do dono de 06/11/2026 (arquivoFicaComAEquipe): o resto de um pedido
+// ou o documento pessoal ficam com a equipe, que ve a nota na conversa, e a
+// conversa continua com a IA. "A equipe confere o resto" e "a equipe vai ver
+// seu documento" sao informacao, nesse turno e so com esse objeto. Dizer que
+// PASSOU ("passei seu documento para a equipe"), que alguem vai voltar a falar
+// ("a equipe vai te responder", "e te retorna", "ela te retorna") conta, em
+// qualquer turno.
 
 import type { AcaoDoTurno } from "@/lib/domain/conformidade/fatos-do-turno";
 import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
@@ -87,7 +95,22 @@ const VOLTAR =
 const QUANDO_VOLTA =
   "(?:assim que|quando|logo que|em seguida|em breve|daqui a pouco|ja ja|mais tarde|depois|em instantes|em alguns minutos|o quanto antes|se)";
 
+/** O arquivo da pessoa como objeto ("seu documento", "o resto do pedido"). */
+const ARQUIVO_QUE_PASSA =
+  "(?:(?:o|a|os|as|seu|sua|seus|suas|esse|essa|esses|essas|este|esta)\\s+)?(?:resto|restante|demais|documentos?|arquivos?|pedidos?|carteirinhas?|fotos?|imagens?)(?:\\s+d[oa]\\s+\\w+)?\\s+";
+
 const PROMESSAS: readonly RegExp[] = [
+  // Matriz do dono de 06/11/2026: "passei seu documento para a equipe", "vou
+  // encaminhar o resto do pedido para a recepcao". O arquivo fica na conversa;
+  // ninguem passa nada.
+  new RegExp(
+    `\\b(?:${EU_VOU}\\s+(?:te\\s+|lhe\\s+)?${PASSAR}|(?:estou|to|tou|estamos)\\s+${PASSANDO}|${PASSEI})\\s+${ARQUIVO_QUE_PASSA}${PARA}${DESTINO}`,
+  ),
+  // "A equipe confere o documento e te retorna", "a recepcao vai ver e te
+  // responder", "o time olha o pedido e entra em contato".
+  new RegExp(
+    `\\b${EQUIPE_E_APOSTO}\\s[^.!?\\n]{0,80}?\\be\\s+${DEPOIS}(?:(?:te|lhe)\\s+(?:responde|responder|retorna|retornar|avisa|avisar|fala|falar|chama|chamar|liga|ligar|procura|procurar|informa|informar|explica|explicar|confirma|confirmar)|retorna|retornar|responde|responder|entra em contato|entrar em contato)\\b`,
+  ),
   // "Vou passar sua conversa para alguem da nossa equipe", "posso te
   // encaminhar para um atendente?", "ja vou passar voce a recepcao".
   new RegExp(
@@ -170,6 +193,11 @@ export type ContextoDaPassagem = {
   usouFerramenta: boolean;
   /** As acoes que as ferramentas do turno executaram com sucesso. */
   acoes: readonly AcaoDoTurno[];
+  /**
+   * A conversa tem um pedido com o resto para a equipe ou um documento pessoal
+   * guardado para ela. Ausente: nao tem.
+   */
+  arquivoFicaComAEquipe?: boolean;
 };
 
 /** Sem o turno: nenhuma ferramenta, nenhuma acao (o lado seguro). */
@@ -205,6 +233,20 @@ const AVISOS_DA_APROVACAO: readonly RegExp[] = [
     "g",
   ),
 ];
+
+/**
+ * "A equipe confere o resto", "a equipe vai ver seu documento": so com o
+ * objeto (o resto, o documento, o arquivo), sem ninguem voltar a falar na mesma
+ * frase.
+ */
+const EQUIPE_CONFERE_O_ARQUIVO = new RegExp(
+  `\\b${EQUIPE_E_APOSTO}\\s+${DEPOIS}(?:(?:vai|vao|ira|irao|deve|devem|pode|podera)\\s+)?(?:confere|conferem|conferir|conferira|ve|veem|ver|vera|olha|olham|olhar|olhara|analisa|analisam|analisar|analisara|verifica|verificam|verificar|verificara|checa|checam|checar)\\s+(?:(?:o|a|os|as|seu|sua|seus|suas|esse|essa|esses|essas|este|esta|estes|estas)\\s+)?(?:resto|restante|demais|outros?|outras?|documentos?|arquivos?|pedidos?|itens?|carteirinhas?)\\b(?![^.!?]*\\b(?:te|lhe|retorn\\w*|respond\\w*|entr\\w* em contato|avis\\w*|fala\\w*|volt\\w*|ligar?\\w*|chama\\w*)\\b)`,
+  "g",
+);
+
+/** "A equipe confere o resto. Ela te retorna." */
+const ELA_VOLTA_A_FALAR =
+  /\b(?:ela|eles|elas)\s+(?:(?:ja|logo)\s+)?(?:(?:vai|vao|ira|irao)\s+)?(?:(?:te|lhe)\s+(?:responde|responder|retorna|retornar|avisa|avisar|fala|falar|chama|chamar|liga|ligar|procura|procurar)|entra em contato|entrar em contato)\b/;
 
 /** Conferir sem voltar: o verbo no infinitivo e no gerundio. */
 const CONFERINDO =
@@ -252,6 +294,12 @@ export function prometePassagemParaAEquipe(
   if (contexto.acoes.includes("marcou")) {
     for (const aviso of AVISOS_DA_APROVACAO) {
       base = base.replace(aviso, " ");
+    }
+  }
+  if (contexto.arquivoFicaComAEquipe === true) {
+    base = base.replace(EQUIPE_CONFERE_O_ARQUIVO, " ");
+    if (ELA_VOLTA_A_FALAR.test(base)) {
+      return true;
     }
   }
   if (PROMESSAS.some((padrao) => padrao.test(base))) {

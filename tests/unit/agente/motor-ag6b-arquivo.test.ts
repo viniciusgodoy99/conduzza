@@ -245,11 +245,7 @@ describe("cada tipo e o motivo da passagem (tabela 1.2)", () => {
     ["resultado_ou_laudo", "midia_clinica"],
     ["receita", "midia_clinica"],
     ["foto_do_corpo", "midia_clinica"],
-    ["carteirinha", "documento_do_paciente"],
     ["guia_ou_autorizacao", "documento_do_paciente"],
-    ["documento_de_identidade", "documento_do_paciente"],
-    ["outro", "midia_nao_identificada"],
-    ["ilegivel", "midia_nao_identificada"],
   ] as const)("%s: %s, origem leitor, sem agente", async (tipo, motivo) => {
     const { porta } = portaFalsa({ leitura: { [FOTO]: lida({ tipo }) } });
     const { promessa, agente } = turno([fotoNoLaco()], { midia: porta });
@@ -268,12 +264,18 @@ describe("cada tipo e o motivo da passagem (tabela 1.2)", () => {
     expect(escrito.join("")).not.toContain(tipo);
   });
 
-  it("o pedido com item fora do Cadastro ou lido sem seguranca: nao identificada", async () => {
+  it("o pedido sem item achado ou lido sem seguranca: nao identificada", async () => {
     for (const leitura of [
-      lida({ tipo: "pedido_de_exame_ou_procedimento", procedimentos: [HEMOGRAMA], foraDoCadastro: 1 }),
+      lida({ tipo: "pedido_de_exame_ou_procedimento", procedimentos: [], foraDoCadastro: 1 }),
       lida({
         tipo: "pedido_de_exame_ou_procedimento",
         procedimentos: [HEMOGRAMA],
+        confianca: "baixa",
+      }),
+      lida({
+        tipo: "pedido_de_exame_ou_procedimento",
+        procedimentos: [HEMOGRAMA],
+        foraDoCadastro: 1,
         confianca: "baixa",
       }),
     ]) {

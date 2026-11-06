@@ -22,6 +22,8 @@ import {
   type MotivoDaFalha,
 } from "@/lib/domain/conformidade/veredicto";
 
+import { ERROS_DA_GRAVACAO, RECUSAS_DA_GRAVACAO } from "../agente/ag6b-contrato";
+
 // Espelhos do E3 entre o TS e o banco: a frase fixa e o corpo de cada evento
 // no fio (lidos da migration MAIS NOVA que define cada funcao, que e o corpo
 // que vale com todas aplicadas), os motivos de escalonamento, os codigos de
@@ -540,6 +542,30 @@ describe("AG6b: os espelhos da midia", () => {
     // As chaves das habilidades que o banco le (as de config.ts).
     expect(corpo).toContain("'ler_audio'");
     expect(corpo).toContain("'ler_imagem_e_documento'");
+  });
+
+  it("gravar_leitura_da_midia, a mais nova (matriz de 06/11/2026): os erros, as recusas e o que nao recusa", () => {
+    const { arquivo, corpo } = corpoMaisNovo("gravar_leitura_da_midia");
+    expect(arquivo).toBe("20261106130000_leitor_carteirinha_e_ilegivel.sql");
+    expect(
+      [...corpo.matchAll(/errcode = '(?:22023|22004)', message = '([a-z_]+)'/g)].map((m) => m[1]),
+    ).toEqual([...ERROS_DA_GRAVACAO]);
+    expect([
+      ...new Set(
+        [...corpo.matchAll(/'ok', false, 'motivo', '([a-z_]+)'/g)].map((m) => m[1]),
+      ),
+    ]).toEqual([...RECUSAS_DA_GRAVACAO]);
+    // O numero so entra no contato: nunca na leitura, na nota, na trilha ou na resposta.
+    expect(corpo.match(/p_numero_da_carteirinha/g)?.length).toBe(
+      corpo.match(/if p_numero_da_carteirinha is not null and not \(/g)!.length +
+        corpo.match(/and p_numero_da_carteirinha ~ /g)!.length +
+        corpo.match(/regexp_replace\(p_numero_da_carteirinha,/g)!.length +
+        corpo.match(/\(p_numero_da_carteirinha is not null or/g)!.length +
+        corpo.match(/v_numero_novo := p_numero_da_carteirinha is not null/g)!.length +
+        corpo.match(/v_numero_diferente := p_numero_da_carteirinha is not null/g)!.length +
+        corpo.match(/v_cartao_de_antes <> p_numero_da_carteirinha/g)!.length +
+        corpo.match(/when v_numero_novo then p_numero_da_carteirinha/g)!.length,
+    );
   });
 
   it("midia_da_ia_liberada devolve boolean (o motor confere antes de mandar)", () => {

@@ -146,7 +146,9 @@ import {
 import { PRAZO_DO_CLASSIFICADOR_NO_PORTAO_MS } from "@/lib/domain/conformidade/prazo";
 import {
   INTERVALO_DA_ESPERA_MS,
+  conveniosDaLeitura,
   itensDoCatalogo,
+  lerIlegiveisDaJanela,
   lerLeiturasDoTurno,
   midiaNaoLida,
   planejarMidiasDoTurno,
@@ -531,6 +533,7 @@ export function dependenciasPadraoDaIa(entrada: {
               identificadorDeSeguranca: e.identificador,
               arquivo: l.arquivo,
               catalogo: l.catalogo,
+              convenios: l.convenios,
               prazoMs: Math.min(PRAZO_DO_LEITOR_MS, l.prazoMs),
               ids: {
                 clinicId: e.clinicId,
@@ -886,6 +889,8 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
   c.midiaNaoLida = mensagensPendentes(historico.mensagens).some(midiaNaoLida);
   let mensagensDoTurno = historico.mensagens;
   let plano: PlanoDaMidia | null = null;
+  // Matriz do dono de 06/11/2026: o ilegivel de antes, nesta janela.
+  let ilegivelNaJanela = false;
   let precosDaMidia: PrecoDoModelo[] | null = null;
   let catalogoDaMidia: Awaited<
     ReturnType<typeof carregarCatalogoDoAgente>
@@ -897,7 +902,7 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
     ]);
     const midiaDeps = c.deps.midia;
     const modeloDoAudio = midiaDeps?.modeloDaTranscricao ?? null;
-    const [liberado, leituras, porMinuto] = await Promise.all([
+    const [liberado, leituras, porMinuto, ilegiveis] = await Promise.all([
       telefoneLiberadoParaMidia(admin, { clinicId, telefone }),
       lerLeiturasDoTurno(admin, {
         clinicId,
@@ -909,7 +914,16 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
       modeloDoAudio === null
         ? Promise.resolve(null)
         : lerPrecoDaTranscricao(admin, modeloDoAudio),
+      lerIlegiveisDaJanela(admin, {
+        clinicId,
+        conversationId: c.conversationId,
+      }),
     ]);
+    // As mensagens deste turno contam como uma vez so, e o job repetido nao
+    // conta a mesma leitura duas vezes. Sem conseguir ler: a equipe.
+    ilegivelNaJanela =
+      ilegiveis === null ||
+      ilegiveis.some((id) => !historico.pendentes.includes(id));
     precosDaMidia =
       modeloDoAudio === null
         ? precosLidos
@@ -931,6 +945,8 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
           modeloDoLeitor !== null &&
           precosDaMidia.some((p) => p.modelo === modeloDoLeitor),
         catalogo: itensDoCatalogo(catalogoLido),
+        convenios: conveniosDaLeitura(catalogoLido),
+        ilegivelNaJanela,
         mascarar: (texto) => mascararNome(texto, contato.name),
         agoraMs,
       },
@@ -1196,6 +1212,7 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
       nomeDoContato: contato.name,
       contato: tipoDoContato,
       foraDoAssuntoNaJanela: foraDoAssunto,
+      ilegivelNaJanela,
       primeiraRespostaDaIa: !historico.iaRespondeuNaJanela,
       conferirTrava: () =>
         conferirTravaDoWhatsapp(admin, {

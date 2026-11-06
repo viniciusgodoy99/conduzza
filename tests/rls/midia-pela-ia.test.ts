@@ -98,6 +98,7 @@ let apagadaA: Cena;
 let audioB: Cena;
 /** Um telefone liberado da A sem conversa ainda (a conversa e aberta por contato e numero). */
 let telefoneLivreA = "";
+let telefoneDaCarteirinhaA = "";
 
 async function rpcOk<T>(nome: string, args: Record<string, unknown> = {}): Promise<T> {
   const { data, error } = await admin.rpc(nome, args);
@@ -285,7 +286,7 @@ function argumentosDaLeitura(job: string, mensagem: string, midia: "audio" | "im
         p_procedimentos: [],
         p_fora_do_cadastro: 0,
         p_confianca: "alta",
-        p_resumo: "carteirinha do convênio, passada para a equipe",
+        p_resumo: "carteirinha do convênio",
         p_modelo: "gpt-6-luna",
         p_versao: "leitor-0123456789ab",
       };
@@ -371,11 +372,12 @@ beforeAll(async () => {
 
   // TODOS os telefones antes de qualquer conversa (a licao de 30/10/2026).
   const telefonesDaA = [];
-  for (let i = 0; i < 5; i += 1) {
+  for (let i = 0; i < 6; i += 1) {
     telefonesDaA.push(await telefoneLiberado(clinicaA));
   }
   const telefoneDaB = await telefoneLiberado(clinicaB);
   telefoneLivreA = telefonesDaA[4]!;
+  telefoneDaCarteirinhaA = telefonesDaA[5]!;
 
   audioA = await cenaComLeitura(clinicaA, numeroA, telefonesDaA[0]!, "audio");
   imagemA = await cenaComLeitura(clinicaA, numeroA, telefonesDaA[1]!, "imagem");
@@ -423,6 +425,67 @@ describe("gravar_leitura_da_midia e midia_da_ia_liberada: so o servidor", () => 
       ok: false,
       motivo: "sem_posse",
     });
+    await rpcOk("concluir_job", { p_id: job, p_worker: WORKER });
+  });
+});
+
+describe("a carteirinha lida (matriz de 06/11/2026, migration 20261106130000)", () => {
+  it("toda sessao e anon recebem 42501 com os parametros novos; a RPC grava so pelo servidor; a B nao le a nota nem o contato; o numero nunca volta", async () => {
+    const NUMERO = "99887766554433ZQ";
+    const convenio = await inserir("insurance", {
+      clinic_id: clinicaA,
+      name: "Convenio sintetico",
+      requires_card: true,
+      active: true,
+    });
+    const conversa = await conversaNaIa(clinicaA, numeroA, telefoneDaCarteirinhaA);
+    const mensagem = await midiaDoPaciente(clinicaA, conversa, "imagem");
+    const job = await jobQueLeu(clinicaA, numeroA, conversa, mensagem);
+    const daLeitura = {
+      ...argumentosDaLeitura(job, mensagem, "imagem"),
+      p_convenio_lido: convenio,
+      p_numero_da_carteirinha: NUMERO,
+    };
+    const contato = async () => {
+      const { data } = await admin
+        .from("contact")
+        .select("id, insurance_card, insurance_id")
+        .eq("clinic_id", clinicaA)
+        .eq("phone_e164", telefoneDaCarteirinhaA)
+        .single()
+        .throwOnError();
+      return data as { id: string; insurance_card: string | null; insurance_id: string | null };
+    };
+    await admin
+      .from("contact")
+      .update({ insurance_card: "12345678" })
+      .eq("clinic_id", clinicaA)
+      .eq("phone_e164", telefoneDaCarteirinhaA)
+      .throwOnError();
+    for (const cliente of [anonClient(), ...SESSOES.map(como)]) {
+      const { error } = await cliente.rpc("gravar_leitura_da_midia", daLeitura);
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
+    }
+    expect((await contato()).insurance_card).toBe("12345678");
+    const gravada = await rpcOk<Gravacao>("gravar_leitura_da_midia", daLeitura);
+    expect(gravada).toMatchObject({ ok: true, reutilizado: false });
+    expect(JSON.stringify(gravada)).not.toContain(NUMERO);
+    // O numero diferente nao muda; o plano vazio grava; a nota, sem o numero.
+    expect(await contato()).toMatchObject({ insurance_card: "12345678", insurance_id: convenio });
+    const notas = async (cliente: SupabaseClient) => {
+      const { data } = await cliente
+        .from("message")
+        .select("body")
+        .eq("conversation_id", conversa)
+        .eq("is_internal_note", true);
+      return (data ?? []) as { body: string }[];
+    };
+    expect(await notas(como("admin-a"))).toHaveLength(1);
+    expect(JSON.stringify(await notas(admin))).not.toContain(NUMERO);
+    expect(await notas(como("admin-b"))).toEqual([]);
+    expect(await notas(como("pendente-a"))).toEqual([]);
+    const daB = await como("admin-b").from("contact").select("id").eq("id", (await contato()).id);
+    expect(daB.data).toEqual([]);
     await rpcOk("concluir_job", { p_id: job, p_worker: WORKER });
   });
 });
@@ -476,7 +539,7 @@ describe("ia_leitura_da_midia: quem le", () => {
       midia: "imagem",
       tipo: "carteirinha",
       transcricao: null,
-      resumo: "carteirinha do convênio, passada para a equipe",
+      resumo: "carteirinha do convênio",
     });
   });
 });

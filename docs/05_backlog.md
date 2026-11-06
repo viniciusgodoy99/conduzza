@@ -1559,6 +1559,8 @@ Banco no `docs/04`, seção 37 (e as notas das seções 4 e 17); arquitetura no 
 
 **Estado:** aplicada na produção em 05/11/2026, com o ok do dono, `ENSAIO OK` e o `motor-ia` pausado durante o ensaio, e publicada no merge `3574ae8`: RLS 8 de 8, integração 15 de 15, `job-queue` 12 de 12 e ponta a ponta 6 de 6. **A mídia continua indo para a equipe até a prova paga (D-100):** `TRANSCRICAO_CALIBRADA` falsa e os tetos do leitor nulos; nada sai à OpenAI. Depois do código, falta ao dono a operação da D-94 e o ok da prova paga.
 
+> **A matriz de arquivos do dono de 06/11/2026 (entrada "A matriz de arquivos")** muda o que segue com a IA nesta entrega: o item "a carteirinha e o documento de identidade passam para a equipe" e a tabela de decisão deixam de valer com o código da branch `agente-ligar-teste`.
+>
 > **Decisões do dono de 06/11/2026 (entrada "Ligar o agente no teste"):** a D-100 foi dispensada, e a mídia sai para a OpenAI desde a publicação em 06/11/2026; o `whisper-1` fica, com a remoção prevista para 26/02/2027; a D34, o RIPD e o termo foram dispensados para esta fase de teste; a D-95 e os requisitos da Produção continuam.
 
 **Decisões pendentes do dono** (do adendo do desenho e das rodadas, todas construídas com a recomendação; um "ok" segue todas):
@@ -1830,6 +1832,55 @@ Tudo em `ia_uso`, no teto diário da clínica (padrão de US$ 5) e na reserva do
 1. **O classificador não foi medido** com o modelo de verdade: a variante diz `nenhum`, mas só a D34 mostra se ele obedece. Se escalar, o pedido continua indo para a equipe (o lado seguro).
 2. **"Como tomo o remédio da colonoscopia?" continua na equipe:** o portão não conhece o catálogo, e abrir um nome livre deixaria passar "o remédio da pressão". "Tenho exame amanhã, qual o preparo?" também continua. Ficaram de fora de propósito, porque não estavam na decisão.
 3. **O `CLAUDE.md` 3.2** ainda diz "a dúvida sobre o preparo ... passa para a equipe" sem a exceção da pergunta geral: o ajuste da frase é com o dono.
+
+### [ ] A matriz de arquivos do agente `G` (decisão do dono de 06/11/2026; construída na branch `agente-ligar-teste`; **nada foi aplicado nem publicado: a migration `20261106130000` só foi ensaiada num Postgres local**)
+
+As palavras do dono: "preciso que nem tudo vá para a equipe, preciso que você interprete e veja se faz sentido o agente atender ou direcionar ao atendente". Carteirinha: "Pode ler o número e cadastrar no cadastro se tiver necessidade e algum campo para isso". RG, CNH e CPF: "vai depender, às vezes a equipe vai precisar que o agente peça para adiantar o atendimento". Ilegível: "preciso que a IA peça uma foto melhor para a equipe nunca ficar sobrecarregada, mas se for duvidosa pode delegar para a equipe".
+
+| Leitura | Decisão, sempre do servidor |
+|---|---|
+| Qualquer tipo com confiança baixa | Equipe (a "duvidosa"), menos `ilegivel` |
+| Pedido, tudo no Cadastro | Agente, como antes |
+| Pedido, pelo menos 1 item achado e o resto fora | Agente responde o que achou, o sistema cola "O resto do pedido a equipe confere.", e a nota interna fica na conversa, que continua na IA |
+| Pedido, nenhum item achado | Equipe, como antes |
+| Carteirinha | Agente; grava no cadastro o que está vazio (`docs/04`, seção 44) |
+| RG, CNH, CPF | Agente segue; o arquivo fica para a equipe; nada é extraído |
+| `ilegivel`, primeira vez na janela da IA | Agente pede uma foto mais nítida, sem dizer o que é o arquivo; vários no mesmo turno contam como uma vez |
+| `ilegivel` de novo na mesma janela | Equipe |
+| `outro`, alta ou média | Agente pergunta como pode ajudar |
+| Resultado, laudo, atestado, receita, foto do corpo, guia ou autorização | Equipe, como antes. CLAUDE.md 3.2 não muda |
+| Figurinha | Como antes |
+
+Arquitetura no `docs/03`, seção 28; banco no `docs/04`, seção 44; LGPD no `docs/03`, seção 14.
+
+**Versões novas:** leitor `leitor-c510a40133a9`, agente `agente-136faf31be91`, verificador `verificador-fd5a3c6877b7`, regras `regras-6cf663023178`.
+
+**O que muda para quem usa, depois de publicar:**
+- **Na conversa, a bolha "Lido pelo assistente":** "pedido com Hemograma; 2 fora do Cadastro, para a equipe conferir", "carteirinha do convênio Unimed Nacional", "carteirinha do convênio", "documento pessoal, guardado para a equipe", "arquivo que não é pedido nem documento", "arquivo ilegível". Só diz "passado para a equipe" o que foi.
+- **Na conversa, a nota interna** (assinada "Assistente"), no pedido com parte fora e na carteirinha que difere do cadastro.
+- **Em Pacientes:** o número e o plano que a foto gravou aparecem na ficha, como os outros. A trilha `gravou_carteirinha_lida` diz quais campos.
+- **Na Tela 6:** a descrição e a nota de "Ler imagem e documento".
+
+**Decisões tomadas sem o dono, para ele conferir:**
+1. O número e o plano só gravam com confiança **alta**. O plano em confiança média só serve ao texto do agente.
+2. Com o plano do cadastro diferente do lido, o número também não grava: ele seria de outro plano. Vira nota.
+3. A marcação não pede o número para qualquer número no cadastro, inclusive o que a equipe escreveu, com o plano igual ou vazio.
+4. O aviso do resto é colado pelo sistema, como a F2; o agente não precisa escrever.
+5. A nota entra na mesma transação da leitura, pela RPC, em vez de por `anotarPassagemParaAEquipe`: é o que garante "uma vez só".
+6. O contato em uso (`SKIP LOCKED`) não grava e deixa nota; não há nova tentativa.
+
+**O que não foi construído:**
+- **O agente pedir RG, CNH ou CPF.** O dono disse "às vezes a equipe vai precisar que o agente peça"; a matriz fechada não pediu. Continua proibido pelo prompt; o caminho seria uma habilidade por clínica.
+- **Um aviso à equipe além da nota:** ela só vê ao abrir a conversa. Nada de chip, contador ou alerta (`docs/04`, seção 44).
+- **O aviso do resto em turno de frase fixa:** a resposta que é uma frase fixa da agenda ou do sistema não leva o aviso; a nota fica.
+
+**Riscos a saber:**
+- **O esquema novo não foi exercitado contra a OpenAI** (sem prova paga, pelo próprio dono). Se a API recusar o formato, toda foto e todo PDF vão para a equipe, o que aparece logo no primeiro teste real.
+- **O acerto do modelo em `ilegivel`, `outro` e no número** não foi medido. A trava é a validação estreita e a regra de só gravar o vazio.
+- **Carteirinha de dependente:** grava no contato da conversa; a equipe corrige na ficha.
+- **O número pela OpenAI:** dado pessoal, sem RIPD por decisão do dono nesta fase; rever antes de paciente real (`docs/03`, seção 14).
+
+**Estado:** escrito e testado na branch: bateria de conformidade e `tests/unit/agente` verdes em 06/11/2026 (`tests/unit/agente`, `tests/unit/conformidade`, `tests/unit/ia-whatsapp` e a bolha: 149 arquivos e 11.583 testes), com a máquina sobrecarregada (os vermelhos das rodadas anteriores foram só de tempo, com limite em milissegundos, sem relação). Migration, rollback e ensaio com `ENSAIO OK` e 74 sabotagens no Postgres local (`docs/04`, seção 44). **Falta:** aplicar a migration com o ok do dono, publicar o código, ligar a habilidade na clínica de teste e mandar uma carteirinha, um pedido parcial e uma foto borrada de verdade, conferindo a nota, a ficha e o que o agente disse. `tests/integration` e `tests/rls` dos casos novos ficam para depois de aplicar.
 
 ### [ ] Conversas longas e os 5 defeitos que elas acharam `M` (05/11/2026; autorizado pelo dono só em branch: `agente-ag0-conversas`; **nada publicado nem aplicado, sem migration**)
 

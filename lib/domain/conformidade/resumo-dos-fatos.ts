@@ -458,11 +458,25 @@ export function resumirFatosDoTurno(
     .map((itens) => itens.map((nome) => numaLinha(nome)).filter((n) => n !== ""))
     .filter((itens) => itens.length > 0)
     .map((itens) => ROTULO_DO_PEDIDO.replace("{}", () => itens.join(", ")));
+  // Matriz do dono de 06/11/2026: os outros arquivos, um rotulo fixo por tipo,
+  // sem repetir.
+  const arquivos = [
+    ...new Set(
+      (fatos.arquivos ?? []).map((arquivo) =>
+        arquivo.tipo === "carteirinha" && arquivo.convenio !== null
+          ? ROTULO_DO_ARQUIVO.carteirinhaComPlano.replace("{}", () =>
+              numaLinha(arquivo.convenio ?? ""),
+            )
+          : ROTULO_DO_ARQUIVO[arquivo.tipo],
+      ),
+    ),
+  ];
   // [AG6b mídia] fim
   const resumo = [
     `Hoje na clínica: ${hoje}.`,
     // [AG6b mídia]
     ...pedidos,
+    ...arquivos,
     secao(
       "Ações que as ferramentas fizeram com sucesso nesta resposta",
       acoes,
@@ -527,6 +541,25 @@ export function resumirFatosDoTurno(
 /** AG6b: o pedido lido ("{}" e a lista dos nomes do Cadastro). */
 const ROTULO_DO_PEDIDO =
   "A pessoa mandou um pedido com: {}.";
+/**
+ * Matriz do dono de 06/11/2026: o que o sistema sabe dos outros arquivos e o que
+ * a resposta pode dizer deles. A equipe ve o resto e o documento na conversa,
+ * que continua com a assistente: dizer que a conversa foi passada nao vale.
+ */
+const ROTULO_DO_ARQUIVO = {
+  resto_do_pedido:
+    "A pessoa mandou um pedido com itens fora do Cadastro: esses itens a equipe confere na conversa, que continua com a assistente. Dizer isso é permitido.",
+  carteirinha:
+    "A pessoa mandou a carteirinha de um convênio que o sistema não reconheceu: agradecer e perguntar qual é o convênio é permitido.",
+  carteirinhaComPlano:
+    "A pessoa mandou a carteirinha do convênio {}: agradecer é permitido. Isso não confirma que a clínica atende o convênio.",
+  documento:
+    "A pessoa mandou um documento pessoal, que fica guardado para a equipe na conversa, que continua com a assistente. Dizer isso é permitido.",
+  ilegivel:
+    "A pessoa mandou um arquivo que não deu para ler: pedir uma foto mais nítida do arquivo é permitido.",
+  outro:
+    "A pessoa mandou um arquivo que não é pedido nem documento: perguntar como pode ajudar é permitido.",
+} as const;
 // [AG6b mídia] fim
 
 /** As regras do resumo, para a versao das regras mudar quando ele mudar. */
@@ -557,6 +590,7 @@ export const FONTES_DO_RESUMO: readonly string[] = [
   "resumo: a lista de espera sem dia e hora; a pessoa na lista sem o procedimento, o profissional e a preferencia",
   // [AG6b mídia] início
   ROTULO_DO_PEDIDO,
+  JSON.stringify(ROTULO_DO_ARQUIVO),
   "resumo: o pedido lido pelo leitor de midia so com os nomes do Cadastro",
   // [AG6b mídia] fim
 ];
