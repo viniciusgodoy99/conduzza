@@ -1814,7 +1814,7 @@ Decisão do dono em 03/11/2026, **"Conta própria só para o painel"**: o super 
 5. **Depois da limpeza, as contas antigas continuam administradoras** da teste123, da Salud Care e da Conduzza Teste, como contas normais marcadas como equipe Conduzza (o uso delas continua marcado no painel). Recomendação: manter; quem não quiser ficar numa clínica tira o próprio acesso pela equipe da clínica, com outro administrador.
 6. **Voltar uma conta antiga a super admin** depois da limpeza passa a exigir o rollback da migration (o banco recusa conta com vínculo). Recomendação: aceitar; a volta é rara e fica no roteiro.
 
-### [ ] Teste do agente de IA entre números conectados `M` (pedido do dono em 06/11/2026; construído na branch `teste-entre-numeros`; **migration `20261106100000` não aplicada, código não publicado**)
+### [x] Teste do agente de IA entre números conectados `M` (pedido do dono em 06/11/2026; **migration `20261106100000` aplicada e código publicado em 06/11/2026**)
 
 Um número conectado conversa com outro, em especial dois da mesma clínica, e o agente responde. Banco no `docs/04`, seção 41; arquitetura no `docs/03`, seção 25; tela no brief, Tela 6.
 
@@ -1822,9 +1822,9 @@ Um número conectado conversa com outro, em especial dois da mesma clínica, e o
 
 **Regra da seção 3.3 do `CLAUDE.md`:** risco de banimento no canal não oficial, agravado por automação. Teste curto, com a marca desligada no fim; o agente não responde na dúvida.
 
-**Não rodou:** nada na produção; `npm run test:rls -- entre-numeros` e `npm run test:integration -- entre-numeros` (escritos, para depois de aplicar); teste com dois números reais, OpenAI e uazapi; `npm run build`.
+**Provas na produção:** ensaio `ENSAIO OK` em 7 s, aplicada em 686 ms, RLS 11 de 11, integração 5 de 5. **Não rodou:** o teste com dois números reais, a OpenAI e a uazapi, que é o do dono.
 
-**Falta do dono:** o ok para ensaiar e aplicar a migration e publicar a branch.
+**Limite conhecido:** os tipos à mão ficaram iguais aos gerados nesta frente; continuam as diferenças antigas (`falhas_sem_envio`, `equipe_conduzza` e outras que nenhum código usa pelo cliente).
 
 ### [x] Resto da AG0: o desempenho do agente em Resultados `M` (autorizado pelo dono para construir em branch; 04/11/2026, na branch `agente-ag0-metricas`, a partir da `agente-ag5`; **migration `20261104120000` aplicada e código publicado em 05/11/2026, no merge `007677e`, com o ok do dono**)
 Troca o "Ainda não medido" do desempenho da recepcionista de IA, em Resultados, por números reais. Banco no `docs/04`, seção 40; tela no brief, Tela 11 (o `docs/03` não cita o "Ainda não medido" e não muda). As telas e a exportação funcionam com e sem a migration: sem ela, continua tudo em "Ainda não medido".

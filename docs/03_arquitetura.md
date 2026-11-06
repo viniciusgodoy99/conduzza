@@ -2085,7 +2085,7 @@ Banco em `docs/04`, 38.11. No código:
 - **O diálogo do RT** nomeia cada categoria do aviso ("cita remédio", "cita dose", "fala de sintoma", "cita jejum ou outro cuidado"); sem conseguir conferir, volta a frase geral.
 - **Painel geral, detalhe da clínica:** o cartão "Responsável técnico" (`components/painel-geral/responsavel-tecnico-no-painel.tsx`) mostra nome, conselho, número e UF, o link do portal do conselho (`PORTAL_DO_CONSELHO`: a busca no CRM e no CRO; o site do conselho federal nos outros) e "Registro conferido". A action `conferirRegistroDoRtAction` confere a sessão e o Zod; a RPC decide.
 
-## 25. Teste do agente de IA entre números conectados (06/11/2026; construído na branch `teste-entre-numeros`; **migration não aplicada e código não publicado**, esperando o ok do dono)
+## 25. Teste do agente de IA entre números conectados (06/11/2026; **migration aplicada e código publicado em 06/11/2026**)
 
 Pedido do dono: um número conectado conversa com outro, em especial dois números da mesma clínica, e o agente responde. O banco está no `docs/04`, seção 41. Decisões de arquitetura:
 
