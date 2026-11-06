@@ -2,7 +2,7 @@
 
 Como trocar o super admin das contas de clínica por uma conta só para o painel, o que conferir e como voltar. Decisão do dono de 03/11/2026, **"Conta própria só para o painel"**: o super admin usa um e-mail só para isso; esse e-mail não é membro de clínica nenhuma e cai direto no Painel geral, numa área separada da clínica; para trabalhar numa clínica, a pessoa usa a conta normal. Código no `docs/03`, seção 15.6; banco no `docs/04`, seção 39; tela no brief (Tela 14); estado e pendências no `docs/05`, entrada "Super admin numa conta só para o painel".
 
-**Estado em 03/11/2026:** código e migration `20261103110000_super_admin_sem_clinica.sql` **escritos na branch `super-admin-separado`, nada publicado nem aplicado**, nenhum passo deste roteiro rodou. Hoje há 2 super admins, os 2 com vínculo ativo de administrador: o dono (teste123 e Salud Care) e o Victor (Conduzza Teste).
+**Estado em 06/11/2026:** roteiro executado, com o ok do dono. Código publicado em 03/11/2026, migration `20261103110000_super_admin_sem_clinica.sql` aplicada em 06/11/2026, contas do painel criadas e contas antigas limpas. Hoje há 2 super admins, sem vínculo com clínica; as contas antigas ficaram só nas clínicas delas, marcadas em `equipe_conduzza`. O resto deste roteiro serve para a próxima troca.
 
 ---
 
