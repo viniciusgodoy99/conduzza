@@ -508,6 +508,8 @@ beforeAll(async () => {
     version: 1,
     status: "publicada",
     skills: { enviar_preparo: true },
+    // Em numero inteiro, sem o publico escolhido, a IA nao atende (falha fechada).
+    publico_atendido: "todos",
     exige_nome_completo: false,
     exige_nascimento: false,
     exige_cpf: false,
@@ -1331,7 +1333,8 @@ describe("o turno de ponta a ponta pelo motor da IA, com o LLM falso (frente M)"
       p_name: "Contato sintético",
       p_wa_message_id: `preparo-int-pap:${sufixo}:${telefones}`,
       p_content_type: "texto",
-      p_body: "Pode me mandar a orientação de preparo, por favor?",
+      // CFM-7: o procedimento do preparo tem de ser o que a pessoa pediu.
+      p_body: `Pode me mandar a orientação de preparo da ${nome}, por favor?`,
       p_whatsapp_account_id: numero,
     });
     expect(ingestao.ia_atendendo).toBe(true);
