@@ -473,9 +473,9 @@ export const HABILIDADES_DO_AGENTE = [
   // AG6b (desenho, secao 6; D-56, D-14 e D-58): o audio pela transcricao e a
   // foto ou o PDF pelo leitor de midia. Desligadas por padrao, sem
   // ferramenta (o motor le a midia antes do agente) e sem dependencia. So
-  // valem na versao PUBLICADA, com o telefone que confirmou o aviso novo
-  // (D-95) e, ate a prova paga (D-100), nunca de fato: TRANSCRICAO_CALIBRADA
-  // e os tetos do leitor fecham o plano do turno (lib/agente/midia.ts).
+  // valem na versao PUBLICADA e com o telefone que confirmou o aviso novo
+  // (D-95). TRANSCRICAO_CALIBRADA e os tetos do leitor ainda podem fechar o
+  // plano do turno (lib/agente/midia.ts); a D-100 foi dispensada em 06/11/2026.
   // Revisao das telas da AG6b (item 4): a nota diz "os telefones cadastrados
   // na aba WhatsApp", e nao "da equipe": o telefone de paciente usado mesmo
   // assim (o forcado) que confirmou o aviso novo tambem manda midia (D-95).
@@ -568,7 +568,7 @@ export const HABILIDADE_DO_ARQUIVO = "ler_imagem_e_documento";
 
 /**
  * AG6b (revisao das telas, item 3): o que o SERVIDOR ja deixa valer, mesmo
- * com a habilidade ligada na versao publicada. Ate a prova paga (D-100), o
+ * com a habilidade ligada na versao publicada. Com as constantes desligadas, o
  * plano do turno (lib/agente/midia.ts) marca todo audio, foto e documento
  * como fora, e a conversa vai para a equipe. Calculado so no servidor
  * (lib/agente/midia-no-servidor.ts, pelas constantes da calibragem), e a

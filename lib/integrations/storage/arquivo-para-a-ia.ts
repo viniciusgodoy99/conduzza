@@ -33,8 +33,9 @@ import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
 export const BALDE_DA_MIDIA = "midia-conversas";
 
 /**
- * O prazo da leitura do arquivo (PROPOSTA, a calibrar na prova paga). E o
- * teto: um prazo maior de quem chama nao vale aqui.
+ * O prazo da leitura do arquivo. E o teto: um prazo maior de quem chama nao
+ * vale aqui.
+ * shortcut: valor sem medir (prova paga dispensada pelo dono em 06/11/2026), trocar quando houver medida.
  */
 export const PRAZO_DO_ARQUIVO_NO_STORAGE_MS = 8_000;
 

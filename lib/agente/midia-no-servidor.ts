@@ -9,13 +9,13 @@ import { TRANSCRICAO_CALIBRADA } from "@/lib/integrations/llm/transcricao";
 
 // [AG6b mídia] (arquivo novo da revisao das telas da AG6b, item 3)
 //
-// O audio, a foto e o documento ja valem no servidor? Ate a prova paga
-// (D-100), TRANSCRICAO_CALIBRADA e falsa e os tetos de tokens do leitor sao
-// nulos: o plano do turno (planejarMidiasDoTurno e tokensDoArquivoNaReserva,
-// lib/agente/midia.ts) marca todo audio, foto e documento como fora, e a
-// conversa vai para a equipe, mesmo com "Entender áudio" e "Ler imagem e
-// documento" ligadas. A Tela 6 mostra isso na habilidade (a dica de
-// TEXTOS_DA_MIDIA), em vez de um "Ligada" sem efeito.
+// O audio, a foto e o documento ja valem no servidor? Desde a decisao do dono
+// de 06/11/2026, sim. Com TRANSCRICAO_CALIBRADA falsa ou os tetos de tokens do
+// leitor nulos, o plano do turno (planejarMidiasDoTurno e
+// tokensDoArquivoNaReserva, lib/agente/midia.ts) marca o audio, a foto e o
+// documento como fora, e a conversa vai para a equipe, mesmo com "Entender
+// áudio" e "Ler imagem e documento" ligadas. A Tela 6 mostra isso na
+// habilidade (a dica de TEXTOS_DA_MIDIA), em vez de um "Ligada" sem efeito.
 //
 // So as CONSTANTES da calibragem: este arquivo nunca chama o SDK, e e
 // server-only para o SDK (que os dois modulos importam) nunca ir ao

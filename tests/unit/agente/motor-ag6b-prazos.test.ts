@@ -941,7 +941,7 @@ describe("o corte do laco no leitor pelos tetos injetados (R3 de d1a15f6, 2)", (
     "o caso do revisor, %s: a porta que nao volta; o laco corta e conta o pior caso pelos tetos do executor",
     async (_nome, arquivo, paginas, tokensDoArquivo) => {
       relogioFalso();
-      expect(TETO_DE_TOKENS_POR_IMAGEM).toBeNull();
+      expect(TETO_DE_TOKENS_POR_IMAGEM).not.toBe(1_600);
       const { porta } = portaFalsa({
         preparo: {
           [FOTO]: {
@@ -1001,7 +1001,7 @@ describe("o corte do laco no leitor pelos tetos injetados (R3 de d1a15f6, 2)", (
 
   it("pelo executor: os tetos do plano e da reserva chegam ao corte do laco, e o acerto conta o pior caso do arquivo", async () => {
     relogioFalso();
-    expect(TETO_DE_TOKENS_POR_IMAGEM).toBeNull();
+    expect(TETO_DE_TOKENS_POR_IMAGEM).not.toBe(1_600);
     const ler = vi.fn<PortaDaMidia["ler"]>(() => nunca());
     const { cenario, promessa } = rodar({
       mensagens: [foto()],

@@ -375,15 +375,23 @@ describe("a nota diz quem manda mídia (item 4)", () => {
 });
 
 describe("a habilidade que o servidor ainda não deixa valer (item 3)", () => {
-  it("o cálculo do servidor: só as constantes da calibragem; hoje, nada vale", () => {
-    // O estado de hoje (antes da prova paga, D-100).
+  it("o cálculo do servidor: só as constantes da calibragem; hoje, tudo vale", () => {
+    // O estado de hoje (decisao do dono de 06/11/2026: a prova paga, D-100,
+    // foi dispensada; os tetos sao os de lib/integrations/llm/leitor-de-midia.ts).
     expect(CALIBRAGEM_DO_SERVIDOR).toEqual({
-      transcricaoCalibrada: false,
-      tetoPorImagem: null,
-      tetoPorPagina: null,
+      transcricaoCalibrada: true,
+      tetoPorImagem: 10_000,
+      tetoPorPagina: 12_000,
     });
-    expect(midiaNoServidor()).toEqual(SEM_A_PROVA);
-    // Depois da prova: cada uma pela sua constante.
+    expect(midiaNoServidor()).toEqual(CALIBRADO);
+    expect(
+      midiaNoServidor({
+        transcricaoCalibrada: false,
+        tetoPorImagem: null,
+        tetoPorPagina: null,
+      }),
+    ).toEqual(SEM_A_PROVA);
+    // Cada uma pela sua constante.
     expect(
       midiaNoServidor({
         transcricaoCalibrada: true,
@@ -441,10 +449,10 @@ describe("a habilidade que o servidor ainda não deixa valer (item 3)", () => {
 
   it("a dica de cada habilidade de mídia; nada nas outras, nada sem a leitura", () => {
     expect(dicaDaMidiaNoServidor(HABILIDADE_DO_AUDIO, SEM_A_PROVA)).toBe(
-      TEXTOS_DA_MIDIA.audioSemAProva,
+      TEXTOS_DA_MIDIA.audioDesligado,
     );
     expect(dicaDaMidiaNoServidor(HABILIDADE_DO_ARQUIVO, SEM_A_PROVA)).toBe(
-      TEXTOS_DA_MIDIA.arquivoSemAProva,
+      TEXTOS_DA_MIDIA.arquivoDesligado,
     );
     expect(
       dicaDaMidiaNoServidor(HABILIDADE_DO_AUDIO, {
@@ -467,19 +475,19 @@ describe("a habilidade que o servidor ainda não deixa valer (item 3)", () => {
   });
 
   it("os textos: de recepcionista, sem travessão, sem jargão", () => {
-    expect(TEXTOS_DA_MIDIA.audioSemAProva).toBe(
-      "Ainda não está valendo: falta a prova com áudios de verdade. Até lá, o áudio vai para a equipe.",
+    expect(TEXTOS_DA_MIDIA.audioDesligado).toBe(
+      "Ainda não está valendo: a Conduzza desligou o áudio por enquanto. Até voltar, o áudio vai para a equipe.",
     );
-    expect(TEXTOS_DA_MIDIA.arquivoSemAProva).toBe(
-      "Ainda não está valendo: falta a prova com fotos e documentos de verdade. Até lá, foto e documento vão para a equipe.",
+    expect(TEXTOS_DA_MIDIA.arquivoDesligado).toBe(
+      "Ainda não está valendo: a Conduzza desligou foto e documento por enquanto. Até voltar, foto e documento vão para a equipe.",
     );
     for (const frase of [
-      TEXTOS_DA_MIDIA.audioSemAProva,
-      TEXTOS_DA_MIDIA.arquivoSemAProva,
+      TEXTOS_DA_MIDIA.audioDesligado,
+      TEXTOS_DA_MIDIA.arquivoDesligado,
     ]) {
       expect(frase).not.toMatch(/[—–]/);
       expect(frase).not.toMatch(
-        /\b(handoff|tenant|opt-in|upload|whisper|transcribe|LLM|token|servidor|calibra\w*)\b/i,
+        /\b(handoff|tenant|opt-in|upload|whisper|transcribe|LLM|token|servidor|calibra\w*|prova)\b/i,
       );
     }
   });
@@ -494,8 +502,8 @@ describe("a habilidade que o servidor ainda não deixa valer (item 3)", () => {
         midiaNoServidor: SEM_A_PROVA,
       });
       for (const [chave, dica] of [
-        [HABILIDADE_DO_AUDIO, TEXTOS_DA_MIDIA.audioSemAProva],
-        [HABILIDADE_DO_ARQUIVO, TEXTOS_DA_MIDIA.arquivoSemAProva],
+        [HABILIDADE_DO_AUDIO, TEXTOS_DA_MIDIA.audioDesligado],
+        [HABILIDADE_DO_ARQUIVO, TEXTOS_DA_MIDIA.arquivoDesligado],
       ] as const) {
         // A dica escrita (como a da dependencia: so texto, sem chip).
         expect(dicaDoServidorNa(html, chave)).toBe(
@@ -520,8 +528,8 @@ describe("a habilidade que o servidor ainda não deixa valer (item 3)", () => {
       for (const chave of MIDIA) {
         expect(dicaDoServidorNa(html, chave)).toBe("");
       }
-      expect(html).not.toContain(TEXTOS_DA_MIDIA.audioSemAProva);
-      expect(html).not.toContain(TEXTOS_DA_MIDIA.arquivoSemAProva);
+      expect(html).not.toContain(TEXTOS_DA_MIDIA.audioDesligado);
+      expect(html).not.toContain(TEXTOS_DA_MIDIA.arquivoDesligado);
     }
   });
 
@@ -542,11 +550,11 @@ describe("a habilidade que o servidor ainda não deixa valer (item 3)", () => {
     { timeout: 30_000 },
     () => {
       const comDica = painel(dadosDeTeste({ midiaNoServidor: SEM_A_PROVA }));
-      expect(comDica).toContain(TEXTOS_DA_MIDIA.audioSemAProva);
-      expect(comDica).toContain(TEXTOS_DA_MIDIA.arquivoSemAProva);
+      expect(comDica).toContain(TEXTOS_DA_MIDIA.audioDesligado);
+      expect(comDica).toContain(TEXTOS_DA_MIDIA.arquivoDesligado);
       const semDica = painel(dadosDeTeste({ midiaNoServidor: CALIBRADO }));
-      expect(semDica).not.toContain(TEXTOS_DA_MIDIA.audioSemAProva);
-      expect(semDica).not.toContain(TEXTOS_DA_MIDIA.arquivoSemAProva);
+      expect(semDica).not.toContain(TEXTOS_DA_MIDIA.audioDesligado);
+      expect(semDica).not.toContain(TEXTOS_DA_MIDIA.arquivoDesligado);
     },
   );
 

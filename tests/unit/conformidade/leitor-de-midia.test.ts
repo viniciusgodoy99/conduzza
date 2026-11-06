@@ -782,9 +782,9 @@ describe("o corte duro com o SDK de verdade (openai 7.28) e um fetch falso", () 
 });
 
 describe("os tetos, o prazo e a versao", () => {
-  it("os tetos de tokens so existem depois da prova paga (D-100)", () => {
-    expect(TETO_DE_TOKENS_POR_IMAGEM).toBeNull();
-    expect(TETO_DE_TOKENS_POR_PAGINA).toBeNull();
+  it("os tetos de tokens: sem medida, a prova paga foi dispensada pelo dono em 06/11/2026", () => {
+    expect(TETO_DE_TOKENS_POR_IMAGEM).toBe(10_000);
+    expect(TETO_DE_TOKENS_POR_PAGINA).toBe(12_000);
     expect(PRAZO_DO_LEITOR_MS).toBe(12_000);
     expect(VERSAO_DA_POLITICA_DO_LEITOR).toMatch(/^leitor-[0-9a-f]{12}$/);
   });

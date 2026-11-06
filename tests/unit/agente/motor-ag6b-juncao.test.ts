@@ -12,7 +12,7 @@ vi.mock("@/lib/agente/contexto", () => ({
 
 // Revisao R3 de d1a15f6 (2): sem o vi.mock dos tetos do leitor. O corte do
 // laco usa os tetos INJETADOS (os do executor, 1.600 e 1.800, os mesmos do
-// plano, da reserva e da porta); as constantes do modulo continuam nulas.
+// plano, da reserva e da porta); as constantes do modulo sao outras.
 
 import { usoEstimadoDoLeitor } from "@/lib/agente/gasto";
 import {
@@ -370,9 +370,9 @@ describe("o leitor de verdade dentro da porta (o corte dele vence o da porta)", 
       uso: null,
     });
     const agente = agenteQueResponde("Claro, posso ajudar.");
-    // As constantes do modulo continuam nulas (nenhum vi.mock): o pior caso
-    // vem dos tetos que o executor injeta.
-    expect(TETO_DE_TOKENS_POR_IMAGEM).toBeNull();
+    // As constantes do modulo sao outras (nenhum vi.mock): o pior caso vem
+    // dos tetos que o executor injeta.
+    expect(TETO_DE_TOKENS_POR_IMAGEM).not.toBe(1_600);
     const promessa = executarTurnoDoAgente({
       cliente: agente.cliente,
       modelo: "gpt-6-luna",

@@ -249,8 +249,8 @@ describe("o modelo, pela lista fechada (D-90)", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("a calibragem: falsa ate a prova paga (D-100)", () => {
-    expect(TRANSCRICAO_CALIBRADA).toBe(false);
+  it("a calibragem: ligada desde a decisao do dono de 06/11/2026, que dispensou a prova paga", () => {
+    expect(TRANSCRICAO_CALIBRADA).toBe(true);
   });
 });
 

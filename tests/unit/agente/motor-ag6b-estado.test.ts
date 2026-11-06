@@ -16,7 +16,10 @@ import {
   PREFIXO_DO_AUDIO,
   type EntradaDoPlano,
 } from "@/lib/agente/midia";
-import type { ItemDoCatalogoDaLeitura } from "@/lib/integrations/llm/leitor-de-midia";
+import {
+  TETO_DE_TOKENS_POR_IMAGEM,
+  type ItemDoCatalogoDaLeitura,
+} from "@/lib/integrations/llm/leitor-de-midia";
 
 import { conversaDoCenario } from "./ag6-contrato";
 import {
@@ -427,6 +430,28 @@ describe("o Cadastro grande demais para o leitor (revisao): fora ja no plano", (
     expect(noLimite.aLer).toHaveLength(1);
     const doAudio = planejarMidiasDoTurno(entradaDoPlano(catalogoCom(251), "audio"), tetos);
     expect(doAudio.mensagens[0]?.midia?.situacao).toBe("a_transcrever");
+  });
+
+  // Decisao do dono de 06/11/2026: a prova paga (D-100) foi dispensada, e as
+  // constantes do servidor valem (sem passar tetos: os do modulo).
+  it("com as constantes do servidor: o audio e o arquivo saem so com a habilidade publicada e o telefone com o aviso novo", () => {
+    const audio = entradaDoPlano(catalogoCom(2), "audio");
+    const foto = entradaDoPlano(catalogoCom(2));
+    expect(planejarMidiasDoTurno(audio).aTranscrever).toBe(1);
+    expect(planejarMidiasDoTurno(foto).aLer).toEqual([
+      { midia: "imagem", tokensDoArquivo: TETO_DE_TOKENS_POR_IMAGEM },
+    ]);
+    for (const [nome, trocas] of [
+      ["sem o aviso novo", { telefoneLiberado: false }],
+      ["sem as habilidades", { habilidades: {} }],
+    ] as const) {
+      const semAudio = planejarMidiasDoTurno({ ...audio, ...trocas });
+      expect(semAudio.mensagens[0]?.midia?.situacao, nome).toBe("fora");
+      expect(semAudio.aTranscrever, nome).toBe(0);
+      const semFoto = planejarMidiasDoTurno({ ...foto, ...trocas });
+      expect(semFoto.mensagens[0]?.midia?.situacao, nome).toBe("fora");
+      expect(semFoto.aLer, nome).toEqual([]);
+    }
   });
 
   it("pelo executor: o arquivo passa como midia nao suportada, sem ler o Storage nem chamar o leitor", async () => {

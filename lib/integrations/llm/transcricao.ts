@@ -95,9 +95,9 @@ import { log } from "@/lib/log";
 // urgencia na falha que vem depois da transcricao (a gravacao recusada, o
 // corte durante a RPC).
 //
-// TRANSCRICAO_CALIBRADA (falsa ate a prova paga, D-100): com ela falsa, o
-// plano do turno (lib/agente/midia.ts) marca todo audio como fora, e nada
-// chega aqui.
+// TRANSCRICAO_CALIBRADA (verdadeira desde a decisao do dono de 06/11/2026, que
+// dispensou a prova paga, D-100): com ela falsa, o plano do turno
+// (lib/agente/midia.ts) marca todo audio como fora, e nada chega aqui.
 //
 // LGPD: log so com ids, o resultado, os segundos, a tentativa e a duracao
 // da chamada; nunca o texto, nem error.message, nem a urgencia (e dado de
@@ -128,9 +128,9 @@ export function modeloDaTranscricao(
 }
 
 /**
- * Prazo de uma transcricao (PROPOSTA, a calibrar na prova paga: 15, 60 e
- * 120 s de audio): as chamadas e a espera entre elas cabem nele. Vai ao SDK
- * (o timeout de cada chamada, so o que sobra) e ao corte duro.
+ * Prazo de uma transcricao: as chamadas e a espera entre elas cabem nele. Vai
+ * ao SDK (o timeout de cada chamada, so o que sobra) e ao corte duro.
+ * shortcut: valor sem medir (prova paga dispensada pelo dono em 06/11/2026), trocar quando houver medida.
  */
 export const PRAZO_DA_TRANSCRICAO_MS = 12_000;
 /**
@@ -153,12 +153,14 @@ const PRAZO_MINIMO_DA_CHAMADA_MS = 1_000;
 const ESPERA_PADRAO_DA_NOVA_TENTATIVA_MS = 500;
 
 /**
+ * O audio vai a transcricao? Falsa, todo audio e "fora" no plano do turno,
+ * mesmo com a habilidade ligada (o jeito de desligar sem mexer em clinica).
  * As travas da saida (silencio, repeticao, confianca, frases-fantasma) e o
- * prazo foram calibrados pela prova paga (D-100)? Enquanto for falsa, todo
- * audio e "fora" no plano do turno, mesmo com a habilidade ligada. Vira
- * verdadeira num commit pequeno depois da prova, com os limites medidos.
+ * prazo continuam com os valores propostos, e o que elas nao garantem vai
+ * para a equipe.
+ * shortcut: valor sem medir (prova paga dispensada pelo dono em 06/11/2026), trocar quando houver medida.
  */
-export const TRANSCRICAO_CALIBRADA = false;
+export const TRANSCRICAO_CALIBRADA = true;
 
 /** O pedido fixo (fora o arquivo e o modelo). */
 export const PARAMETROS_FIXOS_DA_TRANSCRICAO = {
@@ -569,7 +571,7 @@ export async function transcreverAudio(entrada: {
   sinal?: AbortSignal;
   agora?: () => number;
   /**
-   * SO a prova paga (scripts/ia/prova-da-midia.ts, D-100): as metricas de
+   * SO a medida com o script (scripts/ia/prova-da-midia.ts): as metricas de
    * cada segmento, a duration e o usage.seconds da resposta, para calibrar
    * as travas. So numeros; o motor nunca passa. Assim a chamada continua
    * existindo num lugar so.

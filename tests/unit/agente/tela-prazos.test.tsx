@@ -246,7 +246,7 @@ describe("Habilidades: Cancelar consulta e Remarcar consulta", () => {
       agenda: AGENDA,
       prazos: { cancelarHoras: null, remarcarHoras: 48 },
       habilidades: {
-        ...habilidadesEfetivas({}),
+        ...habilidadesEfetivas({ agendar: false }),
         cancelar: true,
         remarcar: true,
       },

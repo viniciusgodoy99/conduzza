@@ -604,20 +604,21 @@ export const TEXTOS_DA_MIDIA = {
   // D-62: o simulador nao manda audio, foto nem documento nesta etapa.
   simulador:
     "Áudio, foto e documento só no WhatsApp, com os telefones da equipe.",
-  // Revisao das telas da AG6b (item 3): enquanto o servidor nao foi
-  // calibrado pela prova paga (D-100), a habilidade ligada nao tem efeito, e
-  // a tela diz isso embaixo dela (dicaDaMidiaNoServidor).
-  audioSemAProva:
-    "Ainda não está valendo: falta a prova com áudios de verdade. Até lá, o áudio vai para a equipe.",
-  arquivoSemAProva:
-    "Ainda não está valendo: falta a prova com fotos e documentos de verdade. Até lá, foto e documento vão para a equipe.",
+  // Revisao das telas da AG6b (item 3): com as constantes do servidor
+  // desligadas, a habilidade ligada nao tem efeito, e a tela diz isso embaixo
+  // dela (dicaDaMidiaNoServidor). Desde a decisao do dono de 06/11/2026, que
+  // dispensou a prova paga (D-100), elas estao ligadas, e a dica nao aparece.
+  audioDesligado:
+    "Ainda não está valendo: a Conduzza desligou o áudio por enquanto. Até voltar, o áudio vai para a equipe.",
+  arquivoDesligado:
+    "Ainda não está valendo: a Conduzza desligou foto e documento por enquanto. Até voltar, foto e documento vão para a equipe.",
 } as const;
 
 /**
  * A dica da habilidade de midia que o servidor ainda nao deixa valer, ou
- * nula: as outras habilidades, a midia ja calibrada, ou sem a leitura do
+ * nula: as outras habilidades, a midia que vale, ou sem a leitura do
  * servidor (`midia` ausente: quem chama nao mandou, e a tela nao inventa a
- * dica). Vale ligada ou desligada: ligar agora nao muda nada ate a prova.
+ * dica). Vale ligada ou desligada: ligar agora nao muda nada ate o servidor voltar.
  */
 export function dicaDaMidiaNoServidor(
   chave: string,
@@ -627,10 +628,10 @@ export function dicaDaMidiaNoServidor(
     return null;
   }
   if (chave === HABILIDADE_DO_AUDIO) {
-    return midia.audio ? null : TEXTOS_DA_MIDIA.audioSemAProva;
+    return midia.audio ? null : TEXTOS_DA_MIDIA.audioDesligado;
   }
   if (chave === HABILIDADE_DO_ARQUIVO) {
-    return midia.arquivo ? null : TEXTOS_DA_MIDIA.arquivoSemAProva;
+    return midia.arquivo ? null : TEXTOS_DA_MIDIA.arquivoDesligado;
   }
   return null;
 }

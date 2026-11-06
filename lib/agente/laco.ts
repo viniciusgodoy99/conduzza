@@ -338,7 +338,7 @@ export const RESERVA_DO_FILTRO_MS = 10_000;
  * (PRAZO_DO_CLASSIFICADOR_NO_PORTAO_MS). A midia lenta e cortada ANTES de
  * pagar o classificador e o agente, e o turno nunca passa de prazoEm (a
  * reserva das gravacoes e a do envio, no executor, ficam inteiras).
- * PROPOSTA, a calibrar na prova paga (D-100) junto com os prazos da midia;
+ * PROPOSTA, sem medir (a prova paga, D-100, foi dispensada pelo dono em 06/11/2026), como os prazos da midia;
  * a conta do minimo do turno com midia esta em
  * PRAZO_MINIMO_DO_TURNO_COM_MIDIA_MS (lib/jobs/responder-com-ia.ts).
  */

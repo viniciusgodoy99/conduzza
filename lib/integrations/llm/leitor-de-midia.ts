@@ -26,9 +26,9 @@
 // aceita, ou excecao inesperada. A decisao (segue, equipe e o motivo) e do
 // servidor, nunca do modelo (DECISAO_DO_TIPO_DO_LEITOR, config.ts).
 //
-// Os tetos de tokens de uma imagem e de uma pagina de PDF so existem depois
-// da prova paga (D-100): sem eles (nulos), o plano do turno nunca manda
-// arquivo ao leitor (a reserva do gasto nao teria o pior caso).
+// Os tetos de tokens de uma imagem e de uma pagina de PDF sao o pior caso da
+// reserva do gasto: sem eles (nulos), o plano do turno nunca manda arquivo ao
+// leitor. O teto diario conta o uso real, nao o teto.
 //
 // PRAZO (CORTE DURO): a leitura inteira (as chamadas, a espera entre elas e
 // a leitura do corpo) corre dentro de correrComPrazo, com o prazo de quem
@@ -94,7 +94,10 @@ import {
 } from "@/lib/integrations/llm/verificador";
 import { log } from "@/lib/log";
 
-/** Prazo de uma leitura (PROPOSTA, a calibrar na prova paga). */
+/**
+ * Prazo de uma leitura.
+ * shortcut: valor sem medir (prova paga dispensada pelo dono em 06/11/2026), trocar quando houver medida.
+ */
 export const PRAZO_DO_LEITOR_MS = 12_000;
 /**
  * O corte duro e o prazo da leitura mais esta folga (a mesma da transcricao
@@ -131,13 +134,19 @@ export const MAXIMO_FORA_DO_CADASTRO = 20;
 export const MAXIMO_DE_CODIGOS_NO_ESQUEMA = 250;
 
 /**
- * Os tetos de tokens de entrada de uma imagem (detail "high") e de uma
- * pagina de PDF, MEDIDOS na prova paga (D-100). Nulos ate la: sem eles o
- * plano do turno marca todo arquivo como fora (o leitor nunca roda sem o
- * pior caso na reserva do gasto).
+ * O teto de tokens de entrada de uma imagem (detail "high"), o pior caso da
+ * reserva do gasto. Nulo, o plano do turno marca toda imagem como fora. Folgado
+ * de proposito: a reserva maior so segura mais do teto diario durante o turno,
+ * e o acerto conta o uso real.
+ * shortcut: valor sem medir (prova paga dispensada pelo dono em 06/11/2026), trocar quando houver medida.
  */
-export const TETO_DE_TOKENS_POR_IMAGEM: number | null = null;
-export const TETO_DE_TOKENS_POR_PAGINA: number | null = null;
+export const TETO_DE_TOKENS_POR_IMAGEM: number | null = 10_000;
+/**
+ * O teto de tokens de entrada de uma pagina de PDF: a imagem da pagina e o
+ * texto dela. Nulo, o plano do turno marca todo PDF como fora.
+ * shortcut: valor sem medir (prova paga dispensada pelo dono em 06/11/2026), trocar quando houver medida.
+ */
+export const TETO_DE_TOKENS_POR_PAGINA: number | null = 12_000;
 
 /** O nome do PDF que vai a OpenAI: nunca o do paciente. */
 export const NOME_DO_PDF = "documento.pdf";

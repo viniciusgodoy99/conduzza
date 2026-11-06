@@ -87,11 +87,11 @@ import type { PreparoDaHabilidade } from "@/lib/domain/preparo";
 // falta). Sem permissao (recepcao), a chave fica visivel e desabilitada com
 // a dica de sempre.
 //
-// Revisao das telas da AG6b: enquanto o servidor nao foi calibrado pela
-// prova paga (D-100; midiaNoServidor, calculado na pagina), a habilidade de
-// midia ligada nao tem efeito, e a dica (dicaDaMidiaNoServidor) fica escrita
-// embaixo dela, para todos os papeis, sem travar a chave: ligar agora so
-// vale depois da prova, e desligar continua livre (item 3). A nota, a dica
+// Revisao das telas da AG6b: com as constantes do servidor desligadas
+// (midiaNoServidor, calculado na pagina; ligadas desde 06/11/2026), a
+// habilidade de midia ligada nao tem efeito, e a dica (dicaDaMidiaNoServidor)
+// fica escrita embaixo dela, para todos os papeis, sem travar a chave:
+// desligar continua livre (item 3). A nota, a dica
 // do servidor e a da dependencia sao a descricao da chave
 // (aria-describedby, na ordem da tela): o leitor de tela ouve a nota da
 // OpenAI no foco (item 7).
@@ -203,7 +203,7 @@ export function AbaHabilidades({
   ) => void;
   // [AG6b mídia] início
   /**
-   * O que o servidor ja deixa valer (a prova paga, D-100). Ausente: sem a
+   * O que o servidor ja deixa valer. Ausente: sem a
    * dica (a tela nao inventa).
    */
   midiaNoServidor?: MidiaNoServidor | null;
