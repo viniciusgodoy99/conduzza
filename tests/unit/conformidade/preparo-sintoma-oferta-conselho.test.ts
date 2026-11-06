@@ -124,6 +124,13 @@ describe("a oferta de outro procedimento e recusada", () => {
     "Aproveite a visita e marque a avaliação.",
   ])("%s", (texto) => {
     expect(problemasDoTextoDoPreparo(texto).recusas).toContain("oferta_casada");
+    // Revisao final da AG7 (achado 4): a estrutura, nao o nome do procedimento.
+    "Aproveite e faça também a limpeza da pele.",
+    "Faça também a remoção de tatuagem.",
+    "Que tal uma limpeza de pele?",
+    "Você também pode fazer a limpeza de pele.",
+    "Você pode também fazer um peeling.",
+    "Fazer também o botox fica melhor.",
     expect(conteudoRecusadoPeloBanco(texto).map((a) => a.causa)).toContain(
       "oferta_de_outro_procedimento",
     );
@@ -139,6 +146,13 @@ describe("a oferta de outro procedimento e recusada", () => {
     "Traga também os exames.",
   ])("passa: %s", (texto) => {
     expect(ofereceOutroProcedimento(texto)).toBe(false);
+    // Revisao final da AG7 (achado 4): o item do preparo continua passando.
+    "Faça também a assinatura do termo.",
+    "faça também o jejum",
+    "aproveite para trazer os exames",
+    "Faça também a remoção do esmalte.",
+    "Que tal trazer os exames antes?",
+    "Você também pode fazer o jejum em casa.",
   });
 });
 

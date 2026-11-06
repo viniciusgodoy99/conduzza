@@ -544,23 +544,47 @@ const OFERECE =
   "(?:faca|marque|agende|realize|inclua|adicione|conheca|experimente|contrate)";
 const OFERECE_NO_INFINITIVO =
   "(?:fazer|marcar|agendar|realizar|incluir|adicionar|conhecer|experimentar|contratar)";
-// O que continua sendo instrucao de preparo depois de "faca tambem" e de
-// "aproveite para fazer".
-const INSTRUCAO_DE_PREPARO =
-  "(?: (?:[a-z]+ ){0,2}(?:jejum|dieta|preparo|preparacao|exames?|coleta|higiene|banho|lavagem|limpeza d[oa]|enema|hidratacao|repouso|retirada|remocao|assepsia|tricotomia|depilacao d[aeo]|refeic(?:ao|oes)|lanche|alimentacao|retorno)\\M)";
+// O que continua sendo item do preparo depois de "faca tambem", de "aproveite",
+// de "que tal" e de "tambem pode fazer". A lista e do que passa, nunca do que se
+// oferece: o procedimento do Cadastro nao esta disponivel na regra do banco, e o
+// que nao esta aqui e recusado ("a limpeza de pele", "a remocao de tatuagem").
+// A limpeza e a remocao so com o que as faz item de preparo.
+const ITEM_DO_PREPARO =
+  "(?: (?:[a-z]+ ){0,2}(?:jejum|dieta|preparo|preparacao|exames?|coleta|higiene|banho|lavagem|enema|hidratacao|repouso|assepsia|tricotomia|refeic(?:ao|oes)|lanche|alimentacao|retorno|assinatura|termo|ficha|cadastro|limpeza d[oa] [a-z]+ com|(?:remocao|retirada) d[aeo]s? (?:esmaltes?|maquiagem|adornos?|joias?|brincos?|aneis|anel|proteses?|lentes|piercings?)|depilacao d[aeo])\\M)";
 /**
  * "Aproveite e faca tambem a limpeza de pele." Oferta casada, fora da D-80
- * (CFM 2.336/2023): "aproveite" ou "que tal" com o verbo de oferta, e o verbo
- * de oferta com "tambem" ou "junto". Instrucao de preparo depois disso passa
- * ("faca tambem o jejum"), e "aproveite para trazer os exames" nem tem o verbo.
+ * (CFM 2.336/2023), pela estrutura: "aproveite" com o verbo de oferta, "que tal"
+ * com qualquer coisa, e "tambem" ou "junto" com o verbo de oferta ("voce tambem
+ * pode fazer"), sempre menos o item do preparo ("faca tambem o jejum",
+ * "aproveite para trazer os exames" nem tem o verbo). Sobra: a oferta sem
+ * nenhuma dessas palavras ("Temos peeling com desconto" ja cai nas regras do
+ * filtro; "Recomendamos a limpeza de pele" fica so no TS).
  */
 export const FONTE_DA_OFERTA_DE_OUTRO_PROCEDIMENTO =
-  `\\m(?:aproveit[a-z]*|que tal)\\M (?:[a-z]+ ){0,3}?(?:${OFERECE}|${OFERECE_NO_INFINITIVO})\\M(?!${INSTRUCAO_DE_PREPARO})` +
-  `|\\m${OFERECE} (?:tambem|junto)\\M(?!${INSTRUCAO_DE_PREPARO})` +
-  `|\\mtambem ${OFERECE}\\M(?!${INSTRUCAO_DE_PREPARO})`;
+  `\\m(?:aproveit[a-z]*)\\M (?:[a-z]+ ){0,3}?(?:${OFERECE}|${OFERECE_NO_INFINITIVO})\\M(?!${ITEM_DO_PREPARO})` +
+  `|\\mque tal\\M(?!${ITEM_DO_PREPARO})` +
+  `|\\m(?:${OFERECE}|${OFERECE_NO_INFINITIVO}) (?:tambem|junto)\\M(?!${ITEM_DO_PREPARO})` +
+  `|\\mtambem ${OFERECE}\\M(?!${ITEM_DO_PREPARO})` +
+  `|\\mtambem (?:[a-z]+ ){0,2}?${OFERECE_NO_INFINITIVO}\\M(?!${ITEM_DO_PREPARO})` +
+  `|\\mpode(?:m|ra)? tambem ${OFERECE_NO_INFINITIVO}\\M(?!${ITEM_DO_PREPARO})`;
+
+/**
+ * O que qualquer RT aprova, porque nao e remedio nem dose (revisao final da AG7;
+ * a decisao de 05/11/2026 era "remedio e dose so de CRM ou CRO"): o jejum, tomar
+ * agua, o frasco que a pessoa traga e o pedido de informar os medicamentos em
+ * uso. Sai do texto antes da conferencia do remedio e da dose, entao o resto da
+ * frase continua lido: "Traga 1 frasco de Picoprep" barra pelo nome. Lista
+ * fechada: o nome de remedio e a instrucao de tomar ficam fora dela.
+ */
+export const FONTE_DO_QUE_NAO_E_REMEDIO_NEM_DOSE =
+  "\\mem jejum\\M" +
+  "|\\m(?:tomar|ingerir|beber)\\M (?:apenas |so |somente |bastante )?(?:agua|liquidos?|chas?|sucos?|caldos?|isotonicos?)\\M" +
+  "|\\m(?:traga|leve|trazer|levar|colete|coletar|entregue|entregar|apresente|apresentar)\\M (?:[a-z]+ ){0,2}?[0-9]+ ?(?:frascos?|potes?|potinhos?|tubos?)\\M" +
+  "|\\m(?:informe|informar|liste|listar|avise|avisar|comunique|comunicar|relate|relatar|mencione|mencionar)\\M (?:(?:os|as|o|a|seus|suas|seu|sua|todos|todas|quais|qual|que|se|sobre|de|dos|das|do|da|usa|usar|toma|tomar|esta|usando|tomando|algum|alguma|qualquer) ){0,5}?(?:medicament|remedi|medicac)[a-z]*\\M" +
+  "|\\m(?:traga|leve|trazer|levar|apresente|apresentar)\\M (?:(?:a|as|sua|suas) )?(?:(?:lista|relacao) d[eo]s? (?:(?:seus|suas) )?(?:medicament|remedi|medicac)[a-z]*|receitas?(?: medicas?)?)\\M";
 
 /** A fonte na sintaxe do Postgres, como RegExp do JavaScript. */
-function regexDoBanco(fonte: string): RegExp {
+function regexDoBanco(fonte: string, flags = "u"): RegExp {
   return new RegExp(
     fonte.replaceAll("\\m", COMECO_DE_PALAVRA).replaceAll("\\M", FIM_DE_PALAVRA),
     "u",
@@ -569,6 +593,10 @@ function regexDoBanco(fonte: string): RegExp {
 
 const SINTOMA_NORMALIZADO_DO_BANCO = regexDoBanco(FONTE_DO_SINTOMA_NORMALIZADO);
 const OFERTA_DO_BANCO = regexDoBanco(FONTE_DA_OFERTA_DE_OUTRO_PROCEDIMENTO);
+const NAO_E_REMEDIO_NEM_DOSE = regexDoBanco(
+  FONTE_DO_QUE_NAO_E_REMEDIO_NEM_DOSE,
+  "gu",
+);
 
 /** A base do banco com os espacos repetidos juntados (as quebras ficam). */
 function frasesDoBanco(texto: string): string {
