@@ -670,7 +670,7 @@ describe("os remedios do preparo no editor", () => {
   it("enviando: os campos e os botões travam", () => {
     const html = editor([BISACODIL], { enviando: true });
     expect(html).toMatch(/id="ed-remedio-0-nome"[^>]*disabled/);
-    expect(html).toMatch(/<button[^>]*disabled[^>]*>.*Adicionar remédio/s);
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>[\s\S]*Adicionar remédio/);
   });
 
   it("todo alvo tem 40px, sem cor solta e sem travessão", () => {
@@ -1214,9 +1214,7 @@ describe("o topo da aba Procedimentos", () => {
           cadastroDoAgente={CADASTRO_VAZIO_PARA_O_AGENTE}
           podeEditar
           dica="Somente administradores e gestores alteram os cadastros"
-          remedios={[]}
           aoMudar={() => undefined}
-          aoMudarRemedios={() => undefined}
           timezone={FUSO}
           preparo={preparoDaAba}
         />,
@@ -1266,9 +1264,7 @@ describe("o topo da aba Procedimentos", () => {
           cadastroDoAgente={CADASTRO_VAZIO_PARA_O_AGENTE}
           podeEditar
           dica="Somente administradores e gestores alteram os cadastros"
-          remedios={[]}
           aoMudar={() => undefined}
-          aoMudarRemedios={() => undefined}
           timezone={FUSO}
           preparo={preparo({ tipo: "pronto", dados: lidos })}
         />,

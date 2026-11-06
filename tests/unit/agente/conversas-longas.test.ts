@@ -2199,6 +2199,85 @@ describe("8. o preparo aprovado depois de marcar", () => {
     },
   );
 
+  it("com a introdução da IA, numa mensagem só: a conversa em volta e o texto exato; a barrada sai sem ela; a dúvida fora do texto vai para a equipe", async () => {
+    const INTRO = "Claro! Segue a orientação da clínica:";
+    const c = clinicaDeUmaUnidade(CATALOGO_COM_PREPARO);
+    await marcarALimpeza(c);
+    await modeloResponde(c, "Qual é mesmo o horário?", HORARIO_DA_LIMPEZA);
+
+    // O corpo inteiro, com a decisao do mesmo hash; o bloco e o aprovado.
+    const corpo = `${INTRO}\n\n${MENSAGEM_DO_PREPARO}`;
+    const t = await c.fala({
+      texto: "Me manda a orientação de preparo",
+      roteiro: [
+        ferramenta("enviar_preparo", {
+          procedimento: P_LIMPEZA,
+          introducao: INTRO,
+        }),
+      ],
+    });
+    expect(t.enviadas).toEqual([corpo]);
+    expect(t.chamadasAoModelo).toBe(1);
+    expect(t.decisao).toMatchObject({
+      desfecho: "enviou_preparo",
+      texto_sha256: sha256DoTexto(corpo),
+      aprovado: false,
+      compliance_blocked: false,
+      escalation_reason: null,
+    });
+    expect(
+      c.cenario.banco.linhas("message").find((m) => m.job_id === t.job),
+    ).toMatchObject({ author: "sistema", body: corpo });
+    expect(t.statusDaConversa).toBe("ia_atendendo");
+
+    // O turno seguinte: o modelo le o substituto, nem o texto nem a introducao.
+    const t2 = await modeloResponde(
+      c,
+      "Qual é mesmo o horário?",
+      HORARIO_DA_LIMPEZA,
+    );
+    const lido = JSON.stringify(t2.corpos[0]?.input);
+    expect(lido).toContain(substitutoDaMensagemDoPreparo("Limpeza de pele"));
+    expect(lido).not.toContain(INTRO);
+
+    // SABOTAGEM: a introducao com remedio, dose ou sintoma, barrada: sai so o
+    // bloco, sem passar a conversa.
+    for (const barrada of [
+      "Segue o bisacodil:",
+      "São 2 comprimidos, segue:",
+      "Se tiver cólica, segue:",
+    ]) {
+      const t3 = await c.fala({
+        texto: "Me manda de novo a orientação de preparo",
+        roteiro: [
+          ferramenta("enviar_preparo", {
+            procedimento: P_LIMPEZA,
+            introducao: barrada,
+          }),
+        ],
+      });
+      expect(t3.enviadas).toEqual([MENSAGEM_DO_PREPARO]);
+      expect(t3.decisao).toMatchObject({
+        desfecho: "enviou_preparo",
+        texto_sha256: sha256DoTexto(MENSAGEM_DO_PREPARO),
+      });
+      expect(c.recebidasPeloPaciente.join("\n")).not.toContain(barrada);
+      expect(t3.statusDaConversa).toBe("ia_atendendo");
+    }
+
+    // A pergunta que o texto nao responde: a equipe, com a frase de sempre, sem
+    // o modelo; nada do texto sai de novo.
+    const antes = c.recebidasPeloPaciente.length;
+    passou(
+      await c.fala({ texto: "posso tomar com leite?" }),
+      { desfecho: "escalou", motivo: "assunto_clinico" },
+      0,
+    );
+    expect(c.recebidasPeloPaciente.slice(antes)).toEqual([
+      FRASE_DE_ESCALONAMENTO,
+    ]);
+  });
+
   it("a versão que sai de vigor antes do envio: nada do preparo sai; a frase e a equipe, com a nota", async () => {
     const c = clinicaDeUmaUnidade(CATALOGO_COM_PREPARO);
     await marcarALimpeza(c);

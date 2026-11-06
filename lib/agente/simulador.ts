@@ -62,7 +62,8 @@ import { carregarCatalogoDoAgente, carregarConfigDoRascunho } from "./contexto";
 import { ROTULO_DO_MOTIVO_DE_ESCALONAMENTO } from "@/lib/domain/agente/config";
 import { lerPreparoParaEnvio } from "./contexto";
 import { PASSO_DO_PREPARO_FORA_DE_VIGOR } from "./ferramentas/enviar-preparo";
-import { partesDaMensagemDoPreparo } from "@/lib/domain/preparo";
+import { comIntroducao } from "@/lib/domain/conformidade/preparo-aprovado";
+import { separarIntroducaoDoPreparo } from "@/lib/domain/preparo";
 // [AG7 preparo] fim
 import { acertarGasto, reservarGasto } from "./gasto";
 import {
@@ -581,7 +582,7 @@ export async function simularTurno(
       ? {
           autor: fala.autor,
           autoria:
-            partesDaMensagemDoPreparo(fala.texto) !== null ? "sistema" : "ia",
+            separarIntroducaoDoPreparo(fala.texto) !== null ? "sistema" : "ia",
           texto: fala.texto,
         }
       : { autor: fala.autor, texto: fala.texto },
@@ -830,7 +831,13 @@ export async function simularTurno(
         },
       );
     } else {
-      resposta = leitura.preparo.mensagem;
+      // A introducao que o filtro aprovou, como no WhatsApp.
+      resposta = (
+        (resultado.introducao === null
+          ? null
+          : comIntroducao(leitura.preparo, resultado.introducao)) ??
+        leitura.preparo
+      ).mensagem;
       tipo = "preparo";
     }
   } else {

@@ -97,9 +97,11 @@
 //
 // [AG7 preparo] AG7 (03/11/2026; D-75 a D-80): a orientacao de preparo
 // aprovada pelo responsavel tecnico. O modelo so escolhe o procedimento
-// (enviar_preparo, que so vale SOZINHA no turno); o turno termina sem texto
-// do modelo, sem filtro e sem verificador, com o resultado "preparo", e o
-// executor manda a mensagem do sistema montada pelo banco. Depois de marcar
+// (enviar_preparo, que so vale SOZINHA no turno); o turno termina com o
+// resultado "preparo", sem o filtro no texto do preparo (nada dele passa pelo
+// modelo), e o executor manda a mensagem do sistema montada pelo banco. A
+// introducao que o modelo pode mandar (decisao do dono de 06/11/2026) passa
+// pela regra propria e pelo filtro inteiro; barrada, sai so o bloco. Depois de marcar
 // um procedimento com texto em vigor, o sistema cola a frase F2 na resposta
 // (pelo filtro inteiro). O historico que vai ao modelo troca a mensagem do
 // preparo e todo trecho dos textos de preparo da clinica por marcadores; o
@@ -176,12 +178,17 @@ import {
 } from "@/lib/integrations/llm/classificador-de-entrada";
 // [AG7 preparo] início
 import {
+  problemaDaIntroducao,
+  type ProblemaDaIntroducao,
+} from "@/lib/domain/conformidade/preparo-aprovado";
+import {
   CABECALHO_DO_PREPARO,
   FRASE_DO_PREPARO_DEPOIS_DE_MARCAR,
   partesDaMensagemDoPreparo,
   procedimentoDaMensagemDoPreparo,
   RODAPE_DO_PREPARO,
   semOPreparo,
+  separarIntroducaoDoPreparo,
   SUBSTITUTO_DA_FALA_SEM_A_MASCARA,
   SUBSTITUTO_DO_TEXTO_DO_PREPARO,
   substitutoDaFalaNoFormatoDoPreparo,
@@ -653,6 +660,12 @@ export type ResultadoDoTurno =
   | (Comum & {
       tipo: "preparo";
       preparo: { procedimentoId: string; versaoId: string; versao: number };
+      /**
+       * A introducao que passou pela regra propria e pelo filtro inteiro, para
+       * ir antes do bloco exato (decisao do dono de 06/11/2026). null: sai so o
+       * bloco (o modelo nao mandou, ou foi barrada: a trilha diz).
+       */
+      introducao: string | null;
       resposta: null;
       rascunhoBloqueado: null;
       /**
@@ -800,6 +813,13 @@ const ROTULO_DO_BLOQUEIO: Readonly<Record<CategoriaDeConformidade, string>> = {
 export function rotuloDoBloqueio(categoria: CategoriaDeConformidade): string {
   return ROTULO_DO_BLOQUEIO[categoria];
 }
+
+/** Por que a introducao nao saiu, na trilha (nunca o texto dela). */
+const ROTULO_DO_PROBLEMA_DA_INTRODUCAO: Record<ProblemaDaIntroducao, string> = {
+  formato: "fora do formato",
+  conteudo: "cita remédio, dose, número, como tomar ou sintoma",
+  remedio_do_texto: "cita um remédio do texto aprovado",
+};
 
 // [AG7 preparo] início
 /**
@@ -1237,7 +1257,10 @@ function substitutoDaFalaInteira(
   texto: string,
   autoria: AutoriaDaClinica | null,
 ): string | null {
-  const partes = partesDaMensagemDoPreparo(texto);
+  // Com a introducao da IA antes do bloco, a fala inteira vira o substituto.
+  const separada = separarIntroducaoDoPreparo(texto);
+  const partes =
+    separada === null ? null : partesDaMensagemDoPreparo(separada.bloco);
   if (partes !== null && autoria === "sistema") {
     return substitutoDaMensagemDoPreparo(partes.procedimento);
   }
@@ -2964,6 +2987,7 @@ async function turnoDoAgente(
       procedimentoId: string;
       versaoId: string;
       versao: number;
+      introducao: string | null;
     } | null = null;
     /**
      * Revisao da AG7 (CFM-7): o procedimento escolhido pelo modelo e o que a
@@ -3270,6 +3294,7 @@ async function turnoDoAgente(
               procedimentoId: envio.procedimentoId,
               versaoId: envio.versaoId,
               versao: envio.versao,
+              introducao: envio.introducao,
             };
             break rodadas;
           }
@@ -3399,16 +3424,164 @@ async function turnoDoAgente(
       }
     }
 
+    // Os fatos do turno e o filtro, os mesmos da resposta e da introducao do
+    // preparo. Os fatos: AG3, o estado entra como fonte de dia e hora (o que ja
+    // foi oferecido), e so o reconferido agora e horario livre.
+    const fatosPara = (
+      ferramentas: readonly SaidaParaOsFatos[],
+      respostasDaBase: readonly string[],
+      fraseDoPreparo: string | null,
+    ): FatosDoTurno => {
+      const doEstado = agendaDoTurno.fatosDoEstado();
+      return montarFatosDoTurno({
+        config: entrada.config,
+        catalogo: entrada.catalogo,
+        agoraTexto,
+        agoraMs: entrada.agoraMs,
+        fuso: entrada.fuso,
+        ferramentas:
+          doEstado === null ? ferramentas : [...ferramentas, doEstado],
+        respostasDaBase,
+        // [AG6b mídia] Os pedidos lidos na conversa (so os nomes do
+        // Cadastro), para o resumo dos fatos do verificador.
+        pedidos: pedidosDoTurno(mensagensDoTurno, entrada.catalogo),
+        // [AG7 preparo] A F2, so quando o turno a colou no rascunho (MOTOR-3:
+        // nunca a que o modelo escreveu sozinho).
+        fraseDoPreparo,
+      });
+    };
+    const passarNoFiltro = async (
+      rascunho: string,
+      fatos: FatosDoTurno,
+      introducaoDoPreparo: boolean,
+    ): Promise<DecisaoDoFiltro> => {
+      // Achado 14 e revisao curta das correcoes (achado 1): a copia do
+      // verificador vai sem o nascimento (no turno da coleta) e sem os nomes
+      // que o servidor VALIDOU neste turno e que parecem nome
+      // (nomesValidados; nunca a heuristica da deixa, que engolia o sintoma).
+      // O resto, sintoma inclusive, chega como esta. O texto aprovado continua
+      // o rascunho, byte a byte.
+      const nomesValidados = agendaDoTurno.nomesValidados();
+      const verificador: Verificador =
+        naColeta || nomesValidados.length > 0
+          ? (pedido) => {
+              const copia = (texto: string) =>
+                mascararParaOVerificador(texto, {
+                  anoCorrente,
+                  nomesValidados,
+                });
+              return entrada.verificador({
+                ...pedido,
+                rascunho: copia(pedido.rascunho),
+                mensagensDoPaciente: pedido.mensagensDoPaciente.map(copia),
+              });
+            }
+          : entrada.verificador;
+      const decisao = await filtrarSaida({
+        rascunho,
+        contexto: {
+          precosDoTurno,
+          nomesDoCatalogo: nomesDoCatalogo(entrada.catalogo),
+          mensagensDoPaciente: textosPendentes,
+          fatos,
+          // [AG7 preparo] A resposta que copia um trecho dos textos de preparo
+          // da clinica e barrada (trecho_do_preparo_da_clinica).
+          textosDePreparo: entrada.catalogo.textosDePreparo ?? [],
+          // [AG7 preparo] Revisao curta (CURTA-1): a resposta a pergunta de
+          // preparo so e conferida com a habilidade (resposta_ao_preparo).
+          comPreparo,
+          introducaoDoPreparo,
+        },
+        verificador,
+        prazoEm,
+        agora,
+      });
+      const chamadaDoVerificador = decisao.verificador;
+      if (chamadaDoVerificador?.uso) {
+        uso.push({
+          papel: "verificador",
+          modelo: chamadaDoVerificador.modelo ?? modeloDosClassificadores,
+          uso: chamadaDoVerificador.uso,
+        });
+      } else if (
+        decisao.aprovado ||
+        decisao.camada === "modelo" ||
+        (decisao.camada === "falha" &&
+          chamadaPodeTerSidoCobrada(decisao.motivoDaFalha))
+      ) {
+        // O verificador foi chamado e nao voltou com usage (prazo, rede): a
+        // chamada pode ter sido cobrada; entra a estimativa maxima.
+        uso.push({
+          papel: "verificador",
+          modelo: chamadaDoVerificador?.modelo ?? modeloDosClassificadores,
+          uso: usoEstimadoDoVerificador(rascunho, textosPendentes),
+        });
+      }
+      return decisao;
+    };
+
     // [AG7 preparo] início
-    // AG7: a orientacao de preparo escolhida. Sem texto do modelo, sem
-    // comporResposta e sem o filtro (nada do modelo sai): o executor le a
+    // AG7: a orientacao de preparo escolhida. Sem comporResposta e sem o filtro
+    // no texto do preparo (nada dele passa pelo modelo): o executor le a
     // mensagem que o banco monta da versao em vigor, confere o hash e envia
     // como mensagem do sistema. Sozinha no turno, nenhuma ferramenta de
     // agenda rodou (as falhas seguidas nao mudam).
     if (preparoEscolhido !== null) {
+      // Decisao do dono de 06/11/2026: a introducao so vale com a regra propria
+      // e o filtro inteiro. Barrada ou com falha, sai so o bloco: o paciente
+      // nao fica sem resposta e nada escrito pela IA sai sem passar.
+      let introducao: string | null = null;
+      let filtroDaIntroducao: DecisaoDoFiltro | null = null;
+      if (preparoEscolhido.introducao !== null) {
+        const bruta = semAMarcaDoNome(preparoEscolhido.introducao);
+        const problema = problemaDaIntroducao(
+          bruta,
+          entrada.catalogo.textosDePreparo ?? [],
+        );
+        if (problema !== null) {
+          trilha.push({
+            tipo: "bloqueio",
+            texto: `A introdução da IA foi barrada (${ROTULO_DO_PROBLEMA_DA_INTRODUCAO[problema]}): saiu só a orientação aprovada.`,
+          });
+        } else {
+          try {
+            const consultas = await agendaDoTurno.fatosDasConsultasDoContato();
+            filtroDaIntroducao = await passarNoFiltro(
+              bruta,
+              fatosPara(
+                consultas === null
+                  ? ferramentasDoTurno
+                  : [...ferramentasDoTurno, consultas],
+                [],
+                null,
+              ),
+              true,
+            );
+          } catch {
+            filtroDaIntroducao = null;
+          }
+          if (filtroDaIntroducao?.aprovado === true) {
+            introducao = filtroDaIntroducao.texto;
+            trilha.push({
+              tipo: "outro",
+              texto: "A introdução da IA passou na conformidade.",
+            });
+          } else {
+            trilha.push({
+              tipo: "bloqueio",
+              texto: `A introdução da IA foi barrada pela conformidade${filtroDaIntroducao === null ? "" : ` (${rotuloDoBloqueio(filtroDaIntroducao.categoria)})`}: saiu só a orientação aprovada.`,
+            });
+          }
+        }
+      }
       return {
         tipo: "preparo",
-        preparo: preparoEscolhido,
+        preparo: {
+          procedimentoId: preparoEscolhido.procedimentoId,
+          versaoId: preparoEscolhido.versaoId,
+          versao: preparoEscolhido.versao,
+        },
+        introducao,
         resposta: null,
         rascunhoBloqueado: null,
         desfecho: {
@@ -3419,7 +3592,7 @@ async function turnoDoAgente(
         trilha,
         uso,
         versaoDoPrompt: VERSAO_DO_PROMPT,
-        filtro: null,
+        filtro: filtroDaIntroducao,
         descartados,
         ferramentasUsadas,
         versaoDoClassificador,
@@ -3604,30 +3777,13 @@ async function turnoDoAgente(
     // lanca e falha fechada: a resposta nao sai e a conversa passa.
     let fatos: FatosDoTurno;
     try {
-      // AG3: o estado entra como fonte de dia e hora (o que ja foi
-      // oferecido), e so o reconferido agora e horario livre.
-      const doEstado = agendaDoTurno.fatosDoEstado();
-      fatos = montarFatosDoTurno({
-        config: entrada.config,
-        catalogo: entrada.catalogo,
-        agoraTexto,
-        agoraMs: entrada.agoraMs,
-        fuso: entrada.fuso,
-        ferramentas:
-          doEstado === null
-            ? ferramentasDoTurno
-            : [...ferramentasDoTurno, doEstado],
+      fatos = fatosPara(
+        ferramentasDoTurno,
         respostasDaBase,
-        // [AG6b mídia] Os pedidos lidos na conversa (so os nomes do
-        // Cadastro), para o resumo dos fatos do verificador.
-        pedidos: pedidosDoTurno(mensagensDoTurno, entrada.catalogo),
-        // [AG7 preparo] A F2, so quando o turno a colou no rascunho (MOTOR-3:
-        // nunca a que o modelo escreveu sozinho).
-        fraseDoPreparo:
-          comAF2 && rascunho.includes(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR)
-            ? FRASE_DO_PREPARO_DEPOIS_DE_MARCAR
-            : null,
-      });
+        comAF2 && rascunho.includes(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR)
+          ? FRASE_DO_PREPARO_DEPOIS_DE_MARCAR
+          : null,
+      );
     } catch {
       log.warn("ia_agente_fatos_falharam", {
         kind: "agente",
@@ -3635,64 +3791,7 @@ async function turnoDoAgente(
       });
       return falhar("desconhecida");
     }
-    // Achado 14 e revisao curta das correcoes (achado 1): a copia do
-    // verificador vai sem o nascimento (no turno da coleta) e sem os nomes
-    // que o servidor VALIDOU neste turno e que parecem nome
-    // (nomesValidados; nunca a heuristica da deixa, que engolia o sintoma).
-    // O resto, sintoma inclusive, chega como esta. O texto aprovado continua
-    // o rascunho, byte a byte.
-    const nomesValidados = agendaDoTurno.nomesValidados();
-    const verificador: Verificador =
-      naColeta || nomesValidados.length > 0
-        ? (pedido) => {
-            const copia = (texto: string) =>
-              mascararParaOVerificador(texto, { anoCorrente, nomesValidados });
-            return entrada.verificador({
-              ...pedido,
-              rascunho: copia(pedido.rascunho),
-              mensagensDoPaciente: pedido.mensagensDoPaciente.map(copia),
-            });
-          }
-        : entrada.verificador;
-    filtro = await filtrarSaida({
-      rascunho,
-      contexto: {
-        precosDoTurno,
-        nomesDoCatalogo: nomesDoCatalogo(entrada.catalogo),
-        mensagensDoPaciente: textosPendentes,
-        fatos,
-        // [AG7 preparo] A resposta que copia um trecho dos textos de preparo
-        // da clinica e barrada (trecho_do_preparo_da_clinica).
-        textosDePreparo: entrada.catalogo.textosDePreparo ?? [],
-        // [AG7 preparo] Revisao curta (CURTA-1): a resposta a pergunta de
-        // preparo so e conferida com a habilidade (resposta_ao_preparo).
-        comPreparo,
-      },
-      verificador,
-      prazoEm,
-      agora,
-    });
-    const chamadaDoVerificador = filtro.verificador;
-    if (chamadaDoVerificador?.uso) {
-      uso.push({
-        papel: "verificador",
-        modelo: chamadaDoVerificador.modelo ?? modeloDosClassificadores,
-        uso: chamadaDoVerificador.uso,
-      });
-    } else if (
-      filtro.aprovado ||
-      filtro.camada === "modelo" ||
-      (filtro.camada === "falha" &&
-        chamadaPodeTerSidoCobrada(filtro.motivoDaFalha))
-    ) {
-      // O verificador foi chamado e nao voltou com usage (prazo, rede): a
-      // chamada pode ter sido cobrada; entra a estimativa maxima.
-      uso.push({
-        papel: "verificador",
-        modelo: chamadaDoVerificador?.modelo ?? modeloDosClassificadores,
-        uso: usoEstimadoDoVerificador(rascunho, textosPendentes),
-      });
-    }
+    filtro = await passarNoFiltro(rascunho, fatos, false);
     if (!filtro.aprovado) {
       trilha.push({
         tipo: "bloqueio",

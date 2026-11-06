@@ -728,12 +728,11 @@ export async function salvarTurno(
       reservas_perdidas: turno.reservasPerdidas,
       saida: turno.saida,
       // O texto so vive enquanto o envio esta pendente (retencao, contrato 1.1).
-      // [AG7 preparo] O preparo nunca guarda texto (ai_turno_texto_coerente):
-      // a retomada relê a mensagem do banco pela versao da decisao.
+      // [AG7 preparo] O texto do preparo nunca fica aqui: a retomada relê a
+      // mensagem do banco pela versao da decisao. Na saida preparo, o texto e so
+      // a introducao da IA (decisao de 06/11/2026; ai_turno_texto_coerente).
       texto:
-        turno.estado === "enviado" ||
-        turno.estado === "sem_envio" ||
-        turno.saida === "preparo"
+        turno.estado === "enviado" || turno.estado === "sem_envio"
           ? null
           : turno.texto,
       texto_sha256: turno.textoSha256,

@@ -772,6 +772,13 @@ export type AgendaDoTurno = {
   paraOModelo: () => AtendimentoParaOModelo | null;
   /** AG3: os fatos que vem do estado (fonte de dia e hora), ou null. */
   fatosDoEstado: () => SaidaParaOsFatos | null;
+  /**
+   * Decisao do dono de 06/11/2026: as consultas do contato como fatos, sem
+   * chamar ferramenta nem mudar o turno, para a introducao do preparo citar o
+   * dia da consulta da pessoa ("Como sua colonoscopia e na terca..."). null:
+   * nada a sustentar, ou a leitura falhou (a introducao com o dia e barrada).
+   */
+  fatosDasConsultasDoContato: () => Promise<SaidaParaOsFatos | null>;
   /** AG3: os codigos de resultado das ferramentas deste turno, em ordem. */
   resultados: () => string[];
   // [AG7 preparo] início
@@ -3320,6 +3327,22 @@ export function criarAgendaDoTurno(entrada: {
     return listaDoTurno;
   }
 
+  async function fatosDasConsultasDoContato(): Promise<SaidaParaOsFatos | null> {
+    const lista = await lerAsConsultas().catch(() => null);
+    if (lista === null || lista.consultas.length === 0) {
+      return null;
+    }
+    return {
+      saida: JSON.stringify({ resultado: "consultas" }),
+      fatos: {
+        consultaLida: true,
+        consultasComHorario: lista.consultas.map((c) =>
+          consultaComoFato(c, { marcada: false }),
+        ),
+      },
+    };
+  }
+
   async function consultarMinhasConsultas(
     argumentos: unknown,
   ): Promise<ResultadoDaFerramentaDeAgenda> {
@@ -4982,6 +5005,7 @@ export function criarAgendaDoTurno(entrada: {
     preparar,
     paraOModelo,
     fatosDoEstado,
+    fatosDasConsultasDoContato,
     resultados: () => [...resultados],
     // [AG7 preparo]
     procedimentoMarcadoNoTurno: () => procedimentoMarcado,

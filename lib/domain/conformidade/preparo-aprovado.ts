@@ -32,17 +32,24 @@ import {
 import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
 import {
   avaliarRegras,
+  FONTE_DO_QUE_A_INTRODUCAO_NAO_DIZ,
   type AchadoDaRegra,
 } from "@/lib/domain/conformidade/filtro-deterministico";
 import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
 import {
   conselhoDaLinhaDoRt,
   CONSELHOS_DE_REMEDIO_E_DOSE,
+  corpoComIntroducao,
+  frasesDoBanco,
   frasesParaORecorte,
+  introducaoNoFormato,
+  nomesDeRemedioDoTexto,
   normalizaSintoma,
   ofereceOutroProcedimento,
   partesDaMensagemDoPreparo,
+  regexDoBanco,
   semOQueNaoERemedioNemDose,
+  textoRecusadoPeloBanco,
 } from "@/lib/domain/preparo";
 
 export {
@@ -126,7 +133,15 @@ export function aprovarParaEnvio(lido: unknown): PreparoAprovado | null {
  *    (recusaPeloConselho).
  * O PreparoAprovado sai congelado.
  */
-export function conferirParaEnvio(lido: unknown): ConferenciaDoEnvio {
+export function conferirParaEnvio(
+  lido: unknown,
+  /**
+   * Decisao do dono de 06/11/2026: a introducao que vai antes do bloco (so por
+   * comIntroducao). O bloco e conferido inteiro antes dela; a mensagem e o hash
+   * do PreparoAprovado passam a ser os do corpo inteiro.
+   */
+  introducao: string | null = null,
+): ConferenciaDoEnvio {
   const foraDoFormato: ConferenciaDoEnvio = { tipo: "fora_do_formato" };
   if (typeof lido !== "object" || lido === null || Array.isArray(lido)) {
     return foraDoFormato;
@@ -173,10 +188,90 @@ export function conferirParaEnvio(lido: unknown): ConferenciaDoEnvio {
   if (peloConselho.length > 0) {
     return { tipo: "recusado", recusas: peloConselho, versaoId, procedureId };
   }
+  const corpo =
+    introducao === null ? mensagem : corpoComIntroducao(introducao, mensagem);
+  if (
+    introducao !== null &&
+    (problemaDaIntroducao(introducao, [partes.texto]) !== null ||
+      Array.from(corpo).length > LIMITE_DA_MENSAGEM_DO_PREPARO)
+  ) {
+    return foraDoFormato;
+  }
   return {
     tipo: "pronto",
-    preparo: marcar({ mensagem, sha256, versaoId, procedureId, versao }),
+    preparo: marcar({
+      mensagem: corpo,
+      sha256: sha256DoTexto(corpo),
+      versaoId,
+      procedureId,
+      versao,
+    }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// A introducao da IA antes do bloco exato (decisao do dono de 06/11/2026, opcao
+// A: "a IA escreve a conversa em volta e o sistema envia a orientacao exata")
+// ---------------------------------------------------------------------------
+
+/**
+ * Por que a introducao nao sai: fora do formato (ou com o que o banco recusa
+ * sozinho), com o que ela nunca diz, ou com o nome de um remedio do texto
+ * aprovado.
+ */
+export type ProblemaDaIntroducao = "formato" | "conteudo" | "remedio_do_texto";
+
+const QUE_A_INTRODUCAO_NAO_DIZ = regexDoBanco(
+  FONTE_DO_QUE_A_INTRODUCAO_NAO_DIZ,
+);
+
+/**
+ * A regra propria da introducao, que so bloqueia, por cima do filtro inteiro
+ * (a IA nunca escreve remedio, dose nem como tomar: CLAUDE.md 3.2). O banco
+ * confere o formato e o conteudo de novo (preparo_introducao_valida); os nomes
+ * do texto aprovado ficam so aqui.
+ */
+export function problemaDaIntroducao(
+  texto: string,
+  textosDePreparo: readonly string[],
+): ProblemaDaIntroducao | null {
+  if (!introducaoNoFormato(texto) || textoRecusadoPeloBanco(texto)) {
+    return "formato";
+  }
+  const base = frasesDoBanco(texto);
+  if (QUE_A_INTRODUCAO_NAO_DIZ.test(base)) {
+    return "conteudo";
+  }
+  const palavras = new Set(base.split(/[^\p{L}]+/u));
+  return textosDePreparo.some((t) =>
+    nomesDeRemedioDoTexto(t).some((nome) => palavras.has(nome)),
+  )
+    ? "remedio_do_texto"
+    : null;
+}
+
+/**
+ * O preparo com a introducao antes do bloco exato, ou null (quem chama manda so
+ * o bloco, ou, na retomada, recusa): a mesma conferencia do envio no bloco e,
+ * nela, a regra propria contra o texto deste bloco, o bloco ja com introducao e
+ * a mensagem que passa de 4.096. O hash passa a ser o do corpo inteiro, que a
+ * decisao grava e o gatilho de message confere, separando o bloco de novo.
+ */
+export function comIntroducao(
+  preparo: PreparoAprovado,
+  introducao: string,
+): PreparoAprovado | null {
+  const conferido = conferirParaEnvio(
+    {
+      versao_id: preparo.versaoId,
+      procedure_id: preparo.procedureId,
+      versao: preparo.versao,
+      mensagem: preparo.mensagem,
+      sha256: preparo.sha256,
+    },
+    introducao,
+  );
+  return conferido.tipo === "pronto" ? conferido.preparo : null;
 }
 
 // ---------------------------------------------------------------------------
