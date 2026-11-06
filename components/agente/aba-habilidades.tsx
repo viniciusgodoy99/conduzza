@@ -48,6 +48,8 @@ import type { PreparoDaHabilidade } from "@/lib/domain/preparo";
 // falta um dos dois, a chave fica desligada e desabilitada com a dica
 // DICA_DA_AGENDA_INCOMPLETA, escrita tambem embaixo da descricao (a dica do
 // cursor nao e o unico jeito de saber por que). A acao recusa de novo.
+// Decisao do dono de 06/11/2026: com os dois preenchidos, ela ja aparece
+// ligada (a chave ausente vale ligada), e so quem desligou fica desligado.
 //
 // Fase de teste (decisao do dono de 20/10/2026, revista na onda 2, item
 // 10): a consulta da IA so transforma o contato em paciente quando a equipe

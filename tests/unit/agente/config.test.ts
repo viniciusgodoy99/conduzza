@@ -36,6 +36,7 @@ import {
   HABILIDADES_DO_AGENTE,
   habilidadesComAgenda,
   habilidadesComAgendaSchema,
+  habilidadesParaGravar,
   habilidadesEfetivas,
   habilidadesSchema,
   HORIZONTE_DA_AGENDA,
@@ -259,7 +260,8 @@ describe("habilidades", () => {
     expect(porChave.agendar).toMatchObject({
       titulo: "Agendar consulta",
       travada: false,
-      padrao: false,
+      // Decisao do dono de 06/11/2026: nasce ligada, sem efeito ate a agenda.
+      padrao: true,
       precisaDaAgenda: true,
       // AG3: o cadastro da pessoa (so sinais) e os dados para marcar.
       ferramentas: [
@@ -414,7 +416,8 @@ describe("habilidades", () => {
       informar_preco_e_convenio: true,
       // [AG7 preparo] A orientacao de preparo, desligada por padrao.
       enviar_preparo: false,
-      agendar: false,
+      // Decisao do dono de 06/11/2026: Agendar nasce ligada.
+      agendar: true,
       cancelar: false,
       remarcar: false,
       lista_de_espera: false,
@@ -521,7 +524,8 @@ describe("habilidades", () => {
       informar_preco_e_convenio: false,
       // [AG7 preparo] A orientacao de preparo, desligada por padrao.
       enviar_preparo: false,
-      agendar: false,
+      // Decisao do dono de 06/11/2026: Agendar nasce ligada.
+      agendar: true,
       cancelar: false,
       remarcar: false,
       lista_de_espera: false,
@@ -560,6 +564,81 @@ describe("habilidades", () => {
       }).parse({ agendar: true }).agendar,
     ).toBe(true);
     expect(DICA_DA_AGENDA_INCOMPLETA).not.toMatch(TRAVESSAO);
+  });
+
+  // Decisao do dono de 06/11/2026: "e pra sempre estar ligado". O espelho no
+  // banco: conferir_horario_da_ia e lista_de_espera_da_ia_ligada.
+  describe("Agendar consulta ligada por padrao", () => {
+    const completa = { antecedenciaHoras: 2, horizonteDias: 30 };
+    const incompleta = { antecedenciaHoras: 2, horizonteDias: null };
+
+    it("ausente vale ligada; so o booleano false desliga; o resto vale o padrao", () => {
+      expect(habilidadesComAgenda({}, completa).agendar).toBe(true);
+      expect(habilidadesComAgenda({ agendar: true }, completa).agendar).toBe(true);
+      expect(habilidadesComAgenda({ agendar: false }, completa).agendar).toBe(false);
+      for (const estranho of ["false", null, 0, {}]) {
+        expect(habilidadesComAgenda({ agendar: estranho }, completa).agendar).toBe(true);
+      }
+    });
+
+    it("sem a agenda (D13) nao vale, nem da as ferramentas", () => {
+      for (const agenda of [
+        incompleta,
+        { antecedenciaHoras: null, horizonteDias: 30 },
+        agendaPadrao(),
+      ]) {
+        expect(habilidadesComAgenda({}, agenda).agendar).toBe(false);
+        expect(ferramentasDoAgente(habilidadesEfetivas({}), agenda, null)).not.toContain("agendar");
+      }
+      expect(ferramentasDoAgente(habilidadesEfetivas({}), completa, null)).toEqual(
+        expect.arrayContaining(["buscar_horario", "reservar_horario", "agendar"]),
+      );
+    });
+
+    it("remarcar, cancelar e lista de espera continuam desligadas sem a chave", () => {
+      const valem = habilidadesComAgenda({}, completa, {
+        cancelarHoras: 24,
+        remarcarHoras: 24,
+      });
+      expect(valem).toMatchObject({
+        cancelar: false,
+        remarcar: false,
+        lista_de_espera: false,
+      });
+    });
+
+    it("a chave que nao veio nao e um pedido para ligar; true sem a agenda continua recusado", () => {
+      expect(
+        habilidadesComAgendaSchema(incompleta).safeParse({
+          confirmar_presenca: true,
+        }).success,
+      ).toBe(true);
+      expect(
+        habilidadesComAgendaSchema(incompleta).safeParse({ agendar: true })
+          .success,
+      ).toBe(false);
+    });
+
+    it("com a agenda incompleta, o false da chave presa nao vira escolha gravada", () => {
+      const entrada = {
+        ...habilidadesEfetivas({}),
+        agendar: false,
+        confirmar_presenca: true,
+      };
+      const semAChave = habilidadesParaGravar({ encaixe: true }, entrada, incompleta);
+      expect(semAChave).not.toHaveProperty("agendar");
+      expect(semAChave).toMatchObject({ encaixe: true, confirmar_presenca: true });
+      expect(habilidadesComAgenda(semAChave, completa).agendar).toBe(true);
+      // Quem desligou continua desligado, e quem ligou, ligado.
+      expect(
+        habilidadesParaGravar({ agendar: false }, entrada, incompleta).agendar,
+      ).toBe(false);
+      expect(
+        habilidadesParaGravar({ agendar: true }, entrada, incompleta).agendar,
+      ).toBe(true);
+      // Com a agenda completa, a chave e de verdade: desligar grava false.
+      expect(habilidadesParaGravar({}, entrada, completa).agendar).toBe(false);
+    });
   });
 
   it("o que vale de fato desliga agendar sem a agenda completa", () => {
@@ -2439,8 +2518,12 @@ describe("AG4: prazos para cancelar e remarcar", () => {
       }),
     ).toBe(DICA_DA_REMARCACAO_INCOMPLETA);
     expect(
-      dicaDaHabilidade("remarcar", { ...contexto, habilidades: {} }),
+      dicaDaHabilidade("remarcar", { ...contexto, habilidades: { agendar: false } }),
     ).toBe(DICA_DA_REMARCACAO_INCOMPLETA);
+    // Decisao do dono de 06/11/2026: sem a chave gravada, Agendar vale ligada.
+    expect(
+      dicaDaHabilidade("remarcar", { ...contexto, habilidades: {} }),
+    ).toBeNull();
     expect(
       dicaDaHabilidade("remarcar", { ...contexto, agenda: agendaPadrao() }),
     ).toBe(DICA_DA_REMARCACAO_INCOMPLETA);

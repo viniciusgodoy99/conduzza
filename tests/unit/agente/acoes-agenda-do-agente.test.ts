@@ -369,7 +369,29 @@ describe("Agendar consulta só liga com a agenda do rascunho (salvarHabilidadesA
     });
   });
 
-  it("desligar (ou mexer em outra) sem a agenda continua valendo", async () => {
+  // Decisao do dono de 06/11/2026: sem a agenda, a chave de Agendar fica presa
+  // e a tela manda false; esse false nao e escolha e nao pode ficar gravado.
+  it("mexer em outra sem a agenda vale, e o false da chave presa não é gravado", async () => {
+    expect(
+      await acoes.salvarHabilidadesAction({
+        ...habilidadesEfetivas({}),
+        agendar: false,
+        confirmar_presenca: true,
+      }),
+    ).toEqual({ ok: true });
+    const gravado = (
+      banco.escritas()[0]?.dados as { skills: Record<string, boolean> }
+    ).skills;
+    expect(gravado).toMatchObject({ confirmar_presenca: true });
+    expect(gravado).not.toHaveProperty("agendar");
+  });
+
+  it("quem desligou continua desligado depois de mexer em outra sem a agenda", async () => {
+    banco.rascunho = {
+      skills: { agendar: false },
+      agenda_antecedencia_horas: null,
+      agenda_horizonte_dias: null,
+    };
     expect(
       await acoes.salvarHabilidadesAction({
         ...habilidadesEfetivas({}),
@@ -381,6 +403,24 @@ describe("Agendar consulta só liga com a agenda do rascunho (salvarHabilidadesA
       (banco.escritas()[0]?.dados as { skills: Record<string, boolean> })
         .skills,
     ).toMatchObject({ agendar: false, confirmar_presenca: true });
+  });
+
+  it("com a agenda completa, desligar grava o false", async () => {
+    banco.rascunho = {
+      skills: {},
+      agenda_antecedencia_horas: 2,
+      agenda_horizonte_dias: 30,
+    };
+    expect(
+      await acoes.salvarHabilidadesAction({
+        ...habilidadesEfetivas({}),
+        agendar: false,
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      (banco.escritas()[0]?.dados as { skills: Record<string, boolean> })
+        .skills,
+    ).toMatchObject({ agendar: false });
   });
 
   it("formato errado é recusado antes de tocar o banco", async () => {

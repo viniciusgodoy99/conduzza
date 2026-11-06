@@ -44,7 +44,7 @@ import {
 // ninguem inventa valor: o campo nasce vazio (colunas nulas) e, com um dos
 // dois vazio, a habilidade "Agendar consulta" fica desligada (a aba
 // Habilidades mostra a chave desabilitada com a dica, e o motor e o banco
-// recusam).
+// recusam). Decisao do dono de 06/11/2026: com os dois, ela ja vale.
 //
 // Formulario proprio, com o proprio Salvar (grava agenda_antecedencia_horas e
 // agenda_horizonte_dias no RASCUNHO pela acao salvarAgendaAction, o mesmo

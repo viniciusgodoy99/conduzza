@@ -473,11 +473,13 @@ describe("persona, habilidades e horário", () => {
       }),
     ).toEqual({ ok: true });
     const [escrita] = banco.escritas();
+    // Sem a agenda no rascunho, a chave de Agendar nao e gravada: ausente
+    // continua valendo ligada (decisao do dono de 06/11/2026).
+    const { agendar: _agendar, ...semAgendar } = habilidadesEfetivas({
+      informar_preco_e_convenio: false,
+    });
     expect(escrita?.dados).toEqual({
-      skills: {
-        encaixe: true,
-        ...habilidadesEfetivas({ informar_preco_e_convenio: false }),
-      },
+      skills: { encaixe: true, ...semAgendar },
     });
     expect(
       (escrita?.dados as { skills: Record<string, boolean> }).skills

@@ -316,8 +316,11 @@ export type HabilidadeDoAgente = {
  * o agente sempre pode escalar.
  *
  * E4 (20/10/2026): "Agendar consulta" (buscar, reservar e marcar; a consulta
- * nasce pendente da aprovacao da equipe, D12) e "Confirmar presenca" nascem
- * desligadas. A primeira so liga com a antecedencia e o horizonte (D13).
+ * nasce pendente da aprovacao da equipe, D12) so vale com a antecedencia e o
+ * horizonte (D13). Decisao do dono de 06/11/2026: ela nasce LIGADA (a chave
+ * ausente vale ligada; so o false gravado desliga; o espelho no banco e
+ * conferir_horario_da_ia e lista_de_espera_da_ia_ligada, migration
+ * 20261106110000). "Confirmar presenca" nasce desligada.
  *
  * AG4 (27/10/2026): "Cancelar consulta" (D-9: confirmacao numa mensagem nova
  * e o prazo da clinica) e "Remarcar consulta" (D-10: consulta nova pendente,
@@ -400,7 +403,7 @@ export const HABILIDADES_DO_AGENTE = [
       "registrar_dados_do_paciente",
       "agendar",
     ],
-    padrao: false,
+    padrao: true,
     precisaDaAgenda: true,
     precisaDaHabilidade: null,
     precisaDoPrazo: null,
@@ -850,6 +853,9 @@ export function dicaDaHabilidade(
  * gravada e vale desligada enquanto a outra nao valer (habilidadesComAgenda),
  * como o prazo que a clinica apaga depois de ligar.
  *
+ * Confere a ENTRADA, nao o padrao: "Agendar consulta" nasce ligada, e a chave
+ * que nao veio nao e um pedido para ligar.
+ *
  * `prazos` ausente ou nulo vale os dois vazios (ligar cancelar ou remarcar e
  * recusado).
  */
@@ -857,20 +863,47 @@ export function habilidadesComAgendaSchema(
   agenda: AgendaDoAgente,
   prazos?: PrazosDoAgente | null,
 ) {
-  return habilidadesSchema.superRefine((habilidades, ctx) => {
-    for (const habilidade of HABILIDADES_DO_AGENTE) {
-      if (
-        habilidades[habilidade.chave] &&
-        !camposDaHabilidadePreenchidos(habilidade, agenda, prazos)
-      ) {
-        ctx.addIssue({
-          code: "custom",
-          path: [habilidade.chave],
-          message: habilidade.dicaDaDependencia ?? DICA_DA_AGENDA_INCOMPLETA,
-        });
+  return z
+    .record(z.string(), z.unknown())
+    .superRefine((valor, ctx) => {
+      for (const habilidade of HABILIDADES_DO_AGENTE) {
+        if (
+          valor[habilidade.chave] === true &&
+          !camposDaHabilidadePreenchidos(habilidade, agenda, prazos)
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            path: [habilidade.chave],
+            message: habilidade.dicaDaDependencia ?? DICA_DA_AGENDA_INCOMPLETA,
+          });
+        }
       }
+    })
+    .pipe(habilidadesSchema);
+}
+
+/**
+ * O `skills` a gravar: a entrada sobre o gravado (chave que esta leva nao
+ * conhece nao se perde). Com a agenda incompleta, a chave de "Agendar
+ * consulta" fica presa na tela, que manda o false do que vale de fato, e nao
+ * uma escolha: gravar esse false desligaria a habilidade para sempre depois
+ * que a clinica preenchesse a agenda (decisao do dono de 06/11/2026: so quem
+ * desligou fica desligado). Ali, o gravado fica como esta.
+ */
+export function habilidadesParaGravar(
+  gravado: Readonly<Record<string, unknown>>,
+  entrada: HabilidadesDoAgente,
+  agenda: AgendaDoAgente,
+): Record<string, unknown> {
+  const proximas: Record<string, unknown> = { ...gravado, ...entrada };
+  if (!agendaCompleta(agenda)) {
+    if ("agendar" in gravado) {
+      proximas.agendar = gravado.agendar;
+    } else {
+      delete proximas.agendar;
     }
-  });
+  }
+  return proximas;
 }
 
 // ---------------------------------------------------------------------------

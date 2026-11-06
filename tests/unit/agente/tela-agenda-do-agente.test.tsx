@@ -390,7 +390,7 @@ describe("Regras e limites: limites para marcar consulta", () => {
       expect(campo).not.toContain(' placeholder="');
     }
     expect(html).toMatch(
-      /role="note"[^>]*data-tom="info"[^>]*>(?:(?!<\/div>).)*Com um dos campos vazio, a habilidade Agendar consulta fica desligada\./,
+      /role="note"[^>]*data-tom="info"[^>]*>(?:(?!<\/div>).)*Com um dos campos vazio, a habilidade Agendar consulta não vale: o assistente não marca consultagada\./,
     );
     expect(texto(renderCartao({ agenda: SO_ANTECEDENCIA }))).toContain(
       TEXTOS_DO_AGENTE.agendaIncompleta,

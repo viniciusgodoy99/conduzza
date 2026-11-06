@@ -371,10 +371,11 @@ export const TEXTOS_DO_AGENTE = {
   horarioSalvo: "Horário salvo no rascunho.",
   horarioComErro: "Corrija antes de salvar",
   // Limites para marcar consulta (E4, D13): a clinica preenche; ninguem
-  // inventa valor. Sem os dois, "Agendar consulta" nao liga.
+  // inventa valor. Sem os dois, "Agendar consulta" nao vale (decisao do dono
+  // de 06/11/2026: com os dois, ela ja vale, sem ninguem ligar).
   agendaTitulo: "Limites para marcar consulta",
   agendaDescricao:
-    "A habilidade Agendar consulta só liga com os dois preenchidos. A consulta que o assistente marca fica pendente até a equipe aprovar na Agenda.",
+    "A habilidade Agendar consulta já vem ligada e só passa a valer com os dois preenchidos. A consulta que o assistente marca fica pendente até a equipe aprovar na Agenda.",
   antecedencia: "Antecedência mínima para marcar (horas)",
   antecedenciaDica: (minimo: number, maximo: number) =>
     `De ${minimo} a ${maximo} horas. O assistente só oferece horário que começa depois desse tempo.`,
@@ -382,7 +383,7 @@ export const TEXTOS_DO_AGENTE = {
   horizonteDica: (minimo: number, maximo: number) =>
     `De ${minimo} a ${maximo} dias. O assistente não oferece horário além disso.`,
   agendaIncompleta:
-    "Com um dos campos vazio, a habilidade Agendar consulta fica desligada.",
+    "Com um dos campos vazio, a habilidade Agendar consulta não vale: o assistente não marca consulta.",
   salvarAgenda: "Salvar limites",
   agendaSalva: "Limites para marcar consulta salvos no rascunho.",
   // Quem o assistente atende (onda 2, item 4; decisao P4a do dono). O
