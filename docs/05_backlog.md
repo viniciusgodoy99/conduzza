@@ -1724,6 +1724,28 @@ A revisão curta reproduziu o harness da AG7 numa cópia, com os mesmos números
 21. **Os textos novos das telas** (no contrato: as divergências da frente de telas, com os de Cadastros, Configurações e Tela 6, e as do fechamento, com a ajuda do editor, as frases do conteúdo recusado pelo banco e a da conta da equipe Conduzza). **Recomendo** aprovar como estão; a conferência visual fica com o dono.
 22. **A rodada paga D34** antes de qualquer paciente, com as versões novas (as regras mudaram de novo na correção da revisão curta: `regras-ccaadd3cc0e4`, eram `regras-61b833cd51ab`; o portão, o classificador, o verificador e o prompt não mudaram).
 
+### [ ] Portão de entrada: o pedido administrativo sobre exame não vai mais para a equipe `M` (decisão do dono em 06/11/2026: "preciso que nem tudo vá para a equipe"; construído na branch `agente-portao-exame`; **nada publicado**)
+**O defeito:** a palavra "exame" escalava sozinha. "Quanto custa esse exame?", "quero agendar esses exames", "vocês fazem esse exame?" e "tenho um pedido de exame" iam para a equipe.
+
+**O que passa agora pelo portão:** preço, convênio, agenda, se a clínica faz e ter um pedido do médico, sobre o exame, também com "esse exame" e "esses exames".
+
+**Como:** não é troca local, como a desfeita em 31/10/2026 (deixava passar 21 de 27 sondas clínicas, porque a palavra "exame" era a única trava do que vinha em volta). É uma lista do que passa, lida no **turno inteiro** (`RECEPCAO_DO_EXAME` em `lib/domain/conformidade/padroes.ts`): qualquer palavra fora dela, em qualquer mensagem da rajada, mantém o exame escalando. Convênio e nome de exame também são listas fechadas. O filtro de saída não mudou (`regras-8f0d69e2a40e` nos dois lados).
+
+**O que continua escalando** (trava permanente em `tests/unit/conformidade/portao-recepcao-do-exame.test.ts`): sintoma ou resultado na mesma mensagem ou na mesma rajada ("minha glicose tá alterada, quanto custa esses exames?", "quanto custa esse exame, tô com muita dor", "o médico pediu porque estou com tontura, quanto custa?"), o resultado ("meu exame deu alterado", "o que significa esse resultado?", "esse exame pode ser tumor?"), a dúvida e a conduta ("vale a pena fazer esses exames?", "preciso fazer esse exame?", "qual exame eu devo fazer?", "esse exame dói?", "você faria esse exame?"), a finalidade e o preparo, e o exame sozinho ("exames", "meus exames", "seguem os exames").
+
+**Mais apertado que a produção:** a troca antiga de preço deixou de valer nos padrões. "Minha glicose tá alterada, quanto custa o exame?", com o artigo, passava na produção e agora escala. O custo: pergunta de preço com o artigo e alguma coisa fora da lista ("oi, me chamo Ana, quanto custa o exame?", ou um exame de nome fora da lista) também volta para a equipe. Se isso pesar no uso, a lista cresce.
+
+**Urgência e rede de segurança:** não mudaram. A lista de trocas que a urgência lê é a mesma. Conferência main contra branch, com as 12.882 frases das fixtures e dos testes da conformidade, sozinhas e na rajada nas duas ordens (38.646 leituras): só `assunto_clinico` mudou; nenhuma leitura ganhou ou perdeu urgência, sintoma ou qualquer outro gatilho. O script da conferência ficou fora do repositório; a trava permanente são os testes novos.
+
+**Casos da bateria que mudaram de lado, porque guardavam a decisão antiga** (os ids ficam): as legendas AG6B-P01 a P08, P10 e P12 a P15, as falas AG6B-F01 e F02 e as bordas "(R2, proposta)" de `gatilhos-de-entrada.test.ts`. As 27 sondas e os 7 rascunhos da revisão R2 não mudaram; entraram também nas duas ordens da rajada.
+
+**Versões:** portão `portao-9e835642d49a` para `portao-ac8922f0785a`; classificador (sem a habilidade de preparo) `classificador-03718b05f3a2` para `classificador-bb61a48527c8`. A política do classificador ganhou o pedido administrativo como recepção e, junto, a frase que manda escalar o que vier com sintoma, doença, resultado ou dúvida.
+
+**Resíduos:**
+1. **O classificador não foi medido com o modelo real** (nenhum teste chama a OpenAI). Se ele escalar esses pedidos mesmo com a política nova, o defeito continua aparecendo para o dono, e a medida está na D34.
+2. **A legenda do pedido agora chega ao leitor** ("quanto custa esses exames?" junto da foto), com a habilidade de ler imagem e documento ligada; quem separa pedido de resultado é o leitor. Também depende da D34.
+3. **A rajada são as mensagens ainda sem resposta:** "minha glicose tá alterada" já respondida num turno anterior não segura o "quanto custa esses exames?" do turno seguinte no portão.
+
 ### [ ] Conversas longas e os 5 defeitos que elas acharam `M` (05/11/2026; autorizado pelo dono só em branch: `agente-ag0-conversas`; **nada publicado nem aplicado, sem migration**)
 
 **A suíte:** `tests/unit/agente/conversas-longas.test.ts` e `tests/unit/agente/conversa-longa.ts`, 12 cenários com o LLM falso, sem rede e sem banco. Cada fala roda o job inteiro (o executor, o laço, o filtro e o envio). Os 5 defeitos estavam marcados com `it.fails` e agora são testes comuns.
@@ -1791,28 +1813,6 @@ A revisão curta reproduziu o harness da AG7 numa cópia, com os mesmos números
 - **Falso positivo aceito:** "Não quero marcar nada" conta como pedido; a aprovação do exame ("A equipe já aprovou o exame.") barra com a consulta pendente; "A clínica já confirmou o pagamento da consulta" barra.
 - **Emoji fora da marcação:** o cancelamento, a lista de espera e o menu da régua continuam lendo "Sim 👎" como sim, porque o pedido foi só a marcação e a remarcação. **Ponto para o dono:** a mesma trava neles é uma linha; o cancelamento está em produção e cancelar com "Sim 👎" é o mesmo defeito.
 - **"Seu horário foi liberado"** com a consulta aprovada de verdade também barra (falha fechada).
-
-### [ ] Portão de entrada: o pedido administrativo sobre exame não vai mais para a equipe `M` (decisão do dono em 06/11/2026: "preciso que nem tudo vá para a equipe"; construído na branch `agente-portao-exame`; **nada publicado**)
-**O defeito:** a palavra "exame" escalava sozinha. "Quanto custa esse exame?", "quero agendar esses exames", "vocês fazem esse exame?" e "tenho um pedido de exame" iam para a equipe.
-
-**O que passa agora pelo portão:** preço, convênio, agenda, se a clínica faz e ter um pedido do médico, sobre o exame, também com "esse exame" e "esses exames".
-
-**Como:** não é troca local, como a desfeita em 31/10/2026 (deixava passar 21 de 27 sondas clínicas, porque a palavra "exame" era a única trava do que vinha em volta). É uma lista do que passa, lida no **turno inteiro** (`RECEPCAO_DO_EXAME` em `lib/domain/conformidade/padroes.ts`): qualquer palavra fora dela, em qualquer mensagem da rajada, mantém o exame escalando. Convênio e nome de exame também são listas fechadas. O filtro de saída não mudou (`regras-8f0d69e2a40e` nos dois lados).
-
-**O que continua escalando** (trava permanente em `tests/unit/conformidade/portao-recepcao-do-exame.test.ts`): sintoma ou resultado na mesma mensagem ou na mesma rajada ("minha glicose tá alterada, quanto custa esses exames?", "quanto custa esse exame, tô com muita dor", "o médico pediu porque estou com tontura, quanto custa?"), o resultado ("meu exame deu alterado", "o que significa esse resultado?", "esse exame pode ser tumor?"), a dúvida e a conduta ("vale a pena fazer esses exames?", "preciso fazer esse exame?", "qual exame eu devo fazer?", "esse exame dói?", "você faria esse exame?"), a finalidade e o preparo, e o exame sozinho ("exames", "meus exames", "seguem os exames").
-
-**Mais apertado que a produção:** a troca antiga de preço deixou de valer nos padrões. "Minha glicose tá alterada, quanto custa o exame?", com o artigo, passava na produção e agora escala. O custo: pergunta de preço com o artigo e alguma coisa fora da lista ("oi, me chamo Ana, quanto custa o exame?", ou um exame de nome fora da lista) também volta para a equipe. Se isso pesar no uso, a lista cresce.
-
-**Urgência e rede de segurança:** não mudaram. A lista de trocas que a urgência lê é a mesma. Conferência main contra branch, com as 12.882 frases das fixtures e dos testes da conformidade, sozinhas e na rajada nas duas ordens (38.646 leituras): só `assunto_clinico` mudou; nenhuma leitura ganhou ou perdeu urgência, sintoma ou qualquer outro gatilho. O script da conferência ficou fora do repositório; a trava permanente são os testes novos.
-
-**Casos da bateria que mudaram de lado, porque guardavam a decisão antiga** (os ids ficam): as legendas AG6B-P01 a P08, P10 e P12 a P15, as falas AG6B-F01 e F02 e as bordas "(R2, proposta)" de `gatilhos-de-entrada.test.ts`. As 27 sondas e os 7 rascunhos da revisão R2 não mudaram; entraram também nas duas ordens da rajada.
-
-**Versões:** portão `portao-9e835642d49a` para `portao-ac8922f0785a`; classificador (sem a habilidade de preparo) `classificador-03718b05f3a2` para `classificador-bb61a48527c8`. A política do classificador ganhou o pedido administrativo como recepção e, junto, a frase que manda escalar o que vier com sintoma, doença, resultado ou dúvida.
-
-**Resíduos:**
-1. **O classificador não foi medido com o modelo real** (nenhum teste chama a OpenAI). Se ele escalar esses pedidos mesmo com a política nova, o defeito continua aparecendo para o dono, e a medida está na D34.
-2. **A legenda do pedido agora chega ao leitor** ("quanto custa esses exames?" junto da foto), com a habilidade de ler imagem e documento ligada; quem separa pedido de resultado é o leitor. Também depende da D34.
-3. **A rajada são as mensagens ainda sem resposta:** "minha glicose tá alterada" já respondida num turno anterior não segura o "quanto custa esses exames?" do turno seguinte no portão.
 
 ### [ ] Super admin numa conta só para o painel `M` (decisão do dono em 03/11/2026; construído na branch `super-admin-separado`, a partir do `main` `af40a7e`, com a migration `20261103110000` escrita e ensaiada só no Postgres local; **nada publicado nem aplicado**)
 Decisão do dono em 03/11/2026, **"Conta própria só para o painel"**: o super admin usa um e-mail só para isso; esse e-mail não é membro de clínica nenhuma e cai direto no Painel geral, numa área separada da clínica; para trabalhar numa clínica, a pessoa usa a conta normal. Hoje os dois super admins também administram clínicas (o dono, a teste123 e a Salud Care; o Victor, a Conduzza Teste): são as contas antigas, toleradas até a limpeza. Arquitetura no `docs/03`, 15.6; banco no `docs/04`, seção 39; tela no brief (Tela 14, "A área separada do super admin"); operação em `supabase/operacao/super-admin-separado.md`.
