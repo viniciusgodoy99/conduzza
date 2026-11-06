@@ -1747,7 +1747,7 @@ A marca guarda só ids e instantes (por isso pode ir ao tempo real inteira), é 
 
 Decisões do dono de 28/10/2026: **D-56** (mudada; "Pode usar o whisper": a transcrição é nossa, pela API de transcrição da OpenAI, no nosso servidor, e a uazapi nunca mais transcreve; a exceção à regra "Responses API sempre" está escrita no CLAUDE.md, seção 2, e na seção 14) e **D-14/D-58** ("Ta confirmado": só o leitor de mídia vê o arquivo, com saída fechada; o agente recebe só o texto do pedido; resultado, laudo, receita e foto do corpo vão para a equipe; carteirinha, guia e documento pessoal também, na primeira versão; o que não for identificado também). As decisões do adendo do desenho (`~/.claude/plans/agente-completo/ag6/desenho-ag6b.md`, que substitui o que o desenho da AG6 dizia de áudio, imagem e documento, com os contratos `contrato-ag6b.md` e `contrato-ag6b-motor.md`), **D-90 a D-101**, e as da AG6 que valem aqui (D-57, D-59, D-60, D-61 e D-62, que o desenho dava como "seguem a recomendação" mas nunca vieram do dono) estão **pendentes do dono** e foram construídas com a recomendação (a lista no `docs/05`, entrada "AG6b do agente de IA"). A construção ficou numa cópia separada do repositório (a pasta de trabalho `scratchpad/wt-ag6b`, em `/private/tmp`), na branch local `agente-ag6b`, criada da AG6a revisada (`412176d`). Banco no `docs/04`, seção 37; telas no brief (Tela 1, bloco "O que o assistente transcreveu ou leu"; Tela 6, bloco "Agente completo, AG6b"); spec no `docs/01` (Módulo 1, nota do item 1.15; Módulo 2, nota da AG6b). **Nada disto está no ar:** a migration `20261030100000` só foi ensaiada num Postgres local, não foi ensaiada nem aplicada na produção e espera o ok explícito do dono; vai depois da AG5 (`20261029100000`) e da AG6a (`20261029120000`), as duas também não aplicadas.
 
-> **Decisão do dono de 06/11/2026 (seção 25):** a prova paga foi dispensada, e as constantes abaixo passam a valer quando o código da branch `agente-ligar-teste` for publicado.
+> **Decisão do dono de 06/11/2026 (seção 26):** a prova paga foi dispensada, e as constantes abaixo valem desde a publicação em 06/11/2026.
 
 **Nada sai para a OpenAI antes da prova paga (D-100), mesmo depois de publicar:** `TRANSCRICAO_CALIBRADA` é falsa e os tetos de tokens do leitor (`TETO_DE_TOKENS_POR_IMAGEM` e `TETO_DE_TOKENS_POR_PAGINA`) são nulos. Com as habilidades ligadas, toda mídia fica `fora` no plano do turno e passa para a equipe como hoje (`midia_nao_suportada`), e a Tela 6 diz isso embaixo de cada habilidade ("Ainda não está valendo: ..."). As constantes medidas (a calibragem, os limites das travas, os tetos de tokens e os prazos) entram num commit pequeno depois da prova, com o ok do dono.
 
@@ -2082,7 +2082,7 @@ A conversa do paciente não muda de tratamento: o pedido do preparo é uma mensa
 Banco em `docs/04`, 38.11. No código:
 
 - **As duas recusas novas** moram em `lib/domain/preparo.ts` (`normalizaSintoma` e `ofereceOutroProcedimento`, módulo puro), com a fonte na sintaxe do Postgres, a mesma do banco. `classificarOTexto` (`preparo-aprovado.ts`) as acrescenta como `triagem` e `oferta_casada`, então valem nas três barreiras de sempre: a Server Action ao salvar e ao aprovar, a RPC, e de novo a cada envio (`conferirParaEnvio` e a régua). Só valem para o texto da clínica: `padroes.ts` não mudou, e o filtro da resposta do modelo e a versão das regras seguem como estavam. Medidas contra os controles antes de ligar: 0 de 431 em `CONTROLES_DE_SAIDA`.
-- **Desfeito em 06/11/2026 (seção 25):** este item e o do Painel geral, abaixo, deixam de valer com o código da branch `agente-ligar-teste`.
+- **Desfeito em 06/11/2026 (seção 26):** este item e o do Painel geral, abaixo, deixaram de valer.
 - **O registro do RT conferido:** sem conferência, `preparo_em_vigor` é falso, e o motor, a régua e o gatilho já tratam isso como "sem texto em vigor". Em Cadastros, a seção mostra "Registro do RT ainda não conferido pela Conduzza" e o chip "Aprovada, sem envio" (`situacaoDoPreparoNaTela`, com `registroConferido`); não pede nova aprovação, e "Suspender o envio" continua disponível. A Tela 6 cai em "sem texto aprovado", porque a IA de fato não manda nada.
 - **Remédio ou dose só de CRM ou CRO:** `recusaPeloConselho` (`preparo-aprovado.ts`) usa a detecção que já alimenta o aviso (`medicamento` e `dosagem`), depois de tirar o que não é remédio nem dose (o jejum, tomar água, o frasco que a pessoa traz e informar os medicamentos em uso; `docs/04`, 38.11). A Server Action só lê o RT quando o texto cita remédio ou dose; erro na leitura recusa. O envio pela IA lê o conselho da linha do RT da mensagem, e a régua, do campo `conselho` da leitura; sem conselho conhecido, recusa. O TS lê mais visões que o banco (letras soltas, leet, compacta): tudo o que o banco recusa, o TS recusa, e a paridade do harness confere num corpus com cada remédio do léxico.
 - **O diálogo do RT** nomeia cada categoria do aviso ("cita remédio", "cita dose", "fala de sintoma", "cita jejum ou outro cuidado"); sem conseguir conferir, volta a frase geral.
@@ -2097,7 +2097,7 @@ Pedido do dono: um número conectado conversa com outro, em especial dois númer
 - **Uma conversa só, em quem atende.** O `wa_message_id` é global: a pergunta fica com id próprio do número que recebeu (`entre:<número>:<id>`) e a resposta não vira linha no número que escreveu (`resposta_entre_numeros`). Quem testa lê a conversa no Atendimento da clínica que responde.
 - **`webhook` e motor não mudam.** `route.ts` já responde 200 a toda ignorada. O executor (`lib/jobs/responder-com-ia.ts`) lê `ia_pode_falar_com`, que já olha a marca.
 
-## 26. Agente de IA: ligar o teste, as decisões do dono de 06/11/2026 (construída na branch `agente-ligar-teste`; **não publicada**)
+## 26. Agente de IA: ligar o teste, as decisões do dono de 06/11/2026 (**aplicada e publicada em 06/11/2026**)
 
 O resumo, as decisões com as palavras do dono, as constantes, o custo e o que falta na tela estão no `docs/05`, entrada "Ligar o agente no teste"; o banco, no `docs/04`, seção 42.
 
@@ -2113,7 +2113,7 @@ O resumo, as decisões com as palavras do dono, as constantes, o custo e o que f
 
 **O `whisper-1` tem remoção prevista para 26/02/2027** (seção 23.3 e `docs/05`, D-90): sem o sucessor até lá, todo áudio vai para a equipe.
 
-## 27. Agente de IA: os remédios do preparo e a introdução da IA (06/11/2026; construída na branch `agente-remedios`; **não aplicada nem publicada**; banco no `docs/04`, seção 43)
+## 27. Agente de IA: os remédios do preparo e a introdução da IA (06/11/2026; **aplicada e publicada em 06/11/2026**; banco no `docs/04`, seção 43)
 
 Decisão do dono em 06/11/2026, opção A: "a IA escreve a conversa em volta e o sistema envia a orientação exata". Vale o CLAUDE.md 3.2, com a linha da introdução na exceção da D-80.
 

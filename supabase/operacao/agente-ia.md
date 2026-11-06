@@ -1154,7 +1154,7 @@ Como ler: `desfecho` `falhou` com `motivo_da_falha` `desconhecida` num turno de 
 
 ## Ligar o teste: as decisões do dono de 06/11/2026
 
-Construídas na branch `agente-ligar-teste`, **não publicadas** (`docs/05`, entrada "Ligar o agente no teste"; `docs/04`, seção 42; `docs/03`, seção 25).
+Publicadas em 06/11/2026 (`docs/05`, entrada "Ligar o agente no teste"; `docs/04`, seção 42; `docs/03`, seção 26).
 
 **Ordem, com o ok do dono:** (1) em horário calmo, o ensaio `~/.claude/plans/agente-completo/ligar/ensaio-20261106110000.sql` (`ENSAIO OK`, termina em ROLLBACK) e a migration `20261106110000`: só catálogo, sem trava de tabela; (2) os casos novos de banco, um arquivo por vez; (3) o merge e o push. Rollback: voltar o código e rodar `supabase/operacao/rollback/20261106110000-corpos-anteriores.sql`.
 
