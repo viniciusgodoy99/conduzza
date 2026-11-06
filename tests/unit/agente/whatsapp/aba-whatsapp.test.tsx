@@ -24,6 +24,8 @@ vi.mock("@/app/(app)/agente/whatsapp-actions", () => ({
 
 import {
   TEXTOS_DA_IA,
+  TELEFONE_ENTRE_NUMEROS_STATUS,
+  TEXTOS_DO_ENTRE_NUMEROS,
   TEXTOS_DO_TESTE_COM_PACIENTE,
 } from "@/components/agente/whatsapp/agente-de-ia";
 import {
@@ -380,7 +382,7 @@ describe("permissão", () => {
       expect(campo).toContain('disabled=""');
     }
     const caixas = html.match(/<button[^>]*role="checkbox"[^>]*>/g) ?? [];
-    expect(caixas).toHaveLength(1);
+    expect(caixas).toHaveLength(2);
     for (const caixa of caixas) {
       expect(caixa).toContain('disabled=""');
     }
@@ -521,6 +523,40 @@ describe("ligar só pela equipe Conduzza (E3)", () => {
     // depois da recusa do banco (onda 2, item 3: o administrador tambem)
     expect(html).not.toContain(
       escapado(TEXTOS_DO_TESTE_COM_PACIENTE.confirmacao),
+    );
+  });
+
+  it("número conectado em teste: o chip nas 3 camadas e, com a trava segurando, a frase própria", () => {
+    const telefones = dados().telefones.map((t, i) =>
+      i === 0 ? { ...t, entreNumeros: true } : t,
+    );
+    const html = aba({ dados: dados({ telefones }) });
+    const indice = html.indexOf(TELEFONE_ENTRE_NUMEROS_STATUS.label);
+    expect(indice).toBeGreaterThan(-1);
+    expect(html.slice(Math.max(0, indice - 800), indice)).toContain("<svg");
+    expect(html).not.toContain(escapado(TEXTOS_DO_ENTRE_NUMEROS.paradoNaLinha));
+    const parado = aba({
+      dados: dados({
+        telefones,
+        situacao: {
+          ...dados().situacao,
+          telefonesInvalidos: [telefones[0]!.id],
+        },
+      }),
+    });
+    expect(parado).toContain(escapado(TEXTOS_DO_ENTRE_NUMEROS.paradoNaLinha));
+    expect(parado).not.toContain(escapado(TEXTOS_DA_IA.telefoneInvalidoNaLinha));
+  });
+
+  it("a opção do número conectado: sem permissão, visível e desabilitada; com ela, só no diálogo", () => {
+    const opcao = escapado(TEXTOS_DO_ENTRE_NUMEROS.opcao);
+    const comPermissao = aba();
+    expect(comPermissao).not.toContain(opcao);
+    const semPermissao = aba({ podeEditar: false });
+    const indice = semPermissao.indexOf(opcao);
+    expect(indice).toBeGreaterThan(-1);
+    expect(semPermissao.slice(Math.max(0, indice - 500), indice)).toMatch(
+      /disabled/,
     );
   });
 

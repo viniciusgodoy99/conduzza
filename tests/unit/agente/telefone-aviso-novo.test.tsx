@@ -530,7 +530,7 @@ describe("o chip do telefone com o aviso antigo", () => {
 
   it("a lista de telefones lê a versão do aviso", async () => {
     expect(COLUNAS_DOS_TELEFONES).toBe(
-      "id, phone_key, rotulo, ativo, aviso_da_openai_versao",
+      "id, phone_key, rotulo, ativo, aviso_da_openai_versao, entre_numeros",
     );
     const banco = sessaoDaAba();
     const lidos = await lerLiberacaoDeVerdade(banco.cliente, CLINICA_LIDA);

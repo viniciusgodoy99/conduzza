@@ -235,7 +235,7 @@ export function telefonesForaDoPublico(dados: DadosDaIa): readonly string[] {
 
 /** Por que um telefone da lista nao aciona o assistente. */
 export type MotivoDoTelefone =
-  "invalido" | "sem_autorizacao" | "fora_do_publico";
+  "invalido" | "sem_autorizacao" | "fora_do_publico" | "entre_numeros_parado";
 
 /**
  * Por que o telefone nao aciona o assistente, ou null (aciona quando
@@ -246,14 +246,17 @@ export type MotivoDoTelefone =
  * (situacao.telefonesSemAutorizacao): o contato revogou a autorizacao para
  * receber mensagens, e o executor passa a conversa sem responder.
  * "fora_do_publico" (onda 2, P4b): o contato nao cabe no publico escolhido
- * em Regras e limites (so leads, so pacientes).
+ * em Regras e limites (so leads, so pacientes). "entre_numeros_parado": numero
+ * conectado marcado para teste que a trava contra o laco segurou agora.
  */
 export function porQueNaoAciona(
   dados: DadosDaIa,
   telefoneId: string,
 ): MotivoDoTelefone | null {
   if (dados.situacao.telefonesInvalidos.includes(telefoneId)) {
-    return "invalido";
+    return dados.telefones.some((t) => t.id === telefoneId && t.entreNumeros)
+      ? "entre_numeros_parado"
+      : "invalido";
   }
   if (dados.situacao.telefonesSemAutorizacao.includes(telefoneId)) {
     return "sem_autorizacao";
@@ -273,6 +276,8 @@ export function textoDoTelefoneQueNaoAciona(motivo: MotivoDoTelefone): string {
       return TEXTOS_DA_IA.telefoneSemAutorizacaoNaLinha;
     case "fora_do_publico":
       return TEXTOS_DA_IA.telefoneForaDoPublicoNaLinha;
+    case "entre_numeros_parado":
+      return TEXTOS_DO_ENTRE_NUMEROS.paradoNaLinha;
   }
 }
 
@@ -661,6 +666,13 @@ export const TELEFONE_SEM_MIDIA_STATUS: StatusDefinition = {
   icon: Hourglass,
 };
 
+/** O numero conectado marcado para teste: FlaskConical info, o mesmo sentido de teste. */
+export const TELEFONE_ENTRE_NUMEROS_STATUS: StatusDefinition = {
+  label: "Número conectado, só para teste",
+  tone: "info",
+  icon: FlaskConical,
+};
+
 /** A versao do aviso que o telefone confirmou; ausente vale 1 (o lado seguro). */
 export function versaoDoAvisoDoTelefone(
   telefone: Pick<TelefoneDaIa, "avisoDaOpenaiVersao">,
@@ -1011,6 +1023,25 @@ export const TEXTOS_DO_TESTE_COM_PACIENTE = {
   usando: "Salvando...",
 } as const;
 
+/** O numero conectado usado so para teste (decisao do dono de 06/11/2026). */
+export const TEXTOS_DO_ENTRE_NUMEROS = {
+  detectado:
+    "Este é um número conectado ao Conduzza. Para usar só em teste, confirme na janela que abriu.",
+  titulo: "Usar este número conectado só para teste?",
+  texto:
+    "O assistente vai responder às mensagens deste número, como responde a um paciente. Não dá para ligar nos dois sentidos: se o outro lado também estiver com o assistente ligado para responder, ele para. Use por pouco tempo, porque conversa automática entre números pode levar ao bloqueio do número no WhatsApp.",
+  opcao: "É um número conectado, usar só para teste",
+  naoConfirmado: "Marque a opção para usar este número só para teste.",
+  botao: "Usar só para teste",
+  usando: "Salvando...",
+  reciproco:
+    "Não dá para ligar nos dois sentidos: o outro número já está marcado para testar com este. Desligue lá primeiro.",
+  foraDaFase:
+    "Esta clínica ainda não pode usar número conectado para teste do assistente.",
+  paradoNaLinha:
+    "O assistente não responde a este número agora. Confira se ele está ligado no número que recebe e desligado no número que escreve.",
+} as const;
+
 /**
  * O texto de um motivo da parada para quem le. O super admin e a equipe
  * Conduzza: nos motivos que mandam falar com ela (servidor, interruptor e
@@ -1277,6 +1308,12 @@ export const telefoneDaEquipeSchema = z
      * (23514 teste_com_paciente_nao_confirmado).
      */
     confirmouTesteComPaciente: z.boolean().optional(),
+    /**
+     * A opcao "E um numero conectado, usar so para teste" (TEXTOS_DO_ENTRE_NUMEROS),
+     * depois da recusa do numero conectado. O banco confere de novo: so na
+     * clinica da fase ou de teste, nunca fechando o par.
+     */
+    confirmouEntreNumeros: z.boolean().optional(),
   })
   .strict();
 

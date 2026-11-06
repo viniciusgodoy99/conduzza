@@ -9,6 +9,7 @@ import {
   MODO_DA_ESCOLHA,
   telefoneDaEquipeSchema,
   TEXTOS_DA_IA,
+  TEXTOS_DO_ENTRE_NUMEROS,
   TEXTOS_DO_TESTE_COM_PACIENTE,
   // [AG6b mídia] início
   VERSAO_DO_AVISO_DA_OPENAI,
@@ -99,6 +100,7 @@ export type ResultadoDaIa =
       error: string;
       pedeConfirmacao?: true;
       pedeForcar?: true;
+      pedeEntreNumeros?: true;
     };
 
 const TEXTOS = {
@@ -357,6 +359,12 @@ function textoDoErro(kind: string, error: ErroDoBanco, outro: string): string {
   if (kind.startsWith("telefone_") && codigo === "23514") {
     if (chave === "telefone_invalido_para_equipe") {
       return TEXTOS_DA_IA.telefoneDaPlataforma;
+    }
+    if (chave === "entre_numeros_reciproco") {
+      return TEXTOS_DO_ENTRE_NUMEROS.reciproco;
+    }
+    if (chave === "entre_numeros_fora_da_fase") {
+      return TEXTOS_DO_ENTRE_NUMEROS.foraDaFase;
     }
     if (chave === "contato_de_paciente") {
       return TEXTOS_DA_IA.contatoDePaciente;
@@ -751,6 +759,7 @@ export async function adicionarTelefoneDaIaAction(
     return falhou(guardaOk, "telefone_linha", linha, TEXTOS.naoAlterou);
   }
   const forcar = forcarContatoDePaciente === true;
+  const entreNumeros = parsed.data.confirmouEntreNumeros === true;
   // Sempre por nome de parametro: a assinatura tem o forcar (E3), a
   // confirmacao do aviso da OpenAI (migration 20261019120000) e, com o
   // forcar, a confirmacao do teste (onda 2, item 3). O schema so aceita a
@@ -770,6 +779,9 @@ export async function adicionarTelefoneDaIaAction(
     // a OpenAI (D-95).
     p_versao_do_aviso: VERSAO_DO_AVISO_DA_OPENAI,
     // [AG6b mídia] fim
+    // So com a opcao marcada: a assinatura de antes da migration 20261106100000
+    // continua servindo ao resto.
+    ...(entreNumeros ? { p_confirmou_entre_numeros: true } : {}),
   });
   if (error) {
     const resultado = falhou(
@@ -788,6 +800,19 @@ export async function adicionarTelefoneDaIaAction(
       (error.message ?? "").trim() === "contato_de_paciente"
     ) {
       return { ...resultado, pedeForcar: true };
+    }
+    // Numero conectado: em vez da recusa, a opcao de usar so para teste.
+    if (
+      !resultado.ok &&
+      !entreNumeros &&
+      error.code === "23514" &&
+      (error.message ?? "").trim() === "telefone_invalido_para_equipe"
+    ) {
+      return {
+        ok: false,
+        error: TEXTOS_DO_ENTRE_NUMEROS.detectado,
+        pedeEntreNumeros: true,
+      };
     }
     return resultado;
   }

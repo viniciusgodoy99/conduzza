@@ -69,7 +69,9 @@ import {
   textosDaParada,
   // [AG6b mídia] início
   podeConfirmarOAvisoNovo,
+  TELEFONE_ENTRE_NUMEROS_STATUS,
   TELEFONE_SEM_MIDIA_STATUS,
+  TEXTOS_DO_ENTRE_NUMEROS,
   telefoneSemMidia,
   textoDoTelefoneSemMidia,
   // [AG6b mídia] fim
@@ -241,6 +243,7 @@ type DepoisDaAcao = {
   seDerCerto?: () => void;
   sePedirConfirmacao?: () => void;
   sePedirForcar?: () => void;
+  sePedirEntreNumeros?: () => void;
 };
 
 /**
@@ -274,6 +277,9 @@ export function useAcaoDaIa() {
           }
           if (r.pedeForcar) {
             depois.sePedirForcar?.();
+          }
+          if (r.pedeEntreNumeros) {
+            depois.sePedirEntreNumeros?.();
           }
         }
         setResultado(anunciar(r, sucesso));
@@ -1057,6 +1063,7 @@ type DepoisDeAdicionar = {
   seDerCerto?: () => void;
   sePedirConfirmacao?: () => void;
   sePedirForcar?: () => void;
+  sePedirEntreNumeros?: () => void;
 };
 
 /**
@@ -1252,6 +1259,7 @@ export function CartaoDosTelefones({
     confirmarContato: false,
     forcarContatoDePaciente: false,
     confirmouTesteComPaciente: false,
+    confirmouEntreNumeros: false,
   };
   const form = useForm<ValoresDoTelefone, unknown, TelefoneValidado>({
     resolver: zodResolver(telefoneDaEquipeSchema),
@@ -1272,6 +1280,12 @@ export function CartaoDosTelefones({
     digitado: string;
   } | null>(null);
   const [confirmouTeste, setConfirmouTeste] = useState(false);
+  // O numero conectado usado so para teste: como o "Usar mesmo assim".
+  const [marcandoEntreNumeros, setMarcandoEntreNumeros] = useState<{
+    valores: TelefoneValidado;
+    digitado: string;
+  } | null>(null);
+  const [confirmouEntreNumeros, setConfirmouEntreNumeros] = useState(false);
   // O telefone a excluir (o dialogo de confirmacao).
   const [excluindo, setExcluindo] = useState<TelefoneDaIa | null>(null);
   // [AG6b mídia] início
@@ -1311,6 +1325,23 @@ export function CartaoDosTelefones({
     setConfirmacaoPara(null);
     setForcando(null);
     setConfirmouTeste(false);
+    setMarcandoEntreNumeros(null);
+    setConfirmouEntreNumeros(false);
+  };
+
+  const fecharEntreNumeros = () => {
+    setMarcandoEntreNumeros(null);
+    setConfirmouEntreNumeros(false);
+  };
+
+  const confirmarEntreNumeros = () => {
+    if (!marcandoEntreNumeros || !confirmouEntreNumeros) {
+      return;
+    }
+    aoAdicionar(
+      { ...marcandoEntreNumeros.valores, confirmouEntreNumeros: true },
+      { sempre: fecharEntreNumeros, seDerCerto: limpar },
+    );
   };
 
   const fecharForcar = () => {
@@ -1388,6 +1419,8 @@ export function CartaoDosTelefones({
                   // O forcar so sai pelo dialogo (confirmarForcar).
                   forcarContatoDePaciente: false,
                   confirmouTesteComPaciente: false,
+                  // A opcao so sai pelo dialogo (confirmarEntreNumeros).
+                  confirmouEntreNumeros: false,
                 };
                 aoAdicionar(enviados, {
                   seDerCerto: limpar,
@@ -1398,6 +1431,10 @@ export function CartaoDosTelefones({
                   sePedirForcar: () => {
                     setConfirmouTeste(false);
                     setForcando({ valores: enviados, digitado });
+                  },
+                  sePedirEntreNumeros: () => {
+                    setConfirmouEntreNumeros(false);
+                    setMarcandoEntreNumeros({ valores: enviados, digitado });
                   },
                 });
               })(evento)
@@ -1497,6 +1534,19 @@ export function CartaoDosTelefones({
                   </FormItem>
                 )}
               />
+            ) : null}
+            {/* Sem permissao, a opcao fica visivel e desabilitada, com a dica;
+                com ela, abre no dialogo quando o telefone e um numero conectado. */}
+            {dica !== null ? (
+              <div className="flex min-h-10 items-center gap-3 sm:col-span-3">
+                {comDica(<Checkbox id={`${ids}-entre-sem-permissao`} disabled />, dica)}
+                <Label
+                  htmlFor={`${ids}-entre-sem-permissao`}
+                  className="text-[13px] leading-snug font-normal"
+                >
+                  {TEXTOS_DO_ENTRE_NUMEROS.opcao}
+                </Label>
+              </div>
             ) : null}
           </form>
         </Form>
@@ -1625,6 +1675,12 @@ export function CartaoDosTelefones({
                           />
                         ) : null}
                         {/* [AG6b mídia] fim */}
+                        {telefone.entreNumeros ? (
+                          <StatusChip
+                            size="sm"
+                            definition={TELEFONE_ENTRE_NUMEROS_STATUS}
+                          />
+                        ) : null}
                       </span>
                     </div>
                     <div className="flex flex-wrap items-center gap-1">
@@ -1812,6 +1868,66 @@ export function CartaoDosTelefones({
                 (confirmouTeste
                   ? null
                   : TEXTOS_DO_TESTE_COM_PACIENTE.naoConfirmado),
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* O numero conectado so para teste: so com a opcao marcada; fica
+          registrado no nome de quem marca. */}
+      <Dialog
+        open={
+          marcandoEntreNumeros !== null &&
+          marcandoEntreNumeros.digitado === telefoneDigitado
+        }
+        onOpenChange={(aberto) =>
+          !aberto && !pendente ? fecharEntreNumeros() : null
+        }
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>{TEXTOS_DO_ENTRE_NUMEROS.titulo}</DialogTitle>
+            <DialogDescription>{TEXTOS_DO_ENTRE_NUMEROS.texto}</DialogDescription>
+          </DialogHeader>
+          <div className="flex min-h-10 items-start gap-3">
+            <Checkbox
+              id={`${ids}-entre-numeros`}
+              checked={confirmouEntreNumeros}
+              onCheckedChange={(valor) =>
+                setConfirmouEntreNumeros(valor === true)
+              }
+              disabled={pendente || dica !== null}
+              className="mt-0.5"
+            />
+            <Label
+              htmlFor={`${ids}-entre-numeros`}
+              className="text-[13px] leading-snug font-normal"
+            >
+              {TEXTOS_DO_ENTRE_NUMEROS.opcao}
+            </Label>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              disabled={pendente}
+              onClick={fecharEntreNumeros}
+            >
+              Cancelar
+            </Button>
+            {comDica(
+              <Button
+                disabled={pendente || !confirmouEntreNumeros || dica !== null}
+                aria-busy={ocupado("telefone-novo") || undefined}
+                onClick={confirmarEntreNumeros}
+              >
+                {ocupado("telefone-novo")
+                  ? TEXTOS_DO_ENTRE_NUMEROS.usando
+                  : TEXTOS_DO_ENTRE_NUMEROS.botao}
+              </Button>,
+              dica ??
+                (confirmouEntreNumeros
+                  ? null
+                  : TEXTOS_DO_ENTRE_NUMEROS.naoConfirmado),
             )}
           </DialogFooter>
         </DialogContent>
