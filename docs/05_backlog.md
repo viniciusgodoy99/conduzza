@@ -1844,9 +1844,6 @@ Troca o "Ainda não medido" do desempenho da recepcionista de IA, em Resultados,
 
 **A aplicar, com o ok do dono de 05/11/2026 e depois da AG5 no ar:** o ensaio na produção, a migration, `npm run test:rls -- relatorios`, `npm run test:integration -- relatorios` e a publicação do código, em qualquer ordem entre o código e a migration.
 
-### [ ] Sincronização de gasto da Meta parada desde 23/10/2026
-Achado em 05/11/2026: 6 jobs `sincronizar_gasto_meta`, criados em 22/10/2026 e com `run_at` em 23/10/2026, seguem `pendente` em `job_queue`, sem tentativa, de clínicas diferentes, e o motor não os reivindica (`reivindicados: 0` a cada ciclo). Não é da AG5: é de antes dela. Falta investigar por que não são reivindicados e se o gasto da Meta está desatualizado.
-
 ### [ ] Contrato dos pacotes
 Migration de contrato do pacote com vários procedimentos (a `20260929120000` foi o expand). **Só roda depois do código novo publicado**: até lá, o código antigo depende dos gatilhos legados.
 **Pré-requisitos (migrar antes para `package_item` e `package_balance_item`):**

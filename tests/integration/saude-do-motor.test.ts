@@ -61,7 +61,11 @@ describe("runs órfãs", () => {
   it("toque cujo job morreu de vez é fechado, não fica pendurado para sempre", async () => {
     const { data: clinica } = await admin
       .from("clinic")
-      .insert({ name: `Órfã ${sufixo}`, slug: `orfa-${sufixo}` })
+      .insert({
+        e_de_teste: true,
+        name: `Órfã ${sufixo}`,
+        slug: `orfa-${sufixo}`,
+      })
       .select("id")
       .single()
       .throwOnError();
@@ -122,7 +126,11 @@ describe("runs órfãs", () => {
   it("não encosta em run que já foi enviada", async () => {
     const { data: clinica } = await admin
       .from("clinic")
-      .insert({ name: `Órfã ok ${sufixo}`, slug: `orfa-ok-${sufixo}` })
+      .insert({
+        e_de_teste: true,
+        name: `Órfã ok ${sufixo}`,
+        slug: `orfa-ok-${sufixo}`,
+      })
       .select("id")
       .single()
       .throwOnError();

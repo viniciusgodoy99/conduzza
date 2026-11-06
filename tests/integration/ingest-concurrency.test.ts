@@ -38,7 +38,11 @@ async function ingest(
 beforeAll(async () => {
   const { data, error } = await admin
     .from("clinic")
-    .insert({ name: `Ingest ${suffix}`, slug: `ingest-${suffix}` })
+    .insert({
+      e_de_teste: true,
+      name: `Ingest ${suffix}`,
+      slug: `ingest-${suffix}`,
+    })
     .select("id")
     .single();
   if (error || !data) {

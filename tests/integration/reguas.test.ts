@@ -47,6 +47,7 @@ async function montarCenario(nome: string): Promise<Cenario> {
   const { data: clinica } = await admin
     .from("clinic")
     .insert({
+      e_de_teste: true,
       name: `Régua ${nome} ${sufixo}`,
       slug: `regua-${nome}-${sufixo}`,
     })

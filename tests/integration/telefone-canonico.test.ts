@@ -54,7 +54,11 @@ async function contatosDaChave(chave: string) {
 beforeAll(async () => {
   const { data } = await admin
     .from("clinic")
-    .insert({ name: `Telefone ${sufixo}`, slug: `telefone-${sufixo}` })
+    .insert({
+      e_de_teste: true,
+      name: `Telefone ${sufixo}`,
+      slug: `telefone-${sufixo}`,
+    })
     .select("id")
     .single()
     .throwOnError();

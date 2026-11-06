@@ -34,7 +34,11 @@ function slot(horaInicio: string, horaFim: string) {
 beforeAll(async () => {
   const { data: clinica } = await admin
     .from("clinic")
-    .insert({ name: `Agenda Conc ${sufixo}`, slug: `agc-${sufixo}` })
+    .insert({
+      e_de_teste: true,
+      name: `Agenda Conc ${sufixo}`,
+      slug: `agc-${sufixo}`,
+    })
     .select("id")
     .single()
     .throwOnError();

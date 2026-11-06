@@ -31,7 +31,11 @@ describe("textos padrão das réguas", () => {
     const sufixo = Date.now().toString(36);
     const { data: clinica } = await admin
       .from("clinic")
-      .insert({ name: `Textos ${sufixo}`, slug: `textos-${sufixo}` })
+      .insert({
+        e_de_teste: true,
+        name: `Textos ${sufixo}`,
+        slug: `textos-${sufixo}`,
+      })
       .select("id")
       .single()
       .throwOnError();
