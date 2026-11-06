@@ -1902,7 +1902,17 @@ begin
   if v_rt.ate is not null then
     raise exception using errcode = 'P0001', message = 'responsavel_encerrado';
   end if;
-  if v_rt.user_id = auth.uid() then
+  -- O proprio RT, pela conta ou pelo e-mail: o RT com a conta do painel
+  -- separada ("ana+painel@") tem o mesmo e-mail sem o sufixo. Quem usa outro
+  -- e-mail passa: so a equipe Conduzza saber quem e quem fecha esse caso.
+  if v_rt.user_id = auth.uid()
+     or exists (select 1
+                  from auth.users u
+                  join auth.users r on r.id = v_rt.user_id
+                 where u.id = auth.uid()
+                   and regexp_replace(lower(u.email), '\+[^@]*@', '@')
+                     = regexp_replace(lower(r.email), '\+[^@]*@', '@'))
+  then
     raise exception using errcode = '42501', message = c_frase_proprio;
   end if;
   if v_rt.registro_conferido_em is not null then
@@ -1925,7 +1935,7 @@ grant execute on function public.conferir_registro_do_responsavel_tecnico(uuid)
   to authenticated;
 
 comment on function public.conferir_registro_do_responsavel_tecnico(uuid) is
-  'Painel geral (authenticated; so o super admin passa). AG7, decisao do dono de 05/11/2026: marca o registro do RT como conferido no portal do conselho (registro_conferido_em, registro_conferido_por = auth.uid()). Na ordem: 22004 parametro_nulo; 42501 "Só a equipe Conduzza confere o registro do responsável técnico." (is_product_admin; nem o proprio RT, nem os papeis da clinica); a trava da designacao (FOR UPDATE); P0001 sem_responsavel_tecnico; P0001 responsavel_encerrado (a designacao que a tela mostrou ja acabou); 42501 "O próprio responsável técnico não confere o registro dele." (conta antiga de super admin designada antes); P0001 registro_ja_conferido. Trilha conferiu_registro_do_responsavel_tecnico {user_id}. Devolve quando conferiu. Nunca 40001 nem 40P01.';
+  'Painel geral (authenticated; so o super admin passa). AG7, decisao do dono de 05/11/2026: marca o registro do RT como conferido no portal do conselho (registro_conferido_em, registro_conferido_por = auth.uid()). Na ordem: 22004 parametro_nulo; 42501 "Só a equipe Conduzza confere o registro do responsável técnico." (is_product_admin; nem o proprio RT, nem os papeis da clinica); a trava da designacao (FOR UPDATE); P0001 sem_responsavel_tecnico; P0001 responsavel_encerrado (a designacao que a tela mostrou ja acabou); 42501 "O próprio responsável técnico não confere o registro dele." (a mesma conta, ou a conta com o mesmo e-mail sem o sufixo depois do +; outro e-mail nao se detecta); P0001 registro_ja_conferido. Trilha conferiu_registro_do_responsavel_tecnico {user_id}. Devolve quando conferiu. Nunca 40001 nem 40P01.';
 
 -- ---------------------------------------------------------------------------
 -- 9) mensagem_ia_exige_aprovacao: o ramo do preparo
