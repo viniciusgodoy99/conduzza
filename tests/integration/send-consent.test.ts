@@ -37,7 +37,11 @@ beforeAll(async () => {
 
   const { data: clinic, error: clinicError } = await admin
     .from("clinic")
-    .insert({ name: `Send ${suffix}`, slug: `send-${suffix}` })
+    .insert({
+      e_de_teste: true,
+      name: `Send ${suffix}`,
+      slug: `send-${suffix}`,
+    })
     .select("id")
     .single();
   if (clinicError || !clinic) {

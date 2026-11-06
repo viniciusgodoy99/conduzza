@@ -26,7 +26,11 @@ const numeroDaClinica = new Map<string, string>();
 async function criarClinica(nome: string): Promise<string> {
   const { data } = await admin
     .from("clinic")
-    .insert({ name: `Job ${nome} ${sufixo}`, slug: `job-${nome}-${sufixo}` })
+    .insert({
+      e_de_teste: true,
+      name: `Job ${nome} ${sufixo}`,
+      slug: `job-${nome}-${sufixo}`,
+    })
     .select("id")
     .single()
     .throwOnError();

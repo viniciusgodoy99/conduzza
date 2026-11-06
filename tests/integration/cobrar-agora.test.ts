@@ -67,6 +67,7 @@ async function montarCenario(
   const { data: clinica } = await admin
     .from("clinic")
     .insert({
+      e_de_teste: true,
       name: `Cobrança ${nome} ${sufixo}`,
       slug: `cobranca-${nome}-${sufixo}`,
     })

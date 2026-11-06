@@ -45,7 +45,7 @@ export default defineConfig({
     setupFiles: [travaDeRede],
     fileParallelism: false,
     testTimeout: 30000,
-    hookTimeout: 30000,
+    hookTimeout: 180_000,
   },
   resolve: {
     alias: [

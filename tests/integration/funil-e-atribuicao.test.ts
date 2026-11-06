@@ -33,7 +33,11 @@ type AgendaMinima = {
 async function criarClinica(nome: string): Promise<string> {
   const { data } = await admin
     .from("clinic")
-    .insert({ name: `Funil ${nome} ${sufixo}`, slug: `fun-${nome}-${sufixo}` })
+    .insert({
+      e_de_teste: true,
+      name: `Funil ${nome} ${sufixo}`,
+      slug: `fun-${nome}-${sufixo}`,
+    })
     .select("id")
     .single()
     .throwOnError();

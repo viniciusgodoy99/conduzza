@@ -139,7 +139,7 @@ beforeAll(async () => {
   } else {
     const { data, error } = await admin
       .from("clinic")
-      .insert({ name: "Clínica Equipe RLS", slug: SLUG })
+      .insert({ e_de_teste: true, name: "Clínica Equipe RLS", slug: SLUG })
       .select("id")
       .single();
     if (error || !data) {
@@ -528,6 +528,7 @@ describe("o vínculo não muda de clínica nem de pessoa", () => {
     const { data } = await admin
       .from("clinic")
       .insert({
+        e_de_teste: true,
         name: "Clínica Vizinha RLS",
         slug: `rls-equipe-vizinha-${SUFIXO}`,
       })

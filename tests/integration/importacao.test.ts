@@ -30,6 +30,7 @@ async function criarClinica(nome: string): Promise<string> {
   const { data } = await admin
     .from("clinic")
     .insert({
+      e_de_teste: true,
       name: `Importa ${nome} ${sufixo}`,
       slug: `imp-${nome}-${sufixo}`,
     })

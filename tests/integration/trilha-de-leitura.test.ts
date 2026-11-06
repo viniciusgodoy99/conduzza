@@ -75,7 +75,11 @@ async function leiturasDoContato(entityId: string) {
 beforeAll(async () => {
   const { data: clinica } = await admin
     .from("clinic")
-    .insert({ name: `Trilha ${sufixo}`, slug: `trilha-${sufixo}` })
+    .insert({
+      e_de_teste: true,
+      name: `Trilha ${sufixo}`,
+      slug: `trilha-${sufixo}`,
+    })
     .select("id")
     .single()
     .throwOnError();
