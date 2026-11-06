@@ -546,7 +546,10 @@ describe("AG6b: os espelhos da midia", () => {
 
   it("gravar_leitura_da_midia, a mais nova (matriz de 06/11/2026): os erros, as recusas e o que nao recusa", () => {
     const { arquivo, corpo } = corpoMaisNovo("gravar_leitura_da_midia");
-    expect(arquivo).toBe("20261106130000_leitor_carteirinha_e_ilegivel.sql");
+    expect(arquivo).toBe("20261106140000_midia_sempre_ligada.sql");
+    // Decisao do dono de 06/11/2026: a midia vale sempre; o telefone continua.
+    expect(corpo).not.toMatch(/ler_audio|ler_imagem_e_documento|v_skills/);
+    expect(corpo).toContain("midia_da_ia_liberada");
     expect(
       [...corpo.matchAll(/errcode = '(?:22023|22004)', message = '([a-z_]+)'/g)].map((m) => m[1]),
     ).toEqual([...ERROS_DA_GRAVACAO]);

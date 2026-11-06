@@ -446,7 +446,7 @@ describe("falha fechada da transcricao", () => {
 });
 
 describe("o prompt com o audio (desenho 5.4)", () => {
-  it("a linha do audio so com a habilidade valendo", () => {
+  it("a linha do audio vale sempre (decisao do dono de 06/11/2026)", () => {
     const comAudio = montarInstrucoes({
       config: config(),
       catalogo: CATALOGO,
@@ -457,14 +457,14 @@ describe("o prompt com o audio (desenho 5.4)", () => {
     expect(FRASES_DO_ATENDIMENTO.audioLigado).toContain(
       "CPF e número da carteirinha, peça para a pessoa digitar",
     );
-    const semAudio = montarInstrucoes({
+    const padrao = montarInstrucoes({
       config: configPadraoDoAgente(),
       catalogo: CATALOGO,
       agoraTexto: "quinta-feira, 30/10/2026, 12:00",
     });
-    expect(semAudio).not.toContain(FRASES_DO_ATENDIMENTO.audioLigado);
+    expect(padrao).toContain(FRASES_DO_ATENDIMENTO.audioLigado);
     // O "Nunca" vale sempre.
-    expect(semAudio).toContain(
+    expect(padrao).toContain(
       "- peça foto, áudio, documento ou arquivo, a não ser uma foto mais nítida quando a mensagem disser para pedir;",
     );
   });

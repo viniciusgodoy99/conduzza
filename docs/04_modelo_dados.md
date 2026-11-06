@@ -5173,3 +5173,10 @@ O dono: "preciso que nem tudo vá para a equipe". A decisão de cada arquivo é 
 **Tipos:** à mão em `lib/supabase/database.types.ts`: `ia_leitura_da_midia.convenio_lido_id`, os dois parâmetros novos, `p_contato` e a função interna. Conferir com `supabase gen types` depois de aplicar.
 
 **Escritas e não rodadas:** os casos novos de `tests/integration/midia-pela-ia.test.ts` ("a matriz de arquivos"), `tests/integration/agendamento-completo-da-ia.test.ts` ("a carteirinha que já está no cadastro") e `tests/rls/midia-pela-ia.test.ts` ("a carteirinha lida").
+
+## 45. Áudio, foto e PDF sempre ligados (decisão do dono de 06/11/2026, migration `20261106140000_midia_sempre_ligada.sql`; **aplicada na produção em 06/11/2026**)
+
+`gravar_leitura_da_midia` deixa de ler `ai_agent_config.skills`: saem as constantes `c_habilidade_do_audio` e `c_habilidade_do_arquivo` e a variável `v_skills`. A recusa `leitura_desligada` fica só para a clínica sem versão publicada. O resto do corpo é igual ao da seção 44, com os mesmos grants (`create or replace`). `midia_da_ia_liberada` (D-95) não muda. As chaves antigas em `skills` ficam gravadas e não valem mais.
+
+**Travas:** só catálogo, nenhuma tabela. **Ordem:** a migration antes do código. **Rollback:** `supabase/operacao/rollback/20261106140000-corpo-anterior.sql`, depois de voltar o código. **Ensaio:** `~/.claude/plans/agente-completo/midia-sempre/ensaio-20261106140000.sql`, com o corpo de antes conferido por md5 e a volta do rollback.
+

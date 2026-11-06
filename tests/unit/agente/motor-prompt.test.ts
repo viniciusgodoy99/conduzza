@@ -106,7 +106,8 @@ describe("montarInstrucoes", () => {
       "<atendimento>",
       "<instrucoes_da_clinica>",
       "<base_da_clinica>",
-      "<procedimentos>",
+      // A frase do arquivo cita o bloco: aqui, a linha que o abre.
+      "\n<procedimentos>\n",
       "Agora na clínica:",
     ].map((marca) => texto.indexOf(marca, TEXTO_FIXO_DO_AGENTE.length));
     expect(posicoes.every((p) => p > 0)).toBe(true);
@@ -196,7 +197,7 @@ describe("montarInstrucoes", () => {
     for (const marca of [
       "</instrucoes_da_clinica>",
       "</base_da_clinica>",
-      "<procedimentos>",
+      "\n<procedimentos>\n",
       "</procedimentos>",
     ]) {
       const blocos = texto.slice(TEXTO_FIXO_DO_AGENTE.length);

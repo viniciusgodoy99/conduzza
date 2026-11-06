@@ -485,9 +485,10 @@ export const HABILIDADES_DO_AGENTE = [
     descricao:
       "Transcreve o áudio que a pessoa manda e responde por escrito. Áudio sem fala, longo demais ou que não deu para transcrever passa para a equipe.",
     nota: "A transcrição é feita pela OpenAI, nos EUA, com a chave do Conduzza, só nas conversas com o assistente. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
-    travada: false,
+    // Decisao do dono de 06/11/2026: sempre ligada, sem chave na tela.
+    travada: true,
     ferramentas: [],
-    padrao: false,
+    padrao: true,
     precisaDaAgenda: false,
     precisaDaHabilidade: null,
     precisaDoPrazo: null,
@@ -499,9 +500,10 @@ export const HABILIDADES_DO_AGENTE = [
     descricao:
       "Lê a foto ou o PDF de um pedido de exame ou procedimento e responde sobre os itens que a clínica faz. Guarda no cadastro o número e o convênio da carteirinha, se estiverem vazios. Pede uma foto mais nítida do arquivo que não deu para ler. Resultado, laudo, receita, foto do corpo, guia e o que ficar em dúvida passam para a equipe.",
     nota: "A foto ou o PDF vai uma vez para a OpenAI, nos EUA, sem o nome do arquivo e sem a localização da foto. O número da carteirinha também passa por lá. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
-    travada: false,
+    // Decisao do dono de 06/11/2026: sempre ligada, sem chave na tela.
+    travada: true,
     ferramentas: [],
-    padrao: false,
+    padrao: true,
     precisaDaAgenda: false,
     precisaDaHabilidade: null,
     precisaDoPrazo: null,
@@ -565,6 +567,16 @@ export function notaDaHabilidade(chave: string): string | null {
 /** AG6b: as chaves das duas habilidades de midia (skills do jsonb). */
 export const HABILIDADE_DO_AUDIO = "ler_audio";
 export const HABILIDADE_DO_ARQUIVO = "ler_imagem_e_documento";
+/**
+ * Decisao do dono de 06/11/2026 ("preciso que sempre esteja ligado, nao precisar
+ * apertar um botao, pode tirar da UI"): as duas de midia valem sempre e nao
+ * aparecem na aba Habilidades. A trava por telefone (o aviso da OpenAI, D-95)
+ * continua.
+ */
+export const HABILIDADES_SEM_CHAVE_NA_TELA: ReadonlySet<string> = new Set([
+  HABILIDADE_DO_AUDIO,
+  HABILIDADE_DO_ARQUIVO,
+]);
 
 /**
  * AG6b (revisao das telas, item 3): o que o SERVIDOR ja deixa valer, mesmo

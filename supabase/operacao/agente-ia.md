@@ -1158,7 +1158,7 @@ Publicadas em 06/11/2026 (`docs/05`, entrada "Ligar o agente no teste"; `docs/04
 
 **Ordem, com o ok do dono:** (1) em horário calmo, o ensaio `~/.claude/plans/agente-completo/ligar/ensaio-20261106110000.sql` (`ENSAIO OK`, termina em ROLLBACK) e a migration `20261106110000`: só catálogo, sem trava de tabela; (2) os casos novos de banco, um arquivo por vez; (3) o merge e o push. Rollback: voltar o código e rodar `supabase/operacao/rollback/20261106110000-corpos-anteriores.sql`.
 
-**Para o áudio funcionar num telefone de teste, depois de publicar:** Tela 6, Habilidades, ligar "Entender áudio" (e "Ler imagem e documento") e publicar; aba WhatsApp, no telefone com o chip "Sem áudio, foto e documento", o administrador da clínica ou a equipe Conduzza desliga e liga de novo, confirmando o aviso (o telefone de paciente usado mesmo assim sai e entra de novo pelo formulário). Para marcar, a antecedência e o horizonte em Regras e limites e publicar: "Agendar consulta" já vem ligada.
+**Para o áudio funcionar num telefone de teste, depois de publicar:** áudio, foto e PDF valem sempre (decisão do dono de 06/11/2026, sem chave na Tela 6); aba WhatsApp, no telefone com o chip "Sem áudio, foto e documento", o administrador da clínica ou a equipe Conduzza desliga e liga de novo, confirmando o aviso (o telefone de paciente usado mesmo assim sai e entra de novo pelo formulário). Para marcar, a antecedência e o horizonte em Regras e limites e publicar: "Agendar consulta" já vem ligada.
 
 **Desligar só a mídia:** `TRANSCRICAO_CALIBRADA = false` e os tetos nulos, em `lib/integrations/llm/`, num commit: toda mídia volta para a equipe, e a Tela 6 diz isso embaixo de cada habilidade. Numa clínica só: desligar as duas habilidades e publicar.
 
@@ -1174,7 +1174,7 @@ Publicada em 06/11/2026 (`docs/05`, entrada "A matriz de arquivos"; `docs/04`, s
 - O que a foto gravou: `select entity_id, detalhes, created_at from public.audit_log where action = 'gravou_carteirinha_lida' order by created_at desc;` (quais campos, nunca o valor).
 - As notas: `select conversation_id, created_at from public.message where is_internal_note and (body like '%confira o arquivo%' or body like '%item fora do Cadastro%') order by created_at desc;`. **Ninguém é avisado da nota:** a equipe só a vê ao abrir a conversa.
 
-**Tirar um número gravado por engano:** na ficha do paciente, como qualquer outro. **Desligar:** desligar "Ler imagem e documento" e publicar; toda foto e todo PDF voltam para a equipe. **Rollback:** primeiro o código; depois `supabase/operacao/rollback/20261106130000-corpos-anteriores.sql` inteiro. Os números e as notas ficam.
+**Tirar um número gravado por engano:** na ficha do paciente, como qualquer outro. **Desligar:** não há mais chave (decisão do dono de 06/11/2026). Por telefone, desligando-o na aba WhatsApp; para todos, as constantes da calibragem, por commit (`docs/03`, seção 29). **Rollback:** primeiro o código; depois `supabase/operacao/rollback/20261106130000-corpos-anteriores.sql` inteiro. Os números e as notas ficam.
 
 ## Urgência, passagem e mídia pela IA (AG6a e AG6b)
 

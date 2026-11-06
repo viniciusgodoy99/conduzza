@@ -507,10 +507,10 @@ describe("simulador, habilidades e textos da AG6a", () => {
   // ficava fora da AG6a). A AG6b o traz (desenho da AG6b, secao 6): a aba
   // Habilidades ganha "Entender áudio" e "Ler imagem e documento", com as
   // notas (tests/unit/agente/telas-ag6b.test.tsx tem o resto).
-  it("o áudio entra na AG6b: a aba Habilidades ganha Entender áudio e Ler imagem e documento", () => {
+  it("áudio, foto e PDF valem sempre: a aba Habilidades não tem chave deles (decisão do dono de 06/11/2026)", () => {
     const html = painel(dadosDeTeste(), "habilidades");
-    expect(texto(html)).toContain("Entender áudio");
-    expect(texto(html)).toContain("Ler imagem e documento");
+    expect(texto(html)).not.toContain("Entender áudio");
+    expect(texto(html)).not.toContain("Ler imagem e documento");
   });
   // [AG6b mídia] fim
 
