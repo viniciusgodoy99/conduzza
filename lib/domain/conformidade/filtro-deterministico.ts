@@ -471,7 +471,7 @@ export const REGRA_DA_RESPOSTA_AO_PREPARO = "resposta_ao_preparo";
 // catalogo mascarados ("Glicemia de jejum" e procedimento) e sem o nome do
 // exame de sangue de jejum.
 const ASSUNTO_DO_PREPARO =
-  "\\b(?:jejum|preparo|preparos|preparacao|preparar|laxantes?)\\b|\\b(?:posso|pode|podem|devo|deve|tenho que|tem que|precisa|preciso|da pra|da para)\\b (?:\\w+ ){0,3}?(?:comer|beber|tomar|ingerir|almocar|jantar|lanchar|mastigar)\\b";
+  "\\b(?:jejum|preparo|preparos|preparacao|preparar|laxantes?|remedios?|medicamentos?|medicac(?:ao|oes))\\b|\\b(?:posso|pode|podem|devo|deve|tenho que|tem que|precisa|preciso|da pra|da para)\\b (?:\\w+ ){0,3}?(?:comer|beber|tomar|ingerir|almocar|jantar|lanchar|mastigar)\\b";
 // Revisao curta (CURTA-1): a dieta so e assunto do preparo com o exame, a
 // vespera ou o procedimento do catalogo (mascarado) na mesma frase: a
 // clinica de nutricao fala de dieta o tempo todo ("Voces fazem dieta?"). As
@@ -519,7 +519,7 @@ const PERGUNTA_QUE_RESPONDE = `${ABERTURA}(?:sim|nao|(?:precisa|tem|pode|deve|e)
 // laxante, comer e beber e a restricao. Fora da oferta e da pergunta do
 // procedimento, a frase que fala disso depois da pergunta responde a ela.
 const ASSUNTO_NA_RESPOSTA =
-  "\\b(?:jejum|preparo|preparos|preparacao|preparar|orientac(?:ao|oes)|laxantes?|dieta|comer|coma|come|comendo|comida|comidas|beber|beba|bebe|bebendo|bebida|bebidas|alimentac\\w*|alimentos?|refeic\\w*|liquidos?|restric\\w*)\\b";
+  "\\b(?:jejum|preparo|preparos|preparacao|preparar|orientac(?:ao|oes)|laxantes?|remedios?|medicamentos?|medicac(?:ao|oes)|tomar|toma|tome|tomam|tomem|tomando|tomado|tomada|comprimidos?|capsulas?|gotas?|doses?|dieta|comer|coma|come|comendo|comida|comidas|beber|beba|bebe|bebendo|bebida|bebidas|alimentac\\w*|alimentos?|refeic\\w*|liquidos?|restric\\w*)\\b";
 
 const REGEX_DO_ASSUNTO = new RegExp(ASSUNTO_DO_PREPARO);
 const REGEX_DA_DIETA = new RegExp(DIETA);
@@ -624,11 +624,27 @@ const SITUACAO_PESSOAL = [
   "\\b(?:tomo|tomei|tomando|uso|usei|usando|comi|bebi|fumo|fumei|mastiguei|masco|mascando|esqueci|esquecer|vomitei|nao consegui|nao consigo|nao vou conseguir)\\b",
   // A permissao aplicada a pessoa ("posso mascar chiclete no jejum?").
   "\\b(?:posso|pode|devo|deve|da pra|da para|consigo)\\b (?:\\w+ ){0,3}?(?:comer|beber|tomar|mascar|chupar|fumar|usar|mastigar|ingerir|almocar|jantar|lanchar|dirigir|trabalhar|malhar|treinar)\\b",
+  // Parar o remedio ("preciso parar o remedio antes do exame?").
+  "\\b(?:parar|paro|parei|suspender|suspendo|suspendi|interromper|interrompo|interrompi|cortar|corto|cortei)\\b (?:de tomar )?(?:\\w+ ){0,2}?(?:remedios?|medicamentos?|medicac(?:ao|oes))\\b",
   // Outra pessoa e a idade ("pra minha mae que tem 80 anos").
   "\\b(?:minha|meu) (?:mae|pai|filh[oa]s?|marido|esposa|esposo|mulher|avo|vo|vovo|tia|tio|irma|irmao|sogra|sogro|namorad[oa]|bebe|crianca|net[oa]|parente)\\b",
   "\\b\\d{1,3} ?anos\\b",
 ].join("|");
 const REGEX_DA_SITUACAO_PESSOAL = new RegExp(SITUACAO_PESSOAL);
+/**
+ * Decisao do dono de 06/11/2026 (opcao A): "como eu tomo" e "qual remedio eu
+ * tomo antes do exame" pedem o texto aprovado; nao dizem que a pessoa toma um
+ * remedio. Sai so a expressao, e so sem remedio pelo nome depois dela ("como
+ * eu tomo remedio de pressao" continua). O resto da frase continua lido.
+ */
+const REMEDIO_DA_PERGUNTA = "(?:remedios?|medicamentos?|medicac(?:ao|oes))";
+const DO_EXAME_DA_PERGUNTA =
+  "(?:d[aoe]s?|dess[ae]s?|dest[ae]s?) (?:exames?|preparos?|\\u00a7)(?![a-z0-9])";
+const COMO_TOMAR_NAO_E_SITUACAO = [
+  `\\bcomo (?:que )?(?:eu )?(?:devo )?(?:tomo|tomar|toma)\\b(?= (?:(?:o|os|esse|esses|este|estes) )?(?:${REMEDIO_DA_PERGUNTA}|preparos?) ${DO_EXAME_DA_PERGUNTA}|\\s*(?:[.,;:!?]|$))`,
+  `\\b(?:qual|quais|que) ${REMEDIO_DA_PERGUNTA} (?:que )?(?:eu )?(?:tomo|toma)\\b(?= antes ${DO_EXAME_DA_PERGUNTA})`,
+].join("|");
+const REGEX_DO_COMO_TOMAR = new RegExp(COMO_TOMAR_NAO_E_SITUACAO, "g");
 
 /**
  * Revisao da AG7 (CFM-6): alguma pendente do paciente (o texto como chegou)
@@ -640,7 +656,10 @@ export function situacaoPessoalNoPedidoDoPreparo(
 ): boolean {
   return textos.some((texto) =>
     REGEX_DA_SITUACAO_PESSOAL.test(
-      mascararNomes(normalizarBase(texto), nomesDoCatalogo),
+      mascararNomes(normalizarBase(texto), nomesDoCatalogo).replace(
+        REGEX_DO_COMO_TOMAR,
+        " ",
+      ),
     ),
   );
 }
@@ -740,7 +759,7 @@ export const FONTES_DAS_REGRAS_EM_CODIGO: readonly string[] = [
   `${REGRA_DO_TRECHO_DO_PREPARO}: com os textos de preparo da clinica, a frase de ${TAMANHO_MINIMO_DO_TRECHO} caracteres ou mais de um deles (ou o texto inteiro) que aparece inteira no rascunho, e (revisao da AG7, CFM-8) a oracao entre virgulas de ${TAMANHO_MINIMO_DO_TRECHO} caracteres ou mais, inteira, e ${PALAVRAS_DA_JANELA_DO_TRECHO} palavras seguidas de um deles, com ${TAMANHO_MINIMO_DO_TRECHO} caracteres ou mais, que aparecem seguidas no rascunho, os dois lados em minusculas, sem acento, sem pontuacao e com espaco unico (orientacao_clinica)`,
   // Revisao da AG7 (CFM-6): a situacao da pessoa no pedido do preparo (a
   // conferencia do envio, no laco).
-  `${REGRA_DO_PEDIDO_COM_SITUACAO_PESSOAL}: nas pendentes do turno do envio do preparo (o texto como chegou, os nomes do catalogo mascarados), ${SITUACAO_PESSOAL} passa para a equipe (assunto_clinico) antes do envio`,
+  `${REGRA_DO_PEDIDO_COM_SITUACAO_PESSOAL}: nas pendentes do turno do envio do preparo (o texto como chegou, os nomes do catalogo mascarados), ${SITUACAO_PESSOAL} passa para a equipe (assunto_clinico) antes do envio, sem ${COMO_TOMAR_NAO_E_SITUACAO}`,
   // Revisao da AG7 (CFM-5) e revisao curta (CURTA-1): a resposta que
   // afirma ou nega o jejum ou o preparo, so com a habilidade.
   `${REGRA_DA_RESPOSTA_AO_PREPARO}: so com a habilidade do preparo (comPreparo) e com a pergunta numa frase das mensagens do paciente (${ASSUNTO_DO_PREPARO}, ou ${DIETA} com ${CONTEXTO_DA_DIETA}, e ${PERGUNTA_OU_PEDIDO} na mesma frase, sem ${EXAME_DE_JEJUM}, os nomes do catalogo mascarados), barra a frase do rascunho sem os textos colados que responde (${RESPOSTA_NA_FRASE}), a pergunta que comeca respondendo (${PERGUNTA_QUE_RESPONDE}) e a frase que fala do assunto (${ASSUNTO_NA_RESPOSTA}) fora da oferta (${OFERTA_DO_PREPARO}) e da pergunta do procedimento (${PERGUNTA_DO_PROCEDIMENTO}) (orientacao_clinica)`,
@@ -1066,7 +1085,9 @@ export function avaliarRegras(
   // [AG7 preparo] fim
 
   // Contexto: o paciente falou de saude.
-  for (const gatilho of gatilhosDosTextos(contexto.mensagensDoPaciente)) {
+  for (const gatilho of gatilhosDosTextos(contexto.mensagensDoPaciente, {
+    comPreparo: contexto.comPreparo === true,
+  })) {
     const categoria = CONTEXTO_CLINICO.get(gatilho);
     if (categoria) {
       achados.push({ categoria, regra: `contexto:${gatilho}` });

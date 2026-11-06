@@ -15,6 +15,8 @@ import {
   type TipoDaMidiaLida,
   type TipoDoLeitor,
 } from "@/lib/domain/agente/config";
+import type { CarteirinhaNoCadastro } from "@/lib/domain/carteirinha-lida";
+import type { FatoDoArquivo } from "@/lib/domain/conformidade/fatos-do-turno";
 import { correrComPrazo } from "@/lib/domain/conformidade/prazo";
 import {
   detectarUrgencia,
@@ -34,6 +36,7 @@ import {
   FOLGA_DO_CORTE_DO_LEITOR_MS,
   MAXIMO_DE_CHAMADAS_DO_LEITOR,
   MAXIMO_DE_CODIGOS_NO_ESQUEMA,
+  MAXIMO_DE_CONVENIOS_NO_ESQUEMA,
   TETO_DE_TOKENS_POR_IMAGEM,
   TETO_DE_TOKENS_POR_PAGINA,
   VERSAO_DA_POLITICA_DO_LEITOR,
@@ -128,6 +131,14 @@ import { USO_ZERADO, type UsoDoModelo } from "./uso";
 //    perdida, a invocacao que morreu) transcreve de novo e acha a urgencia
 //    de novo. Com a urgencia no texto mantido, grava como sempre: o portao
 //    do job repetido a acha no texto relido (medio 3; urgenciaDaTranscricao).
+//
+// Matriz do dono de 06/11/2026 ("nem tudo vá para a equipe"; decidirPelaLeitura):
+// a carteirinha, o documento pessoal, o arquivo que nao e nada disso e o
+// primeiro ilegivel da janela seguem com a IA, que le so um texto fixo; o
+// pedido com parte fora do Cadastro segue com os itens achados, e o banco grava
+// a nota para a equipe junto com a leitura. O numero da carteirinha so passa
+// por aqui a caminho da RPC: nunca fica em LeituraGravada, no resumo, na
+// descricao nem em log.
 
 // ---------------------------------------------------------------------------
 // Tipos
@@ -154,6 +165,11 @@ export type LeituraGravada = {
   foraDoCadastro: number;
   confianca: ConfiancaDaLeitura | null;
   resumo: string | null;
+  /**
+   * O convenio que o leitor reconheceu na carteirinha (o id do Cadastro).
+   * Ausente: nao reconheceu, ou nao e carteirinha.
+   */
+  convenioId?: string;
 };
 
 /**
@@ -194,6 +210,41 @@ export const FRASE_DA_FIGURINHA = "(a pessoa mandou uma figurinha)";
 export const DESCRICAO_DO_PEDIDO =
   "(a pessoa mandou um pedido de exame ou procedimento com: {})";
 
+/**
+ * O que o agente le no lugar dos outros arquivos que seguem com ele (matriz do
+ * dono de 06/11/2026): sempre um texto fixo, com os nomes do Cadastro, nunca
+ * nada do arquivo. O que pede alguma coisa ao agente vale so na mensagem nova;
+ * no historico ("Antes"), o job seguinte nao pede foto de novo.
+ */
+export const DESCRICOES_DO_ARQUIVO = {
+  /** "{}": a lista do pedido, como em DESCRICAO_DO_PEDIDO. */
+  pedidoParcial:
+    "(a pessoa mandou um pedido de exame ou procedimento com: {}; o resto do pedido fica com a equipe, e o sistema já avisa a pessoa)",
+  pedidoParcialAntes:
+    "(a pessoa mandou um pedido de exame ou procedimento com: {}; o resto do pedido ficou com a equipe)",
+  /** "{}": o nome do convenio no Cadastro. */
+  carteirinhaComPlano: "(a pessoa mandou a carteirinha do convênio {})",
+  carteirinhaSemPlano:
+    "(a pessoa mandou a carteirinha de um convênio: pergunte qual é o convênio, sem dizer se a clínica atende ou não)",
+  carteirinhaSemPlanoAntes: "(a pessoa mandou a carteirinha de um convênio)",
+  documento:
+    "(a pessoa mandou um documento pessoal, que fica guardado para a equipe)",
+  ilegivel:
+    "(a pessoa mandou um arquivo que não deu para ler: peça uma foto mais nítida)",
+  ilegivelAntes:
+    "(a pessoa mandou um arquivo que não deu para ler; não peça de novo)",
+  outro:
+    "(a pessoa mandou um arquivo que não é pedido nem documento: pergunte como pode ajudar)",
+  outroAntes: "(a pessoa mandou um arquivo que não é pedido nem documento)",
+} as const;
+
+/**
+ * O que o sistema cola na resposta do turno em que o pedido tem parte fora do
+ * Cadastro (como a F2 do preparo): o paciente sempre fica sabendo, com as
+ * mesmas palavras, e a conversa continua com a IA.
+ */
+export const AVISO_DO_RESTO_DO_PEDIDO = "O resto do pedido a equipe confere.";
+
 /** Os passos da trilha ("Por que a IA respondeu isso"; nunca o conteudo). */
 export const PASSOS_DA_MIDIA = {
   transcreveu: "Transcreveu o áudio que a pessoa mandou.",
@@ -201,10 +252,19 @@ export const PASSOS_DA_MIDIA = {
   transcricaoFalhou: "A transcrição do áudio falhou: passou para a equipe.",
   leuPedido:
     "Leu o arquivo que a pessoa mandou: pedido com {} itens do Cadastro.",
+  leuPedidoParcial:
+    "Leu o arquivo que a pessoa mandou: pedido com {itens} itens do Cadastro e {fora} fora dele, que a equipe confere (nota na conversa).",
+  leuCarteirinha: "Leu o arquivo que a pessoa mandou: carteirinha do convênio.",
+  documentoGuardado:
+    "O arquivo é um documento pessoal: ficou guardado para a equipe, e nada foi tirado dele.",
+  pediuFotoMelhor:
+    "Não deu para ler o arquivo que a pessoa mandou: o assistente pede uma foto mais nítida.",
+  arquivoOutro:
+    "O arquivo não é pedido nem documento: o assistente pergunta como pode ajudar.",
   midiaClinica:
     "O arquivo que a pessoa mandou só a equipe pode avaliar: passou para a equipe.",
   documentoDoPaciente:
-    "O arquivo é a carteirinha, uma guia ou um documento pessoal: passou para a equipe.",
+    "O arquivo é uma guia ou autorização do convênio: passou para a equipe.",
   naoIdentificada: "O assistente não identificou o arquivo: passou para a equipe.",
   figurinha: "A pessoa mandou uma figurinha.",
   // Fora do desenho 5.5, mesmo tom: a leitura que falhou e o arquivo fora
@@ -309,6 +369,22 @@ export function itensDoCatalogo(
   ].map((p) => ({ codigo: p.codigo, id: p.id, nome: p.nome }));
 }
 
+/**
+ * Os convenios ativos do Cadastro para o leitor (c1, c2...), ate o teto do
+ * esquema: quem fica de fora nao e reconhecido, e o agente pergunta.
+ */
+export function conveniosDaLeitura(
+  catalogo: Pick<CatalogoDoAgente, "conveniosDoCadastro">,
+): ItemDoCatalogoDaLeitura[] {
+  return catalogo.conveniosDoCadastro
+    .slice(0, MAXIMO_DE_CONVENIOS_NO_ESQUEMA)
+    .map((c, indice) => ({
+      codigo: `c${indice + 1}`,
+      id: c.id,
+      nome: c.plano?.trim() ? `${c.nome} ${c.plano.trim()}` : c.nome,
+    }));
+}
+
 /** O nome do Cadastro numa linha, sem sinal de bloco. */
 function nomeNumaLinha(nome: string): string {
   return nome
@@ -330,18 +406,30 @@ function emLista(itens: readonly string[]): string {
 /** A descricao que o agente le ("p3 Hemograma, p7 Glicemia de jejum"). */
 export function descricaoDoPedido(
   itens: readonly ItemDoCatalogoDaLeitura[],
+  molde: string = DESCRICAO_DO_PEDIDO,
 ): string {
-  return DESCRICAO_DO_PEDIDO.replace("{}", () =>
+  return molde.replace("{}", () =>
     itens.map((i) => `${i.codigo} ${nomeNumaLinha(i.nome)}`).join(", "),
   );
 }
 
+/** O convenio reconhecido na carteirinha, pelo Cadastro de agora, ou null. */
+function convenioLido(
+  leitura: Pick<LeituraGravada, "convenioId">,
+  convenios: readonly ItemDoCatalogoDaLeitura[] | undefined,
+): ItemDoCatalogoDaLeitura | null {
+  return (
+    (convenios ?? []).find((c) => c.id === leitura.convenioId) ?? null
+  );
+}
+
 /**
- * A maior descricao possivel com este catalogo (os 10 nomes mais longos):
- * a estimativa do gasto.
+ * A maior descricao possivel com este catalogo (os 10 nomes mais longos, ou a
+ * carteirinha do maior convenio, ou um texto fixo): a estimativa do gasto.
  */
 export function descricaoMaxima(
   catalogo: readonly ItemDoCatalogoDaLeitura[],
+  convenios: readonly ItemDoCatalogoDaLeitura[] = [],
 ): string {
   const maiores = [...catalogo]
     .sort(
@@ -350,7 +438,17 @@ export function descricaoMaxima(
         Buffer.byteLength(`${a.codigo} ${a.nome}`),
     )
     .slice(0, 10);
-  return descricaoDoPedido(maiores);
+  return [
+    descricaoDoPedido(maiores, DESCRICOES_DO_ARQUIVO.pedidoParcial),
+    ...Object.values(DESCRICOES_DO_ARQUIVO),
+    ...convenios.map((c) =>
+      DESCRICOES_DO_ARQUIVO.carteirinhaComPlano.replace("{}", () =>
+        nomeNumaLinha(c.nome),
+      ),
+    ),
+  ].reduce((maior, texto) =>
+    Buffer.byteLength(texto) > Buffer.byteLength(maior) ? texto : maior,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -363,44 +461,128 @@ export type DecisaoDaLeitura =
       /** Os itens do Cadastro, na ordem do pedido. */
       itens: ItemDoCatalogoDaLeitura[];
       descricao: string;
+      /** Quantos ficaram fora: o resto, que a equipe confere (0: nenhum). */
+      foraDoCadastro: number;
+    }
+  | {
+      /** O arquivo segue com a IA, que le so o texto fixo. */
+      tipo: "responde";
+      descricao: string;
+      /** O passo da trilha. */
+      passo: string;
+      /** O que o verificador fica sabendo. */
+      fato: FatoDoArquivo | null;
     }
   | { tipo: "figurinha" }
   | { tipo: "escala"; motivo: MotivoDaLeitura };
 
+/** O que a decisao e o resumo sabem alem da leitura. */
+export type ContextoDaLeitura = {
+  /** Os convenios do Cadastro (conveniosDaLeitura). Ausente: nenhum. */
+  convenios?: readonly ItemDoCatalogoDaLeitura[];
+  /**
+   * Ja houve leitura ilegivel nesta janela da IA, fora das mensagens deste
+   * turno (lerIlegiveisDaJanela): o ilegivel de agora vai para a equipe.
+   * Ausente: nao houve.
+   */
+  ilegivelNaJanela?: boolean;
+};
+
 /**
- * A decisao do SERVIDOR pela leitura do arquivo (desenho 1.2): o pedido com
- * 1 a 10 itens, todos no Cadastro de agora, nenhum fora e confianca alta ou
- * media segue com a IA; a figurinha com confianca alta ou media segue; o
- * resto passa para a equipe com o motivo da tabela. Nunca lanca.
+ * A decisao do SERVIDOR pela leitura do arquivo (desenho 1.2, com a matriz do
+ * dono de 06/11/2026). Nunca lanca. Confianca baixa e a "duvidosa": equipe,
+ * menos no ilegivel, que nao olha a confianca. Resultado, laudo, receita, foto
+ * do corpo e guia: equipe, em qualquer confianca, pela tabela. Seguem com a IA:
+ * o pedido com 1 a 10 itens no Cadastro de agora (com o resto fora, os achados
+ * e o aviso; sem item nenhum, equipe); a carteirinha; o documento pessoal; o
+ * outro; a figurinha; e o ilegivel, so na primeira vez da janela
+ * (`ilegivelNaJanela`). `historico`: a mensagem e de antes deste turno, ja foi
+ * decidida: nada e pedido ao agente de novo.
  */
 export function decidirPelaLeitura(
   leitura: Pick<
     LeituraGravada,
-    "tipo" | "procedimentos" | "foraDoCadastro" | "confianca"
+    "tipo" | "procedimentos" | "foraDoCadastro" | "confianca" | "convenioId"
   >,
   catalogo: readonly ItemDoCatalogoDaLeitura[],
+  contexto: ContextoDaLeitura & { historico?: boolean } = {},
 ): DecisaoDaLeitura {
   const tipo = leitura.tipo;
   if (!(TIPOS_DO_LEITOR as readonly string[]).includes(tipo)) {
     return { tipo: "escala", motivo: "midia_nao_identificada" };
   }
+  const historico = contexto.historico === true;
   const confiavel =
     leitura.confianca === "alta" || leitura.confianca === "media";
   const decisao = DECISAO_DO_TIPO_DO_LEITOR[tipo as TipoDoLeitor];
   if (decisao !== "segue") {
     return { tipo: "escala", motivo: decisao };
   }
+  if (tipo === "ilegivel") {
+    if (historico) {
+      return {
+        tipo: "responde",
+        descricao: DESCRICOES_DO_ARQUIVO.ilegivelAntes,
+        passo: PASSOS_DA_MIDIA.pediuFotoMelhor,
+        fato: null,
+      };
+    }
+    return contexto.ilegivelNaJanela === true
+      ? { tipo: "escala", motivo: "midia_nao_identificada" }
+      : {
+          tipo: "responde",
+          descricao: DESCRICOES_DO_ARQUIVO.ilegivel,
+          passo: PASSOS_DA_MIDIA.pediuFotoMelhor,
+          fato: { tipo: "ilegivel" },
+        };
+  }
+  if (!confiavel) {
+    return { tipo: "escala", motivo: "midia_nao_identificada" };
+  }
   if (tipo === "figurinha") {
-    return confiavel
-      ? { tipo: "figurinha" }
-      : { tipo: "escala", motivo: "midia_nao_identificada" };
+    return { tipo: "figurinha" };
+  }
+  if (tipo === "carteirinha") {
+    const convenio = convenioLido(leitura, contexto.convenios);
+    return {
+      tipo: "responde",
+      descricao:
+        convenio !== null
+          ? DESCRICOES_DO_ARQUIVO.carteirinhaComPlano.replace("{}", () =>
+              nomeNumaLinha(convenio.nome),
+            )
+          : historico
+            ? DESCRICOES_DO_ARQUIVO.carteirinhaSemPlanoAntes
+            : DESCRICOES_DO_ARQUIVO.carteirinhaSemPlano,
+      passo: PASSOS_DA_MIDIA.leuCarteirinha,
+      fato: {
+        tipo: "carteirinha",
+        convenio: convenio === null ? null : nomeNumaLinha(convenio.nome),
+      },
+    };
+  }
+  if (tipo === "documento_de_identidade") {
+    return {
+      tipo: "responde",
+      descricao: DESCRICOES_DO_ARQUIVO.documento,
+      passo: PASSOS_DA_MIDIA.documentoGuardado,
+      fato: { tipo: "documento" },
+    };
+  }
+  if (tipo === "outro") {
+    return {
+      tipo: "responde",
+      descricao: historico
+        ? DESCRICOES_DO_ARQUIVO.outroAntes
+        : DESCRICOES_DO_ARQUIVO.outro,
+      passo: PASSOS_DA_MIDIA.arquivoOutro,
+      fato: historico ? null : { tipo: "outro" },
+    };
   }
   // O pedido.
   const porId = new Map(catalogo.map((c) => [c.id, c]));
   const itens = leitura.procedimentos.map((id) => porId.get(id));
   if (
-    !confiavel ||
-    leitura.foraDoCadastro !== 0 ||
     itens.length === 0 ||
     itens.length > 10 ||
     new Set(leitura.procedimentos).size !== leitura.procedimentos.length ||
@@ -409,7 +591,52 @@ export function decidirPelaLeitura(
     return { tipo: "escala", motivo: "midia_nao_identificada" };
   }
   const achados = itens as ItemDoCatalogoDaLeitura[];
-  return { tipo: "segue", itens: achados, descricao: descricaoDoPedido(achados) };
+  return {
+    tipo: "segue",
+    itens: achados,
+    foraDoCadastro: leitura.foraDoCadastro,
+    descricao:
+      leitura.foraDoCadastro === 0
+        ? descricaoDoPedido(achados)
+        : descricaoDoPedido(
+            achados,
+            historico
+              ? DESCRICOES_DO_ARQUIVO.pedidoParcialAntes
+              : DESCRICOES_DO_ARQUIVO.pedidoParcial,
+          ),
+  };
+}
+
+/**
+ * A mensagem do arquivo que segue com a IA, como o agente a le: texto, com a
+ * legenda e a descricao do servidor (o arquivo nunca vai).
+ */
+export function mensagemDoArquivoLido(
+  mensagem: MensagemDaConversa,
+  decisao: Extract<DecisaoDaLeitura, { tipo: "segue" | "responde" }>,
+  historico = false,
+): MensagemDaConversa {
+  const fato: FatoDoArquivo | null =
+    decisao.tipo === "responde"
+      ? decisao.fato
+      : decisao.foraDoCadastro > 0
+        ? { tipo: "resto_do_pedido" }
+        : null;
+  return {
+    ...mensagem,
+    tipo: "texto",
+    origem: "arquivo",
+    texto: mensagem.midia?.legenda ?? "",
+    textoOriginal: mensagem.legendaOriginal ?? "",
+    arquivo: {
+      descricao: decisao.descricao,
+      ...(fato === null ? {} : { fato }),
+      // So na mensagem nova: o aviso ja foi colado no turno dela.
+      ...(fato?.tipo === "resto_do_pedido" && !historico
+        ? { avisarDoResto: true }
+        : {}),
+    },
+  };
 }
 
 /** A prioridade entre os motivos (o clinico, o documento, o nao identificado). */
@@ -428,25 +655,39 @@ export function motivoMaisForte(
 export function resumoDaLeitura(
   leitura: Pick<
     LeituraGravada,
-    "tipo" | "procedimentos" | "foraDoCadastro" | "confianca"
+    "tipo" | "procedimentos" | "foraDoCadastro" | "confianca" | "convenioId"
   >,
   catalogo: readonly ItemDoCatalogoDaLeitura[],
+  contexto: ContextoDaLeitura = {},
 ): string | null {
   const tipo = leitura.tipo;
+  const confiavel =
+    leitura.confianca === "alta" || leitura.confianca === "media";
   if (tipo === "pedido_de_exame_ou_procedimento") {
-    if (leitura.confianca !== "alta" && leitura.confianca !== "media") {
+    if (!confiavel) {
       return RESUMO_DA_LEITURA.pedidoSemSeguranca;
-    }
-    if (leitura.foraDoCadastro > 0) {
-      return RESUMO_DA_LEITURA.pedidoForaDoCadastro;
     }
     const porId = new Map(catalogo.map((c) => [c.id, c]));
     const nomes = leitura.procedimentos
       .map((id) => porId.get(id))
       .filter((c): c is ItemDoCatalogoDaLeitura => c !== undefined)
       .map((c) => nomeNumaLinha(c.nome));
+    if (nomes.length === 0 && leitura.foraDoCadastro > 0) {
+      return RESUMO_DA_LEITURA.pedidoForaDoCadastro;
+    }
     if (nomes.length === 0 || nomes.length !== leitura.procedimentos.length) {
       return RESUMO_DA_LEITURA.pedidoSemSeguranca;
+    }
+    if (leitura.foraDoCadastro > 0) {
+      const fora = String(leitura.foraDoCadastro);
+      const parcial = RESUMO_DA_LEITURA.pedidoParcial
+        .replace("{nomes}", () => emLista(nomes))
+        .replace("{fora}", () => fora);
+      return Array.from(parcial).length <= LIMITE_DO_RESUMO_DA_LEITURA
+        ? parcial
+        : RESUMO_DA_LEITURA.pedidoParcialComMuitosItens
+            .replace("{itens}", () => String(nomes.length))
+            .replace("{fora}", () => fora);
     }
     const comNomes = RESUMO_DA_LEITURA.pedido.replace("{}", () =>
       emLista(nomes),
@@ -460,10 +701,44 @@ export function resumoDaLeitura(
   if (tipo === "figurinha") {
     return null;
   }
-  if ((TIPOS_DO_LEITOR as readonly string[]).includes(tipo)) {
-    return RESUMO_DA_LEITURA[tipo as Exclude<TipoDoLeitor, "pedido_de_exame_ou_procedimento" | "figurinha">];
+  if (tipo === "ilegivel") {
+    return contexto.ilegivelNaJanela === true
+      ? RESUMO_DA_LEITURA.ilegivelDeNovo
+      : RESUMO_DA_LEITURA.ilegivel;
   }
-  return RESUMO_DA_LEITURA.outro;
+  if (
+    tipo === "carteirinha" ||
+    tipo === "documento_de_identidade" ||
+    tipo === "outro"
+  ) {
+    if (!confiavel) {
+      return RESUMO_DA_LEITURA.arquivoSemSeguranca;
+    }
+    const convenio = convenioLido(leitura, contexto.convenios);
+    if (tipo === "carteirinha" && convenio !== null) {
+      const comPlano = RESUMO_DA_LEITURA.carteirinhaComPlano.replace("{}", () =>
+        nomeNumaLinha(convenio.nome),
+      );
+      return Array.from(comPlano).length <= LIMITE_DO_RESUMO_DA_LEITURA
+        ? comPlano
+        : RESUMO_DA_LEITURA.carteirinha;
+    }
+    return RESUMO_DA_LEITURA[tipo];
+  }
+  if ((TIPOS_DO_LEITOR as readonly string[]).includes(tipo)) {
+    return RESUMO_DA_LEITURA[
+      tipo as Exclude<
+        TipoDoLeitor,
+        | "pedido_de_exame_ou_procedimento"
+        | "figurinha"
+        | "ilegivel"
+        | "carteirinha"
+        | "documento_de_identidade"
+        | "outro"
+      >
+    ];
+  }
+  return RESUMO_DA_LEITURA.arquivoSemSeguranca;
 }
 
 // ---------------------------------------------------------------------------
@@ -473,16 +748,18 @@ export function resumoDaLeitura(
 /**
  * A mensagem do paciente com a leitura gravada aplicada: o audio transcrito
  * vira texto ("(áudio) ..." para o modelo; o texto original so para o
- * servidor), o pedido que segue vira texto com a descricao (a legenda e o
+ * servidor), o arquivo que segue vira texto com a descricao (a legenda e o
  * texto), a figurinha vira figurinha. O resto (sem fala, o arquivo clinico,
- * o documento, o nao identificado) continua midia: o marcador de sempre.
+ * o que foi para a equipe) continua midia: o marcador de sempre.
  */
 export function mensagemComALeitura(
   mensagem: MensagemDaConversa,
   leitura: LeituraGravada,
-  entrada: {
+  entrada: ContextoDaLeitura & {
     catalogo: readonly ItemDoCatalogoDaLeitura[];
     mascarar: (texto: string) => string;
+    /** A mensagem e de antes deste turno. */
+    historico?: boolean;
   },
 ): MensagemDaConversa {
   const midia = mensagem.midia;
@@ -505,19 +782,12 @@ export function mensagemComALeitura(
       textoOriginal: leitura.transcricao,
     };
   }
-  const decisao = decidirPelaLeitura(leitura, entrada.catalogo);
+  const decisao = decidirPelaLeitura(leitura, entrada.catalogo, entrada);
   if (decisao.tipo === "figurinha") {
     return { ...comLeitura, tipo: "figurinha", texto: null };
   }
-  if (decisao.tipo === "segue") {
-    return {
-      ...comLeitura,
-      tipo: "texto",
-      origem: "arquivo",
-      texto: midia.legenda ?? "",
-      textoOriginal: mensagem.legendaOriginal ?? "",
-      arquivo: { descricao: decisao.descricao },
-    };
+  if (decisao.tipo === "segue" || decisao.tipo === "responde") {
+    return mensagemDoArquivoLido(comLeitura, decisao, entrada.historico === true);
   }
   return comLeitura;
 }
@@ -578,6 +848,10 @@ export type EntradaDoPlano = {
    * de qualquer jeito: o enum do esquema da saida nao cabe).
    */
   catalogo: readonly ItemDoCatalogoDaLeitura[];
+  /** Os convenios do Cadastro (a carteirinha ja lida). Ausente: nenhum. */
+  convenios?: readonly ItemDoCatalogoDaLeitura[];
+  /** Ilegivel antes, nesta janela (ContextoDaLeitura). Ausente: nao. */
+  ilegivelNaJanela?: boolean;
   /** Mascara o nome do contato (a transcricao lida). */
   mascarar: (texto: string) => string;
   agoraMs: number;
@@ -684,7 +958,10 @@ export function planejarMidiasDoTurno(
     const liberada = midiaLiberadaNoTurno(midia.midia, entrada);
     const leitura = entrada.leituras?.get(midia.messageId);
     if (liberada && leitura !== undefined && leitura.midia === midia.midia) {
-      return mensagemComALeitura(mensagem, leitura, entrada);
+      return mensagemComALeitura(mensagem, leitura, {
+        ...entrada,
+        historico: !pendente,
+      });
     }
     if (!pendente) {
       return mensagem;
@@ -778,8 +1055,9 @@ export function semEspera(
 export function mensagensParaEstimativa(
   mensagens: readonly MensagemDaConversa[],
   catalogo: readonly ItemDoCatalogoDaLeitura[],
+  convenios: readonly ItemDoCatalogoDaLeitura[] = [],
 ): MensagemDaConversa[] {
-  const maxima = descricaoMaxima(catalogo);
+  const maxima = descricaoMaxima(catalogo, convenios);
   return mensagens.map((m): MensagemDaConversa => {
     const situacao = m.midia?.situacao;
     if (situacao === "a_transcrever") {
@@ -885,7 +1163,13 @@ export type ResultadoDaTranscricao =
   | { tipo: "job_antigo"; uso: UsoDoModelo | null };
 
 export type ResultadoDaLeitura =
-  | { tipo: "lido"; leitura: LeituraGravada; uso: UsoDoModelo | null }
+  | {
+      tipo: "lido";
+      leitura: LeituraGravada;
+      uso: UsoDoModelo | null;
+      /** A leitura de carteirinha: o cadastro ja tem o numero (nunca o valor). */
+      carteirinhaNoCadastro?: CarteirinhaNoCadastro;
+    }
   | { tipo: "falhou"; motivo: MotivoDaFalha; uso: UsoDoModelo | null }
   | { tipo: "fora_da_ia"; uso: UsoDoModelo | null }
   /** D-A, como na transcricao. */
@@ -920,6 +1204,8 @@ export type PortaDaMidia = {
     catalogo: readonly ItemDoCatalogoDaLeitura[],
     prazoMs: number,
     sinal?: AbortSignal,
+    /** Para o codigo do convenio e o resumo. Ausente: sem convenios. */
+    contexto?: ContextoDaLeitura,
   ): Promise<ResultadoDaLeitura>;
 };
 
@@ -966,6 +1252,7 @@ export type DependenciasDaPortaDoWhatsapp = {
     midia: MidiaLida;
     arquivo: ArquivoParaOLeitor;
     catalogo: readonly ItemDoCatalogoDaLeitura[];
+    convenios: readonly ItemDoCatalogoDaLeitura[];
     prazoMs: number;
     sinal?: AbortSignal;
   }) => Promise<ResultadoDoLeitor>;
@@ -988,8 +1275,12 @@ export type DependenciasDaPortaDoWhatsapp = {
 
 /** A resposta de gravar_leitura_da_midia que o motor entende. */
 type GravacaoDaLeitura =
-  | { tipo: "gravada" }
-  | { tipo: "reutilizada"; leitura: LeituraGravada }
+  | { tipo: "gravada"; carteirinhaNoCadastro?: CarteirinhaNoCadastro }
+  | {
+      tipo: "reutilizada";
+      leitura: LeituraGravada;
+      carteirinhaNoCadastro?: CarteirinhaNoCadastro;
+    }
   | { tipo: "fora_da_ia" }
   | { tipo: "job_antigo" }
   | { tipo: "recusada"; codigo: string };
@@ -1049,7 +1340,27 @@ export function leituraDoBanco(valor: unknown): LeituraGravada | null {
     foraDoCadastro: fora,
     confianca: doAudio ? null : confianca,
     resumo: typeof v.resumo === "string" ? v.resumo : null,
+    ...(typeof v.convenio_lido_id === "string"
+      ? { convenioId: v.convenio_lido_id }
+      : {}),
   };
+}
+
+/** O que a RPC diz do cadastro depois da carteirinha (nunca o valor). */
+function carteirinhaDaResposta(r: {
+  carteirinha_no_cadastro?: unknown;
+  convenio_do_cadastro?: unknown;
+}): { carteirinhaNoCadastro?: CarteirinhaNoCadastro } {
+  return r.carteirinha_no_cadastro === true
+    ? {
+        carteirinhaNoCadastro: {
+          convenioId:
+            typeof r.convenio_do_cadastro === "string"
+              ? r.convenio_do_cadastro
+              : null,
+        },
+      }
+    : {};
 }
 
 /**
@@ -1074,6 +1385,9 @@ async function gravarLeitura(
     resumo: string | null;
     modelo: string;
     versao: string;
+    convenioId?: string;
+    /** So na carteirinha lida com confianca alta; nunca vai a outro lugar. */
+    numeroDaCarteirinha?: string | null;
   },
 ): Promise<GravacaoDaLeitura> {
   try {
@@ -1091,6 +1405,12 @@ async function gravarLeitura(
       p_resumo: e.resumo,
       p_modelo: e.modelo,
       p_versao: e.versao,
+      ...(e.tipo === "carteirinha"
+        ? {
+            p_convenio_lido: e.convenioId ?? null,
+            p_numero_da_carteirinha: e.numeroDaCarteirinha ?? null,
+          }
+        : {}),
     });
     if (error) {
       return {
@@ -1103,15 +1423,17 @@ async function gravarLeitura(
       motivo?: unknown;
       reutilizado?: unknown;
       leitura?: unknown;
+      carteirinha_no_cadastro?: unknown;
+      convenio_do_cadastro?: unknown;
     } | null;
     if (r?.ok === true && r.reutilizado === false) {
-      return { tipo: "gravada" };
+      return { tipo: "gravada", ...carteirinhaDaResposta(r) };
     }
     if (r?.ok === true && r.reutilizado === true) {
       const leitura = leituraDoBanco(r.leitura);
       return leitura === null || leitura.midia !== e.midia
         ? { tipo: "recusada", codigo: "resposta_fora_do_formato" }
-        : { tipo: "reutilizada", leitura };
+        : { tipo: "reutilizada", leitura, ...carteirinhaDaResposta(r) };
     }
     const motivo = typeof r?.motivo === "string" ? r.motivo : "";
     if (r?.ok === false && motivo === "job_antigo") {
@@ -1590,7 +1912,7 @@ export function portaDaMidiaDoWhatsapp(
       };
     },
 
-    async ler(arquivo, catalogo, prazoMs, sinal) {
+    async ler(arquivo, catalogo, prazoMs, sinal, contexto = {}) {
       if (sinal?.aborted === true) {
         return { tipo: "falhou", motivo: "timeout", uso: null };
       }
@@ -1625,6 +1947,7 @@ export function portaDaMidiaDoWhatsapp(
             midia: arquivo.midia,
             arquivo: arquivo.arquivo,
             catalogo,
+            convenios: contexto.convenios ?? [],
             // O corte duro do leitor cai antes do desta porta: o resultado
             // (com as tentativas sem uso) sempre volta.
             prazoMs: prazoParaAIntegracao(prazoMs, FOLGA_DO_CORTE_DO_LEITOR_MS),
@@ -1671,13 +1994,17 @@ export function portaDaMidiaDoWhatsapp(
             foraDoCadastro: feito.leitura.foraDoCadastro,
             confianca: feito.leitura.confianca,
             resumo: null,
+            ...(feito.leitura.convenioId === null
+              ? {}
+              : { convenioId: feito.leitura.convenioId }),
           };
-          leitura.resumo = resumoDaLeitura(leitura, catalogo);
+          leitura.resumo = resumoDaLeitura(leitura, catalogo, contexto);
           const gravada = await gravarLeitura(admin, d, {
             ...leitura,
             messageId: arquivo.messageId,
             modelo: feito.modelo,
             versao: VERSAO_DA_POLITICA_DO_LEITOR,
+            numeroDaCarteirinha: feito.leitura.numeroDaCarteirinha,
           });
           return resultadoDaGravacao(gravada, leitura, uso, arquivo, ids);
         },
@@ -1738,6 +2065,9 @@ function resultadoDaGravacao(
     tipo: "lido",
     leitura: gravada.tipo === "reutilizada" ? gravada.leitura : leitura,
     uso,
+    ...(gravada.carteirinhaNoCadastro === undefined
+      ? {}
+      : { carteirinhaNoCadastro: gravada.carteirinhaNoCadastro }),
   };
 }
 
@@ -1781,7 +2111,7 @@ export async function lerLeiturasDoTurno(
     const { data, error } = await admin
       .from("ia_leitura_da_midia")
       .select(
-        "message_id, midia, tipo, transcricao, segundos_de_audio, procedimentos, fora_do_cadastro, confianca, resumo",
+        "message_id, midia, tipo, transcricao, segundos_de_audio, procedimentos, fora_do_cadastro, confianca, resumo, convenio_lido_id",
       )
       .eq("clinic_id", entrada.clinicId)
       .eq("conversation_id", entrada.conversationId)
@@ -1797,6 +2127,50 @@ export async function lerLeiturasDoTurno(
       }
     }
     return leituras;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * As mensagens com leitura ilegivel na janela ATUAL da IA nesta conversa (a
+ * matriz do dono de 06/11/2026: a primeira, o agente pede uma foto mais nitida;
+ * de novo, a equipe). Pela service role, com clinic_id explicito. Quem chama
+ * tira as mensagens do proprio turno: varios ilegiveis no mesmo turno contam
+ * como uma vez, e o job repetido nao conta a mesma leitura duas vezes. null em
+ * qualquer erro: quem chama passa para a equipe (o lado seguro).
+ */
+export async function lerIlegiveisDaJanela(
+  admin: SupabaseClient,
+  entrada: { clinicId: string; conversationId: string },
+): Promise<string[] | null> {
+  try {
+    const janela = await admin
+      .from("ia_janela_da_conversa")
+      .select("desde")
+      .eq("clinic_id", entrada.clinicId)
+      .eq("conversation_id", entrada.conversationId)
+      .maybeSingle();
+    if (janela.error) {
+      return null;
+    }
+    const desde = (janela.data as { desde?: unknown } | null)?.desde;
+    if (typeof desde !== "string") {
+      return null;
+    }
+    const { data, error } = await admin
+      .from("ia_leitura_da_midia")
+      .select("message_id")
+      .eq("clinic_id", entrada.clinicId)
+      .eq("conversation_id", entrada.conversationId)
+      .eq("tipo", "ilegivel")
+      .gte("created_at", desde);
+    if (error) {
+      return null;
+    }
+    return ((data ?? []) as { message_id?: unknown }[]).flatMap((l) =>
+      typeof l.message_id === "string" ? [l.message_id] : [],
+    );
   } catch {
     return null;
   }

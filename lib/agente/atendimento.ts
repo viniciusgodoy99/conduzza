@@ -16,6 +16,10 @@
 // informou ficam em dados_informados_na_marcacao; aqui so chega SE foram
 // informados (nunca o valor) e o que falta.
 
+import {
+  carteirinhaDoCadastroVale,
+  type CarteirinhaNoCadastro,
+} from "@/lib/domain/carteirinha-lida";
 import { datasEHorasDoTexto } from "@/lib/domain/conformidade/fatos-do-turno";
 import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
 
@@ -122,6 +126,12 @@ export type DadosInformados = {
   carteirinha: boolean;
   para_o_titular: boolean | null;
   faltam: DadoDaMarcacao[];
+  /**
+   * O cadastro do contato ja tem o numero da carteirinha (o que a foto gravou,
+   * ou o que a equipe escreveu; decisao do dono de 06/11/2026). So o sinal e o
+   * convenio do cadastro, nunca o valor. Ausente: nao tem, ou nao veio.
+   */
+  carteirinhaNoCadastro?: CarteirinhaNoCadastro;
 };
 
 /** O que ler_atendimento_da_ia devolve quando deu certo. */
@@ -357,6 +367,16 @@ function dadosLidos(valor: unknown): DadosInformados | null {
     carteirinha: valor.carteirinha,
     para_o_titular: valor.para_o_titular,
     faltam: [...new Set(faltam as DadoDaMarcacao[])],
+    ...(valor.carteirinha_no_cadastro === true
+      ? {
+          carteirinhaNoCadastro: {
+            convenioId:
+              typeof valor.convenio_do_cadastro === "string"
+                ? valor.convenio_do_cadastro
+                : null,
+          },
+        }
+      : {}),
   };
 }
 
@@ -495,15 +515,20 @@ export function comHorariosOferecidos(
  * (nome completo, nascimento e CPF) e a carteirinha so na consulta pelo
  * convenio, quando o convenio tem "Carteirinha obrigatoria" ou o
  * procedimento tem o requisito carteirinha (para todos ou para esse
- * convenio). Quem decide de verdade e o banco (o agendar recusa com
- * faltam_dados); isto e para o turno saber o que pedir depois de reservar e
- * para o simulador, que nao grava.
+ * convenio), e o numero nao esta no cadastro para esse convenio. Quem decide
+ * de verdade e o banco (o agendar recusa com faltam_dados); isto e para o
+ * turno saber o que pedir depois de reservar e para o simulador, que nao
+ * grava.
  */
 export function dadosQueFaltam(entrada: {
   exigidos: { nomeCompleto: boolean; nascimento: boolean; cpf: boolean };
   informados: Pick<
     DadosInformados,
-    "nome_completo" | "data_nascimento" | "cpf" | "carteirinha"
+    | "nome_completo"
+    | "data_nascimento"
+    | "cpf"
+    | "carteirinha"
+    | "carteirinhaNoCadastro"
   >;
   /** O vinculo da reserva viva; null sem reserva. */
   vinculo: { procedimentoId: string; convenioId: string | null } | null;
@@ -526,7 +551,11 @@ export function dadosQueFaltam(entrada: {
   if (
     !informados.carteirinha &&
     vinculo !== null &&
-    exigeCarteirinha(catalogo, vinculo)
+    exigeCarteirinha(catalogo, vinculo) &&
+    !carteirinhaDoCadastroVale(
+      informados.carteirinhaNoCadastro,
+      vinculo.convenioId,
+    )
   ) {
     faltam.push("carteirinha");
   }

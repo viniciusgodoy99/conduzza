@@ -1314,7 +1314,7 @@ Depois disso, a próxima etapa é a AG4 ("O que falta", abaixo).
 
 **Para publicar, na ordem:** (1) o ok do dono para o ensaio na produção e a migration; (2) o merge e o deploy do código, depois da migration; (3) `npm run test:rls` e `npm run test:integration` com os casos novos; (4) uma rodada com a OpenAI de verdade para ver o verificador lendo a introdução (nenhum teste chama a OpenAI, e a frase `PERMITIDO_OFERECER_O_PREPARO` mudou).
 
-**Depende de outra frente:** o exemplo do dono, "e o remédio do exame, como eu tomo?", hoje para no portão de entrada e na CFM-6 (`docs/03`, seção 25). Liberar essa pergunta é decisão da frente `agente-portao-exame` e do dono: sem isso, ela continua indo para a equipe, com a frase de sempre.
+**O exemplo do dono**, "e o remédio do exame, como eu tomo?", chega ao agente com a habilidade "Enviar orientação de preparo", e a saída é só o `enviar_preparo`: frente `agente-portao-exame` (entrada "Portão de entrada: o pedido administrativo sobre exame", abaixo, e `docs/03`, seção 27). Sem a habilidade ou sem texto em vigor, vai para a equipe, com a frase de sempre.
 
 ### [x] AG4 do agente de IA: a IA lista, cancela e remarca consultas pela conversa `G` (pedido do dono em 26/10/2026, a etapa AG4 do plano da entrada acima; D-9 e D-10 decididas em 27/10/2026; construída e revisada na noite de 27/10/2026, na branch local `agente-ag4`; a migration `20261028100000` passou no ensaio na produção em 27/10/2026, às 22h16, com a transação desfeita; **aplicada e publicada em 28/10/2026, com o ok do dono**: a migration às 09:12 e o código no merge `0d9b7d5`)
 
@@ -1559,6 +1559,8 @@ Banco no `docs/04`, seção 37 (e as notas das seções 4 e 17); arquitetura no 
 
 **Estado:** aplicada na produção em 05/11/2026, com o ok do dono, `ENSAIO OK` e o `motor-ia` pausado durante o ensaio, e publicada no merge `3574ae8`: RLS 8 de 8, integração 15 de 15, `job-queue` 12 de 12 e ponta a ponta 6 de 6. **A mídia continua indo para a equipe até a prova paga (D-100):** `TRANSCRICAO_CALIBRADA` falsa e os tetos do leitor nulos; nada sai à OpenAI. Depois do código, falta ao dono a operação da D-94 e o ok da prova paga.
 
+> **A matriz de arquivos do dono de 06/11/2026 (entrada "A matriz de arquivos")** muda o que segue com a IA nesta entrega: o item "a carteirinha e o documento de identidade passam para a equipe" e a tabela de decisão deixaram de valer com a publicação em 06/11/2026.
+>
 > **Decisões do dono de 06/11/2026 (entrada "Ligar o agente no teste"):** a D-100 foi dispensada, e a mídia sai para a OpenAI desde a publicação em 06/11/2026; o `whisper-1` fica, com a remoção prevista para 26/02/2027; a D34, o RIPD e o termo foram dispensados para esta fase de teste; a D-95 e os requisitos da Produção continuam.
 
 **Decisões pendentes do dono** (do adendo do desenho e das rodadas, todas construídas com a recomendação; um "ok" segue todas):
@@ -1724,7 +1726,7 @@ A revisão curta reproduziu o harness da AG7 numa cópia, com os mesmos números
 7. **A lista de remédios do preparo** (`MEDICAMENTOS_DO_PREPARO`, 33 formas, só na saída do modelo; nunca barra o texto do RT). **Recomendo** conferir com a fonte da Anvisa (o bulário) antes de paciente real.
 8. **[x] Feito em 05/11/2026, na branch `agente-ag7-rt` (`docs/04`, 38.11):** a regra pequena, com 0 falso positivo em 431 controles. **A oferta de outro procedimento sem preço no texto da clínica** ("Aproveite e faça também a limpeza de pele." passa sem recusa nem aviso; com "com desconto", recusa pelo preço). **Recomendo** uma regra pequena de recusa no texto da clínica (a oferta casada fica fora da D-80, CFM 2.336/2023), medida contra os controles antes de ligar.
 9. **As passagens a mais pela falha fechada** (CFM-5, CFM-6 e CFM-7: a resposta curta barrada, a situação da pessoa e o procedimento não confirmado). **Recomendo** medir na fase de teste e na D34 antes de afrouxar qualquer uma. A CURTA-1, que a revisão curta mostrou maior do que uma passagem a mais (a regra da CFM-5 barrava respostas que não são de preparo, com ou sem a habilidade), foi corrigida na construção (`fac431e`): a regra só roda com a habilidade e só barra a frase que afirma ou nega o jejum ou o preparo.
-10. **O portão com a palavra "exame" e o falso Urgente** ("qual o preparo do exame de sangue?" vai para a equipe antes do classificador; "tomei 4 comprimidos de bisacodil" vira Urgente, `remedio_demais`). **Recomendo** manter os dois (o lado seguro, D-81), medir na D34 e levar o falso Urgente ao RT junto da lista da D-51; afrouxar o "exame" só com o ok do dono e a medida.
+10. **O portão com a palavra "exame" e o falso Urgente** (resolvido na parte do exame em 06/11/2026, entrada "Portão de entrada: o pedido administrativo sobre exame"; antes, "qual o preparo do exame de sangue?" ia para a equipe antes do classificador; "tomei 4 comprimidos de bisacodil" vira Urgente, `remedio_demais`). **Recomendo** manter os dois (o lado seguro, D-81), medir na D34 e levar o falso Urgente ao RT junto da lista da D-51; afrouxar o "exame" só com o ok do dono e a medida.
 11. **"µg" e "kit de preparo" recusados no texto da clínica, e a cópia literal de frase administrativa do texto barrada na resposta do modelo.** **Recomendo** manter (com a tela orientando "escreva mcg no lugar de µg" e "a palavra kit também conta como oferta"; a IA nunca vê o texto da clínica).
 12. **TELA-9, o RT de teste na Conduzza Teste.** A conta de super admin nunca age como RT (D-71), nem com vínculo ativo: o Victor não aprova pela conta dele de super admin. **Recomendo** usar a conta normal dele como RT de teste, como na decisão "Conta própria só para o painel".
 13. **A ordem com a trava do super admin** (`20261103110000`, no `main` e não aplicada). As duas ordens funcionam (provado no harness, sem desligar gatilho). **Recomendo** aplicar na ordem em que os oks vierem; se a trava vier depois da AG7, rodar o ensaio dela com as duas tabelas da AG7 na lista do passo 9 (o arquivo já as tem).
@@ -1799,7 +1801,7 @@ Tudo em `ia_uso`, no teto diário da clínica (padrão de US$ 5) e na reserva do
 
 **O que continua escalando** (trava permanente em `tests/unit/conformidade/portao-recepcao-do-exame.test.ts`): sintoma ou resultado na mesma mensagem ou na mesma rajada ("minha glicose tá alterada, quanto custa esses exames?", "quanto custa esse exame, tô com muita dor", "o médico pediu porque estou com tontura, quanto custa?"), o resultado ("meu exame deu alterado", "o que significa esse resultado?", "esse exame pode ser tumor?"), a dúvida e a conduta ("vale a pena fazer esses exames?", "preciso fazer esse exame?", "qual exame eu devo fazer?", "esse exame dói?", "você faria esse exame?"), a finalidade e o preparo, e o exame sozinho ("exames", "meus exames", "seguem os exames").
 
-**Mais apertado que a produção:** a troca antiga de preço deixou de valer nos padrões. "Minha glicose tá alterada, quanto custa o exame?", com o artigo, passava na produção e agora escala. O custo: pergunta de preço com o artigo e alguma coisa fora da lista ("oi, me chamo Ana, quanto custa o exame?", ou um exame de nome fora da lista) também volta para a equipe. Se isso pesar no uso, a lista cresce.
+**Mais apertado que a produção:** a troca antiga de preço deixou de valer nos padrões. "Minha glicose tá alterada, quanto custa o exame?", com o artigo, passava na produção e agora escala. O custo: pergunta de preço com o artigo e alguma coisa fora da lista ("boa tarde, sou a Ana, quanto custa o exame?", ou um exame de nome fora da lista) também volta para a equipe. Se isso pesar no uso, a lista cresce.
 
 **Urgência e rede de segurança:** não mudaram. A lista de trocas que a urgência lê é a mesma. Conferência main contra branch, com as 12.882 frases das fixtures e dos testes da conformidade, sozinhas e na rajada nas duas ordens (38.646 leituras): só `assunto_clinico` mudou; nenhuma leitura ganhou ou perdeu urgência, sintoma ou qualquer outro gatilho. O script da conferência ficou fora do repositório; a trava permanente são os testes novos.
 
@@ -1811,6 +1813,74 @@ Tudo em `ia_uso`, no teto diário da clínica (padrão de US$ 5) e na reserva do
 1. **O classificador não foi medido com o modelo real** (nenhum teste chama a OpenAI). Se ele escalar esses pedidos mesmo com a política nova, o defeito continua aparecendo para o dono, e a medida está na D34.
 2. **A legenda do pedido agora chega ao leitor** ("quanto custa esses exames?" junto da foto), com a habilidade de ler imagem e documento ligada; quem separa pedido de resultado é o leitor. Também depende da D34.
 3. **A rajada são as mensagens ainda sem resposta:** "minha glicose tá alterada" já respondida num turno anterior não segura o "quanto custa esses exames?" do turno seguinte no portão.
+
+**O nome antes do pedido** (mesma frente): "oi, me chamo Ana, quanto custa o exame?" passa. Só "me chamo" e "meu nome é", com até duas palavras de nome; o resto continua tendo de caber na lista, e "me chamo Ana e tô com dor, quanto custa o exame?" escala.
+
+**A pergunta do preparo e do remédio do exame** (decisão do dono de 06/11/2026, opção A dos remédios; a exceção D-80 do `CLAUDE.md` 3.2, que não muda): com a habilidade "Enviar orientação de preparo", "qual o preparo do exame?", "precisa de jejum pro exame?", "e o remédio do exame, como eu tomo?", "qual remédio eu tomo antes do exame?" e variações de grafia e ordem chegam ao agente, que só escolhe o procedimento (`enviar_preparo`), e o sistema manda o texto aprovado palavra por palavra. Mesma técnica: lista fechada, turno inteiro. **Sem a habilidade**, o portão escala antes do modelo, como sempre (`detectarGatilhosDeEntrada` sem `comPreparo`): não há o que enviar. **Sem texto em vigor**, vai para a equipe. O modelo continua sem escrever preparo: se escrever, o filtro barra e a conversa vai para a equipe. O caminho inteiro no `docs/03`, seção 27.
+
+**Continua escalando** (trava em `tests/unit/conformidade/portao-preparo-do-exame.test.ts` e no fim de `tests/unit/agente/motor-ag7-preparo.test.ts`): "posso tomar o remédio com leite?", "esqueci de tomar o remédio do exame", "tomei o remédio e passei mal", "qual remédio eu tomo pra dor?", "posso tomar dipirona antes do exame?", "tomo remédio de pressão, posso fazer o exame?", "preciso parar o remédio antes do exame?", "quanto de remédio eu tomo?", "sou diabética, qual o preparo do exame?", "tô grávida, como é o preparo?"; o remédio pelo nome; o remédio sem dizer de quê ("como eu tomo esse remédio?"). A urgência e a rede de segurança não mudaram: conferência contra o main no fim desta entrada.
+
+**Duas correções que a frente achou no caminho:** "exame" confirmava o procedimento na CFM-7 (com um "Exame de sangue" no catálogo, "qual o preparo do exame?" mandaria o texto dele): agora não identifica procedimento nenhum, e o modelo pergunta qual é. E "preciso parar o remédio" não contava como situação da pessoa na CFM-6: agora conta.
+
+**Caso da bateria que mudou de lado:** AG7-E05 ("qual o preparo do exame de sangue?") ficou como o lado sem a habilidade, e AG7-CN06 é o mesmo pedido com a habilidade. O teste "HOJE o pedido do exemplo do dono" (`preparo-introducao.test.ts`) agora diz os dois lados.
+
+**Versões (sobre a junção `37538d8`):** portão `portao-ac8922f0785a` para `portao-918d49469e1f`; regras `regras-b837d0d6bfdf` para `regras-04105ba83f04`; prompt `agente-e0b5b34c6d30` para `agente-7b1f62633823`; classificador com a habilidade `classificador-be0b88c18d07` para `classificador-e7b342a4584b`; sem a habilidade, igual (`classificador-bb61a48527c8`).
+
+**Conferência contra o main (`8e7132f`, `portao-9e835642d49a`):** as 13.291 frases das fixtures e dos testes da conformidade, sozinhas sem e com a habilidade e na rajada com a pergunta nas duas ordens (53.164 leituras): só `assunto_clinico` mudou. As 5.761 leituras com urgência e as 9.831 com sintoma no main são as mesmas na branch. O script ficou fora do repositório.
+
+**Resíduos desta parte:**
+1. **O classificador não foi medido** com o modelo de verdade: a variante diz `nenhum`, mas só a D34 mostra se ele obedece. Se escalar, o pedido continua indo para a equipe (o lado seguro).
+2. **"Como tomo o remédio da colonoscopia?" continua na equipe:** o portão não conhece o catálogo, e abrir um nome livre deixaria passar "o remédio da pressão". "Tenho exame amanhã, qual o preparo?" também continua. Ficaram de fora de propósito, porque não estavam na decisão.
+3. **O `CLAUDE.md` 3.2** ainda diz "a dúvida sobre o preparo ... passa para a equipe" sem a exceção da pergunta geral: o ajuste da frase é com o dono.
+
+### [x] A matriz de arquivos do agente `G` (decisão do dono de 06/11/2026; **migration `20261106130000` aplicada e código publicado em 06/11/2026**; a OpenAI ainda não exercitou o esquema novo)
+
+As palavras do dono: "preciso que nem tudo vá para a equipe, preciso que você interprete e veja se faz sentido o agente atender ou direcionar ao atendente". Carteirinha: "Pode ler o número e cadastrar no cadastro se tiver necessidade e algum campo para isso". RG, CNH e CPF: "vai depender, às vezes a equipe vai precisar que o agente peça para adiantar o atendimento". Ilegível: "preciso que a IA peça uma foto melhor para a equipe nunca ficar sobrecarregada, mas se for duvidosa pode delegar para a equipe".
+
+| Leitura | Decisão, sempre do servidor |
+|---|---|
+| Qualquer tipo com confiança baixa | Equipe (a "duvidosa"), menos `ilegivel` |
+| Pedido, tudo no Cadastro | Agente, como antes |
+| Pedido, pelo menos 1 item achado e o resto fora | Agente responde o que achou, o sistema cola "O resto do pedido a equipe confere.", e a nota interna fica na conversa, que continua na IA |
+| Pedido, nenhum item achado | Equipe, como antes |
+| Carteirinha | Agente; grava no cadastro o que está vazio (`docs/04`, seção 44) |
+| RG, CNH, CPF | Agente segue; o arquivo fica para a equipe; nada é extraído |
+| `ilegivel`, primeira vez na janela da IA | Agente pede uma foto mais nítida, sem dizer o que é o arquivo; vários no mesmo turno contam como uma vez |
+| `ilegivel` de novo na mesma janela | Equipe |
+| `outro`, alta ou média | Agente pergunta como pode ajudar |
+| Resultado, laudo, atestado, receita, foto do corpo, guia ou autorização | Equipe, como antes. CLAUDE.md 3.2 não muda |
+| Figurinha | Como antes |
+
+Arquitetura no `docs/03`, seção 28; banco no `docs/04`, seção 44; LGPD no `docs/03`, seção 14.
+
+**Versões novas:** leitor `leitor-c510a40133a9`, agente `agente-136faf31be91`, verificador `verificador-fd5a3c6877b7`, regras `regras-6cf663023178`.
+
+**O que muda para quem usa, depois de publicar:**
+- **Na conversa, a bolha "Lido pelo assistente":** "pedido com Hemograma; 2 fora do Cadastro, para a equipe conferir", "carteirinha do convênio Unimed Nacional", "carteirinha do convênio", "documento pessoal, guardado para a equipe", "arquivo que não é pedido nem documento", "arquivo ilegível". Só diz "passado para a equipe" o que foi.
+- **Na conversa, a nota interna** (assinada "Assistente"), no pedido com parte fora e na carteirinha que difere do cadastro.
+- **Em Pacientes:** o número e o plano que a foto gravou aparecem na ficha, como os outros. A trilha `gravou_carteirinha_lida` diz quais campos.
+- **Na Tela 6:** a descrição e a nota de "Ler imagem e documento".
+
+**Decisões tomadas sem o dono, para ele conferir:**
+1. O número e o plano só gravam com confiança **alta**. O plano em confiança média só serve ao texto do agente.
+2. Com o plano do cadastro diferente do lido, o número também não grava: ele seria de outro plano. Vira nota.
+3. A marcação não pede o número para qualquer número no cadastro, inclusive o que a equipe escreveu, com o plano igual ou vazio.
+4. O aviso do resto é colado pelo sistema, como a F2; o agente não precisa escrever.
+5. A nota entra na mesma transação da leitura, pela RPC, em vez de por `anotarPassagemParaAEquipe`: é o que garante "uma vez só".
+6. O contato em uso (`SKIP LOCKED`) não grava e deixa nota; não há nova tentativa.
+
+**O que não foi construído:**
+- **O agente pedir RG, CNH ou CPF.** O dono disse "às vezes a equipe vai precisar que o agente peça"; a matriz fechada não pediu. Continua proibido pelo prompt; o caminho seria uma habilidade por clínica.
+- **Um aviso à equipe além da nota:** ela só vê ao abrir a conversa. Nada de chip, contador ou alerta (`docs/04`, seção 44).
+- **O aviso do resto em turno de frase fixa:** a resposta que é uma frase fixa da agenda ou do sistema não leva o aviso; a nota fica.
+
+**Riscos a saber:**
+- **O esquema novo não foi exercitado contra a OpenAI** (sem prova paga, pelo próprio dono). Se a API recusar o formato, toda foto e todo PDF vão para a equipe, o que aparece logo no primeiro teste real.
+- **O acerto do modelo em `ilegivel`, `outro` e no número** não foi medido. A trava é a validação estreita e a regra de só gravar o vazio.
+- **Carteirinha de dependente:** grava no contato da conversa; a equipe corrige na ficha.
+- **O número pela OpenAI:** dado pessoal, sem RIPD por decisão do dono nesta fase; rever antes de paciente real (`docs/03`, seção 14).
+
+**Estado (06/11/2026):** publicado. Conferência da junção com os remédios e o portão: 20.285 testes, typecheck, lint e build verdes; ensaio e provas na produção no `docs/04`, seção 44. **Não rodou:** a OpenAI de verdade com o esquema novo do leitor (se recusar, toda foto e PDF vão para a equipe: falha fechada). **Limites conhecidos:** a nota interna só aparece quando a equipe abre a conversa; o agente não pede RG, CNH ou CPF (não construído); a carteirinha de dependente grava no contato da conversa, só quando o campo está vazio.
 
 ### [ ] Conversas longas e os 5 defeitos que elas acharam `M` (05/11/2026; autorizado pelo dono só em branch: `agente-ag0-conversas`; **nada publicado nem aplicado, sem migration**)
 

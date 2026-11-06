@@ -16,6 +16,24 @@
 export const CABECALHO_DA_NOTA_DA_PASSAGEM =
   "Resumo do assistente para a equipe (montado pelo sistema, sem dados do paciente).";
 
+/**
+ * As notas que o banco grava junto com a leitura (gravar_leitura_da_midia,
+ * migration 20261106130000; matriz do dono de 06/11/2026), com a conversa
+ * ainda na IA: a equipe ve quando abre a conversa, e nada avisa. Sem numero de
+ * carteirinha, sem nome de exame e sem texto do arquivo. Um teste confere que
+ * sao os textos da migration.
+ */
+export const NOTAS_DA_LEITURA = {
+  /** "{}": quantos itens ficaram fora. */
+  pedidoParcial:
+    "O pedido que a pessoa mandou tem item fora do Cadastro ({}). O assistente respondeu sobre os outros e disse que a equipe confere o resto: veja o arquivo nesta conversa.",
+  /** "{}": número, convênio, ou número e convênio. */
+  carteirinhaDiferente:
+    "A carteirinha que a pessoa mandou tem {} diferente do cadastro, e o cadastro não mudou: confira o arquivo nesta conversa.",
+  carteirinhaNaoGravada:
+    "A carteirinha que a pessoa mandou não foi gravada no cadastro agora, que estava em uso: confira o arquivo nesta conversa.",
+} as const;
+
 /** Quem assina a nota da passagem no fio (a mesma assinatura da IA). */
 export const AUTOR_DA_NOTA_DA_PASSAGEM = "Assistente";
 

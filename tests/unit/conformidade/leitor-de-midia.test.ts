@@ -139,11 +139,13 @@ function ler(
   });
 }
 
+const SEM_CARTEIRINHA = { convenio: "nenhum", numero_da_carteirinha: null };
 const PEDIDO = {
   tipo: "pedido_de_exame_ou_procedimento",
   itens: ["p3", "p7"],
   fora_do_cadastro: 0,
   confianca: "alta",
+  ...SEM_CARTEIRINHA,
 };
 
 describe("o corpo da chamada", () => {
@@ -223,30 +225,35 @@ describe("o corpo da chamada", () => {
     expect(JSON.stringify(corpo.input)).not.toMatch(/https?:\/\//);
   });
 
-  it("o esquema da saida nao tem string livre (so enums, a lista de enums e um inteiro)", () => {
+  it("o esquema da saida: a unica string livre e o numero da carteirinha (o resto, enums, a lista de enums e um inteiro)", () => {
     const formato = zodTextFormat(
-      esquemaDaLeitura(CATALOGO.map((c) => c.codigo)),
+      esquemaDaLeitura(CATALOGO.map((c) => c.codigo), ["c1", "c2"]),
       "leitura_do_arquivo",
     );
     const esquema = formato.schema as {
       properties: Record<string, Record<string, unknown>>;
       additionalProperties: boolean;
+      required: string[];
     };
     expect(formato.strict).toBe(true);
     expect(esquema.additionalProperties).toBe(false);
     expect(Object.keys(esquema.properties).sort()).toEqual([
       "confianca",
+      "convenio",
       "fora_do_cadastro",
       "itens",
+      "numero_da_carteirinha",
       "tipo",
     ]);
+    expect([...esquema.required].sort()).toEqual(Object.keys(esquema.properties).sort());
+    expect(esquema.properties.convenio?.enum).toEqual(["nenhum", "c1", "c2"]);
     expect(esquema.properties.tipo?.enum).toEqual([...TIPOS_DO_LEITOR]);
     expect(esquema.properties.confianca?.enum).toEqual(["alta", "media", "baixa"]);
     expect(
       (esquema.properties.itens?.items as { enum?: unknown }).enum,
     ).toEqual(["p1", "p3", "p7"]);
     expect(esquema.properties.fora_do_cadastro?.type).toBe("integer");
-    // Nenhuma string sem enum em lugar nenhum.
+    // Nenhuma string sem enum em lugar nenhum, fora do numero.
     const semEnum = (no: unknown): boolean => {
       if (typeof no !== "object" || no === null) {
         return false;
@@ -257,7 +264,9 @@ describe("o corpo da chamada", () => {
       }
       return Object.values(o).some(semEnum);
     };
-    expect(semEnum(esquema)).toBe(false);
+    const { numero_da_carteirinha: numero, ...fechados } = esquema.properties;
+    expect(semEnum({ ...esquema, properties: fechados })).toBe(false);
+    expect(semEnum(numero)).toBe(true);
   });
 
   it("o envelope neutraliza marcador e quebra de linha no nome do Cadastro", () => {
@@ -282,6 +291,8 @@ describe("a saida lida e conferida pelo servidor", () => {
         codigos: ["p3", "p7"],
         foraDoCadastro: 0,
         confianca: "alta",
+        convenioId: null,
+        numeroDaCarteirinha: null,
       },
       modelo: "gpt-6-luna",
       uso: {
@@ -306,13 +317,13 @@ describe("a saida lida e conferida pelo servidor", () => {
     });
     expect(
       conferirLeitura(
-        { tipo: "receita", itens: ["p3"], fora_do_cadastro: 0, confianca: "alta" },
+        { ...SEM_CARTEIRINHA, tipo: "receita", itens: ["p3"], fora_do_cadastro: 0, confianca: "alta" },
         CATALOGO,
       ),
     ).toEqual({ ok: false, motivo: "incoerente" });
     expect(
       conferirLeitura(
-        { tipo: "carteirinha", itens: [], fora_do_cadastro: 2, confianca: "alta" },
+        { ...SEM_CARTEIRINHA, tipo: "carteirinha", itens: [], fora_do_cadastro: 2, confianca: "alta" },
         CATALOGO,
       ),
     ).toEqual({ ok: false, motivo: "incoerente" });
@@ -428,7 +439,7 @@ describe("falha fechada", () => {
   it("o log nunca leva o tipo lido (dado de saude), so o resultado e a contagem", async () => {
     const linhas = silenciarLog();
     const { cliente } = clienteFalso(async () =>
-      resposta({ tipo: "resultado_ou_laudo", itens: [], fora_do_cadastro: 0, confianca: "alta" }),
+      resposta({ ...SEM_CARTEIRINHA, tipo: "resultado_ou_laudo", itens: [], fora_do_cadastro: 0, confianca: "alta" }),
     );
     await ler(cliente);
     const log = linhas.join("");
@@ -814,21 +825,25 @@ describe("a tabela 1.2: o que a IA faz com cada tipo", () => {
       expect(decidirPelaLeitura(leitura({ confianca }), CATALOGO)).toEqual({
         tipo: "segue",
         itens: [CATALOGO[1], CATALOGO[2]],
+        foraDoCadastro: 0,
         descricao:
           "(a pessoa mandou um pedido de exame ou procedimento com: p3 Hemograma, p7 Glicemia de jejum)",
       });
     }
   });
 
-  it("o pedido com item fora do Cadastro ou confianca baixa: nao identificada (nunca 'a clinica nao faz')", () => {
-    expect(decidirPelaLeitura(leitura({ foraDoCadastro: 1 }), CATALOGO)).toEqual({
-      tipo: "escala",
-      motivo: "midia_nao_identificada",
-    });
+  it("o pedido sem item achado ou com confianca baixa: nao identificada (nunca 'a clinica nao faz')", () => {
+    expect(
+      decidirPelaLeitura(leitura({ procedimentos: [], foraDoCadastro: 1 }), CATALOGO),
+    ).toEqual({ tipo: "escala", motivo: "midia_nao_identificada" });
     expect(decidirPelaLeitura(leitura({ confianca: "baixa" }), CATALOGO)).toEqual({
       tipo: "escala",
       motivo: "midia_nao_identificada",
     });
+    // A baixa com item achado e item fora tambem: e a "duvidosa".
+    expect(
+      decidirPelaLeitura(leitura({ confianca: "baixa", foraDoCadastro: 1 }), CATALOGO),
+    ).toEqual({ tipo: "escala", motivo: "midia_nao_identificada" });
     // O id que saiu do Cadastro depois da leitura (o job repetido).
     expect(
       decidirPelaLeitura(leitura({ procedimentos: ["fora-do-catalogo"] }), CATALOGO),
@@ -839,11 +854,7 @@ describe("a tabela 1.2: o que a IA faz com cada tipo", () => {
     ["resultado_ou_laudo", "midia_clinica"],
     ["receita", "midia_clinica"],
     ["foto_do_corpo", "midia_clinica"],
-    ["carteirinha", "documento_do_paciente"],
     ["guia_ou_autorizacao", "documento_do_paciente"],
-    ["documento_de_identidade", "documento_do_paciente"],
-    ["outro", "midia_nao_identificada"],
-    ["ilegivel", "midia_nao_identificada"],
   ] as const)("%s vai para a equipe com %s, em qualquer confianca", (tipo, motivo) => {
     for (const confianca of ["alta", "media", "baixa"] as const) {
       expect(
@@ -884,9 +895,9 @@ describe("a tabela 1.2: o que a IA faz com cada tipo", () => {
     expect(resumoDaLeitura(leitura({}), CATALOGO)).toBe(
       "pedido com Hemograma e Glicemia de jejum",
     );
-    expect(resumoDaLeitura(leitura({ foraDoCadastro: 2 }), CATALOGO)).toBe(
-      RESUMO_DA_LEITURA.pedidoForaDoCadastro,
-    );
+    expect(
+      resumoDaLeitura(leitura({ procedimentos: [], foraDoCadastro: 2 }), CATALOGO),
+    ).toBe(RESUMO_DA_LEITURA.pedidoForaDoCadastro);
     expect(resumoDaLeitura(leitura({ confianca: "baixa" }), CATALOGO)).toBe(
       RESUMO_DA_LEITURA.pedidoSemSeguranca,
     );
@@ -895,7 +906,7 @@ describe("a tabela 1.2: o que a IA faz com cada tipo", () => {
     );
     expect(
       resumoDaLeitura(leitura({ tipo: "carteirinha", procedimentos: [] }), CATALOGO),
-    ).toBe("carteirinha do convênio, passada para a equipe");
+    ).toBe("carteirinha do convênio");
     // A figurinha: sem resumo (o CHECK do banco; sem linha na bolha).
     expect(
       resumoDaLeitura(leitura({ tipo: "figurinha", procedimentos: [] }), CATALOGO),

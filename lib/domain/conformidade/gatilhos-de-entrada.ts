@@ -34,6 +34,7 @@ import {
   NEUTRALIZACOES_DE_ENTRADA,
   PADROES_DA_REDE_DE_SEGURANCA,
   PADROES_DE_ENTRADA,
+  PALAVRAS_DA_RECEPCAO,
 } from "@/lib/domain/conformidade/padroes";
 // [AG6 urgência] início
 import { detectarUrgencia } from "@/lib/domain/conformidade/urgencia";
@@ -106,6 +107,12 @@ export type EntradaDoPortao = {
   dataDeNascimento?: string | null;
   /** Hoje no fuso da clinica (AAAA-MM-DD); exigido para usar a data acima. */
   hojeNaClinica?: string | null;
+  /**
+   * A habilidade "Enviar orientacao de preparo" valendo no turno (o mesmo
+   * comPreparo do classificador): so com ela a pergunta do preparo e do remedio
+   * do exame cabe no molde. Ausente: sem a habilidade, o lado seguro.
+   */
+  comPreparo?: boolean;
 };
 
 const DATA = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -198,19 +205,20 @@ const neutralizarForaDaRecepcao = neutralizador(
   ),
 );
 const neutralizarNaRecepcao = (texto: string) =>
-  neutralizarForaDaRecepcao(texto).replace(/\bexames?\b/g, "procedimento");
+  neutralizarForaDaRecepcao(texto).replace(PALAVRAS_DA_RECEPCAO, "item");
 /** Acima disso, o turno ja nao e um pedido curto (e a regex fica barata). */
 const LIMITE_DA_RECEPCAO_DO_EXAME = 300;
 
 function turnoDeRecepcaoDoExame(
   mensagens: readonly MensagemDeEntrada[],
+  comPreparo: boolean,
 ): boolean {
   const turno = mensagens
     .flatMap((m) => (m.tipo === "texto" ? [m.texto ?? ""] : []))
     .join(" ");
   return (
     turno.length <= LIMITE_DA_RECEPCAO_DO_EXAME &&
-    cabeNaRecepcaoDoExame(visaoCorrida(normalizarBase(turno)))
+    cabeNaRecepcaoDoExame(visaoCorrida(normalizarBase(turno)), comPreparo)
   );
 }
 
@@ -309,7 +317,10 @@ export function detectarGatilhosDeEntrada(
   // [AG6 urgência] fim
   /** S1: os textos do turno, na ordem, para a rede de seguranca na juncao. */
   const textosDaRede: string[] = [];
-  const neutralizar = turnoDeRecepcaoDoExame(entrada.mensagens)
+  const neutralizar = turnoDeRecepcaoDoExame(
+    entrada.mensagens,
+    entrada.comPreparo === true,
+  )
     ? neutralizarNaRecepcao
     : neutralizarForaDaRecepcao;
 
@@ -647,7 +658,7 @@ export const FONTES_DO_PORTAO_EM_CODIGO: readonly string[] = [
   `limite da leitura: ${LIMITE_DA_LEITURA} caracteres depois da NFKD (o ASCII conta um), na mensagem, na legenda e no que vai a urgencia`,
   // Decisao do dono de 06/11/2026: o pedido de recepcao sobre o exame.
   ...FONTES_DA_RECEPCAO_DO_EXAME,
-  `recepcao do exame: o turno inteiro no molde, ate ${LIMITE_DA_RECEPCAO_DO_EXAME} caracteres, troca o exame nos padroes; fora dele, a troca exame_na_pergunta_de_preco nao vale nos padroes (a urgencia e a rede na juncao leem como antes)`,
+  `recepcao do exame: o turno inteiro no molde (o preparo e o remedio do exame so com comPreparo), ate ${LIMITE_DA_RECEPCAO_DO_EXAME} caracteres, troca as palavras do molde nos padroes; fora dele, a troca exame_na_pergunta_de_preco nao vale nos padroes (a urgencia e a rede na juncao leem como antes)`,
   // Revisao de desempenho de 31/10/2026: a guarda de janela das trocas (a
   // intencao clinica perto do exame da pergunta de preco) e lida em codigo
   // (normalizar.ts), fora da fonte da troca; a versao do portao le as
@@ -664,8 +675,10 @@ export const FONTES_DO_PORTAO_EM_CODIGO: readonly string[] = [
 /** Atalho para o filtro de saida: gatilhos de um conjunto de textos. */
 export function gatilhosDosTextos(
   textos: readonly string[],
+  opcoes: { comPreparo?: boolean } = {},
 ): GatilhoDeEntrada[] {
   return detectarGatilhosDeEntrada({
     mensagens: textos.map((texto) => ({ tipo: "texto", texto })),
+    comPreparo: opcoes.comPreparo === true,
   });
 }

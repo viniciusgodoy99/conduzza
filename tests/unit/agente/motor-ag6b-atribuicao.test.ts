@@ -179,18 +179,20 @@ describe("a midia lida", () => {
     expect(cenario.marcas.ordem).toEqual(["passagem", "frase", "atribuicao:atribuida"]);
   });
 
-  it("a carteirinha (documento_do_paciente) atribui: e administrativo", async () => {
+  it("a guia (documento_do_paciente) atribui: e administrativo", async () => {
     const { cenario } = await rodar({
       mensagens: [linhaDeMidia({ id: FOTO, contentType: "imagem" })],
       leitura: {
         [FOTO]: {
           tipo: "lido",
           leitura: {
-            tipo: "carteirinha",
+            tipo: "guia_ou_autorizacao",
             procedimentos: [],
             codigos: [],
             foraDoCadastro: 0,
             confianca: "alta",
+            convenioId: null,
+            numeroDaCarteirinha: null,
           },
           modelo: "gpt-6-luna",
           uso: null,
@@ -206,16 +208,26 @@ describe("a midia lida", () => {
   });
 
   it.each([
-    ["receita", "midia_clinica"],
-    ["foto_do_corpo", "midia_clinica"],
-    ["ilegivel", "midia_nao_identificada"],
-  ] as const)("%s (%s): nunca atribui, a chamada nem sai", async (tipo, motivo) => {
+    ["receita", "midia_clinica", "alta"],
+    ["foto_do_corpo", "midia_clinica", "alta"],
+    ["outro", "midia_nao_identificada", "baixa"],
+    ["carteirinha", "midia_nao_identificada", "baixa"],
+    ["documento_de_identidade", "midia_nao_identificada", "baixa"],
+  ] as const)("%s (%s, confianca %s): nunca atribui, a chamada nem sai", async (tipo, motivo, confianca) => {
     const { cenario } = await rodar({
       mensagens: [linhaDeMidia({ id: FOTO, contentType: "imagem" })],
       leitura: {
         [FOTO]: {
           tipo: "lido",
-          leitura: { tipo, procedimentos: [], codigos: [], foraDoCadastro: 0, confianca: "alta" },
+          leitura: {
+            tipo,
+            procedimentos: [],
+            codigos: [],
+            foraDoCadastro: 0,
+            confianca,
+            convenioId: null,
+            numeroDaCarteirinha: null,
+          },
           modelo: "gpt-6-luna",
           uso: null,
         },
@@ -241,6 +253,8 @@ describe("a midia lida", () => {
             codigos: [],
             foraDoCadastro: 0,
             confianca: "alta",
+            convenioId: null,
+            numeroDaCarteirinha: null,
           },
           modelo: "gpt-6-luna",
           uso: null,

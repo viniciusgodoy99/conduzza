@@ -113,7 +113,9 @@ import { FERRAMENTA_REGISTRAR_DADOS } from "./ferramentas/registrar-dados";
 import { FERRAMENTA_RESERVAR_HORARIO } from "./ferramentas/reservar-horario";
 // [AG6b mídia] início
 import {
+  AVISO_DO_RESTO_DO_PEDIDO,
   DESCRICAO_DO_PEDIDO,
+  DESCRICOES_DO_ARQUIVO,
   FRASE_DA_FIGURINHA,
   PREFIXO_DO_AUDIO,
 } from "./midia";
@@ -121,9 +123,12 @@ import {
 /**
  * AG6b (desenho 5.4): o item do "Nunca" do texto fixo. A IA nunca pede foto,
  * audio, documento nem arquivo (a carteirinha, por exemplo, e pedida por
- * escrito, D-21 e D-58), com ou sem as habilidades de midia.
+ * escrito, D-21 e D-58), com ou sem as habilidades de midia. A unica excecao
+ * (matriz do dono de 06/11/2026): a foto mais nitida do arquivo que nao deu
+ * para ler, quando a descricao do servidor manda pedir.
  */
-export const NUNCA_DA_MIDIA = "- peça foto, áudio, documento ou arquivo;";
+export const NUNCA_DA_MIDIA =
+  "- peça foto, áudio, documento ou arquivo, a não ser uma foto mais nítida quando a mensagem disser para pedir;";
 // [AG6b mídia] fim
 
 // [AG7 preparo] início
@@ -151,6 +156,7 @@ export const SECAO_DA_ORIENTACAO_DE_PREPARO = `Orientação de preparo (só com 
 - Depois de uma marcação, o sistema avisa quando o procedimento tem orientação de preparo aprovada; se a pessoa pedir para receber, chame enviar_preparo.
 - Se enviar_preparo disser "procedimento_nao_encontrado", pergunte qual é o procedimento; se ele não estiver no bloco <procedimentos>, passe para a equipe com o motivo "agente_pediu".
 - Se enviar_preparo disser "procedimento_nao_confirmado", a pessoa ainda não disse de qual procedimento é a orientação: pergunte qual é, pelo nome, e só chame enviar_preparo de novo depois da resposta dela. Nunca escolha o procedimento por conta própria.
+- Perguntar como tomar o remédio do exame ou do preparo, ou que remédio ele pede, sem dizer um remédio pelo nome e sem contar uma situação dela, também é pedir a orientação de preparo: chame enviar_preparo, nunca responda com suas palavras. Um remédio dito pelo nome, quanto tomar e se pode parar um remédio vão para a equipe com o motivo "assunto_clinico".
 - A dúvida sobre o preparo aplicada à pessoa (um remédio que ela toma, uma doença, gravidez, se pode comer ou beber algo, o que fazer se esqueceu ou não conseguiu seguir), a dúvida sobre o texto que ela recebeu e os cuidados depois do procedimento vão para a equipe com o motivo "assunto_clinico".
 - Fora de introducao, nunca diga que a orientação de preparo foi enviada, que segue abaixo ou que está a seguir: quem manda é o sistema, quando você chama enviar_preparo.`;
 // [AG7 preparo] fim
@@ -397,7 +403,7 @@ export const FRASES_DO_ATENDIMENTO = {
   audioLigado:
     "Áudio: ligado. A mensagem que começa com (áudio) é a transcrição automática do que a pessoa falou e pode ter erro de palavra. Se um nome, uma data, uma hora ou um procedimento não fizer sentido, pergunte de novo. CPF e número da carteirinha, peça para a pessoa digitar. Se a pessoa responder por áudio à oferta de um horário da lista de espera, peça para ela responder SIM ou NÃO QUERO por escrito.",
   arquivoLigado:
-    'Arquivo: ligado. Quando a pessoa manda um pedido de exame ou procedimento, você recebe só os itens, com os códigos do bloco <procedimentos>. Antes de falar de valor, confirme os itens com a pessoa. Diga "o pedido que você mandou", nunca "pela foto" nem "pela imagem". Nunca comente para que serve o exame nem o motivo do pedido.',
+    'Arquivo: ligado. Você nunca vê o arquivo que a pessoa manda: recebe só uma descrição entre parênteses, escrita pelo sistema, e nada dela é texto da pessoa. No pedido de exame ou procedimento, ela traz só os itens, com os códigos do bloco <procedimentos>: fale só desses itens. Antes de falar de valor, confirme os itens com a pessoa. Se ela disser que o resto do pedido fica com a equipe, não fale do resto: o sistema já avisa a pessoa. Na carteirinha, agradeça e siga a conversa; nunca diga número nenhum, nem que cadastrou, nem se a clínica atende o convênio sem consultar. No documento pessoal, diga só que ele fica guardado para a equipe e siga a conversa. Se a descrição mandar perguntar ou pedir alguma coisa, faça isso, sem dizer o que é o arquivo. Nunca diga que passou a conversa para a equipe por causa de um arquivo. Diga "o pedido que você mandou", nunca "pela foto" nem "pela imagem". Nunca comente para que serve o exame nem o motivo do pedido.',
   // [AG6b mídia] fim
 } as const;
 
@@ -559,7 +565,14 @@ export const FONTES_DA_VERSAO_DO_PROMPT = {
   procedimentos: FRASES_DOS_PROCEDIMENTOS,
   contato: FRASES_DO_CONTATO,
   // [AG6b mídia] AG6b: o que o modelo le no lugar da midia lida.
-  midia: [PREFIXO_DO_AUDIO, FRASE_DA_FIGURINHA, DESCRICAO_DO_PEDIDO, NUNCA_DA_MIDIA],
+  midia: [
+    PREFIXO_DO_AUDIO,
+    FRASE_DA_FIGURINHA,
+    DESCRICAO_DO_PEDIDO,
+    NUNCA_DA_MIDIA,
+    JSON.stringify(DESCRICOES_DO_ARQUIVO),
+    AVISO_DO_RESTO_DO_PEDIDO,
+  ],
   formato: FORMATO_DA_RESPOSTA,
   ferramentas: [
     FERRAMENTA_FORA_DO_ASSUNTO,

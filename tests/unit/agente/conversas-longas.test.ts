@@ -3664,6 +3664,8 @@ describe("12. áudio e foto no meio da conversa", () => {
         codigos: [codigoDoProcedimento(CADASTRO, PROC.exame)],
         foraDoCadastro: 0,
         confianca: "alta",
+        convenioId: null,
+        numeroDaCarteirinha: null,
       },
       { roteiro: [final(pedido)] },
     );
@@ -3725,6 +3727,8 @@ describe("12. áudio e foto no meio da conversa", () => {
         codigos: [],
         foraDoCadastro: 0,
         confianca: "alta",
+        convenioId: null,
+        numeroDaCarteirinha: null,
       }),
       { desfecho: "escalou", motivo: "midia_clinica", gatilho: null },
       0,

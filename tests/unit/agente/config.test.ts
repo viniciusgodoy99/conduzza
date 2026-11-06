@@ -3023,7 +3023,7 @@ describe("AG6b: as habilidades de midia, os motivos e os tipos da leitura", () =
     expect(porChave[HABILIDADE_DO_ARQUIVO]).toMatchObject({
       titulo: "Ler imagem e documento",
       descricao:
-        "Lê a foto ou o PDF de um pedido de exame ou procedimento e responde sobre os itens que a clínica faz. Resultado, laudo, receita, foto do corpo, carteirinha, guia e documento pessoal passam para a equipe.",
+        "Lê a foto ou o PDF de um pedido de exame ou procedimento e responde sobre os itens que a clínica faz. Guarda no cadastro o número e o convênio da carteirinha, se estiverem vazios. Pede uma foto mais nítida do arquivo que não deu para ler. Resultado, laudo, receita, foto do corpo, guia e o que ficar em dúvida passam para a equipe.",
       travada: false,
       padrao: false,
       ferramentas: [],
@@ -3032,7 +3032,7 @@ describe("AG6b: as habilidades de midia, os motivos e os tipos da leitura", () =
       "A transcrição é feita pela OpenAI, nos EUA, com a chave do Conduzza, só nas conversas com o assistente. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
     );
     expect(notaDaHabilidade(HABILIDADE_DO_ARQUIVO)).toBe(
-      "A foto ou o PDF vai uma vez para a OpenAI, nos EUA, sem o nome do arquivo e sem a localização da foto. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
+      "A foto ou o PDF vai uma vez para a OpenAI, nos EUA, sem o nome do arquivo e sem a localização da foto. O número da carteirinha também passa por lá. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
     );
     expect(notaDaHabilidade("agendar")).toBeNull();
     for (const texto of [
@@ -3075,6 +3075,19 @@ describe("AG6b: as habilidades de midia, os motivos e os tipos da leitura", () =
       "ilegivel",
     ]);
     expect(Object.keys(DECISAO_DO_TIPO_DO_LEITOR).sort()).toEqual([...TIPOS_DO_LEITOR].sort());
+    // A matriz do dono de 06/11/2026: o que so a equipe pode ver continua com ela.
+    expect(DECISAO_DO_TIPO_DO_LEITOR).toEqual({
+      pedido_de_exame_ou_procedimento: "segue",
+      guia_ou_autorizacao: "documento_do_paciente",
+      carteirinha: "segue",
+      documento_de_identidade: "segue",
+      resultado_ou_laudo: "midia_clinica",
+      receita: "midia_clinica",
+      foto_do_corpo: "midia_clinica",
+      figurinha: "segue",
+      outro: "segue",
+      ilegivel: "segue",
+    });
     expect(MOTIVOS_DA_LEITURA).toEqual([
       "midia_clinica",
       "documento_do_paciente",

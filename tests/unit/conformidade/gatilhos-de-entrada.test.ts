@@ -35,6 +35,7 @@ describe("bateria: mensagens que tem de escalar", () => {
         mensagens: caso.mensagens,
         dataDeNascimento: caso.dataDeNascimento,
         hojeNaClinica: caso.hojeNaClinica,
+        comPreparo: caso.comPreparo,
       });
       expect(gatilhos).toContain(caso.gatilho);
     },
@@ -59,9 +60,12 @@ describe("bateria: mensagens normais que nao escalam", () => {
   it.each(CONTROLES_DE_ENTRADA.map((caso) => [caso.id, caso] as const))(
     "%s passa pelo portao",
     (_id, caso) => {
-      expect(detectarGatilhosDeEntrada({ mensagens: caso.mensagens })).toEqual(
-        [],
-      );
+      expect(
+        detectarGatilhosDeEntrada({
+          mensagens: caso.mensagens,
+          comPreparo: caso.comPreparo,
+        }),
+      ).toEqual([]);
     },
   );
 });

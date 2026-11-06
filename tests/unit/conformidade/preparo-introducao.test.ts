@@ -431,10 +431,16 @@ describe("a pergunta que o texto nao responde vai para a equipe", () => {
     expect(situacaoPessoalNoPedidoDoPreparo([texto], [])).toBe(true);
   });
 
-  it("HOJE o pedido do exemplo do dono tambem para no portao (frente agente-portao-exame): a equipe responde, nada de remedio sai pela IA", () => {
-    expect(gatilhos("e o remédio do exame, como eu tomo?")).toContain(
-      "assunto_clinico",
-    );
+  it("o pedido do exemplo do dono: sem a habilidade, a equipe responde; com ela, chega ao agente e nao conta como situacao da pessoa", () => {
+    const pedido = "e o remédio do exame, como eu tomo?";
+    expect(gatilhos(pedido)).toContain("assunto_clinico");
+    expect(
+      detectarGatilhosDeEntrada({
+        mensagens: [{ tipo: "texto", texto: pedido }],
+        comPreparo: true,
+      }),
+    ).toEqual([]);
+    expect(situacaoPessoalNoPedidoDoPreparo([pedido], [])).toBe(false);
     // O pedido de sempre chega ao modelo.
     expect(gatilhos("Me manda o preparo da colonoscopia")).toEqual([]);
   });

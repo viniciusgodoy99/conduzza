@@ -9,7 +9,12 @@ import type {
   ResultadoDaLeitura,
   ResultadoDaTranscricao,
 } from "@/lib/agente/midia";
+import {
+  CABECALHO_DA_NOTA_DA_PASSAGEM,
+  NOTAS_DA_LEITURA,
+} from "@/lib/agente/nota-da-passagem";
 import type { UsoDoModelo } from "@/lib/agente/uso";
+import { numeroDaCarteirinhaLido } from "@/lib/domain/carteirinha-lida";
 import type { TipoDeUrgencia } from "@/lib/domain/conformidade/urgencia";
 import {
   CONFIANCAS_DA_LEITURA,
@@ -60,6 +65,8 @@ export const ERROS_DA_GRAVACAO = [
   "resumo_invalido",
   "modelo_invalido",
   "versao_invalida",
+  "convenio_invalido",
+  "carteirinha_invalida",
 ] as const;
 
 /** As recusas ({ok:false, motivo}) de gravar_leitura_da_midia, NA ORDEM. */
@@ -72,6 +79,7 @@ export const RECUSAS_DA_GRAVACAO = [
   "leitura_desligada",
   "midia_bloqueada",
   "procedimento_invalido",
+  "convenio_invalido",
 ] as const;
 
 /** Os codigos da atribuicao (R1.2 com a R2 e a AG6b), na ordem do banco. */
@@ -211,6 +219,9 @@ export function erroDaLeitura(a: Record<string, unknown>): string | null {
   ) {
     return "modelo_invalido";
   }
+  // Matriz do dono de 06/11/2026 (migration 20261106130000).
+  const convenioLido = a.p_convenio_lido ?? null;
+  const numeroLido = a.p_numero_da_carteirinha ?? null;
   const versao = String(a.p_versao);
   const padrao = doAudio
     ? /^transcricao-[0-9a-f]{12}$/
@@ -219,6 +230,19 @@ export function erroDaLeitura(a: Record<string, unknown>): string | null {
       : /^leitor-[0-9a-f]{12}$/;
   if (!padrao.test(versao)) {
     return "versao_invalida";
+  }
+  if (convenioLido !== null && tipo !== "carteirinha") {
+    return "convenio_invalido";
+  }
+  if (
+    numeroLido !== null &&
+    !(
+      tipo === "carteirinha" &&
+      confianca === "alta" &&
+      numeroDaCarteirinhaLido(numeroLido) === numeroLido
+    )
+  ) {
+    return "carteirinha_invalida";
   }
   return null;
 }
@@ -343,6 +367,15 @@ export function rpcsDaAg6b(banco: BancoEmMemoria, opcoes: OpcoesDaAg6b): void {
     if (((args.p_procedimentos ?? []) as unknown[]).some((p) => !ativos.has(p))) {
       return recusa("procedimento_invalido");
     }
+    const convenioLido = args.p_convenio_lido ?? null;
+    if (
+      convenioLido !== null &&
+      !banco
+        .linhas("insurance")
+        .some((i) => i.id === convenioLido && i.clinic_id === clinicId && i.active === true)
+    ) {
+      return recusa("convenio_invalido");
+    }
     const leituras = banco.linhas("ia_leitura_da_midia");
     const existente = leituras.find((l) => l.message_id === args.p_message_id);
     if (existente !== undefined) {
@@ -360,7 +393,9 @@ export function rpcsDaAg6b(banco: BancoEmMemoria, opcoes: OpcoesDaAg6b): void {
             fora_do_cadastro: existente.fora_do_cadastro,
             confianca: existente.confianca,
             resumo: existente.resumo,
+            convenio_lido_id: existente.convenio_lido_id ?? null,
           },
+          ...carteirinhaDoContato(existente.tipo),
         },
         error: null,
       };
@@ -382,10 +417,109 @@ export function rpcsDaAg6b(banco: BancoEmMemoria, opcoes: OpcoesDaAg6b): void {
       resumo: args.p_resumo ?? null,
       modelo: args.p_modelo,
       versao: args.p_versao,
+      convenio_lido_id: args.p_convenio_lido ?? null,
       created_at: new Date().toISOString(),
     });
-    return { data: { ok: true, reutilizado: false, id }, error: null };
+    gravarACarteirinhaEAsNotas(args);
+    return {
+      data: {
+        ok: true,
+        reutilizado: false,
+        id,
+        ...carteirinhaDoContato(args.p_tipo),
+      },
+      error: null,
+    };
   });
+  /** A resposta da RPC na carteirinha: SE o cadastro tem, nunca o valor. */
+  const contatoDaConversa = () => {
+    const conversa = banco.linhas("conversation").find((c) => c.id === conversationId);
+    return banco.linhas("contact").find((k) => k.id === conversa?.contact_id);
+  };
+  function carteirinhaDoContato(tipo: unknown): Record<string, unknown> {
+    if (tipo !== "carteirinha") {
+      return {};
+    }
+    const contato = contatoDaConversa();
+    return {
+      carteirinha_no_cadastro: String(contato?.insurance_card ?? "").trim() !== "",
+      convenio_do_cadastro: contato?.insurance_id ?? null,
+    };
+  }
+  /** O espelho do que a RPC faz na primeira leitura (migration 20261106130000). */
+  function gravarACarteirinhaEAsNotas(args: Linha): void {
+    const anotar = (texto: string) =>
+      banco.linhas("message").push({
+        id: `nota-${banco.linhas("message").length + 1}`,
+        clinic_id: clinicId,
+        conversation_id: conversationId,
+        direction: "saida",
+        author: "sistema",
+        content_type: "texto",
+        body: `${CABECALHO_DA_NOTA_DA_PASSAGEM}\n${texto}`,
+        is_internal_note: true,
+        billable: false,
+        cost_cents: 0,
+        created_at: new Date().toISOString(),
+      });
+    const itens = (args.p_procedimentos ?? []) as unknown[];
+    const fora = Number(args.p_fora_do_cadastro ?? 0);
+    if (
+      args.p_tipo === "pedido_de_exame_ou_procedimento" &&
+      itens.length > 0 &&
+      fora > 0 &&
+      (args.p_confianca === "alta" || args.p_confianca === "media")
+    ) {
+      anotar(NOTAS_DA_LEITURA.pedidoParcial.replace("{}", String(fora)));
+    }
+    const numero = (args.p_numero_da_carteirinha ?? null) as string | null;
+    const plano = (args.p_convenio_lido ?? null) as string | null;
+    const contato = contatoDaConversa();
+    if (
+      args.p_tipo !== "carteirinha" ||
+      args.p_confianca !== "alta" ||
+      contato === undefined ||
+      (numero === null && plano === null)
+    ) {
+      return;
+    }
+    const cartao = String(contato.insurance_card ?? "")
+      .toUpperCase()
+      .replace(/[^0-9A-Z]/g, "");
+    const planoDiferente =
+      plano !== null && (contato.insurance_id ?? null) !== null && contato.insurance_id !== plano;
+    const numeroDiferente = numero !== null && cartao !== "" && cartao !== numero;
+    const campos: string[] = [];
+    if (numero !== null && cartao === "" && !planoDiferente) {
+      contato.insurance_card = numero;
+      campos.push("insurance_card");
+    }
+    if (plano !== null && (contato.insurance_id ?? null) === null) {
+      contato.insurance_id = plano;
+      campos.push("insurance_id");
+    }
+    if (campos.length > 0) {
+      banco.linhas("audit_log").push({
+        clinic_id: clinicId,
+        action: "gravou_carteirinha_lida",
+        entity: "contact",
+        entity_id: contato.id,
+        detalhes: { campos, message_id: args.p_message_id },
+      });
+    }
+    if (numeroDiferente || planoDiferente) {
+      anotar(
+        NOTAS_DA_LEITURA.carteirinhaDiferente.replace(
+          "{}",
+          numeroDiferente && planoDiferente
+            ? "número e convênio"
+            : numeroDiferente
+              ? "número"
+              : "convênio",
+        ),
+      );
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

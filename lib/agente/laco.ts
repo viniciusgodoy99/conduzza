@@ -135,7 +135,10 @@ import type {
   CategoriaDeConformidade,
   GatilhoDeEntrada,
 } from "@/lib/domain/conformidade/categorias";
-import type { FatosDoTurno } from "@/lib/domain/conformidade/fatos-do-turno";
+import type {
+  FatoDoArquivo,
+  FatosDoTurno,
+} from "@/lib/domain/conformidade/fatos-do-turno";
 import {
   filtrarSaida,
   type DecisaoDoFiltro,
@@ -294,7 +297,10 @@ import {
   usoEstimadoDoLeitor,
 } from "./gasto";
 import {
+  AVISO_DO_RESTO_DO_PEDIDO,
+  conveniosDaLeitura,
   decidirPelaLeitura,
+  mensagemDoArquivoLido,
   FRASE_DA_FIGURINHA,
   itensDoCatalogo,
   MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA,
@@ -475,7 +481,13 @@ export type MensagemDaConversa = {
    * procedimento com: p3 Hemograma)"), montado pelo servidor so com os
    * codigos e os nomes do Cadastro. So com origem "arquivo".
    */
-  arquivo?: { descricao: string };
+  arquivo?: {
+    descricao: string;
+    /** O que o verificador fica sabendo (matriz do dono de 06/11/2026). */
+    fato?: FatoDoArquivo;
+    /** O pedido novo com o resto fora do Cadastro: o sistema cola o aviso. */
+    avisarDoResto?: boolean;
+  };
   /**
    * AG6b: a midia do paciente (audio, imagem ou documento) e a situacao dela
    * no turno. So o servidor le: nunca vai a OpenAI nem para log.
@@ -726,6 +738,12 @@ export type EntradaDoTurno = {
    * proxima passa para a equipe. Ausente: 0.
    */
   foraDoAssuntoNaJanela?: number;
+  /**
+   * Matriz do dono de 06/11/2026: ja houve leitura ilegivel nesta janela, fora
+   * das mensagens deste turno (o ilegivel de agora vai para a equipe). Ausente:
+   * nao houve.
+   */
+  ilegivelNaJanela?: boolean;
   /**
    * Onda 2 (P11a): a IA ainda nao respondeu nesta janela, entao a resposta
    * leva o aviso de assistente virtual. Ausente: nenhuma fala do assistente
@@ -1491,6 +1509,22 @@ function textosOriginaisDoPaciente(
   });
 }
 
+/**
+ * A habilidade "Enviar orientacao de preparo" valendo nesta configuracao.
+ * Configuracao que nao da para ler: sem a habilidade (o lado seguro).
+ */
+export function habilidadeDoPreparoValendo(config: ConfigDoAgente): boolean {
+  try {
+    return ferramentasDoAgente(
+      config.habilidades,
+      config.agenda,
+      config.prazos,
+    ).includes(NOME_DO_ENVIO_DO_PREPARO);
+  } catch {
+    return false;
+  }
+}
+
 /** O passo da trilha do pedido do preparo com a situacao da pessoa. */
 export const PASSO_DO_PEDIDO_COM_SITUACAO_PESSOAL =
   "O pedido da orientação de preparo veio junto de uma situação da pessoa: passa para a equipe, sem enviar.";
@@ -1653,10 +1687,15 @@ export function custoMaximoDoTurno(entrada: {
   // [AG6b mídia] início
   // As midias que vao aos modelos contam como texto (o pior caso).
   const itensDaLeitura = itensDoCatalogo(entrada.catalogo);
+  const conveniosDoLeitor = conveniosDaLeitura(entrada.catalogo);
   const mensagensDaConta =
     entrada.midia === null || entrada.midia === undefined
       ? entrada.mensagens
-      : mensagensParaEstimativa(entrada.mensagens, itensDaLeitura);
+      : mensagensParaEstimativa(
+          entrada.mensagens,
+          itensDaLeitura,
+          conveniosDoLeitor,
+        );
   // [AG6b mídia] fim
   const pendentes = mensagensPendentes(mensagensDaConta).map((m) =>
     maisLongo(m.texto ?? "", textoParaOsModelos(m, escondido)),
@@ -1741,6 +1780,7 @@ export function custoMaximoDoTurno(entrada: {
     for (const arquivo of entrada.midia.aLer) {
       const uso = usoEstimadoDoLeitor({
         catalogo: itensDaLeitura,
+        convenios: conveniosDoLeitor,
         tokensDoArquivo: arquivo.tokensDoArquivo,
       });
       const custo =
@@ -2075,17 +2115,7 @@ async function turnoDoAgente(
   // configuracao: o classificador roda a variante com preparo e a versao
   // gravada e a dela. Configuracao que nao da para ler: sem a habilidade (o
   // lado seguro: o pedido de preparo passa para a equipe).
-  const comPreparo = ((): boolean => {
-    try {
-      return ferramentasDoAgente(
-        entrada.config.habilidades,
-        entrada.config.agenda,
-        entrada.config.prazos,
-      ).includes(NOME_DO_ENVIO_DO_PREPARO);
-    } catch {
-      return false;
-    }
-  })();
+  const comPreparo = habilidadeDoPreparoValendo(entrada.config);
   const versaoDoClassificador = versaoDaPoliticaDoClassificador({
     comPreparo,
   });
@@ -2097,6 +2127,11 @@ async function turnoDoAgente(
   const inicioDasPendentes =
     mensagensDoTurno.length - mensagensPendentes(entrada.mensagens).length;
   const pendentesDoTurno = () => mensagensDoTurno.slice(inicioDasPendentes);
+  /** O que o verificador e a passagem sabem dos arquivos da conversa. */
+  const fatosDosArquivos = (): FatoDoArquivo[] =>
+    mensagensDoTurno.flatMap((m) =>
+      m.arquivo?.fato === undefined ? [] : [m.arquivo.fato],
+    );
   const trocarPendente = (messageId: string, nova: MensagemDaConversa) => {
     const i = mensagensDoTurno.findIndex(
       (m, j) => j >= inicioDasPendentes && m.midia?.messageId === messageId,
@@ -2243,6 +2278,7 @@ async function turnoDoAgente(
       arquivo.tipo === "arquivo"
         ? usoEstimadoDoLeitor({
             catalogo: catalogoDaLeitura,
+            convenios: conveniosDaLeitura(entrada.catalogo),
             tokensDoArquivo: tokensDoArquivoNaReserva(
               arquivo.midia,
               arquivo.arquivo.tipo === "pdf" ? "application/pdf" : "image/jpeg",
@@ -2519,6 +2555,10 @@ async function turnoDoAgente(
    */
   const lerOsArquivosPendentes = async (): Promise<ResultadoDoTurno | null> => {
     const catalogoDaLeitura = itensDoCatalogo(entrada.catalogo);
+    const contextoDaLeitura = {
+      convenios: conveniosDaLeitura(entrada.catalogo),
+      ilegivelNaJanela: entrada.ilegivelNaJanela === true,
+    };
     const aLer = pendentesDoTurno().filter(
       (m) => m.midia?.situacao === "a_ler",
     );
@@ -2575,7 +2615,13 @@ async function turnoDoAgente(
         legiveis.map(async (arquivo) => {
           const corrida = await cortarAMidia(
             (prazoDaPorta, sinal) =>
-              porta.ler(arquivo, catalogoDaLeitura, prazoDaPorta, sinal),
+              porta.ler(
+                arquivo,
+                catalogoDaLeitura,
+                prazoDaPorta,
+                sinal,
+                contextoDaLeitura,
+              ),
             prazo,
           );
           return {
@@ -2616,6 +2662,9 @@ async function turnoDoAgente(
               leitura: feita.leitura,
             },
           });
+          if (feita.carteirinhaNoCadastro !== undefined) {
+            agendaDoTurno.carteirinhaNoCadastro(feita.carteirinhaNoCadastro);
+          }
         }
       }
     }
@@ -2634,7 +2683,11 @@ async function turnoDoAgente(
     );
     const decisoes = lidas.map((m) => ({
       mensagem: m,
-      decisao: decidirPelaLeitura(m.midia.leitura, catalogoDaLeitura),
+      decisao: decidirPelaLeitura(
+        m.midia.leitura,
+        catalogoDaLeitura,
+        contextoDaLeitura,
+      ),
     }));
     const motivo = motivoMaisForte(
       decisoes.flatMap(({ decisao }): MotivoDaLeitura[] =>
@@ -2654,18 +2707,25 @@ async function turnoDoAgente(
       if (decisao.tipo === "segue") {
         trilha.push({
           tipo: "outro",
-          texto: PASSOS_DA_MIDIA.leuPedido.replace("{}", () =>
-            String(decisao.itens.length),
-          ),
+          texto:
+            decisao.foraDoCadastro > 0
+              ? PASSOS_DA_MIDIA.leuPedidoParcial
+                  .replace("{itens}", () => String(decisao.itens.length))
+                  .replace("{fora}", () => String(decisao.foraDoCadastro))
+              : PASSOS_DA_MIDIA.leuPedido.replace("{}", () =>
+                  String(decisao.itens.length),
+                ),
         });
-        trocarPendente(mensagem.midia.messageId, {
-          ...mensagem,
-          tipo: "texto",
-          origem: "arquivo",
-          texto: mensagem.midia.legenda ?? "",
-          textoOriginal: mensagem.legendaOriginal ?? "",
-          arquivo: { descricao: decisao.descricao },
-        });
+        trocarPendente(
+          mensagem.midia.messageId,
+          mensagemDoArquivoLido(mensagem, decisao),
+        );
+      } else if (decisao.tipo === "responde") {
+        trilha.push({ tipo: "outro", texto: decisao.passo });
+        trocarPendente(
+          mensagem.midia.messageId,
+          mensagemDoArquivoLido(mensagem, decisao),
+        );
       } else if (decisao.tipo === "figurinha") {
         trilha.push({ tipo: "outro", texto: PASSOS_DA_MIDIA.figurinha });
         trocarPendente(mensagem.midia.messageId, {
@@ -2699,6 +2759,7 @@ async function turnoDoAgente(
       const entradas = pendentesDoTurno().map(entradaDoPortao);
       const gatilhos = detectarGatilhosDeEntrada({
         mensagens: entradas,
+        comPreparo,
         dataDeNascimento: entrada.dataDeNascimento ?? null,
         hojeNaClinica:
           entrada.hojeNaClinica ?? hojeNoFuso(entrada.agoraMs, entrada.fuso),
@@ -3431,6 +3492,7 @@ async function turnoDoAgente(
       ferramentas: readonly SaidaParaOsFatos[],
       respostasDaBase: readonly string[],
       fraseDoPreparo: string | null,
+      avisoDoResto: string | null = null,
     ): FatosDoTurno => {
       const doEstado = agendaDoTurno.fatosDoEstado();
       return montarFatosDoTurno({
@@ -3445,6 +3507,10 @@ async function turnoDoAgente(
         // [AG6b mídia] Os pedidos lidos na conversa (so os nomes do
         // Cadastro), para o resumo dos fatos do verificador.
         pedidos: pedidosDoTurno(mensagensDoTurno, entrada.catalogo),
+        // Matriz do dono de 06/11/2026: os outros arquivos da conversa e o
+        // aviso do resto do pedido, so quando o turno o colou no rascunho.
+        arquivos: fatosDosArquivos(),
+        avisoDoResto,
         // [AG7 preparo] A F2, so quando o turno a colou no rascunho (MOTOR-3:
         // nunca a que o modelo escreveu sozinho).
         fraseDoPreparo,
@@ -3635,6 +3701,9 @@ async function turnoDoAgente(
     // textos colados dos fatos; a F2 que o modelo escreveu sozinho e
     // afirmacao dele, e o verificador a julga como tal.
     let comAF2 = false;
+    // Matriz do dono de 06/11/2026: o pedido com o resto fora do Cadastro. O
+    // sistema cola o aviso, como a F2, e ele passa pelo filtro inteiro.
+    let comOAvisoDoResto = false;
 
     if (fraseDaAgenda !== null) {
       // AG4: a frase fixa da agenda, com a saudacao e o aviso colados como
@@ -3703,6 +3772,10 @@ async function turnoDoAgente(
           acoes: ferramentasDoTurno.flatMap(({ fatos }) =>
             fatos?.acao === undefined ? [] : [fatos.acao],
           ),
+          arquivoFicaComAEquipe: fatosDosArquivos().some(
+            (fato) =>
+              fato.tipo === "resto_do_pedido" || fato.tipo === "documento",
+          ),
         })
       ) {
         trilha.push({ tipo: "outro", texto: PASSO_DA_PASSAGEM_EM_TEXTO });
@@ -3761,6 +3834,9 @@ async function turnoDoAgente(
         permitidas.has(NOME_DO_ENVIO_DO_PREPARO) &&
         entrada.catalogo.preparosEmVigor?.has(marcado) === true;
       // [AG7 preparo] fim
+      comOAvisoDoResto = pendentesDoTurno().some(
+        (m) => m.arquivo?.avisarDoResto === true,
+      );
       rascunho = comporResposta({
         mensagem: mensagemSemMarca,
         saudacao: entrada.config.saudacao,
@@ -3769,7 +3845,13 @@ async function turnoDoAgente(
         encerra: final.encerra_a_conversa,
         aviso,
         // [AG7 preparo]
-        depoisDaMensagem: comAF2 ? FRASE_DO_PREPARO_DEPOIS_DE_MARCAR : null,
+        depoisDaMensagem:
+          [
+            comOAvisoDoResto ? AVISO_DO_RESTO_DO_PEDIDO : null,
+            comAF2 ? FRASE_DO_PREPARO_DEPOIS_DE_MARCAR : null,
+          ]
+            .filter((frase): frase is string => frase !== null)
+            .join(" ") || null,
       });
     }
 
@@ -3782,6 +3864,9 @@ async function turnoDoAgente(
         respostasDaBase,
         comAF2 && rascunho.includes(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR)
           ? FRASE_DO_PREPARO_DEPOIS_DE_MARCAR
+          : null,
+        comOAvisoDoResto && rascunho.includes(AVISO_DO_RESTO_DO_PEDIDO)
+          ? AVISO_DO_RESTO_DO_PEDIDO
           : null,
       );
     } catch {

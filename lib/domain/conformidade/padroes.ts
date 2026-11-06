@@ -3307,11 +3307,13 @@ const SERVICO_NA_RECEPCAO = "(?:fazem|faz|realizam|realiza|tem)";
  * "posso fazer", "faria", "qual exame", "meus exames" e o exame sozinho.
  * § e o exame; ¤, o quando.
  */
-const RECEPCAO_DO_EXAME = new RegExp(
-  `^(?:(?:${[
+const ORACOES_DA_RECEPCAO: readonly string[] = [
     // Cumprimento e emenda.
     "oi|ola|opa|alo|bom dia|boa tarde|boa noite|tudo bem|tudo bom|td bem|por favor|por gentileza|pf|pfv|pfvr|obrigad[oa]|ok|sim|certo|uma duvida|tenho uma duvida|e|tambem|entao|ah",
     "(?:queria|quero|gostaria de|preciso|pode me|poderia me|podem me|me) (?:saber|dizer|informar|falar|diz|diga|fala|informa)(?: se)?",
+    // O nome, com ate duas palavras. Qualquer outra coisa na frase ("me chamo
+    // Ana e to com dor") nao cabe, e cada palavra continua lida pelos padroes.
+    "(?:me chamo|meu nome e|meu nome eh) [a-z]+(?: [a-z]+)?",
     // Preco.
     `${PRECO_NA_RECEPCAO}(?: (?:(?:pra|para) )?fazer)?(?: §)?`,
     `§ ${PRECO_NA_RECEPCAO}`,
@@ -3331,16 +3333,69 @@ const RECEPCAO_DO_EXAME = new RegExp(
     `(?:tenho|to com|estou com|recebi|peguei|segue|seguem|mando|mandei|enviei|envio|vou mandar|vou enviar|aqui esta|aqui ta) (?:(?:o|um|uns|os|meu|esse|este) )?${PEDIDO_MEDICO}(?:(?: pra| para)? §)?`,
     `(?:(?:o|um|meu|esse|este) )?${PEDIDO_MEDICO}(?:(?: pra| para)? §)? (?:esta|ta) aqui`,
     `(?:(?:o|a|meu|minha) )?${MEDICO_DO_PEDIDO} (?:me )?(?:pediu|passou|solicitou) §`,
-  ].join("|")})(?: |$))+$`,
-);
+];
+
+// A pergunta do preparo e do remedio do exame (decisao do dono de 06/11/2026,
+// opcao A; D-80, CLAUDE.md 3.2): so com a habilidade "Enviar orientacao de
+// preparo", porque a saida dela e o enviar_preparo, o texto aprovado pelo RT
+// palavra por palavra. Sem a habilidade, escala antes do modelo, como sempre.
+const REMEDIO_NA_RECEPCAO = "(?:remedios?|medicamentos?|medicac(?:ao|oes))";
+const COMO_TOMAR_NA_RECEPCAO =
+  "como (?:que )?(?:eu )?(?:devo )?(?:tomo|tomar|toma)";
+const PARA_O_EXAME = "(?:(?:pro|pros|pra|para)(?: fazer)? )?§(?: ¤)*";
+/** O remedio sempre de alguma coisa: "como eu tomo esse remedio?" escala. */
+const DE_QUEM_E_O_REMEDIO = `(?:${PARA_O_EXAME}|antes(?: de fazer)? §(?: ¤)*|(?:do|desse|deste|no) preparo)`;
+const NOME_DO_PREPARO =
+  "(?:(?:o |os )?preparos?|(?:a |as )?orientac(?:ao|oes) de preparo)";
+
+/**
+ * Sem situacao da pessoa e sem remedio pelo nome: lista fechada, como o resto
+ * do molde. Sem "posso tomar", "tomei", "esqueci", "quanto tomo" e "parar".
+ */
+const ORACOES_DO_PREPARO: readonly string[] = [
+  // O preparo.
+  `(?:(?:qual|quais|como) (?:e |eh |sao |seria |fica |funciona )?)?${NOME_DO_PREPARO}(?: ${PARA_O_EXAME})?`,
+  `(?:(?:pode|poderia|podem) )?(?:me )?(?:manda|mande|mandar|envia|envie|enviar|passa|passe|passar) ${NOME_DO_PREPARO}(?: ${PARA_O_EXAME})?`,
+  `(?:quero|queria|gostaria de|preciso de|preciso do)(?: receber)? ${NOME_DO_PREPARO}(?: ${PARA_O_EXAME})?`,
+  `tem (?:algum )?preparos?(?: ${PARA_O_EXAME})?`,
+  `§(?: ¤)* (?:tem|pede|exige|precisa(?: de)?) (?:algum |alguma )?(?:preparos?|jejum|${REMEDIO_NA_RECEPCAO})`,
+  // O jejum.
+  `(?:(?:pro|pros|pra|para)(?: fazer)? §(?: ¤)* )?(?:precisa(?: de| fazer| ficar| estar)?|tem que(?: fazer| ficar| estar)?|tem|exige|pede) (?:em |de )?jejum(?: ${PARA_O_EXAME})?`,
+  "(?:§(?: ¤)* )?(?:e|eh) (?:em|com|de) jejum",
+  // O remedio do exame ou do preparo, e como tomar.
+  `${COMO_TOMAR_NA_RECEPCAO} (?:(?:o|os|esse|esses|este|estes) )?${REMEDIO_NA_RECEPCAO} ${DE_QUEM_E_O_REMEDIO}`,
+  `${COMO_TOMAR_NA_RECEPCAO} (?:(?:o|os|esse|este) )?preparos?(?: §(?: ¤)*)?`,
+  `(?:(?:o|os|esse|esses|este|estes) )?${REMEDIO_NA_RECEPCAO} ${DE_QUEM_E_O_REMEDIO}(?: ${COMO_TOMAR_NA_RECEPCAO})?`,
+  `(?:qual|quais|que) (?:e |eh |sao )?(?:(?:o|os) )?${REMEDIO_NA_RECEPCAO}(?: (?:que )?(?:eu )?(?:(?:devo|preciso|vou|tenho que|tem que) )?(?:tomo|tomar|toma))? ${DE_QUEM_E_O_REMEDIO}`,
+  `(?:tem que tomar|precisa tomar|tem|precisa de)(?: algum| alguma)? ${REMEDIO_NA_RECEPCAO}(?: (?:pra|para) tomar)? ${DE_QUEM_E_O_REMEDIO}`,
+  `(?:o )?preparo (?:tem|pede|exige|precisa(?: de)?)(?: algum| alguma)? ${REMEDIO_NA_RECEPCAO}`,
+];
+
+const moldeDoTurno = (oracoes: readonly string[]) =>
+  new RegExp(`^(?:(?:${oracoes.join("|")})(?: |$))+$`);
+const RECEPCAO_DO_EXAME = moldeDoTurno(ORACOES_DA_RECEPCAO);
+const RECEPCAO_COM_O_PREPARO = moldeDoTurno([
+  ...ORACOES_DA_RECEPCAO,
+  ...ORACOES_DO_PREPARO,
+]);
+
+/**
+ * O que so o molde autoriza no turno inteiro: fora daqui, os padroes continuam
+ * lendo cada palavra ("dipirona", "resultado", "dor"). "Item" e neutro de
+ * proposito: "procedimento" dispararia "antes do procedimento".
+ */
+export const PALAVRAS_DA_RECEPCAO =
+  /\b(?:exames?|remedios?|medicamentos?|medicac(?:ao|oes)|tomo|tomar|toma)\b/g;
 
 /** A visao corrida (so letra, digito e espaco) cabe no molde? */
-export function cabeNaRecepcaoDoExame(corrida: string): boolean {
-  return RECEPCAO_DO_EXAME.test(
-    corrida
-      .replace(EXAME_NA_RECEPCAO, "§")
-      .replace(QUANDO_NA_RECEPCAO, "¤"),
-  );
+export function cabeNaRecepcaoDoExame(
+  corrida: string,
+  comPreparo: boolean,
+): boolean {
+  const marcada = corrida
+    .replace(EXAME_NA_RECEPCAO, "§")
+    .replace(QUANDO_NA_RECEPCAO, "¤");
+  return (comPreparo ? RECEPCAO_COM_O_PREPARO : RECEPCAO_DO_EXAME).test(marcada);
 }
 
 /** Para a versao do portao. */
@@ -3348,6 +3403,8 @@ export const FONTES_DA_RECEPCAO_DO_EXAME: readonly string[] = [
   EXAME_NA_RECEPCAO.source,
   QUANDO_NA_RECEPCAO.source,
   RECEPCAO_DO_EXAME.source,
+  RECEPCAO_COM_O_PREPARO.source,
+  PALAVRAS_DA_RECEPCAO.source,
 ];
 
 /** Lexico forte da entrada, na forma compactada (sem letra dobrada). */

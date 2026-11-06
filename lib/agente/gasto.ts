@@ -247,6 +247,8 @@ export function custoMaximoDaTranscricao(
  */
 export function usoEstimadoDoLeitor(entrada: {
   catalogo: readonly ItemDoCatalogoDaLeitura[];
+  /** Os convenios da lista do leitor. Ausente: nenhum. */
+  convenios?: readonly ItemDoCatalogoDaLeitura[];
   /** Os tokens do arquivo no pior caso (imagem, ou paginas x por pagina). */
   tokensDoArquivo: number | null;
 }): UsoDoLlm | null {
@@ -262,6 +264,7 @@ export function usoEstimadoDoLeitor(entrada: {
       tokensNoMaximo(
         montarEnvelopeDaLeitura({
           catalogo: entrada.catalogo,
+          convenios: entrada.convenios,
           nonce: NONCE_DE_MEDIDA,
         }),
       ) +
