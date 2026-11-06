@@ -2144,7 +2144,7 @@ Continuam na equipe, de propósito: "como tomo o remédio da colonoscopia?" (o p
 
 **Versões:** regras `regras-8f0d69e2a40e` → `regras-b837d0d6bfdf`; prompt `agente-35b5cf9944dd` → `agente-e0b5b34c6d30`; verificador `verificador-6bca2c941966` → `verificador-7cefbd54e288` (a frase `PERMITIDO_OFERECER_O_PREPARO`); o portão fica em `portao-9e835642d49a`. Depois da frente do portão (`docs/05`): portão `portao-918d49469e1f`, regras `regras-04105ba83f04`, prompt `agente-7b1f62633823`, classificador com a habilidade `classificador-e7b342a4584b`.
 
-## 28. Agente de IA: a matriz de arquivos do dono de 06/11/2026 (construída na branch `agente-ligar-teste`; **não publicada**)
+## 28. Agente de IA: a matriz de arquivos do dono de 06/11/2026 (**aplicada e publicada em 06/11/2026**)
 
 A tabela, as palavras do dono e o que não foi construído estão no `docs/05`, entrada "A matriz de arquivos"; o banco, no `docs/04`, seção 44. Isto muda a seção 23 (a tabela 1.2), e o resto dela continua: o leitor classifica, com saída fechada; o agente nunca vê o arquivo; nada do CLAUDE.md, 3.2, muda: resultado, laudo, atestado, receita e foto do corpo continuam só com a equipe, e o motivo mais forte da rajada (`motivoMaisForte`) continua levando tudo.
 

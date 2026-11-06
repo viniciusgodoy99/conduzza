@@ -1559,7 +1559,7 @@ Banco no `docs/04`, seção 37 (e as notas das seções 4 e 17); arquitetura no 
 
 **Estado:** aplicada na produção em 05/11/2026, com o ok do dono, `ENSAIO OK` e o `motor-ia` pausado durante o ensaio, e publicada no merge `3574ae8`: RLS 8 de 8, integração 15 de 15, `job-queue` 12 de 12 e ponta a ponta 6 de 6. **A mídia continua indo para a equipe até a prova paga (D-100):** `TRANSCRICAO_CALIBRADA` falsa e os tetos do leitor nulos; nada sai à OpenAI. Depois do código, falta ao dono a operação da D-94 e o ok da prova paga.
 
-> **A matriz de arquivos do dono de 06/11/2026 (entrada "A matriz de arquivos")** muda o que segue com a IA nesta entrega: o item "a carteirinha e o documento de identidade passam para a equipe" e a tabela de decisão deixam de valer com o código da branch `agente-ligar-teste`.
+> **A matriz de arquivos do dono de 06/11/2026 (entrada "A matriz de arquivos")** muda o que segue com a IA nesta entrega: o item "a carteirinha e o documento de identidade passam para a equipe" e a tabela de decisão deixaram de valer com a publicação em 06/11/2026.
 >
 > **Decisões do dono de 06/11/2026 (entrada "Ligar o agente no teste"):** a D-100 foi dispensada, e a mídia sai para a OpenAI desde a publicação em 06/11/2026; o `whisper-1` fica, com a remoção prevista para 26/02/2027; a D34, o RIPD e o termo foram dispensados para esta fase de teste; a D-95 e os requisitos da Produção continuam.
 
@@ -1833,7 +1833,7 @@ Tudo em `ia_uso`, no teto diário da clínica (padrão de US$ 5) e na reserva do
 2. **"Como tomo o remédio da colonoscopia?" continua na equipe:** o portão não conhece o catálogo, e abrir um nome livre deixaria passar "o remédio da pressão". "Tenho exame amanhã, qual o preparo?" também continua. Ficaram de fora de propósito, porque não estavam na decisão.
 3. **O `CLAUDE.md` 3.2** ainda diz "a dúvida sobre o preparo ... passa para a equipe" sem a exceção da pergunta geral: o ajuste da frase é com o dono.
 
-### [ ] A matriz de arquivos do agente `G` (decisão do dono de 06/11/2026; construída na branch `agente-ligar-teste`; **nada foi aplicado nem publicado: a migration `20261106130000` só foi ensaiada num Postgres local**)
+### [x] A matriz de arquivos do agente `G` (decisão do dono de 06/11/2026; **migration `20261106130000` aplicada e código publicado em 06/11/2026**; a OpenAI ainda não exercitou o esquema novo)
 
 As palavras do dono: "preciso que nem tudo vá para a equipe, preciso que você interprete e veja se faz sentido o agente atender ou direcionar ao atendente". Carteirinha: "Pode ler o número e cadastrar no cadastro se tiver necessidade e algum campo para isso". RG, CNH e CPF: "vai depender, às vezes a equipe vai precisar que o agente peça para adiantar o atendimento". Ilegível: "preciso que a IA peça uma foto melhor para a equipe nunca ficar sobrecarregada, mas se for duvidosa pode delegar para a equipe".
 
@@ -1880,7 +1880,7 @@ Arquitetura no `docs/03`, seção 28; banco no `docs/04`, seção 44; LGPD no `d
 - **Carteirinha de dependente:** grava no contato da conversa; a equipe corrige na ficha.
 - **O número pela OpenAI:** dado pessoal, sem RIPD por decisão do dono nesta fase; rever antes de paciente real (`docs/03`, seção 14).
 
-**Estado:** escrito e testado na branch: bateria de conformidade e `tests/unit/agente` verdes em 06/11/2026 (`tests/unit/agente`, `tests/unit/conformidade`, `tests/unit/ia-whatsapp` e a bolha: 149 arquivos e 11.583 testes), com a máquina sobrecarregada (os vermelhos das rodadas anteriores foram só de tempo, com limite em milissegundos, sem relação). Migration, rollback e ensaio com `ENSAIO OK` e 74 sabotagens no Postgres local (`docs/04`, seção 44). **Falta:** aplicar a migration com o ok do dono, publicar o código, ligar a habilidade na clínica de teste e mandar uma carteirinha, um pedido parcial e uma foto borrada de verdade, conferindo a nota, a ficha e o que o agente disse. `tests/integration` e `tests/rls` dos casos novos ficam para depois de aplicar.
+**Estado (06/11/2026):** publicado. Conferência da junção com os remédios e o portão: 20.285 testes, typecheck, lint e build verdes; ensaio e provas na produção no `docs/04`, seção 44. **Não rodou:** a OpenAI de verdade com o esquema novo do leitor (se recusar, toda foto e PDF vão para a equipe: falha fechada). **Limites conhecidos:** a nota interna só aparece quando a equipe abre a conversa; o agente não pede RG, CNH ou CPF (não construído); a carteirinha de dependente grava no contato da conversa, só quando o campo está vazio.
 
 ### [ ] Conversas longas e os 5 defeitos que elas acharam `M` (05/11/2026; autorizado pelo dono só em branch: `agente-ag0-conversas`; **nada publicado nem aplicado, sem migration**)
 

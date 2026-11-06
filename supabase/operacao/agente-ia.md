@@ -1164,7 +1164,7 @@ Publicadas em 06/11/2026 (`docs/05`, entrada "Ligar o agente no teste"; `docs/04
 
 ## A matriz de arquivos: a carteirinha no cadastro e as notas (decisão do dono de 06/11/2026)
 
-Construída na branch `agente-ligar-teste`, **não publicada** (`docs/05`, entrada "A matriz de arquivos"; `docs/04`, seção 44; `docs/03`, seção 26).
+Publicada em 06/11/2026 (`docs/05`, entrada "A matriz de arquivos"; `docs/04`, seção 44; `docs/03`, seção 28).
 
 **Ordem, com o ok do dono:** (1) em horário calmo, o ensaio `~/.claude/plans/agente-completo/ligar/ensaio-20261106130000.sql` (`ENSAIO OK`, termina em ROLLBACK; segura `ACCESS EXCLUSIVE` em `ia_leitura_da_midia` até o ROLLBACK: cerca de 7 s no Postgres local, com a máquina sobrecarregada; o Atendimento e o turno com mídia esperam) e a migration `20261106130000`; (2) os casos novos de `tests/rls` e `tests/integration` de `midia-pela-ia`, um arquivo por vez; (3) `supabase gen types` para conferir os tipos à mão; (4) o código. **A migration antes do código:** sem a coluna, toda mídia vai para a equipe.
 
