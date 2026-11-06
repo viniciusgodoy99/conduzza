@@ -350,6 +350,7 @@ async function main(): Promise<number> {
     portao:
       detectarGatilhosDeEntrada({
         mensagens: caso.mensagens,
+        comPreparo: caso.comPreparo === true,
         dataDeNascimento:
           "dataDeNascimento" in caso ? caso.dataDeNascimento : undefined,
         hojeNaClinica: "hojeNaClinica" in caso ? caso.hojeNaClinica : undefined,

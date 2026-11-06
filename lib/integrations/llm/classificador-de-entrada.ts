@@ -105,7 +105,11 @@ export type Classificacao = z.infer<typeof EsquemaDaClassificacao>;
 // abaixo) troca so a frase do jejum na linha do assunto_clinico: pedir o
 // preparo e nenhum; a duvida sobre o preparo aplicada a pessoa, a duvida
 // sobre o texto recebido e os cuidados depois continuam assunto_clinico. O
-// portao deterministico nao muda (D-81).
+// portao deterministico nao mudou na AG7 (D-81).
+//
+// Decisao do dono de 06/11/2026 (opcao A dos remedios): com a habilidade, como
+// tomar o remedio do exame ou do preparo, sem remedio pelo nome e sem situacao
+// da pessoa, tambem e nenhum, alinhado ao molde do portao (padroes.ts).
 // [AG7 preparo] fim
 export const POLITICA_DO_CLASSIFICADOR = `Você classifica mensagens que pacientes mandam pelo WhatsApp para a recepção de uma clínica médica e de estética no Brasil. Uma recepcionista virtual só pode responder perguntas de agenda, preço, convênio, endereço e horários. Sua tarefa é apontar quando a conversa tem de ir para uma pessoa da equipe.
 
@@ -132,7 +136,7 @@ export const FRASE_DO_PREPARO_SEM_A_HABILIDADE =
 
 /** A frase que entra no lugar dela com a habilidade (desenho da AG7, 4.4). */
 export const FRASE_DO_PREPARO_COM_A_HABILIDADE =
-  "Pedir a orientação de preparo de um procedimento, ou perguntar de forma geral se ele tem preparo ou exige jejum, sem contar uma situação de saúde da própria pessoa, é nenhum: a recepção manda o texto aprovado pela clínica. Continua assunto_clinico: a dúvida sobre o preparo aplicada à pessoa (um remédio que toma, uma doença, gravidez, se pode comer ou beber algo, o que fazer se esqueceu ou não conseguiu seguir), a dúvida sobre o texto recebido e os cuidados depois do procedimento.";
+  "Pedir a orientação de preparo de um procedimento, ou perguntar de forma geral se ele tem preparo ou exige jejum, sem contar uma situação de saúde da própria pessoa, é nenhum: a recepção manda o texto aprovado pela clínica. Perguntar como tomar o remédio do exame ou do preparo, ou que remédio ele pede, sem dizer um remédio pelo nome e sem contar uma situação da própria pessoa, também é nenhum. Continua assunto_clinico: a dúvida sobre o preparo aplicada à pessoa (um remédio que toma, uma doença, gravidez, se pode comer ou beber algo, o que fazer se esqueceu ou não conseguiu seguir), a dúvida sobre o texto recebido e os cuidados depois do procedimento. Também continua assunto_clinico: um remédio dito pelo nome, quanto tomar e se pode parar um remédio.";
 
 /**
  * A politica com a habilidade "Enviar orientacao de preparo" ligada: a de

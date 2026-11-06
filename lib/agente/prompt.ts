@@ -151,6 +151,7 @@ export const SECAO_DA_ORIENTACAO_DE_PREPARO = `Orientação de preparo (só com 
 - Depois de uma marcação, o sistema avisa quando o procedimento tem orientação de preparo aprovada; se a pessoa pedir para receber, chame enviar_preparo.
 - Se enviar_preparo disser "procedimento_nao_encontrado", pergunte qual é o procedimento; se ele não estiver no bloco <procedimentos>, passe para a equipe com o motivo "agente_pediu".
 - Se enviar_preparo disser "procedimento_nao_confirmado", a pessoa ainda não disse de qual procedimento é a orientação: pergunte qual é, pelo nome, e só chame enviar_preparo de novo depois da resposta dela. Nunca escolha o procedimento por conta própria.
+- Perguntar como tomar o remédio do exame ou do preparo, ou que remédio ele pede, sem dizer um remédio pelo nome e sem contar uma situação dela, também é pedir a orientação de preparo: chame enviar_preparo, nunca responda com suas palavras. Um remédio dito pelo nome, quanto tomar e se pode parar um remédio vão para a equipe com o motivo "assunto_clinico".
 - A dúvida sobre o preparo aplicada à pessoa (um remédio que ela toma, uma doença, gravidez, se pode comer ou beber algo, o que fazer se esqueceu ou não conseguiu seguir), a dúvida sobre o texto que ela recebeu e os cuidados depois do procedimento vão para a equipe com o motivo "assunto_clinico".
 - Fora de introducao, nunca diga que a orientação de preparo foi enviada, que segue abaixo ou que está a seguir: quem manda é o sistema, quando você chama enviar_preparo.`;
 // [AG7 preparo] fim

@@ -2098,3 +2098,218 @@ describe("o simulador com o preparo", () => {
     });
   });
 });
+
+// Decisao do dono de 06/11/2026 (opcao A; D-80): a pergunta do preparo e do
+// remedio do exame chega ao agente so com a habilidade, e a saida e so o
+// enviar_preparo. As camadas uma a uma; o portao, a CFM-6 e o filtro sem o laco
+// estao em tests/unit/conformidade/portao-preparo-do-exame.test.ts.
+describe("a pergunta do preparo e do remedio do exame, pelo laco", () => {
+  const OLA = {
+    autor: "assistente" as const,
+    autoria: "ia" as const,
+    texto: "Olá! Como posso ajudar?",
+  };
+  const PERGUNTAS = [
+    "qual o preparo do exame?",
+    "como é o preparo do exame?",
+    "precisa de jejum pro exame?",
+    "e o remédio do exame, como eu tomo?",
+    "como eu tomo o remédio do exame?",
+    "qual remédio eu tomo antes do exame?",
+    "tem algum remédio para tomar antes do exame?",
+    "como tomo o remédio do preparo?",
+  ];
+  const TRAVAS = [
+    "posso tomar o remédio com leite?",
+    "esqueci de tomar o remédio do exame",
+    "tomei o remédio e passei mal",
+    "qual remédio eu tomo pra dor?",
+    "posso tomar dipirona antes do exame?",
+    "tomo remédio de pressão, posso fazer o exame?",
+    "preciso parar o remédio antes do exame?",
+    "quanto de remédio eu tomo?",
+    "sou diabética, qual o preparo do exame?",
+    "to grávida, como é o preparo?",
+    "me chamo Ana e to com dor, quanto custa o exame?",
+  ];
+  const semNomeNaConversa = (pergunta: string) => ({
+    mensagens: [paciente("Oi"), OLA, paciente(pergunta)],
+  });
+  const comAConsultaNaConversa = (pergunta: string) => ({
+    mensagens: [paciente("Quero marcar uma consulta"), OLA, paciente(pergunta)],
+  });
+
+  it.each(PERGUNTAS)(
+    "%j, com o procedimento citado antes: o modelo so escolhe e o sistema manda o texto",
+    async (pergunta) => {
+      const { r, corpos } = await turno(
+        [ferramenta("enviar_preparo", { procedimento: P_CONSULTA })],
+        comAConsultaNaConversa(pergunta),
+      );
+      expect(r.tipo).toBe("preparo");
+      expect(r.trilha.map((p) => p.texto)).not.toContain(
+        PASSO_DO_PEDIDO_COM_SITUACAO_PESSOAL,
+      );
+      // A variante do classificador com a habilidade, e nenhum filtro: o texto
+      // nao e do modelo.
+      expect(classificador.mock.calls[0]?.[0]).toMatchObject({
+        comPreparo: true,
+      });
+      expect(verificador).not.toHaveBeenCalled();
+      semTextoDaClinica("corpo", corpos);
+    },
+  );
+
+  it.each(PERGUNTAS)(
+    "%j, sem nome e sem nada na conversa: nada sai, e o modelo pergunta qual e",
+    async (pergunta) => {
+      const { r, corpos } = await turno(
+        [
+          ferramenta("enviar_preparo", { procedimento: P_EXAME }),
+          final("Qual é o exame?"),
+        ],
+        semNomeNaConversa(pergunta),
+      );
+      expect(saidas(corpos[1])).toEqual([
+        { ok: false, motivo: "procedimento_nao_confirmado" },
+      ]);
+      expect(r.tipo).toBe("resposta");
+      expect(r.resposta).toBe("Qual é o exame?");
+      expect(r.trilha.map((p) => p.texto)).toContain(
+        PASSO_DO_PROCEDIMENTO_NAO_CONFIRMADO,
+      );
+    },
+  );
+
+  it("com dois procedimentos citados na conversa: o modelo nao escolhe sozinho", async () => {
+    const { r, corpos } = await turno(
+      [
+        ferramenta("enviar_preparo", { procedimento: P_CONSULTA }),
+        final("Qual é o exame?"),
+      ],
+      {
+        mensagens: [
+          paciente("Quero marcar uma consulta e um botox"),
+          OLA,
+          paciente("como eu tomo o remédio do exame?"),
+        ],
+      },
+    );
+    expect(saidas(corpos[1])).toEqual([
+      { ok: false, motivo: "procedimento_nao_confirmado" },
+    ]);
+    expect(r.tipo).toBe("resposta");
+  });
+
+  it("o procedimento da marcacao da conversa confirma, mesmo sem o nome", async () => {
+    const { r } = await turno(
+      [ferramenta("enviar_preparo", { procedimento: P_EXAME })],
+      {
+        ...semNomeNaConversa("como eu tomo o remédio do exame?"),
+        atendimento: {
+          estado: { ...estadoVazio(), procedure_id: PROC.exame },
+          dados: dadosVazios(),
+        },
+      },
+    );
+    expect(r.tipo).toBe("preparo");
+  });
+
+  it("sem texto em vigor: vai para a equipe, sem o modelo escrever nada", async () => {
+    const { r } = await turno(
+      [ferramenta("enviar_preparo", { procedimento: P_LIMPEZA })],
+      {
+        mensagens: [
+          paciente("Quero marcar uma limpeza de pele"),
+          OLA,
+          paciente("como eu tomo o remédio do exame?"),
+        ],
+      },
+    );
+    expect(r.tipo).toBe("frase_fixa");
+    expect(r.desfecho).toMatchObject({
+      tipo: "escalou",
+      motivo: "assunto_clinico",
+      origem: "ferramenta",
+    });
+  });
+
+  it.each(PERGUNTAS)(
+    "%j, sem a habilidade: o portao escala antes do modelo, como sempre",
+    async (pergunta) => {
+      const { r, create } = await turno([], {
+        ...semNomeNaConversa(pergunta),
+        config: configComPreparo(false),
+      });
+      expect(r.tipo).toBe("frase_fixa");
+      expect(r.desfecho).toMatchObject({
+        tipo: "escalou",
+        motivo: "assunto_clinico",
+        origem: "portao",
+      });
+      expect(create).not.toHaveBeenCalled();
+      expect(classificador).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(TRAVAS)(
+    "%j, com a habilidade: escala no portao, sem modelo",
+    async (pergunta) => {
+      const { r, create } = await turno([], semNomeNaConversa(pergunta));
+      expect(r.tipo).toBe("frase_fixa");
+      expect(r.desfecho).toMatchObject({ tipo: "escalou", origem: "portao" });
+      expect(create).not.toHaveBeenCalled();
+      expect(classificador).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    "Você toma com bastante água.",
+    "É só tomar à noite.",
+    "O remédio é tomado na véspera.",
+    "Tome 1 comprimido às 18h.",
+    "Sim, 2 comprimidos.",
+    "Não precisa.",
+    "Precisa de jejum de 8 horas.",
+  ])(
+    "%j: o modelo escreveu o preparo ou o remedio, a regra barra e vai para a equipe",
+    async (rascunho) => {
+      const { r } = await turno(
+        [final(rascunho)],
+        comAConsultaNaConversa("como eu tomo o remédio do exame?"),
+      );
+      expect(r.tipo).toBe("frase_fixa");
+      expect(r.desfecho).toMatchObject({
+        tipo: "bloqueou",
+        categoria: "orientacao_clinica",
+        camada: "regra",
+      });
+      expect(verificador).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a introducao com o remedio nao sai; o bloco exato sai sozinho", async () => {
+    const { r } = await turno(
+      [
+        ferramenta("enviar_preparo", {
+          procedimento: P_CONSULTA,
+          introducao: "Claro! Tome o remédio à noite:",
+        }),
+      ],
+      comAConsultaNaConversa("como eu tomo o remédio do exame?"),
+    );
+    expect(r.tipo).toBe("preparo");
+    if (r.tipo === "preparo") {
+      expect(r.introducao).toBeNull();
+    }
+  });
+
+  it("o nome antes do pedido de recepcao chega ao modelo", async () => {
+    const { r, create } = await turno(
+      [final("Qual é o exame?")],
+      semNomeNaConversa("oi, me chamo Ana, quanto custa o exame?"),
+    );
+    expect(create).toHaveBeenCalled();
+    expect(r.tipo).toBe("resposta");
+  });
+});
