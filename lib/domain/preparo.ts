@@ -587,7 +587,7 @@ export const FONTE_DO_QUE_NAO_E_REMEDIO_NEM_DOSE =
 function regexDoBanco(fonte: string, flags = "u"): RegExp {
   return new RegExp(
     fonte.replaceAll("\\m", COMECO_DE_PALAVRA).replaceAll("\\M", FIM_DE_PALAVRA),
-    "u",
+    flags,
   );
 }
 
@@ -613,8 +613,18 @@ export function ofereceOutroProcedimento(texto: string): boolean {
   return OFERTA_DO_BANCO.test(frasesDoBanco(texto));
 }
 
+/**
+ * A base do texto (como preparo_conselho_recusa_texto le) sem o que nao e
+ * remedio nem dose: quem confere o remedio e a dose le este texto.
+ */
+export function semOQueNaoERemedioNemDose(texto: string): string {
+  return baseDoBanco(texto)
+    .replace(/\s+/gu, " ")
+    .replace(NAO_E_REMEDIO_NEM_DOSE, " ");
+}
+
 /** As frases do texto, como escritas e aparadas (o corte das recusas da tela). */
-function frasesParaORecorte(texto: string): string[] {
+export function frasesParaORecorte(texto: string): string[] {
   return texto
     .split(/(?<=[.!?;:])\s+|\n+/u)
     .map((frase) => frase.trim())

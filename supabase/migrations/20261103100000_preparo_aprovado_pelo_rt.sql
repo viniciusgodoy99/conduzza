@@ -492,7 +492,10 @@ comment on function public.preparo_texto_recusado(text) is
 -- dose, byte a byte (o \b do JavaScript vira \y; o teste
 -- tests/unit/agente/ag7-espelhos.test.ts confere), na visao base, com os
 -- brancos juntados. O TS le mais visoes (letras soltas, leet, compacta), entao
--- tudo o que esta recusa, o TS recusa. Nao le tabela.
+-- tudo o que esta recusa, o TS recusa. Revisao final da AG7: antes da
+-- conferencia sai o que nao e remedio nem dose (o jejum, tomar agua, o frasco
+-- que a pessoa traz e informar os medicamentos em uso; a fonte e
+-- FONTE_DO_QUE_NAO_E_REMEDIO_NEM_DOSE, lib/domain/preparo.ts). Nao le tabela.
 create function public.preparo_conselho_recusa_texto(p_conselho text, p_texto text)
 returns boolean
 language sql
@@ -529,14 +532,14 @@ as $function$
                -- dosagem, frequencia_en_es
                or b.base ~ '\y(?:twice|once|three times) a day\y|\yevery \d+ hours\y|\ycada \d+ horas\y|\y(?:una|dos|tres) veces al dia\y'),
            false)
-    from (select regexp_replace(regexp_replace(lower(normalize(p_texto, nfkd)), '[\u0300-\u036f]', '', 'g'), '\s+', ' ', 'g') as base) as b
+    from (select regexp_replace(regexp_replace(regexp_replace(lower(normalize(p_texto, nfkd)), '[\u0300-\u036f]', '', 'g'), '\s+', ' ', 'g'), '\mem jejum\M|\m(?:tomar|ingerir|beber)\M (?:apenas |so |somente |bastante )?(?:agua|liquidos?|chas?|sucos?|caldos?|isotonicos?)\M|\m(?:traga|leve|trazer|levar|colete|coletar|entregue|entregar|apresente|apresentar)\M (?:[a-z]+ ){0,2}?[0-9]+ ?(?:frascos?|potes?|potinhos?|tubos?)\M|\m(?:informe|informar|liste|listar|avise|avisar|comunique|comunicar|relate|relatar|mencione|mencionar)\M (?:(?:os|as|o|a|seus|suas|seu|sua|todos|todas|quais|qual|que|se|sobre|de|dos|das|do|da|usa|usar|toma|tomar|esta|usando|tomando|algum|alguma|qualquer) ){0,5}?(?:medicament|remedi|medicac)[a-z]*\M|\m(?:traga|leve|trazer|levar|apresente|apresentar)\M (?:(?:a|as|sua|suas) )?(?:(?:lista|relacao) d[eo]s? (?:(?:seus|suas) )?(?:medicament|remedi|medicac)[a-z]*|receitas?(?: medicas?)?)\M', ' ', 'g') as base) as b
 $function$;
 
 revoke all on function public.preparo_conselho_recusa_texto(text, text)
   from public, anon, authenticated, service_role;
 
 comment on function public.preparo_conselho_recusa_texto(text, text) is
-  'Interna (AG7; decisao do dono de 05/11/2026; nenhum papel da API executa: as RPCs salvar_preparo_do_procedimento e aprovar_preparo_do_procedimento e preparo_em_vigor rodam como o dono). Verdadeiro se o conselho nao e CRM nem CRO e o texto cita remedio ou dose (os padroes medicamento e dosagem do filtro, na visao base). "em jejum" conta como dose, porque o padrao horario_de_uso o traz (o limite esta no docs/03, secao 24). Qualquer nulo: falso. Pura.';
+  'Interna (AG7; decisao do dono de 05/11/2026; nenhum papel da API executa: as RPCs salvar_preparo_do_procedimento e aprovar_preparo_do_procedimento e preparo_em_vigor rodam como o dono). Verdadeiro se o conselho nao e CRM nem CRO e o texto cita remedio ou dose (os padroes medicamento e dosagem do filtro, na visao base), fora o que nao e remedio nem dose (em jejum, tomar agua, o frasco que a pessoa traz e informar os medicamentos em uso). Qualquer nulo: falso. Pura.';
 
 -- O nome que vai no cabecalho da mensagem ao paciente: o do procedimento
 -- (preparo_do_procedimento.nome_do_procedimento) e o do RT

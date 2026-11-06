@@ -7,6 +7,7 @@ import {
   erroDeSempre,
   FRASE_DA_EQUIPE_CONDUZZA,
   FRASES_SEM_PERMISSAO,
+  fraseDoConselho,
   fraseDoNomeComInvisivel,
   frasesDoConteudoRecusado,
   prepararTextoDoPreparo,
@@ -20,6 +21,7 @@ import { getSessionContext } from "@/lib/auth/active-clinic";
 import {
   problemasDoTextoDoPreparo,
   recusaPeloConselho,
+  trechoDoRemedioOuDose,
 } from "@/lib/domain/conformidade/preparo-aprovado";
 import { canEdit, type Role } from "@/lib/domain/permissions";
 import { conteudoRecusadoPeloBanco } from "@/lib/domain/preparo";
@@ -267,12 +269,12 @@ async function conselhoRecusa(
   );
 }
 
-function recusaDoConselho(comFrase?: string): RecusaDoPreparo {
+/** Revisao final da AG7: a recusa diz qual trecho barrou. */
+function recusaDoConselho(texto: string, comFrase?: string): RecusaDoPreparo {
+  const frase = fraseDoConselho(trechoDoRemedioOuDose(texto));
   return {
     ok: false,
-    error: comFrase
-      ? `${comFrase} ${T.conselhoNaoAceita}`
-      : T.conselhoNaoAceita,
+    error: comFrase ? `${comFrase} ${frase}` : frase,
     code: "conselho_nao_aceita_remedio_ou_dose",
   };
 }
@@ -345,6 +347,12 @@ function recusaDoBanco(
       error: acao === "aprovar" ? `${T.naoPodeSerAprovado} ${frase}` : frase,
       code: "texto_recusado",
     };
+  }
+  if (erro.message === "conselho_nao_aceita_remedio_ou_dose") {
+    return recusaDoConselho(
+      texto,
+      acao === "aprovar" ? T.naoPodeSerAprovado : undefined,
+    );
   }
   return traduzirErroDoPreparo(acao, erro);
 }
@@ -437,7 +445,7 @@ export async function salvarPreparoAction(
     return texto;
   }
   if (await conselhoRecusa(sessao, texto.texto)) {
-    return recusaDoConselho();
+    return recusaDoConselho(texto.texto);
   }
   const procedimento = await nomeDoProcedimento(sessao, lido.data.procedureId);
   if (procedimento === "erro" || procedimento === "nao") {
@@ -524,7 +532,7 @@ export async function aprovarPreparoAction(
     };
   }
   if (await conselhoRecusa(sessao, versao.texto)) {
-    return recusaDoConselho(T.naoPodeSerAprovado);
+    return recusaDoConselho(versao.texto, T.naoPodeSerAprovado);
   }
   const { error } = await sessao.supabase.rpc(
     "aprovar_preparo_do_procedimento",
@@ -632,7 +640,7 @@ export async function aprovarDeNovoAction(
     };
   }
   if (await conselhoRecusa(sessao, texto.texto)) {
-    return recusaDoConselho(T.naoPodeSerAprovado);
+    return recusaDoConselho(texto.texto, T.naoPodeSerAprovado);
   }
   const salvo = await salvarNoBanco(
     sessao,
@@ -858,7 +866,7 @@ export async function avisosDoPreparoAction(
     recusa:
       recusaDoTextoDoPreparo(versao.texto) ??
       ((await conselhoRecusa(sessao, versao.texto))
-        ? T.conselhoNaoAceita
+        ? fraseDoConselho(trechoDoRemedioOuDose(versao.texto))
         : null),
   };
 }

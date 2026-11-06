@@ -38,9 +38,11 @@ import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
 import {
   conselhoDaLinhaDoRt,
   CONSELHOS_DE_REMEDIO_E_DOSE,
+  frasesParaORecorte,
   normalizaSintoma,
   ofereceOutroProcedimento,
   partesDaMensagemDoPreparo,
+  semOQueNaoERemedioNemDose,
 } from "@/lib/domain/preparo";
 
 export {
@@ -380,6 +382,8 @@ function classificarOTexto(texto: string): {
  * O que barra o texto pelo conselho do RT (decisao do dono de 05/11/2026): o
  * remedio e a dose que o aviso do dialogo acusa, quando o conselho nao e CRM
  * nem CRO (null: sem conselho conhecido, nao aceita). Vazia: o conselho aceita.
+ * Revisao final da AG7: o jejum, tomar agua, o frasco da coleta e informar os
+ * medicamentos em uso nao sao remedio nem dose (semOQueNaoERemedioNemDose).
  * O banco tem a mesma regra, em menos visoes (preparo_conselho_recusa_texto).
  */
 export function recusaPeloConselho(
@@ -389,7 +393,19 @@ export function recusaPeloConselho(
   if (conselho !== null && CONSELHOS_DE_REMEDIO_E_DOSE.includes(conselho)) {
     return [];
   }
-  return classificarOTexto(texto).avisos.filter(
+  return classificarOTexto(semOQueNaoERemedioNemDose(texto)).avisos.filter(
     (categoria) => categoria === "medicamento" || categoria === "dosagem",
+  );
+}
+
+/**
+ * A primeira frase do texto (como a clinica escreveu) que traz o remedio ou a
+ * dose, para a recusa dizer o que tirar. null: so o texto inteiro dispara.
+ */
+export function trechoDoRemedioOuDose(texto: string): string | null {
+  return (
+    frasesParaORecorte(texto).find(
+      (frase) => recusaPeloConselho(frase, null).length > 0,
+    ) ?? null
   );
 }

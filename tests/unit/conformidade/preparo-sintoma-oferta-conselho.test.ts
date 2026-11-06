@@ -7,12 +7,14 @@ import {
   conferirParaEnvio,
   problemasDoTextoDoPreparo,
   recusaPeloConselho,
+  trechoDoRemedioOuDose,
 } from "@/lib/domain/conformidade/preparo-aprovado";
 import { sha256DoTexto } from "@/lib/domain/conformidade/filtro";
 import {
   conselhoDaLinhaDoRt,
   conteudoRecusadoPeloBanco,
   FONTE_DA_OFERTA_DE_OUTRO_PROCEDIMENTO,
+  FONTE_DO_QUE_NAO_E_REMEDIO_NEM_DOSE,
   FONTE_DO_SINTOMA_NORMALIZADO,
   mensagemDoPreparo,
   normalizaSintoma,
@@ -48,8 +50,6 @@ describe("a normalizacao de sintoma e recusada", () => {
     "Sangramento leve faz parte do procedimento.",
     "O desconforto é passageiro.",
     "A cólica é um efeito esperado do laxante.",
-  ])("%s", (texto) => {
-    const { recusas, trechosDasRecusas } = problemasDoTextoDoPreparo(texto);
     // Revisao final da AG7 (achado 2): o verbo do sintoma, o sintoma que passa
     // e a frase que se refere a anterior.
     "É normal doer.",
@@ -62,6 +62,8 @@ describe("a normalizacao de sintoma e recusada", () => {
     "Isso passa logo.",
     "É comum coçar.",
     "O inchaço diminui em dois dias.",
+  ])("%s", (texto) => {
+    const { recusas, trechosDasRecusas } = problemasDoTextoDoPreparo(texto);
     expect(recusas).toContain("triagem");
     expect(trechosDasRecusas.find((t) => t.categoria === "triagem")?.trecho).toBe(
       texto,
@@ -82,8 +84,6 @@ describe("a normalizacao de sintoma e recusada", () => {
     "Mantenha a alimentação normal.",
     "Pode vir sozinho.",
     "Não venha sozinho.",
-  ])("passa: %s", (texto) => {
-    expect(normalizaSintoma(texto)).toBe(false);
     // Revisao final da AG7 (achado 2): os falsos positivos, e o alerta.
     "Você não pode passar sozinha pela recepção.",
     "Em caso de febre, é comum remarcar o exame.",
@@ -92,6 +92,8 @@ describe("a normalizacao de sintoma e recusada", () => {
     "Se a dor não melhora, procure atendimento.",
     "Pode haver cólica. É normal levar um acompanhante.",
     "Em caso de dor forte, procure atendimento. Não se preocupe com a chegada.",
+  ])("passa: %s", (texto) => {
+    expect(normalizaSintoma(texto)).toBe(false);
   });
 
   it("o sintoma em outra frase nao conta, e os espacos repetidos nao escapam", () => {
@@ -100,8 +102,6 @@ describe("a normalizacao de sintoma e recusada", () => {
     );
     expect(normalizaSintoma("Cólica   é   normal.")).toBe(true);
   });
-});
-
 
   it.each([
     "Pode haver cólica. Isso é normal.",
@@ -113,6 +113,8 @@ describe("a normalizacao de sintoma e recusada", () => {
   ])("a frase que se refere à anterior: %s", (texto) => {
     expect(normalizaSintoma(texto)).toBe(true);
   });
+});
+
 describe("a oferta de outro procedimento e recusada", () => {
   it.each([
     "Aproveite e faça também a limpeza de pele.",
@@ -122,8 +124,6 @@ describe("a oferta de outro procedimento e recusada", () => {
     "Agende junto a drenagem.",
     "Conheça também o nosso peeling.",
     "Aproveite a visita e marque a avaliação.",
-  ])("%s", (texto) => {
-    expect(problemasDoTextoDoPreparo(texto).recusas).toContain("oferta_casada");
     // Revisao final da AG7 (achado 4): a estrutura, nao o nome do procedimento.
     "Aproveite e faça também a limpeza da pele.",
     "Faça também a remoção de tatuagem.",
@@ -131,6 +131,8 @@ describe("a oferta de outro procedimento e recusada", () => {
     "Você também pode fazer a limpeza de pele.",
     "Você pode também fazer um peeling.",
     "Fazer também o botox fica melhor.",
+  ])("%s", (texto) => {
+    expect(problemasDoTextoDoPreparo(texto).recusas).toContain("oferta_casada");
     expect(conteudoRecusadoPeloBanco(texto).map((a) => a.causa)).toContain(
       "oferta_de_outro_procedimento",
     );
@@ -144,8 +146,6 @@ describe("a oferta de outro procedimento e recusada", () => {
     "Faça também a lavagem intestinal.",
     "Agende também o retorno.",
     "Traga também os exames.",
-  ])("passa: %s", (texto) => {
-    expect(ofereceOutroProcedimento(texto)).toBe(false);
     // Revisao final da AG7 (achado 4): o item do preparo continua passando.
     "Faça também a assinatura do termo.",
     "faça também o jejum",
@@ -153,6 +153,8 @@ describe("a oferta de outro procedimento e recusada", () => {
     "Faça também a remoção do esmalte.",
     "Que tal trazer os exames antes?",
     "Você também pode fazer o jejum em casa.",
+  ])("passa: %s", (texto) => {
+    expect(ofereceOutroProcedimento(texto)).toBe(false);
   });
 });
 
@@ -192,8 +194,47 @@ describe("remedio ou dose so de RT de CRM ou CRO", () => {
     );
   });
 
-  it("limite conhecido: 'em jejum' conta como dose (o padrao horario_de_uso)", () => {
-    expect(recusaPeloConselho("Venha em jejum.", "CRBM")).toEqual(["dosagem"]);
+  // Revisao final da AG7 (achado 5): "remedio e dose so de CRM ou CRO"; o jejum
+  // nao e remedio nem dose. Revertido o limite que dizia "em jejum conta como
+  // dose".
+  it.each([
+    "Venha em jejum.",
+    "Compareça em jejum de 8 horas.",
+    "Pode tomar água.",
+    "Informe os medicamentos em uso.",
+    "Traga 1 frasco de urina.",
+    "Avise se usa algum remédio.",
+    "Traga a lista de medicamentos.",
+    "Traga a receita médica.",
+  ])("qualquer RT aprova: %s", (texto) => {
+    for (const conselho of ["CRBM", "CRF", "COREN", "CREFITO", "CRN", "CRP", "CRFa", "CREF"]) {
+      expect(recusaPeloConselho(texto, conselho)).toEqual([]);
+    }
+  });
+
+  it.each([
+    "Tome 1 comprimido de bisacodil",
+    "Use 2 sachês de Picoprep",
+    "Tomar 10 mg",
+    "Tome o laxante às 18h.",
+    "Pode tomar o remédio.",
+    "Pode tomar água com o remédio.",
+    "Traga 1 frasco de Picoprep.",
+    "Tome 1 frasco.",
+    "Beba 500 ml de água.",
+    "Informe os medicamentos e suspenda o AAS.",
+    "Laxante às 18h.",
+  ])("só CRM e CRO: %s", (texto) => {
+    expect(recusaPeloConselho(texto, "CRN").length).toBeGreaterThan(0);
+    expect(recusaPeloConselho(texto, "CRM")).toEqual([]);
+    expect(recusaPeloConselho(texto, "CRO")).toEqual([]);
+  });
+
+  it("a recusa acha o trecho que barrou", () => {
+    expect(
+      trechoDoRemedioOuDose("Venha em jejum. Tome 1 comprimido de bisacodil. Traga o documento."),
+    ).toBe("Tome 1 comprimido de bisacodil.");
+    expect(trechoDoRemedioOuDose("Venha em jejum.")).toBeNull();
   });
 
   it("o envio recusa pelo conselho da linha do RT", () => {
@@ -232,6 +273,7 @@ describe("a paridade com o SQL, nos bytes", () => {
     expect(MIGRATION).toContain(
       `b.frases ~ '${FONTE_DA_OFERTA_DE_OUTRO_PROCEDIMENTO}'`,
     );
+    expect(MIGRATION).toContain(`'${FONTE_DO_QUE_NAO_E_REMEDIO_NEM_DOSE}', ' ', 'g'`);
   });
 
   it("cada padrao de remedio e de dose do filtro esta em preparo_conselho_recusa_texto", () => {

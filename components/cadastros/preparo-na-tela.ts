@@ -104,7 +104,7 @@ export const TEXTOS_DO_PREPARO = {
   ajudaDoEditorRecusa:
     "Não pode ter link, arroba, valor ou condição de pagamento, promessa de resultado, brinde ou oferta de outro procedimento, frase dizendo que um sintoma é normal ou passa sozinho, nem antes e depois de pacientes.",
   ajudaDoEditorAviso:
-    "Pode ter remédio, dose e jejum: antes de aprovar, o responsável técnico vê um aviso para conferir. Remédio e dose, só com responsável técnico de CRM ou CRO.",
+    "Pode ter remédio, dose e jejum: antes de aprovar, o responsável técnico vê um aviso para conferir. Nome de remédio e instrução de dose, só com responsável técnico de CRM ou CRO; jejum, água e pedir para informar os medicamentos em uso valem para todos.",
   enviarParaORt: "Enviar para o RT aprovar",
   enviando: "Enviando...",
   cancelar: "Cancelar",
@@ -530,6 +530,13 @@ const FRASE_DO_CONTEUDO_RECUSADO = {
   oferta_de_outro_procedimento:
     "tire a oferta de outro procedimento: a orientação de preparo não oferece nada junto.",
 } as const;
+
+/** Revisao final da AG7: a recusa pelo conselho, com o trecho que barrou. */
+export function fraseDoConselho(trecho: string | null): string {
+  return trecho === null
+    ? TEXTOS_DO_PREPARO.conselhoNaoAceita
+    : `${TEXTOS_DO_PREPARO.conselhoNaoAceita} O trecho que barrou: ${citarTrecho(trecho)}.`;
+}
 
 export function frasesDoConteudoRecusado(
   texto: string,

@@ -3,8 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FRASE_DA_EQUIPE_CONDUZZA,
   FRASES_SEM_PERMISSAO,
+  fraseDoConselho,
   TEXTOS_DO_PREPARO as T,
 } from "@/components/cadastros/preparo-na-tela";
+import { trechoDoRemedioOuDose } from "@/lib/domain/conformidade/preparo-aprovado";
 
 // As Server Actions da orientacao de preparo (AG7, frente T; contrato 4.6),
 // contra um cliente do Supabase dublado. O que interessa aqui:
@@ -952,6 +954,7 @@ describe("descartar e suspender", () => {
 
 describe("remédio ou dose só de RT de CRM ou CRO (decisão de 05/11/2026)", () => {
   const COM_REMEDIO = "Tome 2 comprimidos de bisacodil às 18h.";
+  const TRECHO_DA_V2 = COM_REMEDIO;
   const comRt = (conselho: string) => {
     estado.tabelas.responsavel_tecnico = [
       { id: "rt", clinic_id: CLINICA, conselho, ate: null },
@@ -964,7 +967,7 @@ describe("remédio ou dose só de RT de CRM ou CRO (decisão de 05/11/2026)", ()
       await salvarPreparoAction({ ...SALVAR, texto: COM_REMEDIO }),
     ).toEqual({
       ok: false,
-      error: T.conselhoNaoAceita,
+      error: fraseDoConselho(trechoDoRemedioOuDose(COM_REMEDIO)),
       code: "conselho_nao_aceita_remedio_ou_dose",
     });
     expect(escritas()).toEqual([]);
@@ -1003,14 +1006,30 @@ describe("remédio ou dose só de RT de CRM ou CRO (decisão de 05/11/2026)", ()
       await aprovarPreparoAction({ versaoId: V2, textoSha256: SHA_V2 }),
     ).toEqual({
       ok: false,
-      error: `${T.naoPodeSerAprovado} ${T.conselhoNaoAceita}`,
+      error: `${T.naoPodeSerAprovado} ${fraseDoConselho(TRECHO_DA_V2)}`,
       code: "conselho_nao_aceita_remedio_ou_dose",
     });
     expect(escritas()).toEqual([]);
     expect(await avisosDoPreparoAction({ versaoId: V2 })).toMatchObject({
       ok: true,
-      recusa: T.conselhoNaoAceita,
+      recusa: fraseDoConselho(TRECHO_DA_V2),
     });
+  });
+
+  it("a recusa cita o trecho que barrou, e o jejum salva com qualquer RT", async () => {
+    comRt("CRN");
+    const r = await salvarPreparoAction({
+      ...SALVAR,
+      texto: "Venha em jejum. Use 2 sachês de Picoprep.",
+    });
+    expect(r).toMatchObject({ ok: false });
+    expect(r.ok ? "" : r.error).toContain("Use 2 sachês de Picoprep.");
+    expect(r.ok ? "" : r.error).not.toContain("Venha em jejum");
+    const jejum = await salvarPreparoAction({
+      ...SALVAR,
+      texto: "Venha em jejum de 8 horas. Informe os medicamentos em uso.",
+    });
+    expect(jejum.ok).toBe(true);
   });
 
   it("o banco recusa pelo conselho: a mesma frase", async () => {
