@@ -42,6 +42,7 @@ import {
   CONTROLES_DO_RESULTADO_DA_REVISAO_R2,
   ENTRADAS_POR_AUDIO,
   FALAS_DO_PEDIDO_QUE_ESCALAM,
+  FALAS_DO_PEDIDO_QUE_PASSAM,
   LEGENDAS_DO_PEDIDO_QUE_ESCALAM,
   LEGENDAS_QUE_ESCALAM,
   LEGENDAS_QUE_PASSAM,
@@ -183,6 +184,7 @@ describe("bateria AG6b: os ids e a cobertura", () => {
       ...LEGENDAS_QUE_PASSAM,
       ...LEGENDAS_DO_PEDIDO_QUE_ESCALAM,
       ...FALAS_DO_PEDIDO_QUE_ESCALAM,
+      ...FALAS_DO_PEDIDO_QUE_PASSAM,
       ...SONDAS_DO_EXAME_DA_REVISAO_R2,
       ...CONTEXTO_DO_EXAME_DA_REVISAO_R2,
       ...SAIDAS_DO_LUGAR_QUE_BLOQUEIAM,
@@ -363,9 +365,10 @@ describe("bateria AG6b: a legenda do pedido que já passava chega ao leitor", ()
 });
 
 // Revisao R2 de d1a15f6 (M1): as trocas do exame na legenda da 3a rodada
-// (item 6) foram desfeitas. A legenda e a fala do pedido com o demonstrativo,
-// a marcacao, o convenio, o pedido ou so o exame escalam antes do leitor,
-// como no main; a troca na recepcao e PROPOSTA para o dono e para a D34.
+// (item 6) foram desfeitas, e o conteudo clinico em volta do exame escala
+// (as sondas e o contexto abaixo). Decisao do dono de 06/11/2026: o pedido de
+// recepcao passa pelo molde do turno inteiro (portao-recepcao-do-exame.test.ts);
+// aqui fica o exame sozinho, que escala antes do leitor, e a fala.
 describe("bateria AG6b (revisão R2): o exame na legenda volta a escalar (M1)", () => {
   it.each(LEGENDAS_DO_PEDIDO_QUE_ESCALAM.map((c) => [c.id, c] as const))(
     "%s: o portao escala com o assunto clinico e o arquivo nunca sai",
@@ -405,6 +408,24 @@ describe("bateria AG6b (revisão R2): o exame na legenda volta a escalar (M1)", 
       expect(r.resposta).toBe(FRASE_DE_ESCALONAMENTO);
       expect(r.desfecho).toMatchObject({ tipo: "escalou", origem: "portao" });
       expect(agente.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(FALAS_DO_PEDIDO_QUE_PASSAM.map((c) => [c.id, c] as const))(
+    "%s: a fala com o pedido de recepcao passa como o escrito; o agente responde",
+    async (_id, caso) => {
+      expect(
+        detectarGatilhosDeEntrada({
+          mensagens: [{ tipo: "texto", texto: caso.texto }],
+        }),
+      ).toEqual([]);
+      const { porta, transcrever } = portaFalsa({
+        transcricao: { [AUDIO]: transcrita(caso.texto) },
+      });
+      const { r, agente } = await turnoComMidia([audioNoLaco()], porta);
+      expect(transcrever).toHaveBeenCalledTimes(1);
+      expect(agente.create).toHaveBeenCalled();
+      expect(r.tipo).toBe("resposta");
     },
   );
 
