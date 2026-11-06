@@ -595,6 +595,19 @@ describe("politica do classificador alinhada as decisoes de 05/10 e 19/10", () =
     expect(POLITICA_DO_CLASSIFICADOR).not.toMatch(/[–—]/);
   });
 
+  // Decisao do dono de 06/11/2026: alinhado ao portao, sem afrouxar o resto.
+  it("o pedido de recepcao sobre o exame e recepcao; o conteudo clinico junto nao", () => {
+    for (const trecho of [
+      "perguntar se o convênio cobre um exame, marcar, remarcar ou cancelar um exame, dizer que tem um pedido de exame ou que o médico pediu um exame",
+      'mesmo escrevendo "esse exame" ou "esses exames"',
+      "Se junto do pedido sobre o exame vier sintoma, doença ou resultado, em qualquer uma das mensagens",
+      "se precisa fazer, se vale a pena, qual exame fazer, para que serve, se dói ou o que pode mostrar",
+    ]) {
+      expect(POLITICA_DO_CLASSIFICADOR).toContain(trecho);
+    }
+    expect(POLITICA_DO_CLASSIFICADOR).not.toMatch(/[–—]/);
+  });
+
   it("a versao do texto do classificador e marcada (Q12)", () => {
     expect(VERSAO_DA_POLITICA_DO_CLASSIFICADOR).toMatch(
       /^classificador-[0-9a-f]{12}$/,
@@ -674,9 +687,10 @@ describe("AG7: a variante do preparo no classificador", () => {
     expect(politicaDoClassificador({ comPreparo: false })).toBe(
       POLITICA_DO_CLASSIFICADOR,
     );
-    // A versao de antes da AG7 (a da AG6b na branch).
+    // Decisao de 06/11/2026 (o pedido de recepcao sobre o exame). Era
+    // classificador-03718b05f3a2 (a da AG6b na branch), que a AG7 nao mudou.
     expect(VERSAO_DA_POLITICA_DO_CLASSIFICADOR).toBe(
-      "classificador-03718b05f3a2",
+      "classificador-bb61a48527c8",
     );
     expect(versaoDaPoliticaDoClassificador()).toBe(
       VERSAO_DA_POLITICA_DO_CLASSIFICADOR,
