@@ -27,6 +27,8 @@ import {
   visoesDoTexto,
 } from "@/lib/domain/conformidade/normalizar";
 import {
+  cabeNaRecepcaoDoExame,
+  FONTES_DA_RECEPCAO_DO_EXAME,
   IDADES_POR_EXTENSO,
   LEXICO_COMPACTO_DE_ENTRADA,
   NEUTRALIZACOES_DE_ENTRADA,
@@ -186,9 +188,38 @@ function caixaAlta(bruto: string): boolean {
 // "O laudo fica pronto quando?" e documento, nao assunto clinico.
 const neutralizarEntrada = neutralizador(NEUTRALIZACOES_DE_ENTRADA);
 
-function gatilhosDoTexto(bruto: string): Set<GatilhoDeEntrada> {
+// Decisao do dono de 06/11/2026: nos padroes, o exame so deixa de escalar no
+// turno que cabe inteiro no molde (padroes.ts; o portao le o turno todo: "minha
+// glicose ta alterada" numa mensagem e "quanto custa esses exames?" na outra
+// continua escalando). Fora dele, a palavra escala mesmo na pergunta de preco.
+const neutralizarForaDaRecepcao = neutralizador(
+  NEUTRALIZACOES_DE_ENTRADA.filter(
+    ({ nome }) => nome !== "exame_na_pergunta_de_preco",
+  ),
+);
+const neutralizarNaRecepcao = (texto: string) =>
+  neutralizarForaDaRecepcao(texto).replace(/\bexames?\b/g, "procedimento");
+/** Acima disso, o turno ja nao e um pedido curto (e a regex fica barata). */
+const LIMITE_DA_RECEPCAO_DO_EXAME = 300;
+
+function turnoDeRecepcaoDoExame(
+  mensagens: readonly MensagemDeEntrada[],
+): boolean {
+  const turno = mensagens
+    .flatMap((m) => (m.tipo === "texto" ? [m.texto ?? ""] : []))
+    .join(" ");
+  return (
+    turno.length <= LIMITE_DA_RECEPCAO_DO_EXAME &&
+    cabeNaRecepcaoDoExame(visaoCorrida(normalizarBase(turno)))
+  );
+}
+
+function gatilhosDoTexto(
+  bruto: string,
+  neutralizar: (texto: string) => string,
+): Set<GatilhoDeEntrada> {
   const achados = new Set<GatilhoDeEntrada>();
-  const visoes = visoesDoTexto(bruto, [], neutralizarEntrada);
+  const visoes = visoesDoTexto(bruto, [], neutralizar);
   // Cada visao diferente uma vez so (rev5): no texto comum as cinco visoes
   // costumam ser o mesmo texto, e cada padrao rodava cinco vezes nele. O
   // resultado e o mesmo.
@@ -278,6 +309,9 @@ export function detectarGatilhosDeEntrada(
   // [AG6 urgência] fim
   /** S1: os textos do turno, na ordem, para a rede de seguranca na juncao. */
   const textosDaRede: string[] = [];
+  const neutralizar = turnoDeRecepcaoDoExame(entrada.mensagens)
+    ? neutralizarNaRecepcao
+    : neutralizarForaDaRecepcao;
 
   for (const mensagem of entrada.mensagens) {
     // [AG6b mídia] início
@@ -311,7 +345,7 @@ export function detectarGatilhosDeEntrada(
     // S1 (rev5): o portao le o comeco que, normalizado, cabe no limite da
     // leitura (o texto que nao escala pelo tamanho cabe inteiro).
     const lido = trechoLido(texto);
-    for (const gatilho of gatilhosDoTexto(lido)) {
+    for (const gatilho of gatilhosDoTexto(lido, neutralizar)) {
       achados.add(gatilho);
     }
     // [AG6 urgência] início
@@ -611,6 +645,9 @@ export const FONTES_DO_PORTAO_EM_CODIGO: readonly string[] = [
   // S1 (rev5): a visao corrida e o limite da leitura.
   `rede de seguranca na visao corrida (o que nao e letra nem digito vira espaco, a palavra repetida fica uma vez, sem as muletas ${MULETAS_DA_FALA.join(", ")}), na mensagem e na juncao`,
   `limite da leitura: ${LIMITE_DA_LEITURA} caracteres depois da NFKD (o ASCII conta um), na mensagem, na legenda e no que vai a urgencia`,
+  // Decisao do dono de 06/11/2026: o pedido de recepcao sobre o exame.
+  ...FONTES_DA_RECEPCAO_DO_EXAME,
+  `recepcao do exame: o turno inteiro no molde, ate ${LIMITE_DA_RECEPCAO_DO_EXAME} caracteres, troca o exame nos padroes; fora dele, a troca exame_na_pergunta_de_preco nao vale nos padroes (a urgencia e a rede na juncao leem como antes)`,
   // Revisao de desempenho de 31/10/2026: a guarda de janela das trocas (a
   // intencao clinica perto do exame da pergunta de preco) e lida em codigo
   // (normalizar.ts), fora da fonte da troca; a versao do portao le as

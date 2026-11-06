@@ -753,7 +753,7 @@ describe("AG7: a variante do preparo no classificador", () => {
     }
   });
 
-  it("o portao deterministico nao muda (D-81): o pedido passa, a duvida da pessoa e o exame escalam", () => {
+  it("o portao deterministico nao mudou pela AG7 (D-81): o pedido passa, a duvida da pessoa e o exame escalam", () => {
     expect(gatilhosDosTextos(["qual o preparo da colonoscopia?"])).toEqual([]);
     expect(gatilhosDosTextos(["precisa de jejum pro ultrassom?"])).toEqual([]);
     expect(
@@ -765,9 +765,10 @@ describe("AG7: a variante do preparo no classificador", () => {
     expect(gatilhosDosTextos(["qual o preparo do exame de sangue?"])).toContain(
       "assunto_clinico",
     );
-    // A versao do portao de antes da AG7 (a da AG6a, 2a rodada): a AG7 nao
-    // mexe no portao. Quem mudar o portao depois atualiza esta linha.
-    expect(versaoDoPortao()).toBe("portao-9e835642d49a");
+    // A AG7 nao mexeu no portao (era portao-9e835642d49a, a da AG6a, 2a
+    // rodada). Quem mudar o portao depois atualiza esta linha: a decisao de
+    // 06/11/2026 (o pedido de recepcao sobre o exame) o mudou.
+    expect(versaoDoPortao()).toBe("portao-ac8922f0785a");
   });
 });
 // [AG7 preparo] fim

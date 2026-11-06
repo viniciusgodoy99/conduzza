@@ -552,6 +552,10 @@ describe("AG6b: a figurinha e a mídia a ler no portão", () => {
 // glicose ta alterada, quanto custa esses exames?"). As bordas abaixo agora
 // escalam; a troca na recepcao e PROPOSTA para o dono e para a D34. A guarda
 // da finalidade e do preparo ficou (so deixa a troca de preco mais estrita).
+//
+// Decisao do dono de 06/11/2026: o pedido de recepcao passa pelo molde do turno
+// inteiro (portao-recepcao-do-exame.test.ts tem a trava). Aqui as bordas que
+// mudaram de lado por essa decisao e as que continuam escalando.
 describe("AG6b (3a rodada, desfeita na revisão R2): o exame na legenda do pedido", () => {
   const portao = (texto: string) =>
     detectarGatilhosDeEntrada({ mensagens: [{ tipo: "texto", texto }] });
@@ -565,9 +569,15 @@ describe("AG6b (3a rodada, desfeita na revisão R2): o exame na legenda do pedid
     "desses",
     "deste",
     "destes",
-    "nesse",
-    "nesses",
   ])(
+    "o demonstrativo %s antes do exame, na pergunta de preco, passa (06/11/2026)",
+    (d) => {
+      expect(portao(`quanto custa ${d} exames?`)).toEqual([]);
+      expect(portao(`qual o valor ${d} exame?`)).toEqual([]);
+    },
+  );
+
+  it.each(["nesse", "nesses"])(
     "o demonstrativo %s antes do exame, na pergunta de preco, escala (R2)",
     (d) => {
       expect(portao(`quanto custa ${d} exames?`)).toEqual(["assunto_clinico"]);
@@ -590,13 +600,21 @@ describe("AG6b (3a rodada, desfeita na revisão R2): o exame na legenda do pedid
     "o convênio autoriza esse exame?",
     "segue o pedido de exames",
     "o pedido médico dos exames está aqui",
+    "quero marcar um exame de sangue",
+    "quero marcar esses exames pra semana que vem",
+    "Quero marcar esses exames pra semana que vem.",
+    "quero marcar o exame no mes que vem",
+  ])("a recepcao do exame passa (decisao de 06/11/2026): %s", (texto) => {
+    expect(portao(texto)).toEqual([]);
+  });
+
+  it.each([
     "exames",
     "Exame.",
     "seguem os exames",
     "esses exames aqui",
-    "quero marcar um exame de sangue",
     "tem horário pra que dia pra fazer esses exames?",
-  ])("a recepcao do exame escala (R2, proposta): %s", (texto) => {
+  ])("o exame fora do molde escala: %s", (texto) => {
     expect(portao(texto)).toEqual(["assunto_clinico"]);
   });
 
@@ -620,9 +638,9 @@ describe("AG6b (3a rodada, desfeita na revisão R2): o exame na legenda do pedid
     "pra que serve o exame? quanto custa?",
     "quanto custa o exame? pra que serve?",
     "quanto custa o exame? precisa de jejum?",
-    "quero marcar esses exames pra semana que vem",
-    "Quero marcar esses exames pra semana que vem.",
-    "quero marcar o exame no mes que vem",
+    // O "que vem" do tempo nao e o exame que vem: fora do molde, escala.
+    "tenho esses exames pra semana que vem",
+    "vou fazer o exame no mes que vem",
   ])(
     'R2: a guarda da finalidade e o "que vem" do tempo escalam: %s',
     (texto) => {
