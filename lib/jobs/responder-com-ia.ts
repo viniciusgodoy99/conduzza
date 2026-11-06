@@ -138,6 +138,7 @@ import { enviarPreparoAprovadoDaIa } from "@/lib/integrations/whatsapp/send";
 import { mascararNome } from "@/lib/agente/historico";
 import {
   entradaDoPortao,
+  habilidadeDoPreparoValendo,
   hojeNoFuso,
   RESERVA_DO_AGENTE_DEPOIS_DA_MIDIA_MS,
   RESERVA_DO_FILTRO_MS,
@@ -957,6 +958,7 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
       const escala =
         detectarGatilhosDeEntrada({
           mensagens: pendentesNaEspera,
+          comPreparo: habilidadeDoPreparoValendo(config),
           dataDeNascimento: contato.birth_date,
           // Revisao da AG6b: a data de hoje no fuso da clinica, a mesma do
           // portao do laco (o menor pelo nascimento nao espera o download).

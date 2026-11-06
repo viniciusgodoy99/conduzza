@@ -1491,6 +1491,22 @@ function textosOriginaisDoPaciente(
   });
 }
 
+/**
+ * A habilidade "Enviar orientacao de preparo" valendo nesta configuracao.
+ * Configuracao que nao da para ler: sem a habilidade (o lado seguro).
+ */
+export function habilidadeDoPreparoValendo(config: ConfigDoAgente): boolean {
+  try {
+    return ferramentasDoAgente(
+      config.habilidades,
+      config.agenda,
+      config.prazos,
+    ).includes(NOME_DO_ENVIO_DO_PREPARO);
+  } catch {
+    return false;
+  }
+}
+
 /** O passo da trilha do pedido do preparo com a situacao da pessoa. */
 export const PASSO_DO_PEDIDO_COM_SITUACAO_PESSOAL =
   "O pedido da orientação de preparo veio junto de uma situação da pessoa: passa para a equipe, sem enviar.";
@@ -2075,17 +2091,7 @@ async function turnoDoAgente(
   // configuracao: o classificador roda a variante com preparo e a versao
   // gravada e a dela. Configuracao que nao da para ler: sem a habilidade (o
   // lado seguro: o pedido de preparo passa para a equipe).
-  const comPreparo = ((): boolean => {
-    try {
-      return ferramentasDoAgente(
-        entrada.config.habilidades,
-        entrada.config.agenda,
-        entrada.config.prazos,
-      ).includes(NOME_DO_ENVIO_DO_PREPARO);
-    } catch {
-      return false;
-    }
-  })();
+  const comPreparo = habilidadeDoPreparoValendo(entrada.config);
   const versaoDoClassificador = versaoDaPoliticaDoClassificador({
     comPreparo,
   });
@@ -2699,6 +2705,7 @@ async function turnoDoAgente(
       const entradas = pendentesDoTurno().map(entradaDoPortao);
       const gatilhos = detectarGatilhosDeEntrada({
         mensagens: entradas,
+        comPreparo,
         dataDeNascimento: entrada.dataDeNascimento ?? null,
         hojeNaClinica:
           entrada.hojeNaClinica ?? hojeNoFuso(entrada.agoraMs, entrada.fuso),

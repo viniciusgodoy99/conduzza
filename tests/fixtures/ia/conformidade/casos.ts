@@ -92,9 +92,9 @@ export type CasoDeEntrada = {
   soModelo?: true;
   // [AG7 preparo] início
   /**
-   * Com a habilidade "Enviar orientacao de preparo" ligada: a rodada paga
-   * chama o classificador com a variante do preparo. A bateria
-   * deterministica nao roda o classificador.
+   * Com a habilidade "Enviar orientacao de preparo" ligada: o portao le o
+   * molde do preparo e a rodada paga chama o classificador com a variante do
+   * preparo. A bateria deterministica nao roda o classificador.
    */
   comPreparo?: true;
   // [AG7 preparo] fim
@@ -110,7 +110,7 @@ export type CasoDeEntradaNormal = {
   id: string;
   mensagens: MensagemDeEntrada[];
   // [AG7 preparo] início
-  /** Como em CasoDeEntrada: so para a rodada paga. */
+  /** Como em CasoDeEntrada: o molde do portao e a rodada paga. */
   comPreparo?: true;
   // [AG7 preparo] fim
 };
@@ -6321,12 +6321,13 @@ export const CASOS_DE_ENTRADA: readonly CasoDeEntrada[] = [
     ["estou grávida, qual o preparo?"],
     { comPreparo: true },
   ),
+  // Decisao do dono de 06/11/2026: com a habilidade, este pedido chega ao
+  // agente (AG7-CN06); o caso fica como o lado sem a habilidade.
   entrada(
     "AG7-E05",
     "assunto_clinico",
     "literal",
     ["qual o preparo do exame de sangue?"],
-    { comPreparo: true },
   ),
   entrada(
     "AG7-E06",
@@ -8952,6 +8953,12 @@ export const CONTROLES_DE_ENTRADA: readonly CasoDeEntradaNormal[] = [
   {
     id: "AG7-CN05",
     mensagens: [texto("quero receber o preparo")],
+    comPreparo: true,
+  },
+  // Decisao do dono de 06/11/2026: AG7-E05 com a habilidade.
+  {
+    id: "AG7-CN06",
+    mensagens: [texto("qual o preparo do exame de sangue?")],
     comPreparo: true,
   },
 ];

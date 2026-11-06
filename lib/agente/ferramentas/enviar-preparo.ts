@@ -264,8 +264,12 @@ export function decidirEnvioDoPreparo(
 // Revisao da AG7 (CFM-7): o procedimento que a pessoa pediu
 // ---------------------------------------------------------------------------
 
-// As palavras que nao identificam um procedimento.
+// As palavras que nao identificam um procedimento. "Exame" tambem: "qual o
+// preparo do exame?" nao confirma o "Exame de sangue" do catalogo, e o modelo
+// pergunta qual e (decisao do dono de 06/11/2026).
 const PALAVRAS_VAZIAS: ReadonlySet<string> = new Set([
+  "exame",
+  "exames",
   "com",
   "sem",
   "para",
