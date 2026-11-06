@@ -1162,6 +1162,20 @@ Construídas na branch `agente-ligar-teste`, **não publicadas** (`docs/05`, ent
 
 **Desligar só a mídia:** `TRANSCRICAO_CALIBRADA = false` e os tetos nulos, em `lib/integrations/llm/`, num commit: toda mídia volta para a equipe, e a Tela 6 diz isso embaixo de cada habilidade. Numa clínica só: desligar as duas habilidades e publicar.
 
+## A matriz de arquivos: a carteirinha no cadastro e as notas (decisão do dono de 06/11/2026)
+
+Construída na branch `agente-ligar-teste`, **não publicada** (`docs/05`, entrada "A matriz de arquivos"; `docs/04`, seção 44; `docs/03`, seção 26).
+
+**Ordem, com o ok do dono:** (1) em horário calmo, o ensaio `~/.claude/plans/agente-completo/ligar/ensaio-20261106130000.sql` (`ENSAIO OK`, termina em ROLLBACK; segura `ACCESS EXCLUSIVE` em `ia_leitura_da_midia` até o ROLLBACK: cerca de 7 s no Postgres local, com a máquina sobrecarregada; o Atendimento e o turno com mídia esperam) e a migration `20261106130000`; (2) os casos novos de `tests/rls` e `tests/integration` de `midia-pela-ia`, um arquivo por vez; (3) `supabase gen types` para conferir os tipos à mão; (4) o código. **A migration antes do código:** sem a coluna, toda mídia vai para a equipe.
+
+**O teste de verdade, num telefone de teste:** uma carteirinha com o cadastro vazio (o número e o plano aparecem em Pacientes); a mesma foto de novo, com outro número no cadastro (nota na conversa, cadastro igual); um pedido com um item que a clínica não faz (o agente fala do outro, o aviso sai, a nota fica); uma foto borrada (o agente pede outra; a segunda foto borrada vai para a equipe); um RG; uma selfie sem nada de saúde (`outro`) e um laudo (a equipe, sempre).
+
+**Onde olhar:**
+- O que a foto gravou: `select entity_id, detalhes, created_at from public.audit_log where action = 'gravou_carteirinha_lida' order by created_at desc;` (quais campos, nunca o valor).
+- As notas: `select conversation_id, created_at from public.message where is_internal_note and (body like '%confira o arquivo%' or body like '%item fora do Cadastro%') order by created_at desc;`. **Ninguém é avisado da nota:** a equipe só a vê ao abrir a conversa.
+
+**Tirar um número gravado por engano:** na ficha do paciente, como qualquer outro. **Desligar:** desligar "Ler imagem e documento" e publicar; toda foto e todo PDF voltam para a equipe. **Rollback:** primeiro o código; depois `supabase/operacao/rollback/20261106130000-corpos-anteriores.sql` inteiro. Os números e as notas ficam.
+
 ## Urgência, passagem e mídia pela IA (AG6a e AG6b)
 
 **AG6a:** quando a pessoa descreve algo que pode ser uma emergência (uma lista fixa de sinais, proposta ao responsável técnico e ainda não aprovada, D-51), a IA passa a conversa para a equipe com a frase de sempre e a marca como **Urgente**: no topo do Atendimento, com o contador do menu em alerta, até alguém assumir, transferir ou resolver. E, independente da lista, a **rede de segurança no portão** passa para a equipe, como sintoma, o risco de vida e a emergência aguda ditos sem rodeio (um erro da lista só tira a marca; a IA não responde). Se a clínica escolher na Tela 6 "Para o responsável do lead, quando houver", a conversa passada vai ao responsável do lead logo depois da frase, mas nunca a urgência, o sintoma, o assunto clínico, a resposta barrada pela conformidade, o arquivo clínico ou que o assistente não leu ou não identificou, nem a conversa em que a pessoa escreveu de novo (essas ficam na fila). **AG6b:** com "Entender áudio" e "Ler imagem e documento" ligadas, o áudio vira texto pela transcrição da OpenAI (`whisper-1`, no nosso servidor) e a foto ou o PDF vai uma vez a um leitor de saída fechada; só o pedido de exame ou procedimento com todos os itens no Cadastro segue com a IA, e o resto passa para a equipe. Decisões e pendências: `docs/05`, entradas "AG6a do agente de IA" e "AG6b do agente de IA"; banco no `docs/04`, seções 36 e 37; motor no `docs/03`, seções 22 e 23.
