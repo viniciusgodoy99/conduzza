@@ -554,3 +554,13 @@ describe("interpretarRespostaDeOferta", () => {
     expect(interpretarRespostaDeOferta(null)).toBe("nao_reconhecida");
   });
 });
+
+describe("o emoji negativo na resposta a oferta (05/11/2026)", () => {
+  it.each(["SIM 👎", "Sim ❌", "quero 🚫"])("%s nao aceita a vaga", (texto) => {
+    expect(interpretarRespostaDeOferta(texto)).toBe("nao_reconhecida");
+  });
+
+  it("SIM com o emoji de sim aceita", () => {
+    expect(interpretarRespostaDeOferta("SIM 👍")).toBe("aceitar");
+  });
+});

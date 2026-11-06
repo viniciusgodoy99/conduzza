@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { interpretarResposta } from "@/lib/domain/resposta-paciente";
+import {
+  ehRespostaDoMenuDeConfirmacao,
+  interpretarResposta,
+  interpretarRespostaAListaDeEspera,
+  interpretarRespostaAoCancelamento,
+} from "@/lib/domain/resposta-paciente";
 import { MENU_CONFIRMACAO } from "@/lib/domain/textos-padrao";
 
 describe("interpretarResposta", () => {
@@ -124,5 +129,24 @@ describe("interpretarResposta", () => {
     expect(interpretarResposta("qual o valor da consulta")).toBe(
       "nao_reconhecida",
     );
+  });
+});
+
+describe("o emoji que nao e de sim nunca vira sim (05/11/2026)", () => {
+  it.each(["Sim 👎", "Sim ❌", "Pode 🚫", "👍👎", "Sim :("])("%s", (texto) => {
+    expect(interpretarResposta(texto)).toBe("nao_reconhecida");
+    expect(interpretarRespostaAoCancelamento([texto])).toBe("nao_reconhecida");
+    expect(interpretarRespostaAListaDeEspera([texto])).toBe("nao_reconhecida");
+  });
+
+  it.each(["Sim 👍", "Sim 🙏", "Sim ❤️", "Sim 😊"])("%s continua sim", (texto) => {
+    expect(interpretarResposta(texto)).toBe("confirmar");
+    expect(interpretarRespostaAoCancelamento([texto])).toBe("sim");
+    expect(interpretarRespostaAListaDeEspera([texto])).toBe("sim");
+  });
+
+  it("o menu da regua nao aceita o numero com emoji negativo", () => {
+    expect(ehRespostaDoMenuDeConfirmacao("1 👎")).toBe(false);
+    expect(ehRespostaDoMenuDeConfirmacao("1")).toBe(true);
   });
 });

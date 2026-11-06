@@ -2,6 +2,7 @@ import { TZDate } from "@date-fns/tz";
 
 import {
   interpretarResposta,
+  temSinalQueNaoESim,
   normalizar,
 } from "@/lib/domain/resposta-paciente";
 
@@ -505,7 +506,8 @@ export type RespostaDeOferta = "aceitar" | "recusar" | "nao_reconhecida";
 export function interpretarRespostaDeOferta(
   body: string | null,
 ): RespostaDeOferta {
-  if (!body) {
+  // "SIM 👎" nao aceita a vaga: normalizar apagaria o emoji.
+  if (!body || temSinalQueNaoESim(body)) {
     return "nao_reconhecida";
   }
   const texto = normalizar(body);

@@ -15,10 +15,6 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      conferir_registro_do_responsavel_tecnico: {
-        Args: { p_rt_id: string }
-        Returns: string
-      }
       graphql: {
         Args: {
           extensions?: Json
@@ -6018,6 +6014,10 @@ export type Database = {
         Args: { p_id: string; p_worker: string }
         Returns: undefined
       }
+      conferir_registro_do_responsavel_tecnico: {
+        Args: { p_rt_id: string }
+        Returns: string
+      }
       conta_de_envio: {
         Args: { p_clinic_id: string; p_contact_id: string; p_tipo?: string }
         Returns: string
@@ -6844,6 +6844,10 @@ export type Database = {
       podar_cliques_do_site: {
         Args: { p_agora?: string; p_clinic_ids?: string[] }
         Returns: Json
+      }
+      preparo_conselho_recusa_texto: {
+        Args: { p_conselho: string; p_texto: string }
+        Returns: boolean
       }
       previa_da_automacao_de_fluxo: {
         Args: {

@@ -98,11 +98,47 @@ export function normalizar(texto: string): string {
 }
 
 /**
+ * Revisao final da AG7: os emojis que nao mudam o sim. O resto recusa, porque
+ * normalizar apaga emoji e "Sim 👎" viraria "sim". Lista do que passa, nunca do
+ * que nega: o emoji que ninguem previu cai no "nao entendi" (a pergunta volta).
+ */
+const EMOJIS_QUE_NAO_MUDAM_O_SIM = [
+  ...EMOJIS_DE_CONFIRMACAO,
+  "\u{1F642}", // sorriso
+  "\u{1F60A}", // sorriso com os olhos
+  "\u{1F600}", // risada
+  "\u{1F603}", // risada
+  "\u{1F604}", // risada
+  "\u{1F601}", // risada
+  "\u{1F609}", // piscada
+  "\u{1F970}", // coracoes
+  "\u{1F60D}", // olhos de coracao
+  "\u{2764}", // coracao
+  "\u{1F64F}", // maos juntas
+];
+const EMOJI = /\p{Extended_Pictographic}/u;
+/** O emoticon de texto que normalizar tambem apaga. */
+const EMOTICON_NEGATIVO = /[:;]-?[(/\\|]/;
+
+/** A mensagem traz um sinal que nao e de sim e que normalizar apagaria? */
+export function temSinalQueNaoESim(mensagem: string): boolean {
+  let restante = mensagem.replace(MODIFICADORES, "");
+  for (const emoji of EMOJIS_QUE_NAO_MUDAM_O_SIM) {
+    restante = restante.split(emoji).join(" ");
+  }
+  return EMOJI.test(restante) || EMOTICON_NEGATIVO.test(restante);
+}
+
+/**
  * Le a intencao do paciente. Devolve 'nao_reconhecida' em qualquer duvida:
  * o fail-safe do fluxo e a recepcao assumir a conversa.
  */
 export function interpretarResposta(body: string | null): IntencaoDoPaciente {
   if (!body) {
+    return "nao_reconhecida";
+  }
+  // "Sim 👎" nao e sim: normalizar apagaria o emoji.
+  if (temSinalQueNaoESim(body)) {
     return "nao_reconhecida";
   }
 
@@ -230,7 +266,7 @@ function respostaDeUmaMensagem(
   body: string,
   sim: ReadonlySet<string> = SIM_DO_CANCELAMENTO,
 ): RespostaAoCancelamento {
-  if (PERGUNTA_NA_MENSAGEM.test(body)) {
+  if (PERGUNTA_NA_MENSAGEM.test(body) || temSinalQueNaoESim(body)) {
     return "nao_reconhecida";
   }
   const semModificadores = body.replace(MODIFICADORES, "");
@@ -285,6 +321,7 @@ export const FONTES_DA_RESPOSTA_AO_CANCELAMENTO: readonly string[] = [
   [...SIM_DO_CANCELAMENTO].join(","),
   [...NAO_DO_CANCELAMENTO].join(","),
   EMOJIS_DE_CONFIRMACAO.join(","),
+  EMOJIS_QUE_NAO_MUDAM_O_SIM.join(","),
   // Revisao da AG4 (achado 8): a pergunta nunca e sim nem nao.
   PERGUNTA_NA_MENSAGEM.source,
 ];
@@ -386,38 +423,6 @@ function semCortesia(mensagem: string): string {
     .replace(PEDE_O_DE_ACORDO, " ")
     .replace(CORTESIA_NO_COMECO, "")
     .replace(CORTESIA_NO_FIM, "");
-}
-
-/**
- * Revisao final da AG7: os emojis que nao mudam o sim. O resto recusa, porque
- * normalizar apaga emoji e "Sim 👎" viraria "sim". Lista do que passa, nunca do
- * que nega: o emoji que ninguem previu cai no "nao entendi" (a pergunta volta).
- */
-const EMOJIS_QUE_NAO_MUDAM_O_SIM = [
-  ...EMOJIS_DE_CONFIRMACAO,
-  "\u{1F642}", // sorriso
-  "\u{1F60A}", // sorriso com os olhos
-  "\u{1F600}", // risada
-  "\u{1F603}", // risada
-  "\u{1F604}", // risada
-  "\u{1F601}", // risada
-  "\u{1F609}", // piscada
-  "\u{1F970}", // coracoes
-  "\u{1F60D}", // olhos de coracao
-  "\u{2764}", // coracao
-  "\u{1F64F}", // maos juntas
-];
-const EMOJI = /\p{Extended_Pictographic}/u;
-/** O emoticon de texto que normalizar tambem apaga. */
-const EMOTICON_NEGATIVO = /[:;]-?[(/\\|]/;
-
-/** A mensagem traz um sinal que nao e de sim e que normalizar apagaria? */
-function temSinalQueNaoESim(mensagem: string): boolean {
-  let restante = mensagem.replace(MODIFICADORES, "");
-  for (const emoji of EMOJIS_QUE_NAO_MUDAM_O_SIM) {
-    restante = restante.split(emoji).join(" ");
-  }
-  return EMOJI.test(restante) || EMOTICON_NEGATIVO.test(restante);
 }
 
 /**
@@ -597,7 +602,7 @@ const NAO_DA_LISTA_DE_ESPERA = new Set([
 function respostaDeUmaMensagemAListaDeEspera(
   body: string,
 ): RespostaAListaDeEspera {
-  if (PERGUNTA_NA_MENSAGEM.test(body)) {
+  if (PERGUNTA_NA_MENSAGEM.test(body) || temSinalQueNaoESim(body)) {
     return "nao_reconhecida";
   }
   let restante = body.replace(MODIFICADORES, "");
@@ -653,6 +658,7 @@ export const FONTES_DA_RESPOSTA_A_LISTA_DE_ESPERA: readonly string[] = [
   [...SIM_DA_LISTA_DE_ESPERA].join(","),
   [...NAO_DA_LISTA_DE_ESPERA].join(","),
   EMOJIS_DE_CONFIRMACAO.join(","),
+  EMOJIS_QUE_NAO_MUDAM_O_SIM.join(","),
   PERGUNTA_NA_MENSAGEM.source,
 ];
 
@@ -676,7 +682,7 @@ export const FONTES_DA_RESPOSTA_A_LISTA_DE_ESPERA: readonly string[] = [
 const VOCABULARIO_DO_MENU = new Set(["1", "2", "3", "confirmar", "remarcar", "cancelar"]);
 
 export function ehRespostaDoMenuDeConfirmacao(body: string | null): boolean {
-  if (!body) {
+  if (!body || temSinalQueNaoESim(body)) {
     return false;
   }
   return VOCABULARIO_DO_MENU.has(normalizar(body));
