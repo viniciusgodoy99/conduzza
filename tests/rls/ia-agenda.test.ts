@@ -716,6 +716,31 @@ describe("reservar_horario_da_ia e agendar_pela_ia: só o servidor", () => {
     expect(count).toBe(0);
   });
 
+  // Decisao do dono de 06/11/2026 (migration 20261106110000): as duas
+  // conferencias mudaram de corpo, e continuam so de quem esta dentro do banco.
+  it("as conferências internas: nenhuma sessão, nem anon, nem o servidor chama (42501)", async () => {
+    for (const cliente of [
+      ...TODAS_AS_SESSOES.map((quem) => como(quem)),
+      anonClient(),
+      admin,
+    ]) {
+      const lista = await cliente.rpc("lista_de_espera_da_ia_ligada", {
+        p_clinic_id: clinicaA,
+      });
+      expect(lista.error?.code).toBe(PERMISSAO_NEGADA);
+      const conferir = await cliente.rpc("conferir_horario_da_ia", {
+        p_clinic_id: clinicaA,
+        p_conversation_id: conversaA1,
+        p_service_link_id: l1,
+        p_starts_at: inicio,
+        p_ends_at: null,
+        p_reserva_propria: null,
+        p_unit_id: null,
+      });
+      expect(conferir.error?.code).toBe(PERMISSAO_NEGADA);
+    }
+  });
+
   it("o servidor chama: resposta de negócio, nunca erro de permissão", async () => {
     // A clinica de teste nao tem a IA liberada: as duas dizem ia_desligada.
     const reservar = await admin.rpc(

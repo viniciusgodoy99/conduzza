@@ -610,7 +610,7 @@ describe("semOPreparo (o historico que vai ao modelo)", () => {
 });
 
 describe("situacaoDoPreparoNaTela (os cinco chips)", () => {
-  const RT_ABERTO = { id: "rt-1", userId: "u-1", registroConferido: true };
+  const RT_ABERTO = { id: "rt-1", userId: "u-1" };
   const versao = (
     v: number,
     situacao: VersaoNaTela["situacao"],
@@ -651,24 +651,10 @@ describe("situacaoDoPreparoNaTela (os cinco chips)", () => {
     );
   });
 
-  it("sem a conferencia do registro: aprovada, sem envio, e nao pede nova aprovacao", () => {
-    expect(
-      situacao([versao(1, "aprovado")], {
-        rtAberto: { ...RT_ABERTO, registroConferido: false },
-      }),
-    ).toBe("aprovada_sem_envio");
-    // O que ja pedia nova aprovacao continua pedindo.
-    expect(
-      situacao([versao(1, "aprovado")], {
-        rtAberto: { id: "rt-2", userId: "u-2", registroConferido: false },
-      }),
-    ).toBe("precisa_de_nova_aprovacao");
-  });
-
   it("precisa de nova aprovacao: RT trocado, sem RT, sem acesso ou nome mudado", () => {
     const aprovada = [versao(1, "aprovado")];
     expect(
-      situacao(aprovada, { rtAberto: { id: "rt-2", userId: "u-2", registroConferido: true } }),
+      situacao(aprovada, { rtAberto: { id: "rt-2", userId: "u-2" } }),
     ).toBe("precisa_de_nova_aprovacao");
     expect(situacao(aprovada, { rtAberto: null })).toBe(
       "precisa_de_nova_aprovacao",

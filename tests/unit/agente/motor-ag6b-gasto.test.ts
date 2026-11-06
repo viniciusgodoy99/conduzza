@@ -18,6 +18,7 @@ import { custoMaximoDoTurno } from "@/lib/agente/laco";
 import {
   itensDoCatalogo,
   MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA,
+  tokensDoArquivoNaReserva,
 } from "@/lib/agente/midia";
 import { MAXIMO_DE_CHAMADAS_DO_LEITOR } from "@/lib/integrations/llm/leitor-de-midia";
 import {
@@ -276,6 +277,42 @@ describe("a reserva do turno com a midia (o pior caso)", () => {
     expect(
       (comArquivos([{ tokensDoArquivo: 1_600 }]) ?? NaN) - (comArquivos([]) ?? NaN),
     ).toBe(MAXIMO_DE_CHAMADAS_DO_LEITOR * (umaChamada ?? NaN));
+  });
+
+  // Decisao do dono de 06/11/2026: a prova paga (D-100) foi dispensada, e os
+  // tetos sao folgados. A reserva pior caso de uma midia (as duas chamadas)
+  // continua muito abaixo do teto diario padrao (US$ 5 = 5.000.000).
+  it("o pior caso de cada midia na reserva, com o Cadastro no maior tamanho e o preco real", () => {
+    // O preco de llm_preco (migration 20261006110000).
+    const lunaDeVerdade: PrecoDoModelo = {
+      modelo: "gpt-6-luna",
+      entrada: 100_000,
+      saida: 500_000,
+      cacheLeitura: 10_000,
+      cacheEscrita: 125_000,
+    };
+    const catalogo = Array.from({ length: 250 }, (_, i) => ({
+      codigo: `p${i + 1}`,
+      nome: "N".repeat(40),
+      id: `id-${i}`,
+    }));
+    const pior = (tokens: number | null) => {
+      const uso = usoEstimadoDoLeitor({ catalogo, tokensDoArquivo: tokens });
+      return uso === null
+        ? NaN
+        : MAXIMO_DE_CHAMADAS_DO_LEITOR *
+            (custoMaximoDaChamada(uso, "gpt-6-luna", [lunaDeVerdade]) ?? NaN);
+    };
+    const imagem = pior(tokensDoArquivoNaReserva("imagem", "image/jpeg"));
+    const pdf = pior(tokensDoArquivoNaReserva("documento", "application/pdf"));
+    const audio =
+      MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA *
+      (custoMaximoDaTranscricao(120, "whisper-1", [LUNA, WHISPER]) ?? NaN);
+    expect(tokensDoArquivoNaReserva("documento", "application/pdf")).toBe(36_000);
+    expect(imagem).toBeLessThan(pdf);
+    expect(audio).toBe(24_000);
+    expect(imagem).toBeGreaterThan(0);
+    expect(pdf).toBeLessThan(audio);
   });
 
   it("o arquivo a ler conta o teto do leitor; sem preco da transcricao, null", () => {

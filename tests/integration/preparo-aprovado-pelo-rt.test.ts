@@ -199,7 +199,8 @@ async function criarPessoa(apelido: string, papel: string): Promise<void> {
 }
 
 
-// Decisao do dono de 05/11/2026: sem o registro do RT conferido, nada esta em
+// Desde a decisao do dono de 06/11/2026, conferir nao muda mais nada (a RPC
+// fica, sem uso). Antes, de 05/11/2026: sem o registro do RT conferido, nada esta em
 // vigor, e so o super admin confere. Por isso esta suite exige
 // INTEGRACAO_COM_SUPER_ADMIN=1 (o usuario sintetico com product_admin NO BANCO
 // DE PRODUCAO, sem vinculo, como em super-admin-sem-clinica.test.ts; sai no
@@ -365,7 +366,7 @@ async function emVigorPelaSessao(
   }));
   const { data: rtAberto } = await sessao
     .from("responsavel_tecnico")
-    .select("id, user_id, registro_conferido_em")
+    .select("id, user_id")
     .eq("clinic_id", clinica)
     .is("ate", null)
     .maybeSingle()
@@ -373,7 +374,6 @@ async function emVigorPelaSessao(
   const rt = rtAberto as {
     id: string;
     user_id: string;
-    registro_conferido_em: string | null;
   } | null;
   let rtComAcesso = false;
   if (rt) {
@@ -394,13 +394,7 @@ async function emVigorPelaSessao(
     .throwOnError();
   const situacao = situacaoDoPreparoNaTela({
     versoes: lidas,
-    rtAberto: rt
-      ? {
-          id: rt.id,
-          userId: rt.user_id,
-          registroConferido: rt.registro_conferido_em !== null,
-        }
-      : null,
+    rtAberto: rt ? { id: rt.id, userId: rt.user_id } : null,
     rtComAcesso,
     nomeAtual: (proc as { name: string }).name,
   });
@@ -1511,7 +1505,9 @@ describe("as tres decisoes do dono de 05/11/2026", () => {
     expect(error).toBeNull();
   });
 
-  it("sem a conferencia nada sai; conferido, sai; trocar o RT comeca sem conferencia", async () => {
+  // Decisao do dono de 06/11/2026 (migration 20261106110000): a conferencia do
+  // registro nao entra mais; o RT vigente e o texto aprovado bastam.
+  it("sem a conferencia, sai; conferir nao muda nada; trocar o RT tira de vigor", async () => {
     await definirNovo("rt", "CRM");
     const { data: salvo } = await salvar(
       "admin",
@@ -1519,14 +1515,12 @@ describe("as tres decisoes do dono de 05/11/2026", () => {
       "Traga o pedido médico antes do exame.",
     );
     await aprovar("rt", salvo);
-    expect(await lerParaEnvio(salvo.versao_id)).toBeNull();
-    expect((await emVigorNoBanco()).has(salvo.versao_id)).toBe(false);
-    await conferirRtAberto();
     expect(await lerParaEnvio(salvo.versao_id)).not.toBeNull();
+    expect((await emVigorNoBanco()).has(salvo.versao_id)).toBe(true);
+    await conferirRtAberto();
     expect((await emVigorNoBanco()).has(salvo.versao_id)).toBe(true);
     await definirNovo("rt", "CRM");
     expect((await emVigorNoBanco()).has(salvo.versao_id)).toBe(false);
-    await conferirRtAberto();
   });
 
   it("remedio ou dose so de CRM ou CRO: o CRN e recusado ao salvar", async () => {

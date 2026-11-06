@@ -437,8 +437,8 @@ export default async function AgentePage({
     previaDoPrompt: superAdmin ? extras.previa : null,
     motivoDoSimulador: motivo,
     emUsoNoWhatsapp: emUso,
-    // [AG6b mídia] o audio, a foto e o documento ja valem no servidor (a
-    // prova paga, D-100)? So as constantes da calibragem, calculadas aqui:
+    // [AG6b mídia] o audio, a foto e o documento ja valem no servidor? So as
+    // constantes da calibragem, calculadas aqui:
     // o SDK nunca vai ao navegador (revisao das telas da AG6b, item 3).
     midiaNoServidor: midiaNoServidor(),
     // [AG7 preparo] início

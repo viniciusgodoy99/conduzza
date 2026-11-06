@@ -235,7 +235,7 @@ export const CARACTERES_DA_TRANSCRICAO_NA_RESERVA = 1000;
  * O maximo que a porta pede ao Storage por arquivo (o mesmo valor de
  * PRAZO_DO_ARQUIVO_NO_STORAGE_MS, de lib/integrations/storage/arquivo-para-
  * a-ia.ts, que e server-only e nao entra aqui), por menor que seja o resto
- * do prazo da midia. PROPOSTA, a calibrar na prova paga (D-100).
+ * do prazo da midia. PROPOSTA, sem medir (a prova paga, D-100, foi dispensada pelo dono em 06/11/2026).
  */
 export const PRAZO_MAXIMO_DO_STORAGE_MS = 8_000;
 /**
@@ -264,8 +264,8 @@ export const MAXIMO_DE_CHAMADAS_DA_TRANSCRICAO_NA_PORTA = 1 + TENTATIVAS_EXTRAS;
  * respondia no limite dela deixava so a margem (uns 1 s) para a RPC: a RPC
  * mais lenta que isso gravava DEPOIS do corte da porta, e a bolha mostrava a
  * leitura numa conversa cuja trilha dizia que a midia falhou. Com a fatia, a
- * RPC tem a margem e a fatia (2 s) ate o corte da porta. PROPOSTA, a medir
- * na prova paga (D-100) junto com os prazos da midia. A RPC que passa disso
+ * RPC tem a margem e a fatia (2 s) ate o corte da porta. PROPOSTA, sem medir
+ * (a prova paga, D-100, foi dispensada pelo dono em 06/11/2026), como os prazos da midia. A RPC que passa disso
  * (trava longa no banco) ainda pode gravar depois do corte: o corte e do
  * cliente, e a RPC que ja saiu nao volta.
  */
@@ -568,7 +568,7 @@ export type EntradaDoPlano = {
   leituras: ReadonlyMap<string, LeituraGravada> | null;
   /** O modelo da transcricao vale e tem preco por minuto. */
   transcricaoComPreco: boolean;
-  /** TRANSCRICAO_CALIBRADA (a prova paga). */
+  /** TRANSCRICAO_CALIBRADA. */
   transcricaoCalibrada: boolean;
   /** O leitor tem os tetos medidos, o modelo e o preco. */
   leitorPronto: boolean;

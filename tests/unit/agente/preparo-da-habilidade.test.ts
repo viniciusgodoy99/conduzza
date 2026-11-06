@@ -67,7 +67,6 @@ const RT_ABERTO: Linha = {
   uf: "CE",
   desde: "2026-11-01T12:00:00Z",
   ate: null,
-  registro_conferido_em: "2026-11-02T12:00:00Z",
 };
 
 const PROCEDIMENTOS: Linha[] = [
@@ -179,7 +178,6 @@ describe("versoesEmVigorDosAtivos", () => {
     uf: "CE",
     desde: "2026-11-01T12:00:00Z",
     ate: null,
-    registroConferidoEm: "2026-10-02T12:00:00Z",
   };
   const ativos = PROCEDIMENTOS.map((p) => ({
     id: p.id as string,
@@ -355,9 +353,8 @@ describe("fetchPreparoDaHabilidade: as regras de hoje conferidas no servidor", (
     }
   });
 
-  // Revisao final da AG7 (achado 8): sem a conferencia, a nota nao pode dizer
-  // que nao ha orientacao aprovada.
-  it("o texto aprovado sem a conferencia do registro: registro nao conferido", async () => {
+  // Decisao do dono de 06/11/2026: a conferencia do registro nao conta mais.
+  it("o registro nao conferido nao tira a orientacao aprovada", async () => {
     const semConferencia = tabelas([versao({ id: "v1" })]);
     semConferencia.responsavel_tecnico = semConferencia.responsavel_tecnico.map(
       (r: Record<string, unknown>) => ({ ...r, registro_conferido_em: null }),
@@ -365,14 +362,7 @@ describe("fetchPreparoDaHabilidade: as regras de hoje conferidas no servidor", (
     const { cliente } = clienteCom(semConferencia);
     await expect(
       fetchPreparoDaHabilidade(cliente, CLINICA, recusadoPelasRegrasDeHoje),
-    ).resolves.toBe("registro_nao_conferido");
-    const semTexto = tabelas([]);
-    semTexto.responsavel_tecnico = semTexto.responsavel_tecnico.map(
-      (r: Record<string, unknown>) => ({ ...r, registro_conferido_em: null }),
-    );
-    await expect(
-      fetchPreparoDaHabilidade(clienteCom(semTexto).cliente, CLINICA, recusadoPelasRegrasDeHoje),
-    ).resolves.toBe("sem_texto_aprovado");
+    ).resolves.toBe("sai");
   });
 
   it("a leitura que falha lanca (a pagina nao mostra a nota sem conferir)", async () => {

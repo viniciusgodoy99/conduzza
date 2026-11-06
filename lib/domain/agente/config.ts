@@ -316,8 +316,11 @@ export type HabilidadeDoAgente = {
  * o agente sempre pode escalar.
  *
  * E4 (20/10/2026): "Agendar consulta" (buscar, reservar e marcar; a consulta
- * nasce pendente da aprovacao da equipe, D12) e "Confirmar presenca" nascem
- * desligadas. A primeira so liga com a antecedencia e o horizonte (D13).
+ * nasce pendente da aprovacao da equipe, D12) so vale com a antecedencia e o
+ * horizonte (D13). Decisao do dono de 06/11/2026: ela nasce LIGADA (a chave
+ * ausente vale ligada; so o false gravado desliga; o espelho no banco e
+ * conferir_horario_da_ia e lista_de_espera_da_ia_ligada, migration
+ * 20261106110000). "Confirmar presenca" nasce desligada.
  *
  * AG4 (27/10/2026): "Cancelar consulta" (D-9: confirmacao numa mensagem nova
  * e o prazo da clinica) e "Remarcar consulta" (D-10: consulta nova pendente,
@@ -400,7 +403,7 @@ export const HABILIDADES_DO_AGENTE = [
       "registrar_dados_do_paciente",
       "agendar",
     ],
-    padrao: false,
+    padrao: true,
     precisaDaAgenda: true,
     precisaDaHabilidade: null,
     precisaDoPrazo: null,
@@ -470,9 +473,9 @@ export const HABILIDADES_DO_AGENTE = [
   // AG6b (desenho, secao 6; D-56, D-14 e D-58): o audio pela transcricao e a
   // foto ou o PDF pelo leitor de midia. Desligadas por padrao, sem
   // ferramenta (o motor le a midia antes do agente) e sem dependencia. So
-  // valem na versao PUBLICADA, com o telefone que confirmou o aviso novo
-  // (D-95) e, ate a prova paga (D-100), nunca de fato: TRANSCRICAO_CALIBRADA
-  // e os tetos do leitor fecham o plano do turno (lib/agente/midia.ts).
+  // valem na versao PUBLICADA e com o telefone que confirmou o aviso novo
+  // (D-95). TRANSCRICAO_CALIBRADA e os tetos do leitor ainda podem fechar o
+  // plano do turno (lib/agente/midia.ts); a D-100 foi dispensada em 06/11/2026.
   // Revisao das telas da AG6b (item 4): a nota diz "os telefones cadastrados
   // na aba WhatsApp", e nao "da equipe": o telefone de paciente usado mesmo
   // assim (o forcado) que confirmou o aviso novo tambem manda midia (D-95).
@@ -565,7 +568,7 @@ export const HABILIDADE_DO_ARQUIVO = "ler_imagem_e_documento";
 
 /**
  * AG6b (revisao das telas, item 3): o que o SERVIDOR ja deixa valer, mesmo
- * com a habilidade ligada na versao publicada. Ate a prova paga (D-100), o
+ * com a habilidade ligada na versao publicada. Com as constantes desligadas, o
  * plano do turno (lib/agente/midia.ts) marca todo audio, foto e documento
  * como fora, e a conversa vai para a equipe. Calculado so no servidor
  * (lib/agente/midia-no-servidor.ts, pelas constantes da calibragem), e a
@@ -850,6 +853,9 @@ export function dicaDaHabilidade(
  * gravada e vale desligada enquanto a outra nao valer (habilidadesComAgenda),
  * como o prazo que a clinica apaga depois de ligar.
  *
+ * Confere a ENTRADA, nao o padrao: "Agendar consulta" nasce ligada, e a chave
+ * que nao veio nao e um pedido para ligar.
+ *
  * `prazos` ausente ou nulo vale os dois vazios (ligar cancelar ou remarcar e
  * recusado).
  */
@@ -857,20 +863,47 @@ export function habilidadesComAgendaSchema(
   agenda: AgendaDoAgente,
   prazos?: PrazosDoAgente | null,
 ) {
-  return habilidadesSchema.superRefine((habilidades, ctx) => {
-    for (const habilidade of HABILIDADES_DO_AGENTE) {
-      if (
-        habilidades[habilidade.chave] &&
-        !camposDaHabilidadePreenchidos(habilidade, agenda, prazos)
-      ) {
-        ctx.addIssue({
-          code: "custom",
-          path: [habilidade.chave],
-          message: habilidade.dicaDaDependencia ?? DICA_DA_AGENDA_INCOMPLETA,
-        });
+  return z
+    .record(z.string(), z.unknown())
+    .superRefine((valor, ctx) => {
+      for (const habilidade of HABILIDADES_DO_AGENTE) {
+        if (
+          valor[habilidade.chave] === true &&
+          !camposDaHabilidadePreenchidos(habilidade, agenda, prazos)
+        ) {
+          ctx.addIssue({
+            code: "custom",
+            path: [habilidade.chave],
+            message: habilidade.dicaDaDependencia ?? DICA_DA_AGENDA_INCOMPLETA,
+          });
+        }
       }
+    })
+    .pipe(habilidadesSchema);
+}
+
+/**
+ * O `skills` a gravar: a entrada sobre o gravado (chave que esta leva nao
+ * conhece nao se perde). Com a agenda incompleta, a chave de "Agendar
+ * consulta" fica presa na tela, que manda o false do que vale de fato, e nao
+ * uma escolha: gravar esse false desligaria a habilidade para sempre depois
+ * que a clinica preenchesse a agenda (decisao do dono de 06/11/2026: so quem
+ * desligou fica desligado). Ali, o gravado fica como esta.
+ */
+export function habilidadesParaGravar(
+  gravado: Readonly<Record<string, unknown>>,
+  entrada: HabilidadesDoAgente,
+  agenda: AgendaDoAgente,
+): Record<string, unknown> {
+  const proximas: Record<string, unknown> = { ...gravado, ...entrada };
+  if (!agendaCompleta(agenda)) {
+    if ("agendar" in gravado) {
+      proximas.agendar = gravado.agendar;
+    } else {
+      delete proximas.agendar;
     }
-  });
+  }
+  return proximas;
 }
 
 // ---------------------------------------------------------------------------

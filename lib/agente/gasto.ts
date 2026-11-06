@@ -242,8 +242,8 @@ export function custoMaximoDaTranscricao(
 /**
  * AG6b: o maximo de uma chamada do leitor de midia: a politica, o envelope
  * com a lista do Cadastro, o arquivo (o teto de tokens de uma imagem, ou o
- * de uma pagina vezes as paginas) e o teto de saida. null sem o teto medido
- * na prova paga (o leitor nao roda).
+ * de uma pagina vezes as paginas) e o teto de saida. null sem o teto (o leitor
+ * nao roda).
  */
 export function usoEstimadoDoLeitor(entrada: {
   catalogo: readonly ItemDoCatalogoDaLeitura[];

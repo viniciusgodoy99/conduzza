@@ -371,10 +371,11 @@ export const TEXTOS_DO_AGENTE = {
   horarioSalvo: "Horário salvo no rascunho.",
   horarioComErro: "Corrija antes de salvar",
   // Limites para marcar consulta (E4, D13): a clinica preenche; ninguem
-  // inventa valor. Sem os dois, "Agendar consulta" nao liga.
+  // inventa valor. Sem os dois, "Agendar consulta" nao vale (decisao do dono
+  // de 06/11/2026: com os dois, ela ja vale, sem ninguem ligar).
   agendaTitulo: "Limites para marcar consulta",
   agendaDescricao:
-    "A habilidade Agendar consulta só liga com os dois preenchidos. A consulta que o assistente marca fica pendente até a equipe aprovar na Agenda.",
+    "A habilidade Agendar consulta já vem ligada e só passa a valer com os dois preenchidos. A consulta que o assistente marca fica pendente até a equipe aprovar na Agenda.",
   antecedencia: "Antecedência mínima para marcar (horas)",
   antecedenciaDica: (minimo: number, maximo: number) =>
     `De ${minimo} a ${maximo} horas. O assistente só oferece horário que começa depois desse tempo.`,
@@ -382,7 +383,7 @@ export const TEXTOS_DO_AGENTE = {
   horizonteDica: (minimo: number, maximo: number) =>
     `De ${minimo} a ${maximo} dias. O assistente não oferece horário além disso.`,
   agendaIncompleta:
-    "Com um dos campos vazio, a habilidade Agendar consulta fica desligada.",
+    "Com um dos campos vazio, a habilidade Agendar consulta não vale: o assistente não marca consulta.",
   salvarAgenda: "Salvar limites",
   agendaSalva: "Limites para marcar consulta salvos no rascunho.",
   // Quem o assistente atende (onda 2, item 4; decisao P4a do dono). O
@@ -603,20 +604,21 @@ export const TEXTOS_DA_MIDIA = {
   // D-62: o simulador nao manda audio, foto nem documento nesta etapa.
   simulador:
     "Áudio, foto e documento só no WhatsApp, com os telefones da equipe.",
-  // Revisao das telas da AG6b (item 3): enquanto o servidor nao foi
-  // calibrado pela prova paga (D-100), a habilidade ligada nao tem efeito, e
-  // a tela diz isso embaixo dela (dicaDaMidiaNoServidor).
-  audioSemAProva:
-    "Ainda não está valendo: falta a prova com áudios de verdade. Até lá, o áudio vai para a equipe.",
-  arquivoSemAProva:
-    "Ainda não está valendo: falta a prova com fotos e documentos de verdade. Até lá, foto e documento vão para a equipe.",
+  // Revisao das telas da AG6b (item 3): com as constantes do servidor
+  // desligadas, a habilidade ligada nao tem efeito, e a tela diz isso embaixo
+  // dela (dicaDaMidiaNoServidor). Desde a decisao do dono de 06/11/2026, que
+  // dispensou a prova paga (D-100), elas estao ligadas, e a dica nao aparece.
+  audioDesligado:
+    "Ainda não está valendo: a Conduzza desligou o áudio por enquanto. Até voltar, o áudio vai para a equipe.",
+  arquivoDesligado:
+    "Ainda não está valendo: a Conduzza desligou foto e documento por enquanto. Até voltar, foto e documento vão para a equipe.",
 } as const;
 
 /**
  * A dica da habilidade de midia que o servidor ainda nao deixa valer, ou
- * nula: as outras habilidades, a midia ja calibrada, ou sem a leitura do
+ * nula: as outras habilidades, a midia que vale, ou sem a leitura do
  * servidor (`midia` ausente: quem chama nao mandou, e a tela nao inventa a
- * dica). Vale ligada ou desligada: ligar agora nao muda nada ate a prova.
+ * dica). Vale ligada ou desligada: ligar agora nao muda nada ate o servidor voltar.
  */
 export function dicaDaMidiaNoServidor(
   chave: string,
@@ -626,10 +628,10 @@ export function dicaDaMidiaNoServidor(
     return null;
   }
   if (chave === HABILIDADE_DO_AUDIO) {
-    return midia.audio ? null : TEXTOS_DA_MIDIA.audioSemAProva;
+    return midia.audio ? null : TEXTOS_DA_MIDIA.audioDesligado;
   }
   if (chave === HABILIDADE_DO_ARQUIVO) {
-    return midia.arquivo ? null : TEXTOS_DA_MIDIA.arquivoSemAProva;
+    return midia.arquivo ? null : TEXTOS_DA_MIDIA.arquivoDesligado;
   }
   return null;
 }
@@ -661,9 +663,6 @@ export const TEXTOS_DO_PREPARO = {
   // em vigor, mas as regras de hoje recusam o de todos.
   aprovadaSemEnvio:
     "Nenhuma orientação aprovada pelo responsável técnico pode ser enviada: as regras de hoje não deixam o texto sair (em Cadastros, aparece como “Aprovada, sem envio”). Com a chave ligada, o pedido de preparo passa para a equipe.",
-  // Revisao final da AG7: ha texto aprovado, e so falta a conferencia.
-  registroNaoConferido:
-    "Registro do RT ainda não conferido pela Conduzza: nenhuma orientação aprovada pode ser enviada até a conferência. Com a chave ligada, o pedido de preparo passa para a equipe.",
   marcaDoSimulador:
     "Enviado pelo sistema: texto aprovado pelo responsável técnico",
 } as const;
@@ -671,9 +670,8 @@ export const TEXTOS_DO_PREPARO = {
 /**
  * A nota de "Enviar orientação de preparo" quando nenhum procedimento ativo
  * tem orientacao aprovada em vigor que possa sair: sem texto aprovado
- * ("sem_texto_aprovado"), com todos recusados pelas regras de hoje
- * ("aprovada_sem_envio") ou esperando a conferencia do registro do RT
- * ("registro_nao_conferido"). Nula para as outras habilidades, com algum texto
+ * ("sem_texto_aprovado") ou com todos recusados pelas regras de hoje
+ * ("aprovada_sem_envio"). Nula para as outras habilidades, com algum texto
  * que sai, ou sem a leitura (`preparoDaHabilidade` nulo ou ausente: a pagina
  * nao conferiu, e a tela nao inventa a nota). Vale ligada ou desligada.
  */
@@ -686,9 +684,6 @@ export function notaDoPreparoSemTextoAprovado(
   }
   if (preparoDaHabilidade === "sem_texto_aprovado") {
     return TEXTOS_DO_PREPARO.semTextoAprovado;
-  }
-  if (preparoDaHabilidade === "registro_nao_conferido") {
-    return TEXTOS_DO_PREPARO.registroNaoConferido;
   }
   return preparoDaHabilidade === "aprovada_sem_envio"
     ? TEXTOS_DO_PREPARO.aprovadaSemEnvio

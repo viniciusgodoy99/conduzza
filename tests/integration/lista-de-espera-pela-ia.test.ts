@@ -552,6 +552,12 @@ describe("pedir_lista_de_espera_pela_ia: cada recusa, na ordem do contrato", () 
     expect(await pedir(c.conversa, j)).toEqual({ ok: false, motivo: "lista_de_espera_desligada" });
     await publicar({ agendar: false, lista_de_espera: true });
     expect(await pedir(c.conversa, j)).toEqual({ ok: false, motivo: "lista_de_espera_desligada" });
+    // Decisao do dono de 06/11/2026: a chave agendar ausente vale ligada, e a
+    // da lista continua desligada por padrao.
+    await publicar({});
+    expect(await pedir(c.conversa, j)).toEqual({ ok: false, motivo: "lista_de_espera_desligada" });
+    await publicar({ lista_de_espera: true });
+    expect(await pedir(c.conversa, j)).not.toEqual({ ok: false, motivo: "lista_de_espera_desligada" });
     await publicar(LISTA_LIGADA);
     const unidades = [
       await inserir("unit", { clinic_id: clinica, name: "Sede sintética" }),

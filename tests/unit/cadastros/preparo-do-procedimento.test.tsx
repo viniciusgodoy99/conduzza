@@ -120,7 +120,6 @@ const RT_ANA: ResponsavelTecnico = {
   uf: "CE",
   desde: "2026-10-01T12:00:00Z",
   ate: null,
-  registroConferidoEm: "2026-10-02T12:00:00Z",
 };
 const RT_ANTIGO: ResponsavelTecnico = {
   ...RT_ANA,
@@ -459,27 +458,14 @@ describe("sem responsável técnico ativo", () => {
     });
   });
 
-  it("o registro do RT não conferido: o aviso, o chip sem envio, sem pedir nova aprovação, e Suspender continua", () => {
+  // Decisao do dono de 06/11/2026: a conferencia do registro nao conta mais.
+  it("o RT vigente com o texto aprovado: em vigor, sem aviso de conferência", () => {
     const html = semEntidades(
-      secao({
-        dados: dados({
-          rtAberto: { ...RT_ANA, registroConferidoEm: null },
-        }),
-        podeEditarCadastros: true,
-      }),
+      secao({ dados: dados(), podeEditarCadastros: true }),
     );
-    expect(html).toContain(
-      "Registro do RT ainda não conferido pela Conduzza",
-    );
-    expect(html).toContain("Aprovada, sem envio");
-    expect(html).not.toContain("Precisa de nova aprovação");
+    expect(html).not.toContain("conferid");
+    expect(html).not.toContain("Aprovada, sem envio");
     expect(html).toContain(T.suspender);
-  });
-
-  it("o registro conferido: nenhum aviso de conferência", () => {
-    expect(semEntidades(secao({ dados: dados() }))).not.toContain(
-      "ainda não conferido",
-    );
   });
 
   it("o RT sem acesso ativo também conta como sem RT", () => {

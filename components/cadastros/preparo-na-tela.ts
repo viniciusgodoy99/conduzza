@@ -69,8 +69,6 @@ export const TEXTOS_DO_PREPARO = {
   semRtLink: "Definir em Configurações, Equipe",
   semRtSemLink:
     "Quem define é o administrador da clínica, em Configurações, Equipe.",
-  registroNaoConferido:
-    "Registro do RT ainda não conferido pela Conduzza. Nenhuma orientação de preparo é enviada até a conferência.",
   semOrientacao:
     "Nenhuma orientação de preparo escrita para este procedimento.",
   emVigor: "Em vigor",

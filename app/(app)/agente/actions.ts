@@ -20,6 +20,7 @@ import {
   dadosExigidosSchema,
   diferencasDoRascunho,
   habilidadesComAgendaSchema,
+  habilidadesParaGravar,
   habilidadesSchema,
   horarioParaOBanco,
   horarioSchema,
@@ -489,7 +490,9 @@ export async function salvarPersonaAction(
  * rascunho, e a entrada passa de novo por habilidadesComAgendaSchema: a tela
  * ja deixa a chave desabilitada, mas o cliente nao e confiavel. A recusa usa
  * a mesma dica da tela. AG4: os prazos tambem (cancelar e remarcar so ligam
- * com o prazo de cada uma preenchido no rascunho).
+ * com o prazo de cada uma preenchido no rascunho). Decisao de 06/11/2026: com
+ * a agenda incompleta, o false que a tela manda nao vira escolha gravada
+ * (habilidadesParaGravar).
  */
 export async function salvarHabilidadesAction(
   entrada: unknown,
@@ -531,8 +534,9 @@ export async function salvarHabilidadesAction(
     cancelar_antecedencia_horas?: unknown;
     remarcar_antecedencia_horas?: unknown;
   };
+  const agenda = agendaDoBanco(linha);
   const parsed = habilidadesComAgendaSchema(
-    agendaDoBanco(linha),
+    agenda,
     prazosDoBanco(linha),
   ).safeParse(entrada);
   if (!parsed.success) {
@@ -544,7 +548,7 @@ export async function salvarHabilidadesAction(
       ? (gravado as Record<string, unknown>)
       : {};
   return gravarNoRascunho(supabase, quem, "habilidades", {
-    skills: { ...existente, ...parsed.data },
+    skills: habilidadesParaGravar(existente, parsed.data, agenda),
   });
 }
 
