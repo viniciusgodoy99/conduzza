@@ -365,7 +365,7 @@ async function emVigorPelaSessao(
   }));
   const { data: rtAberto } = await sessao
     .from("responsavel_tecnico")
-    .select("id, user_id, registro_conferido_em")
+    .select("id, user_id")
     .eq("clinic_id", clinica)
     .is("ate", null)
     .maybeSingle()
@@ -373,7 +373,6 @@ async function emVigorPelaSessao(
   const rt = rtAberto as {
     id: string;
     user_id: string;
-    registro_conferido_em: string | null;
   } | null;
   let rtComAcesso = false;
   if (rt) {
@@ -394,13 +393,7 @@ async function emVigorPelaSessao(
     .throwOnError();
   const situacao = situacaoDoPreparoNaTela({
     versoes: lidas,
-    rtAberto: rt
-      ? {
-          id: rt.id,
-          userId: rt.user_id,
-          registroConferido: rt.registro_conferido_em !== null,
-        }
-      : null,
+    rtAberto: rt ? { id: rt.id, userId: rt.user_id } : null,
     rtComAcesso,
     nomeAtual: (proc as { name: string }).name,
   });

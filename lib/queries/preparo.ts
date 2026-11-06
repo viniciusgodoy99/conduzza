@@ -42,8 +42,6 @@ export type ResponsavelTecnico = {
   uf: string;
   desde: string;
   ate: string | null;
-  /** Quando a equipe Conduzza conferiu o registro; null: nada sai. */
-  registroConferidoEm: string | null;
 };
 
 export type OrigemDoPreparo = "cadastro" | "texto_antigo";
@@ -119,8 +117,7 @@ function ehSituacao(valor: unknown): valor is SituacaoDoPreparo {
   );
 }
 
-const COLUNAS_DO_RT =
-  "id, user_id, nome, conselho, numero, uf, desde, ate, registro_conferido_em";
+const COLUNAS_DO_RT = "id, user_id, nome, conselho, numero, uf, desde, ate";
 
 // Sem o texto: ele vem numa leitura propria, so das versoes que a tela
 // mostra (lerTextosDasVersoes).
@@ -148,7 +145,6 @@ function lerResponsavel(r: Linha): ResponsavelTecnico | null {
     uf: r.uf,
     desde: r.desde,
     ate: textoOuNulo(r.ate),
-    registroConferidoEm: textoOuNulo(r.registro_conferido_em),
   };
 }
 
@@ -417,13 +413,7 @@ export function situacaoDoProcedimento(
 ): SituacaoDoPreparoNaTela {
   return situacaoDoPreparoNaTela({
     versoes: versoesDoProcedimento(dados, procedimento.id).map(paraATela),
-    rtAberto: dados.rtAberto
-      ? {
-          id: dados.rtAberto.id,
-          userId: dados.rtAberto.userId,
-          registroConferido: dados.rtAberto.registroConferidoEm !== null,
-        }
-      : null,
+    rtAberto: dados.rtAberto,
     rtComAcesso: dados.rtComAcesso,
     nomeAtual: procedimento.name,
   });
@@ -556,20 +546,7 @@ export async function fetchPreparoDaHabilidade(
     ativos,
   );
   if (emVigor.length === 0) {
-    // Revisao final da AG7: sem a conferencia, "Nenhum procedimento tem
-    // orientacao aprovada" seria falso quando o texto aprovado existe e so
-    // falta conferir o registro.
-    const seConferido = versoesEmVigorDosAtivos(
-      {
-        versoes: aprovadas,
-        rtAberto: { ...rt, registroConferidoEm: "conferido" },
-        rtComAcesso,
-      },
-      ativos,
-    );
-    return rt.registroConferidoEm === null && seConferido.length > 0
-      ? "registro_nao_conferido"
-      : "sem_texto_aprovado";
+    return "sem_texto_aprovado";
   }
   const textos = await lerTextosDasVersoes(supabase, clinicId, emVigor);
   return preparoDaHabilidade(emVigor, textos, recusado);

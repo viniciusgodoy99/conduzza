@@ -1299,7 +1299,6 @@ export type VersaoNaTela = {
 
 export type SituacaoDoPreparoNaTela =
   | "aprovada"
-  /** Tudo em ordem, menos o registro do RT, que a Conduzza nao conferiu. */
   | "aprovada_sem_envio"
   | "aguardando"
   | "precisa_de_nova_aprovacao"
@@ -1307,8 +1306,8 @@ export type SituacaoDoPreparoNaTela =
   | "sem_orientacao";
 
 /**
- * O chip da secao: as situacoes do banco; "aprovada_sem_envio" tambem e a
- * versao aprovada cujo texto as regras de hoje recusam (revisao curta da AG7,
+ * O chip da secao: as situacoes do banco; "aprovada_sem_envio" e a versao
+ * aprovada cujo texto as regras de hoje recusam (revisao curta da AG7,
  * CURTA-5: o servidor confere; o envio nao a deixa sair).
  */
 export type SituacaoDoChipDoPreparo = SituacaoDoPreparoNaTela;
@@ -1322,15 +1321,12 @@ export type SituacaoDoChipDoPreparo = SituacaoDoPreparoNaTela;
  *    recusam o de todos: o envio e a regua nao os deixam sair, e Cadastros
  *    os mostra como "Aprovada, sem envio" (revisao curta da AG7, a sobra da
  *    CURTA-5 na Tela 6);
- *  - "registro_nao_conferido": ha texto aprovado que estaria em vigor, e so
- *    falta a equipe Conduzza conferir o registro do RT (revisao final da AG7);
  *  - "sem_texto_aprovado": nenhum procedimento ativo tem texto aprovado em
  *    vigor.
  */
 export type PreparoDaHabilidade =
   | "sai"
   | "aprovada_sem_envio"
-  | "registro_nao_conferido"
   | "sem_texto_aprovado";
 
 /** As situacoes de quem ja foi aprovado um dia (a linha do envio). */
@@ -1353,9 +1349,7 @@ function maisNova(versoes: readonly VersaoNaTela[]): VersaoNaTela | null {
 /**
  * O chip do procedimento (os cinco do desenho, 5.1), na ordem de quem vale:
  *  1. ha versao aprovado: "aprovada" quando ela esta em vigor (o RT dela e o
- *     RT aberto, com acesso ativo e o registro conferido, e o nome do
- *     procedimento nao mudou); "aprovada_sem_envio" quando so falta a
- *     conferencia do registro (o RT nao tem o que aprovar de novo); e
+ *     RT aberto, com acesso ativo, e o nome do procedimento nao mudou); e
  *     "precisa_de_nova_aprovacao" quando nao esta (RT trocado ou sem acesso,
  *     nome mudado). O texto novo que espera o RT aparece no bloco proprio,
  *     sem trocar o chip;
@@ -1368,22 +1362,19 @@ function maisNova(versoes: readonly VersaoNaTela[]): VersaoNaTela | null {
  */
 export function situacaoDoPreparoNaTela(e: {
   versoes: readonly VersaoNaTela[];
-  rtAberto: { id: string; userId: string; registroConferido: boolean } | null;
+  rtAberto: { id: string; userId: string } | null;
   rtComAcesso: boolean;
   nomeAtual: string;
 }): SituacaoDoPreparoNaTela {
   const aprovada = maisNova(e.versoes.filter((v) => v.situacao === "aprovado"));
   if (aprovada !== null) {
-    const valeria =
-      aprovada.rtId !== null &&
+    return aprovada.rtId !== null &&
       e.rtAberto !== null &&
       aprovada.rtId === e.rtAberto.id &&
       e.rtComAcesso &&
-      aprovada.nomeDoProcedimento === e.nomeAtual;
-    if (!valeria) {
-      return "precisa_de_nova_aprovacao";
-    }
-    return e.rtAberto?.registroConferido ? "aprovada" : "aprovada_sem_envio";
+      aprovada.nomeDoProcedimento === e.nomeAtual
+      ? "aprovada"
+      : "precisa_de_nova_aprovacao";
   }
   if (e.versoes.some((v) => v.situacao === "aguardando_rt")) {
     return "aguardando";

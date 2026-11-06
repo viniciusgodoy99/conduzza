@@ -1171,11 +1171,6 @@ export function SecaoDoPreparo({
   return moldura(
     <>
       {rtVigente ? null : <AvisoSemRt podeDefinirRt={preparo.podeDefinirRt} />}
-      {rtVigente && dados.rtAberto?.registroConferidoEm === null ? (
-        <Aviso tom="warning" role="note">
-          {T.registroNaoConferido}
-        </Aviso>
-      ) : null}
 
       {devolvida && devolvida.comentario ? (
         <Aviso tom="warning" role="note">

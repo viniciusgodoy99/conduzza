@@ -386,9 +386,6 @@ describe("a dica de quando nenhum procedimento tem orientação aprovada", () =>
     );
     // Com texto em vigor que sai, ou sem a leitura (nulo ou ausente): sem a
     // dica.
-    expect(notaDoPreparoSemTextoAprovado(PREPARO, "registro_nao_conferido")).toContain(
-      "Registro do RT ainda não conferido pela Conduzza",
-    );
     expect(notaDoPreparoSemTextoAprovado(PREPARO, "sai")).toBeNull();
     expect(notaDoPreparoSemTextoAprovado(PREPARO, null)).toBeNull();
     expect(notaDoPreparoSemTextoAprovado(PREPARO, undefined)).toBeNull();

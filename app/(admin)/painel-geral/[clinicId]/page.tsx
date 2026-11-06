@@ -9,7 +9,6 @@ import { publicoDosRequisitos } from "@/components/painel-geral/painel-geral";
 import { versaoDoFiltroDoTurno } from "@/lib/agente/whatsapp";
 import { ambienteDaIaLigado } from "@/lib/ia/liberacao";
 import { modeloDoAgente } from "@/lib/integrations/llm/openai";
-import { getSessionContext } from "@/lib/auth/active-clinic";
 import { fetchLiberacaoDaIa } from "@/lib/queries/ia-liberacao";
 import {
   fetchClinicaDoPainel,
@@ -22,7 +21,6 @@ import {
   type HistoricoDaConta,
   type NotasDaClinica,
 } from "@/lib/queries/painel-geral";
-import { fetchResponsavelTecnicoAberto } from "@/lib/queries/preparo";
 import { createClient } from "@/lib/supabase/server";
 
 // Detalhe de uma clinica no Painel geral (onda 1, decisao do dono de
@@ -61,10 +59,6 @@ import { createClient } from "@/lib/supabase/server";
 // dado de paciente; cada uma que falha tira so o proprio cartao. O banco
 // diz quais notas sao de quem esta vendo ("minha": so essas tem o "Excluir"
 // habilitado) e confere de novo ao excluir.
-
-// AG7 (decisao do dono de 05/11/2026): o RT aberto da clinica (lido pela
-// policy do super admin), para a equipe Conduzza conferir o registro. Nao e
-// dado de paciente. A leitura que falha tira so o proprio cartao.
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -133,8 +127,6 @@ export default async function DetalheDaClinicaNoPainelPage({
     forcados,
     notas,
     historico,
-    responsavelTecnico,
-    sessao,
   ] = await Promise.all([
       ouErro(fetchClinicaDoPainel(supabase, clinicId)),
       ouErro(fetchEquipeDaClinica(supabase, clinicId)),
@@ -144,8 +136,6 @@ export default async function DetalheDaClinicaNoPainelPage({
       lerTelefonesForcados(supabase, clinicId),
       ouErro(fetchNotasDaClinica(supabase, clinicId)),
       ouErro(fetchHistoricoDaConta(supabase, clinicId)),
-      ouErro(fetchResponsavelTecnicoAberto(supabase, clinicId)),
-      getSessionContext(),
     ]);
 
   if (lida === "erro") {
@@ -184,8 +174,6 @@ export default async function DetalheDaClinicaNoPainelPage({
       versoes={versoesDeAgora()}
       notas={notasLidas}
       historico={historicoLido}
-      responsavelTecnico={responsavelTecnico}
-      sessaoUserId={sessao?.userId ?? null}
     />
   );
 }

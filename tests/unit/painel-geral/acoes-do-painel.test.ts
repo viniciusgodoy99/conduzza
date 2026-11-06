@@ -83,7 +83,6 @@ import {
   definirInterruptorGeralAction,
   definirTetoDaIaAction,
   escreverNotaDaClinicaAction,
-  conferirRegistroDoRtAction,
   excluirNotaDaClinicaAction,
   reativarClinicaAction,
   registrarRequisitoDaProducaoAction,
@@ -149,7 +148,6 @@ const validas = [
       clinicId: CLINICA,
       notaId: REGISTRO,
     }),
-  () => conferirRegistroDoRtAction({ clinicId: CLINICA, rtId: REGISTRO }),
 ] as const;
 
 describe("guarda no servidor", () => {
@@ -958,47 +956,6 @@ describe("segunda leva: as notas internas da equipe Conduzza", () => {
     expect(registro.revalidados).toEqual([["/painel-geral", "layout"]]);
     expect(registro.tabelas).toEqual([]);
     expect(JSON.stringify(registro.logs)).not.toContain("recepção");
-  });
-
-  it("conferir o registro do RT: a RPC com a designacao que a tela mostrou", async () => {
-    expect(
-      await conferirRegistroDoRtAction({ clinicId: CLINICA, rtId: NOTA }),
-    ).toEqual({ ok: true });
-    expect(registro.rpcs).toEqual([
-      {
-        nome: "conferir_registro_do_responsavel_tecnico",
-        args: { p_rt_id: NOTA },
-      },
-    ]);
-  });
-
-  it.each([
-    ["42501", "x", TEXTOS_DO_PAINEL.rtProprioNaoConfere],
-    ["P0001", "responsavel_encerrado", TEXTOS_DO_PAINEL.rtEncerrado],
-    ["P0001", "sem_responsavel_tecnico", TEXTOS_DO_PAINEL.rtEncerrado],
-    ["P0001", "registro_ja_conferido", TEXTOS_DO_PAINEL.registroJaConferido],
-    ["XX000", "x", TEXTOS_DO_PAINEL.naoConferiuORegistro],
-  ])("conferir: o erro %s %s em frase de recepção", async (code, message, frase) => {
-    registro.respostas.set("conferir_registro_do_responsavel_tecnico", {
-      data: null,
-      error: { code, message },
-    });
-    expect(
-      await conferirRegistroDoRtAction({ clinicId: CLINICA, rtId: NOTA }),
-    ).toEqual({ ok: false, error: frase });
-  });
-
-  it("conferir: campo a mais ou id fora do formato, sem banco", async () => {
-    for (const entrada of [
-      { clinicId: CLINICA, rtId: "x" },
-      { clinicId: CLINICA, rtId: NOTA, extra: 1 },
-    ]) {
-      expect(await conferirRegistroDoRtAction(entrada)).toEqual({
-        ok: false,
-        error: TEXTOS_DO_PAINEL.dadosInvalidos,
-      });
-    }
-    expect(registro.rpcs).toEqual([]);
   });
 
   it("excluir: excluir_nota_da_clinica com a nota", async () => {
