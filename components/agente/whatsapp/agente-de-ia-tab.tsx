@@ -1338,9 +1338,22 @@ export function CartaoDosTelefones({
     if (!marcandoEntreNumeros || !confirmouEntreNumeros) {
       return;
     }
+    const valores = {
+      ...marcandoEntreNumeros.valores,
+      confirmouEntreNumeros: true,
+    };
     aoAdicionar(
-      { ...marcandoEntreNumeros.valores, confirmouEntreNumeros: true },
-      { sempre: fecharEntreNumeros, seDerCerto: limpar },
+      valores,
+      {
+        sempre: fecharEntreNumeros,
+        seDerCerto: limpar,
+        // Numero conectado que tambem e contato de paciente: o forcar leva a
+        // opcao junto.
+        sePedirForcar: () => {
+          setConfirmouTeste(false);
+          setForcando({ valores, digitado: marcandoEntreNumeros.digitado });
+        },
+      },
     );
   };
 

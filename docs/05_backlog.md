@@ -1832,6 +1832,18 @@ Troca o "Ainda não medido" do desempenho da recepcionista de IA, em Resultados,
 
 **A aplicar, com o ok do dono de 05/11/2026 e depois da AG5 no ar:** o ensaio na produção, a migration, `npm run test:rls -- relatorios`, `npm run test:integration -- relatorios` e a publicação do código, em qualquer ordem entre o código e a migration.
 
+### [ ] Teste do agente de IA entre números conectados `M` (pedido do dono em 06/11/2026; construído na branch `teste-entre-numeros`; **migration `20261106100000` não aplicada, código não publicado**)
+
+Um número conectado conversa com outro, em especial dois da mesma clínica, e o agente responde. Banco no `docs/04`, seção 41; arquitetura no `docs/03`, seção 25; tela no brief, Tela 6.
+
+**O que foi feito:** a marca por telefone em `ia_contato_liberado`, gravada só pela função, com trilha; a trava contra o laço em três camadas; a conversa e os ids em quem atende (nada se perde nem repete); a opção na aba WhatsApp; o passo a passo do que precisa existir (`docs/04`, 41.2).
+
+**Regra da seção 3.3 do `CLAUDE.md`:** risco de banimento no canal não oficial, agravado por automação. Teste curto, com a marca desligada no fim; o agente não responde na dúvida.
+
+**Não rodou:** nada na produção; `npm run test:rls -- entre-numeros` e `npm run test:integration -- entre-numeros` (escritos, para depois de aplicar); teste com dois números reais, OpenAI e uazapi; `npm run build`.
+
+**Falta do dono:** o ok para ensaiar e aplicar a migration e publicar a branch.
+
 ### [ ] Sincronização de gasto da Meta parada desde 23/10/2026
 Achado em 05/11/2026: 6 jobs `sincronizar_gasto_meta`, criados em 22/10/2026 e com `run_at` em 23/10/2026, seguem `pendente` em `job_queue`, sem tentativa, de clínicas diferentes, e o motor não os reivindica (`reivindicados: 0` a cada ciclo). Não é da AG5: é de antes dela. Falta investigar por que não são reivindicados e se o gasto da Meta está desatualizado.
 
@@ -2373,3 +2385,4 @@ Conferir as metas da seção 11 da spec funcional.
 | Volume de conversas das 15 clínicas | `[PENDENTE]` P3. Afeta dimensionamento de infraestrutura |
 | Propriedade do produto | `[PENDENTE]` P4. Afeta titularidade de domínio e do projeto Supabase |
 | Integração com PMS | Fora do V1. Só manter `appointment.source` e `external_id` preparados |
+| Teste do agente entre números conectados | Risco de banimento (`CLAUDE.md`, 3.3): só com a marca de teste, por pouco tempo, e com o ok do dono para a migration `20261106100000` (`docs/04`, seção 41) |
