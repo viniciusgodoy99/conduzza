@@ -75,10 +75,10 @@ describe("estimativas (só erram para cima)", () => {
     );
     // [AG7 preparo] início
     // AG7: a estimativa conta a maior variante da politica (a com a
-    // habilidade do preparo e 332 bytes maior), e a folga continua inteira
+    // habilidade do preparo e 617 bytes maior), e a folga continua inteira
     // para o que nao esta no texto.
     expect(tokensNoMaximo(POLITICA_DO_CLASSIFICADOR_COM_PREPARO)).toBe(
-      tokensNoMaximo(POLITICA_DO_CLASSIFICADOR) + 332,
+      tokensNoMaximo(POLITICA_DO_CLASSIFICADOR) + 617,
     );
     expect(classificador.tokensEntrada).toBeGreaterThan(
       tokensNoMaximo(POLITICA_DO_CLASSIFICADOR_COM_PREPARO) + FOLGA_DA_CHAMADA,

@@ -2,7 +2,11 @@ import { readFileSync } from "node:fs";
 
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
-import { citacaoDoProcedimento } from "@/lib/agente/ferramentas/enviar-preparo";
+import {
+  citacaoDoProcedimento,
+  FERRAMENTA_ENVIAR_PREPARO,
+} from "@/lib/agente/ferramentas/enviar-preparo";
+import { SECAO_DA_ORIENTACAO_DE_PREPARO } from "@/lib/agente/prompt";
 import { filtrarSaida, versaoDoPortao } from "@/lib/domain/conformidade/filtro";
 import {
   avaliarRegras,
@@ -10,6 +14,11 @@ import {
 } from "@/lib/domain/conformidade/filtro-deterministico";
 import { detectarGatilhosDeEntrada } from "@/lib/domain/conformidade/gatilhos-de-entrada";
 import type { Verificador } from "@/lib/domain/conformidade/veredicto";
+import {
+  FRASE_DO_PREPARO_COM_A_HABILIDADE,
+  POLITICA_DO_CLASSIFICADOR,
+  POLITICA_DO_CLASSIFICADOR_COM_PREPARO,
+} from "@/lib/integrations/llm/classificador-de-entrada";
 import {
   CASOS_DE_URGENCIA,
   RAJADAS_DE_URGENCIA,
@@ -239,6 +248,42 @@ describe("a CFM-7: o exame sem nome nao confirma procedimento nenhum", () => {
     expect(
       citacaoDoProcedimento(catalogo, "a2", ["qual o preparo do exame de sangue?"]),
     ).toBe("outro");
+  });
+});
+
+describe("o classificador: a politica trata o pedido como nenhum, sem medicao paga", () => {
+  it("so a variante com a habilidade diz isso", () => {
+    const trecho =
+      "Perguntar como tomar o remédio do exame ou do preparo, ou que remédio ele pede, sem dizer um remédio pelo nome e sem contar uma situação da própria pessoa, também é nenhum.";
+    expect(FRASE_DO_PREPARO_COM_A_HABILIDADE).toContain(trecho);
+    expect(POLITICA_DO_CLASSIFICADOR_COM_PREPARO).toContain(trecho);
+    expect(POLITICA_DO_CLASSIFICADOR).not.toContain(trecho);
+  });
+
+  it("o que continua assunto_clinico esta escrito, e o de sempre nao saiu", () => {
+    for (const trecho of [
+      "Também continua assunto_clinico: um remédio dito pelo nome, quanto tomar e se pode parar um remédio.",
+      "a dúvida sobre o preparo aplicada à pessoa (um remédio que toma, uma doença, gravidez, se pode comer ou beber algo, o que fazer se esqueceu ou não conseguiu seguir)",
+      "a dúvida sobre o texto recebido e os cuidados depois do procedimento",
+    ]) {
+      expect(FRASE_DO_PREPARO_COM_A_HABILIDADE).toContain(trecho);
+    }
+    expect(FRASE_DO_PREPARO_COM_A_HABILIDADE).not.toMatch(/[–—]/);
+  });
+});
+
+describe("as instrucoes do agente: a saida e so o enviar_preparo", () => {
+  it("o pedido e a ferramenta; o modelo nao responde com as palavras dele", () => {
+    expect(SECAO_DA_ORIENTACAO_DE_PREPARO).toContain(
+      "Perguntar como tomar o remédio do exame ou do preparo, ou que remédio ele pede, sem dizer um remédio pelo nome e sem contar uma situação dela, também é pedir a orientação de preparo: chame enviar_preparo, nunca responda com suas palavras.",
+    );
+    expect(SECAO_DA_ORIENTACAO_DE_PREPARO).toContain(
+      'Um remédio dito pelo nome, quanto tomar e se pode parar um remédio vão para a equipe com o motivo "assunto_clinico".',
+    );
+    expect(SECAO_DA_ORIENTACAO_DE_PREPARO).toContain(
+      "Você nunca escreve orientação de preparo",
+    );
+    expect(FERRAMENTA_ENVIAR_PREPARO.name).toBe("enviar_preparo");
   });
 });
 
