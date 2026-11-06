@@ -461,8 +461,23 @@ export type FatosDoTurno = {
    * regra deterministica nova. Ausente: nenhum.
    */
   pedidos?: readonly (readonly string[])[];
+  /**
+   * Matriz do dono de 06/11/2026: os outros arquivos da conversa que seguiram
+   * com a IA, cada um numa linha do resumo dos fatos do verificador. Sem texto
+   * do arquivo: so o tipo e, na carteirinha, o nome do convenio no Cadastro.
+   * Nenhuma regra deterministica nova. Ausente: nenhum.
+   */
+  arquivos?: readonly FatoDoArquivo[];
   // [AG6b mídia] fim
 };
+
+/** O que o verificador fica sabendo de um arquivo que seguiu com a IA. */
+export type FatoDoArquivo =
+  | { tipo: "resto_do_pedido" }
+  | { tipo: "carteirinha"; convenio: string | null }
+  | { tipo: "documento" }
+  | { tipo: "ilegivel" }
+  | { tipo: "outro" };
 
 export type AchadoDosFatos = { categoria: CategoriaDosFatos; regra: string };
 
@@ -655,6 +670,19 @@ function diaDaClinicaValido(valor: unknown): boolean {
 }
 
 /** Os fatos tem exatamente o formato esperado? Qualquer desvio bloqueia. */
+function arquivoValido(valor: unknown): boolean {
+  if (typeof valor !== "object" || valor === null) {
+    return false;
+  }
+  const a = valor as Record<string, unknown>;
+  return a.tipo === "carteirinha"
+    ? a.convenio === null || typeof a.convenio === "string"
+    : a.tipo === "resto_do_pedido" ||
+        a.tipo === "documento" ||
+        a.tipo === "ilegivel" ||
+        a.tipo === "outro";
+}
+
 export function fatosValidos(valor: unknown): valor is FatosDoTurno {
   if (typeof valor !== "object" || valor === null) {
     return false;
@@ -701,7 +729,10 @@ export function fatosValidos(valor: unknown): valor is FatosDoTurno {
     // AG5: as entradas da lista de espera e a habilidade, opcionais.
     entradasDaEsperaValidas(f.entradasDaEspera) &&
     (f.listaDeEsperaLigada === undefined ||
-      typeof f.listaDeEsperaLigada === "boolean")
+      typeof f.listaDeEsperaLigada === "boolean") &&
+    // Matriz de 06/11/2026: a regra da cobertura le este fato.
+    (f.arquivos === undefined ||
+      (Array.isArray(f.arquivos) && f.arquivos.every(arquivoValido)))
   );
 }
 
@@ -5128,6 +5159,11 @@ function regraDaCobertura(
         sustentadaPorGrupos,
         nomesDeConvenio,
         semConvenioAtivo: fatos.semConvenioAtivo,
+        conveniosDasCarteirinhas: (fatos.arquivos ?? []).flatMap((arquivo) =>
+          arquivo.tipo === "carteirinha" && arquivo.convenio !== null
+            ? [normalizarBase(arquivo.convenio)]
+            : [],
+        ),
       });
       if (regra !== null) {
         anotar(regra);
@@ -5153,6 +5189,8 @@ type LeituraDaCobertura = {
   ) => boolean;
   nomesDeConvenio: readonly string[];
   semConvenioAtivo: boolean;
+  /** Os convenios das carteirinhas lidas na conversa (FatosDoTurno.arquivos). */
+  conveniosDasCarteirinhas: readonly string[];
 };
 
 /**
@@ -5189,7 +5227,11 @@ function convenioCitadoSemFato(
       CONDICAO_ANTES.test(antes) ||
       SABER_ANTES.test(antes) ||
       PEDIDO_ANTES.test(antes) ||
-      COMPLEMENTO_ANTES.test(antes)
+      COMPLEMENTO_ANTES.test(antes) ||
+      (CARTEIRINHA_DO_CONVENIO_ANTES.test(antes) &&
+        leitura.conveniosDasCarteirinhas.some((nome) =>
+          contem(nome, frase.slice(mencao.inicio, mencao.fim)),
+        ))
     ) {
       return false;
     }
@@ -5265,6 +5307,14 @@ const PEDIDO_NA_FRASE =
  */
 const COMPLEMENTO_ANTES =
   /\b(?:carteirinha|carteirinhas|carteira|carteiras|cartao|cartoes|autorizacao|autorizacoes|guia|guias|senha|senhas|pedido|pedidos|numero|token|codigo|bandeira|bandeiras|maquininha)(?:\s+[^\s,;:.!?]+){0,2}?\s+(?:de|do|da|dos|das)\s+(?:(?:seu|sua|seus|suas|o|a|os|as|qualquer|cada|esse|essa|este|esta)\s+){0,2}$/;
+/**
+ * Matriz do dono de 06/11/2026: "a carteirinha do convenio Unimed". Citar a
+ * carteirinha que a pessoa mandou, pelo nome que o Cadastro deu a ela, nao afirma
+ * cobertura. So com o convenio do fato do turno (FatosDoTurno.arquivos); outro
+ * nome, ou o mesmo nome em outra frase, continua precisando do fato.
+ */
+const CARTEIRINHA_DO_CONVENIO_ANTES =
+  /\b(?:carteirinha|carteira|cartao)\s+(?:de|do|da)\s+(?:(?:seu|sua|o|a)\s+)?(?:convenio|plano)\s+$/;
 /** O lugar conveniado: "estacionamento conveniado", "farmacia parceira". */
 const LUGAR_ANTES_DO_CONVENIADO =
   /\b(?:estacionamento|estacionamentos|garagem|garagens|vaga|vagas|local|area|espaco|lugar|patio|farmacia|farmacias|laboratorio|laboratorios|hotel|hoteis|restaurante|restaurantes|loja|lojas|academia|academias)\s+$/;
@@ -7204,6 +7254,7 @@ export const FONTES_DOS_FATOS: readonly string[] = [
   PEDIDO_ANTES.source,
   PEDIDO_NA_FRASE.source,
   COMPLEMENTO_ANTES.source,
+  CARTEIRINHA_DO_CONVENIO_ANTES.source,
   LUGAR_ANTES_DO_CONVENIADO.source,
   VERBO_DE_LIGACAO_NO_FIM.source,
   VERBO_DE_CONVENIO.source,

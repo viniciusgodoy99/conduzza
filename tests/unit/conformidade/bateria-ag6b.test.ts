@@ -324,9 +324,11 @@ describe("bateria AG6b: a IA nunca interpreta o arquivo nem o audio", () => {
     },
   );
 
-  it("a IA nunca pede foto, audio, documento ou arquivo (o 'Nunca' do texto fixo)", () => {
+  it("a IA nunca pede foto, audio, documento ou arquivo (o 'Nunca' do texto fixo), a nao ser a foto mais nitida que o sistema manda pedir", () => {
     expect(TEXTO_FIXO_DO_AGENTE).toContain(NUNCA_DA_MIDIA);
-    expect(NUNCA_DA_MIDIA).toBe("- peça foto, áudio, documento ou arquivo;");
+    expect(NUNCA_DA_MIDIA).toBe(
+      "- peça foto, áudio, documento ou arquivo, a não ser uma foto mais nítida quando a mensagem disser para pedir;",
+    );
   });
 });
 

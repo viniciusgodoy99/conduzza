@@ -65,6 +65,7 @@ import type {
   ConsultaDoFato,
   DiaDaClinica,
   EntradaDaEsperaDoFato,
+  FatoDoArquivo,
   FatosDaFerramenta,
   FatosDoTurno,
   HorarioDoFato,
@@ -244,6 +245,16 @@ export function montarFatosDoTurno(entrada: {
    * procedimento lido na conversa que seguiu com a IA. Ausente: nenhum.
    */
   pedidos?: readonly (readonly string[])[];
+  /**
+   * Matriz do dono de 06/11/2026: os outros arquivos da conversa que seguiram
+   * com a IA, para o resumo dos fatos. Ausente: nenhum.
+   */
+  arquivos?: readonly FatoDoArquivo[];
+  /**
+   * O aviso do resto do pedido que o sistema colou na resposta deste turno.
+   * Entra nos textos colados, como a F2. Ausente ou nulo: nao foi colado.
+   */
+  avisoDoResto?: string | null;
   // [AG6b mídia] fim
   // [AG7 preparo] início
   /**
@@ -332,6 +343,8 @@ export function montarFatosDoTurno(entrada: {
     FRASE_FORA_DO_ASSUNTO,
     // [AG7 preparo] A F2, quando o turno a colou.
     entrada.fraseDoPreparo,
+    // O aviso do resto do pedido, quando o turno o colou.
+    entrada.avisoDoResto,
   ].filter((texto): texto is string => (texto?.trim() ?? "") !== "");
   return {
     // Revisao final da AG3: sem o eco do pedido (que so vale na frase que
@@ -373,6 +386,9 @@ export function montarFatosDoTurno(entrada: {
     // [AG6b mídia] AG6b: os pedidos lidos (so os nomes do Cadastro).
     ...((entrada.pedidos ?? []).length > 0
       ? { pedidos: (entrada.pedidos ?? []).map((itens) => [...itens]) }
+      : {}),
+    ...((entrada.arquivos ?? []).length > 0
+      ? { arquivos: (entrada.arquivos ?? []).map((a) => ({ ...a })) }
       : {}),
   };
 }

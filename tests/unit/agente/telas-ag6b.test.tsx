@@ -85,8 +85,8 @@ const DO_DESENHO = {
   ler_imagem_e_documento: {
     titulo: "Ler imagem e documento",
     descricao:
-      "Lê a foto ou o PDF de um pedido de exame ou procedimento e responde sobre os itens que a clínica faz. Resultado, laudo, receita, foto do corpo, carteirinha, guia e documento pessoal passam para a equipe.",
-    nota: "A foto ou o PDF vai uma vez para a OpenAI, nos EUA, sem o nome do arquivo e sem a localização da foto. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
+      "Lê a foto ou o PDF de um pedido de exame ou procedimento e responde sobre os itens que a clínica faz. Guarda no cadastro o número e o convênio da carteirinha, se estiverem vazios. Pede uma foto mais nítida do arquivo que não deu para ler. Resultado, laudo, receita, foto do corpo, guia e o que ficar em dúvida passam para a equipe.",
+    nota: "A foto ou o PDF vai uma vez para a OpenAI, nos EUA, sem o nome do arquivo e sem a localização da foto. O número da carteirinha também passa por lá. Por enquanto, só com os telefones cadastrados na aba WhatsApp que confirmaram o aviso de áudio, foto e documento.",
   },
 } as const;
 

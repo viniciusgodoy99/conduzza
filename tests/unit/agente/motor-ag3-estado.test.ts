@@ -279,6 +279,59 @@ describe("os dados que faltam (o espelho de dados_que_faltam_para_marcar)", () =
   });
 });
 
+describe("a carteirinha que ja esta no cadastro (matriz do dono de 06/11/2026)", () => {
+  const catalogo = catalogoDoCadastro();
+  const nenhum = { nomeCompleto: false, nascimento: false, cpf: false };
+  const pelaUnimed = { procedimentoId: PROC.consulta, convenioId: CONV.unimed };
+  const faltam = (noCadastro: { convenioId: string | null } | undefined) =>
+    dadosQueFaltam({
+      exigidos: nenhum,
+      informados: {
+        ...dadosVazios(),
+        ...(noCadastro === undefined ? {} : { carteirinhaNoCadastro: noCadastro }),
+      },
+      vinculo: pelaUnimed,
+      catalogo,
+    });
+
+  it("nao falta com o mesmo convenio, nem com o convenio do cadastro vazio; com outro, falta", () => {
+    expect(faltam(undefined)).toEqual(["carteirinha"]);
+    expect(faltam({ convenioId: CONV.unimed })).toEqual([]);
+    expect(faltam({ convenioId: null })).toEqual([]);
+    expect(faltam({ convenioId: CONV.amil })).toEqual(["carteirinha"]);
+  });
+
+  it("a resposta do banco diz SE tem, nunca o valor; sem a marca, nada", () => {
+    const resposta = (dados: Record<string, unknown>) =>
+      lerRespostaDoAtendimento({
+        ok: true,
+        versao: 0,
+        janela_desde: "2026-10-20T11:00:00.000Z",
+        estado: estadoVazio(),
+        dados: {
+          nome_completo: false,
+          data_nascimento: false,
+          cpf: false,
+          carteirinha: false,
+          para_o_titular: null,
+          faltam: [],
+          ...dados,
+        },
+      });
+    expect(
+      resposta({ carteirinha_no_cadastro: true, convenio_do_cadastro: CONV.unimed }),
+    ).toMatchObject({ dados: { carteirinhaNoCadastro: { convenioId: CONV.unimed } } });
+    expect(resposta({ carteirinha_no_cadastro: true, convenio_do_cadastro: null })).toMatchObject({
+      dados: { carteirinhaNoCadastro: { convenioId: null } },
+    });
+    const sem = resposta({});
+    expect(JSON.stringify(sem)).not.toContain("carteirinhaNoCadastro");
+    expect(JSON.stringify(resposta({ carteirinha_no_cadastro: false }))).not.toContain(
+      "carteirinhaNoCadastro",
+    );
+  });
+});
+
 describe("a pergunta Confirma", () => {
   it("uma frase que começa com Confirma e termina em interrogação", () => {
     for (const sim of [

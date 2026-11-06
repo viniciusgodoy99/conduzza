@@ -464,7 +464,9 @@ describe("o prompt com o audio (desenho 5.4)", () => {
     });
     expect(semAudio).not.toContain(FRASES_DO_ATENDIMENTO.audioLigado);
     // O "Nunca" vale sempre.
-    expect(semAudio).toContain("- peça foto, áudio, documento ou arquivo;");
+    expect(semAudio).toContain(
+      "- peça foto, áudio, documento ou arquivo, a não ser uma foto mais nítida quando a mensagem disser para pedir;",
+    );
   });
 });
 

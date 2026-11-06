@@ -167,6 +167,10 @@ import type {
   HorarioLivreDoTurno,
 } from "@/lib/domain/conformidade/fatos-do-turno";
 import { pedeOutraMarcacao } from "@/lib/domain/conformidade/fatos-do-turno";
+import {
+  carteirinhaDoCadastroVale,
+  type CarteirinhaNoCadastro,
+} from "@/lib/domain/carteirinha-lida";
 import { pareceNomeDePessoa } from "@/lib/domain/conformidade/minimizar";
 import {
   confirmouAMarcacao,
@@ -782,6 +786,12 @@ export type AgendaDoTurno = {
    */
   procedimentoMarcadoNoTurno: () => string | null;
   // [AG7 preparo] fim
+  /**
+   * A carteirinha lida neste turno ja esta no cadastro (matriz do dono de
+   * 06/11/2026): o agente nao pede o numero de novo na marcacao. So o sinal e
+   * o convenio, nunca o valor. Antes de preparar() e do agente.
+   */
+  carteirinhaNoCadastro: (noCadastro: CarteirinhaNoCadastro) => void;
   /** AG3: as falhas seguidas depois deste turno (item 9). */
   falhasDepois: () => number;
   /** AG3: o estado e os dados depois do turno. */
@@ -4985,6 +4995,13 @@ export function criarAgendaDoTurno(entrada: {
     resultados: () => [...resultados],
     // [AG7 preparo]
     procedimentoMarcadoNoTurno: () => procedimentoMarcado,
+    carteirinhaNoCadastro: (noCadastro) => {
+      dados.carteirinhaNoCadastro = noCadastro;
+      // O que veio do banco foi calculado antes da foto.
+      if (carteirinhaDoCadastroVale(noCadastro, estado.insurance_id)) {
+        dados.faltam = dados.faltam.filter((d) => d !== "carteirinha");
+      }
+    },
     falhasDepois,
     fechar,
     nota,
