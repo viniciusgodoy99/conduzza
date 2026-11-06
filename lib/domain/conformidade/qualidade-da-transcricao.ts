@@ -28,13 +28,17 @@
 // ouve o audio. Sem os segmentos (a resposta nao trouxe), nao da para
 // conferir: "sem fala" (falha fechada).
 //
-// Os limites e a lista sao PROPOSTA (desenho 4.1), a calibrar na prova paga
-// (D-100, scripts/ia/prova-da-midia.ts). Mudar um deles muda a versao da
-// transcricao (lib/integrations/llm/transcricao.ts).
+// Os limites e a lista sao PROPOSTA (desenho 4.1), sem medir (a prova paga,
+// D-100, foi dispensada pelo dono em 06/11/2026; o script fica em
+// scripts/ia/prova-da-midia.ts). Mudar um deles muda a versao da transcricao
+// (lib/integrations/llm/transcricao.ts).
 
 import { createHash } from "node:crypto";
 
-/** Os limites das travas (PROPOSTA, a calibrar na prova paga). */
+/**
+ * Os limites das travas.
+ * shortcut: valor sem medir (prova paga dispensada pelo dono em 06/11/2026), trocar quando houver medida.
+ */
 export const LIMITES_DA_QUALIDADE = {
   /**
    * Acima disso o segmento nao conta como fala, qualquer que seja o
@@ -46,7 +50,7 @@ export const LIMITES_DA_QUALIDADE = {
   /**
    * A transcricao curta (revisao de 30/10/2026, M3): com ate `palavrasAte`
    * palavras, TODOS os segmentos precisam de no_speech_prob ate
-   * `noSpeechProbAcimaDe` (o "baixo"). PROPOSTA: a prova paga mede o "sim"
+   * `noSpeechProbAcimaDe` (o "baixo"). PROPOSTA: falta medir o "sim"
    * falado de verdade (o roteiro tem um) contra o silencio e o ruido.
    */
   curta: { palavrasAte: 3, noSpeechProbAcimaDe: 0.2 },

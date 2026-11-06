@@ -254,8 +254,12 @@ function contextoValido(contexto: unknown): contexto is ContextoDoFiltro {
     // so verdadeiro ou falso quando vem.
     (!("comPreparo" in c) ||
       c.comPreparo === undefined ||
-      typeof c.comPreparo === "boolean")
+      typeof c.comPreparo === "boolean") &&
     // [AG7 preparo] fim
+    // A introducao do preparo: so verdadeiro ou falso quando vem.
+    (!("introducaoDoPreparo" in c) ||
+      c.introducaoDoPreparo === undefined ||
+      typeof c.introducaoDoPreparo === "boolean")
   );
 }
 

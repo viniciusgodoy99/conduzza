@@ -77,8 +77,8 @@ export type DadosDoPainel = {
   emUsoNoWhatsapp: boolean;
   // [AG6b mídia] início
   /**
-   * O audio, e a foto e o documento, ja valem no servidor (a prova paga,
-   * D-100)? Calculado na pagina (lib/agente/midia-no-servidor.ts, so as
+   * O audio, e a foto e o documento, ja valem no servidor? Calculado na
+   * pagina (lib/agente/midia-no-servidor.ts, so as
    * constantes, sem o SDK no navegador). Com o falso, a aba Habilidades diz
    * na habilidade que ela ainda nao vale (revisao das telas da AG6b, item
    * 3). Ausente: a tela nao inventa a dica.

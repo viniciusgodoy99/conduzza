@@ -4701,6 +4701,8 @@ CREATE OR REPLACE do corpo de produção (md5 `9a949b8a...`), com a mesma assina
 
 ## 38. O preparo do procedimento aprovado pelo responsável técnico (AG7, 03/11/2026, migration `20261103100000_preparo_aprovado_pelo_rt.sql`; ensaiada só num Postgres local; **aplicada na produção em 05/11/2026, às 22:31 (1,2 s), com o ok do dono e o ensaio completo; publicada no merge `a4bd8f9`**; vai depois da `20261029100000` da AG5, da `20261029120000` da AG6a e da `20261030100000` da AG6b (seções 35 a 37), as três também não aplicadas; construída na branch local `agente-ag7`, a partir da `agente-ag6b` (`592c121`), commit `0a55e77`; mudada na revisão em `b960b59`, `f78cca7`, `8729d40`, `1823f1e`, `1678b96`, `48246d5` (só o cabeçalho) e `5a4aadf`, no fechamento em `0641ad9` e `7973b44` e na documentação final em `7407a3f` (só o comentário do cabeçalho); a correção da revisão curta não mexeu nela)
 
+> **Desfeito em 06/11/2026 (seção 42):** `preparo_em_vigor` não exige mais a conferência do registro do RT, que esta seção descreve; as colunas e a RPC ficam, sem uso.
+
 Decisões do dono: **D-80**, autorizada em 03/11/2026 ("Preciso que nesses casos, ele deixe ela recomendar": remédio, dose e jejum são aceitos dentro do texto aprovado pelo responsável técnico, que o sistema envia palavra por palavra; a IA nunca escreve, lê nem resume o preparo; a exceção está no CLAUDE.md, seção 3.2, e na regra do Módulo 1 do `docs/01`), e **D-4** (a opção B na AG7: o texto aprovado, conferido por hash). As outras (D-70 a D-79 e D-81 a D-86) seguem a recomendação do desenho e estão **pendentes do dono** (38.1). Esta migration é o **banco** da AG7: o responsável técnico (RT) de cada clínica, com o histórico; as versões imutáveis do texto do preparo, com o hash, a situação e a aprovação só pelo RT vigente; as regras do texto e do nome; as leituras do servidor; as RPCs das telas; o desfecho `enviou_preparo` e a saída `preparo`; o ramo do preparo no gatilho de `message`; e a cópia do texto antigo. O código que usa este contrato está na mesma branch (`docs/03`, seção 24). Estado, decisões e pendências no `docs/05`, entrada "AG7 do agente de IA". O desenho e o contrato da construção, com as divergências de cada frente e do fechamento: `~/.claude/plans/agente-completo/ag7/desenho.md` e `contrato.md`.
 
 **Vai depois da AG5, da AG6a e da AG6b, mas não troca nenhum corpo delas:** o único corpo trocado é o de `mensagem_ia_exige_aprovacao`, o do M1 (`20261013100000`), que nenhuma das três mexeu e que é o mesmo na produção (md5 de `prosrc` `1129cfc16036215e538422fba7371a1c`, sem comentário, grants só do dono); os dois CHECKs reescritos são os do M1, iguais na produção (`ai_decision_log_desfecho_valido`, md5 de `pg_get_constraintdef` `c0d83395337e74d559861d5b8fa58801`, e `ai_turno_saida_valida`, `36975878604a6c0dabc28538f3cdf1f8`). O pré-requisito do ensaio confere esses md5, que a AG6b está aplicada, que nenhum objeto novo existe e que nenhuma linha tem os valores novos. A migration não recria nem cita os CHECKs e as funções que os espelhos dos testes leem da migration mais nova (o motivo de passagem, o gatilho de entrada, o rótulo, a passagem, a atribuição, a frase e o `kind` da fila).
@@ -5053,3 +5055,75 @@ O id é o mesmo para quem envia e para quem recebe, e o unique é global. O que 
 - **Postgres local** (`entre-numeros/banco/`, 127.0.0.1:55624, todas as migrations até a `20261104120000`, sem ler a produção); resultado em `final.txt`.
 - **md5:** migration `33ed19be10701ec74e54b2d2c17ef356`, rollback `bfe2fa707792fedf3b5e70941a0591bf`, ensaio `b470436ecf1697f6a27f84e7e5dfed75`. Os corpos de antes vêm do modelo local; o ensaio para se a produção tiver outro (`ingest_inbound_message` `bd0917a98ef754027513809cba5bee43`).
 - **Na produção (06/11/2026):** ensaio `ENSAIO OK` em 7 s, sem nenhuma sessão esperando trava; aplicada em 686 ms, md5 conferido; `tests/rls/entre-numeros.test.ts` 11 de 11 e `tests/integration/entre-numeros.test.ts` 5 de 5, sem sobra de clínica de prova. O teste com dois números reais, a OpenAI e a uazapi é o que o dono faz agora.
+
+## 42. O preparo sem a conferência do registro do RT e "Agendar consulta" ligada por padrão (decisões do dono de 06/11/2026, migration `20261106110000_preparo_sem_conferencia_e_agendar.sql`; **aplicada na produção em 06/11/2026**)
+
+Decisões do dono de 06/11/2026 (o `docs/05`, entrada "Ligar o agente no teste", tem as palavras dele). Só três funções mudam, e nada de tabela, coluna, índice ou linha: o mesmo `create or replace`, com o dono, os grants, o `search_path`, a volatilidade e a assinatura de antes.
+
+| Função | Antes | Agora |
+|---|---|---|
+| `preparo_em_vigor` (interna, `SECURITY DEFINER`) | exigia `responsavel_tecnico.registro_conferido_em` | o resto da regra da seção 38: a versão da clínica, aprovada, o hash recalculado batendo, o RT que aprovou sendo o vigente de agora, o conselho dele aceitando o texto (`preparo_conselho_recusa_texto`: remédio ou dose só de RT de CRM ou CRO), o procedimento da mesma clínica e com o nome da aprovação |
+| `conferir_horario_da_ia` (interna; `reservar_horario_da_ia` e `agendar_pela_ia` passam por ela) | `(skills ->> 'agendar') is distinct from 'true'` dava `agenda_nao_configurada` | `(skills -> 'agendar') is not distinct from 'false'::jsonb`: a chave ausente vale ligada, e só o booleano `false` desliga. **Só o booleano:** o texto `"false"`, o nulo e o número valem o padrão, como `habilidadesEfetivas`, para o motor e o banco nunca discordarem. A D13 continua: sem `agenda_antecedencia_horas` ou `agenda_horizonte_dias`, `agenda_nao_configurada` |
+| `lista_de_espera_da_ia_ligada` (interna) | a chave `agendar` tinha de ser `true` | a mesma leitura da chave `agendar`; a chave `lista_de_espera` continua exigindo `true` (desligada por padrão) |
+
+**As duas últimas são as únicas funções que leem a chave `agendar`** (conferido em `pg_proc`, no modelo local com as 129 migrations: `prosrc ~ 'skills'` dá nove funções; as outras leem `remarcar`, `cancelar`, `enviar_preparo` e as duas de mídia, ou só copiam o jsonb). Vale a última versão publicada, nunca o rascunho. A porta vem antes: `ia_pode_atender` responde `ia_desligada` para clínica fora de teste e de produção, conversa fora da IA, número desligado e telefone fora da lista.
+
+**O que fica sem uso, de propósito, para não mexer em tabela:** as colunas `responsavel_tecnico.registro_conferido_em` e `registro_conferido_por`, o gatilho `responsavel_tecnico_nao_muda` (que continua cuidando delas) e a RPC `conferir_registro_do_responsavel_tecnico`, que continua só do super admin e não muda mais nada. Os comentários delas ficam como estavam. Nada no código as chama.
+
+**Nada no banco para a mídia (a decisão 3):** a tabela, as RPCs, o preço do `whisper-1` e a trava por telefone são os da seção 37, já na produção. A D-95 fica: `midia_da_ia_liberada` e `gravar_leitura_da_midia` continuam exigindo a habilidade na versão publicada e `aviso_da_openai_versao = 2`.
+
+**Travas (medidas no Postgres local):** só catálogo: `AccessShare` em `pg_namespace` e `pg_language`, `ShareUpdateExclusive` no objeto de cada função (o comentário) e `RowExclusive` no TOAST de `pg_proc`. **Nenhuma tabela é travada**, e nada segura leitura nem escrita de ninguém. `lock_timeout` de 3 s. O ensaio, na produção, soma `ROW EXCLUSIVE` dos INSERTs sintéticos e `SHARE ROW EXCLUSIVE` em `responsavel_tecnico` e `preparo_do_procedimento` (os `DISABLE TRIGGER`, tabelas frias, até o ROLLBACK).
+
+**Ordem:** a migration antes do código. Com o código novo e o banco antigo, o motor oferece a marcação que o banco recusa, e a tela mostra em vigor um preparo que não sai. Com a migration e o código antigo, nada quebra.
+
+**O efeito na hora de aplicar:** a clínica em teste com a versão publicada sem a chave e com a agenda preenchida passa a poder reservar e marcar pelo banco; o preparo aprovado com RT não conferido passa a estar em vigor. Nenhuma das duas sai sozinha sem a habilidade e o telefone liberados.
+
+**Provas no Postgres local** (`~/.claude/plans/agente-completo/ligar/banco`, 127.0.0.1:55625, sem ler a produção): o ensaio `~/.claude/plans/agente-completo/ligar/ensaio-20261106110000.sql` (termina em ROLLBACK e só escreve em clínicas sintéticas `e_de_teste`, e na N, sem o agente): as regras de antes com os mesmos dados; a matriz de `skills` e da agenda; a reserva de verdade com o `skills` vazio; remarcar e cancelar desligadas; a lista de espera; cada regra de `preparo_em_vigor`; o gatilho da mensagem deixando sair o preparo sem a conferência, e recusando o corpo mudado; os grants e os atributos; só as três funções mudando; e o rollback devolvendo os corpos e os comentários. `ENSAIO OK`, **31 de 31 sabotagens** pegas e a volta do rollback com os md5 de antes. md5 da migration `c16e6268b5469a13eccd01309ed7e574`, do rollback (`supabase/operacao/rollback/20261106110000-corpos-anteriores.sql`) `757bfcfc36d0bed48b5a11a119a9e03f`, do ensaio `f5dfb801fdbba22f6ce6c211f8614e6e`. md5 de `prosrc`, antes e depois: `preparo_em_vigor` `6d4291763655f97db52034b5e538c9fc` e `c706b9de6948ea43f1eff95bd84a5816`; `conferir_horario_da_ia` `694fdf0601db46be639dd6b4a5d0b649` e `db69feeccc613ea4d5cad877f8bf074d`; `lista_de_espera_da_ia_ligada` `1adee02246428fa9b453567f8cc518e9` e `a53d34a432c293a7413adfdf4e84b2af`.
+
+**Tipos:** sem mudança em `lib/supabase/database.types.ts`: nenhuma coluna, função pública ou assinatura muda, e a RPC e as colunas sem uso continuam lá.
+
+**Na produção (06/11/2026):** ensaio `ENSAIO OK` em 4 s, sem sessão esperando trava; aplicada em 981 ms, md5 conferido; `tests/rls/ia-agenda` e `tests/rls/preparo-aprovado-pelo-rt` 40 passaram e 6 pulados (super admin de prova); `tests/integration/agendamento-completo-da-ia` e `lista-de-espera-pela-ia` verdes depois de corrigir os casos novos, que reaproveitavam horário e pedido. **Como estava antes de aplicar:** os casos novos em `tests/integration/agendamento-completo-da-ia.test.ts` ("Agendar consulta ligada por padrão"), `tests/integration/lista-de-espera-pela-ia.test.ts`, `tests/integration/preparo-aprovado-pelo-rt.test.ts` (o caso das decisões de 05/11 reescrito) e `tests/rls/ia-agenda.test.ts` (as conferências internas continuam fechadas). Os casos antigos que conferem o RT continuam válidos: a RPC fica.
+
+## 43. Os remédios do preparo e a introdução da IA (06/11/2026, migration `20261106120000_remedios_do_preparo.sql`; **aplicada na produção em 06/11/2026**)
+
+Decisão do dono em 06/11/2026, opção A: "a IA escreve a conversa em volta e o sistema envia a orientação exata". O pedido: "Ter um canto para a clínica colocar os remédios que a IA pode citar, até porque tem remédios necessários para fazer exames. Poderia colocar o nome do remédio, como tomar, uma breve descrição." A regra do CLAUDE.md 3.2 não muda: a IA nunca escreve, resume nem parafraseia remédio, dose ou como tomar; só o texto cadastrado e aprovado pelo RT, enviado pelo sistema, palavra por palavra.
+
+### 43.1 Os remédios: sem coluna
+
+Os remédios moram no **texto da versão** (`preparo_do_procedimento.texto`), composto por `comporTextoDoPreparo` (`lib/domain/preparo.ts`), depois da orientação livre:
+
+```
+{orientação livre}
+
+Remédios do preparo:
+
+Bisacodil 5 mg: tomar 2 comprimidos às 20h da véspera do exame.
+Laxante usado para limpar o intestino.
+```
+
+Nenhuma coluna e nenhuma tabela: a mesma aprovação do RT, o mesmo hash, as mesmas recusas (`preparo_texto_recusado`, `problemasDoTextoDoPreparo`) e o mesmo limite de 3.500 caracteres no texto inteiro. Remédio continua só de RT de CRM ou CRO: o cabeçalho "Remédios do preparo:" já cai em `preparo_conselho_recusa_texto`, mesmo com um nome que a lista não conhece. Para editar, `separarRemediosDoTexto` lê os campos do próprio texto e só reconhece o bloco que `comporTextoDoPreparo` escreveria de novo, byte a byte; fora disso (o texto escrito à mão, o texto antigo), o texto inteiro fica como orientação livre e nada se perde.
+
+### 43.2 A introdução: o corpo da mensagem
+
+Com a introdução, o corpo de `message` é `{introdução}\n\n{mensagem_do_preparo}`, autor `sistema`, no mesmo job (`message_job_id_key`). `ler_preparo_para_envio` e `mensagem_do_preparo` não mudam: devolvem só o bloco. A decisão `enviou_preparo` guarda em `texto_sha256` o hash do **corpo inteiro** e continua sem `aprovado` (`ai_decision_log_preparo_coerente` não muda: o texto do preparo não passa pelo filtro); a passagem da introdução pelo filtro aparece na trilha (`context_read`), em `versao_filtro` e em `verificador_modelo`.
+
+### 43.3 O que a migration muda
+
+- **CHECK `ai_turno_texto_coerente`** (drop e add, NOT VALID e VALIDATE): `texto is null or (saida in ('resposta', 'preparo') and texto_sha256 is not null)`. Na saída `preparo`, o texto é **só a introdução**, enquanto o envio está pendente, para a retomada remontar o mesmo corpo; o texto do preparo continua relido do banco. Sai como o de sempre: no envio, em `sem_envio`, na troca para a frase e na varredura de 1 hora.
+- **`preparo_introducao_valida(p_texto text)`** (nova, `sql`, `immutable`, `parallel safe`, `search_path` vazio, nenhum papel da API executa): uma linha de até 160 caracteres, em `preparo_texto_valido`, sem o que `preparo_texto_recusado` recusa e sem o que `FONTE_DO_QUE_A_INTRODUCAO_NAO_DIZ` (`lib/domain/conformidade/filtro-deterministico.ts`, byte a byte; `tests/unit/conformidade/preparo-introducao.test.ts` confere) lista: qualquer dígito, unidade, número por extenso, como tomar, o assunto do remédio, `MEDICAMENTOS_DO_PREPARO` e sintoma. Tudo o que ela recusa, `problemaDaIntroducao` também recusa, e o TS lê ainda os nomes de remédio do texto aprovado (`nomesDeRemedioDoTexto`), o filtro inteiro e o verificador.
+- **`mensagem_ia_exige_aprovacao`**: só o passo 8 do ramo do preparo. O corpo é a mensagem remontada da versão em vigor, sozinha, ou depois de uma introdução válida e de uma linha em branco. O resto do corpo fica igual, byte a byte (blocos `[remedios do preparo]`).
+
+**Não mudam:** `preparo_em_vigor`, `ia_pode_falar_com`, `ler_preparo_para_envio`, `mensagem_do_preparo`, `ai_decision_log` e os CHECKs dela. Nenhuma linha muda de valor.
+
+### 43.4 Travas e ordem
+
+ACCESS EXCLUSIVE em `ai_turno`, até o commit, pelo CHECK trocado (poucas linhas). As funções só mexem no catálogo: `message` não é travada. `lock_timeout` de 3 s. **A migration vai antes do código.** O código de antes funciona com ela. O código novo sem ela falha fechado: o turno com introdução não grava (CHECK), ou o gatilho recusa (CZIA3), e a conversa passa para a equipe.
+
+### 43.5 Rollback e ensaio
+
+- **Rollback:** `supabase/operacao/rollback/20261106120000-corpos-anteriores.sql`, depois de voltar o código. Devolve o corpo, o comentário e o CHECK de antes, tira a função e limpa o texto dos turnos do preparo pendentes. Os remédios ficam: são texto da versão aprovada.
+- **Ensaio:** `~/.claude/plans/agente-completo/remedios/ensaio-20261106120000.sql` (termina em ROLLBACK, com `ENSAIO OK`; só linhas sintéticas de uma clínica `e_de_teste`), montado com a migration e o rollback copiados byte a byte. Postgres local em `~/.claude/plans/agente-completo/remedios/banco` (127.0.0.1:55626, `max_wal_size=64MB`), todas as migrations do repositório sobre os stubs do Supabase, sem ler a produção. `rodar-tudo.sh` refaz tudo e desliga o servidor no fim.
+- **O que o ensaio prova:** o catálogo e os grants; o corpus da regra (o mesmo do TS); a mensagem com o bloco dos remédios; **sabotagens no gatilho**, com a decisão do mesmo hash: o bloco com uma letra trocada, a menos ou a mais, com e sem introdução, é recusado; a introdução com remédio, dose ou sintoma é recusada; sem a linha em branco, duas introduções, a introdução depois do bloco, a decisão de outro corpo, autor `ia`, autor humano, a conversa com a equipe e a versão suspensa; o CHECK do turno; aplicar, voltar e aplicar. `sabotagens/rodar.py`: 21 defeitos, um por vez, todos pegos.
+- **Na produção (06/11/2026):** ensaio `ENSAIO OK` em 3 s, sem sessão esperando trava; aplicada em 409 ms, md5 conferido; `tests/integration/preparo-aprovado-pelo-rt.test.ts` 29 de 29 e a concorrência verde, pela primeira vez na produção, porque sem a conferência do RT não precisam mais do super admin de prova.
+- **Não rodou:** a OpenAI de verdade, inclusive a rodada paga do verificador com a frase nova.
+

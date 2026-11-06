@@ -5,11 +5,15 @@ import { ptBR } from "date-fns/locale";
 import {
   controleNoNome,
   invisivelNoNome,
+  LIMITE_DA_DESCRICAO_DO_REMEDIO,
+  LIMITE_DE_COMO_TOMAR,
+  LIMITE_DO_NOME_DO_REMEDIO,
   LIMITE_DO_TEXTO_DO_PREPARO,
   nomeDoPreparoValido,
   normalizarTextoDoPreparo,
   textoDoPreparoValido,
   type ConteudoRecusadoPeloBanco,
+  type RemedioDoPreparo,
   type SituacaoDoPreparo,
 } from "@/lib/domain/preparo";
 
@@ -69,8 +73,6 @@ export const TEXTOS_DO_PREPARO = {
   semRtLink: "Definir em Configurações, Equipe",
   semRtSemLink:
     "Quem define é o administrador da clínica, em Configurações, Equipe.",
-  registroNaoConferido:
-    "Registro do RT ainda não conferido pela Conduzza. Nenhuma orientação de preparo é enviada até a conferência.",
   semOrientacao:
     "Nenhuma orientação de preparo escrita para este procedimento.",
   emVigor: "Em vigor",
@@ -105,6 +107,17 @@ export const TEXTOS_DO_PREPARO = {
     "Não pode ter link, arroba, valor ou condição de pagamento, promessa de resultado, brinde ou oferta de outro procedimento, frase dizendo que um sintoma é normal ou passa sozinho, nem antes e depois de pacientes.",
   ajudaDoEditorAviso:
     "Pode ter remédio, dose e jejum: antes de aprovar, o responsável técnico vê um aviso para conferir. Nome de remédio e instrução de dose, só com responsável técnico de CRM ou CRO; jejum, água e pedir para informar os medicamentos em uso valem para todos.",
+  // Os remedios do preparo (decisao do dono de 06/11/2026): parte do texto da
+  // versao, com a mesma aprovacao do RT.
+  remedios: "Remédios do preparo",
+  remediosAjuda:
+    "Os remédios que o paciente precisa tomar para o exame. Eles entram no texto da orientação e vão ao paciente exatamente como estão aqui, depois que o responsável técnico aprovar. O assistente nunca escreve nem resume o que está aqui, e a dúvida que o texto não responde vai para a equipe.",
+  semRemedios: "Nenhum remédio neste preparo.",
+  remedioNome: "Nome do remédio",
+  remedioComoTomar: "Como tomar",
+  remedioDescricao: "Breve descrição (opcional)",
+  adicionarRemedio: "Adicionar remédio",
+  tirarRemedio: "Tirar este remédio",
   enviarParaORt: "Enviar para o RT aprovar",
   enviando: "Enviando...",
   cancelar: "Cancelar",
@@ -558,6 +571,40 @@ export function frasesDoConteudoRecusado(
       : base.charAt(0).toLocaleUpperCase("pt-BR") + base.slice(1);
   });
   return [...new Set(frases)].join(" ");
+}
+
+/**
+ * O que impede o texto de ser montado com os remedios (cada linha do editor, em
+ * ordem), ou null. A linha toda em branco nao conta. O conteudo (remedio, dose,
+ * promessa) e o tamanho do texto inteiro passam pelas mesmas regras do texto.
+ */
+export function problemaNosRemedios(
+  remedios: readonly RemedioDoPreparo[],
+): string | null {
+  for (const { nome, comoTomar, descricao } of remedios) {
+    const n = nome.trim();
+    const c = comoTomar.trim();
+    const d = descricao.trim();
+    if (n === "" && c === "" && d === "") {
+      continue;
+    }
+    if (n === "" || c === "") {
+      return "Preencha o nome e como tomar de cada remédio, ou tire o que ficou pela metade.";
+    }
+    if (n.includes(":")) {
+      return `Tire os dois pontos do nome do remédio: ${n}.`;
+    }
+    if (Array.from(n).length > LIMITE_DO_NOME_DO_REMEDIO) {
+      return `O nome do remédio pode ter até ${LIMITE_DO_NOME_DO_REMEDIO} caracteres.`;
+    }
+    if (Array.from(c).length > LIMITE_DE_COMO_TOMAR) {
+      return `Como tomar pode ter até ${LIMITE_DE_COMO_TOMAR} caracteres.`;
+    }
+    if (Array.from(d).length > LIMITE_DA_DESCRICAO_DO_REMEDIO) {
+      return `A descrição do remédio pode ter até ${LIMITE_DA_DESCRICAO_DO_REMEDIO} caracteres.`;
+    }
+  }
+  return null;
 }
 
 /**

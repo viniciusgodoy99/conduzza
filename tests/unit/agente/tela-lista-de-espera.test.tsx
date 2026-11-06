@@ -151,7 +151,7 @@ describe("a habilidade Lista de espera", () => {
     // Sem a agenda, e com a agenda completa mas Agendar desligada.
     for (const props of [
       { agenda: SEM_AGENDA },
-      { agenda: AGENDA },
+      { agenda: AGENDA, habilidades: habilidadesEfetivas({ agendar: false }) },
       {
         agenda: SEM_AGENDA,
         habilidades: habilidadesEfetivas({ agendar: true }),
@@ -200,7 +200,7 @@ describe("a habilidade Lista de espera", () => {
   it("ligada no rascunho, mas sem Agendar valendo: a tela diz Desligada (falha fechada)", () => {
     const html = habilidades({
       agenda: AGENDA,
-      habilidades: { ...habilidadesEfetivas({}), [LISTA]: true },
+      habilidades: { ...habilidadesEfetivas({ agendar: false }), [LISTA]: true },
     });
     expect(chaveDa(html, LISTA)).toContain('aria-checked="false"');
   });

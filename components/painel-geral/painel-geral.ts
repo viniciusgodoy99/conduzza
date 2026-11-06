@@ -607,49 +607,7 @@ export function semUsoDeIa(
 const ULTIMO_ACESSO_E_ATIVIDADE =
   "O último acesso é a última atividade da pessoa no sistema: quem continua conectado e usando aparece em dia, sem precisar entrar de novo.";
 
-/**
- * Onde consultar o registro de cada conselho (AG7, decisao do dono de
- * 05/11/2026): a busca de profissionais no CRM e no CRO; nos outros, o site do
- * conselho federal, de onde sai a consulta do regional. Enderecos abertos em
- * 05/11/2026 (o do CONFEF respondeu 429 ao robo).
- */
-export const PORTAL_DO_CONSELHO: Readonly<Record<string, string>> = {
-  CRM: "https://portal.cfm.org.br/busca-medicos",
-  CRO: "https://website.cfo.org.br/busca-profissionais/",
-  CRBM: "https://cfbm.gov.br/",
-  CRF: "https://site.cff.org.br/",
-  COREN: "https://www.cofen.gov.br/",
-  CREFITO: "https://www.coffito.gov.br/",
-  CRN: "https://cfn.org.br/",
-  CRP: "https://cadastro.cfp.org.br/",
-  CRFa: "https://fonoaudiologia.org.br/",
-  CREF: "https://www.confef.org.br/",
-};
-
 export const TEXTOS_DO_PAINEL = {
-  rtTitulo: "Responsável técnico",
-  rtDescricao:
-    "Consulte o registro no portal do conselho. Sem a conferência, nenhuma orientação de preparo desta clínica é enviada.",
-  rtNome: "Nome",
-  rtConselho: "Conselho",
-  rtNumero: "Número",
-  rtUf: "UF",
-  rtVazio: "A clínica não tem responsável técnico ativo.",
-  rtErroAoCarregar: "Não foi possível carregar o responsável técnico.",
-  rtPortal: (conselho: string) => `Consultar o registro no portal (${conselho})`,
-  rtSemPortal: (conselho: string) =>
-    `Consulte o registro no portal do conselho (${conselho}).`,
-  rtNaoConferido: "Registro ainda não conferido.",
-  rtConferidoEm: (quando: string) => `Registro conferido em ${quando}.`,
-  rtProprioNaoConfere:
-    "O próprio responsável técnico não confere o registro dele. Peça a outra pessoa da equipe Conduzza.",
-  marcarRegistroConferido: "Registro conferido",
-  conferindoRegistro: "Conferindo...",
-  registroConferido: "Registro marcado como conferido.",
-  naoConferiuORegistro: "Não foi possível marcar o registro. Tente de novo.",
-  rtEncerrado:
-    "O responsável técnico mudou enquanto você conferia. Recarregue a página e confira o registro de agora.",
-  registroJaConferido: "Este registro já foi conferido.",
   titulo: "Painel geral",
   eyebrow: "Equipe Conduzza",
   descricao: `Como cada clínica usa o sistema: quem da equipe usou por último, quantas pessoas tem, o WhatsApp e o agente de IA. De paciente, só contagens. ${ULTIMO_ACESSO_E_ATIVIDADE}`,
@@ -1951,10 +1909,6 @@ export const escreverNotaSchema = z
   .strict();
 
 /** Excluir uma nota: a clinica da tela (para revalidar) e a nota. */
-export const conferirRegistroDoRtSchema = z
-  .object({ clinicId: z.uuid(), rtId: z.uuid() })
-  .strict();
-
 export const excluirNotaSchema = z
   .object({ clinicId: z.uuid(), notaId: z.uuid() })
   .strict();

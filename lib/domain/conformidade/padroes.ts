@@ -3147,23 +3147,13 @@ const SEM_DESFECHO_DO_EXAME =
   "(?!.{0,40}\\b(?:alterad|deu\\b|deram\\b|sai(?:u|ram)\\b|mostr|apont|acus|positiv|negativ|normal|resultado|antes\\b|depois\\b|precis))";
 
 // [AG6b mídia] início
-// PROPOSTA PARA O DONO E PARA A D34 (revisao R2 de d1a15f6, M1): a troca do
-// exame NA RECEPCAO, para a legenda do pedido chegar ao leitor ("quanto fica
-// esse exame?", "quero marcar esses exames", "aceita unimed pra esses
-// exames?", "orcamento desses exames", "segue o pedido de exames",
-// "exames"). A 3a rodada da AG6b (item 6) chegou a pôr essas trocas
-// (exame_na_recepcao, pedido_de_exame, exame_sozinho e os demonstrativos na
-// troca de preco), mas elas dependiam do ok do dono, que nao veio, e
-// pioravam contra a producao: das 27 sondas clinicas do revisor que o main
-// escala, 21 passavam ("minha glicose ta alterada, quanto custa esses
-// exames?", "meu hemograma veio com as plaquetas baixas", "vale a pena fazer
-// esses exames?", "pode ser tumor"), e o CONTEXTO_CLINICO do filtro deixava
-// de travar. Desfeitas: o portao volta ao comportamento da 6eae43d (o do
-// main), e a legenda do pedido com o demonstrativo, a marcacao, o convenio,
-// o pedido ou so o exame continua escalando antes do leitor (o lado
-// seguro). Qualquer troca nova aqui espera a decisao do dono e a medida da
-// rodada paga (D34). Fica so a guarda abaixo, que deixa a troca de preco
-// antiga mais estrita.
+// Revisao R2 de d1a15f6 (M1): a troca do exame NA RECEPCAO, feita como troca
+// local (exame_na_recepcao, pedido_de_exame, exame_sozinho), foi desfeita: das
+// 27 sondas clinicas do revisor que o main escala, 21 passavam ("minha glicose
+// ta alterada, quanto custa esses exames?", "vale a pena fazer esses exames?"),
+// porque a palavra "exame" era a unica trava do que vinha em volta. Por isso a
+// decisao do dono de 06/11/2026 entra pelo molde do turno inteiro
+// (RECEPCAO_DO_EXAME, abaixo), nunca como troca local.
 
 /**
  * O que torna o exame clinico em QUALQUER ponto da mensagem: a finalidade
@@ -3261,12 +3251,103 @@ export const NEUTRALIZACOES_DE_ENTRADA: readonly Neutralizacao[] = [
     // guarda da 3a rodada: a finalidade e o preparo em qualquer ponto da
     // mensagem mantem o exame clinico ("pra que serve o exame? quanto
     // custa?", "quanto custa o exame? precisa de jejum?").
+    // Decisao de 06/11/2026: os padroes do portao nao usam mais esta troca
+    // (ela deixava passar "minha glicose ta alterada, quanto custa o exame?");
+    // ficou so para a urgencia e a rede na juncao lerem o que sempre leram.
     nome: "exame_na_pergunta_de_preco",
     fonte: `(?<=\\b${PRECO_OU_SERVICO_DO_EXAME} (?:d[aoe]s? |o |a |os |as |um |uma )?)exames?\\b${SEM_DESFECHO_DO_EXAME}|\\bexames?\\b(?=(?:\\W+[a-z]+){0,4}\\W+${PERGUNTA_DE_PRECO_DO_EXAME}\\b)${SEM_DESFECHO_DO_EXAME}`,
     troca: "procedimento",
     // [AG6b mídia] A guarda da 3a rodada, lida em codigo (acima).
     semPorPerto: SEM_INTENCAO_NA_MENSAGEM,
   },
+];
+
+// ---------------------------------------------------------------------------
+// Entrada: o pedido de recepcao sobre o exame (decisao do dono de 06/11/2026)
+// ---------------------------------------------------------------------------
+
+const QUANTOS_EXAMES = "(?:\\d{1,2}|dois|tres|quatro|cinco|seis)";
+/**
+ * Lista fechada de nomes: com "de " e qualquer palavra, passavam "quero marcar
+ * esse exame de urgencia" e, na rajada, "quero marcar esses exames" e "de
+ * calmante". Nome fora daqui escala, como o resto fora do molde.
+ */
+const NOME_DO_EXAME =
+  "(?:sangue|urina|fezes|vista|rotina|imagem|covid|prostata|mama|tireoide|glicose|glicemia|colesterol|hemograma|ultrassom|ultrassonografia|tomografia|ressonancia|mamografia|eletrocardiograma|ecocardiograma|colonoscopia|endoscopia|preventivo|papanicolau|audiometria|admissao|admissional|demissional|periodico)";
+const MEDICO_DO_PEDIDO = "(?:medico|medica|doutor|doutora|dr|dra)";
+const PEDIDO_MEDICO = `pedidos?(?: medicos?| d[oa] ${MEDICO_DO_PEDIDO})?`;
+/**
+ * O exame e o quando viram uma marca antes do molde: escritos dentro dele, as
+ * repeticoes faziam a regex levar segundos para compilar na primeira chamada.
+ * Sem "meu" antes do exame ("meus exames" continua clinico) e sem "nesse".
+ */
+const EXAME_NA_RECEPCAO = new RegExp(
+  `\\b(?:(?:todos )?(?:o|os|do|dos|de|um|uns|esse|esses|este|estes|desse|desses|deste|destes) )?(?:${QUANTOS_EXAMES} )?exames?(?: de ${NOME_DO_EXAME})?(?: aqui)?(?: (?:do|desse|deste|no) ${PEDIDO_MEDICO})?(?: que (?:o|a|meu|minha) ${MEDICO_DO_PEDIDO} (?:me )?pediu)?\\b`,
+  "g",
+);
+/** Sem "tarde" e "manha" soltas: "boa tarde" e cumprimento. */
+const QUANDO_NA_RECEPCAO = new RegExp(
+  "\\b(?:(?:pra|para|pro|na|no|de|a|o|nessa|nesse|essa|esse|esta|este) ){0,2}(?:hoje|amanha|depois de amanha|segunda(?: feira)?|terca(?: feira)?|quarta(?: feira)?|quinta(?: feira)?|sexta(?: feira)?|sabado|domingo|semana que vem|proxima semana|mes que vem|proximo mes|mesmo dia|dia \\d{1,2}(?: \\d{1,2})?)\\b|\\b(?:de|pela) manha\\b|\\b(?:a|de|pela) tarde\\b",
+  "g",
+);
+const CLINICA_NA_RECEPCAO = "(?:voces|vcs|vc|voce|cs|a clinica)";
+const PLANO_NA_RECEPCAO =
+  "(?:(?:o|a|meu|minha|pelo|pela) )?(?:convenio|plano(?: de saude)?|unimed|bradesco|amil|sulamerica|sul america|hapvida)";
+const PRECO_NA_RECEPCAO =
+  "(?:quanto (?:custa|custam|custaria|fica|ficam|ficaria|sai|saem|sairia|e|ta|esta|seria|vai (?:ficar|custar|sair))|(?:(?:qual|quais) (?:e |seria )?)?(?:o |os )?(?:valor|valores|preco|precos)|(?:(?:quero|queria|gostaria de|preciso de|pode fazer|me passa|me manda) )?(?:um |o )?orcamento)";
+const SERVICO_NA_RECEPCAO = "(?:fazem|faz|realizam|realiza|tem)";
+
+/**
+ * O turno que so tem pedido de recepcao sobre o exame (preco, convenio, agenda,
+ * se a clinica faz, ter um pedido do medico): sequencia de oracoes, lida do
+ * comeco ao fim na visao corrida das mensagens de texto do turno juntas. Lista
+ * do que passa, de proposito: o conteudo clinico em volta nao tem lexico
+ * ("minha glicose ta alterada", "to com anemia"), entao qualquer palavra fora
+ * do molde mantem o exame escalando. Na duvida, escala. Sem "preciso fazer",
+ * "posso fazer", "faria", "qual exame", "meus exames" e o exame sozinho.
+ * § e o exame; ¤, o quando.
+ */
+const RECEPCAO_DO_EXAME = new RegExp(
+  `^(?:(?:${[
+    // Cumprimento e emenda.
+    "oi|ola|opa|alo|bom dia|boa tarde|boa noite|tudo bem|tudo bom|td bem|por favor|por gentileza|pf|pfv|pfvr|obrigad[oa]|ok|sim|certo|uma duvida|tenho uma duvida|e|tambem|entao|ah",
+    "(?:queria|quero|gostaria de|preciso|pode me|poderia me|podem me|me) (?:saber|dizer|informar|falar|diz|diga|fala|informa)(?: se)?",
+    // Preco.
+    `${PRECO_NA_RECEPCAO}(?: (?:(?:pra|para) )?fazer)?(?: §)?`,
+    `§ ${PRECO_NA_RECEPCAO}`,
+    // Se a clinica faz.
+    `(?:${CLINICA_NA_RECEPCAO} )?${SERVICO_NA_RECEPCAO} §(?: ai)?(?: ¤)*`,
+    `${CLINICA_NA_RECEPCAO} ${SERVICO_NA_RECEPCAO}(?: ai| aqui)?`,
+    `§ (?:${CLINICA_NA_RECEPCAO} )?(?:fazem|faz|realizam|realiza)(?: ai| aqui)?`,
+    `(?:${CLINICA_NA_RECEPCAO} )?(?:conseguem|consegue) (?:fazer|realizar) §(?: ¤)*`,
+    // Agenda.
+    "(?:(?:quero|queria|gostaria de|preciso|vou|pode|poderia|podem|consigo|da pra|da para|tem como|como faco (?:pra|para)) )?(?:marcar|agendar|remarcar|reagendar|desmarcar|cancelar|marca|agenda|remarca|reagenda|desmarca|cancela|marque|agende|remarque|reagende|desmarque|cancele) (?:meus? )?§(?: ¤)*",
+    "(?:quero|queria|gostaria de) fazer §(?: ¤)*",
+    "tem (?:horarios?|vagas?)(?: (?:pra|para|pro|pros)(?: fazer)? §)?(?: ¤)*",
+    // Convenio.
+    `${PLANO_NA_RECEPCAO} (?:cobre|cobrem|autoriza|autorizam|paga|pagam)(?: §)?`,
+    `(?:${CLINICA_NA_RECEPCAO} )?(?:aceita|aceitam|atende|atendem|pega|pegam) ${PLANO_NA_RECEPCAO}(?: (?:pra|para|pro|pros|nesse|nesses|neste|nestes|no|nos) §)?`,
+    // O pedido do medico.
+    `(?:tenho|to com|estou com|recebi|peguei|segue|seguem|mando|mandei|enviei|envio|vou mandar|vou enviar|aqui esta|aqui ta) (?:(?:o|um|uns|os|meu|esse|este) )?${PEDIDO_MEDICO}(?:(?: pra| para)? §)?`,
+    `(?:(?:o|um|meu|esse|este) )?${PEDIDO_MEDICO}(?:(?: pra| para)? §)? (?:esta|ta) aqui`,
+    `(?:(?:o|a|meu|minha) )?${MEDICO_DO_PEDIDO} (?:me )?(?:pediu|passou|solicitou) §`,
+  ].join("|")})(?: |$))+$`,
+);
+
+/** A visao corrida (so letra, digito e espaco) cabe no molde? */
+export function cabeNaRecepcaoDoExame(corrida: string): boolean {
+  return RECEPCAO_DO_EXAME.test(
+    corrida
+      .replace(EXAME_NA_RECEPCAO, "§")
+      .replace(QUANDO_NA_RECEPCAO, "¤"),
+  );
+}
+
+/** Para a versao do portao. */
+export const FONTES_DA_RECEPCAO_DO_EXAME: readonly string[] = [
+  EXAME_NA_RECEPCAO.source,
+  QUANDO_NA_RECEPCAO.source,
+  RECEPCAO_DO_EXAME.source,
 ];
 
 /** Lexico forte da entrada, na forma compactada (sem letra dobrada). */

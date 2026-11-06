@@ -102,6 +102,7 @@ function preparo(): ResultadoDoTurno {
   return {
     tipo: "preparo",
     preparo: { procedimentoId: PROCEDIMENTO, versaoId: VERSAO, versao: 3 },
+    introducao: null,
     resposta: null,
     rascunhoBloqueado: null,
     desfecho: {
@@ -589,6 +590,160 @@ describe("o turno do preparo", () => {
     expect(decisoes()).toEqual([]);
     expect(enviarPreparo).not.toHaveBeenCalled();
     expect(enviarFrase).not.toHaveBeenCalled();
+  });
+});
+
+describe("a introducao da IA antes do bloco (decisao do dono de 06/11/2026)", () => {
+  const INTRO = "Claro! Segue a orientação da clínica:";
+  const CORPO = `${INTRO}\n\n${MENSAGEM}`;
+  const SHA_DO_CORPO = sha256DoTexto(CORPO);
+
+  function comIntro(introducao: string | null = INTRO): ResultadoDoTurno {
+    return { ...preparo(), introducao } as ResultadoDoTurno;
+  }
+
+  it("a mesma mensagem: a introducao, a linha em branco e o bloco; a decisao e o turno com o hash do corpo; a introducao so fica no turno enquanto o envio esta pendente", async () => {
+    turno.mockImplementation(async () => comIntro());
+    let noEnvio: Linha | undefined;
+    enviarPreparo.mockImplementation(async () => {
+      noEnvio = { ...turnoGravado() };
+      return { ok: true, messageId: "msg-preparo" };
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(enviarPreparo).toHaveBeenCalledTimes(1);
+    const enviado = enviarPreparo.mock.calls[0]![1].preparo;
+    expect(enviado.mensagem).toBe(CORPO);
+    expect(enviado.sha256).toBe(SHA_DO_CORPO);
+    expect(Object.isFrozen(enviado)).toBe(true);
+    expect(decisoes()).toHaveLength(1);
+    expect(decisoes()[0]).toMatchObject({
+      desfecho: "enviou_preparo",
+      preparo_versao_id: VERSAO,
+      texto_sha256: SHA_DO_CORPO,
+      aprovado: false,
+      compliance_blocked: false,
+      compliance_rule: null,
+      message_id: "msg-preparo",
+    });
+    expect(noEnvio).toMatchObject({
+      estado: "decidido",
+      saida: "preparo",
+      texto: INTRO,
+      texto_sha256: SHA_DO_CORPO,
+    });
+    expect(turnoGravado()).toMatchObject({
+      estado: "enviado",
+      saida: "preparo",
+      texto: null,
+      texto_sha256: SHA_DO_CORPO,
+    });
+    expect(enviarResposta).not.toHaveBeenCalled();
+  });
+
+  it("sem introducao: o bloco, o hash dele e nada no texto do turno, como sempre", async () => {
+    turno.mockImplementation(async () => comIntro(null));
+    expect(await rodar()).toEqual({ ok: true });
+    expect(enviarPreparo.mock.calls[0]![1].preparo.mensagem).toBe(MENSAGEM);
+    expect(decisoes()[0]).toMatchObject({ texto_sha256: SHA });
+  });
+
+  it("a que nao passa de novo ou nao cabe no teto: sai so o bloco, e a trilha diz", async () => {
+    turno.mockImplementation(async () =>
+      comIntro("Segue o bisacodil de 5 mg:"),
+    );
+    expect(await rodar()).toEqual({ ok: true });
+    const enviado = enviarPreparo.mock.calls[0]![1].preparo;
+    expect(enviado.mensagem).toBe(MENSAGEM);
+    expect(decisoes()[0]).toMatchObject({ texto_sha256: SHA });
+    expect(
+      JSON.stringify(decisoes()[0]?.context_read),
+    ).toContain("saiu só a orientação aprovada");
+    expect(JSON.stringify(decisoes()[0])).not.toContain("bisacodil");
+  });
+
+  it("o texto recusado ou fora de vigor na hora: nada sai, nem a introducao", async () => {
+    turno.mockImplementation(async () => comIntro());
+    lido = null;
+    expect(await rodar()).toEqual({ ok: true });
+    expect(enviarPreparo).not.toHaveBeenCalled();
+    expect(enviarFrase).toHaveBeenCalledTimes(1);
+    expect(passagens).toEqual(["assunto_clinico"]);
+  });
+
+  describe("a retomada", () => {
+    function decidido(texto: string | null, sha: string) {
+      banco.linhas("ai_decision_log").push({
+        id: DECISAO,
+        clinic_id: CLINICA,
+        conversation_id: CONVERSA,
+        job_id: JOB,
+        desfecho: "enviou_preparo",
+        aprovado: false,
+        texto_sha256: sha,
+        preparo_versao_id: VERSAO,
+        created_at: CRIADO,
+      });
+      banco.linhas("ai_turno").push({
+        job_id: JOB,
+        clinic_id: CLINICA,
+        conversation_id: CONVERSA,
+        estado: "decidido",
+        reserva_id: null,
+        reservas_perdidas: [],
+        saida: "preparo",
+        texto,
+        texto_sha256: sha,
+        decision_id: DECISAO,
+        mensagens_lidas: ["m1"],
+      });
+    }
+
+    it("remonta o mesmo corpo com a introducao do turno e o bloco relido; sem chamar o modelo", async () => {
+      decidido(INTRO, SHA_DO_CORPO);
+      expect(await rodar()).toEqual({ ok: true });
+      expect(turno).not.toHaveBeenCalled();
+      expect(enviarPreparo.mock.calls[0]![1].preparo.mensagem).toBe(CORPO);
+      expect(turnoGravado()).toMatchObject({ estado: "enviado", texto: null });
+    });
+
+    it.each([
+      [
+        "a introducao trocada no turno",
+        () => decidido("Oi, segue a orientação da clínica:", SHA_DO_CORPO),
+      ],
+      [
+        "a introducao com o remedio",
+        () => decidido("Segue o bisacodil:", SHA_DO_CORPO),
+      ],
+      ["a introducao perdida do turno", () => decidido(null, SHA_DO_CORPO)],
+      [
+        "o bloco mudou em vigor (uma letra)",
+        () => {
+          decidido(INTRO, SHA_DO_CORPO);
+          lido = lidoDoBanco(MENSAGEM.replace("Colonoscopia", "Colonoscopio"));
+        },
+      ],
+      [
+        "fora de vigor",
+        () => {
+          decidido(INTRO, SHA_DO_CORPO);
+          lido = null;
+        },
+      ],
+    ])("%s: passa sem frase, nada sai", async (_n, preparar) => {
+      preparar();
+      expect(await rodar()).toEqual({ ok: true });
+      expect(enviarPreparo).not.toHaveBeenCalled();
+      expect(enviarFrase).not.toHaveBeenCalled();
+      expect(passagens).toEqual(["falha_tecnica"]);
+      expect(turnoGravado()).toMatchObject({ estado: "passou_para_equipe" });
+    });
+  });
+
+  it("nenhuma introducao nem texto do preparo no log", async () => {
+    turno.mockImplementation(async () => comIntro());
+    await rodar();
+    expect(logs.join("")).not.toContain(INTRO);
   });
 });
 

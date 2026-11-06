@@ -1152,6 +1152,16 @@ Como ler: `desfecho` `falhou` com `motivo_da_falha` `desconhecida` num turno de 
 
 ---
 
+## Ligar o teste: as decisões do dono de 06/11/2026
+
+Publicadas em 06/11/2026 (`docs/05`, entrada "Ligar o agente no teste"; `docs/04`, seção 42; `docs/03`, seção 26).
+
+**Ordem, com o ok do dono:** (1) em horário calmo, o ensaio `~/.claude/plans/agente-completo/ligar/ensaio-20261106110000.sql` (`ENSAIO OK`, termina em ROLLBACK) e a migration `20261106110000`: só catálogo, sem trava de tabela; (2) os casos novos de banco, um arquivo por vez; (3) o merge e o push. Rollback: voltar o código e rodar `supabase/operacao/rollback/20261106110000-corpos-anteriores.sql`.
+
+**Para o áudio funcionar num telefone de teste, depois de publicar:** Tela 6, Habilidades, ligar "Entender áudio" (e "Ler imagem e documento") e publicar; aba WhatsApp, no telefone com o chip "Sem áudio, foto e documento", o administrador da clínica ou a equipe Conduzza desliga e liga de novo, confirmando o aviso (o telefone de paciente usado mesmo assim sai e entra de novo pelo formulário). Para marcar, a antecedência e o horizonte em Regras e limites e publicar: "Agendar consulta" já vem ligada.
+
+**Desligar só a mídia:** `TRANSCRICAO_CALIBRADA = false` e os tetos nulos, em `lib/integrations/llm/`, num commit: toda mídia volta para a equipe, e a Tela 6 diz isso embaixo de cada habilidade. Numa clínica só: desligar as duas habilidades e publicar.
+
 ## Urgência, passagem e mídia pela IA (AG6a e AG6b)
 
 **AG6a:** quando a pessoa descreve algo que pode ser uma emergência (uma lista fixa de sinais, proposta ao responsável técnico e ainda não aprovada, D-51), a IA passa a conversa para a equipe com a frase de sempre e a marca como **Urgente**: no topo do Atendimento, com o contador do menu em alerta, até alguém assumir, transferir ou resolver. E, independente da lista, a **rede de segurança no portão** passa para a equipe, como sintoma, o risco de vida e a emergência aguda ditos sem rodeio (um erro da lista só tira a marca; a IA não responde). Se a clínica escolher na Tela 6 "Para o responsável do lead, quando houver", a conversa passada vai ao responsável do lead logo depois da frase, mas nunca a urgência, o sintoma, o assunto clínico, a resposta barrada pela conformidade, o arquivo clínico ou que o assistente não leu ou não identificou, nem a conversa em que a pessoa escreveu de novo (essas ficam na fila). **AG6b:** com "Entender áudio" e "Ler imagem e documento" ligadas, o áudio vira texto pela transcrição da OpenAI (`whisper-1`, no nosso servidor) e a foto ou o PDF vai uma vez a um leitor de saída fechada; só o pedido de exame ou procedimento com todos os itens no Cadastro segue com a IA, e o resto passa para a equipe. Decisões e pendências: `docs/05`, entradas "AG6a do agente de IA" e "AG6b do agente de IA"; banco no `docs/04`, seções 36 e 37; motor no `docs/03`, seções 22 e 23.
@@ -1167,7 +1177,7 @@ Como ler: `desfecho` `falhou` com `motivo_da_falha` `desconhecida` num turno de 
 5. **As provas de banco da AG6b**, um arquivo por vez: `tests/rls/midia-pela-ia.test.ts`, `tests/integration/midia-pela-ia.test.ts` e `tests/integration/midia-pela-ia-concorrencia.test.ts`.
 6. **O código:** o merge da `agente-ag6b` e o push. **Recomendação ao dono: a AG6a junto com a AG6b**, porque as correções finais da AG6a (a revisão conjunta de 30/10/2026 e as rodadas `d1a15f6`, `88e9560`, `1cf092d` e `577a650`) só existem nessa branch; publicar a AG6a sozinha pede levar as correções à mão para a `agente-ag6`. **Nunca o código antes das migrations:** a passagem por urgência falha (23514 na decisão, 22023 no rótulo) e o job tenta de novo, e a atribuição dá PGRST202 (a conversa fica na fila); o resto tolera (a lista do Atendimento sem a marca, a mídia toda `fora`, a lista de telefones sem a coluna nova). As migrations com o código de antes quase não mudam nada (`docs/04`, 36.8 e 37.10).
 7. **A operação da D-94 (só o dono; pendente, não foi feita):** tirar a `UAZAPI_OPENAI_KEY` da Vercel, revogar essa chave na OpenAI e conferir no painel da uazapi se a instância guarda uma chave da OpenAI (e apagar a que estiver lá). O código da AG6b não lê mais a variável e pede o download à uazapi sempre com `transcribe: false`.
-8. **A prova paga (D-100, com o ok do dono)**, pela chave do projeto `avaliacao`, só com material sintético e com orçamento máximo, e o commit pequeno das constantes medidas. **Só a partir daí "Entender áudio" e "Ler imagem e documento" valem.** Depois: a D34 de novo, os telefones reconfirmados com o aviso novo, as habilidades ligadas e publicadas na Tela 6 das duas clínicas de teste e o teste com os telefones da equipe.
+8. **[Dispensada pelo dono em 06/11/2026: `docs/05`, entrada "Ligar o agente no teste".]** **A prova paga (D-100, com o ok do dono)**, pela chave do projeto `avaliacao`, só com material sintético e com orçamento máximo, e o commit pequeno das constantes medidas. **Só a partir daí "Entender áudio" e "Ler imagem e documento" valem.** Depois: a D34 de novo, os telefones reconfirmados com o aviso novo, as habilidades ligadas e publicadas na Tela 6 das duas clínicas de teste e o teste com os telefones da equipe.
 
 **Conferir que as migrations estão no banco** (`true` nas colunas da migration aplicada):
 
@@ -1322,7 +1332,7 @@ group by c.name, r.midia, r.tipo, r.modelo, r.versao
 order by c.name, r.midia, r.tipo;
 ```
 
-Como ler: antes da prova paga, as leituras têm de vir vazias (nada é transcrito nem lido). Depois, `versao` diz a política que leu (`transcricao-...` no áudio, `leitor-...` no arquivo, `figurinha-...` com o modelo `local`).
+Como ler: até publicar o código das decisões de 06/11/2026 (a prova paga foi dispensada; `docs/05`, entrada "Ligar o agente no teste"), as leituras têm de vir vazias (nada é transcrito nem lido). Depois, `versao` diz a política que leu (`transcricao-...` no áudio, `leitor-...` no arquivo, `figurinha-...` com o modelo `local`).
 
 **W. Passagens por sintoma** (as últimas 24 horas; é onde cai o que a rede de segurança pega e a lista de urgência não marcou)
 

@@ -498,7 +498,7 @@ function baseDoBanco(texto: string): string {
 // O limite de uma frase para a regra do sintoma (a virgula nao separa: "Se
 // tiver colica, e normal").
 const NA_MESMA_FRASE = "[^.!?;\\n]*";
-const SINTOMA_OU_REACAO =
+export const SINTOMA_OU_REACAO =
   "\\m(?:colicas?|dor|dores|enjoos?|nauseas?|vomitos?|diarreias?|tonturas?|mal[- ]estar|inchacos?|vermelhid(?:ao|oes)|sangramentos?|coceiras?|ardencias?|ardor|queimac(?:ao|oes)|formigamentos?|febres?|fraquezas?|cansacos?|sonolencias?|gases|estufamentos?|desconfortos?|hematomas?|manchas?|reac(?:ao|oes)|sintomas?|efeitos? colaterais|efeito colateral|evacuac(?:ao|oes)|evacuar|sentir|doer|doi|doem|doendo|arder|arde|ardem|ardendo|cocar|coca|cocam|cocando|sangrar|sangra|sangram|sangrando|inchar|incha|incham|inchad[oa]|inchando|enjoar|enjoad[oa]|vomitar|formigar|formigando|latejar|lateja|latejando|queimar|queimando|incomodar|incomodo)\\M";
 const COMO_NORMAL =
   "(?:normal|normais|esperad[oa]s?|comum|comuns|natural|naturais|previst[oa]s?|habitual|habituais|passageir[oa]s?|transitori[oa]s?)\\M";
@@ -584,9 +584,11 @@ export const FONTE_DO_QUE_NAO_E_REMEDIO_NEM_DOSE =
   "|\\m(?:traga|leve|trazer|levar|apresente|apresentar)\\M (?:(?:a|as|sua|suas) )?(?:(?:lista|relacao) d[eo]s? (?:(?:seus|suas) )?(?:medicament|remedi|medicac)[a-z]*|receitas?(?: medicas?)?)\\M";
 
 /** A fonte na sintaxe do Postgres, como RegExp do JavaScript. */
-function regexDoBanco(fonte: string, flags = "u"): RegExp {
+export function regexDoBanco(fonte: string, flags = "u"): RegExp {
   return new RegExp(
-    fonte.replaceAll("\\m", COMECO_DE_PALAVRA).replaceAll("\\M", FIM_DE_PALAVRA),
+    fonte
+      .replaceAll("\\m", COMECO_DE_PALAVRA)
+      .replaceAll("\\M", FIM_DE_PALAVRA),
     flags,
   );
 }
@@ -599,7 +601,7 @@ const NAO_E_REMEDIO_NEM_DOSE = regexDoBanco(
 );
 
 /** A base do banco com os espacos repetidos juntados (as quebras ficam). */
-function frasesDoBanco(texto: string): string {
+export function frasesDoBanco(texto: string): string {
   return baseDoBanco(texto).replace(/ +/g, " ");
 }
 
@@ -759,6 +761,164 @@ export function partesDaMensagemDoPreparo(corpo: string): {
   return texto.trim() === "" ? null : { procedimento, linhaDoRt, texto };
 }
 
+// ---------------------------------------------------------------------------
+// A introducao da IA antes do bloco exato (decisao do dono de 06/11/2026, opcao
+// A: "a IA escreve a conversa em volta e o sistema envia a orientacao exata")
+// ---------------------------------------------------------------------------
+
+/** O tamanho da introducao (pontos de codigo; o mesmo de preparo_introducao_valida). */
+export const LIMITE_DA_INTRODUCAO_DO_PREPARO = 160;
+
+/** O corpo da mensagem: a introducao, uma linha em branco e o bloco exato. */
+export function corpoComIntroducao(introducao: string, bloco: string): string {
+  return `${introducao}\n\n${bloco}`;
+}
+
+/** A introducao cabe numa linha so, curta, no formato do texto do preparo? */
+export function introducaoNoFormato(texto: string): boolean {
+  return (
+    textoDoPreparoValido(texto) &&
+    !texto.includes("\n") &&
+    Array.from(texto).length <= LIMITE_DA_INTRODUCAO_DO_PREPARO
+  );
+}
+
+/**
+ * O corpo no formato da mensagem do preparo, com ou sem a introducao (que nunca
+ * e o texto aprovado: e da IA e passou pelo filtro), ou null. Quem confere o
+ * bloco contra a versao em vigor e o gatilho de message.
+ */
+export function separarIntroducaoDoPreparo(
+  corpo: string,
+): { introducao: string | null; bloco: string } | null {
+  if (typeof corpo !== "string") {
+    return null;
+  }
+  if (partesDaMensagemDoPreparo(corpo) !== null) {
+    return { introducao: null, bloco: corpo };
+  }
+  const corte = corpo.indexOf(`\n\n${CABECALHO_DO_PREPARO}`);
+  if (corte <= 0) {
+    return null;
+  }
+  const introducao = corpo.slice(0, corte);
+  const bloco = corpo.slice(corte + 2);
+  return introducaoNoFormato(introducao) &&
+    partesDaMensagemDoPreparo(bloco) !== null
+    ? { introducao, bloco }
+    : null;
+}
+
+// ---------------------------------------------------------------------------
+// Os remedios do preparo (decisao do dono de 06/11/2026): parte do texto da
+// versao, com a mesma aprovacao do RT, o mesmo hash e as mesmas barreiras. Sem
+// coluna: os campos saem do proprio texto quando a tela o abre de novo.
+// ---------------------------------------------------------------------------
+
+/** A linha que abre o bloco dos remedios no texto da versao. */
+export const CABECALHO_DOS_REMEDIOS = "Remédios do preparo:";
+
+export const LIMITE_DO_NOME_DO_REMEDIO = 80;
+export const LIMITE_DE_COMO_TOMAR = 300;
+export const LIMITE_DA_DESCRICAO_DO_REMEDIO = 200;
+
+export type RemedioDoPreparo = {
+  nome: string;
+  comoTomar: string;
+  descricao: string;
+};
+
+const umaLinha = (texto: string): string => texto.replace(/\s+/gu, " ").trim();
+
+/**
+ * O texto da versao: a orientacao livre (como veio) e, com algum remedio, o
+ * bloco deles, cada um "Nome: como tomar" e a descricao na linha de baixo:
+ *
+ *   {orientacao}
+ *
+ *   Remedios do preparo:
+ *
+ *   Bisacodil 5 mg: tomar 2 comprimidos as 20h da vespera do exame.
+ *   Laxante usado para limpar o intestino.
+ *
+ * A linha toda em branco fica de fora; a pela metade entra como esta (o
+ * contador e o rascunho a veem; quem barra o envio e problemaNosRemedios).
+ */
+export function comporTextoDoPreparo(
+  orientacao: string,
+  remedios: readonly RemedioDoPreparo[],
+): string {
+  const blocos = remedios
+    .map((r) => ({
+      linha: `${umaLinha(r.nome)}: ${umaLinha(r.comoTomar)}`.trim(),
+      descricao: umaLinha(r.descricao),
+      vazio: umaLinha(`${r.nome}${r.comoTomar}${r.descricao}`) === "",
+    }))
+    .filter((r) => !r.vazio)
+    .map((r) => (r.descricao === "" ? r.linha : `${r.linha}\n${r.descricao}`));
+  if (blocos.length === 0) {
+    return orientacao;
+  }
+  const bloco = `${CABECALHO_DOS_REMEDIOS}\n\n${blocos.join("\n\n")}`;
+  return orientacao.trim() === "" ? bloco : `${orientacao.trim()}\n\n${bloco}`;
+}
+
+/**
+ * O caminho de volta: a orientacao e os remedios de um texto. So reconhece o
+ * bloco que comporTextoDoPreparo escreveria de novo, byte a byte; fora disso (o
+ * texto escrito a mao, o texto antigo), o texto inteiro volta como orientacao e
+ * nada se perde.
+ */
+export function separarRemediosDoTexto(texto: string): {
+  orientacao: string;
+  remedios: RemedioDoPreparo[];
+} {
+  const inteiro = { orientacao: texto, remedios: [] };
+  const abertura = `${CABECALHO_DOS_REMEDIOS}\n\n`;
+  const meio = texto.lastIndexOf(`\n\n${abertura}`);
+  const inicio = meio >= 0 ? meio + 2 : texto.startsWith(abertura) ? 0 : -1;
+  if (inicio < 0) {
+    return inteiro;
+  }
+  const remedios: RemedioDoPreparo[] = [];
+  for (const bloco of texto.slice(inicio + abertura.length).split("\n\n")) {
+    const [linha = "", descricao = "", ...sobra] = bloco.split("\n");
+    const corte = linha.indexOf(": ");
+    if (corte <= 0 || sobra.length > 0) {
+      return inteiro;
+    }
+    remedios.push({
+      nome: linha.slice(0, corte),
+      comoTomar: linha.slice(corte + 2),
+      descricao,
+    });
+  }
+  const orientacao = meio >= 0 ? texto.slice(0, meio) : "";
+  return comporTextoDoPreparo(orientacao, remedios) === texto
+    ? { orientacao, remedios }
+    : inteiro;
+}
+
+// A palavra antes da dose ("Bisacodil 5 mg", "Xyzina 10ml"), na visao base.
+const PALAVRA_ANTES_DA_DOSE =
+  /(\p{L}{3,})\s+\d+(?:[.,]\d+)?\s?(?:mg|mcg|ml|g|ui|gotas?|comprimidos?|capsulas?|saches?)(?![\p{L}\p{Nd}])/gu;
+
+/**
+ * Os nomes de remedio de um texto de preparo, em palavras na visao base
+ * (minusculas, sem acento): as do nome de cada remedio do bloco (3 letras ou
+ * mais) e a palavra colada numa dose no texto livre. A introducao nao diz
+ * nenhuma delas. So bloqueia: uma palavra a mais aqui so tira a introducao.
+ */
+export function nomesDeRemedioDoTexto(texto: string): string[] {
+  const nomes = separarRemediosDoTexto(texto).remedios.flatMap((r) =>
+    baseDoBanco(r.nome).split(/[^\p{L}]+/u),
+  );
+  for (const achado of baseDoBanco(texto).matchAll(PALAVRA_ANTES_DA_DOSE)) {
+    nomes.push(achado[1] ?? "");
+  }
+  return [...new Set(nomes.filter((nome) => nome.length >= 3))];
+}
+
 /**
  * O procedimento da primeira linha de um corpo que comeca pelo cabecalho do
  * preparo (aparado), ou null quando nao comeca. NAO confirma que e a
@@ -827,7 +987,8 @@ export function podeSerAMensagemDoPreparo(m: MensagemParaReconhecer): boolean {
     typeof m.job_id === "string" &&
     m.job_id !== "" &&
     corpo !== null &&
-    partesDaMensagemDoPreparo(corpo) !== null
+    // Com a introducao da IA antes do bloco (decisao de 06/11/2026).
+    separarIntroducaoDoPreparo(corpo) !== null
   );
 }
 
@@ -1299,7 +1460,6 @@ export type VersaoNaTela = {
 
 export type SituacaoDoPreparoNaTela =
   | "aprovada"
-  /** Tudo em ordem, menos o registro do RT, que a Conduzza nao conferiu. */
   | "aprovada_sem_envio"
   | "aguardando"
   | "precisa_de_nova_aprovacao"
@@ -1307,8 +1467,8 @@ export type SituacaoDoPreparoNaTela =
   | "sem_orientacao";
 
 /**
- * O chip da secao: as situacoes do banco; "aprovada_sem_envio" tambem e a
- * versao aprovada cujo texto as regras de hoje recusam (revisao curta da AG7,
+ * O chip da secao: as situacoes do banco; "aprovada_sem_envio" e a versao
+ * aprovada cujo texto as regras de hoje recusam (revisao curta da AG7,
  * CURTA-5: o servidor confere; o envio nao a deixa sair).
  */
 export type SituacaoDoChipDoPreparo = SituacaoDoPreparoNaTela;
@@ -1322,15 +1482,12 @@ export type SituacaoDoChipDoPreparo = SituacaoDoPreparoNaTela;
  *    recusam o de todos: o envio e a regua nao os deixam sair, e Cadastros
  *    os mostra como "Aprovada, sem envio" (revisao curta da AG7, a sobra da
  *    CURTA-5 na Tela 6);
- *  - "registro_nao_conferido": ha texto aprovado que estaria em vigor, e so
- *    falta a equipe Conduzza conferir o registro do RT (revisao final da AG7);
  *  - "sem_texto_aprovado": nenhum procedimento ativo tem texto aprovado em
  *    vigor.
  */
 export type PreparoDaHabilidade =
   | "sai"
   | "aprovada_sem_envio"
-  | "registro_nao_conferido"
   | "sem_texto_aprovado";
 
 /** As situacoes de quem ja foi aprovado um dia (a linha do envio). */
@@ -1353,9 +1510,7 @@ function maisNova(versoes: readonly VersaoNaTela[]): VersaoNaTela | null {
 /**
  * O chip do procedimento (os cinco do desenho, 5.1), na ordem de quem vale:
  *  1. ha versao aprovado: "aprovada" quando ela esta em vigor (o RT dela e o
- *     RT aberto, com acesso ativo e o registro conferido, e o nome do
- *     procedimento nao mudou); "aprovada_sem_envio" quando so falta a
- *     conferencia do registro (o RT nao tem o que aprovar de novo); e
+ *     RT aberto, com acesso ativo, e o nome do procedimento nao mudou); e
  *     "precisa_de_nova_aprovacao" quando nao esta (RT trocado ou sem acesso,
  *     nome mudado). O texto novo que espera o RT aparece no bloco proprio,
  *     sem trocar o chip;
@@ -1368,22 +1523,19 @@ function maisNova(versoes: readonly VersaoNaTela[]): VersaoNaTela | null {
  */
 export function situacaoDoPreparoNaTela(e: {
   versoes: readonly VersaoNaTela[];
-  rtAberto: { id: string; userId: string; registroConferido: boolean } | null;
+  rtAberto: { id: string; userId: string } | null;
   rtComAcesso: boolean;
   nomeAtual: string;
 }): SituacaoDoPreparoNaTela {
   const aprovada = maisNova(e.versoes.filter((v) => v.situacao === "aprovado"));
   if (aprovada !== null) {
-    const valeria =
-      aprovada.rtId !== null &&
+    return aprovada.rtId !== null &&
       e.rtAberto !== null &&
       aprovada.rtId === e.rtAberto.id &&
       e.rtComAcesso &&
-      aprovada.nomeDoProcedimento === e.nomeAtual;
-    if (!valeria) {
-      return "precisa_de_nova_aprovacao";
-    }
-    return e.rtAberto?.registroConferido ? "aprovada" : "aprovada_sem_envio";
+      aprovada.nomeDoProcedimento === e.nomeAtual
+      ? "aprovada"
+      : "precisa_de_nova_aprovacao";
   }
   if (e.versoes.some((v) => v.situacao === "aguardando_rt")) {
     return "aguardando";

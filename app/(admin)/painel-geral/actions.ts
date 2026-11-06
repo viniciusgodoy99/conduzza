@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 
 import {
   agenteDaClinicaSchema,
-  conferirRegistroDoRtSchema,
   contaDaClinicaSchema,
   escreverNotaSchema,
   ESCOPO_DO_REQUISITO,
@@ -114,11 +113,6 @@ const TEXTO_DA_CHAVE = new Map<string, (kind: string) => string>([
   ["texto_invalido", () => TEXTOS_DO_PAINEL.notaInvalida],
   ["nota_invalida", () => TEXTOS_DO_PAINEL.notaInvalida],
   ["nota_de_outra_pessoa", () => TEXTOS_DO_PAINEL.soQuemEscreveuExclui],
-  // O registro do RT (AG7): a designacao que a tela mostrou ja acabou, e o
-  // clique repetido.
-  ["sem_responsavel_tecnico", () => TEXTOS_DO_PAINEL.rtEncerrado],
-  ["responsavel_encerrado", () => TEXTOS_DO_PAINEL.rtEncerrado],
-  ["registro_ja_conferido", () => TEXTOS_DO_PAINEL.registroJaConferido],
 ]);
 
 /**
@@ -133,9 +127,6 @@ function textoDoErro(kind: string, error: ErroDoBanco, outro: string): string {
   if (codigo === "42501") {
     // Excluir a nota: a guarda daqui ja conferiu a equipe Conduzza, entao a
     // recusa do banco e a nota de outra pessoa.
-    if (kind === "conferir_registro") {
-      return TEXTOS_DO_PAINEL.rtProprioNaoConfere;
-    }
     return kind === "excluir_nota"
       ? TEXTOS_DO_PAINEL.soQuemEscreveuExclui
       : TEXTOS_DO_PAINEL.soEquipeConduzza;
@@ -493,42 +484,6 @@ export async function excluirNotaDaClinicaAction(
     );
   }
   revalidatePath("/painel-geral", "layout");
-  return { ok: true };
-}
-
-/**
- * A equipe Conduzza marca o registro do RT como conferido no portal do conselho
- * (AG7, decisao do dono de 05/11/2026). A RPC recusa quem nao e super admin e o
- * proprio RT, e grava a trilha. Vai a designacao que a tela mostrou: trocar o RT
- * no meio cai em responsavel_encerrado.
- */
-export async function conferirRegistroDoRtAction(
-  entrada: unknown,
-): Promise<ResultadoDoPainel> {
-  const recusa = await guarda();
-  if (recusa) {
-    return { ok: false, error: recusa.error };
-  }
-  const parsed = conferirRegistroDoRtSchema.safeParse(entrada);
-  if (!parsed.success) {
-    return { ok: false, error: TEXTOS_DO_PAINEL.dadosInvalidos };
-  }
-  const { clinicId, rtId } = parsed.data;
-  const supabase: Supabase = await createClient();
-  const { error } = await supabase.rpc(
-    "conferir_registro_do_responsavel_tecnico",
-    { p_rt_id: rtId },
-  );
-  if (error) {
-    return falhou(
-      clinicId,
-      "conferir_registro",
-      error,
-      TEXTOS_DO_PAINEL.naoConferiuORegistro,
-    );
-  }
-  revalidatePath("/painel-geral", "layout");
-  revalidatePath("/cadastros");
   return { ok: true };
 }
 

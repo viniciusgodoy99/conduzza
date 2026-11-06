@@ -73,6 +73,7 @@ import {
   CONTEXTO_CLINICO,
   LEXICO_APROXIMADO,
   LEXICO_COMPACTO,
+  MEDICAMENTOS_DO_PREPARO,
   NEUTRALIZACOES_DE_SAIDA,
   PADROES_DE_SAIDA,
 } from "@/lib/domain/conformidade/padroes";
@@ -81,7 +82,9 @@ import {
 // preparo-aprovado.ts a reexporta: este arquivo nao importa
 // preparo-aprovado.ts, que importa este (ciclo de import).
 import {
+  LIMITE_DA_INTRODUCAO_DO_PREPARO,
   PALAVRAS_DA_JANELA_DO_TRECHO,
+  SINTOMA_OU_REACAO,
   TAMANHO_MINIMO_DO_TRECHO,
   trechoDePreparoNaResposta,
 } from "@/lib/domain/preparo";
@@ -121,6 +124,13 @@ export type ContextoDasRegras = {
    */
   comPreparo?: boolean;
   // [AG7 preparo] fim
+  /**
+   * Decisao do dono de 06/11/2026: o rascunho e a introducao que a IA escreve
+   * antes do bloco exato do preparo. Muda so a regra resposta_ao_preparo, que
+   * le o rascunho sem o anuncio ("segue a orientacao"); o resto do rascunho
+   * continua lido e todas as outras regras valem igual.
+   */
+  introducaoDoPreparo?: boolean;
 };
 
 export type AchadoDaRegra = {
@@ -635,6 +645,38 @@ export function situacaoPessoalNoPedidoDoPreparo(
   );
 }
 
+// [remedios do preparo] inicio
+/**
+ * O anuncio que so a introducao diz, na visao base: sem ele, "Claro! Segue a
+ * orientacao da clinica:" cairia em resposta_ao_preparo, que le "orientacao"
+ * como o assunto. O resto da frase continua lido ("Precisa sim, segue a
+ * orientacao" barra).
+ */
+export const FONTE_DO_ANUNCIO_DA_INTRODUCAO =
+  "\\b(?:segue|seguem|aqui esta|aqui estao|envio|te envio|te passo)\\b (?:\\w+ ){0,2}?orientac(?:ao|oes)\\b";
+const REGEX_DO_ANUNCIO_DA_INTRODUCAO = new RegExp(
+  FONTE_DO_ANUNCIO_DA_INTRODUCAO,
+  "g",
+);
+
+/**
+ * O que a introducao nunca diz, na sintaxe do Postgres (preparo_introducao_valida
+ * traz este texto byte a byte; o teste tests/unit/conformidade/preparo-introducao
+ * confere), lido na visao base com os espacos juntados: qualquer digito, a
+ * unidade, o numero por extenso, como tomar e o assunto do remedio, os remedios
+ * do preparo e o sintoma. So bloqueia. Fica aqui porque entra na versao das
+ * regras; quem aplica e problemaDaIntroducao (preparo-aprovado.ts).
+ */
+export const FONTE_DO_QUE_A_INTRODUCAO_NAO_DIZ = [
+  "[0-9]",
+  `\\m(?:mg|mcg|ug|ml|g|kg|l|ui|u|gotas?|gotinhas?|pingos?|comprimidos?|compr|capsulas?|cps?|caps|saches?|colher(?:es)?|colheradas?|doses?|ampolas?|jatos?|borrifadas?|puffs?|miligramas?|mililitros?|microgramas?|gramas?|litros?|seringas?|frascos?|copos?|xicaras?|unidades?|horas?|minutos?` +
+    `|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez|doze|quinze|vinte|trinta|meio|meia` +
+    `|tome|toma|tomar|tomando|tomem|ingira|ingerir|ingerindo|beba|bebam|beber|bebendo|coma|comam|comer|comendo|engula|engolir|dilua|diluir|misture|misturar|aplique|aplicar|use|usar|usando|evite|evitar|suspenda|suspender|interrompa|interromper|pare|parar|jejum|dieta|laxantes?|remedios?|medicamentos?|medicac(?:ao|oes))\\M`,
+  `\\m(?:${MEDICAMENTOS_DO_PREPARO.join("|").replaceAll("\\b", "\\M")})`,
+  SINTOMA_OU_REACAO,
+].join("|");
+// [remedios do preparo] fim
+
 /**
  * Revisao da AG7 (CFM-5) e revisao curta (CURTA-1): o rascunho responde a
  * pergunta de preparo ou de jejum do paciente? So com a habilidade do
@@ -645,7 +687,11 @@ export function respondeAPerguntaDePreparo(
   rascunho: string,
   contexto: Pick<
     ContextoDasRegras,
-    "mensagensDoPaciente" | "nomesDoCatalogo" | "fatos" | "comPreparo"
+    | "mensagensDoPaciente"
+    | "nomesDoCatalogo"
+    | "fatos"
+    | "comPreparo"
+    | "introducaoDoPreparo"
   >,
 ): boolean {
   if (
@@ -658,7 +704,14 @@ export function respondeAPerguntaDePreparo(
   return frasesDoTexto(
     semTextosColados(rascunho, colados),
     contexto.nomesDoCatalogo,
-  ).some(({ frase, pergunta }) => fraseQueResponde(frase, pergunta));
+  ).some(({ frase, pergunta }) =>
+    fraseQueResponde(
+      contexto.introducaoDoPreparo === true
+        ? frase.replace(REGEX_DO_ANUNCIO_DA_INTRODUCAO, " ")
+        : frase,
+      pergunta,
+    ),
+  );
 }
 // [AG7 preparo] fim
 
@@ -692,6 +745,8 @@ export const FONTES_DAS_REGRAS_EM_CODIGO: readonly string[] = [
   // afirma ou nega o jejum ou o preparo, so com a habilidade.
   `${REGRA_DA_RESPOSTA_AO_PREPARO}: so com a habilidade do preparo (comPreparo) e com a pergunta numa frase das mensagens do paciente (${ASSUNTO_DO_PREPARO}, ou ${DIETA} com ${CONTEXTO_DA_DIETA}, e ${PERGUNTA_OU_PEDIDO} na mesma frase, sem ${EXAME_DE_JEJUM}, os nomes do catalogo mascarados), barra a frase do rascunho sem os textos colados que responde (${RESPOSTA_NA_FRASE}), a pergunta que comeca respondendo (${PERGUNTA_QUE_RESPONDE}) e a frase que fala do assunto (${ASSUNTO_NA_RESPOSTA}) fora da oferta (${OFERTA_DO_PREPARO}) e da pergunta do procedimento (${PERGUNTA_DO_PROCEDIMENTO}) (orientacao_clinica)`,
   // [AG7 preparo] fim
+  // Decisao do dono de 06/11/2026: a introducao antes do bloco exato.
+  `introducao do preparo: em ${REGRA_DA_RESPOSTA_AO_PREPARO}, sem ${FONTE_DO_ANUNCIO_DA_INTRODUCAO}; barrada por ${LIMITE_DA_INTRODUCAO_DO_PREPARO} caracteres ou por ${FONTE_DO_QUE_A_INTRODUCAO_NAO_DIZ}`,
   CNPJ_COM_MASCARA.source,
   ...NEUTRALIZACOES_DE_SAIDA.map(({ nome, fonte, troca }) =>
     [nome, fonte, troca].join(" "),

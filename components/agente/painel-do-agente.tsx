@@ -454,7 +454,7 @@ export function PainelDoAgente({
                 dica={dica}
                 pendente={pendente}
                 // [AG6b mídia] a dica da habilidade que o servidor ainda
-                // nao deixa valer (a prova paga, D-100)
+                // nao deixa valer
                 midiaNoServidor={dados.midiaNoServidor}
                 // [AG7 preparo] início
                 // a dica de "Enviar orientação de preparo" quando nenhum

@@ -53,6 +53,13 @@
 //  - o RESULTADO (M6) e a TRIAGEM que passava tambem no main (B1) ganharam
 //    regra, com os controles.
 //
+// Decisao do dono de 06/11/2026 ("preciso que nem tudo vá para a equipe"): o
+// pedido de recepcao sobre o exame deixou de escalar, agora pelo molde do turno
+// inteiro (padroes.ts, RECEPCAO_DO_EXAME), nao pelas trocas desfeitas na R2. As
+// legendas AG6B-P01 a P08, P10 e P12 a P15 e as falas AG6B-F01 e F02 (os ids
+// ficam) mudaram de lista: agora passam. AG6B-P09 e P11 (o exame sozinho)
+// continuam escalando, e as 27 sondas e os 7 rascunhos da R2 nao mudaram.
+//
 // Os ids sao estaveis (AG6B-A, AG6B-L, AG6B-S, AG6B-C; na 3a rodada,
 // AG6B-P e AG6B-F; na revisao R2, AG6B-U e AG6B-Q).
 
@@ -161,7 +168,8 @@ export type TextoQuePassa = {
  * A legenda do pedido que o portao deixa passar (o leitor diz o que o
  * arquivo e): as que ja passavam na 6eae43d (e no main), a pergunta de
  * preco com o artigo. Revisao R2 de d1a15f6 (M1): as da 3a rodada sairam
- * daqui (LEGENDAS_DO_PEDIDO_QUE_ESCALAM).
+ * daqui (LEGENDAS_DO_PEDIDO_QUE_ESCALAM). Decisao de 06/11/2026: as do pedido
+ * de recepcao voltaram, pelo molde do turno inteiro.
  */
 export const LEGENDAS_QUE_PASSAM: readonly TextoQuePassa[] = [
   { id: "AG6B-P16", texto: "quanto fica?" },
@@ -171,17 +179,6 @@ export const LEGENDAS_QUE_PASSAM: readonly TextoQuePassa[] = [
   { id: "AG6B-P20", texto: "quanto fica esse pedido?" },
   { id: "AG6B-P21", texto: "segue o pedido" },
   { id: "AG6B-P22", texto: "o médico pediu esses exames, quanto fica?" },
-];
-
-/**
- * Revisao R2 de d1a15f6 (M1): a legenda do pedido com o demonstrativo, a
- * marcacao, o convenio, o pedido ou so o exame. A 3a rodada a deixava passar
- * (os ids AG6B-P01 a P15 ficam); as trocas foram desfeitas porque abriam o
- * conteudo clinico em volta ("minha glicose ta alterada, quanto custa esses
- * exames?"). Escala antes do leitor, como no main, ate o dono decidir a
- * troca na recepcao (PROPOSTA) e a D34 medir.
- */
-export const LEGENDAS_DO_PEDIDO_QUE_ESCALAM: readonly TextoQuePassa[] = [
   { id: "AG6B-P01", texto: "quanto fica esse exame?" },
   { id: "AG6B-P02", texto: "quanto custa esses exames?" },
   { id: "AG6B-P03", texto: "vocês fazem esses exames?" },
@@ -190,9 +187,7 @@ export const LEGENDAS_DO_PEDIDO_QUE_ESCALAM: readonly TextoQuePassa[] = [
   { id: "AG6B-P06", texto: "quero marcar esses exames" },
   { id: "AG6B-P07", texto: "orçamento desses exames por favor" },
   { id: "AG6B-P08", texto: "tem horário pra fazer esses exames amanhã?" },
-  { id: "AG6B-P09", texto: "exames" },
   { id: "AG6B-P10", texto: "segue o pedido de exames" },
-  { id: "AG6B-P11", texto: "segue os exames" },
   { id: "AG6B-P12", texto: "o plano cobre esse exame?" },
   { id: "AG6B-P13", texto: "tem vaga pra esses exames amanhã?" },
   { id: "AG6B-P14", texto: "quanto fica os 3 exames?" },
@@ -200,17 +195,30 @@ export const LEGENDAS_DO_PEDIDO_QUE_ESCALAM: readonly TextoQuePassa[] = [
 ];
 
 /**
- * Revisao R2 de d1a15f6 (M1): a fala do audio sobre o pedido (a 3a rodada a
- * deixava passar; os ids ficam) escala como o escrito. "Pra semana que vem"
- * passava pelo "vem" do exame que fica pronto (no main tambem): o "que vem"
- * do tempo nao e mais o exame que vem.
+ * O exame sozinho, sem pedido nenhum: escala antes do leitor, como no main
+ * (decisao de 06/11/2026: as outras legendas desta lista passaram a passar).
  */
-export const FALAS_DO_PEDIDO_QUE_ESCALAM: readonly TextoQuePassa[] = [
+export const LEGENDAS_DO_PEDIDO_QUE_ESCALAM: readonly TextoQuePassa[] = [
+  { id: "AG6B-P09", texto: "exames" },
+  { id: "AG6B-P11", texto: "segue os exames" },
+];
+
+/**
+ * A fala do audio com o pedido de recepcao passa como o escrito (decisao de
+ * 06/11/2026; os ids sao os da R2).
+ */
+export const FALAS_DO_PEDIDO_QUE_PASSAM: readonly TextoQuePassa[] = [
   {
     id: "AG6B-F01",
     texto: "Oi, queria saber quanto fica esses exames aqui do pedido.",
   },
   { id: "AG6B-F02", texto: "Quero marcar esses exames pra semana que vem." },
+];
+
+/** A fala com o exame fora do molde escala como o escrito. */
+export const FALAS_DO_PEDIDO_QUE_ESCALAM: readonly TextoQuePassa[] = [
+  { id: "AG6B-F03", texto: "Queria saber se eu preciso fazer esses exames." },
+  { id: "AG6B-F04", texto: "Quanto fica esses exames, minha glicose ta alta." },
 ];
 
 /**

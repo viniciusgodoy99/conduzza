@@ -48,6 +48,8 @@ import type { PreparoDaHabilidade } from "@/lib/domain/preparo";
 // falta um dos dois, a chave fica desligada e desabilitada com a dica
 // DICA_DA_AGENDA_INCOMPLETA, escrita tambem embaixo da descricao (a dica do
 // cursor nao e o unico jeito de saber por que). A acao recusa de novo.
+// Decisao do dono de 06/11/2026: com os dois preenchidos, ela ja aparece
+// ligada (a chave ausente vale ligada), e so quem desligou fica desligado.
 //
 // Fase de teste (decisao do dono de 20/10/2026, revista na onda 2, item
 // 10): a consulta da IA so transforma o contato em paciente quando a equipe
@@ -85,11 +87,11 @@ import type { PreparoDaHabilidade } from "@/lib/domain/preparo";
 // falta). Sem permissao (recepcao), a chave fica visivel e desabilitada com
 // a dica de sempre.
 //
-// Revisao das telas da AG6b: enquanto o servidor nao foi calibrado pela
-// prova paga (D-100; midiaNoServidor, calculado na pagina), a habilidade de
-// midia ligada nao tem efeito, e a dica (dicaDaMidiaNoServidor) fica escrita
-// embaixo dela, para todos os papeis, sem travar a chave: ligar agora so
-// vale depois da prova, e desligar continua livre (item 3). A nota, a dica
+// Revisao das telas da AG6b: com as constantes do servidor desligadas
+// (midiaNoServidor, calculado na pagina; ligadas desde 06/11/2026), a
+// habilidade de midia ligada nao tem efeito, e a dica (dicaDaMidiaNoServidor)
+// fica escrita embaixo dela, para todos os papeis, sem travar a chave:
+// desligar continua livre (item 3). A nota, a dica
 // do servidor e a da dependencia sao a descricao da chave
 // (aria-describedby, na ordem da tela): o leitor de tela ouve a nota da
 // OpenAI no foco (item 7).
@@ -201,7 +203,7 @@ export function AbaHabilidades({
   ) => void;
   // [AG6b mídia] início
   /**
-   * O que o servidor ja deixa valer (a prova paga, D-100). Ausente: sem a
+   * O que o servidor ja deixa valer. Ausente: sem a
    * dica (a tela nao inventa).
    */
   midiaNoServidor?: MidiaNoServidor | null;

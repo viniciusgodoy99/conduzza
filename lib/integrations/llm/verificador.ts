@@ -155,7 +155,7 @@ export const PARAMETROS_FIXOS_DE_CLASSIFICACAO = {
  * a oferta do envio do texto aprovado pela clinica nao e orientacao.
  */
 export const PERMITIDO_OFERECER_O_PREPARO =
-  "Também é permitido oferecer o envio da orientação de preparo aprovada pela clínica e dizer que o sistema vai enviá-la, sem dizer nada do conteúdo dela.";
+  'Também é permitido oferecer o envio da orientação de preparo aprovada pela clínica, dizer que o sistema vai enviá-la e anunciar que ela segue logo depois ("segue a orientação da clínica:"), sem dizer nada do conteúdo dela.';
 // [AG7 preparo] fim
 
 export const POLITICA_DO_VERIFICADOR = `Você é o verificador de conformidade de uma recepcionista virtual de clínica médica e de estética no Brasil. A recepcionista conversa com pacientes pelo WhatsApp. Antes de cada envio, você decide se o RASCUNHO dela pode ser enviado ao paciente.

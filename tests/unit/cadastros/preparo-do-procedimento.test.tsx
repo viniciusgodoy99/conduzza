@@ -63,6 +63,7 @@ const {
   ChipDoPreparo,
   ConfirmarDescarteDoRascunho,
   ConfirmarDescarteDoTextoNovo,
+  camposDoEditor,
   EditorDoPreparo,
   editorComRascunho,
   FaixaDoRt,
@@ -72,6 +73,7 @@ const {
   linhaDaAprovacao,
   motivoDaNovaAprovacao,
   resumoDoPreparo,
+  textoDoEditor,
   versaoLidaDoEnvio,
 } = await import("@/components/cadastros/preparo-do-procedimento");
 const { ProcedimentosTab } =
@@ -86,6 +88,7 @@ const {
   frasesDasRecusas,
   frasesDoTexto,
   prepararTextoDoPreparo,
+  problemaNosRemedios,
   problemaNoTextoDoPreparo,
   traduzirErroDoPreparo,
 } = await import("@/components/cadastros/preparo-na-tela");
@@ -120,7 +123,6 @@ const RT_ANA: ResponsavelTecnico = {
   uf: "CE",
   desde: "2026-10-01T12:00:00Z",
   ate: null,
-  registroConferidoEm: "2026-10-02T12:00:00Z",
 };
 const RT_ANTIGO: ResponsavelTecnico = {
   ...RT_ANA,
@@ -459,27 +461,15 @@ describe("sem responsável técnico ativo", () => {
     });
   });
 
-  it("o registro do RT não conferido: o aviso, o chip sem envio, sem pedir nova aprovação, e Suspender continua", () => {
+  // Decisao do dono de 06/11/2026: a conferencia do registro nao conta mais.
+  it("o RT vigente com o texto aprovado: em vigor, sem aviso de conferência", () => {
     const html = semEntidades(
-      secao({
-        dados: dados({
-          rtAberto: { ...RT_ANA, registroConferidoEm: null },
-        }),
-        podeEditarCadastros: true,
-      }),
+      secao({ dados: dados(), podeEditarCadastros: true }),
     );
-    expect(html).toContain(
-      "Registro do RT ainda não conferido pela Conduzza",
-    );
-    expect(html).toContain("Aprovada, sem envio");
+    expect(html).not.toContain("conferid");
+    expect(html).not.toContain("Aprovada, sem envio");
     expect(html).not.toContain("Precisa de nova aprovação");
     expect(html).toContain(T.suspender);
-  });
-
-  it("o registro conferido: nenhum aviso de conferência", () => {
-    expect(semEntidades(secao({ dados: dados() }))).not.toContain(
-      "ainda não conferido",
-    );
   });
 
   it("o RT sem acesso ativo também conta como sem RT", () => {
@@ -603,6 +593,184 @@ describe("matriz de papéis (desenho 5.6; D-71)", () => {
   });
 });
 
+// Os remedios do preparo (decisao do dono de 06/11/2026): parte do texto da
+// versao, sem caminho proprio de aprovacao.
+describe("os remedios do preparo no editor", () => {
+  const BISACODIL = {
+    nome: "Bisacodil 5 mg",
+    comoTomar: "tomar 2 comprimidos às 20h da véspera do exame.",
+    descricao: "Laxante usado para limpar o intestino.",
+  };
+
+  function editor(
+    remedios: readonly (typeof BISACODIL)[],
+    props: { texto?: string; enviando?: boolean } = {},
+  ) {
+    return semEntidades(
+      renderToStaticMarkup(
+        <EditorDoPreparo
+          id="ed"
+          texto={props.texto ?? "Jejum de 8 horas."}
+          remedios={remedios}
+          aoMudar={() => undefined}
+          aoMudarRemedios={() => undefined}
+          enviando={props.enviando ?? false}
+          erro={null}
+          aoEnviar={() => undefined}
+          aoCancelar={() => undefined}
+        />,
+      ),
+    );
+  }
+
+  it("vazio: diz que não há remédio, com o botão de adicionar e a ajuda de que vai como está e o RT aprova", () => {
+    const html = editor([]);
+    expect(html).toContain(T.remedios);
+    expect(html).toContain(T.semRemedios);
+    expect(html).toContain(T.adicionarRemedio);
+    expect(html).toContain(T.remediosAjuda);
+    expect(T.remediosAjuda).toContain("exatamente como estão");
+    expect(T.remediosAjuda).toContain("responsável técnico aprovar");
+    expect(html).not.toContain(T.tirarRemedio);
+  });
+
+  it("com remédio: os três campos com rótulo, tirar, e o contador do texto inteiro", () => {
+    const html = editor([BISACODIL]);
+    expect(html).not.toContain(T.semRemedios);
+    for (const rotulo of [
+      T.remedioNome,
+      T.remedioComoTomar,
+      T.remedioDescricao,
+      T.tirarRemedio,
+    ]) {
+      expect(html).toContain(rotulo);
+    }
+    for (const campo of ["nome", "como", "descricao"]) {
+      expect(html).toContain(`for="ed-remedio-0-${campo}"`);
+      expect(html).toContain(`id="ed-remedio-0-${campo}"`);
+    }
+    const inteiro = textoDoEditor({
+      texto: "Jejum de 8 horas.",
+      remedios: [BISACODIL],
+    });
+    expect(html).toContain(`${Array.from(inteiro).length} de 3.500`);
+  });
+
+  it("enviando: os campos e os botões travam", () => {
+    const html = editor([BISACODIL], { enviando: true });
+    expect(html).toMatch(/id="ed-remedio-0-nome"[^>]*disabled/);
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>[\s\S]*Adicionar remédio/);
+  });
+
+  it("todo alvo tem 40px, sem cor solta e sem travessão", () => {
+    const html = editor([BISACODIL]);
+    const trecho =
+      /data-parte="remedios-do-editor"[\s\S]*?(?=<div class="flex flex-wrap justify-end)/.exec(
+        html,
+      )?.[0] ?? "";
+    expect(trecho).not.toBe("");
+    expect(trecho).not.toMatch(/#[0-9a-f]{3,8}\b/i);
+    for (const botao of trecho.match(/<button[^>]*>/g) ?? []) {
+      expect(botao).toContain("h-10");
+    }
+    for (const frase of [
+      T.remedios,
+      T.remediosAjuda,
+      T.semRemedios,
+      T.remedioNome,
+      T.remedioComoTomar,
+      T.remedioDescricao,
+      T.adicionarRemedio,
+      T.tirarRemedio,
+    ]) {
+      expect(frase).not.toMatch(/[\u2013\u2014]/);
+    }
+  });
+
+  it("o papel sem permissão não abre o editor: Escrever fica desabilitado com a dica", () => {
+    const html = secao({ podeEditarCadastros: false });
+    expect(botao(html, T.escreverNovo)).toEqual({
+      dica: FRASES_SEM_PERMISSAO.escrever,
+    });
+  });
+
+  it("abrir de novo um texto com remédios separa os campos; o texto sem o bloco fica inteiro; nada muda ao reabrir", () => {
+    const inteiro = textoDoEditor({
+      texto: "Jejum de 8 horas.",
+      remedios: [BISACODIL],
+    });
+    const campos = camposDoEditor(inteiro);
+    expect(campos.texto).toBe("Jejum de 8 horas.");
+    expect(campos.remedios).toEqual([BISACODIL]);
+    expect(textoDoEditor(campos)).toBe(inteiro);
+    // Reabrir nao vira rascunho: o Cancelar nao pede confirmacao a toa.
+    expect(
+      editorComRascunho({ texto: textoDoEditor(campos), inicial: inteiro }),
+    ).toBe(false);
+    // Mexer num remedio vira rascunho.
+    expect(
+      editorComRascunho({
+        texto: textoDoEditor({
+          ...campos,
+          remedios: [{ ...BISACODIL, nome: "Bisacodil 10 mg" }],
+        }),
+        inicial: inteiro,
+      }),
+    ).toBe(true);
+    const semBloco = camposDoEditor(TEXTO_NOVO);
+    expect(semBloco).toEqual({
+      texto: TEXTO_NOVO,
+      remedios: [],
+      inicial: TEXTO_NOVO,
+    });
+  });
+
+  it("o remédio pela metade, os dois pontos no nome e o tamanho barram antes da action; a linha em branco não conta", () => {
+    expect(problemaNosRemedios([BISACODIL])).toBeNull();
+    expect(problemaNosRemedios([])).toBeNull();
+    expect(
+      problemaNosRemedios([{ nome: " ", comoTomar: "", descricao: "" }]),
+    ).toBeNull();
+    expect(problemaNosRemedios([{ ...BISACODIL, comoTomar: "  " }])).toContain(
+      "pela metade",
+    );
+    expect(problemaNosRemedios([{ ...BISACODIL, nome: "" }])).toContain(
+      "pela metade",
+    );
+    expect(
+      problemaNosRemedios([{ ...BISACODIL, nome: "Bisacodil: 5 mg" }]),
+    ).toContain("dois pontos");
+    expect(
+      problemaNosRemedios([{ ...BISACODIL, nome: "a".repeat(81) }]),
+    ).toContain("80 caracteres");
+    expect(
+      problemaNosRemedios([{ ...BISACODIL, comoTomar: "a".repeat(301) }]),
+    ).toContain("300 caracteres");
+    expect(
+      problemaNosRemedios([{ ...BISACODIL, descricao: "a".repeat(201) }]),
+    ).toContain("200 caracteres");
+    for (const frase of [
+      problemaNosRemedios([{ ...BISACODIL, nome: "" }]),
+      problemaNosRemedios([{ ...BISACODIL, nome: "a:b" }]),
+    ]) {
+      expect(frase).not.toMatch(/[\u2013\u2014]/);
+    }
+  });
+
+  it("os remédios contam no limite de 3.500 do texto da versão", () => {
+    const texto = textoDoEditor({
+      texto: "a".repeat(3_400),
+      remedios: [BISACODIL, BISACODIL],
+    });
+    expect(problemaNoTextoDoPreparo(texto)).toBe(
+      "A orientação de preparo pode ter até 3.500 caracteres.",
+    );
+    expect(
+      editor([BISACODIL, BISACODIL], { texto: "a".repeat(3_400) }),
+    ).toContain("text-alert-text");
+  });
+});
+
 describe("o editor do texto", () => {
   it("o campo, o contador de 3.500 e o Enviar para o RT aprovar", () => {
     const html = semEntidades(
@@ -610,7 +778,9 @@ describe("o editor do texto", () => {
         <EditorDoPreparo
           id="ed"
           texto={TEXTO_NOVO}
+          remedios={[]}
           aoMudar={() => undefined}
+          aoMudarRemedios={() => undefined}
           enviando={false}
           erro={null}
           aoEnviar={() => undefined}
@@ -630,7 +800,9 @@ describe("o editor do texto", () => {
         <EditorDoPreparo
           id="ed"
           texto=""
+          remedios={[]}
           aoMudar={() => undefined}
+          aoMudarRemedios={() => undefined}
           enviando={false}
           erro={null}
           aoEnviar={() => undefined}
@@ -669,7 +841,9 @@ describe("o editor do texto", () => {
         <EditorDoPreparo
           id="ed"
           texto={TEXTO_NOVO}
+          remedios={[]}
           aoMudar={() => undefined}
+          aoMudarRemedios={() => undefined}
           enviando
           erro="Tire o link, o arroba e os caracteres fora do comum: o paciente recebe só o texto (escreva mcg no lugar de µg)."
           aoEnviar={() => undefined}
@@ -689,7 +863,9 @@ describe("o editor do texto", () => {
       <EditorDoPreparo
         id="ed"
         texto={longo}
+        remedios={[]}
         aoMudar={() => undefined}
+        aoMudarRemedios={() => undefined}
         enviando={false}
         erro={null}
         aoEnviar={() => undefined}
@@ -1349,7 +1525,9 @@ describe("o que a pessoa leu é o que vai para o banco (TELA-1, TELA-3 e TELA-11
         <EditorDoPreparo
           id="ed"
           texto="Meu texto ainda não enviado."
+          remedios={[]}
           aoMudar={() => undefined}
+          aoMudarRemedios={() => undefined}
           enviando={false}
           erro={null}
           aviso={T.outraPessoaSalvouAguardando}

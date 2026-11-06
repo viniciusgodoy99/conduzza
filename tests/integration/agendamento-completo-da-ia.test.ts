@@ -1827,3 +1827,74 @@ describe("[revisão curta da AG4, B3] a marcação com a âncora forte e a mensa
     expect(await marcadasPelaIa(conversa)).toBe(1);
   });
 });
+
+// Decisao do dono de 06/11/2026 (migration 20261106110000; docs/04, secao 42).
+describe("Agendar consulta ligada por padrão", () => {
+  async function publicar(campos: {
+    skills: Record<string, boolean>;
+    antecedencia?: number | null;
+    horizonte?: number | null;
+  }): Promise<void> {
+    const { data } = await admin
+      .from("ai_agent_config")
+      .select("version")
+      .eq("clinic_id", clinica)
+      .order("version", { ascending: false })
+      .limit(1)
+      .single()
+      .throwOnError();
+    await inserir("ai_agent_config", {
+      clinic_id: clinica,
+      version: (data as { version: number }).version + 1,
+      status: "publicada",
+      skills: campos.skills,
+      agenda_antecedencia_horas: campos.antecedencia === undefined ? 2 : campos.antecedencia,
+      agenda_horizonte_dias: campos.horizonte === undefined ? 30 : campos.horizonte,
+      exige_nome_completo: true,
+      exige_nascimento: true,
+      exige_cpf: false,
+    });
+  }
+
+  afterAll(async () => {
+    await publicar({ skills: { agendar: true } });
+  });
+
+  // Num dia que nenhum outro caso usa: as reservas vivem 10 minutos e seguram
+  // o horario para as outras conversas.
+  const reservarNoDia3 = (conversa: string, hora: string): Promise<Resposta> =>
+    rpcOk<Resposta>("reservar_horario_da_ia", {
+      p_clinic_id: clinica,
+      p_conversation_id: conversa,
+      p_service_link_id: lAna,
+      p_starts_at: noDia(3, hora),
+      p_job_id: crypto.randomUUID(),
+    });
+
+  it("a chave ausente vale ligada; só o false gravado desliga; sem a agenda, não vale", async () => {
+    const recusada = { ok: false, motivo: "agenda_nao_configurada" };
+    await publicar({ skills: {} });
+    expect(await reservarNoDia3((await novaConversa()).conversa, "15:30")).toMatchObject({ ok: true });
+    await publicar({ skills: { agendar: false } });
+    expect(await reservarNoDia3((await novaConversa()).conversa, "16:00")).toEqual(recusada);
+    await publicar({ skills: {}, antecedencia: null });
+    expect(await reservarNoDia3((await novaConversa()).conversa, "16:00")).toEqual(recusada);
+    await publicar({ skills: {}, horizonte: null });
+    expect(await reservarNoDia3((await novaConversa()).conversa, "16:00")).toEqual(recusada);
+  });
+
+  it("remarcar e cancelar continuam desligadas com o skills sem as chaves", async () => {
+    await publicar({ skills: {} });
+    const { conversa } = await novaConversa();
+    expect(
+      await rpcOk<Resposta>("reservar_horario_da_ia", {
+        p_clinic_id: clinica,
+        p_conversation_id: conversa,
+        p_service_link_id: lAna,
+        p_starts_at: noDia(3, "16:30"),
+        p_job_id: crypto.randomUUID(),
+        p_remarcar: crypto.randomUUID(),
+      }),
+    ).toEqual({ ok: false, motivo: "remarcacao_desligada" });
+  });
+});

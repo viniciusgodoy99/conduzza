@@ -127,7 +127,10 @@ import { lerPreparoParaEnvio } from "@/lib/agente/contexto";
 import { PASSO_DO_PREPARO_FORA_DE_VIGOR } from "@/lib/agente/ferramentas/enviar-preparo";
 import { lerDecisaoDoPreparo } from "@/lib/agente/whatsapp";
 import { passoDoPreparoRecusado } from "@/lib/agente/laco";
-import type { PreparoAprovado } from "@/lib/domain/conformidade/preparo-aprovado";
+import {
+  comIntroducao,
+  type PreparoAprovado,
+} from "@/lib/domain/conformidade/preparo-aprovado";
 import { enviarPreparoAprovadoDaIa } from "@/lib/integrations/whatsapp/send";
 // [AG7 preparo] fim
 
@@ -285,8 +288,8 @@ export const PRAZO_MINIMO_DO_TURNO_MS = 20_000;
 /**
  * AG6b (desenho 5.1): com audio a transcrever ou arquivo a ler, o turno
  * precisa de mais prazo (a transcricao e o leitor vem antes do agente e do
- * filtro). PROPOSTA, a calibrar na prova paga (D-100). Abaixo: volta para a
- * fila, sem custo (orcamento_da_passagem).
+ * filtro). PROPOSTA, sem medir (a prova paga, D-100, foi dispensada pelo dono em 06/11/2026). Abaixo: volta para
+ * a fila, sem custo (orcamento_da_passagem).
  *
  * Revisao da AG6b, a conta (era 30 s, e so a transcricao, o classificador e
  * a reserva do verificador no pior caso davam 30,5 s):
@@ -310,8 +313,8 @@ export const PRAZO_MINIMO_DO_TURNO_MS = 20_000;
  *    (com 1,5 s de Storage, a transcricao tem 10,5 s); a integracao com os
  *    12 s inteiros e 1,5 s de Storage pede 37,5 s, e o maior turno (38 s)
  *    da os 12 s com ate 2 s de Storage.
- * A MARGEM DE 2 s ANTES DO TURNO (R3 de d1a15f6, 5), a medir na prova paga
- * (D-100): o turno com midia so comeca com 36 s, e o maior turno possivel e
+ * A MARGEM DE 2 s ANTES DO TURNO (R3 de d1a15f6, 5), sem medir: o turno com
+ * midia so comeca com 36 s, e o maior turno possivel e
  * 38 s (os 55 s da invocacao menos os 14 s do envio e os 3 s das
  * gravacoes). Tudo o que vem antes da conta do prazo do turno na invocacao
  * (o claim, o historico, o plano da midia e o teto) tem de caber nos 2 s do
@@ -323,11 +326,11 @@ export const PRAZO_MINIMO_DO_TURNO_MS = 20_000;
  * de novo logo antes do laco: abaixo dele, o job volta para a fila sem
  * custo (a reserva solta). Essas idas cabem, entao, na sobra do turno acima
  * do minimo (no maior turno, os mesmos 2 s, menos o que veio antes da
- * conta). Se esses 2 s bastam, e se o minimo fica em 36 s, so a prova paga
- * diz. O minimo nunca pode passar do maior turno (o turno com midia nunca
+ * conta). Se esses 2 s bastam, e se o minimo fica em 36 s, so a medida diz. O
+ * minimo nunca pode passar do maior turno (o turno com midia nunca
  * comecaria).
- * O que NAO cabe, e depende da prova paga (medir o Storage e o modelo e
- * baixar os prazos) ou de subir o maxDuration da rota da IA (decisao de
+ * O que NAO cabe, e depende de medir o Storage e o modelo e baixar os prazos
+ * ou de subir o maxDuration da rota da IA (decisao de
  * infraestrutura, desenho 12): o Storage no pior caso proposto (8 s) junto
  * com o modelo no pior caso, 44 s; e audio e arquivo no mesmo turno. Nesses
  * casos a midia e cortada no prazo dela (falha fechada, a frase de sempre),
@@ -394,9 +397,9 @@ export type DependenciasDoExecutorDaIa = {
 // [AG6b mídia] início
 /** AG6b: o que o executor precisa para a midia do turno. */
 export type DependenciasDaMidiaDoTurno = {
-  /** TRANSCRICAO_CALIBRADA (a prova paga, D-100). */
+  /** TRANSCRICAO_CALIBRADA. */
   transcricaoCalibrada: boolean;
-  /** Os tetos de tokens do leitor medidos na prova (nulos: nao le). */
+  /** Os tetos de tokens do leitor (nulos: nao le). */
   tetosDoLeitor: { imagem: number | null; pagina: number | null };
   /** O modelo da transcricao (IA_MODELO_TRANSCRICAO; null: fora da lista). */
   modeloDaTranscricao: string | null;
@@ -1951,7 +1954,9 @@ async function decidirEEnviarOPreparo(
     clinicId: c.clinicId,
     conversationId: c.conversationId,
     jobId: c.job.id,
-    filtro: null,
+    // A introducao, quando ela passou pelo filtro: a decisao diz as versoes
+    // dele e o verificador. O texto do preparo nunca passa pelo filtro.
+    filtro: resultado.filtro,
     uso: resultado.uso,
     versaoDoPrompt: resultado.versaoDoPrompt,
     configVersion: config.versao,
@@ -2053,12 +2058,29 @@ async function decidirEEnviarOPreparo(
       resultado.notasSeOPreparoNaoSair?.assunto_clinico ?? null,
     );
   }
-  const preparo = leitura.preparo;
+  // Decisao do dono de 06/11/2026: a introducao que o filtro aprovou vai antes
+  // do bloco, na mesma mensagem; o hash da decisao e do corpo inteiro. A que nao
+  // couber (a mensagem passaria de 4.096) fica de fora: sai so o bloco.
+  const comEla =
+    resultado.introducao === null
+      ? null
+      : comIntroducao(leitura.preparo, resultado.introducao);
+  const preparo = comEla ?? leitura.preparo;
   const decisionId = await gravarDecisao(c.admin, {
     ...comum,
     desfecho: resultado.desfecho,
     textoSha256: preparo.sha256,
-    trilha: resultado.trilha,
+    trilha:
+      resultado.introducao !== null && comEla === null
+        ? [
+            ...resultado.trilha,
+            {
+              tipo: "bloqueio",
+              texto:
+                "A introdução da IA não coube na mensagem: saiu só a orientação aprovada.",
+            },
+          ]
+        : resultado.trilha,
   });
   log.info("ia_turno_decidido", {
     ...idsDoLog(c),
@@ -2070,7 +2092,9 @@ async function decidirEEnviarOPreparo(
     ...turno,
     estado: "decidido",
     saida: "preparo",
-    texto: null,
+    // Enquanto o envio esta pendente, a introducao fica no turno para a
+    // retomada remontar o mesmo corpo; o bloco e relido do banco.
+    texto: comEla === null ? null : resultado.introducao,
     textoSha256: preparo.sha256,
     decisionId,
   });
@@ -3032,7 +3056,14 @@ async function retomarOPreparo(
             versaoId: decisao.versaoId,
           }),
         );
-  const preparo = leitura?.tipo === "pronto" ? leitura.preparo : null;
+  // Com a introducao guardada no turno, o mesmo corpo da decisao (a regra propria
+  // de novo; o hash abaixo confere o resto).
+  const preparo =
+    leitura?.tipo !== "pronto"
+      ? null
+      : turno.texto === null
+        ? leitura.preparo
+        : comIntroducao(leitura.preparo, turno.texto);
   if (
     decisao === null ||
     preparo === null ||

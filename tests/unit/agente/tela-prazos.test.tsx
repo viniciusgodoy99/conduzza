@@ -216,8 +216,18 @@ describe("Habilidades: Cancelar consulta e Remarcar consulta", () => {
     expect(texto(html)).not.toContain(DICA_DO_PRAZO_DE_CANCELAR);
 
     // Agenda completa, mas Agendar desligada: Remarcar continua travada.
-    html = habilidades({ agenda: AGENDA, prazos: PRAZOS });
+    html = habilidades({
+      agenda: AGENDA,
+      prazos: PRAZOS,
+      habilidades: habilidadesEfetivas({ agendar: false }),
+    });
     expect(chaveDa(html, "remarcar")).toMatch(/ disabled=""/);
+
+    // Decisao do dono de 06/11/2026: sem a chave gravada, Agendar vale ligada
+    // (com a agenda), e Remarcar so precisa do prazo; continua desligada.
+    html = habilidades({ agenda: AGENDA, prazos: PRAZOS });
+    expect(chaveDa(html, "remarcar")).not.toMatch(/ disabled=""/);
+    expect(chaveDa(html, "remarcar")).toContain('aria-checked="false"');
 
     // Agendar ligada e os dois prazos: as duas livres, sem dica.
     html = habilidades({
@@ -236,7 +246,7 @@ describe("Habilidades: Cancelar consulta e Remarcar consulta", () => {
       agenda: AGENDA,
       prazos: { cancelarHoras: null, remarcarHoras: 48 },
       habilidades: {
-        ...habilidadesEfetivas({}),
+        ...habilidadesEfetivas({ agendar: false }),
         cancelar: true,
         remarcar: true,
       },
