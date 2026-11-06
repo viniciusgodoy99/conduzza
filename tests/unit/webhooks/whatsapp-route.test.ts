@@ -530,11 +530,13 @@ describe("POST /api/webhooks/whatsapp: qual numero chama", () => {
 });
 
 describe("POST /api/webhooks/whatsapp: tudo filtrado pelo numero", () => {
-  it("mensagem ignorada (numero proprio) responde 200 sem midia nem interceptar", async () => {
+  it.each(["numero_proprio", "resposta_entre_numeros"])(
+    "mensagem ignorada (%s) responde 200 sem midia nem interceptar",
+    async (motivoDaIgnorada) => {
     ingerir.mockResolvedValue({
       data: {
         inserted: false,
-        ignorada: "numero_proprio",
+        ignorada: motivoDaIgnorada,
         contact_id: null,
         contact_created: false,
         conversation_id: null,
@@ -554,7 +556,8 @@ describe("POST /api/webhooks/whatsapp: tudo filtrado pelo numero", () => {
     expect(await resposta.json()).toEqual({ ok: true });
     expect(consultasDe("job_queue", "insert")).toHaveLength(0);
     expect(interceptar).not.toHaveBeenCalled();
-  });
+    },
+  );
 
   it("job de midia leva o numero na coluna e no payload", async () => {
     ingerir.mockResolvedValue(ingestInserida(NUMERO_B));

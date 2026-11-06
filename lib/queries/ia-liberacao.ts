@@ -131,6 +131,11 @@ export type TelefoneDaIa = {
    */
   avisoDaOpenaiVersao?: 1 | 2;
   // [AG6b mídia] fim
+  /**
+   * Numero conectado do Conduzza marcado so para teste (entre_numeros, migration
+   * 20261106100000; so a funcao escreve). Ausente: nao marcado.
+   */
+  entreNumeros?: boolean;
 };
 
 /**
@@ -254,6 +259,7 @@ type LinhaDoTelefone = {
   // [AG6b mídia] início
   aviso_da_openai_versao?: unknown;
   // [AG6b mídia] fim
+  entre_numeros?: unknown;
 };
 
 // [AG6b mídia] início
@@ -276,7 +282,7 @@ export function versaoDoAvisoDaLinha(valor: unknown): 1 | 2 {
  * (fetchLeiturasDaMidia) ja eram tolerantes do mesmo jeito.
  */
 export const COLUNAS_DOS_TELEFONES =
-  "id, phone_key, rotulo, ativo, aviso_da_openai_versao";
+  "id, phone_key, rotulo, ativo, aviso_da_openai_versao, entre_numeros";
 export const COLUNAS_DOS_TELEFONES_SEM_O_AVISO = "id, phone_key, rotulo, ativo";
 
 /** O codigo do Postgres para a coluna que nao existe (undefined_column). */
@@ -551,6 +557,7 @@ export async function fetchLiberacaoDaIa(
           telefone.aviso_da_openai_versao,
         ),
         // [AG6b mídia] fim
+        ...(telefone.entre_numeros === true ? { entreNumeros: true } : {}),
       }),
     ),
     interruptorLigado: interruptor.data,

@@ -44,6 +44,7 @@ import {
   telefoneDaEquipeSchema,
   telefoneParaExibir,
   TEXTOS_DA_IA,
+  TEXTOS_DO_ENTRE_NUMEROS,
   TEXTOS_DO_TESTE_COM_PACIENTE,
   telefonesForaDoPublico,
   temTelefoneQueNaoAciona,
@@ -1071,6 +1072,34 @@ describe("formulário do telefone: LGPD e recusas", () => {
         telefone: "84999990001",
         confirmarAvisoDaOpenai: true,
         forcarContatoDePaciente: "sim",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("o número conectado em teste: a trava segurando tem o motivo próprio, e o texto não tem travessão", () => {
+    const situacaoInvalida = situacao({ telefonesInvalidos: ["t1"] });
+    const telefone = { id: "t1", telefone: "+5584999990001", rotulo: "Ana", ativo: true };
+    expect(
+      porQueNaoAciona(
+        dados({ telefones: [{ ...telefone, entreNumeros: true }], situacao: situacaoInvalida }),
+        "t1",
+      ),
+    ).toBe("entre_numeros_parado");
+    expect(
+      porQueNaoAciona(dados({ telefones: [telefone], situacao: situacaoInvalida }), "t1"),
+    ).toBe("invalido");
+    expect(textoDoTelefoneQueNaoAciona("entre_numeros_parado")).toBe(
+      TEXTOS_DO_ENTRE_NUMEROS.paradoNaLinha,
+    );
+    for (const texto of Object.values(TEXTOS_DO_ENTRE_NUMEROS)) {
+      expect(texto).not.toMatch(/[—–]/);
+    }
+    expect(
+      telefoneDaEquipeSchema.safeParse({
+        rotulo: "Ana",
+        telefone: "84999990001",
+        confirmarAvisoDaOpenai: true,
+        confirmouEntreNumeros: "sim",
       }).success,
     ).toBe(false);
   });

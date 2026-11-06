@@ -955,9 +955,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "ingest_failed" }, { status: 500 });
     }
 
-    // Numero proprio (outro numero ativo da clinica escrevendo para este) ou
-    // numero removido no meio do caminho: nada foi gravado, e isso nao e
-    // erro. 200 para o provedor nao reenviar; sem midia e sem interceptar.
+    // Numero proprio (outro numero ativo da clinica escrevendo para este),
+    // numero removido no meio do caminho ou a resposta do teste entre numeros
+    // (fica com quem atende): nada foi gravado, e isso nao e erro. 200 para o provedor nao reenviar; sem midia e sem interceptar.
     if (data?.ignorada) {
       log.info("webhook_mensagem_ignorada", {
         clinic_id: clinicId,

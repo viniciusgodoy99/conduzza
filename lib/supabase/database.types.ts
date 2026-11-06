@@ -2471,6 +2471,7 @@ export type Database = {
           aviso_da_openai_versao: number
           clinic_id: string
           created_at: string
+          entre_numeros: boolean
           forcado: boolean
           id: string
           phone_key: string
@@ -2483,6 +2484,7 @@ export type Database = {
           aviso_da_openai_versao?: number
           clinic_id: string
           created_at?: string
+          entre_numeros?: boolean
           forcado?: boolean
           id?: string
           phone_key: string
@@ -2495,6 +2497,7 @@ export type Database = {
           aviso_da_openai_versao?: number
           clinic_id?: string
           created_at?: string
+          entre_numeros?: boolean
           forcado?: boolean
           id?: string
           phone_key?: string
@@ -6160,6 +6163,7 @@ export type Database = {
           p_ativo: boolean
           p_clinic_id: string
           p_confirmou_aviso_da_openai?: boolean
+          p_confirmou_entre_numeros?: boolean
           p_confirmou_teste_com_paciente?: boolean
           p_forcar_contato_existente?: boolean
           p_rotulo: string
@@ -7195,6 +7199,30 @@ export type Database = {
       }
       telefone_e_numero_da_plataforma: {
         Args: { p_telefone: string }
+        Returns: boolean
+      }
+      chave_do_numero_conectado: {
+        Args: { p_display_phone: string }
+        Returns: string
+      }
+      ia_entre_numeros_marcado: {
+        Args: { p_clinic_id: string; p_telefone: string }
+        Returns: boolean
+      }
+      ia_entre_numeros_fecha_par: {
+        Args: { p_chave: string; p_clinic_id: string }
+        Returns: boolean
+      }
+      ia_entre_numeros_vale: {
+        Args: {
+          p_clinic_id: string
+          p_telefone: string
+          p_whatsapp_account_id: string
+        }
+        Returns: boolean
+      }
+      ia_resposta_entre_numeros: {
+        Args: { p_telefone: string; p_whatsapp_account_id: string }
         Returns: boolean
       }
       textos_de_preparo_da_clinica: {

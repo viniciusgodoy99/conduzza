@@ -234,6 +234,7 @@ import {
 import {
   avisoDeContatoDaClinica,
   TEXTOS_DA_IA,
+  TEXTOS_DO_ENTRE_NUMEROS,
   TEXTOS_DO_TESTE_COM_PACIENTE,
 } from "@/components/agente/whatsapp/agente-de-ia";
 
@@ -1219,7 +1220,7 @@ describe("telefone da equipe pelo administrador (decisão do dono de 19/10/2026)
     expect(registro.inseridos).toEqual([]);
   });
 
-  it("número de WhatsApp do Conduzza: o texto, nada na trilha", async () => {
+  it("número de WhatsApp do Conduzza: a opção de usar só para teste, nada na trilha", async () => {
     registro.errosDoRpc.set("definir_contato_liberado_da_ia", {
       code: "23514",
       message: "telefone_invalido_para_equipe",
@@ -1230,8 +1231,67 @@ describe("telefone da equipe pelo administrador (decisão do dono de 19/10/2026)
         telefone: "84999990002",
         confirmarAvisoDaOpenai: true,
       }),
-    ).toEqual({ ok: false, error: TEXTOS_DA_IA.telefoneDaPlataforma });
+    ).toEqual({
+      ok: false,
+      error: TEXTOS_DO_ENTRE_NUMEROS.detectado,
+      pedeEntreNumeros: true,
+    });
     expect(registro.inseridos).toEqual([]);
+    // Sem a opção marcada, o parâmetro novo nem sai.
+    expect(
+      registro.rpcs.at(-1)?.args,
+    ).not.toHaveProperty("p_confirmou_entre_numeros");
+  });
+
+  it("número conectado com a opção: manda a confirmação ao banco", async () => {
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Ana",
+        telefone: "84999990002",
+        confirmarContato: true,
+        confirmarAvisoDaOpenai: true,
+        confirmouEntreNumeros: true,
+      }),
+    ).toEqual({ ok: true });
+    expect(registro.rpcs.at(-1)?.args).toMatchObject({
+      p_ativo: true,
+      p_confirmou_entre_numeros: true,
+    });
+  });
+
+  it.each([
+    ["entre_numeros_reciproco", TEXTOS_DO_ENTRE_NUMEROS.reciproco],
+    ["entre_numeros_fora_da_fase", TEXTOS_DO_ENTRE_NUMEROS.foraDaFase],
+  ])("recusa do banco (%s): o texto próprio, sem reabrir a opção", async (chave, texto) => {
+    registro.errosDoRpc.set("definir_contato_liberado_da_ia", {
+      code: "23514",
+      message: chave,
+    });
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Ana",
+        telefone: "84999990002",
+        confirmarContato: true,
+        confirmarAvisoDaOpenai: true,
+        confirmouEntreNumeros: true,
+      }),
+    ).toEqual({ ok: false, error: texto });
+  });
+
+  it("o telefone de sempre continua recusando igual se a opção não resolver: não abre de novo", async () => {
+    registro.errosDoRpc.set("definir_contato_liberado_da_ia", {
+      code: "23514",
+      message: "telefone_invalido_para_equipe",
+    });
+    expect(
+      await adicionarTelefoneDaIaAction({
+        rotulo: "Ana",
+        telefone: "84999990002",
+        confirmarContato: true,
+        confirmarAvisoDaOpenai: true,
+        confirmouEntreNumeros: true,
+      }),
+    ).toEqual({ ok: false, error: TEXTOS_DA_IA.telefoneDaPlataforma });
   });
 
   it("telefone de um contato da clínica: o aviso com o nome e a leitura na trilha, como para o super admin", async () => {
@@ -1313,7 +1373,7 @@ describe("E3: telefone novo da equipe", () => {
     expect(registro.inseridos).toEqual([]);
   });
 
-  it("o banco recusou o número da plataforma: o texto genérico, nada na trilha", async () => {
+  it("o banco recusou o número da plataforma: a opção, nada na trilha", async () => {
     registro.errosDoRpc.set("definir_contato_liberado_da_ia", {
       code: "23514",
       message: "telefone_invalido_para_equipe",
@@ -1324,7 +1384,11 @@ describe("E3: telefone novo da equipe", () => {
         telefone: "84999990002",
         confirmarAvisoDaOpenai: true,
       }),
-    ).toEqual({ ok: false, error: TEXTOS_DA_IA.telefoneDaPlataforma });
+    ).toEqual({
+      ok: false,
+      error: TEXTOS_DO_ENTRE_NUMEROS.detectado,
+      pedeEntreNumeros: true,
+    });
     expect(registro.inseridos).toEqual([]);
   });
 

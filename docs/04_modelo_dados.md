@@ -4996,3 +4996,60 @@ A clínica sem atividade recebe zeros e mediana nula, e quem pede a clínica de 
 - **O que o ensaio prova:** cada número contado à mão, com 18 conversas na janela atual; a janela anterior; as bordas `[de, ate)`; a conversa transferida fora de resolvidas; a consulta recusada fora e a de `approval_status` nulo dentro; o envio que falhou ou ficou em `enviando` fora; a nota interna fora; o celular da clínica como pessoa e a resposta automática não; os quatro papéis que veem a clínica lendo o mesmo; a clínica A sem ver a B, nos dois sentidos; o pendente sem ver nada; o `profissional` recebendo null; `anon` sem EXECUTE; o catálogo igual; as chaves de antes iguais; e o rollback.
 - **Postgres local** (`~/.claude/plans/agente-completo/ag0/banco/`, Postgres 18 do Homebrew, 127.0.0.1:55621, com as 125 migrations do repositório sobre os stubs do Supabase, sem ler a produção; a produção é 17.6): o ensaio passa, e 36 sabotagens da migration (`sabotagens/rodar.py`, um defeito por vez) são todas pegas por um assert.
 - **Provas de banco que rodam depois de aplicar:** `npm run test:rls -- relatorios` e `npm run test:integration -- relatorios`, com os casos novos (um usuário da clínica A não lê o bloco da B, o `profissional` recebe null e, na integração, a conta das duas janelas). **Escritos e não rodados:** batem no banco de verdade e só passam com a migration.
+
+## 41. O teste do agente de IA entre números conectados (06/11/2026, migration `20261106100000_teste_entre_numeros.sql`; escrita na branch `teste-entre-numeros` e provada só no Postgres local; **NÃO aplicada**, espera o ok do dono)
+
+Pedido do dono em 06/11/2026: "liberar um número para conversar com outro que está conectado, principalmente se tiverem conectado 2 números na mesma empresa, e o agente responder". Até aqui, `telefone_e_numero_da_plataforma` barrava número conectado em `definir_contato_liberado_da_ia` e em `ia_pode_falar_com`, e a ingestão ignorava outro número da mesma clínica como `numero_proprio`. Essas travas existem contra o laço: dois agentes respondendo um ao outro queimam dinheiro e podem banir o número no canal não oficial (`CLAUDE.md`, 3.3, risco aceito de banimento, agravado por automação). Elas não saíram: entrou uma **liberação explícita, por telefone, só de teste**. Sem a marca, nada muda.
+
+### 41.1 O que mudou
+
+- **`ia_contato_liberado.entre_numeros`** (boolean, default falso). Só `definir_contato_liberado_da_ia` grava (gatilho `ia_contato_liberado_entre_numeros_so_pela_funcao`, com a flag local `conduzza.entre_numeros_da_ia`, o mesmo desenho do `forcado`: 42501 `so_pela_marca_entre_numeros` até para o servidor). Desligado nunca fica marcado: ligar de novo pede a confirmação outra vez, pelo formulário de adicionar. Trilha `marcou_numero_conectado_em_teste` em `audit_log`, sem telefone.
+- **`definir_contato_liberado_da_ia`** ganha `p_confirmou_entre_numeros` (DROP e CREATE, default falso). Número da plataforma sem ela: 23514 `telefone_invalido_para_equipe`, como hoje. Com ela: 23514 `entre_numeros_fora_da_fase` (clínica fora de `ia_clinicas_da_fase_controlada` e não `e_de_teste`, mesmo pelo servidor ou pelo super admin), 23514 `entre_numeros_reciproco`, ou a marca. O aviso da OpenAI e o sinal de paciente continuam pedidos.
+- **`ia_pode_falar_com`, `ia_atende_no_whatsapp`, `ia_devolver_disponivel`, `situacao_da_ia_na_clinica`:** número da plataforma só passa com `ia_entre_numeros_vale`.
+- **`ingest_inbound_message`,** três trechos `[entre numeros]`, nada mais: (a) outro número ativo da mesma clínica só vira conversa com a marca ativa; sem ela, `numero_proprio`; (b) a resposta do número que atende, chegando ao número marcado, volta ignorada `resposta_entre_numeros`; (c) a mensagem do número marcado grava `wa_message_id` próprio, `entre:<número que recebeu>:<id>`.
+- **Funções novas, só do servidor** (42501 para anon e authenticated): `chave_do_numero_conectado`, `ia_entre_numeros_marcado`, `ia_entre_numeros_fecha_par`, `ia_entre_numeros_vale`, `ia_resposta_entre_numeros`.
+
+### 41.2 O que precisa existir para o agente responder de fato
+
+Na ordem do caminho: webhook do número que recebe, `ingest_inbound_message`, `enfileirar_resposta_da_ia`, job `responder_com_ia` (`lib/jobs/responder-com-ia.ts`), envio.
+
+1. **O número que atende (B)** com `ia_numero_liberado` ativo, não removido, e **telefone conhecido**: `display_phone` com 10 a 15 dígitos. Número só com o nome do perfil: `ia_entre_numeros_vale` falso, o agente não responde.
+2. **A clínica de B:** na fase controlada (com o interruptor geral ligado; número real) ou `e_de_teste` (só número `fake`, e o motor de produção não reivindica). `ia_liberacao` liberada, não pausada, modo `contatos` ou `numero_inteiro`, dentro do teto de 24 horas; versão publicada; horário em `atende`; público que aceite o contato.
+3. **O telefone de A marcado na clínica de B,** com a confirmação e o aviso da OpenAI. Contato com sinal de paciente: também o forçar.
+4. **O lado de A:** sem o agente ligado para responder a B (seção 41.3). Clínica de A em `numero_inteiro` com o agente ligado em A conta como ligado: desligue o número A.
+5. **Conversa nova.** Só conversa nova nasce na IA. Se já existe conversa aberta de A com a equipe em B (a mensagem chegou antes da marca), ela segue com a equipe: resolva, ou use o Devolver. A aba já mostra isso na linha do telefone.
+6. **Autorização para receber mensagens:** a primeira mensagem cria `contact_consent` com source `conversa`. Autorização revogada: o executor passa sem responder (`sem_autorizacao`), e não há como reativar sem autorização nova.
+7. **A manutenção do motor** (`motor_manutencao`) tira a conversa da IA quando `ia_pode_falar_com` fica falso (`liberacao_perdida`) ou quando a resposta demora mais de 3 minutos (`sem_resposta`). Com a marca válida, ela não tira: provado com a função de verdade no Postgres local. `ia_desligar` e `ia_retomar_conversas_no_horario` leem as mesmas funções.
+
+### 41.3 A trava contra o laço
+
+1. **Na marca:** `ia_entre_numeros_fecha_par` recusa se algum outro número ativo desta clínica já está marcado numa clínica dona do telefone (a própria, quando os dois números são da mesma). Serializada por `pg_advisory_xact_lock`: duas clínicas marcando ao mesmo tempo, passa uma só (corrida provada com duas sessões; sem a trava, passam as duas).
+2. **Em toda decisão, mesmo com a recusa contornada:** `ia_entre_numeros_vale` é falso com o par recíproco, com o número que escreve com o agente ligado para responder ao número que recebe, com o número que recebe sem telefone conhecido, escrevendo para si mesmo, com a clínica fora da fase. Falha fechada: nulo é falso. Ligar o outro lado depois derruba o teste na próxima decisão, e a manutenção tira a conversa.
+3. **O teto de respostas por conversa por hora** (`ia_liberacao.teto_respostas_por_conversa_hora`, padrão 20), no executor. `tests/unit/ia-whatsapp/entre-numeros-laco.test.ts` roda dois executores de verdade com as duas camadas acima falhando de propósito: cada envio vira turno do outro lado. Sem teto que segure, 40 respostas em 40 passos; com o teto de 20, os dois param em 20 respostas, com `teto_de_respostas` e a frase fixa. Tirando o teto do executor, o teste cai.
+
+Basta o par: o agente só responde a quem escreveu, então um ciclo de três números não propaga mensagem. Nenhuma função usa 40001 nem 40P01.
+
+### 41.4 A colisão de `wa_message_id`
+
+O id é o mesmo para quem envia e para quem recebe, e o unique é global. O que acontece, provado no ensaio:
+
+- **Mesma clínica:** a resposta do B chega ao webhook do A e volta `numero_proprio` (B não tem marca). Nenhuma linha nova; a conversa está no número B.
+- **Clínicas diferentes, sem as mudanças:** a resposta chegava ao A, criava contato e conversa vazios e sumia no `on conflict`; ou, chegando antes do update do envio, gravava o id em X e o update de `send.ts` batia em 23505, sem adoção (`envio_saiu_sem_confirmar_registro`, a linha fica `enviando`; nada é reenviado).
+- **Agora:** `resposta_entre_numeros` não grava nada, antes ou depois do update do envio. A pergunta entra com id próprio, então não colide com a linha de quem enviou (mesmo escrita pela caixa de entrada), e a reentrega bate no mesmo id derivado e não repete. A conversa inteira fica em quem atende. O eco da saída (`registrar_mensagem_do_celular`) não mudou: `numero_proprio` ou `numero_da_plataforma`, sem linha.
+- **Sem marca, colisão como hoje:** o ensaio prova que o par sem marca continua igual.
+- **Limite:** a citação e o apagamento pelo WhatsApp da mensagem de id derivado não casam (só teste); reentrega do provedor no segundo exato em que a marca liga ou desliga pode duplicar a linha de teste, sem turno a mais (o teto vale). A clínica de A não vê essa conversa no Atendimento dela: quem lê é a clínica de B.
+
+### 41.5 Aplicar e voltar
+
+- **Travas:** ACCESS EXCLUSIVE em `ia_contato_liberado`, porque ADD COLUMN e CREATE TRIGGER pedem. Só catálogo, default constante, fração de milissegundo depois de pegar; mas toda ingestão lê essa tabela, então o pedido é NOWAIT, 30 tentativas de 100 ms. No resto, ACCESS SHARE (`clinic`, `ia_liberacao`, `ia_numero_liberado`, `whatsapp_account`, `ai_agent_config`, `ia_interruptor`), para validar os corpos. Nenhuma em `message`, `conversation` ou `contact`.
+- **Ordem:** a migration primeiro, depois o código. A aba lê a coluna nova e, sem ela, cai na leitura sem a coluna (42703; sem a versão do aviso nesse intervalo). O RPC só manda o parâmetro novo com a opção marcada.
+- **Rollback** (`supabase/operacao/rollback/20261106100000-corpos-anteriores.sql`, numa transação; código primeiro): os telefones marcados saem desligados, a conversa deles vai para a equipe, os seis corpos voltam (md5 conferidos no fim), o resto sai. Ficam as mensagens de id derivado e a trilha.
+- **Custo na clínica sem marca:** em toda mensagem, só `ia_resposta_entre_numeros`: de 39 a 64 microssegundos por chamada no Postgres local, sem nenhuma marca, com a máquina carregada; a ingestão inteira leva cerca de 400 microssegundos. Com 3.000 mensagens, antes e depois, em rodadas alternadas, a diferença não sai do ruído da máquina. As outras leituras rodam em número próprio ou em telefone candidato.
+
+### 41.6 Provas
+
+- **Ensaio** (`~/.claude/plans/agente-completo/entre-numeros/ensaio-20261106100000.sql`): uma transação que termina em ROLLBACK, só clínicas sintéticas e telefones fictícios, sem ler a produção; confere os seis md5 de antes, compara a clínica sem marca antes e depois (chave por chave), e prova cada recusa, o caminho na mesma clínica e entre clínicas, a colisão, a camada 2 contornada e o rollback. `ENSAIO OK`.
+- **Sabotagens** (`entre-numeros/banco/sabotagens/rodar.py`): 46 defeitos, um por vez na migration, todos pegos por assert. À parte: a corrida sem o advisory lock (duas marcas) e o executor sem o teto (o teste de simulação cai).
+- **Postgres local** (`entre-numeros/banco/`, 127.0.0.1:55624, todas as migrations até a `20261104120000`, sem ler a produção); resultado em `final.txt`.
+- **md5:** migration `33ed19be10701ec74e54b2d2c17ef356`, rollback `bfe2fa707792fedf3b5e70941a0591bf`, ensaio `b470436ecf1697f6a27f84e7e5dfed75`. Os corpos de antes vêm do modelo local; o ensaio para se a produção tiver outro (`ingest_inbound_message` `bd0917a98ef754027513809cba5bee43`).
+- **Na produção, nada rodou.** `tests/rls/entre-numeros.test.ts` e `tests/integration/entre-numeros.test.ts` estão escritos e **não rodaram**: rodam depois de aplicar, com `npm run test:rls -- entre-numeros` e `npm run test:integration -- entre-numeros`. O teste com dois números reais, a OpenAI e a uazapi também não aconteceu.

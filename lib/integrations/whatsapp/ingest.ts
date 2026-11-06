@@ -50,10 +50,13 @@ export type IngestResultado = {
    * - numero_proprio: quem escreveu e um numero ativo da propria clinica
    *   (o numero A falando com o numero B nao e paciente);
    * - numero_removido: o numero que recebeu foi removido no meio do caminho
-   *   (corrida com a remocao; a URL dele ja recebe 401).
+   *   (corrida com a remocao; a URL dele ja recebe 401);
+   * - resposta_entre_numeros: a resposta do numero que atende, chegando ao
+   *   numero marcado para o teste entre numeros (migration 20261106100000): a
+   *   conversa e a mensagem ficam com quem atende.
    * Os ids vem nulos e inserted false.
    */
-  ignorada?: "numero_proprio" | "numero_removido";
+  ignorada?: "numero_proprio" | "numero_removido" | "resposta_entre_numeros";
   contact_id: string | null;
   contact_created: boolean;
   conversation_id: string | null;
