@@ -1860,16 +1860,27 @@ describe("Agendar consulta ligada por padrão", () => {
     await publicar({ skills: { agendar: true } });
   });
 
+  // Num dia que nenhum outro caso usa: as reservas vivem 10 minutos e seguram
+  // o horario para as outras conversas.
+  const reservarNoDia3 = (conversa: string, hora: string): Promise<Resposta> =>
+    rpcOk<Resposta>("reservar_horario_da_ia", {
+      p_clinic_id: clinica,
+      p_conversation_id: conversa,
+      p_service_link_id: lAna,
+      p_starts_at: noDia(3, hora),
+      p_job_id: crypto.randomUUID(),
+    });
+
   it("a chave ausente vale ligada; só o false gravado desliga; sem a agenda, não vale", async () => {
     const recusada = { ok: false, motivo: "agenda_nao_configurada" };
     await publicar({ skills: {} });
-    expect(await reservar((await novaConversa()).conversa, lAna, "15:30")).toMatchObject({ ok: true });
+    expect(await reservarNoDia3((await novaConversa()).conversa, "15:30")).toMatchObject({ ok: true });
     await publicar({ skills: { agendar: false } });
-    expect(await reservar((await novaConversa()).conversa, lAna, "16:00")).toEqual(recusada);
+    expect(await reservarNoDia3((await novaConversa()).conversa, "16:00")).toEqual(recusada);
     await publicar({ skills: {}, antecedencia: null });
-    expect(await reservar((await novaConversa()).conversa, lAna, "16:00")).toEqual(recusada);
+    expect(await reservarNoDia3((await novaConversa()).conversa, "16:00")).toEqual(recusada);
     await publicar({ skills: {}, horizonte: null });
-    expect(await reservar((await novaConversa()).conversa, lAna, "16:00")).toEqual(recusada);
+    expect(await reservarNoDia3((await novaConversa()).conversa, "16:00")).toEqual(recusada);
   });
 
   it("remarcar e cancelar continuam desligadas com o skills sem as chaves", async () => {
@@ -1880,7 +1891,7 @@ describe("Agendar consulta ligada por padrão", () => {
         p_clinic_id: clinica,
         p_conversation_id: conversa,
         p_service_link_id: lAna,
-        p_starts_at: as("16:30"),
+        p_starts_at: noDia(3, "16:30"),
         p_job_id: crypto.randomUUID(),
         p_remarcar: crypto.randomUUID(),
       }),

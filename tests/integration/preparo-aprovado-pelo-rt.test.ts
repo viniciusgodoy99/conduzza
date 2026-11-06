@@ -123,7 +123,6 @@ const idDe = (apelido: string) => ids.get(apelido)!;
 const como = (apelido: string) => clientes.get(apelido)!;
 
 let clinica = "";
-let conferente: SupabaseClient | null = null;
 let numero = "";
 let colonoscopia = "";
 let ultrassom = "";
@@ -199,70 +198,6 @@ async function criarPessoa(apelido: string, papel: string): Promise<void> {
 }
 
 
-// Desde a decisao do dono de 06/11/2026, conferir nao muda mais nada (a RPC
-// fica, sem uso). Antes, de 05/11/2026: sem o registro do RT conferido, nada esta em
-// vigor, e so o super admin confere. Por isso esta suite exige
-// INTEGRACAO_COM_SUPER_ADMIN=1 (o usuario sintetico com product_admin NO BANCO
-// DE PRODUCAO, sem vinculo, como em super-admin-sem-clinica.test.ts; sai no
-// afterAll). Se uma execucao morrer antes do afterAll:
-//   delete from public.product_admin p using auth.users u
-//    where u.id = p.user_id and u.email like 'preparo-int-super-%@example.com';
-async function criarConferente(): Promise<void> {
-  if (process.env.INTEGRACAO_COM_SUPER_ADMIN !== "1") {
-    throw new Error(
-      "Rode com INTEGRACAO_COM_SUPER_ADMIN=1: sem a conferencia do registro do RT, nenhum preparo fica em vigor.",
-    );
-  }
-  const email = `preparo-int-super-${sufixo}@example.com`;
-  const { data, error } = await admin.auth.admin.createUser({
-    email,
-    password: SENHA,
-    email_confirm: true,
-    user_metadata: { name: "Conferente sintético" },
-  });
-  if (error || !data.user) {
-    throw new Error(`criar o conferente: ${error?.message ?? "sem usuário"}`);
-  }
-  ids.set("conferente", data.user.id);
-  await admin
-    .from("product_admin")
-    .insert({ user_id: data.user.id })
-    .throwOnError();
-  const cliente = anonClient();
-  const { error: erroLogin } = await cliente.auth.signInWithPassword({
-    email,
-    password: SENHA,
-  });
-  if (erroLogin) {
-    throw new Error(`login do conferente: ${erroLogin.message}`);
-  }
-  conferente = cliente;
-}
-
-async function tirarConferente(): Promise<void> {
-  const id = ids.get("conferente");
-  if (id) {
-    await admin.from("product_admin").delete().eq("user_id", id);
-  }
-}
-
-/** A designacao aberta, com o registro conferido pelo super admin. */
-async function conferirRtAberto(): Promise<string> {
-  const { data } = await admin
-    .from("responsavel_tecnico")
-    .select("id")
-    .eq("clinic_id", clinica)
-    .is("ate", null)
-    .single()
-    .throwOnError();
-  const id = (data as { id: string }).id;
-  const { error } = await conferente!.rpc(
-    "conferir_registro_do_responsavel_tecnico",
-    { p_rt_id: id },
-  );
-  expect(error, "conferir o registro do RT").toBeNull();
-  return id;
-}
 
 async function maiorVersao(procedimento: string): Promise<number> {
   const { data } = await admin
@@ -597,7 +532,6 @@ beforeAll(async () => {
   await criarPessoa("recepcao", "recepcao");
   await criarPessoa("rt", "profissional");
   await criarPessoa("rt2", "leitura");
-  await criarConferente();
   const { error } = await como("admin").rpc("definir_responsavel_tecnico", {
     p_clinic_id: clinica,
     p_user_id: idDe("rt"),
@@ -607,7 +541,6 @@ beforeAll(async () => {
     p_uf: "CE",
   });
   expect(error, "definir o RT").toBeNull();
-  await conferirRtAberto();
 }, 180_000);
 
 afterAll(async () => {
@@ -621,7 +554,6 @@ afterAll(async () => {
     const { error } = await admin.from("clinic").delete().eq("id", clinica);
     expect(error, "apagar a clinica do teste").toBeNull();
   }
-  await tirarConferente();
   for (const id of ids.values()) {
     await admin.auth.admin.deleteUser(id);
   }
@@ -1186,8 +1118,6 @@ describe("o gatilho de message: a mensagem do preparo", () => {
       },
     );
     expect(erroDefinir).toBeNull();
-    // A troca comeca sem a conferencia: confere, para o caso seguir.
-    await conferirRtAberto();
     expect(await caso(conversa, versao, mensagem, mensagem)).toBe(
       "CZIA3:frase_divergente",
     );
@@ -1343,7 +1273,6 @@ describe("o turno de ponta a ponta pelo motor da IA, com o LLM falso (frente M)"
       p_uf: "CE",
     });
     expect(error, "definir o RT de novo").toBeNull();
-    await conferirRtAberto();
     return "rt";
   }
 
@@ -1580,7 +1509,7 @@ describe("as tres decisoes do dono de 05/11/2026", () => {
 
   // Decisao do dono de 06/11/2026 (migration 20261106110000): a conferencia do
   // registro nao entra mais; o RT vigente e o texto aprovado bastam.
-  it("sem a conferencia, sai; conferir nao muda nada; trocar o RT tira de vigor", async () => {
+  it("sem a conferencia, sai; trocar o RT tira de vigor", async () => {
     await definirNovo("rt", "CRM");
     const { data: salvo } = await salvar(
       "admin",
@@ -1590,7 +1519,6 @@ describe("as tres decisoes do dono de 05/11/2026", () => {
     await aprovar("rt", salvo);
     expect(await lerParaEnvio(salvo.versao_id)).not.toBeNull();
     expect((await emVigorNoBanco()).has(salvo.versao_id)).toBe(true);
-    await conferirRtAberto();
     expect((await emVigorNoBanco()).has(salvo.versao_id)).toBe(true);
     await definirNovo("rt", "CRM");
     expect((await emVigorNoBanco()).has(salvo.versao_id)).toBe(false);
@@ -1598,7 +1526,6 @@ describe("as tres decisoes do dono de 05/11/2026", () => {
 
   it("remedio ou dose so de CRM ou CRO: o CRN e recusado ao salvar", async () => {
     await definirNovo("rt", "CRN");
-    await conferirRtAberto();
     const { error } = await como("admin").rpc(
       "salvar_preparo_do_procedimento",
       {
@@ -1610,6 +1537,5 @@ describe("as tres decisoes do dono de 05/11/2026", () => {
     expect(error?.code).toBe("P0001");
     expect(error?.message).toBe("conselho_nao_aceita_remedio_ou_dose");
     await definirNovo("rt", "CRM");
-    await conferirRtAberto();
   });
 });
