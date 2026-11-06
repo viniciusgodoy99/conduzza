@@ -166,6 +166,10 @@ describe("a regra propria da introducao (so bloqueia)", () => {
     expect(problemaDaIntroducao(texto, [TEXTO])).not.toBeNull();
   });
 
+  it("so pontuacao nao e introducao (a marca do nome tirada)", () => {
+    expect(problemaDaIntroducao("!", [TEXTO])).toBe("formato");
+  });
+
   it("o limite e o do banco", () => {
     expect(LIMITE_DA_INTRODUCAO_DO_PREPARO).toBe(160);
     expect(MIGRATION).toContain("char_length(p_texto) <= 160");

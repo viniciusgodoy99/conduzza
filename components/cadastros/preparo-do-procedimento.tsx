@@ -524,7 +524,7 @@ export function RemediosDoEditor({
       {remedios.map((remedio, posicao) => (
         <div
           key={posicao}
-          className="grid gap-2 border-t border-border pt-2 first-of-type:border-t-0 first-of-type:pt-0"
+          className="grid gap-2 border-t border-border pt-2"
           data-parte="remedio-do-editor"
         >
           <div className="grid gap-1">

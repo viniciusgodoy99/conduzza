@@ -235,7 +235,12 @@ export function problemaDaIntroducao(
   texto: string,
   textosDePreparo: readonly string[],
 ): ProblemaDaIntroducao | null {
-  if (!introducaoNoFormato(texto) || textoRecusadoPeloBanco(texto)) {
+  // Sem letra: a marca do nome tirada que so deixou pontuacao ("Fulano!" vira "!").
+  if (
+    !introducaoNoFormato(texto) ||
+    textoRecusadoPeloBanco(texto) ||
+    !/\p{L}/u.test(texto)
+  ) {
     return "formato";
   }
   const base = frasesDoBanco(texto);

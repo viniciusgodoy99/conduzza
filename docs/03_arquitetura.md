@@ -2103,5 +2103,5 @@ Decisão do dono em 06/11/2026, opção A: "a IA escreve a conversa em volta e o
 
 **O que não bateu com o exemplo do dono:** "e o remédio do exame, como eu tomo?" **hoje vai para a equipe**: o portão escala qualquer pergunta com "remédio" ou "como tomo" (e a CFM-6 lê "tomo" como remédio que a pessoa toma). O envio com a introdução sai para pedidos que passam do portão ("Me manda o preparo da colonoscopia"). Para valer no exemplo, a frente `agente-portao-exame` precisa liberar essa pergunta no portão e na CFM-6; um teste marca o estado de hoje. E a frase "Aprovado por Dra. Ana, CRM 1234." do exemplo sai como a linha fixa do cabeçalho, "Responsável técnico da clínica: Dra. Ana (CRM-CE 1234)", antes do texto.
 
-**Versões:** regras `regras-8f0d69e2a40e` → `regras-b837d0d6bfdf`; prompt `agente-35b5cf9944dd` → `agente-e0b5b34c6d30`; a política do verificador muda (a frase `PERMITIDO_OFERECER_O_PREPARO`); o portão fica em `portao-9e835642d49a`.
+**Versões:** regras `regras-8f0d69e2a40e` → `regras-b837d0d6bfdf`; prompt `agente-35b5cf9944dd` → `agente-e0b5b34c6d30`; verificador `verificador-6bca2c941966` → `verificador-7cefbd54e288` (a frase `PERMITIDO_OFERECER_O_PREPARO`); o portão fica em `portao-9e835642d49a`.
 
