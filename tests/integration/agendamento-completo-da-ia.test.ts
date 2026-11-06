@@ -975,6 +975,40 @@ describe("o agendar novo", () => {
     expect(await agendar(conversa)).toMatchObject({ ok: true });
   });
 
+  it("a carteirinha que já está no cadastro não é pedida de novo; com outro convênio no cadastro, é (matriz de 06/11/2026, migration 20261106130000)", async () => {
+    const dados = { nome: "Paciente Integração Cartão", nascimento: "1985-05-05" };
+    const { contato, conversa } = await novaConversa();
+    await admin
+      .from("contact")
+      .update({ insurance_card: "123456789" })
+      .eq("id", contato)
+      .throwOnError();
+    expect(await registrar(conversa, dados)).toMatchObject({ ok: true, faltam: [] });
+    expect(await reservar(conversa, lConvenio, "11:30")).toMatchObject({ ok: true });
+    await perguntaEConfirmacao(conversa);
+    expect(await agendar(conversa)).toMatchObject({ ok: true });
+
+    const outra = await novaConversa();
+    const convenio = await inserir("insurance", {
+      clinic_id: clinica,
+      name: "Outro convênio sintético",
+      active: true,
+    });
+    await admin
+      .from("contact")
+      .update({ insurance_card: "123456789", insurance_id: convenio })
+      .eq("id", outra.contato)
+      .throwOnError();
+    expect(await registrar(outra.conversa, dados)).toMatchObject({ ok: true, faltam: [] });
+    expect(await reservar(outra.conversa, lConvenio, "10:30")).toMatchObject({ ok: true });
+    await perguntaEConfirmacao(outra.conversa);
+    expect(await agendar(outra.conversa)).toEqual({
+      ok: false,
+      motivo: "faltam_dados",
+      faltam: ["carteirinha"],
+    });
+  });
+
   it("dois registrar da mesma conversa ao mesmo tempo ficam numa linha só", async () => {
     const { conversa } = await novaConversa();
     const [nome, nascimento] = await Promise.all([
