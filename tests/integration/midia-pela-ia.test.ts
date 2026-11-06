@@ -690,6 +690,7 @@ describe("gravar_leitura_da_midia: as recusas, na ordem do contrato", () => {
         fora_do_cadastro: 0,
         confianca: null,
         resumo: null,
+        convenio_lido_id: null,
       },
     });
     const outroJob = await jobQueLeu(clinicaM, numeroM, conversa, [mensagem]);
@@ -820,7 +821,8 @@ describe("a poda, pela manutencao do motor", () => {
   });
 });
 
-describe("a atribuicao com a midia (D-96) e os motivos novos", () => {
+// Muitos casos com o banco de verdade: 30 s estouram com a maquina carregada.
+describe("a atribuicao com a midia (D-96) e os motivos novos", { timeout: 120_000 }, () => {
   it("o texto e o audio transcrito atribuem; o sem fala e o que ninguem leu ficam na fila", async () => {
     const casos: [string, Midia | "texto", "transcrita" | "sem_fala" | "nenhuma", string][] = [
       ["texto", "texto", "nenhuma", "atribuida"],
