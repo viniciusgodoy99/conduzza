@@ -17,6 +17,7 @@ import { AUTOR_DO_AVISO_AUTOMATICO } from "@/components/atendimento/aviso-automa
 import { autorDaCitacao } from "@/components/atendimento/citacao";
 import {
   LINHA_DO_PREPARO_APROVADO,
+  LINHA_DO_PREPARO_COM_INTRODUCAO,
   MessageBubble,
 } from "@/components/atendimento/message-bubble";
 import { AUTOR_PELO_CELULAR } from "@/components/atendimento/pelo-celular";
@@ -205,6 +206,35 @@ describe("AG7: a mensagem do preparo no Atendimento", () => {
   it("assina Assistente, como a IA, com ou sem o mapa de nomes", () => {
     expect(autorDaBolha(mensagem(), NOMES, ENVIOS)).toBe("Assistente");
     expect(autorDaBolha(mensagem(), {}, ENVIOS)).toBe("Assistente");
+  });
+});
+
+describe("a bolha do preparo com a introducao da IA (decisao do dono de 06/11/2026)", () => {
+  const INTRO = "Claro! Segue a orientação da clínica:";
+  const com = (corpo: string, extra = {}) =>
+    bolha(mensagem({ body: corpo, ...extra }));
+
+  it("assina como o preparo, mostra o corpo inteiro e diz que a primeira frase não é o texto aprovado", () => {
+    const html = com(`${INTRO}\n\n${PREPARO}`);
+    expect(linhaDeAutor(html)).toContain("data-preparo");
+    expect(texto(html)).toContain(INTRO);
+    const paragrafo = linhaDoTextoAprovado(html);
+    expect(paragrafo).toContain(`>${LINHA_DO_PREPARO_COM_INTRODUCAO}</p>`);
+    expect(paragrafo).toContain("text-(--bolha-meta)");
+    expect(LINHA_DO_PREPARO_COM_INTRODUCAO).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  it("sem a introducao, a linha de sempre", () => {
+    expect(linhaDoTextoAprovado(com(PREPARO))).toContain(
+      `>${LINHA_DO_PREPARO_APROVADO}</p>`,
+    );
+  });
+
+  it("sem a decisao do job, nem com a introducao vira preparo", () => {
+    const html = bolha(mensagem({ body: `${INTRO}\n\n${PREPARO}` }), {
+      enviosDoPreparo: new Set<string>(),
+    });
+    expect(linhaDoTextoAprovado(html)).toBe("");
   });
 });
 

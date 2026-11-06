@@ -2112,3 +2112,24 @@ O resumo, as decisões com as palavras do dono, as constantes, o custo e o que f
 **O que a prova mediria e ninguém mediu** (o risco aceito pelo dono para o teste): se o `gpt-6-luna` aceita imagem e PDF com `store: false` e saída estruturada (se não aceitar, toda foto e todo PDF caem na falha fechada e vão para a equipe); o acerto dos 10 tipos; os tokens reais (o uso acima da reserva só vai para o log `ia_midia_acima_da_reserva`); o tempo (o áudio e o arquivo no mesmo turno podem não caber: `docs/05`, AG6b, item 15; o `maxDuration` continua em 60 s); as frases-fantasma do `whisper-1` no português real; e o "sim" falado. O script `scripts/ia/prova-da-midia.ts` fica no repositório, para quando houver medida. Quem olha: a consulta da seção "V" de `supabase/operacao/agente-ia.md` (as leituras) e o log `ia_transcricao_falhou`.
 
 **O `whisper-1` tem remoção prevista para 26/02/2027** (seção 23.3 e `docs/05`, D-90): sem o sucessor até lá, todo áudio vai para a equipe.
+
+## 27. Agente de IA: os remédios do preparo e a introdução da IA (06/11/2026; construída na branch `agente-remedios`; **não aplicada nem publicada**; banco no `docs/04`, seção 43)
+
+Decisão do dono em 06/11/2026, opção A: "a IA escreve a conversa em volta e o sistema envia a orientação exata". Vale o CLAUDE.md 3.2, com a linha da introdução na exceção da D-80.
+
+**O cadastro.** Os remédios são texto da versão, sem caminho paralelo: `comporTextoDoPreparo` e `separarRemediosDoTexto` (`lib/domain/preparo.ts`), `RemediosDoEditor` em `components/cadastros/preparo-do-procedimento.tsx`. A Server Action e as RPCs continuam recebendo só o texto. Quem não pode escrever não abre o editor: o botão fica desabilitado, com a dica.
+
+**A introdução, do modelo ao paciente:**
+1. `enviar_preparo` aceita `introducao` (texto ou null; fora do formato vira null, sem voltar ao modelo). Continua sozinha no turno.
+2. `lib/agente/laco.ts`, depois de escolher a versão: `problemaDaIntroducao` (`lib/domain/conformidade/preparo-aprovado.ts`, a regra própria, que só bloqueia e nem chama o modelo) e depois `filtrarSaida` inteiro, com os fatos do turno e o verificador. Para citar o dia ("Como sua colonoscopia é na terça..."), o laço lê as consultas da pessoa (`fatosDasConsultasDoContato`, sem mudar o turno): o dia que elas não sustentam é barrado.
+3. A única regra diferente é `resposta_ao_preparo`, que lê "orientação" como assunto e barraria toda introdução: com `introducaoDoPreparo`, ela lê a frase sem o anúncio ("segue a orientação", `FONTE_DO_ANUNCIO_DA_INTRODUCAO`), e o resto continua lido ("Precisa sim, segue a orientação" barra). Fora da introdução, nada muda. `anuncia_preparo` vale igual: "segue a orientação de preparo" é barrada, e o prompt pede para não usar a palavra.
+4. Barrada ou com falha: `introducao` nula, a trilha diz o motivo (nunca o texto), e o bloco sai sozinho. **Aqui a conversa não passa para a equipe:** o paciente pediu o texto, e ele está aprovado (decisão do dono).
+5. `lib/jobs/responder-com-ia.ts`: `comIntroducao` confere o bloco de novo (`conferirParaEnvio`, a única conversão para `PreparoAprovado`) e monta o corpo; a decisão e o turno guardam o hash dele; a retomada remonta com a introdução do turno e confere o hash contra a decisão. Passou de 4.096 caracteres: sai só o bloco.
+6. O gatilho de `message` separa o bloco e confere (`docs/04`, 43.3). O simulador mostra igual. O histórico que vai ao modelo troca a mensagem inteira pelo substituto (`separarIntroducaoDoPreparo`); a bolha do Atendimento diz que a primeira frase é do assistente.
+
+**A pergunta fora do texto** ("posso tomar com leite?") já ia para a equipe, com a frase de sempre: o portão de entrada escala (`assunto_clinico`), e a conferência do envio (`situacaoPessoalNoPedidoDoPreparo`, CFM-6) também. Nada novo aqui, só os testes.
+
+**O que não bateu com o exemplo do dono:** "e o remédio do exame, como eu tomo?" **hoje vai para a equipe**: o portão escala qualquer pergunta com "remédio" ou "como tomo" (e a CFM-6 lê "tomo" como remédio que a pessoa toma). O envio com a introdução sai para pedidos que passam do portão ("Me manda o preparo da colonoscopia"). Para valer no exemplo, a frente `agente-portao-exame` precisa liberar essa pergunta no portão e na CFM-6; um teste marca o estado de hoje. E a frase "Aprovado por Dra. Ana, CRM 1234." do exemplo sai como a linha fixa do cabeçalho, "Responsável técnico da clínica: Dra. Ana (CRM-CE 1234)", antes do texto.
+
+**Versões:** regras `regras-8f0d69e2a40e` → `regras-b837d0d6bfdf`; prompt `agente-35b5cf9944dd` → `agente-e0b5b34c6d30`; verificador `verificador-6bca2c941966` → `verificador-7cefbd54e288` (a frase `PERMITIDO_OFERECER_O_PREPARO`); o portão fica em `portao-9e835642d49a`.
+

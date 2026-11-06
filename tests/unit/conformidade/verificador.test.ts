@@ -1032,7 +1032,8 @@ describe("falha fechada: toda anomalia do SDK bloqueia no filtro", () => {
 describe("AG7: oferecer o envio do preparo aprovado nao e orientacao", () => {
   it("a frase nova, no fim do paragrafo do permitido, depois de 'Nada disso libera'", () => {
     expect(PERMITIDO_OFERECER_O_PREPARO).toBe(
-      "Também é permitido oferecer o envio da orientação de preparo aprovada pela clínica e dizer que o sistema vai enviá-la, sem dizer nada do conteúdo dela.",
+      // Decisao do dono de 06/11/2026: a introducao anuncia que ela segue.
+      'Também é permitido oferecer o envio da orientação de preparo aprovada pela clínica, dizer que o sistema vai enviá-la e anunciar que ela segue logo depois ("segue a orientação da clínica:"), sem dizer nada do conteúdo dela.',
     );
     const paragrafo = POLITICA_DO_VERIFICADOR.split("\n").find((linha) =>
       linha.startsWith("É permitido:"),

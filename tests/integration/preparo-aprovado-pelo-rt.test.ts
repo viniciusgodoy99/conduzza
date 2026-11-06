@@ -966,6 +966,62 @@ describe("o gatilho de message: a mensagem do preparo", () => {
     );
   });
 
+  // A introducao da IA antes do bloco (decisao do dono de 06/11/2026). NAO rodou
+  // ao construir: precisa do banco com a migration 20261106120000.
+  it("a introducao, a linha em branco e o bloco exato passam com o hash do corpo inteiro", async () => {
+    const corpo = `Claro! Segue a orientação da clínica:\n\n${mensagem}`;
+    const job = await jobEmExecucao(conversa);
+    await decidirPreparo(job, conversa, versao, corpo);
+    expect(await enviar(conversa, job, corpo)).toBeNull();
+    const { data: linha } = await admin
+      .from("message")
+      .select("author, body")
+      .eq("job_id", job)
+      .single()
+      .throwOnError();
+    expect(linha).toEqual({ author: "sistema", body: corpo });
+    await rpcOk("concluir_job", { p_id: job, p_worker: WORKER });
+  });
+
+  it("SABOTAGEM: uma letra trocada no bloco, com ou sem a introducao: CZIA3", async () => {
+    const divergente = "CZIA3:frase_divergente";
+    const trocada = `${mensagem.slice(0, 40)}x${mensagem.slice(41)}`;
+    expect(trocada).not.toBe(mensagem);
+    expect(await caso(conversa, versao, trocada, trocada), "sem").toBe(
+      divergente,
+    );
+    const corpo = `Claro!\n\n${trocada}`;
+    expect(await caso(conversa, versao, corpo, corpo), "com").toBe(divergente);
+  });
+
+  it.each([
+    ["remedio", "Segue o bisacodil:"],
+    ["dose", "Segue a dose de 5 mg:"],
+    ["unidade", "São dois comprimidos:"],
+    ["como tomar", "Tome assim:"],
+    ["sintoma", "Se tiver cólica, segue:"],
+    ["duas linhas", "Claro!\nSegue:"],
+    ["longa", "a".repeat(161)],
+  ])(
+    "SABOTAGEM: a introducao com %s, mesmo com a decisao do mesmo hash: CZIA3",
+    async (_n, introducao) => {
+      const corpo = `${introducao}\n\n${mensagem}`;
+      expect(await caso(conversa, versao, corpo, corpo)).toBe(
+        "CZIA3:frase_divergente",
+      );
+    },
+  );
+
+  it("a decisao so do bloco nao libera o corpo com a introducao, nem o contrario: CZIA3", async () => {
+    const corpo = `Claro!\n\n${mensagem}`;
+    expect(await caso(conversa, versao, mensagem, corpo)).toBe(
+      "CZIA3:frase_divergente",
+    );
+    expect(await caso(conversa, versao, corpo, mensagem)).toBe(
+      "CZIA3:frase_divergente",
+    );
+  });
+
   it("o conteudo diferente da versao em vigor: CZIA3", async () => {
     const divergente = "CZIA3:frase_divergente";
     expect(
@@ -1158,7 +1214,7 @@ describe("o gatilho de message: a mensagem do preparo", () => {
 });
 
 describe("os CHECKs novos pelo servidor", () => {
-  it("enviou_preparo so com a versao e o hash, sem aprovado; a saida preparo sem texto", async () => {
+  it("enviou_preparo so com a versao e o hash, sem aprovado; a saida preparo so guarda texto (a introducao) com o hash; as outras saidas, nao", async () => {
     const conversa = await conversaNaIa();
     const base = { clinic_id: clinica, conversation_id: conversa };
     const versao = crypto.randomUUID();
@@ -1192,10 +1248,27 @@ describe("os CHECKs novos pelo servidor", () => {
       ...base,
       estado: "decidido",
       saida: "preparo",
-      texto: "Texto do preparo",
+      texto: "Claro! Segue a orientação da clínica:",
       texto_sha256: sha256("x"),
     });
-    expect(comTexto.error?.code).toBe("23514");
+    expect(comTexto.error).toBeNull();
+    const semOHash = await admin.from("ai_turno").insert({
+      job_id: crypto.randomUUID(),
+      ...base,
+      estado: "decidido",
+      saida: "preparo",
+      texto: "Claro! Segue a orientação da clínica:",
+    });
+    expect(semOHash.error?.code).toBe("23514");
+    const frase = await admin.from("ai_turno").insert({
+      job_id: crypto.randomUUID(),
+      ...base,
+      estado: "decidido",
+      saida: "frase",
+      texto: "Texto",
+      texto_sha256: sha256("x"),
+    });
+    expect(frase.error?.code).toBe("23514");
     const semTexto = await admin.from("ai_turno").insert({
       job_id: crypto.randomUUID(),
       ...base,

@@ -1,6 +1,13 @@
 "use client";
 
-import { CircleAlert, History, PenLine, ShieldBan } from "lucide-react";
+import {
+  CircleAlert,
+  History,
+  PenLine,
+  Plus,
+  ShieldBan,
+  Trash2,
+} from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
@@ -29,6 +36,7 @@ import {
   FRASES_SEM_PERMISSAO,
   PESSOA_SEM_NOME,
   prepararTextoDoPreparo,
+  problemaNosRemedios,
   problemaNoTextoDoPreparo,
   registroDoRt,
   ROTULO_DA_SITUACAO,
@@ -48,12 +56,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PREPARO_DO_PROCEDIMENTO_STATUS } from "@/lib/design/status";
 import {
   codigoDoTexto,
+  comporTextoDoPreparo,
+  LIMITE_DE_COMO_TOMAR,
+  LIMITE_DA_DESCRICAO_DO_REMEDIO,
+  LIMITE_DO_NOME_DO_REMEDIO,
   LIMITE_DO_TEXTO_DO_PREPARO,
+  separarRemediosDoTexto,
+  type RemedioDoPreparo,
   type SituacaoDoChipDoPreparo,
 } from "@/lib/domain/preparo";
 import {
@@ -471,11 +486,121 @@ export function ListaDeVersoes({
   );
 }
 
+/**
+ * Os remedios do preparo no editor (decisao do dono de 06/11/2026): o nome, como
+ * tomar e a descricao de cada um. Eles nao tem caminho proprio: entram no texto
+ * da versao (comporTextoDoPreparo), que o RT aprova e o hash confere. Quem nao
+ * pode escrever nem abre o editor (o botao fica desabilitado, com a dica).
+ */
+export function RemediosDoEditor({
+  id,
+  remedios,
+  aoMudar,
+  enviando,
+}: {
+  id: string;
+  remedios: readonly RemedioDoPreparo[];
+  aoMudar: (remedios: RemedioDoPreparo[]) => void;
+  enviando: boolean;
+}) {
+  const mudar = (posicao: number, campo: Partial<RemedioDoPreparo>) =>
+    aoMudar(remedios.map((r, i) => (i === posicao ? { ...r, ...campo } : r)));
+  return (
+    <div
+      className="grid gap-2 rounded-xl border border-border bg-surface-subtle p-3"
+      data-parte="remedios-do-editor"
+    >
+      <div className="grid gap-0.5">
+        <h4 className="text-[13px] font-semibold text-text-strong">
+          {T.remedios}
+        </h4>
+        <p id={`${id}-remedios-ajuda`} className="text-xs text-text-secondary">
+          {T.remediosAjuda}
+        </p>
+      </div>
+      {remedios.length === 0 ? (
+        <p className="text-[13px] text-text-secondary">{T.semRemedios}</p>
+      ) : null}
+      {remedios.map((remedio, posicao) => (
+        <div
+          key={posicao}
+          className="grid gap-2 border-t border-border pt-2"
+          data-parte="remedio-do-editor"
+        >
+          <div className="grid gap-1">
+            <Label htmlFor={`${id}-remedio-${posicao}-nome`}>
+              {T.remedioNome}
+            </Label>
+            <Input
+              id={`${id}-remedio-${posicao}-nome`}
+              value={remedio.nome}
+              maxLength={LIMITE_DO_NOME_DO_REMEDIO}
+              onChange={(e) => mudar(posicao, { nome: e.target.value })}
+              disabled={enviando}
+              aria-describedby={`${id}-remedios-ajuda`}
+            />
+          </div>
+          <div className="grid gap-1">
+            <Label htmlFor={`${id}-remedio-${posicao}-como`}>
+              {T.remedioComoTomar}
+            </Label>
+            <Input
+              id={`${id}-remedio-${posicao}-como`}
+              value={remedio.comoTomar}
+              maxLength={LIMITE_DE_COMO_TOMAR}
+              onChange={(e) => mudar(posicao, { comoTomar: e.target.value })}
+              disabled={enviando}
+            />
+          </div>
+          <div className="grid gap-1">
+            <Label htmlFor={`${id}-remedio-${posicao}-descricao`}>
+              {T.remedioDescricao}
+            </Label>
+            <Input
+              id={`${id}-remedio-${posicao}-descricao`}
+              value={remedio.descricao}
+              maxLength={LIMITE_DA_DESCRICAO_DO_REMEDIO}
+              onChange={(e) => mudar(posicao, { descricao: e.target.value })}
+              disabled={enviando}
+            />
+          </div>
+          <div>
+            <Button
+              variant="ghost"
+              className="h-10"
+              onClick={() => aoMudar(remedios.filter((_, i) => i !== posicao))}
+              disabled={enviando}
+            >
+              <Trash2 aria-hidden />
+              {T.tirarRemedio}
+            </Button>
+          </div>
+        </div>
+      ))}
+      <div>
+        <Button
+          variant="outline"
+          className="h-10"
+          onClick={() =>
+            aoMudar([...remedios, { nome: "", comoTomar: "", descricao: "" }])
+          }
+          disabled={enviando}
+        >
+          <Plus aria-hidden />
+          {T.adicionarRemedio}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** O editor do texto novo ("Escrever orientacao" ou "Escrever texto novo"). */
 export function EditorDoPreparo({
   id,
   texto,
+  remedios,
   aoMudar,
+  aoMudarRemedios,
   enviando,
   erro,
   aviso = null,
@@ -483,8 +608,11 @@ export function EditorDoPreparo({
   aoCancelar,
 }: {
   id: string;
+  /** A orientacao livre; os remedios entram no texto ao enviar. */
   texto: string;
+  remedios: readonly RemedioDoPreparo[];
   aoMudar: (texto: string) => void;
+  aoMudarRemedios: (remedios: RemedioDoPreparo[]) => void;
   enviando: boolean;
   erro: string | null;
   /** Outra pessoa salvou no meio: o texto novo esta acima (TELA-3). */
@@ -492,7 +620,9 @@ export function EditorDoPreparo({
   aoEnviar: () => void;
   aoCancelar: () => void;
 }) {
-  const tamanho = Array.from(prepararTextoDoPreparo(texto)).length;
+  // O contador e o do texto que vai para o RT: a orientacao e os remedios.
+  const inteiro = comporTextoDoPreparo(texto, remedios);
+  const tamanho = Array.from(prepararTextoDoPreparo(inteiro)).length;
   const passou = tamanho > LIMITE_DO_TEXTO_DO_PREPARO;
   return (
     <div className="grid gap-1.5" data-parte="editor-do-preparo">
@@ -506,7 +636,7 @@ export function EditorDoPreparo({
             passou ? "font-semibold text-alert-text" : "text-text-secondary",
           )}
         >
-          {contadorDoTexto(texto)}
+          {contadorDoTexto(inteiro)}
         </span>
       </div>
       <Textarea
@@ -528,6 +658,12 @@ export function EditorDoPreparo({
         <p>{T.ajudaDoEditorRecusa}</p>
         <p>{T.ajudaDoEditorAviso}</p>
       </div>
+      <RemediosDoEditor
+        id={id}
+        remedios={remedios}
+        aoMudar={aoMudarRemedios}
+        enviando={enviando}
+      />
       {aviso ? (
         <Aviso tom="warning" role="status">
           {aviso}
@@ -575,7 +711,10 @@ function recarregaDepois(
 
 /** O editor aberto: o texto, o ponto de partida e a versao lida ao abrir. */
 type EditorAberto = {
+  /** A orientacao livre (sem os remedios). */
   texto: string;
+  /** Os remedios, em campos; entram no texto da versao ao enviar. */
+  remedios: readonly RemedioDoPreparo[];
   /** O texto com que o editor abriu: o rascunho e o que mudou dele. */
   inicial: string;
   /**
@@ -707,6 +846,24 @@ export function ConfirmarDescarteDoTextoNovo({
   );
 }
 
+/**
+ * Os campos do editor de um texto gravado: os remedios saem do proprio texto,
+ * e o texto que nao tem o bloco deles fica inteiro na orientacao.
+ */
+export function camposDoEditor(
+  inicial: string,
+): Pick<EditorAberto, "texto" | "remedios" | "inicial"> {
+  const { orientacao, remedios } = separarRemediosDoTexto(inicial);
+  return { texto: orientacao, remedios, inicial };
+}
+
+/** O texto da versao que o editor vai enviar: a orientacao e os remedios. */
+export function textoDoEditor(
+  editor: Pick<EditorAberto, "texto" | "remedios">,
+): string {
+  return comporTextoDoPreparo(editor.texto, editor.remedios);
+}
+
 /** Ha texto digitado e nao enviado (o rascunho que nao pode sumir calado)? */
 export function editorComRascunho(
   editor: Pick<EditorAberto, "texto" | "inicial"> | null,
@@ -768,7 +925,9 @@ export function SecaoDoPreparo({
   const [reenviando, setReenviando] = useState(false);
   const [verVersoes, setVerVersoes] = useState(false);
 
-  const temRascunho = editorComRascunho(editor);
+  const temRascunho = editorComRascunho(
+    editor && { texto: textoDoEditor(editor), inicial: editor.inicial },
+  );
   useAvisarRascunho(temRascunho, aoMudarRascunho);
 
   const cabecalho = (
@@ -855,10 +1014,8 @@ export function SecaoDoPreparo({
   // guarda a versao lida AGORA (TELA-3): a releitura dos dados nao a muda.
   const abrirEditor = () => {
     const base = aguardando ?? devolvida ?? aprovada ?? suspensa;
-    const inicial = base?.texto ?? "";
     setEditor({
-      texto: inicial,
-      inicial,
+      ...camposDoEditor(base?.texto ?? ""),
       versaoLida: resumo.versaoLida,
       conflito: false,
     });
@@ -884,7 +1041,9 @@ export function SecaoDoPreparo({
     if (editor === null) {
       return;
     }
-    const problema = problemaNoTextoDoPreparo(editor.texto);
+    const texto = textoDoEditor(editor);
+    const problema =
+      problemaNosRemedios(editor.remedios) ?? problemaNoTextoDoPreparo(texto);
     if (problema) {
       setErroDoEditor(problema);
       return;
@@ -896,7 +1055,7 @@ export function SecaoDoPreparo({
     try {
       resultado = await salvarPreparoAction({
         procedureId: procedimento.id,
-        texto: editor.texto,
+        texto,
         versaoLida,
       });
     } catch {
@@ -1207,9 +1366,16 @@ export function SecaoDoPreparo({
         <EditorDoPreparo
           id={id}
           texto={editor.texto}
+          remedios={editor.remedios}
           aoMudar={(novo) => {
             setEditor((atual) =>
               atual === null ? null : { ...atual, texto: novo },
+            );
+            setErroDoEditor(null);
+          }}
+          aoMudarRemedios={(novos) => {
+            setEditor((atual) =>
+              atual === null ? null : { ...atual, remedios: novos },
             );
             setErroDoEditor(null);
           }}

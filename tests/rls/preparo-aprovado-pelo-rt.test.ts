@@ -920,6 +920,8 @@ describe("as funcoes do servidor e as internas", () => {
     ];
     const internas: [string, Record<string, unknown>][] = [
       ["preparo_texto_valido", { p_texto: "Jejum." }],
+      // A regra da introducao da IA (migration 20261106120000): so o gatilho.
+      ["preparo_introducao_valida", { p_texto: "Claro!" }],
       ["responsavel_tecnico_vigente", { p_clinic_id: clinicaA }],
       ["preparo_em_vigor", { p_clinic_id: clinicaA, p_versao_id: versao }],
       ["mensagem_do_preparo", { p_versao_id: versao }],

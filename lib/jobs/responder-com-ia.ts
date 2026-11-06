@@ -127,7 +127,10 @@ import { lerPreparoParaEnvio } from "@/lib/agente/contexto";
 import { PASSO_DO_PREPARO_FORA_DE_VIGOR } from "@/lib/agente/ferramentas/enviar-preparo";
 import { lerDecisaoDoPreparo } from "@/lib/agente/whatsapp";
 import { passoDoPreparoRecusado } from "@/lib/agente/laco";
-import type { PreparoAprovado } from "@/lib/domain/conformidade/preparo-aprovado";
+import {
+  comIntroducao,
+  type PreparoAprovado,
+} from "@/lib/domain/conformidade/preparo-aprovado";
 import { enviarPreparoAprovadoDaIa } from "@/lib/integrations/whatsapp/send";
 // [AG7 preparo] fim
 
@@ -1951,7 +1954,9 @@ async function decidirEEnviarOPreparo(
     clinicId: c.clinicId,
     conversationId: c.conversationId,
     jobId: c.job.id,
-    filtro: null,
+    // A introducao, quando ela passou pelo filtro: a decisao diz as versoes
+    // dele e o verificador. O texto do preparo nunca passa pelo filtro.
+    filtro: resultado.filtro,
     uso: resultado.uso,
     versaoDoPrompt: resultado.versaoDoPrompt,
     configVersion: config.versao,
@@ -2053,12 +2058,29 @@ async function decidirEEnviarOPreparo(
       resultado.notasSeOPreparoNaoSair?.assunto_clinico ?? null,
     );
   }
-  const preparo = leitura.preparo;
+  // Decisao do dono de 06/11/2026: a introducao que o filtro aprovou vai antes
+  // do bloco, na mesma mensagem; o hash da decisao e do corpo inteiro. A que nao
+  // couber (a mensagem passaria de 4.096) fica de fora: sai so o bloco.
+  const comEla =
+    resultado.introducao === null
+      ? null
+      : comIntroducao(leitura.preparo, resultado.introducao);
+  const preparo = comEla ?? leitura.preparo;
   const decisionId = await gravarDecisao(c.admin, {
     ...comum,
     desfecho: resultado.desfecho,
     textoSha256: preparo.sha256,
-    trilha: resultado.trilha,
+    trilha:
+      resultado.introducao !== null && comEla === null
+        ? [
+            ...resultado.trilha,
+            {
+              tipo: "bloqueio",
+              texto:
+                "A introdução da IA não coube na mensagem: saiu só a orientação aprovada.",
+            },
+          ]
+        : resultado.trilha,
   });
   log.info("ia_turno_decidido", {
     ...idsDoLog(c),
@@ -2070,7 +2092,9 @@ async function decidirEEnviarOPreparo(
     ...turno,
     estado: "decidido",
     saida: "preparo",
-    texto: null,
+    // Enquanto o envio esta pendente, a introducao fica no turno para a
+    // retomada remontar o mesmo corpo; o bloco e relido do banco.
+    texto: comEla === null ? null : resultado.introducao,
     textoSha256: preparo.sha256,
     decisionId,
   });
@@ -3032,7 +3056,14 @@ async function retomarOPreparo(
             versaoId: decisao.versaoId,
           }),
         );
-  const preparo = leitura?.tipo === "pronto" ? leitura.preparo : null;
+  // Com a introducao guardada no turno, o mesmo corpo da decisao (a regra propria
+  // de novo; o hash abaixo confere o resto).
+  const preparo =
+    leitura?.tipo !== "pronto"
+      ? null
+      : turno.texto === null
+        ? leitura.preparo
+        : comIntroducao(leitura.preparo, turno.texto);
   if (
     decisao === null ||
     preparo === null ||

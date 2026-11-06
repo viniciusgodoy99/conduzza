@@ -71,6 +71,7 @@ import {
 // [AG7 preparo] início
 import {
   ehMensagemDoPreparo,
+  separarIntroducaoDoPreparo,
   SEM_ENVIOS_DO_PREPARO,
   type EnviosDoPreparo,
 } from "@/lib/domain/preparo";
@@ -749,6 +750,9 @@ function AcoesDaBolha({
  */
 export const LINHA_DO_PREPARO_APROVADO =
   "Texto aprovado pelo responsável técnico";
+/** Com a introducao da IA antes do bloco (decisao do dono de 06/11/2026). */
+export const LINHA_DO_PREPARO_COM_INTRODUCAO =
+  "A primeira frase é do assistente. O resto é o texto aprovado pelo responsável técnico";
 // [AG7 preparo] fim
 
 export function MessageBubble({
@@ -1110,7 +1114,9 @@ export function MessageBubble({
                   data-preparo-aprovado
                   className="text-[12px] leading-snug text-(--bolha-meta)"
                 >
-                  {LINHA_DO_PREPARO_APROVADO}
+                  {separarIntroducaoDoPreparo(message.body ?? "")?.introducao
+                    ? LINHA_DO_PREPARO_COM_INTRODUCAO
+                    : LINHA_DO_PREPARO_APROVADO}
                 </p>
               ) : null}
               {/* [AG7 preparo] fim */}

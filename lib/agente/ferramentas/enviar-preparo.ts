@@ -4,15 +4,17 @@
 // clinica, enviada palavra por palavra. PURO: le o catalogo carregado no
 // servidor (lib/agente/contexto.ts); nada daqui le o banco nem a rede.
 //
-// O modelo NUNCA escreve, le nem resume o preparo: ele so escolhe o
-// procedimento (o codigo do bloco <procedimentos>). O servidor confere no
-// catalogo do turno que o procedimento tem versao em vigor e encerra o turno
-// sem texto do modelo (lib/agente/laco.ts); o executor le a mensagem pronta
-// do banco (ler_preparo_para_envio), confere o hash (aprovarParaEnvio) e a
-// envia como mensagem do SISTEMA (enviarPreparoAprovadoDaIa). O texto vai do
+// O modelo NUNCA escreve, le nem resume o preparo: ele escolhe o procedimento
+// (o codigo do bloco <procedimentos>) e pode mandar uma introducao curta, que so
+// sai se passar pelo filtro inteiro e pela regra propria dela (decisao do dono
+// de 06/11/2026; lib/agente/laco.ts). O servidor confere no catalogo do turno
+// que o procedimento tem versao em vigor e encerra o turno (lib/agente/laco.ts);
+// o executor le a mensagem pronta do banco (ler_preparo_para_envio), confere o
+// hash (aprovarParaEnvio) e a envia como mensagem do SISTEMA
+// (enviarPreparoAprovadoDaIa), com a introducao antes do bloco. O texto vai do
 // banco para a mensagem sem passar pelo modelo, pelo verificador nem pelo
-// historico que vai a OpenAI. Nenhuma saida daqui leva o texto: so ok,
-// motivo, ids e o que a trilha diz.
+// historico que vai a OpenAI. Nenhuma saida daqui leva o texto: so ok, motivo,
+// ids e o que a trilha diz.
 //
 // Regras:
 //  - So vale SOZINHA no turno (contrato da AG7, secao 0, item 8): cada job
@@ -35,7 +37,11 @@ import { ptBR } from "date-fns/locale";
 import type { FunctionTool } from "openai/resources/responses/responses";
 import { z } from "zod";
 
-import { codigoDoTexto } from "@/lib/domain/preparo";
+import {
+  codigoDoTexto,
+  LIMITE_DA_INTRODUCAO_DO_PREPARO,
+  normalizarTextoDoPreparo,
+} from "@/lib/domain/preparo";
 
 import {
   procedimentoDoCodigo,
@@ -49,8 +55,20 @@ export const NOME_DO_ENVIO_DO_PREPARO = "enviar_preparo";
 export const entradaDoEnvioDoPreparoSchema = z
   .object({
     procedimento: z.string().trim().min(1).max(64),
+    // Fora do formato vira "sem introducao" (introducaoDaEntrada): o pedido do
+    // preparo nao volta ao modelo por causa dela.
+    introducao: z.unknown().optional(),
   })
   .strict();
+
+/** A introducao como veio do modelo, normalizada, ou null. */
+function introducaoDaEntrada(valor: unknown): string | null {
+  if (typeof valor !== "string") {
+    return null;
+  }
+  const texto = normalizarTextoDoPreparo(valor);
+  return texto === "" ? null : texto;
+}
 
 /** Definicao para a Responses API (strict, escrita a mao). */
 export const FERRAMENTA_ENVIAR_PREPARO: FunctionTool = {
@@ -58,7 +76,7 @@ export const FERRAMENTA_ENVIAR_PREPARO: FunctionTool = {
   name: NOME_DO_ENVIO_DO_PREPARO,
   strict: true,
   description:
-    "Manda ao paciente a orientação de preparo do procedimento, o texto aprovado pelo responsável técnico da clínica, exatamente como está. Você não escreve nada nesta resposta. Use quando a pessoa pedir o preparo ou as orientações antes do procedimento, ou perguntar de forma geral se precisa de jejum. Chame sozinha, sem outra ferramenta; depois de chamar, não escreva mais nada.",
+    "Manda ao paciente a orientação de preparo do procedimento, o texto aprovado pelo responsável técnico da clínica, exatamente como está. Você não escreve esse texto: só pode mandar uma introdução curta, que vai antes dele. Use quando a pessoa pedir o preparo ou as orientações antes do procedimento, ou perguntar de forma geral se precisa de jejum. Chame sozinha, sem outra ferramenta; depois de chamar, não escreva mais nada.",
   parameters: {
     type: "object",
     properties: {
@@ -67,8 +85,12 @@ export const FERRAMENTA_ENVIAR_PREPARO: FunctionTool = {
         description:
           "Código do procedimento no bloco <procedimentos>, por exemplo p3.",
       },
+      introducao: {
+        type: ["string", "null"],
+        description: `Uma frase curta de conversa, de até ${LIMITE_DA_INTRODUCAO_DO_PREPARO} caracteres, que vai antes do texto aprovado, por exemplo "Claro! Segue a orientação da clínica:". Nunca cite remédio, dose, número, unidade, como tomar, jejum, comida, bebida ou sintoma. Sem o que dizer, null. Se ela não passar na conformidade, o sistema manda só o texto aprovado.`,
+      },
     },
-    required: ["procedimento"],
+    required: ["procedimento", "introducao"],
     additionalProperties: false,
   },
 };
@@ -90,6 +112,8 @@ export type DecisaoDoEnvioDoPreparo =
       procedimentoId: string;
       versaoId: string;
       versao: number;
+      /** Como o modelo mandou: o laco a passa pelo filtro antes de valer. */
+      introducao: string | null;
       passo: string;
     }
   | {
@@ -227,6 +251,7 @@ export function decidirEnvioDoPreparo(
     procedimentoId: procedimento.id,
     versaoId: preparo.versaoId,
     versao: preparo.versao,
+    introducao: introducaoDaEntrada(lido.data.introducao),
     passo: passoDoEnvio(
       procedimento.nome,
       preparo,
