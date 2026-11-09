@@ -50,6 +50,7 @@ import {
   horarioSchema,
   type HorarioDeOperacao,
 } from "@/lib/domain/agente/config";
+import { FRASE_DO_ASSISTENTE_VIRTUAL } from "@/lib/domain/conformidade/frase-fixa";
 
 import {
   configDeTeste,
@@ -211,6 +212,7 @@ describe("Persona", () => {
       usarEmoji: false,
       saudacao: "",
       encerramento: "",
+      fraseDoAssistente: "",
     });
     expect(r.success).toBe(false);
     expect(primeiroErro(r)?.campo).toBe("nome");
@@ -223,6 +225,7 @@ describe("Persona", () => {
       usarEmoji: false,
       saudacao: "Olá! Ligue para (84) 99999-0000.",
       encerramento: "",
+      fraseDoAssistente: "",
     });
     expect(r.success).toBe(false);
     expect(primeiroErro(r)).toEqual({
@@ -238,6 +241,7 @@ describe("Persona", () => {
       usarEmoji: true,
       saudacao: "Olá! Aqui é a recepção.",
       encerramento: "  ",
+      fraseDoAssistente: " ",
     });
     expect(r.success).toBe(true);
     expect(r.data).toEqual({
@@ -246,19 +250,63 @@ describe("Persona", () => {
       usarEmoji: true,
       saudacao: "Olá! Aqui é a recepção.",
       encerramento: null,
+      fraseDoAssistente: null,
     });
   });
 
-  it("a prévia junta saudação, o exemplo do tom e o encerramento", () => {
+  // Decisao do dono de 09/11/2026: a frase de assistente virtual da clinica.
+  it("a frase de assistente virtual precisa dizer que é virtual e passa pelo filtro, no campo certo", () => {
+    const base = {
+      nome: "Ana",
+      tom: "cordial",
+      usarEmoji: false,
+      saudacao: "",
+      encerramento: "",
+    } as const;
+    const casos = [
+      [
+        "Aqui é a Ana, da recepção.",
+        "Diga na frase que é a assistente virtual",
+      ],
+      ["Sou a assistente virtual. Veja www.clinica.com.br", "Tire o link"],
+      [
+        "Sou a assistente virtual e garanto o resultado do tratamento.",
+        "promessa",
+      ],
+    ] as const;
+    for (const [fraseDoAssistente, esperado] of casos) {
+      const r = personaDaTelaSchema.safeParse({ ...base, fraseDoAssistente });
+      expect(r.success, fraseDoAssistente).toBe(false);
+      expect(primeiroErro(r)?.campo).toBe("fraseDoAssistente");
+      expect(primeiroErro(r)?.mensagem).toContain(esperado);
+    }
+    const certa = personaDaTelaSchema.safeParse({
+      ...base,
+      fraseDoAssistente: " Oi! Sou a Ana, inteligência artificial da clínica. ",
+    });
+    expect(certa.success).toBe(true);
+    expect(certa.data?.fraseDoAssistente).toBe(
+      "Oi! Sou a Ana, inteligência artificial da clínica.",
+    );
+  });
+
+  it("a prévia junta saudação, a frase de assistente virtual, o exemplo do tom e o encerramento", () => {
     const valores = valoresDaPersona(
       configDeTeste({ encerramento: "Até breve!" }),
     );
+    // Sem a frase da clinica, a previa mostra a padrao.
+    expect(valores.fraseDoAssistente).toBe("");
     expect(textoDaPrevia(valores)).toBe(
-      `Olá! Aqui é a recepção.\n\n${EXEMPLO_DO_TOM.cordial}\n\nAté breve!`,
+      `Olá! Aqui é a recepção.\n\n${FRASE_DO_ASSISTENTE_VIRTUAL}\n\n${EXEMPLO_DO_TOM.cordial}\n\nAté breve!`,
     );
-    expect(textoDaPrevia({ ...valores, saudacao: "", encerramento: "" })).toBe(
-      EXEMPLO_DO_TOM.cordial,
-    );
+    expect(
+      textoDaPrevia({
+        ...valores,
+        saudacao: "",
+        encerramento: "",
+        fraseDoAssistente: " Sou a assistente virtual. ",
+      }),
+    ).toBe(`Sou a assistente virtual.\n\n${EXEMPLO_DO_TOM.cordial}`);
   });
 
   it("os 3 tons em cartões de rádio com a frase de exemplo, o escolhido marcado", () => {
@@ -285,6 +333,11 @@ describe("Persona", () => {
     expect(texto(html)).toContain("3/40");
     expect(texto(html)).toContain("Como o paciente vê");
     expect(html).toContain("Pré-visualização da mensagem");
+    // A frase de assistente virtual (09/11/2026): em branco, a padrao aparece
+    // no campo (placeholder) e na previa.
+    expect(texto(html)).toContain("Frase de assistente virtual");
+    expect(texto(html)).toContain("0/300");
+    expect(html).toContain(`placeholder="${FRASE_DO_ASSISTENTE_VIRTUAL}"`);
     // emoji em Checkbox (so vale ao salvar e publicar, C31)
     expect(html).toMatch(/role="checkbox"/);
   });

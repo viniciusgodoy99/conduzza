@@ -246,6 +246,7 @@ const PERSONA = {
   usarEmoji: false,
   saudacao: "Olá! Aqui é a Ana.",
   encerramento: null,
+  fraseDoAssistente: null,
 };
 
 function config(extra: Partial<ConfigDoAgente> = {}): ConfigDoAgente {
@@ -389,6 +390,7 @@ describe("persona, habilidades e horário", () => {
         use_emoji: false,
         greeting: "Olá! Aqui é a Ana.",
         closing: null,
+        frase_do_assistente: null,
       },
     });
     expect(escrita?.filtros).toEqual([
@@ -421,6 +423,56 @@ describe("persona, habilidades e horário", () => {
       nome: "Doutora Ana",
     });
     expect(titulo.ok).toBe(false);
+    expect(banco.operacoes).toEqual([]);
+    expect(banco.rpcs).toEqual([]);
+  });
+
+  // Decisao do dono de 09/11/2026: a frase de assistente virtual da clinica
+  // grava com a persona; o servidor confere de novo o que a tela confere.
+  it("frase de assistente virtual: grava a da clínica; sem dizer que é virtual, com link ou longa, recusa antes de escrever", async () => {
+    const frase = "Sou a assistente virtual da Clínica Sol.";
+    expect(
+      await acoes.salvarPersonaAction({
+        ...PERSONA,
+        fraseDoAssistente: ` ${frase} `,
+      }),
+    ).toEqual({ ok: true });
+    expect(banco.escritas()[0]?.dados).toMatchObject({
+      frase_do_assistente: frase,
+    });
+
+    banco = new Banco();
+    const semVirtual = await acoes.salvarPersonaAction({
+      ...PERSONA,
+      fraseDoAssistente: "Aqui é a Ana, da recepção.",
+    });
+    expect(semVirtual).toEqual({
+      ok: false,
+      error:
+        "Frase de assistente virtual. Diga na frase que é a assistente virtual ou uma inteligência artificial: o paciente precisa saber que não está falando com uma pessoa.",
+    });
+    const comLink = await acoes.salvarPersonaAction({
+      ...PERSONA,
+      fraseDoAssistente: "Sou a assistente virtual. Veja www.clinica.com.br",
+    });
+    expect(comLink.ok).toBe(false);
+    if (!comLink.ok) {
+      expect(comLink.error).toContain("Tire o link");
+    }
+    expect(
+      await acoes.salvarPersonaAction({
+        ...PERSONA,
+        fraseDoAssistente: `Sou a assistente virtual. ${"a".repeat(300)}`,
+      }),
+    ).toEqual({
+      ok: false,
+      error: "A frase de assistente virtual vai até 300 caracteres.",
+    });
+    // Sem a chave: dados invalidos (a frase gravada nunca e apagada por um
+    // cliente que nao a manda).
+    const { fraseDoAssistente: _sem, ...semAChave } = PERSONA;
+    void _sem;
+    expect((await acoes.salvarPersonaAction(semAChave)).ok).toBe(false);
     expect(banco.operacoes).toEqual([]);
     expect(banco.rpcs).toEqual([]);
   });

@@ -43,6 +43,7 @@ import { ptBR } from "date-fns/locale";
 
 import {
   ferramentasDoAgente,
+  fraseDoAssistenteVirtual,
   INSTRUCAO_DO_EMOJI,
   INSTRUCAO_DO_TOM,
   LIMITES_DO_AGENTE,
@@ -750,14 +751,18 @@ export function textoDescartado(
  * primeira resposta da IA em cada janela) e do encerramento (todos podem ir
  * na mesma resposta), entre LIMITE_MINIMO_DA_MENSAGEM e
  * LIMITE_DA_MENSAGEM_DO_MODELO. Estavel por versao (vai no prefixo do cache).
+ * O aviso e a frase da clinica, ou a padrao (fraseDoAssistenteVirtual).
  */
 export function limiteDaMensagem(
-  config: Pick<ConfigDoAgente, "saudacao" | "encerramento">,
+  config: Pick<
+    ConfigDoAgente,
+    "saudacao" | "encerramento" | "fraseDoAssistente"
+  >,
 ): number {
   const separador = tamanhoNoFiltro(SEPARADOR_DA_RESPOSTA);
   const extras = [
     config.saudacao,
-    FRASE_DO_ASSISTENTE_VIRTUAL,
+    fraseDoAssistenteVirtual(config),
     config.encerramento,
   ]
     .map((texto) => texto?.trim() ?? "")

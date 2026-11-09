@@ -63,7 +63,9 @@
 //    motivo de sistema fora_do_assunto e a frase de escalonamento;
 //  - o aviso de assistente virtual (P11a) vai antes da primeira resposta da
 //    IA em cada janela, depois da saudacao e antes do filtro, e nunca sai
-//    sozinho de uma resposta grande (a resposta grande e barrada inteira);
+//    sozinho de uma resposta grande (a resposta grande e barrada inteira).
+//    Desde 09/11/2026 o aviso e a resposta do "robô?" sao a frase da clinica
+//    (aba Persona), ou a padrao quando ela nao tem (fraseDoAssistenteVirtual);
 //  - o tipo do contato (lead ou paciente) vai na ultima linha das
 //    instrucoes (item 4), fora do prefixo do cache.
 //
@@ -124,6 +126,7 @@ import {
   ehFerramentaDeAgenda,
   ehFerramentaDoCadastro,
   ferramentasDoAgente,
+  fraseDoAssistenteVirtual,
   ROTULO_DO_MOTIVO_DE_ESCALONAMENTO,
   type ConfigDoAgente,
   type FerramentaDoAgente,
@@ -150,7 +153,6 @@ import {
 } from "@/lib/domain/conformidade/filtro-deterministico";
 import {
   FRASE_DE_ESCALONAMENTO,
-  FRASE_DO_ASSISTENTE_VIRTUAL,
   FRASE_FORA_DO_ASSUNTO,
 } from "@/lib/domain/conformidade/frase-fixa";
 import {
@@ -3687,10 +3689,11 @@ async function turnoDoAgente(
     );
     // P11a: o aviso de assistente virtual na primeira resposta da IA na
     // janela (no WhatsApp, o executor diz; no simulador, a mesma regra da
-    // saudacao).
+    // saudacao). A frase e a da clinica, ou a padrao (09/11/2026).
+    const fraseDoAssistente = fraseDoAssistenteVirtual(entrada.config);
     const aviso =
       (entrada.primeiraRespostaDaIa ?? primeiraResposta)
-        ? FRASE_DO_ASSISTENTE_VIRTUAL
+        ? fraseDoAssistente
         : null;
     let rascunho: string;
     // Revisao 2 da AG2: as respostas da base que o modelo disse ter usado,
@@ -3745,9 +3748,7 @@ async function turnoDoAgente(
       // A frase do dono, com a saudacao e o aviso colados como numa
       // resposta comum (a do "você é um robô?" ja e o aviso: nao repete).
       rascunho = comporResposta({
-        mensagem: ehForaDoAssunto
-          ? FRASE_FORA_DO_ASSUNTO
-          : FRASE_DO_ASSISTENTE_VIRTUAL,
+        mensagem: ehForaDoAssunto ? FRASE_FORA_DO_ASSUNTO : fraseDoAssistente,
         saudacao: entrada.config.saudacao,
         encerramento: null,
         primeiraResposta,

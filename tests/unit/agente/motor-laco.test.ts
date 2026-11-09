@@ -1671,6 +1671,72 @@ describe("onda 2: 'você é um robô?' (P5c)", () => {
   });
 });
 
+// Decisao do dono de 09/11/2026: a frase de assistente virtual e de cada
+// clinica (aba Persona da Tela 6). O aviso da primeira resposta e a resposta
+// ao "você é um robô?" usam a dela; nula ou em branco, a padrao.
+describe("a frase de assistente virtual da clínica (09/11/2026)", () => {
+  const FRASE = "Aqui quem responde é a assistente virtual da Clínica Sol.";
+
+  it("vai no aviso da primeira resposta, no lugar da padrão, e passa pelo filtro", async () => {
+    const { cliente } = clienteComRoteiro([final("Temos sim.")]);
+    const r = await executarTurnoDoAgente(
+      entrada({ cliente, config: config({ fraseDoAssistente: FRASE }) }),
+    );
+    expect(r.desfecho).toEqual({ tipo: "respondeu" });
+    expect(r.resposta).toBe(
+      `Olá! Aqui é a Ana, da clínica.\n\n${FRASE}\n\nTemos sim.`,
+    );
+    expect(r.resposta).not.toContain(FRASE_DO_ASSISTENTE_VIRTUAL);
+    expect(aprovador).toHaveBeenCalledTimes(1);
+  });
+
+  it("é a resposta ao 'você é um robô?', uma vez só", async () => {
+    const { cliente } = clienteComRoteiro([
+      ferramenta("sou_assistente_virtual", {}),
+    ]);
+    const r = await executarTurnoDoAgente(
+      entrada({
+        cliente,
+        config: config({ fraseDoAssistente: FRASE }),
+        mensagens: [paciente("você é um robô?")],
+      }),
+    );
+    expect(r.desfecho).toEqual({ tipo: "respondeu" });
+    expect(r.resposta).toBe(`Olá! Aqui é a Ana, da clínica.\n\n${FRASE}`);
+    expect(r.ferramentasUsadas).toEqual(["sou_assistente_virtual"]);
+  });
+
+  it("depois da primeira resposta, o 'robô?' responde com a frase da clínica, sem saudação", async () => {
+    const { cliente } = clienteComRoteiro([
+      ferramenta("sou_assistente_virtual", {}),
+    ]);
+    const r = await executarTurnoDoAgente(
+      entrada({
+        cliente,
+        config: config({ fraseDoAssistente: FRASE }),
+        mensagens: [
+          paciente("Oi"),
+          { autor: "assistente", texto: "Olá! Como posso ajudar?" },
+          paciente("você é um robô?"),
+        ],
+      }),
+    );
+    expect(r.resposta).toBe(FRASE);
+  });
+
+  it("nula ou em branco: vale a padrão", async () => {
+    for (const fraseDoAssistente of [null, "   "]) {
+      const { cliente } = clienteComRoteiro([final("Temos sim.")]);
+      const r = await executarTurnoDoAgente(
+        entrada({ cliente, config: config({ fraseDoAssistente }) }),
+      );
+      expect(r.resposta, String(fraseDoAssistente)).toBe(
+        `Olá! Aqui é a Ana, da clínica.\n\n${AVISO}\n\nTemos sim.`,
+      );
+    }
+  });
+});
+
 describe("onda 2: aviso de assistente virtual (P11a)", () => {
   it("vai só na primeira resposta da IA na janela, depois da saudação", async () => {
     const primeira = clienteComRoteiro([final("Temos sim.")]);

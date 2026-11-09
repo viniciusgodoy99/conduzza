@@ -56,6 +56,7 @@ import { TZDate } from "@date-fns/tz";
 
 import {
   ferramentasDoAgente,
+  fraseDoAssistenteVirtual,
   type ConfigDoAgente,
 } from "@/lib/domain/agente/config";
 import type {
@@ -71,10 +72,7 @@ import type {
   HorarioDoFato,
   HorarioLivreDoTurno,
 } from "@/lib/domain/conformidade/fatos-do-turno";
-import {
-  FRASE_DO_ASSISTENTE_VIRTUAL,
-  FRASE_FORA_DO_ASSUNTO,
-} from "@/lib/domain/conformidade/frase-fixa";
+import { FRASE_FORA_DO_ASSUNTO } from "@/lib/domain/conformidade/frase-fixa";
 
 import { fusoDaAgenda } from "./ferramentas/buscar-horario";
 import {
@@ -339,7 +337,8 @@ export function montarFatosDoTurno(entrada: {
   const colados = [
     config.saudacao,
     config.encerramento,
-    FRASE_DO_ASSISTENTE_VIRTUAL,
+    // A frase de assistente virtual da clinica, ou a padrao (09/11/2026).
+    fraseDoAssistenteVirtual(config),
     FRASE_FORA_DO_ASSUNTO,
     // [AG7 preparo] A F2, quando o turno a colou.
     entrada.fraseDoPreparo,

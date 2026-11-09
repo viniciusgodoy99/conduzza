@@ -334,16 +334,21 @@ describe("perguntasParaOModelo e instrucoesParaOModelo", () => {
 
 describe("limiteDaMensagem", () => {
   it("é 500 sem saudação nem encerramento", () => {
-    expect(limiteDaMensagem({ saudacao: null, encerramento: null })).toBe(
-      LIMITE_DA_MENSAGEM_DO_MODELO,
-    );
+    expect(
+      limiteDaMensagem({
+        saudacao: null,
+        encerramento: null,
+        fraseDoAssistente: null,
+      }),
+    ).toBe(LIMITE_DA_MENSAGEM_DO_MODELO);
   });
 
   it("desconta saudação, aviso de assistente virtual (onda 2, P11a) e encerramento dos 700 do filtro, com piso", () => {
     const saudacao = "a".repeat(150);
     const encerramento = "b".repeat(100);
     const aviso = Array.from(FRASE_DO_ASSISTENTE_VIRTUAL).length;
-    expect(limiteDaMensagem({ saudacao, encerramento })).toBe(
+    const config = { saudacao, encerramento, fraseDoAssistente: null };
+    expect(limiteDaMensagem(config)).toBe(
       Math.min(
         LIMITE_DA_MENSAGEM_DO_MODELO,
         LIMITE_DO_RASCUNHO - 150 - aviso - 100 - 6,
@@ -351,14 +356,36 @@ describe("limiteDaMensagem", () => {
     );
     // Cabe a resposta mais longa que o modelo pode mandar com tudo colado.
     expect(
-      150 + aviso + 100 + 6 + limiteDaMensagem({ saudacao, encerramento }),
+      150 + aviso + 100 + 6 + limiteDaMensagem(config),
     ).toBeLessThanOrEqual(LIMITE_DO_RASCUNHO);
     expect(
       limiteDaMensagem({
         saudacao: "a".repeat(300),
         encerramento: "b".repeat(300),
+        fraseDoAssistente: null,
       }),
     ).toBe(LIMITE_MINIMO_DA_MENSAGEM);
+  });
+
+  it("desconta a frase de assistente virtual da clínica no lugar da padrão (09/11/2026)", () => {
+    const saudacao = "a".repeat(150);
+    const encerramento = "b".repeat(100);
+    const frase = `Sou a assistente virtual da clínica. ${"c".repeat(200)}`;
+    const aviso = Array.from(frase).length;
+    expect(
+      limiteDaMensagem({ saudacao, encerramento, fraseDoAssistente: frase }),
+    ).toBe(
+      Math.min(
+        LIMITE_DA_MENSAGEM_DO_MODELO,
+        LIMITE_DO_RASCUNHO - 150 - aviso - 100 - 6,
+      ),
+    );
+    // Em branco vale a padrao.
+    expect(
+      limiteDaMensagem({ saudacao, encerramento, fraseDoAssistente: "  " }),
+    ).toBe(
+      limiteDaMensagem({ saudacao, encerramento, fraseDoAssistente: null }),
+    );
   });
 });
 

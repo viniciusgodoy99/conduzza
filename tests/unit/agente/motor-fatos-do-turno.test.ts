@@ -579,4 +579,18 @@ describe("os fatos que o turno monta", () => {
     });
     expect(fatos.anoCorrente).toBe(2026);
   });
+
+  it("a frase de assistente virtual da clínica entra nos textos colados, no lugar da padrão (09/11/2026)", () => {
+    const frase = "Aqui quem responde é a assistente virtual da Clínica Sol.";
+    const fatos = montarFatosDoTurno({
+      config: { ...configComAgenda(), fraseDoAssistente: frase },
+      catalogo: CATALOGO,
+      agoraTexto: "x",
+      agoraMs: AGORA,
+      fuso: FUSO,
+      ferramentas: [],
+    });
+    expect(fatos.textosColados).toContain(frase);
+    expect(fatos.textosColados).not.toContain(FRASE_DO_ASSISTENTE_VIRTUAL);
+  });
 });
