@@ -2169,7 +2169,7 @@ A tabela, as palavras do dono e o que não foi construído estão no `docs/05`, 
 
 **A marcação.** `ler_atendimento_da_ia` diz SE o cadastro tem o número; a carteirinha lida no próprio turno avisa por `agendaDoTurno.carteirinhaNoCadastro` (a resposta da RPC). `dadosQueFaltam` usa `carteirinhaDoCadastroVale`, o espelho de `dados_que_faltam_para_marcar`.
 
-## 29. Agente de IA: áudio, foto e PDF sempre ligados (decisão do dono de 06/11/2026; **aplicada e publicada em 06/11/2026**; banco no `docs/04`, seção 45)
+## 29. Agente de IA: áudio, foto e PDF sempre ligados (decisão do dono de 06/11/2026; **migration aplicada e código publicado em 09/11/2026**, com o ok do dono; banco no `docs/04`, seção 45)
 
 O dono: "Preciso que sempre esteja ligado, não precisar apertar um botão, pode tirar da UI e UX e pode ligar isso".
 
@@ -2179,3 +2179,16 @@ O dono: "Preciso que sempre esteja ligado, não precisar apertar um botão, pode
 - **O que não muda (D-95):** só telefone da lista com o aviso novo (`aviso_da_openai_versao = 2`) manda mídia à OpenAI, conferido pelo motor e pelo banco. **Na Produção, em número inteiro, o contato fora da lista continua sem mídia pela IA:** a foto, o áudio e o PDF de paciente real vão para a equipe, porque a LGPD pede o RIPD e o termo antes. Mudar isso é uma decisão própria do dono.
 - **Desligar:** não há mais chave. Por telefone, desligando-o na aba WhatsApp; para todos, as constantes da calibragem (`TRANSCRICAO_CALIBRADA` e os tetos do leitor), por commit.
 
+## 30. Agente de IA: o portão de entrada na conversa normal (09/11/2026; **publicada em 09/11/2026**, com o ok do dono, sem migration)
+
+O dono mandou "bom dia painho" pelo número de teste e a conversa foi para a equipe pelo portão, com o motivo `sintoma`, antes de chamar a OpenAI. O pedido: "Não faz sentido pegar palavras em inglês, não faz sentido nenhum ter me direcionado, preciso que você revise isso 100% de forma que realmente funcione". A revisão rodou o portão em 456 mensagens de recepção (saudação e gírias daqui, origem, preço, convênio, endereço, agenda, dados, documentos, remarcação e chegada): 59 de 60 frases do dia a dia escalavam; agora 440 seguem para o assistente e 16 continuam com a equipe, de propósito. O classificador por modelo e o filtro de saída não mudaram.
+
+- **Saíram** o sintoma, o pedido de pessoa e a reclamação em inglês e espanhol: pegavam painho, painha, painel, Paineiras, Hurtado, o "agente" do "a gente" e "demanda". O classificador lê qualquer língua; os casos E20 e E33 viraram casos só do modelo.
+- **O léxico compacto** (o texto sem espaços, contra "d o e n d o") só vale dentro de uma palavra ou num trecho de palavras inteiras: "consulta do endocrinologista" deixou de ser "doendo". "ignore", "ignora", "instruc", "atendente" e "advogado" saíram dele.
+- **Sintoma:** não escalam "pus" do verbo pôr ("pus o nome errado"), "cortou" da ligação e do áudio, "cortei o cabelo", "quebrei o celular", "achei estranho o valor", "grave um áudio" e a paralisação dos ônibus; escalam "saiu pus", "cortei o dedo", "quebrei o braço", "me sentindo estranha" e "paralisia". O pedido estético da mancha ("quero tratar as manchas do rosto", "mancha de sol") segue; com sinal clínico até 40 caracteres (coça, dói, vermelha, apareceu, cresceu, depois do procedimento), escala.
+- **Menor de idade:** não escalam o filho que acompanha ou indica ("posso levar minha filha junto?", "minha filha vai me levar", "minha filha me indicou") nem "meus pais" sozinho; escalam a idade, o pedido para o filho, "vou levar meu filho comigo" e "meus pais não deixam".
+- **Manipulação:** não escalam "desconsidera a mensagem anterior", "esquece o que eu falei", "ignora o áudio", "repita por favor", "as instruções para chegar", "foto sem filtro", "sem restrição de horário", "sou administradora", "obrigada <3" e a configuração do lembrete; escalam ignorar ou esquecer instruções e regras, "suas instruções", o prompt, "finja que você é", responder sem filtro, "administrador do sistema" e a marcação de código.
+- **Pedido de pessoa:** o cargo citado não escala ("a atendente foi atenciosa", "sou secretária", "a recepcionista me disse"); o pedido escala ("quero falar com a atendente", "tem algum atendente aí?", "cadê a atendente?", "atendente!", "chama o gerente").
+- **Reclamação:** não escalam "sou advogada", "trabalho na justiça", "qual o CRM da doutora?" e "tenho vergonha das minhas estrias"; escalam "vou chamar meu advogado", "vou entrar na justiça", "vou no CRM" e "que vergonha esse atendimento".
+- **Ficam com a equipe, de propósito:** "socorro" e "urgente", mesmo em pedido administrativo; "isso é golpe?"; "vocês atendem criança?"; a dor figurada ("dor de cabeça com esse trânsito"); o desabafo.
+- **Prova:** `tests/unit/conformidade/portao-conversa-normal.test.ts`, com as 440 que seguem, a conversa do teste de 09/11/2026 e as 56 que continuam escalando. A bateria de conformidade inteira passou (10.137 testes). A versão do portão vai de `portao-918d49469e1f` para `portao-da88be1e9fa6`.

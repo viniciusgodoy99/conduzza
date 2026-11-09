@@ -5174,7 +5174,7 @@ O dono: "preciso que nem tudo vá para a equipe". A decisão de cada arquivo é 
 
 **Escritas e não rodadas:** os casos novos de `tests/integration/midia-pela-ia.test.ts` ("a matriz de arquivos"), `tests/integration/agendamento-completo-da-ia.test.ts` ("a carteirinha que já está no cadastro") e `tests/rls/midia-pela-ia.test.ts` ("a carteirinha lida").
 
-## 45. Áudio, foto e PDF sempre ligados (decisão do dono de 06/11/2026, migration `20261106140000_midia_sempre_ligada.sql`; **aplicada na produção em 06/11/2026**)
+## 45. Áudio, foto e PDF sempre ligados (decisão do dono de 06/11/2026, migration `20261106140000_midia_sempre_ligada.sql`; **aplicada na produção em 09/11/2026**, em 393 ms, com ENSAIO OK e nenhuma sessão esperando trava)
 
 `gravar_leitura_da_midia` deixa de ler `ai_agent_config.skills`: saem as constantes `c_habilidade_do_audio` e `c_habilidade_do_arquivo` e a variável `v_skills`. A recusa `leitura_desligada` fica só para a clínica sem versão publicada. O resto do corpo é igual ao da seção 44, com os mesmos grants (`create or replace`). `midia_da_ia_liberada` (D-95) não muda. As chaves antigas em `skills` ficam gravadas e não valem mais.
 

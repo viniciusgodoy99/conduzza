@@ -1833,7 +1833,7 @@ Tudo em `ia_uso`, no teto diário da clínica (padrão de US$ 5) e na reserva do
 2. **"Como tomo o remédio da colonoscopia?" continua na equipe:** o portão não conhece o catálogo, e abrir um nome livre deixaria passar "o remédio da pressão". "Tenho exame amanhã, qual o preparo?" também continua. Ficaram de fora de propósito, porque não estavam na decisão.
 3. **O `CLAUDE.md` 3.2** ainda diz "a dúvida sobre o preparo ... passa para a equipe" sem a exceção da pergunta geral: o ajuste da frase é com o dono.
 
-### [x] Áudio, foto e PDF sempre ligados `P` (decisão do dono em 06/11/2026; **migration `20261106140000` aplicada e código publicado em 06/11/2026**)
+### [x] Áudio, foto e PDF sempre ligados `P` (decisão do dono em 06/11/2026; **migration `20261106140000` aplicada e código publicado em 09/11/2026**, com o ok do dono)
 
 "Preciso que sempre esteja ligado, não precisar apertar um botão, pode tirar da UI e UX e pode ligar isso." As habilidades "Entender áudio" e "Ler imagem e documento" valem sempre e saíram da Tela 6. Banco no `docs/04`, seção 45; arquitetura no `docs/03`, seção 29; tela no brief.
 
@@ -1889,6 +1889,10 @@ Arquitetura no `docs/03`, seção 28; banco no `docs/04`, seção 44; LGPD no `d
 - **O número pela OpenAI:** dado pessoal, sem RIPD por decisão do dono nesta fase; rever antes de paciente real (`docs/03`, seção 14).
 
 **Estado (06/11/2026):** publicado. Conferência da junção com os remédios e o portão: 20.285 testes, typecheck, lint e build verdes; ensaio e provas na produção no `docs/04`, seção 44. **Não rodou:** a OpenAI de verdade com o esquema novo do leitor (se recusar, toda foto e PDF vão para a equipe: falha fechada). **Limites conhecidos:** a nota interna só aparece quando a equipe abre a conversa; o agente não pede RG, CNH ou CPF (não construído); a carteirinha de dependente grava no contato da conversa, só quando o campo está vazio.
+
+### [x] O portão de entrada na conversa normal `M` (09/11/2026; **publicado em 09/11/2026**, com o ok do dono, sem migration)
+
+O dono mandou "bom dia painho" pelo número de teste e a conversa foi para a equipe com o motivo `sintoma` ("pain", dor em inglês). Pedido dele: "Não faz sentido pegar palavras em inglês, não faz sentido nenhum ter me direcionado, preciso que você revise isso 100%". O portão foi revisado em 456 mensagens de recepção: 440 seguem para o assistente e 16 continuam com a equipe de propósito ("socorro", "urgente", "isso é golpe?", "vocês atendem criança?", a dor figurada e o desabafo). Saíram as regras em inglês e espanhol; o compacto só vale em palavra inteira; o cargo citado, o verbo pôr, a ligação que cortou, o pedido estético da mancha, o filho que acompanha e a mensagem desconsiderada deixaram de escalar. Detalhe no `docs/03`, seção 30. Prova: `tests/unit/conformidade/portao-conversa-normal.test.ts` e a bateria de conformidade inteira (10.137 testes).
 
 ### [ ] Conversas longas e os 5 defeitos que elas acharam `M` (05/11/2026; autorizado pelo dono só em branch: `agente-ag0-conversas`; **nada publicado nem aplicado, sem migration**)
 
