@@ -1074,3 +1074,105 @@ describe("tool_used do log", () => {
     ).toBe("confirmar_presenca");
   });
 });
+
+describe("o documento com foto depois de marcar (09/11/2026)", () => {
+  const MENSAGEM_DO_DOCUMENTO = "70000000-0000-4000-8000-000000000001";
+
+  // O procedimento da busca exige documento com foto ("O que o paciente
+  // precisa"): agendar pede a foto se o assistente le a foto deste telefone
+  // (midia_da_ia_liberada) e o cadastro ainda nao tem o documento.
+  function turnoComDocumentoExigido(porta: PortaDaAgenda | null) {
+    return criarAgendaDoTurno({
+      porta,
+      catalogo: {
+        ...CATALOGO,
+        requisitos: [
+          ...(CATALOGO.requisitos ?? []),
+          {
+            procedimentoId: PROC.consulta,
+            convenioId: null,
+            tipo: "documento_com_foto",
+            valor: null,
+            texto: null,
+          },
+        ],
+      },
+      config: configComAgenda(),
+      agoraMs: AGORA,
+      fuso: FUSO,
+    });
+  }
+
+  function contatoComMidia(liberada: boolean) {
+    banco.inserir("contact", {
+      id: CONTATO,
+      clinic_id: CLINICA,
+      phone_e164: "+5585999990000",
+    });
+    banco.rpc("midia_da_ia_liberada", () => ({ data: liberada, error: null }));
+  }
+
+  function documentoGuardado(apagadoEm: string | null) {
+    banco.inserir("message", {
+      id: MENSAGEM_DO_DOCUMENTO,
+      clinic_id: CLINICA,
+      deleted_at: apagadoEm,
+    });
+    banco.inserir("documento_do_contato", {
+      clinic_id: CLINICA,
+      contact_id: CONTATO,
+      tipo: "documento_com_foto",
+      message_id: MENSAGEM_DO_DOCUMENTO,
+      created_at: "2026-11-01T12:00:00.000Z",
+    });
+  }
+
+  async function marcar(exigido = true) {
+    rpcsDoContrato();
+    const reserva = turnoCom(
+      portaDoWhatsapp("20000000-0000-4000-8000-000000000001"),
+    );
+    await reserva.executar("buscar_horario", BUSCA_DA_ANA);
+    await reserva.executar("reservar_horario", { horario: "h1" });
+    const turno = exigido
+      ? turnoComDocumentoExigido(portaDoWhatsapp())
+      : turnoCom(portaDoWhatsapp());
+    return json(await turno.executar("agendar", {}));
+  }
+
+  it("pede a foto quando o procedimento exige, a foto é lida e o cadastro não tem", async () => {
+    contatoComMidia(true);
+    expect(await marcar()).toMatchObject({
+      resultado: "marcado",
+      documento_com_foto: "pedir",
+    });
+  });
+
+  it("não pede quando o assistente não lê a foto deste telefone (iria para a equipe)", async () => {
+    contatoComMidia(false);
+    expect(await marcar()).not.toHaveProperty("documento_com_foto");
+  });
+
+  it("não pede quando o cadastro já tem o documento", async () => {
+    contatoComMidia(true);
+    documentoGuardado(null);
+    expect(await marcar()).not.toHaveProperty("documento_com_foto");
+  });
+
+  it("pede de novo quando a mensagem do documento foi apagada", async () => {
+    contatoComMidia(true);
+    documentoGuardado("2026-11-02T12:00:00.000Z");
+    expect(await marcar()).toMatchObject({ documento_com_foto: "pedir" });
+  });
+
+  it("sem resposta do banco, não pede", async () => {
+    // Sem o contato: a leitura falha e o agente nao pede.
+    banco.rpc("midia_da_ia_liberada", () => ({ data: true, error: null }));
+    expect(await marcar()).not.toHaveProperty("documento_com_foto");
+  });
+
+  it("sem o requisito, não pede", async () => {
+    contatoComMidia(true);
+    expect(await marcar(false)).not.toHaveProperty("documento_com_foto");
+  });
+});

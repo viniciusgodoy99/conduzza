@@ -546,7 +546,11 @@ describe("AG6b: os espelhos da midia", () => {
 
   it("gravar_leitura_da_midia, a mais nova (matriz de 06/11/2026): os erros, as recusas e o que nao recusa", () => {
     const { arquivo, corpo } = corpoMaisNovo("gravar_leitura_da_midia");
-    expect(arquivo).toBe("20261106140000_midia_sempre_ligada.sql");
+    expect(arquivo).toBe("20261109100000_documentos_do_paciente.sql");
+    // 09/11/2026: o documento com foto e a carteirinha reconhecidos ficam
+    // ligados ao contato pela mensagem (so o tipo e a mensagem).
+    expect(corpo).toContain("insert into public.documento_do_contato");
+    expect(corpo).toMatch(/p_tipo in \(c_carteirinha, c_documento\) and p_confianca in \('alta', 'media'\)/);
     // Decisao do dono de 06/11/2026: a midia vale sempre; o telefone continua.
     expect(corpo).not.toMatch(/ler_audio|ler_imagem_e_documento|v_skills/);
     expect(corpo).toContain("midia_da_ia_liberada");
