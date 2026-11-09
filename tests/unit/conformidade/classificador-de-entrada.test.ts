@@ -782,8 +782,10 @@ describe("AG7: a variante do preparo no classificador", () => {
     // A AG7 nao mexeu no portao (era portao-9e835642d49a, a da AG6a, 2a
     // rodada). Quem mudar o portao depois atualiza esta linha: as decisoes de
     // 06/11/2026 o mudaram (o pedido de recepcao sobre o exame,
-    // portao-ac8922f0785a; a pergunta do preparo e do remedio com a habilidade).
-    expect(versaoDoPortao()).toBe("portao-918d49469e1f");
+    // portao-ac8922f0785a; a pergunta do preparo e do remedio com a habilidade,
+    // portao-918d49469e1f), e a revisao do portao na conversa normal de
+    // 09/11/2026 (portao-conversa-normal.test.ts).
+    expect(versaoDoPortao()).toBe("portao-da88be1e9fa6");
   });
 });
 // [AG7 preparo] fim

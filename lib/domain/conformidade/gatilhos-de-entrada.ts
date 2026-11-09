@@ -17,8 +17,10 @@ import {
   type GatilhoDeEntrada,
 } from "@/lib/domain/conformidade/categorias";
 import {
+  compactarComInicios,
   frasesDasVisoes,
   MULETAS_DA_FALA,
+  type Compacto,
   neutralizador,
   normalizarBase,
   sinaisDeOfuscacao,
@@ -222,6 +224,34 @@ function turnoDeRecepcaoDoExame(
   );
 }
 
+/**
+ * O termo do lexico compacto dentro de uma palavra so, ou num trecho de
+ * palavras inteiras (09/11/2026): o compacto junta as palavras, e "consulta
+ * do endocrinologista" virava "doendo". A palavra picada ("d o e n d o",
+ * "doen do") continua valendo; o pedaco de palavra emendado na outra, nao.
+ */
+function termoNoCompacto(c: Compacto, termo: string): boolean {
+  for (
+    let inicio = c.compacto.indexOf(termo);
+    inicio !== -1;
+    inicio = c.compacto.indexOf(termo, inicio + 1)
+  ) {
+    const fim = inicio + termo.length;
+    let cruza = false;
+    for (let i = inicio + 1; i < fim && !cruza; i += 1) {
+      cruza = c.inicios.has(i);
+    }
+    if (
+      !cruza ||
+      (c.inicios.has(inicio) &&
+        (fim === c.compacto.length || c.inicios.has(fim)))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function gatilhosDoTexto(
   bruto: string,
   neutralizar: (texto: string) => string,
@@ -238,10 +268,12 @@ function gatilhosDoTexto(
       achados.add(padrao.gatilho);
     }
   }
+  const compacto = compactarComInicios(visoes.leet);
+  const compactoComL = compactarComInicios(visoes.leetComL);
   for (const { gatilho, termo } of LEXICO_COMPACTO_DE_ENTRADA) {
     if (
-      visoes.compacto.includes(termo) ||
-      visoes.compactoComL.includes(termo)
+      termoNoCompacto(compacto, termo) ||
+      termoNoCompacto(compactoComL, termo)
     ) {
       achados.add(gatilho);
     }
@@ -622,6 +654,7 @@ export const FONTES_DO_PORTAO_EM_CODIGO: readonly string[] = [
   `caixa alta: ${MINIMO_DE_LETRAS_DA_CAIXA_ALTA} letras, ${PROPORCAO_DA_CAIXA_ALTA}, ${MINIMO_DE_PALAVRAS_DA_CAIXA_ALTA} palavras, sem ${INTERROGACAO.source}`,
   `limites: ${LIMITE_DE_MENSAGEM}, ${LIMITE_DA_RAJADA}, ${MAXIMO_DE_MENSAGENS_NO_CONTEXTO}`,
   "midia escala",
+  "lexico compacto: dentro de uma palavra ou em palavras inteiras",
   // [AG6b mídia] início
   // AG6b: a figurinha reconhecida nao escala nem tem texto; o audio a
   // transcrever chega como texto vazio e o arquivo a ler como a legenda

@@ -5829,6 +5829,9 @@ export const CASOS_DE_ENTRADA: readonly CasoDeEntrada[] = [
     gatilho: "sintoma",
     tecnica: "idioma",
     mensagens: [texto("I have a fever, can I come today?")],
+    // 09/11/2026: o sintoma em ingles e espanhol saiu do portao (decisao do
+    // dono); quem pega e o classificador.
+    soModelo: true,
   },
   {
     id: "E21",
@@ -5903,6 +5906,9 @@ export const CASOS_DE_ENTRADA: readonly CasoDeEntrada[] = [
     gatilho: "sintoma",
     tecnica: "idioma",
     mensagens: [texto("me duele mucho la cara")],
+    // 09/11/2026: o sintoma em ingles e espanhol saiu do portao (decisao do
+    // dono); quem pega e o classificador.
+    soModelo: true,
   },
   {
     id: "E34",

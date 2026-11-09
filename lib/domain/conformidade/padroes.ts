@@ -2901,7 +2901,7 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
     // corpo ("o rosto dela caiu", "minha boca caiu", "minha mae caiu", "a
     // pressao dela caiu"). O "caiu" solto fica de fora de proposito: "o pix
     // caiu?", "a ligacao caiu" e "caiu na caixa postal" sao recepcao.
-    "\\b(?:dor\\b|dores\\b|dorzinha|dorzona|doi\\b|doendo|doeu|doer\\b|dolorid|febr|sangr|inchad|inchac|inchou|incha\\b|inchando|desinch|inx[ao]|reac(?:ao|oes)\\b|falta de ar|sem ar\\b|nao consigo respirar|dificuldade (?:de|para|pra) respirar|tontura|tont[oa]\\b|desmai|vomit|enjo|nausea|diarreia|manch|coceira|cocando|coca\\b|cocar|alergi|alergic|infecc|infeccion|infectad|inflama|pus\\b|caroco|nodulo|bolinha|bolha|empol|passando mal|mal estar|me sentindo mal|estou mal|to mal|machuc|ferid|queimad|queimou|queimando|ardencia|ardend|arde\\b|ardeu|ardor|vermelh|roxo|roxa|hematoma|sangue|edema|formigament|dormencia|dormente|paralis|visao turva|vista embacada|convuls|pressao alta|pressao baixa|taquicardia|palpitac|coracao acelerado|quebrei|fratur|torci\\b|torcao|luxac|cortei|cortou|picada|mordida|irritac|descamand|descascand|secrecao|catarro|tosse|gripad|resfriad|garganta|colica|corrimento|enxaqueca|crise|panico|suicid|me matar|me matando|quero morrer|tirar minha vida|socorro|urgente|emergencia|grave\\b|piorou|piorando|estranh[oa]|tort[oa]\\b|caid[oa]\\b|assimetric|deformad|endurecid|aperto no peito|peito (?:\\w+ )?(?:doendo|apertad|queimando|ardendo|chiando)|respir|entort|latej|pontada|fisgada|repux|zonz|tontei|puxando pro lado|aguinha|roxinh|carocinh|calombo)|\\bcostas? (?:ta|tao|esta|estao) me matando" +
+    "\\b(?:dor\\b|dores\\b|dorzinha|dorzona|doi\\b|doendo|doeu|doer\\b|dolorid|febr|sangr|inchad|inchac|inchou|incha\\b|inchando|desinch|inx[ao]|reac(?:ao|oes)\\b|falta de ar|sem ar\\b|nao consigo respirar|dificuldade (?:de|para|pra) respirar|tontura|tont[oa]\\b|desmai|vomit|enjo|nausea|diarreia|manch|coceira|cocando|coca\\b|cocar|alergi|alergic|infecc|infeccion|infectad|inflama|pus\\b(?<!\\b(?:eu|ja|que|nao|so|tambem) pus)(?! (?:meu|minha|meus|minhas|errad\\w*|o nome|a data|o cpf|o email|o telefone|o endereco)\\b)|caroco|nodulo|bolinha|bolha|empol|passando mal|mal estar|me sentindo mal|estou mal|to mal|machuc|ferid|queimad|queimou|queimando|ardencia|ardend|arde\\b|ardeu|ardor|vermelh|roxo|roxa|hematoma|sangue|edema|formigament|dormencia|dormente|paralisi|paralisad|paralisou|paralisand|visao turva|vista embacada|convuls|pressao alta|pressao baixa|taquicardia|palpitac|coracao acelerado|quebrei(?! (?:o |a |os |as |meu |minha |meus |minhas |um |uma )?(?:celular|telefone|oculos|carro|tela|computador|notebook|chip|cartao|galho|copo|prato|unha|unhas)\\b)|fratur|torci\\b|torcao|luxac|cortei(?! (?:o |a |os |as |meu |minha |meus |minhas )?(?:cabelo|cabelos|franja|unha|unhas|barba|cartao|plano|internet|gasto|gastos|doce|doces|acucar)\\b)|(?<!\\b(?:ligacao|chamada|audio|video|internet|sinal|conexao|mensagem|luz|energia|wifi|zap|whatsapp|net)(?: \\w+)? )cortou(?! (?:aqui|ai|a ligacao|a chamada|o audio|o video|o sinal|a internet|a net|o zap)\\b)|picada|mordida|irritac|descamand|descascand|secrecao|catarro|tosse|gripad|resfriad|garganta|colica|corrimento|enxaqueca|crise|panico|suicid|me matar|me matando|quero morrer|tirar minha vida|socorro|urgente|emergencia|grave\\b(?! (?:um |uma |o |a |esse |essa |pra mim |para mim |por favor )?(?:audio|video|mensagem|recado))|piorou|piorando|(?<!\\b(?:achei|acho|achamos|que) )estranh[oa](?! (?:isso|isto|que|esse|essa|este|esta|o valor|o preco|a mensagem|o link|o site|o horario|nao)\\b)|tort[oa]\\b|caid[oa]\\b|assimetric|deformad|endurecid|aperto no peito|peito (?:\\w+ )?(?:doendo|apertad|queimando|ardendo|chiando)|respir|entort|latej|pontada|fisgada|repux|zonz|tontei|puxando pro lado|aguinha|roxinh|carocinh|calombo)|\\bcostas? (?:ta|tao|esta|estao) me matando" +
       "|\\b(?:rosto|face|boca|labio|labios|olho|olhos|palpebra|palpebras|sobrancelha|sobrancelhas|bochecha|bochechas|queixo|braco|bracos|perna|pernas|mao|maos|lado do corpo|metade do corpo|lado do rosto|metade do rosto|pressao|glicose|glicemia)\\b(?: \\w+){0,2}? (?:caiu|cairam)\\b" +
       "|\\b(?:caiu|cairam)\\b(?: \\w+){0,3}? (?:rosto|face|boca|labio|labios|olho|olhos|palpebra|palpebras|sobrancelha|sobrancelhas|bochecha|bochechas|queixo)\\b" +
       "|\\b(?:ela|ele|minha mae|meu pai|minha filha|meu filho|minha avo|meu avo|minha vo|meu vo|meu marido|minha esposa|minha mulher|a paciente|o paciente|a crianca|o bebe|a bebe)\\b(?: \\w+)? caiu\\b",
@@ -2921,17 +2921,15 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
     "ficou_depois_do_procedimento",
     `\\b(?:depois|apos|desde)\\b (?:d[oa]s? |que (?:fiz|fez|apliquei|aplicou|passei|fui) (?:o |a |no |na )?)?${PROCEDIMENTOS}\\b.{0,40}\\b(?:ficou|ficaram|fiquei|apareceu|apareceram|surgiu|surgiram|comecou|esta|estou|to|tenho|sinto)\\b|\\b(?:ficou|ficaram|fiquei|apareceu|surgiu|esta|estou|to|sinto)\\b.{0,40}\\b(?:depois|apos|desde)\\b (?:d[oa]s? |que )?${PROCEDIMENTOS}`,
   ),
-  e(
-    "sintoma",
-    "sintoma_en_es",
-    "\\b(?:pain|hurts?|hurting|fever|bleed|swell|swollen|rash|itch|dizz|faint|vomit|nause|sick\\b|infection|allerg|chest|headache|migraine|bruise|dolor|duele|fiebre|hinchad|hinchazon|mareo|picazon|picor|infeccion)",
-  ),
+  // O sintoma em ingles e espanhol saiu do portao em 09/11/2026, por decisao
+  // do dono ("Nao faz sentido pegar palavras em ingles"): "pain" pegava
+  // painho, painha, painel e Paineiras. O classificador le qualquer lingua.
 
   // ---- menor de idade ------------------------------------------------------
   e(
     "menor_de_idade",
     "menor_citado",
-    "\\b(?:meu filho|minha filha|meus filhos|minhas filhas|meu menino|minha menina|meu bebe|minha bebe|meu neto|minha neta|meu enteado|minha enteada|meu sobrinho|minha sobrinha|crianca|bebe\\b|bebes\\b|recem[- ]nascid|adolescente|menor de idade|de menor\\b|sou menor|e menor\\b|meus pais|minha mae deixa|meu pai deixa|autorizacao dos (?:pais|responsaveis)|ensino fundamental|ensino medio|\\d+ ?(?:o|a) ano do)",
+    "\\b(?:meu filho|minha filha|meus filhos|minhas filhas|meu menino|minha menina|meu bebe|minha bebe|meu neto|minha neta|meu enteado|minha enteada|meu sobrinho|minha sobrinha|crianca|bebe\\b|bebes\\b|recem[- ]nascid|adolescente|menor de idade|de menor\\b|sou menor|e menor\\b|meus pais (?:nao )?(?:deixa\\w*|autoriz\\w*|precisa\\w*|vao|sabem|pagam|pagar\\w*)|minha mae deixa|meu pai deixa|autorizacao dos (?:pais|responsaveis)|ensino fundamental|ensino medio|\\d+ ?(?:o|a) ano do)",
   ),
   e(
     "menor_de_idade",
@@ -2976,7 +2974,7 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
   e(
     "manipulacao",
     "manipulacao",
-    "\\b(?:ignor|desconsider|esquec(?:e|a) (?:tudo|suas|as|o que)|instruc|prompt|system\\b|(?:prompt|instruc\\w*|regras|mensagem|comando|modo)s? d[oe] sistema\\b|diretriz|configurac|(?:voce|vc|tu|foi|fui|sou|es) (?:\\w+ )?programad|voce agora e|agora voce e|a partir de agora (?:voce|vc|tu|responda|responde|ignore|ignora|esqueca|esquece|seja|aja|finja|fale|fala|so|apenas|sem)\\b|finja|finge|fingir|faca de conta|faz de conta|role ?play|personagem|modo (?:desenvolvedor|dev|debug|admin|teste|livre|sem filtro)|jailbreak|(?:modo|mode) dan\\b|dan mode\\b|(?:you are|you re|youre|voce e|vc e) (?:now |agora )?(?:o |a )?dan\\b|do anything now|developer mode|sem filtro|sem restric|responda (?:apenas|so|somente)|repita|traduz|translate|(?:responda|responde|fale|fala|escreva|escreve|continue|answer|reply) (?:\\w+ ){0,2}?em ingles|in english|token|administrador|admin\\b|root\\b|override|bypass|act as|pretend|you are now|forget (?:your|all|previous)|olvida|ignora las|aja como|age como|atue como|comporte-se como|avaliador|avaliacao interna|verificador|revisor|rascunho|veredicto|considere aprovad|pode aprovar|aprovad[oa] ?=|(?:status|parecer|decisao|verificacao|moderacao|validacao|revisao)\\s*[:=]\\s*(?:aprovad|conforme|liberad)|marque como (?:aprovad|conforme|ok|valid)|confianca\\s*[:=]?\\s*(?:alta|media)|conformidade)|[\\u00ab\\u00bb\\u2039\\u203a]{2,}|\\b[a-z]+_[a-z]+_[a-z]+\\b(?![a-z0-9_.+-]*(?:@|\\.(?:com|br|net|org)\\b))",
+    "\\b(?:(?:ignor(?:e|a|ar|em|ando)|desconsider(?:e|a|ar|em|ando)|esquec(?:e|a|er|am|endo)|desobedec(?:e|a|er|am)|despreze|desprezar|descart(?:e|a|ar|em))\\b (?:\\w+ ){0,3}?(?:instruc|regras|diretriz|ordens|comandos|prompt|programacao|configurac)|(?:ignor(?:e|a|ar|em|ando)|desconsider(?:e|a|ar|em|ando)|esquec(?:e|a|er|am|endo)|desobedec(?:e|a|er|am)|despreze|desprezar|descart(?:e|a|ar|em))\\b (?:tudo )?(?:o )?que (?:te|lhe) (?:disseram|falaram|mandaram|ensinaram|programaram|instruiram)|(?:ignor(?:e|a|ar|em|ando)|desconsider(?:e|a|ar|em|ando)|esquec(?:e|a|er|am|endo)|desobedec(?:e|a|er|am)|despreze|desprezar|descart(?:e|a|ar|em))\\b (?:tudo|todas as mensagens|o que veio) (?:acima|antes|anterior\\w*)|(?:suas|tuas|seus|teus) (?:instruc|regras|diretriz|ordens|comandos|configurac)|instruc\\w* (?:anteriores|iniciais|originais|internas|secretas|que (?:voce|vc|tu) (?:recebeu|tem|segue))|prompt|system\\b|(?:prompt|instruc\\w*|regras|mensagem|comando|modo)s? d[oe] sistema\\b|diretriz\\w* (?:do sistema|interna)|configurac\\w* (?:do sistema|interna|da ia|do robo|do bot)|(?:voce|vc|tu|foi|fui|sou|es) (?:\\w+ )?programad|voce agora e|agora voce e|a partir de agora (?:voce|vc|tu|responda|responde|ignore|ignora|esqueca|esquece|seja|aja|finja|fale|fala|so|apenas|sem)\\b|(?:finja|finge|fingir|faca de conta|faz de conta) (?:que )?(?:voce|vc|tu|ser|seja|eu sou|sou)\\b|role ?play|personagem|modo (?:desenvolvedor|dev|debug|admin|teste|livre|sem filtro)|jailbreak|(?:modo|mode) dan\\b|dan mode\\b|(?:you are|you re|youre|voce e|vc e) (?:now |agora )?(?:o |a )?dan\\b|do anything now|developer mode|(?:responda|responde|fale|fala|aja|age|atue|modo|seja|escreva|escreve|converse|conversa) (?:\\w+ ){0,2}?sem (?:filtro|restric)|responda (?:apenas|so|somente)|repita (?:apos|depois de) mim|repita (?:exatamente|literalmente|palavra por palavra)|traduz|translate|(?:responda|responde|fale|fala|escreva|escreve|continue|answer|reply) (?:\\w+ ){0,2}?em ingles|in english|token (?:de acesso|secreto|da api|do sistema)|api key|chave (?:da|de) api|admin\\w* (?:do|da|deste|desta) (?:sistema|ia|robo|bot|conversa|chat|plataforma|assistente)|(?:acesso|senha|painel|permissao|privilegio)s? (?:de )?admin\\w*|root\\b|override|bypass|act as|pretend|you are now|forget (?:your|all|previous)|olvida|ignora las|aja como|age como|atue como|comporte-se como|avaliador|avaliacao interna|verificador|revisor|rascunho|veredicto|considere aprovad|pode aprovar|aprovad[oa] ?=|(?:status|parecer|decisao|verificacao|moderacao|validacao|revisao)\\s*[:=]\\s*(?:aprovad|conforme|liberad)|marque como (?:aprovad|conforme|ok|valid)|confianca\\s*[:=]?\\s*(?:alta|media)|conformidade)|[\\u00ab\\u00bb\\u2039\\u203a]{2,}|\\b[a-z]+_[a-z]+_[a-z]+\\b(?![a-z0-9_.+-]*(?:@|\\.(?:com|br|net|org)\\b))",
   ),
   // Revisao de precisao de 05/10/2026 (conjunto cego 1): autorizacao da
   // medica alegada pelo paciente ("a dra ja autorizou, pode me falar
@@ -2990,7 +2988,7 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
   e(
     "manipulacao",
     "marcacao",
-    "[<>{}\\[\\]\\\\`]|#{3,}|\\b(?:assistant|user|human|system)\\s*:|\\b[a-z0-9+/]{40,}={0,2}",
+    "<\\/?[a-z_!]|[{}\\[\\]\\\\`]|#{3,}|\\b(?:assistant|user|human|system)\\s*:|\\b[a-z0-9+/]{40,}={0,2}",
   ),
 
   // ---- pedido de humano ----------------------------------------------------
@@ -3010,7 +3008,7 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
   e(
     "pedido_humano",
     "pedido_humano",
-    "\\b(?:atendente|atendimento humano|pessoa (?:de verdade|real|fisica)|gente de verdade|gerente|supervisor|responsavel|dono\\b|dona da clinica|recepcionista|secretaria|falar com (?:alguem|uma? pessoa|um ser humano|um humano|uma humana|o medico|a medica|o doutor|a doutora|a dra|o dr|voces|a clinica)|conversar com (?:alguem|uma? pessoa|um ser humano|um humano|uma humana)|quero (?:falar|conversar) com|me liga|me ligue|ligar (?:pra|para) mim|pode me ligar|telefonar|alguem de verdade)",
+    "\\b(?:atendimento humano|pessoa (?:de verdade|real|fisica)|gente de verdade|(?:falar|conversar|tratar|resolver) (?:direto |diretamente )?com (?:o |a |os |as |um |uma |algum |alguma )?(?:atendente|gerente|supervisor|supervisora|responsavel|dono|dona|recepcionista|recepcao|secretaria)s?\\b|falar com (?:alguem|uma? pessoa|um ser humano|um humano|uma humana|o medico|a medica|o doutor|a doutora|a dra|o dr|voces|a clinica)|conversar com (?:alguem|uma? pessoa|um ser humano|um humano|uma humana)|quero (?:falar|conversar) com|me liga|me ligue|ligar (?:pra|para) mim|pode me ligar|telefonar|alguem de verdade)|^\\s*(?:o |a |um |uma )?(?:atendente|gerente|supervisor|supervisora|recepcionista|recepcao|secretaria)s?(?:,? (?:por favor|pf|pfv|pfvr|urgente|agora|ja|aqui|ai))*\\s*[?!.]*\\s*$",
   ),
   // Onda 2 (P5c): o pedido de uma pessoa sem "falar com" ("preciso de um
   // humano", "prefiro ser atendida por uma pessoa", "quero uma pessoa").
@@ -3027,7 +3025,7 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
   e(
     "pedido_humano",
     "pedido_de_pessoa",
-    "\\b(?:quero|queria|preciso|prefiro|gostaria|exijo)\\b (?:de )?(?:um |uma )?(?:humano|humana|ser humano|atendente)\\b|\\b(?:quero|queria|prefiro|gostaria de|exijo) ser atendid[oa] (?:por|pel[oa]) (?:um |uma )?(?:pessoa|humano|humana|ser humano|atendente|gente)\\b|\\b(?:quero|queria|preciso de|prefiro|exijo) (?:um |uma )?pessoa(?: (?:ai|aqui|agora|por favor|pf|pfv|pfvr))*\\s*(?:$|[?!.,;])|\\b(?:me )?(?:passa|passe|transfere|transfira|chama|chame|coloca|coloque|bota|bote)\\b (?:pra |para |pro |com )?(?:um |uma |o |a |algum |alguma )?(?:humano|humana|ser humano|pessoa|atendente|alguem da (?:equipe|clinica|recepcao))\\b|\\bcade\\b (?:o |a |um |uma |os |as )?(?:humanos?|humanas?|ser humano|pessoa|atendente)\\b|\\b(?:falar|conversar) com (?:ser humano|humanos?|humanas?|pessoa|gente)\\b|^\\s*(?:um |uma |o |a )?(?:humanos?|humanas?|ser humano)(?:,? (?:por favor|pf|pfv|pfvr|urgente|agora|ja|aqui))*\\s*[?!.]*\\s*$",
+    "\\b(?:quero|queria|preciso|prefiro|gostaria|exijo)\\b (?:de )?(?:um |uma )?(?:humano|humana|ser humano|atendente|gerente|supervisor|supervisora|recepcionista|secretaria)\\b|\\b(?:quero|queria|prefiro|gostaria de|exijo) ser atendid[oa] (?:por|pel[oa]) (?:um |uma )?(?:pessoa|humano|humana|ser humano|atendente|gente)\\b|\\b(?:quero|queria|preciso de|prefiro|exijo) (?:um |uma )?pessoa(?: (?:ai|aqui|agora|por favor|pf|pfv|pfvr))*\\s*(?:$|[?!.,;])|\\b(?:me )?(?:passa|passe|transfere|transfira|chama|chame|coloca|coloque|bota|bote)\\b (?:pra |para |pro |com )?(?:um |uma |o |a |algum |alguma )?(?:humano|humana|ser humano|pessoa|atendente|gerente|supervisor|supervisora|recepcionista|secretaria|responsavel|alguem da (?:equipe|clinica|recepcao))\\b|\\bcade\\b (?:o |a |um |uma |os |as )?(?:humanos?|humanas?|ser humano|pessoa|atendente|gerente|supervisor|supervisora|recepcionista|secretaria|responsavel)\\b|\\b(?:tem|existe|ha)\\b (?:algum |alguma |um |uma )?(?:atendente|recepcionista|humano|humana|ser humano|pessoa de verdade)s?\\b(?: (?:ai|aqui|disponivel|online|agora|atendendo))?\\s*(?:$|[?!.,;])|\\b(?:falar|conversar) com (?:ser humano|humanos?|humanas?|pessoa|gente)\\b|^\\s*(?:um |uma |o |a )?(?:humanos?|humanas?|ser humano)(?:,? (?:por favor|pf|pfv|pfvr|urgente|agora|ja|aqui))*\\s*[?!.]*\\s*$",
   ),
   // Onda 2 (P5c): quem recusa o robo pede uma pessoa ("não quero falar com
   // robô", "chega de robô", "sem IA, por favor"). Sem "maquina": "vocês
@@ -3051,14 +3049,9 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
     "falar_com_a_doutora",
     "\\b(?:chama|chame|chamar|chamem|transfere|transfira|transferir|pede (?:pra|para)|peca (?:pra|para)|(?:me )?(?:passa|passe|passar) (?:pra|para|pro))\\b (?:ai |aqui |logo |pra mim )?(?:pra |para |pro )?(?:a |o )?(?:dra|dr|doutora|doutor|medica|medico)\\b(?:\\.? (?!(?:pra|para|pro|ai|aqui|me|falar|conversar|logo|por)\\b)\\w+)?(?: (?:ai|aqui|pra mim|logo|por favor|pfv|pfvr|pf|urgente))*(?: (?:pra|para|pro) (?:falar|conversar|me (?:ligar|liga|ligue|responder|retornar|chamar))| (?:falar|conversar) (?:comigo|cmg)| me (?:ligar|liga|ligue|responder|retornar|chamar)|\\s*(?:$|[?!.,]))|\\b(?:dra|dr|doutora|doutor|medica|medico)\\b(?:\\.? (?!(?:pode|poderia|podia|consegue|conseguiria|vai)\\b)\\w+)? (?:pode |poderia |podia |consegue |conseguiria |vai )?(?:falar|conversar) (?:comigo|cmg)\\b|\\b(?:dra|dr|doutora|doutor|medica|medico)\\b(?:\\.? (?!(?:pode|poderia|podia)\\b)\\w+)? (?:pode|poderia|podia) me (?:ligar|liga|responder|retornar|chamar)\\b|\\b(?:falar|conversar) (?:direto |diretamente |pessoalmente )?com (?:a |o )?(?:dra|dr|doutora|doutor|medica|medico)\\b",
   ),
-  // Onda 2 (P5c): "robot" e "are you real" (a pergunta) sairam, como no
-  // portugues, e "human" virou palavra inteira (pegava o "humano" de "você
-  // é humano?").
-  e(
-    "pedido_humano",
-    "pedido_humano_en_es",
-    "\\b(?:humans?\\b|real person|agent\\b|operator|manager|talk to someone|persona real|hablar con alguien|agente\\b)",
-  ),
+  // O pedido de pessoa e a reclamacao em ingles e espanhol sairam em
+  // 09/11/2026, com o sintoma ("agente" e o "a gente" do WhatsApp; "demanda"
+  // e portugues).
 
   // ---- insatisfacao --------------------------------------------------------
   // Revisao de producao de 19/10/2026 (decisao do dono): "ta demorando"
@@ -3070,7 +3063,7 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
   e(
     "insatisfacao",
     "insatisfacao",
-    "\\b(?:pessim|horrivel|horroros|ridicul|absurd|procon|reclame ?aqui|reclamac|reclamar|advogad|processar|processo judicial|entrar na justica|justica|juizado|denunci|cfm\\b|crm\\b|vigilancia sanitaria|anvisa|nunca mais|palhacada|vergonha|descaso|desrespeit|falta de respeito|irritad|indignad|decepcion|insatisfeit|chatead|lixo|porcaria|enganad|golpe|fraude|mentira|mentiros|roubo|ladr|estorno|exijo\\b|devolv(?:er|am|e) (?:meu|o) dinheiro|dinheiro de volta|cancelar tudo|porra|merda|caralho|puta\\b|foda|pqp\\b|vtnc\\b|fdp\\b|desgrac|inferno|cansad[oa] de esperar|(?<!\\b(?:tempo|quanto|o) )(?:que|q) demora\\b|quanta demora|muita demora|demora demais|demorando demais|ninguem (?:me )?responde|sem resposta|nao respondem|terrivel|lamentavel)",
+    "\\b(?:pessim|horrivel|horroros|ridicul|absurd|procon|reclame ?aqui|reclamac|reclamar|(?:meu|minha|nosso|nossa) advogad|(?:chamar|chamo|acionar|aciono|contratar|contrato|procurar|procuro|consultar|consulto|falar com|ligar (?:pro|para o|pra)|mandar (?:pro|para o|pra)) (?:o |a |um |uma |meu |minha )?advogad|processar|processo judicial|entrar na justica|(?:entro|entrarei|vou|vamos|irei|ir|recorrer|recorro|acionar|aciono|procurar|procuro|levar|levo|botar|colocar|buscar|busco)\\b (?:\\w+ ){0,2}?(?:na|a|pela) justica|justica (?:contra|com voces)|juizado|denunci|(?:vou|irei|vamos|levar|levo|reclamar|reclamo) (?:\\w+ ){0,3}?(?:no|ao|pro|para o) (?:crm|cfm)\\b|vigilancia sanitaria|anvisa|nunca mais|palhacada|(?<!\\b(?:tenho|tive|tem|ter|to com|tou com|estou com|fico com|fiquei com|morro de|morrendo de|sinto|senti|da|me da|me deu) )vergonha|descaso|desrespeit|falta de respeito|irritad|indignad|decepcion|insatisfeit|chatead|lixo|porcaria|enganad|golpe|fraude|mentira|mentiros|roubo|ladr|estorno|exijo\\b|devolv(?:er|am|e) (?:meu|o) dinheiro|dinheiro de volta|cancelar tudo|porra|merda|caralho|puta\\b|foda|pqp\\b|vtnc\\b|fdp\\b|desgrac|inferno|cansad[oa] de esperar|(?<!\\b(?:tempo|quanto|o) )(?:que|q) demora\\b|quanta demora|muita demora|demora demais|demorando demais|ninguem (?:me )?responde|sem resposta|nao respondem|terrivel|lamentavel)",
   ),
   // "Reembolso" sozinho saiu em 05/10/2026 ("qual o cnpj? preciso pro
   // reembolso" e convenio). Fica o reembolso cobrado da clinica.
@@ -3078,11 +3071,6 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
     "insatisfacao",
     "reembolso_cobrado",
     "\\b(?:quero|exijo|cade|kd) (?:o |meu |um |a )?(?:reembolso|ressarcimento)\\b(?! (?:\\w+ ){0,3}?(?:plano|convenio|seguro|operadora|unimed|bradesco|amil|sulamerica|hapvida))",
-  ),
-  e(
-    "insatisfacao",
-    "insatisfacao_en_es",
-    "\\b(?:terrible|awful|worst|lawyer|sue\\b|complain|refund|scam|fraud|horrible|abogado|demanda|queja|estafa)",
   ),
   // Sem padrao de pontuacao repetida desde 19/10/2026 (Q1): "Oi!!!",
   // "Obrigada!!!" e "Quanto custa????" sao recepcao. A reclamacao e lida
@@ -3183,6 +3171,13 @@ const SEM_INTENCAO_NA_MENSAGEM: GuardaDeJanela = {
 };
 // [AG6b mídia] fim
 
+// 09/11/2026: o sinal clinico perto da mancha (coca, doi, vermelha, apareceu,
+// cresceu, depois do procedimento) desfaz a troca do pedido estetico.
+const SINAL_CLINICO_DA_MANCHA: GuardaDeJanela = {
+  fonte: "\\b(?:coc\\w*|doi\\b|doem\\b|doeu|doendo|dor\\b|dores\\b|ard\\w*|vermelh\\w*|inchad\\w*|inchou|apareceu|apareceram|surgiu|surgiram|cresc\\w*|aument\\w*|mudou|mudando|sangr\\w*|ferid\\w*|pus\\b|febre|bolh\\w*|caroco|nodulo|roxa|roxas|roxo|brancas?|corpo todo|espalh\\w*|descam\\w*|escam\\w*|depois d[oae]|apos)",
+  janela: 40,
+};
+
 /**
  * Perguntas de recepcao sobre o exame como DOCUMENTO (quando fica pronto,
  * onde pegar), que o padrao de assunto clinico pegava pela palavra "laudo"
@@ -3190,6 +3185,25 @@ const SEM_INTENCAO_NA_MENSAGEM: GuardaDeJanela = {
  * resultado comentado ("o exame saiu alterado") continua escalando.
  */
 export const NEUTRALIZACOES_DE_ENTRADA: readonly Neutralizacao[] = [
+  {
+    // 09/11/2026 (o portao na conversa normal): o pedido estetico da mancha
+    // ("quero tratar as manchas do rosto", "mancha de sol") nao e sintoma.
+    // Com sinal clinico perto ("manchas vermelhas que cocam", "apareceu
+    // uma mancha"), escala como antes.
+    nome: "mancha_estetica",
+    fonte: "\\b(?:tratar|tratamento (?:de|das|pra|para)|clarear|clareamento (?:de|das)|tirar|remover|remocao (?:de|das)|diminuir|amenizar|melhorar|sumir com|acabar com|cuidar (?:de|das))(?: as| minhas| umas| essas| das| de| uma| essa| minha)? manchas?(?: (?:do|da|de|no|na|nas|nos) (?:rosto|pele|sol|acne|espinha|espinhas|melasma|axila|axilas|virilha|costas|braco|bracos|mao|maos|colo|buco|perna|pernas|barriga|pescoco|testa|bochecha|bochechas))?\\b|\\bmanchas? (?:de sol|solares?|de acne|de espinhas?|senis|senil|de idade|escuras?)\\b",
+    troca: "pedido estetico",
+    semPorPerto: SINAL_CLINICO_DA_MANCHA,
+  },
+  {
+    // 09/11/2026: o filho ou a filha que acompanha ou indica nao e o
+    // paciente ("posso levar minha filha junto?", "minha filha vai me
+    // levar", "minha filha me indicou"). O paciente menor continua
+    // escalando pela idade e pelos outros jeitos de dizer.
+    nome: "parente_que_acompanha",
+    fonte: "\\b(?:posso|pode|podemos|da pra|tem problema|tem como|e permitido)(?: eu)? (?:levar|trazer)(?: o| a)? (?:meu|minha|meus|minhas) (?:filho|filha|neto|neta|bebe|menino|menina|sobrinho|sobrinha|enteado|enteada)s? (?:junto|comigo)\\b|\\b(?:meu|minha|meus|minhas) (?:filho|filha|neto|neta)s?(?= (?:que )?(?:vai me levar|me leva|me levou|vai me acompanhar|me acompanha|me indicou|indicou|marcou pra mim|marcou para mim|me trouxe|vai me trazer)\\b)",
+    troca: "acompanhante",
+  },
   {
     // "Exame de sangue" e nome de exame, nao sangramento.
     nome: "exame_de_sangue",
@@ -3436,17 +3450,13 @@ export const LEXICO_COMPACTO_DE_ENTRADA: readonly {
   ...["remedio", "medicamento", "dipirona", "paracetamol", "gravida"].map(
     (termo) => ({ gatilho: "assunto_clinico" as const, termo }),
   ),
-  ...["ignore", "ignora", "instruc", "prompt", "jailbreak"].map((termo) => ({
+  ...["prompt", "jailbreak"].map((termo) => ({
     gatilho: "manipulacao" as const,
     termo,
   })),
-  // Onda 2 (P5c): "humano" e "chatbot" sairam (a pergunta "você é humano?"
-  // vai ao modelo); "atendente" continua.
-  ...["atendente"].map((termo) => ({
-    gatilho: "pedido_humano" as const,
-    termo,
-  })),
-  ...["procon", "reclameaqui", "advogado"].map((termo) => ({
+  // "atendente" saiu em 09/11/2026: o cargo citado ("a atendente foi
+  // atenciosa") nao e pedido; o pedido escala pelos padroes de frase.
+  ...["procon", "reclameaqui"].map((termo) => ({
     gatilho: "insatisfacao" as const,
     termo,
   })),
