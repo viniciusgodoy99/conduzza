@@ -164,8 +164,11 @@ describe("marcador do tipo no payload", () => {
       join(process.cwd(), "app/(app)/agenda/actions.ts"),
       "utf-8",
     );
-    expect(acao).toMatch(/tipo_de_envio: "aviso_remarcacao"/);
-    expect(acao).toMatch(/"aviso_remarcacao",\s*\)/);
+    // 09/11/2026: o aviso da consulta (remarcacao, aprovacao e recusa) le o
+    // tipo do mapa AVISOS_DA_CONSULTA, no pedido do job e na escolha do numero.
+    expect(acao).toMatch(/tipo: "aviso_remarcacao"/);
+    expect(acao).toMatch(/tipo_de_envio: aviso\.tipo/);
+    expect(acao).toMatch(/aviso\.tipo,\s*\)/);
   });
 
   it("a oferta da lista de espera grava o marcador no SQL que cria o job", () => {
