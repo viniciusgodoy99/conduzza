@@ -114,8 +114,9 @@ export class BancoFalso {
           for (const linha of alvos) {
             Object.assign(linha, op.dados);
           }
+          // A linha toda, como o PostgREST devolve as colunas pedidas.
           return {
-            data: alvos.map((linha) => ({ id: linha.id })),
+            data: alvos.map((linha) => ({ ...linha })),
             error: null,
           };
         }

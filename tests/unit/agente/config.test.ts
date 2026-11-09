@@ -252,6 +252,7 @@ describe("habilidades", () => {
       "consultar_unidades",
       "consultar_requisitos",
       "buscar_profissionais",
+      "consultar_minhas_consultas",
     ]);
     expect(porChave.informar_preco_e_convenio?.travada).toBe(false);
     expect(porChave.informar_preco_e_convenio?.ferramentas).toEqual([
@@ -447,6 +448,7 @@ describe("habilidades", () => {
       "consultar_unidades",
       "consultar_requisitos",
       "buscar_profissionais",
+      "consultar_minhas_consultas",
       "buscar_procedimento",
       "escalar_humano",
     ]);
@@ -462,6 +464,7 @@ describe("habilidades", () => {
       "consultar_unidades",
       "consultar_requisitos",
       "buscar_profissionais",
+      "consultar_minhas_consultas",
       "escalar_humano",
     ]);
     expect(
@@ -481,6 +484,7 @@ describe("habilidades", () => {
       "consultar_unidades",
       "consultar_requisitos",
       "buscar_profissionais",
+      "consultar_minhas_consultas",
       "buscar_procedimento",
       "consultar_cadastro_do_contato",
       "buscar_horario",
@@ -505,6 +509,7 @@ describe("habilidades", () => {
         "consultar_unidades",
         "consultar_requisitos",
         "buscar_profissionais",
+        "consultar_minhas_consultas",
         "buscar_procedimento",
         "confirmar_presenca",
         "escalar_humano",
@@ -2460,13 +2465,13 @@ describe("AG4: prazos para cancelar e remarcar", () => {
       "consultar_unidades",
       "consultar_requisitos",
       "buscar_profissionais",
+      "consultar_minhas_consultas",
       "buscar_procedimento",
       "consultar_cadastro_do_contato",
       "buscar_horario",
       "reservar_horario",
       "registrar_dados_do_paciente",
       "agendar",
-      "consultar_minhas_consultas",
       "pedir_cancelamento",
       "cancelar_consulta",
       "buscar_horario_para_remarcar",
@@ -2487,17 +2492,20 @@ describe("AG4: prazos para cancelar e remarcar", () => {
         ].includes(f),
       ),
     ).toEqual(["consultar_minhas_consultas", "buscar_horario_para_remarcar"]);
-    // Sem prazo: nada de cancelar nem remarcar (falha fechada).
+    // Sem prazo: nada de cancelar nem remarcar (falha fechada). A lista das
+    // consultas da pessoa vem sempre (09/11/2026, Responder duvidas).
     expect(
       ferramentasDoAgente(tudo, AGENDA_COMPLETA, null).some((f) =>
         [
-          "consultar_minhas_consultas",
           "pedir_cancelamento",
           "cancelar_consulta",
           "buscar_horario_para_remarcar",
         ].includes(f),
       ),
     ).toBe(false);
+    expect(ferramentasDoAgente(tudo, AGENDA_COMPLETA, null)).toContain(
+      "consultar_minhas_consultas",
+    );
   });
 
   it("a dica da chave: o prazo de cancelar; agendar e o prazo de remarcar", () => {

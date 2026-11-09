@@ -34,7 +34,11 @@ import {
   recusaPorBloqueio,
   vinculoEquivalente,
 } from "@/lib/domain/remarcacao";
-import { AVISO_REMARCACAO } from "@/lib/domain/textos-padrao";
+import {
+  AVISO_CONSULTA_APROVADA,
+  AVISO_CONSULTA_RECUSADA,
+  AVISO_REMARCACAO,
+} from "@/lib/domain/textos-padrao";
 import { canEdit } from "@/lib/domain/permissions";
 import {
   chaveDeTelefone,
@@ -522,14 +526,55 @@ type VinculoDoBanco = {
 };
 
 /**
- * Aviso de remarcacao pelo WhatsApp (decisao do dono em 24/09/2026). Sai pelo
+ * Os avisos da consulta que saem pelo mesmo caminho: a remarcacao (24/09/2026)
+ * e, desde 09/11/2026, a aprovacao e a recusa da consulta marcada pela IA. A
+ * recusada ja esta cancelada, entao o executor nao confere a consulta nela.
+ */
+const AVISOS_DA_CONSULTA = {
+  remarcacao: {
+    modelo: AVISO_REMARCACAO,
+    tipo: "aviso_remarcacao",
+    acao: "enfileirou_aviso_de_remarcacao",
+    conferirConsulta: true,
+    passou:
+      "O novo horário já passou, então nenhum aviso foi enviado ao paciente.",
+  },
+  aprovada: {
+    modelo: AVISO_CONSULTA_APROVADA,
+    tipo: "confirmacao",
+    acao: "enfileirou_confirmacao_da_aprovacao",
+    conferirConsulta: true,
+    passou:
+      "O horário já passou, então nenhuma confirmação foi enviada ao paciente.",
+  },
+  recusada: {
+    modelo: AVISO_CONSULTA_RECUSADA,
+    tipo: "confirmacao",
+    acao: "enfileirou_aviso_de_recusa",
+    conferirConsulta: false,
+    passou: "O horário já passou, então nenhum aviso foi enviado ao paciente.",
+  },
+} as const satisfies Record<
+  string,
+  {
+    modelo: string;
+    tipo: TipoDeEnvio;
+    acao: string;
+    conferirConsulta: boolean;
+    passou: string;
+  }
+>;
+
+/**
+ * Aviso da consulta pelo WhatsApp (o de remarcacao, decisao do dono em
+ * 24/09/2026, e os da aprovacao e da recusa, 09/11/2026). Sai pelo
  * job enviar_mensagem_ativa, o mesmo caminho dos retornos automaticos: o
  * worker reconfere a autorizacao na hora do envio, respeita o espacamento
  * anti-ban e grava o custo. Aqui a autorizacao e conferida ANTES de enfileirar
  * para a recepcao saber na hora que precisa ligar. Devolve o aviso para a
  * tela quando nada foi enfileirado; undefined quando o envio esta a caminho.
  */
-async function enfileirarAvisoDeRemarcacao(
+async function enfileirarAvisoDaConsulta(
   supabase: Awaited<ReturnType<typeof createClient>>,
   params: {
     clinicId: string;
@@ -541,10 +586,12 @@ async function enfileirarAvisoDeRemarcacao(
     professionalId: string;
     inicio: Date;
   },
+  qual: keyof typeof AVISOS_DA_CONSULTA = "remarcacao",
 ): Promise<string | undefined> {
-  // Horario novo no passado (correcao de registro): nao ha o que avisar.
+  const aviso = AVISOS_DA_CONSULTA[qual];
+  // Horario no passado (correcao de registro): nao ha o que avisar.
   if (params.inicio.getTime() <= Date.now()) {
-    return "O novo horário já passou, então nenhum aviso foi enviado ao paciente.";
+    return aviso.passou;
   }
   const { data: autorizado, error: erroAutorizacao } = await supabase.rpc(
     "consentimento_vigente",
@@ -573,7 +620,7 @@ async function enfileirarAvisoDeRemarcacao(
       supabase,
       params.clinicId,
       [params.contactId],
-      "aviso_remarcacao",
+      aviso.tipo,
     ),
     supabase
       .from("whatsapp_account")
@@ -603,7 +650,7 @@ async function enfileirarAvisoDeRemarcacao(
 
   // Data e hora no fuso da clinica (regra 3.6): o banco guarda UTC.
   const inicioLocal = new TZDate(params.inicio.getTime(), params.timezone);
-  const body = renderizarModelo(AVISO_REMARCACAO, {
+  const body = renderizarModelo(aviso.modelo, {
     nome: (contato?.name as string | null | undefined) ?? null,
     clinica: params.clinicName,
     data: format(inicioLocal, "dd/MM/yyyy", { locale: ptBR }),
@@ -625,10 +672,14 @@ async function enfileirarAvisoDeRemarcacao(
     payload: {
       contact_id: params.contactId,
       body,
-      appointment_id: params.appointmentId,
-      starts_at: params.inicio.toISOString(),
-      professional_id: params.professionalId,
-      tipo_de_envio: "aviso_remarcacao" satisfies TipoDeEnvio,
+      ...(aviso.conferirConsulta
+        ? {
+            appointment_id: params.appointmentId,
+            starts_at: params.inicio.toISOString(),
+            professional_id: params.professionalId,
+          }
+        : {}),
+      tipo_de_envio: aviso.tipo,
     },
     whatsapp_account_id: conta.whatsappAccountId,
   });
@@ -638,7 +689,7 @@ async function enfileirarAvisoDeRemarcacao(
   await supabase.from("audit_log").insert({
     clinic_id: params.clinicId,
     user_id: params.userId,
-    action: "enfileirou_aviso_de_remarcacao",
+    action: aviso.acao,
     entity: "appointment",
     entity_id: params.appointmentId,
   });
@@ -897,7 +948,7 @@ export async function remarcarAgendamentoAction(
   });
 
   const aviso = parsed.data.avisar_paciente
-    ? await enfileirarAvisoDeRemarcacao(supabase, {
+    ? await enfileirarAvisoDaConsulta(supabase, {
         clinicId: guard.clinicId,
         clinicName: guard.clinicName,
         timezone: guard.timezone,
@@ -1198,6 +1249,10 @@ const TEXTOS_DA_PENDENCIA = {
   encaixeTratado: "Este encaixe já foi tratado.",
   naoAprovou: "Não foi possível aprovar. Tente de novo.",
   naoRecusou: "Não foi possível recusar. Tente de novo.",
+  aprovadaComAviso:
+    "Consulta aprovada. A confirmação vai para o paciente pelo WhatsApp.",
+  recusadaComAviso:
+    "Consulta recusada. O aviso vai para o paciente pelo WhatsApp, e a conversa voltou para a equipe.",
   conversaNaoDevolvida:
     "A consulta foi recusada, mas a conversa não voltou para a equipe. Abra a conversa no Atendimento e avise o paciente.",
   conversaNaoEncontrada:
@@ -1301,7 +1356,9 @@ export async function aprovarEncaixeAction(
   if (daIa) {
     aprovar = aprovar.eq("created_by", "ia").eq("is_overbooking", false);
   }
-  const { data, error } = await aprovar.select("id");
+  const { data, error } = await aprovar.select(
+    "id, contact_id, professional_id, starts_at",
+  );
   if (error) {
     return { ok: false, error: TEXTOS_DA_PENDENCIA.naoAprovou };
   }
@@ -1321,8 +1378,67 @@ export async function aprovarEncaixeAction(
     entity: "appointment",
     entity_id: parsed.data,
   });
+  if (!daIa) {
+    revalidatePath("/agenda");
+    return { ok: true };
+  }
+  // 09/11/2026: a consulta da IA aprovada sai confirmada ao paciente (a IA
+  // disse que "a confirmacao chega por aqui").
+  const naoSaiu = await avisoDepoisDaDecisao(
+    supabase,
+    guard,
+    parsed.data,
+    data[0],
+    "aprovada",
+  );
   revalidatePath("/agenda");
-  return { ok: true };
+  return naoSaiu
+    ? { ok: true, aviso: `Consulta aprovada. ${naoSaiu}` }
+    : { ok: true, mensagem: TEXTOS_DA_PENDENCIA.aprovadaComAviso };
+}
+
+/**
+ * O aviso ao paciente depois da aprovacao ou da recusa, com a linha que o
+ * update devolveu. Nunca lanca: a decisao ja foi gravada, e o que falhar
+ * volta como aviso para a tela.
+ */
+async function avisoDepoisDaDecisao(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  guard: GuardaDaAgenda,
+  appointmentId: string,
+  linha: unknown,
+  qual: "aprovada" | "recusada",
+): Promise<string | undefined> {
+  const consulta = linha as {
+    contact_id?: unknown;
+    professional_id?: unknown;
+    starts_at?: unknown;
+  } | null;
+  if (
+    typeof consulta?.contact_id !== "string" ||
+    typeof consulta.professional_id !== "string" ||
+    typeof consulta.starts_at !== "string"
+  ) {
+    return AVISO_NAO_ENFILEIRADO;
+  }
+  try {
+    return await enfileirarAvisoDaConsulta(
+      supabase,
+      {
+        clinicId: guard.clinicId,
+        clinicName: guard.clinicName,
+        timezone: guard.timezone,
+        userId: guard.context.userId,
+        appointmentId,
+        contactId: consulta.contact_id,
+        professionalId: consulta.professional_id,
+        inicio: new Date(consulta.starts_at),
+      },
+      qual,
+    );
+  } catch {
+    return AVISO_NAO_ENFILEIRADO;
+  }
 }
 
 /**
@@ -1423,7 +1539,7 @@ export async function recusarEncaixeAction(
  */
 async function gravarRecusa(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  guard: { clinicId: string; context: { userId: string } },
+  guard: GuardaDaAgenda,
   id: string,
   daIa: boolean,
   statusAtual?: AppointmentStatus,
@@ -1456,7 +1572,9 @@ async function gravarRecusa(
   if (statusAtual !== undefined) {
     recusar = recusar.eq("status", statusAtual);
   }
-  const { data, error } = await recusar.select("id");
+  const { data, error } = await recusar.select(
+    "id, contact_id, professional_id, starts_at",
+  );
   if (error) {
     return { ok: false, error: TEXTOS_DA_PENDENCIA.naoRecusou };
   }
@@ -1498,8 +1616,22 @@ async function gravarRecusa(
         remarcacao ? TEXTOS_DA_REMARCACAO : TEXTOS_DA_PENDENCIA,
       )
     : null;
+  // 09/11/2026: a consulta da IA recusada avisa o paciente. A remarcacao
+  // recusada nao: a antiga continua marcada (D-29).
+  const naoSaiu =
+    daIa && !remarcacao
+      ? await avisoDepoisDaDecisao(supabase, guard, id, data[0], "recusada")
+      : null;
   revalidatePath("/agenda");
-  return aviso ? { ok: true, aviso } : { ok: true };
+  if (aviso) {
+    return { ok: true, aviso };
+  }
+  if (naoSaiu) {
+    return { ok: true, aviso: `Consulta recusada. ${naoSaiu}` };
+  }
+  return naoSaiu === undefined
+    ? { ok: true, mensagem: TEXTOS_DA_PENDENCIA.recusadaComAviso }
+    : { ok: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -1517,7 +1649,7 @@ async function gravarRecusa(
 //   antiga ja na recepcao, em atendimento, compareceu ou faltou, o gatilho
 //   recusa (23514 remarcacao_consulta_antiga_encerrada) e nada muda. Depois,
 //   com a caixa marcada (D-28), sai o aviso de remarcacao de sempre
-//   (enfileirarAvisoDeRemarcacao), com a consulta NOVA;
+//   (enfileirarAvisoDaConsulta), com a consulta NOVA;
 // - recusar e a recusa da consulta da IA de sempre (gravarRecusa: so a nova
 //   e cancelada, sem reoferta, e a conversa volta para a equipe), com os
 //   textos da remarcacao. A antiga fica como esta (D-29), com o pedido de
@@ -1692,7 +1824,7 @@ async function aprovarRemarcacao(
   // (o envio confere a autorizacao, o numero e o custo; o executor mata o
   // aviso que ficou velho). O que nao saiu volta como aviso para a tela.
   const aviso = avisarPaciente
-    ? await enfileirarAvisoDeRemarcacao(supabase, {
+    ? await enfileirarAvisoDaConsulta(supabase, {
         clinicId: guard.clinicId,
         clinicName: guard.clinicName,
         timezone: guard.timezone,

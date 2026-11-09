@@ -624,7 +624,7 @@ function maisRecente(a: string | null, b: string | null): string | null {
 /**
  * A consulta de um aviso de remarcacao, pelo payload do job. Vale a marca
  * dedicada (aviso_remarcacao.appointment_id), se o payload a trouxer, e o
- * appointment_id solto, que e o formato de enfileirarAvisoDeRemarcacao
+ * appointment_id solto, que e o formato de enfileirarAvisoDaConsulta
  * (app/(app)/agenda/actions.ts). Oferta de espera e eco ao paciente nao levam
  * consulta no payload.
  */

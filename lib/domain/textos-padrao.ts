@@ -157,6 +157,18 @@ export const AVISO_REMARCACAO =
   "Olá, {{nome}}! Sua consulta na {{clinica}} foi remarcada para {{data}} às {{hora}}. Qualquer dúvida, é só responder aqui.";
 
 /**
+ * Aviso automatico quando a equipe aprova a consulta marcada pela IA
+ * (decisao do dono de 09/11/2026: a IA diz que "a confirmacao chega por
+ * aqui"). Mesmo caminho e mesmo estilo do aviso de remarcacao.
+ */
+export const AVISO_CONSULTA_APROVADA =
+  "Olá, {{nome}}! Sua consulta na {{clinica}} está confirmada para {{data}} às {{hora}}. Qualquer dúvida, é só responder aqui.";
+
+/** Aviso automatico quando a equipe recusa a consulta marcada pela IA. */
+export const AVISO_CONSULTA_RECUSADA =
+  "Olá, {{nome}}! Não conseguimos confirmar o horário de {{data}} às {{hora}}. Alguém da equipe vai falar com você por aqui.";
+
+/**
  * As tres opcoes do toque de confirmacao. O id e o que volta na resposta do
  * botao; o texto e o que o paciente le (e vira "1. Confirmar" quando o uazapi
  * degrada para lista numerada). Os dois caminhos sao lidos por

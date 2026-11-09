@@ -355,6 +355,7 @@ describe("ferramentas e versão", () => {
       "consultar_unidades",
       "consultar_requisitos",
       "buscar_profissionais",
+      "consultar_minhas_consultas",
     ];
     expect(ferramentasDaChamada(configComAgenda()).map((f) => f.name)).toEqual([
       ...frases,
@@ -426,7 +427,7 @@ describe("ferramentas e versão", () => {
         agoraTexto: AGORA,
       }),
     ).toContain(
-      "Ferramentas desta versão: fora_do_assunto, sou_assistente_virtual, consultar_unidades, consultar_requisitos, buscar_profissionais, buscar_procedimento, consultar_cadastro_do_contato, buscar_horario, reservar_horario, registrar_dados_do_paciente, agendar, confirmar_presenca, escalar_humano.",
+      "Ferramentas desta versão: fora_do_assunto, sou_assistente_virtual, consultar_unidades, consultar_requisitos, buscar_profissionais, consultar_minhas_consultas, buscar_procedimento, consultar_cadastro_do_contato, buscar_horario, reservar_horario, registrar_dados_do_paciente, agendar, confirmar_presenca, escalar_humano.",
     );
   });
 });
