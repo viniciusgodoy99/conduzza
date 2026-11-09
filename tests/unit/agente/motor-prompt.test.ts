@@ -238,6 +238,7 @@ describe("montarInstrucoes", () => {
       "consultar_unidades",
       "consultar_requisitos",
       "buscar_profissionais",
+      "consultar_minhas_consultas",
     ];
     expect(ferramentasDaChamada(ligada).map((f) => f.name)).toEqual([
       "fora_do_assunto",

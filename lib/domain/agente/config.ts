@@ -348,10 +348,13 @@ export const HABILIDADES_DO_AGENTE = [
     // Onda 2 (item 5 e P5c): as frases fixas do fora do assunto e do "você
     // é um robô?" vem sempre, como escalar_humano (habilidade travada). AG2:
     // as consultas do Cadastro tambem (so leitura).
+    // 09/11/2026 (pedido do dono): as consultas que a pessoa ja tem, sempre
+    // que ela perguntar, sem depender de Cancelar ou Remarcar ligadas.
     ferramentas: [
       "fora_do_assunto",
       "sou_assistente_virtual",
       ...FERRAMENTAS_DO_CADASTRO,
+      "consultar_minhas_consultas",
     ],
     padrao: true,
     precisaDaAgenda: false,

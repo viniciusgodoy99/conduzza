@@ -80,6 +80,8 @@ const FRASES_FIXAS = [
   "consultar_unidades",
   "consultar_requisitos",
   "buscar_profissionais",
+  // 09/11/2026: as consultas da pessoa vem sempre (Responder duvidas).
+  "consultar_minhas_consultas",
 ];
 const IDENTIFICADOR = "a".repeat(64);
 const USO_DA_API = {

@@ -598,8 +598,12 @@ describe("os caminhos de antes passam pela remarcação", () => {
     expect(leitura?.colunas).toBe(
       "created_by, is_overbooking, status, remarcacao_de",
     );
-    // A consulta da IA sem remarcacao segue como antes.
-    expect(trilha()).toMatchObject([{ action: "aprovou_consulta_da_ia" }]);
+    // A consulta da IA sem remarcacao segue como antes, e desde 09/11/2026
+    // sai confirmada ao paciente.
+    expect(trilha()).toMatchObject([
+      { action: "aprovou_consulta_da_ia" },
+      { action: "enfileirou_confirmacao_da_aprovacao" },
+    ]);
     expect(updatesDaConsulta()[0]?.filtros).not.toContainEqual([
       "remarcacao_de",
       ANTIGA,
@@ -691,5 +695,91 @@ describe("remarcar a antiga com a remarcação da IA pendente", () => {
       code: "situacao_final",
       error: "Consulta encerrada não se remarca. Marque uma nova consulta.",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("a consulta da IA aprovada ou recusada avisa o paciente (09/11/2026)", () => {
+  it("aprovada: a confirmação sai pelo número do paciente, conferindo a consulta no envio", async () => {
+    expect(await aprovarEncaixeAction(DA_IA)).toEqual({
+      ok: true,
+      mensagem:
+        "Consulta aprovada. A confirmação vai para o paciente pelo WhatsApp.",
+    });
+    expect(fila).toEqual([
+      {
+        tabela: "job_queue",
+        dados: {
+          clinic_id: CLINICA,
+          kind: "enviar_mensagem_ativa",
+          payload: {
+            contact_id: CONTATO,
+            body: "Olá, Paciente de Teste! Sua consulta na Clínica A está confirmada para 03/11/2026 às 10:00. Qualquer dúvida, é só responder aqui.",
+            appointment_id: DA_IA,
+            starts_at: INICIO_DA_NOVA,
+            professional_id: PROFISSIONAL,
+            tipo_de_envio: "confirmacao",
+          },
+          whatsapp_account_id: NUMERO,
+        },
+      },
+    ]);
+    expect(trilha()).toMatchObject([
+      { action: "aprovou_consulta_da_ia", entity_id: DA_IA },
+      { action: "enfileirou_confirmacao_da_aprovacao", entity_id: DA_IA },
+    ]);
+  });
+
+  it("recusada: o aviso sai sem a consulta no pedido (ela já está cancelada) e a conversa volta para a equipe", async () => {
+    expect(await recusarEncaixeAction(DA_IA)).toEqual({
+      ok: true,
+      mensagem:
+        "Consulta recusada. O aviso vai para o paciente pelo WhatsApp, e a conversa voltou para a equipe.",
+    });
+    expect(fila).toEqual([
+      {
+        tabela: "job_queue",
+        dados: {
+          clinic_id: CLINICA,
+          kind: "enviar_mensagem_ativa",
+          payload: {
+            contact_id: CONTATO,
+            body: "Olá, Paciente de Teste! Não conseguimos confirmar o horário de 03/11/2026 às 10:00. Alguém da equipe vai falar com você por aqui.",
+            tipo_de_envio: "confirmacao",
+          },
+          whatsapp_account_id: NUMERO,
+        },
+      },
+    ]);
+    expect(trilha()).toMatchObject([
+      { action: "recusou_consulta_da_ia", entity_id: DA_IA },
+      { action: "enfileirou_aviso_de_recusa", entity_id: DA_IA },
+    ]);
+  });
+
+  it("sem a autorização do paciente nada sai, e a tela diz para avisar por telefone", async () => {
+    banco.respostasDosRpcs.consentimento_vigente = { data: false, error: null };
+    expect(await aprovarEncaixeAction(DA_IA)).toEqual({
+      ok: true,
+      aviso:
+        "Consulta aprovada. O paciente não autorizou receber mensagens. Avise por telefone.",
+    });
+    expect(fila).toEqual([]);
+  });
+
+  it("com o horário já passado nada sai", async () => {
+    vi.setSystemTime(new Date("2026-11-04T15:00:00.000Z"));
+    expect(await aprovarEncaixeAction(DA_IA)).toEqual({
+      ok: true,
+      aviso:
+        "Consulta aprovada. O horário já passou, então nenhuma confirmação foi enviada ao paciente.",
+    });
+    expect(fila).toEqual([]);
+  });
+
+  it("a remarcação recusada não avisa: a antiga continua marcada", async () => {
+    await recusarEncaixeAction(NOVA);
+    expect(fila).toEqual([]);
   });
 });

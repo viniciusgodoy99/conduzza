@@ -27,6 +27,21 @@ const DA_OUTRA = "c0c0c0c0-0000-4000-8000-000000000003";
 const COMUM = "c0c0c0c0-0000-4000-8000-000000000004";
 const USUARIO = "e1e1e1e1-0000-4000-8000-000000000001";
 
+// 09/11/2026: a consulta da IA aprovada ou recusada avisa o paciente; aqui
+// ele nao autorizou receber mensagens (o dublê do consentimento_vigente).
+const AVISO_DA_APROVADA =
+  "Consulta aprovada. O paciente não autorizou receber mensagens. Avise por telefone.";
+const AVISO_DA_RECUSADA =
+  "Consulta recusada. O paciente não autorizou receber mensagens. Avise por telefone.";
+const CONSENTIMENTO_DA_IA = {
+  nome: "consentimento_vigente",
+  args: {
+    p_clinic_id: CLINICA,
+    p_contact_id: "3d3d3d3d-0000-4000-8000-000000000001",
+    p_channel: "whatsapp",
+  },
+};
+
 type Linha = Record<string, unknown>;
 type Operacao = {
   tabela: string;
@@ -53,6 +68,9 @@ function consultaDaIa(): Linha {
   return {
     id: DA_IA,
     clinic_id: CLINICA,
+    contact_id: "3d3d3d3d-0000-4000-8000-000000000001",
+    professional_id: "1b1b1b1b-0000-4000-8000-000000000001",
+    starts_at: "2099-11-03T13:00:00.000Z",
     created_by: "ia",
     is_overbooking: false,
     approval_status: "pendente",
@@ -119,7 +137,7 @@ function from(tabela: string) {
       for (const linha of alvos) {
         Object.assign(linha, op.dados);
       }
-      return { data: alvos.map((linha) => ({ id: linha.id })), error: null };
+      return { data: alvos.map((linha) => ({ ...linha })), error: null };
     }
     return { data: null, error: null };
   };
@@ -173,6 +191,12 @@ const cliente = {
     estado.sequencia.push(`rpc:${nome}`);
     if (estado.rpc === "lanca") {
       throw new Error("rede");
+    }
+    // 09/11/2026: o aviso ao paciente da consulta da IA aprovada ou recusada
+    // (o caminho inteiro esta em remarcacao-da-ia-acoes.test.ts). Aqui o
+    // paciente nao autorizou: o aviso para na autorizacao.
+    if (nome === "consentimento_vigente") {
+      return { data: false, error: null };
     }
     return estado.rpc;
   },
@@ -255,7 +279,10 @@ describe("aprovar", () => {
   // sem isto, o paciente que cancela pela regua nunca liberava o horario
   // para a lista de espera (o gatilho oferecer_ao_cancelar pula com false).
   it("consulta da IA: aprovada, com a confirmação automática ligada e a vaga oferecida ao cancelar, no mesmo update", async () => {
-    expect(await aprovarEncaixeAction(DA_IA)).toEqual({ ok: true });
+    expect(await aprovarEncaixeAction(DA_IA)).toEqual({
+      ok: true,
+      aviso: AVISO_DA_APROVADA,
+    });
     const [update] = updates();
     expect(update?.dados).toEqual({
       approval_status: "aprovado",
@@ -285,7 +312,7 @@ describe("aprovar", () => {
       },
     ]);
     // Aprovar nao devolve conversa nenhuma.
-    expect(estado.rpcs).toEqual([]);
+    expect(estado.rpcs).toEqual([CONSENTIMENTO_DA_IA]);
   });
 
   it("encaixe da IA: só a aprovação, como antes", async () => {
@@ -374,7 +401,10 @@ describe("a pendente já cancelada", () => {
   });
 
   it("a leitura da pendência traz a situação, e o update perde a corrida com o cancelamento", async () => {
-    expect(await aprovarEncaixeAction(DA_IA)).toEqual({ ok: true });
+    expect(await aprovarEncaixeAction(DA_IA)).toEqual({
+      ok: true,
+      aviso: AVISO_DA_APROVADA,
+    });
     const leitura = estado.operacoes.find(
       (op) => op.tabela === "appointment" && op.tipo === "select",
     );
@@ -398,7 +428,10 @@ describe("a pendente já cancelada", () => {
 
 describe("recusar", () => {
   it("consulta da IA: cancela sem oferecer o horário e, depois, devolve a conversa", async () => {
-    expect(await recusarEncaixeAction(DA_IA)).toEqual({ ok: true });
+    expect(await recusarEncaixeAction(DA_IA)).toEqual({
+      ok: true,
+      aviso: AVISO_DA_RECUSADA,
+    });
     const [update] = updates();
     expect(update?.dados).toEqual({
       approval_status: "recusado",
@@ -417,6 +450,7 @@ describe("recusar", () => {
         nome: "devolver_conversa_da_consulta_recusada",
         args: { p_clinic_id: CLINICA, p_appointment_id: DA_IA },
       },
+      CONSENTIMENTO_DA_IA,
     ]);
     // A RPC so depois da recusa gravada.
     expect(estado.sequencia.indexOf("appointment:update")).toBeLessThan(
@@ -543,7 +577,11 @@ describe("cancelar pela Agenda a pendência da IA conta como recusar", () => {
     // resultado e o do Recusar (decisao do dono de 20/10/2026).
     expect(
       await cancelar(DA_IA, "cancelado_paciente", { oferecer_vaga: true }),
-    ).toEqual({ ok: true, recusada: "consulta_da_ia" });
+    ).toEqual({
+      ok: true,
+      recusada: "consulta_da_ia",
+      aviso: AVISO_DA_RECUSADA,
+    });
     const [update] = updates();
     expect(update?.dados).toEqual({
       approval_status: "recusado",
@@ -574,6 +612,7 @@ describe("cancelar pela Agenda a pendência da IA conta como recusar", () => {
         nome: "devolver_conversa_da_consulta_recusada",
         args: { p_clinic_id: CLINICA, p_appointment_id: DA_IA },
       },
+      CONSENTIMENTO_DA_IA,
     ]);
     // A RPC so depois da recusa gravada.
     expect(estado.sequencia.indexOf("appointment:update")).toBeLessThan(

@@ -231,6 +231,7 @@ import {
   type ConvenioDoAgente,
   type VinculoDoAgente,
 } from "./buscar-procedimento";
+import { requisitosDoProcedimento } from "./cadastro-do-agente";
 import {
   entradaDoCadastroDoContatoSchema,
   saidaDoCadastroDoContato,
@@ -381,6 +382,14 @@ export type PortaDaAgenda = {
     /** AG4: a consulta que esta sendo remarcada (p_remarcar). */
     remarcarId?: string | null;
   }) => Promise<RespostaDoAgendar>;
+  /**
+   * 09/11/2026 (decisao do dono): pedir a foto do documento com foto a este
+   * contato? Sim so com a foto do telefone lida pelo assistente (D-95) e sem
+   * documento guardado (documento_do_contato, mensagem viva). Sem o metodo,
+   * ou sem resposta, nao pede: a foto que o assistente nao le iria para a
+   * equipe.
+   */
+  documentoComFotoParaPedir?: () => Promise<boolean | null>;
   /** A consulta do contato que aguarda confirmacao e confirmar_pelo_paciente. */
   confirmarPresenca: () => Promise<RespostaDaConfirmacao>;
   /** AG3: registrar_dados_da_marcacao com o job_id do turno. */
@@ -1355,6 +1364,33 @@ export function criarAgendaDoTurno(entrada: {
   /** O vinculo do catalogo pelo id. */
   const vinculoDe = (id: string | null): VinculoDoAgente | undefined =>
     id === null ? undefined : catalogo.vinculos.find((v) => v.id === id);
+
+  /**
+   * 09/11/2026 (decisao do dono): a consulta marcada cujo procedimento exige
+   * documento com foto (em "O que o paciente precisa", geral ou do convenio
+   * do vinculo) pede a foto dele, quando a porta diz que vale pedir.
+   */
+  async function pedirDocumentoComFoto(
+    serviceLinkId: string | null,
+  ): Promise<boolean> {
+    const vinculo = vinculoDe(serviceLinkId);
+    if (vinculo === undefined) {
+      return false;
+    }
+    const { gerais, doConvenio } = requisitosDoProcedimento(
+      catalogo,
+      vinculo.procedimentoId,
+      vinculo.convenioId,
+    );
+    if (![...gerais, ...doConvenio].some((r) => r.tipo === "documento_com_foto")) {
+      return false;
+    }
+    try {
+      return (await porta?.documentoComFotoParaPedir?.()) === true;
+    } catch {
+      return false;
+    }
+  }
 
   /**
    * AG4 (o limite da 21.15): o nome do profissional pelo id, do Cadastro. So
@@ -3042,6 +3078,9 @@ export function criarAgendaDoTurno(entrada: {
     const serviceLinkId =
       resposta.serviceLinkId ?? reservaAntes?.leitura?.serviceLinkId ?? null;
     const nomes = nomesDoVinculo(serviceLinkId);
+    const documento = (await pedirDocumentoComFoto(serviceLinkId))
+      ? { documento_com_foto: "pedir" as const }
+      : {};
     const inicio = resposta.inicio ?? reservaAntes?.leitura?.inicio ?? null;
     const unidadeId = reservaAntes?.leitura?.unidadeId ?? null;
     const unidade =
@@ -3056,7 +3095,7 @@ export function criarAgendaDoTurno(entrada: {
       // turno, a resposta que repete o dia e a hora e barrada).
       return saida(
         "marcado",
-        { pendente: true },
+        { pendente: true, ...documento },
         `Marcaria a consulta reservada, pendente de aprovação da equipe. ${SIMULADO}`,
         [],
         { acao: "marcou" },
@@ -3073,6 +3112,7 @@ export function criarAgendaDoTurno(entrada: {
         ...(quando === null ? {} : quando),
         ...(nomes === null ? {} : nomes),
         ...(unidade === null ? {} : { unidade: unidade.nome }),
+        ...documento,
       },
       porta?.simulada
         ? `Marcaria ${texto}, pendente de aprovação da equipe. ${SIMULADO}`

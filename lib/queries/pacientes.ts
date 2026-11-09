@@ -393,6 +393,57 @@ export async function fetchSaldosParaComparecimento(
     );
 }
 
+/** Os tipos de documento que a ficha mostra, na ordem da tela. */
+export const TIPOS_DE_DOCUMENTO_DO_CONTATO = [
+  "documento_com_foto",
+  "carteirinha",
+] as const;
+
+export type DocumentoDoContato = {
+  tipo: (typeof TIPOS_DE_DOCUMENTO_DO_CONTATO)[number];
+  /** A mensagem do arquivo: o link e a rota de midia dela. */
+  messageId: string;
+  enviadoEm: string;
+};
+
+/**
+ * Os documentos que a pessoa mandou pelo WhatsApp (decisao do dono de
+ * 09/11/2026), o mais novo de cada tipo. A RLS recorta a clinica, o papel e a
+ * mensagem apagada. Lanca na falha: quem chama mostra o aviso no bloco.
+ */
+export async function fetchDocumentosDoContato(
+  supabase: SupabaseClient,
+  clinicId: string,
+  contactId: string,
+): Promise<DocumentoDoContato[]> {
+  const { data, error } = await supabase
+    .from("documento_do_contato")
+    .select("tipo, message_id, created_at")
+    .eq("clinic_id", clinicId)
+    .eq("contact_id", contactId)
+    .order("created_at", { ascending: false })
+    .limit(20);
+  if (error) {
+    throw new Error("documentos_do_contato");
+  }
+  const documentos: DocumentoDoContato[] = [];
+  for (const linha of (data ?? []) as {
+    tipo: string;
+    message_id: string;
+    created_at: string;
+  }[]) {
+    const tipo = TIPOS_DE_DOCUMENTO_DO_CONTATO.find((t) => t === linha.tipo);
+    if (tipo && !documentos.some((d) => d.tipo === tipo)) {
+      documentos.push({
+        tipo,
+        messageId: linha.message_id,
+        enviadoEm: linha.created_at,
+      });
+    }
+  }
+  return documentos;
+}
+
 /**
  * Ficha completa da Tela 9: cadastro, linha do tempo de consultas, saldos de
  * pacote, autorizacao para receber mensagens e a conversa do atalho (aberta
