@@ -1778,7 +1778,7 @@ Tudo em `ia_uso`, no teto diário da clínica (padrão de US$ 5) e na reserva do
 **As travas por telefone continuam (D-95):** só o telefone cadastrado na aba WhatsApp que confirmou o aviso novo (`aviso_da_openai_versao = 2`) manda mídia à OpenAI, conferido pelo motor (`midia_da_ia_liberada`) e pelo banco ao gravar (`gravar_leitura_da_midia`). O chip "Sem áudio, foto e documento" continua no telefone ligado com o aviso antigo, quando alguma habilidade de mídia está ligada. A D-100 dispensada não abre mídia para contato fora da lista: isso é uma liberação própria, que continua por construir.
 
 **O que falta alguém fazer na tela, depois de publicar, para o áudio funcionar num telefone de teste:**
-1. **Tela 6, Habilidades:** ligar "Entender áudio" (e "Ler imagem e documento", para foto e PDF) e **publicar**: só vale a versão publicada. As duas continuam desligadas por padrão.
+1. **Tela 6, Habilidades:** nada a fazer desde 06/11/2026: áudio, foto e PDF valem sempre (entrada "Áudio, foto e PDF sempre ligados").
 2. **Aba WhatsApp, o telefone de teste:** com o chip "Sem áudio, foto e documento", o administrador da clínica ou a equipe Conduzza desliga e liga de novo o telefone, marcando o aviso no diálogo "Ligar este telefone de novo?" (o telefone usado mesmo sendo de paciente sai e entra de novo pelo formulário, com "Usar mesmo assim"). O telefone adicionado depois da AG6b já nasce com a versão 2.
 3. **Para marcar consulta:** a antecedência e o horizonte em Regras e limites e publicar. "Agendar consulta" já vem ligada.
 
@@ -1832,6 +1832,14 @@ Tudo em `ia_uso`, no teto diário da clínica (padrão de US$ 5) e na reserva do
 1. **O classificador não foi medido** com o modelo de verdade: a variante diz `nenhum`, mas só a D34 mostra se ele obedece. Se escalar, o pedido continua indo para a equipe (o lado seguro).
 2. **"Como tomo o remédio da colonoscopia?" continua na equipe:** o portão não conhece o catálogo, e abrir um nome livre deixaria passar "o remédio da pressão". "Tenho exame amanhã, qual o preparo?" também continua. Ficaram de fora de propósito, porque não estavam na decisão.
 3. **O `CLAUDE.md` 3.2** ainda diz "a dúvida sobre o preparo ... passa para a equipe" sem a exceção da pergunta geral: o ajuste da frase é com o dono.
+
+### [x] Áudio, foto e PDF sempre ligados `P` (decisão do dono em 06/11/2026; **migration `20261106140000` aplicada e código publicado em 06/11/2026**)
+
+"Preciso que sempre esteja ligado, não precisar apertar um botão, pode tirar da UI e UX e pode ligar isso." As habilidades "Entender áudio" e "Ler imagem e documento" valem sempre e saíram da Tela 6. Banco no `docs/04`, seção 45; arquitetura no `docs/03`, seção 29; tela no brief.
+
+**Continua (D-95):** o telefone precisa do aviso novo da OpenAI. Na Produção, em número inteiro, a mídia de quem está fora da lista vai para a equipe, até o dono decidir.
+
+**Dívida:** `dicaDaMidiaNoServidor`, a prop `midiaNoServidor` e as notas das duas habilidades ficam sem uso na tela (`shortcut` em `components/agente/aba-habilidades.tsx`).
 
 ### [x] A matriz de arquivos do agente `G` (decisão do dono de 06/11/2026; **migration `20261106130000` aplicada e código publicado em 06/11/2026**; a OpenAI ainda não exercitou o esquema novo)
 

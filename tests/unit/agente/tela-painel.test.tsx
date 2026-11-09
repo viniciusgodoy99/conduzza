@@ -23,9 +23,10 @@ import {
 // [AG7 preparo] início
 // A habilidade "Enviar orientação de preparo" e uma chave livre a mais, que
 // chega com o CFG da frente M (HABILIDADES_DO_AGENTE). A conta vale antes e
-// depois do merge: 8 de hoje, mais 1 quando ela estiver na lista.
+// depois do merge: 6 de hoje (as duas de midia sairam da tela em 06/11/2026), mais 1
+// quando ela estiver na lista.
 const CHAVES_LIVRES =
-  8 +
+  6 +
   ((HABILIDADES_DO_AGENTE.map((h) => h.chave) as readonly string[]).includes(
     "enviar_preparo",
   )

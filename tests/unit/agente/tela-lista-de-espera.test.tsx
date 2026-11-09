@@ -267,8 +267,9 @@ describe("a nota da fase de teste", () => {
     )
       ? 1
       : 0;
+    // Decisao do dono de 06/11/2026: as duas de midia sairam da tela (4 + 1).
     expect(html.match(/<span id="[^"]*-fase-de-teste"/g)).toHaveLength(
-      6 + comOPreparo,
+      4 + comOPreparo,
     );
     // [AG7 preparo] fim
   });

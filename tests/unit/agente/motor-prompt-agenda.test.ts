@@ -180,7 +180,12 @@ describe("bloco <atendimento> e <profissionais>", () => {
     // AG4: e as linhas de cancelar e remarcar (desligadas sem os prazos).
     // AG5: e a da lista de espera (desligada por padrao).
     // [AG7 preparo] AG7: e a da orientacao de preparo (desligada por padrao).
-    expect(linhas.slice(-9)).toEqual([
+    // Decisao do dono de 06/11/2026: o audio e o arquivo valem sempre, no fim.
+    expect(linhas.slice(-2)).toEqual([
+      FRASES_DO_ATENDIMENTO.audioLigado,
+      FRASES_DO_ATENDIMENTO.arquivoLigado,
+    ]);
+    expect(linhas.slice(-11, -2)).toEqual([
       "Marcar consulta: ligado.",
       "Antecedência mínima para marcar: 2 horas.",
       "Marcar até quantos dias à frente: 14 dias.",

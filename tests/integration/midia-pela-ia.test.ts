@@ -12,7 +12,7 @@ import { adminClient, anonClient } from "../rls/stack";
 // verdade.
 // - gravar_leitura_da_midia: as recusas na ordem do contrato (22004, os
 //   22023 com o codigo, sem_posse, job_antigo, fora_da_ia,
-//   mensagem_invalida, mensagem_nao_lida, leitura_desligada,
+//   mensagem_invalida, mensagem_nao_lida,
 //   midia_bloqueada, procedimento_invalido), o que grava (transcricao,
 //   sem_fala, o pedido com os itens do Cadastro, a figurinha local) e a
 //   primeira leitura que vale (reutilizado, o mesmo job e outro job);
@@ -654,10 +654,9 @@ describe("gravar_leitura_da_midia: as recusas, na ordem do contrato", () => {
     // mensagem_invalida antes de mensagem_nao_lida: a midia de outro tipo.
     expect(await gravar(doPedido(job, outraMidia))).toEqual({ ok: false, motivo: "mensagem_invalida" });
 
-    // leitura_desligada: a ultima publicada sem ler_audio.
-    await publicar(clinicaM, 2, { ler_audio: false, ler_imagem_e_documento: true });
-    expect(await gravar(doAudio(job, mensagem))).toEqual({ ok: false, motivo: "leitura_desligada" });
-    await publicar(clinicaM, 3, { ler_audio: true, ler_imagem_e_documento: true });
+    // Decisao do dono de 06/11/2026: a midia vale sempre. A ultima publicada com
+    // a chave desligada grava do mesmo jeito, logo abaixo.
+    await publicar(clinicaM, 2, { ler_audio: false, ler_imagem_e_documento: false });
 
     // O que grava, e a primeira leitura vale.
     const r = await gravar(doAudio(job, mensagem));

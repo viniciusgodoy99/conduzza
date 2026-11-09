@@ -908,9 +908,10 @@ export function tokensDoArquivoNaReserva(
 }
 
 /**
- * A midia pode ir aos modelos neste turno (D-95): a habilidade dela ligada
- * na versao PUBLICADA e o telefone com o aviso novo. Vale para a midia a
- * ler E para a leitura ja gravada (revisao da AG6b, LGPD): sem isto, a
+ * A midia pode ir aos modelos neste turno (D-95): o telefone com o aviso novo
+ * (a habilidade vale sempre desde a decisao do dono de 06/11/2026, travada em
+ * HABILIDADES_DO_AGENTE; o booleano aqui e so a falha fechada). Vale para a
+ * midia a ler E para a leitura ja gravada (revisao da AG6b, LGPD): sem isto, a
  * transcricao e o pedido lidos antes nunca vao aos modelos como texto.
  */
 export function midiaLiberadaNoTurno(

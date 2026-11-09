@@ -23,6 +23,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   dicaDaHabilidade,
   HABILIDADES_DO_AGENTE,
+  HABILIDADES_SEM_CHAVE_NA_TELA,
   habilidadesComAgenda,
   // [AG6b mídia] início
   notaDaHabilidade,
@@ -231,7 +232,12 @@ export function AbaHabilidades({
       </CardHeader>
       <CardContent>
         <ul className="divide-y divide-border">
-          {HABILIDADES_DO_AGENTE.map((habilidade) => {
+          {/* shortcut: a dica do servidor (midiaNoServidor) e as notas das duas de
+              midia ficam sem uso nesta lista; apagar na proxima vez que mexer
+              nesta aba. */}
+          {HABILIDADES_DO_AGENTE.filter(
+            (h) => !HABILIDADES_SEM_CHAVE_NA_TELA.has(h.chave),
+          ).map((habilidade) => {
             if (habilidade.travada) {
               return (
                 <li key={habilidade.chave} className="py-2.5">

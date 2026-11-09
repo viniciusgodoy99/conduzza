@@ -1785,6 +1785,8 @@ A outra direção (a migration com o código de antes, o `main` com a AG5, ou co
 
 ### 23.1 O que a IA faz com o áudio, a foto e o documento
 
+> **Decisão do dono de 06/11/2026 (seção 29):** áudio, foto e PDF valem sempre, sem chave. Onde este texto diz "com a habilidade ligada", leia só o telefone liberado.
+
 **Áudio** (com "Entender áudio" ligada na versão publicada, o telefone liberado para mídia e a transcrição calibrada): o MP3 que a uazapi gera, de 1 a 120 segundos e até 5 MB, é transcrito uma vez e entra no turno como texto do paciente, marcado como áudio. Passa pela urgência (o portão roda de novo depois da transcrição), pelo portão, pelo classificador, pelo agente e pelo filtro, e a IA responde por escrito; o agente lê "(áudio) Oi, queria saber quanto custa a limpeza de pele...". A equipe vê, embaixo do áudio, "Transcrição do assistente: ...".
 - Sem fala, ruído, música, frase inventada no silêncio, fora do formato ou fora dos limites: o áudio continua mídia e vai para a equipe com a frase de sempre (a equipe vê "não deu para entender fala neste áudio" no sem fala). A transcrição acima de 1.000 caracteres (o limite do portão para a mensagem; 2.000 na rajada; D-57 e D-92) passa como mensagem longa, como um texto. Erro, prazo, cota ou saída fora do formato: falha fechada (`falha_tecnica`).
 - **A fala urgente que as travas descartam passa como Urgente:** a urgência é lida no texto inteiro do áudio, inclusive o trecho descartado ("Quero morrer." curto e incerto, "Socorro, minha mãe desmaiou" num trecho com ruído), e da integração sai só o tipo dela, nunca o texto. A passagem marca a conversa como Urgente mesmo quando a gravação da leitura falha, o prazo corta, o job se repete ou outro áudio ruim vem no mesmo turno; e, desde a quarta rodada (`577a650`), a urgência do áudio bom é lida na rajada inteira, com as mensagens escritas junto ("minha mãe" escrito e "não responde mais, tá caída no chão" falado viram Urgente). A conversa que saiu da IA durante a transcrição não ganha a marca (a passagem do banco devolve `ja_fora_da_ia` sem ela; marcar a conversa que já está com a equipe pede mudança no banco, proposta).
@@ -2166,3 +2168,14 @@ A tabela, as palavras do dono e o que não foi construído estão no `docs/05`, 
 - `prometePassagemParaAEquipe`: com `arquivoFicaComAEquipe`, "a equipe confere o resto" e "a equipe vai ver seu documento" são informação, só com esse objeto e sem ninguém voltar a falar na frase. Ficou **mais** estrita, em qualquer turno: "passei seu documento para a equipe", "vou encaminhar o resto do pedido para a recepção" e "a equipe confere o documento e te retorna" passaram a contar (a última escapava antes).
 
 **A marcação.** `ler_atendimento_da_ia` diz SE o cadastro tem o número; a carteirinha lida no próprio turno avisa por `agendaDoTurno.carteirinhaNoCadastro` (a resposta da RPC). `dadosQueFaltam` usa `carteirinhaDoCadastroVale`, o espelho de `dados_que_faltam_para_marcar`.
+
+## 29. Agente de IA: áudio, foto e PDF sempre ligados (decisão do dono de 06/11/2026; **aplicada e publicada em 06/11/2026**; banco no `docs/04`, seção 45)
+
+O dono: "Preciso que sempre esteja ligado, não precisar apertar um botão, pode tirar da UI e UX e pode ligar isso".
+
+- **Configuração:** `ler_audio` e `ler_imagem_e_documento` ficam `travada: true` em `HABILIDADES_DO_AGENTE`: `habilidadesEfetivas` as devolve ligadas com qualquer `skills`, inclusive um `false` antigo. Não entram em "O que mudou".
+- **Tela:** `HABILIDADES_SEM_CHAVE_NA_TELA` as tira da aba Habilidades, para todos os papéis.
+- **Banco:** `gravar_leitura_da_midia` deixa de conferir o `skills`. Sem versão publicada, continua `leitura_desligada`.
+- **O que não muda (D-95):** só telefone da lista com o aviso novo (`aviso_da_openai_versao = 2`) manda mídia à OpenAI, conferido pelo motor e pelo banco. **Na Produção, em número inteiro, o contato fora da lista continua sem mídia pela IA:** a foto, o áudio e o PDF de paciente real vão para a equipe, porque a LGPD pede o RIPD e o termo antes. Mudar isso é uma decisão própria do dono.
+- **Desligar:** não há mais chave. Por telefone, desligando-o na aba WhatsApp; para todos, as constantes da calibragem (`TRANSCRICAO_CALIBRADA` e os tetos do leitor), por commit.
+

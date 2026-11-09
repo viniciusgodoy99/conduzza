@@ -845,29 +845,22 @@ describe("a lista de telefones antes da migration (item 2)", () => {
 });
 
 describe("a mídia ligada na leitura da liberação, para o Painel geral (item 5)", () => {
-  it("o rascunho ou a publicada, como a Tela 6; só o verdadeiro liga", async () => {
-    const casos: [Parameters<typeof sessaoDaAba>[0], boolean][] = [
-      [{}, false],
-      [{ rascunho: { skills: { ler_audio: true } } }, true],
-      [{ publicada: { skills: { ler_imagem_e_documento: true } } }, true],
-      [
-        {
-          rascunho: { skills: { ler_audio: false } },
-          publicada: { skills: { ler_audio: true } },
-        },
-        true,
-      ],
-      [{ rascunho: { skills: { agendar: true } } }, false],
-      [{ rascunho: { skills: { ler_audio: "true" } } }, false],
-      [{ rascunho: { skills: [true] } }, false],
-      [{ rascunho: { skills: null }, publicada: { skills: 7 } }, false],
+  // Decisao do dono de 06/11/2026: a midia vale sempre, com qualquer skills.
+  it("vale sempre, com qualquer skills no rascunho ou na publicada", async () => {
+    const casos: Parameters<typeof sessaoDaAba>[0][] = [
+      {},
+      { rascunho: { skills: { ler_audio: true } } },
+      { rascunho: { skills: { ler_audio: false } } },
+      { rascunho: { skills: { agendar: true } } },
+      { rascunho: { skills: [true] } },
+      { rascunho: { skills: null }, publicada: { skills: 7 } },
     ];
-    for (const [opcoes, esperado] of casos) {
+    for (const opcoes of casos) {
       const lidos = await lerLiberacaoDeVerdade(
         sessaoDaAba(opcoes).cliente,
         CLINICA_LIDA,
       );
-      expect(lidos.midiaLigada, JSON.stringify(opcoes)).toBe(esperado);
+      expect(lidos.midiaLigada, JSON.stringify(opcoes)).toBe(true);
     }
   });
 

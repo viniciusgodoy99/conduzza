@@ -407,8 +407,8 @@ describe("habilidades", () => {
       lista_de_espera: true,
       confirmar_presenca: false,
       // [AG6b mídia] As duas habilidades de midia, desligadas por padrao.
-      ler_audio: false,
-      ler_imagem_e_documento: false,
+      ler_audio: true,
+      ler_imagem_e_documento: true,
       passar_para_equipe: true,
     });
     expect(habilidadesEfetivas({})).toEqual({
@@ -423,8 +423,8 @@ describe("habilidades", () => {
       lista_de_espera: false,
       confirmar_presenca: false,
       // [AG6b mídia] As duas habilidades de midia, desligadas por padrao.
-      ler_audio: false,
-      ler_imagem_e_documento: false,
+      ler_audio: true,
+      ler_imagem_e_documento: true,
       passar_para_equipe: true,
     });
   });
@@ -531,8 +531,8 @@ describe("habilidades", () => {
       lista_de_espera: false,
       confirmar_presenca: false,
       // [AG6b mídia] As duas habilidades de midia, desligadas por padrao.
-      ler_audio: false,
-      ler_imagem_e_documento: false,
+      ler_audio: true,
+      ler_imagem_e_documento: true,
       passar_para_equipe: true,
     });
     expect(
@@ -1724,8 +1724,8 @@ describe("leitura do banco", () => {
         lista_de_espera: false,
         confirmar_presenca: false,
         // [AG6b mídia] As duas habilidades de midia, desligadas por padrao.
-        ler_audio: false,
-        ler_imagem_e_documento: false,
+        ler_audio: true,
+        ler_imagem_e_documento: true,
         passar_para_equipe: true,
       },
       horario: { ...horarioPadrao(), modo: "fallback", minutosSemResposta: 15 },
@@ -1809,8 +1809,8 @@ describe("leitura do banco", () => {
         lista_de_espera: false,
         confirmar_presenca: false,
         // [AG6b mídia] As duas habilidades de midia, desligadas por padrao.
-        ler_audio: false,
-        ler_imagem_e_documento: false,
+        ler_audio: true,
+        ler_imagem_e_documento: true,
         passar_para_equipe: true,
       },
       horario: {
@@ -3006,14 +3006,14 @@ describe("AG6a: para quem vai a conversa", () => {
 // renderiza), os tres motivos novos com o rotulo e o evento do banco, e os
 // tipos da leitura com a decisao e o resumo do servidor.
 describe("AG6b: as habilidades de midia, os motivos e os tipos da leitura", () => {
-  it("Entender audio e Ler imagem e documento: desligadas, sem ferramenta, com a nota", () => {
+  it("Entender audio e Ler imagem e documento: sempre ligadas (decisao do dono de 06/11/2026), sem ferramenta, sem chave na tela", () => {
     const porChave = Object.fromEntries(HABILIDADES_DO_AGENTE.map((h) => [h.chave, h]));
     expect(porChave[HABILIDADE_DO_AUDIO]).toMatchObject({
       titulo: "Entender áudio",
       descricao:
         "Transcreve o áudio que a pessoa manda e responde por escrito. Áudio sem fala, longo demais ou que não deu para transcrever passa para a equipe.",
-      travada: false,
-      padrao: false,
+      travada: true,
+      padrao: true,
       ferramentas: [],
       precisaDaAgenda: false,
       precisaDaHabilidade: null,
@@ -3024,8 +3024,8 @@ describe("AG6b: as habilidades de midia, os motivos e os tipos da leitura", () =
       titulo: "Ler imagem e documento",
       descricao:
         "Lê a foto ou o PDF de um pedido de exame ou procedimento e responde sobre os itens que a clínica faz. Guarda no cadastro o número e o convênio da carteirinha, se estiverem vazios. Pede uma foto mais nítida do arquivo que não deu para ler. Resultado, laudo, receita, foto do corpo, guia e o que ficar em dúvida passam para a equipe.",
-      travada: false,
-      padrao: false,
+      travada: true,
+      padrao: true,
       ferramentas: [],
     });
     expect(notaDaHabilidade(HABILIDADE_DO_AUDIO)).toBe(

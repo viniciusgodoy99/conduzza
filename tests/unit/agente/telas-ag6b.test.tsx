@@ -146,7 +146,7 @@ function painel(
 // ---------------------------------------------------------------------------
 
 describe("as duas habilidades de mídia", () => {
-  it("a chave, o título, a descrição e a nota vêm da configuração, como o desenho; desligadas por padrão, sem dependência", () => {
+  it("o título, a descrição e a nota vêm da configuração, como o desenho; sempre ligadas, sem dependência", () => {
     expect([...HABILIDADES_DE_MIDIA]).toEqual([
       HABILIDADE_DO_AUDIO,
       HABILIDADE_DO_ARQUIVO,
@@ -157,46 +157,30 @@ describe("as duas habilidades de mídia", () => {
       expect(definicao, chave).toBeDefined();
       expect(definicao).toMatchObject({
         ...DO_DESENHO[chave],
-        travada: false,
-        padrao: false,
+        // Decisao do dono de 06/11/2026: sempre ligadas, sem chave na tela.
+        travada: true,
+        padrao: true,
         precisaDaAgenda: false,
         precisaDaHabilidade: null,
         precisaDoPrazo: null,
         dicaDaDependencia: null,
       });
-      expect(habilidadesEfetivas({})[chave]).toBe(false);
+      expect(habilidadesEfetivas({})[chave]).toBe(true);
+      expect(habilidadesEfetivas({ [chave]: false })[chave]).toBe(true);
     }
   });
 
-  it("na aba: o título, a descrição e a nota, com a chave desligada e o estado escrito", () => {
-    const html = habilidades();
-    const visivel = texto(html);
-    for (const chave of MIDIA) {
-      const { titulo, descricao, nota } = DO_DESENHO[chave];
-      expect(visivel).toContain(titulo);
-      expect(visivel).toContain(descricao);
-      // Nota, nao status: so texto, sem chip nem cor propria, logo embaixo
-      // da descricao e ligada ao id da habilidade.
-      expect(html).toContain(
-        `<span id="agente-habilidade-${chave}-fase-de-teste" class="text-xs text-text-secondary">${nota}</span>`,
-      );
-      expect(html.indexOf(descricao)).toBeLessThan(html.indexOf(nota));
-      const tag = chaveDa(html, chave);
-      expect(tag).toContain('aria-checked="false"');
-      expect(tag).not.toMatch(/ disabled=""/);
-    }
-    expect(visivel).toContain("Desligada");
-  });
-
-  it("ligada no rascunho: a chave diz ligada", () => {
-    const html = habilidades({
-      habilidades: habilidadesEfetivas({
-        ler_audio: true,
-        ler_imagem_e_documento: true,
-      }),
-    });
-    for (const chave of MIDIA) {
-      expect(chaveDa(html, chave)).toContain('aria-checked="true"');
+  it("na aba: nenhuma das duas aparece, para nenhum papel", () => {
+    for (const html of [
+      habilidades(),
+      habilidades({ podeEditar: false, dica: DICA_RECEPCAO }),
+    ]) {
+      const visivel = texto(html);
+      for (const chave of MIDIA) {
+        expect(visivel).not.toContain(DO_DESENHO[chave].titulo);
+        expect(visivel).not.toContain(DO_DESENHO[chave].nota);
+        expect(html).not.toContain(`agente-habilidade-${chave}`);
+      }
     }
   });
 
@@ -210,34 +194,10 @@ describe("as duas habilidades de mídia", () => {
     expect(notaDaFaseDeTeste("nao_existe")).toBeNull();
   });
 
-  it("recepção: visível e desabilitada, com a dica de sempre no cursor; a nota continua", () => {
-    const html = habilidades({ podeEditar: false, dica: DICA_RECEPCAO });
-    for (const chave of MIDIA) {
-      expect(chaveDa(html, chave)).toMatch(/ disabled=""/);
-      expect(html).toMatch(
-        new RegExp(
-          `<span tabindex="0"[^>]*cursor-not-allowed[^>]*><button[^>]*aria-labelledby="agente-habilidade-${chave}"`,
-        ),
-      );
-      expect(texto(html)).toContain(DO_DESENHO[chave].nota);
-    }
-  });
-
-  it("administrador e gestor (podeEditar): a chave liga e desliga, sem dica", () => {
-    const html = habilidades();
-    for (const chave of MIDIA) {
-      expect(html).not.toMatch(
-        new RegExp(
-          `<span tabindex="0"[^>]*cursor-not-allowed[^>]*><button[^>]*aria-labelledby="agente-habilidade-${chave}"`,
-        ),
-      );
-    }
-  });
-
   // O painel inteiro (as abas e o simulador): com a maquina ocupada, passa
   // dos 5 s padrao.
   it(
-    "o que mudou: a habilidade ligada no rascunho aparece pelo título",
+    "o que mudou: as duas valem sempre, então nunca aparecem como mudança",
     { timeout: 30_000 },
     () => {
       const publicada = {
@@ -255,8 +215,8 @@ describe("as duas habilidades de mídia", () => {
         }),
         "versoes",
       );
-      expect(texto(html)).toContain("Entender áudio: ligada");
-      expect(texto(html)).not.toContain("Ler imagem e documento: ligada");
+      expect(texto(html)).not.toContain("Entender áudio");
+      expect(texto(html)).not.toContain("Ler imagem e documento");
     },
   );
 
@@ -282,7 +242,8 @@ describe("mídia ligada nas habilidades", () => {
   it("qualquer uma das duas, em qualquer lista (rascunho ou publicada); só o verdadeiro vale", () => {
     expect(midiaLigadaNasHabilidades()).toBe(false);
     expect(midiaLigadaNasHabilidades(null, undefined)).toBe(false);
-    expect(midiaLigadaNasHabilidades(habilidadesEfetivas({}))).toBe(false);
+    // Decisao do dono de 06/11/2026: o que vale de fato sempre traz as duas.
+    expect(midiaLigadaNasHabilidades(habilidadesEfetivas({}))).toBe(true);
     expect(midiaLigadaNasHabilidades({ ler_audio: true })).toBe(true);
     expect(
       midiaLigadaNasHabilidades(null, { ler_imagem_e_documento: true }),
@@ -325,8 +286,8 @@ describe("a nota do simulador (D-62)", () => {
     },
   );
 
-  it("sem mídia ligada no rascunho: sem a nota", { timeout: 30_000 }, () => {
-    expect(painel()).not.toContain(TEXTOS_DA_MIDIA.simulador);
+  it("no rascunho padrão também: a mídia vale sempre", { timeout: 30_000 }, () => {
+    expect(painel()).toContain(TEXTOS_DA_MIDIA.simulador);
   });
 
   it("o simulador sozinho, sem a prop, não muda", () => {
@@ -351,15 +312,6 @@ describe("a nota do simulador (D-62)", () => {
 
 const SEM_A_PROVA = { audio: false, arquivo: false } as const;
 const CALIBRADO = { audio: true, arquivo: true } as const;
-
-/** O span da dica do servidor da habilidade, ou "" sem ele. */
-function dicaDoServidorNa(html: string, chave: string): string {
-  return (
-    new RegExp(
-      `<span id="agente-habilidade-${chave}-no-servidor"[^>]*>[^<]*</span>`,
-    ).exec(html)?.[0] ?? ""
-  );
-}
 
 describe("a nota diz quem manda mídia (item 4)", () => {
   it("os telefones cadastrados na aba WhatsApp, não só os da equipe (o de paciente usado mesmo assim também)", () => {
@@ -492,72 +444,6 @@ describe("a habilidade que o servidor ainda não deixa valer (item 3)", () => {
     }
   });
 
-  it("na aba, sem a prova: a dica escrita embaixo da nota, ligada ou desligada, com a chave livre", () => {
-    for (const ligadas of [false, true]) {
-      const html = habilidades({
-        habilidades: habilidadesEfetivas({
-          ler_audio: ligadas,
-          ler_imagem_e_documento: ligadas,
-        }),
-        midiaNoServidor: SEM_A_PROVA,
-      });
-      for (const [chave, dica] of [
-        [HABILIDADE_DO_AUDIO, TEXTOS_DA_MIDIA.audioDesligado],
-        [HABILIDADE_DO_ARQUIVO, TEXTOS_DA_MIDIA.arquivoDesligado],
-      ] as const) {
-        // A dica escrita (como a da dependencia: so texto, sem chip).
-        expect(dicaDoServidorNa(html, chave)).toBe(
-          `<span id="agente-habilidade-${chave}-no-servidor" class="text-xs font-semibold text-text-secondary">${dica}</span>`,
-        );
-        // Embaixo da nota.
-        expect(html.indexOf(DO_DESENHO[chave].nota)).toBeLessThan(
-          html.indexOf(dica),
-        );
-        // A chave continua livre (ligar so vale depois da prova; desligar
-        // nunca trava) e diz o estado.
-        const tag = chaveDa(html, chave);
-        expect(tag).not.toMatch(/ disabled=""/);
-        expect(tag).toContain(`aria-checked="${ligadas}"`);
-      }
-    }
-  });
-
-  it("calibrado, ou sem a leitura do servidor: sem a dica", () => {
-    for (const props of [{ midiaNoServidor: CALIBRADO }, {}]) {
-      const html = habilidades(props);
-      for (const chave of MIDIA) {
-        expect(dicaDoServidorNa(html, chave)).toBe("");
-      }
-      expect(html).not.toContain(TEXTOS_DA_MIDIA.audioDesligado);
-      expect(html).not.toContain(TEXTOS_DA_MIDIA.arquivoDesligado);
-    }
-  });
-
-  it("recepção: a dica continua, com a chave presa pela permissão", () => {
-    const html = habilidades({
-      podeEditar: false,
-      dica: DICA_RECEPCAO,
-      midiaNoServidor: SEM_A_PROVA,
-    });
-    for (const chave of MIDIA) {
-      expect(chaveDa(html, chave)).toMatch(/ disabled=""/);
-      expect(dicaDoServidorNa(html, chave)).not.toBe("");
-    }
-  });
-
-  it(
-    "o painel leva o que a página calculou até a aba",
-    { timeout: 30_000 },
-    () => {
-      const comDica = painel(dadosDeTeste({ midiaNoServidor: SEM_A_PROVA }));
-      expect(comDica).toContain(TEXTOS_DA_MIDIA.audioDesligado);
-      expect(comDica).toContain(TEXTOS_DA_MIDIA.arquivoDesligado);
-      const semDica = painel(dadosDeTeste({ midiaNoServidor: CALIBRADO }));
-      expect(semDica).not.toContain(TEXTOS_DA_MIDIA.audioDesligado);
-      expect(semDica).not.toContain(TEXTOS_DA_MIDIA.arquivoDesligado);
-    },
-  );
-
   it("o SDK nunca vai ao navegador: o cálculo é server-only e só a página da Tela 6 o usa", () => {
     const servidor = readFileSync("lib/agente/midia-no-servidor.ts", "utf8");
     expect(servidor.startsWith('import "server-only";')).toBe(true);
@@ -594,26 +480,6 @@ describe("a habilidade que o servidor ainda não deixa valer (item 3)", () => {
 });
 
 describe("a descrição da chave (item 7)", () => {
-  it("a nota da OpenAI entra no aria-describedby da chave; sem a prova, a dica do servidor também, na ordem da tela", () => {
-    const calibrado = habilidades({ midiaNoServidor: CALIBRADO });
-    const semAProva = habilidades({ midiaNoServidor: SEM_A_PROVA });
-    for (const chave of MIDIA) {
-      expect(chaveDa(calibrado, chave)).toContain(
-        `aria-describedby="agente-habilidade-${chave}-fase-de-teste"`,
-      );
-      expect(chaveDa(semAProva, chave)).toContain(
-        `aria-describedby="agente-habilidade-${chave}-fase-de-teste agente-habilidade-${chave}-no-servidor"`,
-      );
-      // Cada id da descricao existe uma vez na tela.
-      for (const sufixo of ["fase-de-teste", "no-servidor"]) {
-        expect(
-          semAProva.match(
-            new RegExp(`id="agente-habilidade-${chave}-${sufixo}"`, "g"),
-          ),
-        ).toHaveLength(1);
-      }
-    }
-  });
 
   it("as outras notas também (cancelar, remarcar, confirmar presença, lista de espera); sem nota, sem descrição", () => {
     const html = habilidades();
