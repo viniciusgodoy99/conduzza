@@ -1890,6 +1890,10 @@ Arquitetura no `docs/03`, seção 28; banco no `docs/04`, seção 44; LGPD no `d
 
 **Estado (06/11/2026):** publicado. Conferência da junção com os remédios e o portão: 20.285 testes, typecheck, lint e build verdes; ensaio e provas na produção no `docs/04`, seção 44. **Não rodou:** a OpenAI de verdade com o esquema novo do leitor (se recusar, toda foto e PDF vão para a equipe: falha fechada). **Limites conhecidos:** a nota interna só aparece quando a equipe abre a conversa; o agente não pede RG, CNH ou CPF (não construído); a carteirinha de dependente grava no contato da conversa, só quando o campo está vazio.
 
+### [x] O documento com foto e a carteirinha pedidos e guardados no cadastro `M` (09/11/2026; **migration `20261109100000` aplicada e código publicado em 09/11/2026**, com o ok do dono)
+
+Depois de marcar, o agente pede a foto do documento com foto quando o procedimento exige, a foto do telefone é lida pelo assistente e o cadastro ainda não tem; a carteirinha continua pedida pelo número, e a foto dela, quando a pessoa manda, é lida. O documento e a carteirinha reconhecidos ficam ligados ao paciente (`documento_do_contato`) e aparecem na ficha, com o link do arquivo. Detalhe no `docs/03`, seção 32, e no `docs/04`, seção 46.
+
 ### [x] A confirmação ao paciente na aprovação e as consultas que ele já tem `P` (09/11/2026; **publicado em 09/11/2026**, com o ok do dono, sem migration)
 
 Aprovar a consulta marcada pela IA manda a confirmação ao paciente pelo WhatsApp, e recusar manda o aviso, pelo caminho do aviso de remarcação (autorização, número conectado, custo e trilha). O agente diz as consultas que a pessoa já tem sempre que ela pergunta, com Cancelar e Remarcar ligadas ou não. Detalhe no `docs/03`, seção 31.

@@ -7,6 +7,7 @@ import { AcoesPaciente } from "@/components/pacientes/acoes-paciente";
 import { AutorizacaoMensagens } from "@/components/pacientes/autorizacao-mensagens";
 import { CabecalhoPaciente } from "@/components/pacientes/cabecalho-paciente";
 import { DadosCadastrais } from "@/components/pacientes/dados-cadastrais";
+import { DocumentosDoPaciente } from "@/components/pacientes/documentos-do-paciente";
 import { IndicadoresPaciente } from "@/components/pacientes/indicadores-paciente";
 import { LinhaDoTempo } from "@/components/pacientes/linha-do-tempo";
 import { OrigemPaciente } from "@/components/pacientes/origem-paciente";
@@ -38,7 +39,10 @@ import {
   fetchEquipeDaAtividade,
 } from "@/lib/queries/atividades";
 import { fetchCatalogo } from "@/lib/queries/catalogo";
-import { fetchFichaPaciente } from "@/lib/queries/pacientes";
+import {
+  fetchDocumentosDoContato,
+  fetchFichaPaciente,
+} from "@/lib/queries/pacientes";
 import { createClient } from "@/lib/supabase/server";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -71,7 +75,7 @@ export default async function FichaPacientePage({
   // atividades (texto que pode ser dado de saude) ganham a linha propria,
   // "leu atividades" com o id do contato, como no drawer e na conversa; a
   // falha delas so marca o cartao, nunca derruba a ficha.
-  const [ficha, catalogo, , atividades, equipe] = await Promise.all([
+  const [ficha, catalogo, , atividades, equipe, , documentos] = await Promise.all([
     fetchFichaPaciente(supabase, active.clinicId, id),
     fetchCatalogo(supabase, active.clinicId),
     auditarLeituraDePaciente(supabase, {
@@ -90,6 +94,8 @@ export default async function FichaPacientePage({
       entity: "atividades",
       entityId: id,
     }),
+    // 09/11/2026: os documentos pelo WhatsApp; a falha so marca o bloco.
+    fetchDocumentosDoContato(supabase, active.clinicId, id).catch(() => null),
   ]);
   // A RLS ja recorta por clinica: sem linha, para esta pessoa a ficha nao
   // existe.
@@ -217,6 +223,10 @@ export default async function FichaPacientePage({
             }))}
             podeEditar={podeEditar}
             dica={dica}
+          />
+          <DocumentosDoPaciente
+            documentos={documentos}
+            timezone={active.timezone}
           />
           <PacotesPaciente
             contactId={ficha.contato.id}

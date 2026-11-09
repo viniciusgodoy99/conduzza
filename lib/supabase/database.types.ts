@@ -2222,6 +2222,36 @@ export type Database = {
           },
         ]
       }
+      documento_do_contato: {
+        Row: {
+          clinic_id: string
+          contact_id: string
+          conversation_id: string
+          created_at: string
+          id: string
+          message_id: string
+          tipo: string
+        }
+        Insert: {
+          clinic_id: string
+          contact_id: string
+          conversation_id: string
+          created_at?: string
+          id?: string
+          message_id: string
+          tipo: string
+        }
+        Update: {
+          clinic_id?: string
+          contact_id?: string
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          message_id?: string
+          tipo?: string
+        }
+        Relationships: []
+      }
       etapa_pendente_da_passagem: {
         Row: {
           clinic_id: string

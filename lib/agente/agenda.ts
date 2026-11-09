@@ -835,6 +835,70 @@ export async function lerCadastroDoContatoDaIa(
   return corrida.valor;
 }
 
+/**
+ * 09/11/2026 (decisao do dono): pedir a foto do documento com foto a este
+ * contato? So se o assistente le a foto deste telefone (midia_da_ia_liberada,
+ * D-95: senao a foto iria para a equipe) e o contato ainda nao tem documento
+ * guardado (documento_do_contato com a mensagem viva). Null sem resposta:
+ * quem chama nao pede.
+ */
+export async function documentoComFotoParaPedirDaIa(
+  admin: Cliente,
+  ids: IdsDoTurno,
+): Promise<boolean | null> {
+  const corrida = await correrComPrazo(async () => {
+    const contato = await admin
+      .from("contact")
+      .select("phone_e164")
+      .eq("clinic_id", ids.clinicId)
+      .eq("id", ids.contactId)
+      .maybeSingle();
+    const telefone = (contato.data as { phone_e164?: unknown } | null)
+      ?.phone_e164;
+    if (contato.error || typeof telefone !== "string") {
+      throw new Error("leitura");
+    }
+    const liberada = await admin.rpc("midia_da_ia_liberada", {
+      p_clinic_id: ids.clinicId,
+      p_telefone: telefone,
+    });
+    if (liberada.error) {
+      throw new Error("leitura");
+    }
+    if (liberada.data !== true) {
+      return false;
+    }
+    const { data, error } = await admin
+      .from("documento_do_contato")
+      .select("message_id")
+      .eq("clinic_id", ids.clinicId)
+      .eq("contact_id", ids.contactId)
+      .eq("tipo", "documento_com_foto")
+      .order("created_at", { ascending: false })
+      .limit(5);
+    if (error) {
+      throw new Error("leitura");
+    }
+    const mensagens = ((data ?? []) as { message_id: string }[]).map(
+      (linha) => linha.message_id,
+    );
+    if (mensagens.length === 0) {
+      return true;
+    }
+    const vivas = await admin
+      .from("message")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", ids.clinicId)
+      .in("id", mensagens)
+      .is("deleted_at", null);
+    if (vivas.error) {
+      throw new Error("leitura");
+    }
+    return (vivas.count ?? 0) === 0;
+  }, PRAZO_DA_AGENDA_MS);
+  return corrida.tipo === "resultado" ? corrida.valor : null;
+}
+
 /** A reserva do estado (desta conversa): viva ou nao, e o horario dela. */
 export async function lerReservaDaIa(
   admin: Cliente,
@@ -1638,6 +1702,8 @@ export function portaDaAgendaDoWhatsapp(
     confirmarPresenca: () => confirmarPresencaPelaIa(admin, ids, ids.agora()),
     registrarDados: (dados) => registrarDadosDaIa(admin, ids, dados),
     lerCadastroDoContato: () => lerCadastroDoContatoDaIa(admin, ids, ids.agora()),
+    documentoComFotoParaPedir: () =>
+      documentoComFotoParaPedirDaIa(admin, ids),
     lerReserva: (holdId) => lerReservaDaIa(admin, ids, holdId, ids.agora()),
     lerConsulta: (appointmentId) =>
       lerConsultaDaIa(admin, ids, appointmentId, ids.agora()),
