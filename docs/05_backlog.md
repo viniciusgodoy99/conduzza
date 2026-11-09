@@ -1890,6 +1890,10 @@ Arquitetura no `docs/03`, seção 28; banco no `docs/04`, seção 44; LGPD no `d
 
 **Estado (06/11/2026):** publicado. Conferência da junção com os remédios e o portão: 20.285 testes, typecheck, lint e build verdes; ensaio e provas na produção no `docs/04`, seção 44. **Não rodou:** a OpenAI de verdade com o esquema novo do leitor (se recusar, toda foto e PDF vão para a equipe: falha fechada). **Limites conhecidos:** a nota interna só aparece quando a equipe abre a conversa; o agente não pede RG, CNH ou CPF (não construído); a carteirinha de dependente grava no contato da conversa, só quando o campo está vazio.
 
+### [x] A confirmação ao paciente na aprovação e as consultas que ele já tem `P` (09/11/2026; **publicado em 09/11/2026**, com o ok do dono, sem migration)
+
+Aprovar a consulta marcada pela IA manda a confirmação ao paciente pelo WhatsApp, e recusar manda o aviso, pelo caminho do aviso de remarcação (autorização, número conectado, custo e trilha). O agente diz as consultas que a pessoa já tem sempre que ela pergunta, com Cancelar e Remarcar ligadas ou não. Detalhe no `docs/03`, seção 31.
+
 ### [x] O portão de entrada na conversa normal `M` (09/11/2026; **publicado em 09/11/2026**, com o ok do dono, sem migration)
 
 O dono mandou "bom dia painho" pelo número de teste e a conversa foi para a equipe com o motivo `sintoma` ("pain", dor em inglês). Pedido dele: "Não faz sentido pegar palavras em inglês, não faz sentido nenhum ter me direcionado, preciso que você revise isso 100%". O portão foi revisado em 456 mensagens de recepção: 440 seguem para o assistente e 16 continuam com a equipe de propósito ("socorro", "urgente", "isso é golpe?", "vocês atendem criança?", a dor figurada e o desabafo). Saíram as regras em inglês e espanhol; o compacto só vale em palavra inteira; o cargo citado, o verbo pôr, a ligação que cortou, o pedido estético da mancha, o filho que acompanha e a mensagem desconsiderada deixaram de escalar. Detalhe no `docs/03`, seção 30. Prova: `tests/unit/conformidade/portao-conversa-normal.test.ts` e a bateria de conformidade inteira (10.137 testes).
