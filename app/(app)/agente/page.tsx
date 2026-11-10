@@ -6,12 +6,7 @@ import { recusadoPelasRegrasDeHoje } from "@/app/(app)/cadastros/recusas-do-prep
 // [AG7 preparo] fim
 import { CartaoDaProntidao } from "@/components/agente/cartao-da-prontidao";
 import { PainelDoAgente } from "@/components/agente/painel-do-agente";
-import {
-  // [AG6b mídia] início
-  midiaLigadaNasHabilidades,
-  // [AG6b mídia] fim
-  TEXTOS_DO_AGENTE,
-} from "@/components/agente/textos";
+import { TEXTOS_DO_AGENTE } from "@/components/agente/textos";
 import type { DadosDoPainel, VersaoDoAgente } from "@/components/agente/tipos";
 import { versaoEmUsoNoWhatsapp } from "@/components/agente/whatsapp/agente-de-ia";
 import {
@@ -389,16 +384,6 @@ export default async function AgentePage({
     );
   }
 
-  // [AG6b mídia] início
-  // D-60: o telefone da equipe com o aviso antigo ganha o chip "Sem áudio,
-  // foto e documento" so com alguma habilidade de midia ligada no rascunho
-  // (o que a tela edita) ou na versao publicada (a que vale no WhatsApp).
-  const midiaLigada = midiaLigadaNasHabilidades(
-    lido.config.habilidades,
-    lido.publicada?.habilidades,
-  );
-  // [AG6b mídia] fim
-
   // As versoes que mudaram as instrucoes (o servidor compara; null = nao
   // conferido, e a linha nao aparece).
   const mudaramAsInstrucoes = (versao: number): boolean | null =>
@@ -454,11 +439,7 @@ export default async function AgentePage({
         abaInicial={aba}
         abaWhatsapp={
           abaWhatsapp ? (
-            <AbaWhatsapp
-              {...abaWhatsapp}
-              // [AG6b mídia] o chip do telefone com o aviso antigo
-              midiaLigada={midiaLigada}
-            />
+            <AbaWhatsapp {...abaWhatsapp} />
           ) : (
             <AbaWhatsappDaRecepcao />
           )

@@ -172,10 +172,6 @@ export function CartoesDoAgenteNoPainel({
         dicas={dicas}
         pendente={pendente}
         ocupado={ocupado}
-        // [AG6b mídia] o chip "Sem áudio, foto e documento" tambem aqui: a
-        // midia ligada no rascunho ou na publicada vem da leitura da
-        // liberacao (revisao das telas da AG6b, item 5)
-        midiaLigada={dados.midiaLigada === true}
         aoAlternar={(telefone, ligado, religar) =>
           executar(
             `telefone-${telefone.id}`,

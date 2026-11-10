@@ -228,6 +228,9 @@ export type DadosDaIa = {
   interruptorLigado: boolean;
   situacao: SituacaoDaIa;
   // [AG6b mídia] início
+  // shortcut: sem consumidor desde 09/11/2026 (o chip "Sem áudio, foto e
+  // documento" saiu com a migration 20261110100000); tirar a leitura do
+  // rascunho e este campo na proxima mudanca desta consulta.
   /**
    * Alguma habilidade de midia ("Entender áudio" ou "Ler imagem e
    * documento") ligada no rascunho ou na ultima versao publicada (o skills

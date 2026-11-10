@@ -5187,3 +5187,8 @@ O dono: "preciso que nem tudo vá para a equipe". A decisão de cada arquivo é 
 - **`gravar_leitura_da_midia`:** igual à da `20261106140000`, mais o passo que grava o documento na primeira leitura da mensagem: o tipo `documento_de_identidade` vira `documento_com_foto` e a `carteirinha` vira `carteirinha`, só com confiança alta ou média (`on conflict (message_id) do nothing`). Nada do documento é guardado: o tipo e a mensagem. Corpo novo md5 `509a2ab193bbe13617f8551e255bfdae`; o de antes, `0ab0639ca252ebb7eeac638a07bdf79c`.
 - **Rollback:** `supabase/operacao/rollback/20261109100000-documentos.sql` (volta o corpo de antes e tira a tabela), depois de voltar o código.
 - **Tipos:** o bloco da tabela gerado pelo `supabase gen types` foi para `lib/supabase/database.types.ts`; as diferenças com o gerado continuam as 26 + 2 antigas.
+
+## 48. Áudio, foto e documento sem o aviso novo (decisão do dono de 09/11/2026, migration `20261110100000_midia_sem_aviso_novo.sql`)
+
+- **`midia_da_ia_liberada(p_clinic_id, p_telefone)`:** verdadeiro com o telefone ativo em `ia_contato_liberado` (pela chave canônica), sem exigir `aviso_da_openai_versao >= 2`. `create or replace` (mantém os grants: só o servidor) e comentário novo. Corpo md5 `cf5d564a4b0b557200b1aa1a3b956b6d`; o de antes, `0446fcb9428a5728adf8091bd140a76a`.
+- **Travas:** só catálogo. **Rollback:** `supabase/operacao/rollback/20261110100000-midia-aviso-antigo.sql`, depois de voltar o código.
