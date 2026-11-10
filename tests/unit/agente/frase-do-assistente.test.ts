@@ -10,6 +10,7 @@ import {
   LIMITES_DO_AGENTE,
   problemaNoTextoDoAgente,
   problemasNoTextoDoAgente,
+  respostaAoRobo,
   type ConfigDoAgente,
   type LinhaDaConfigDoAgente,
 } from "@/lib/domain/agente/config";
@@ -22,21 +23,25 @@ import { COLUNAS_DA_CONFIG_DO_AGENTE } from "@/lib/queries/agente";
 // a resposta ao "você é um robô?"; nula, vale a padrao. O laco, o limite da
 // mensagem e os fatos tem os testes deles (motor-laco, motor-prompt e
 // motor-fatos-do-turno); a tela e a Server Action, os delas (tela-abas e
-// acoes-agente).
+// acoes-agente). Decisao do dono de 10/11/2026: a frase nao precisa dizer que
+// e virtual (o CHECK do banco saiu na 20261110120000); o "virtual" so decide a
+// resposta ao "robô?" (respostaAoRobo).
 
 const MIGRATION = "supabase/migrations/20261109120000_frase_do_assistente.sql";
+const MIGRATION_SEM_VIRTUAL =
+  "supabase/migrations/20261110120000_frase_sem_exigir_virtual.sql";
+const ROLLBACK_SEM_VIRTUAL =
+  "supabase/operacao/rollback/20261110120000-frase-exige-virtual.sql";
 
 /** Meia-risca e travessao, pelo codigo (o arquivo fica sem os dois). */
 const TRAVESSAO = new RegExp(`[${String.fromCharCode(0x2013, 0x2014)}]`);
 
 /**
- * O que o CHECK do banco aceita, conferido no Postgres local e no ensaio
- * (~/.claude/plans/agente-completo/frase-do-assistente/
- * ensaio-20261109120000.sql, com a mesma lista): dizQueEVirtual diz o mesmo em
- * cada uma, para o banco nunca recusar o que a tela aceitou. O link e o
- * tamanho ficam com o filtro e com o zod (abaixo).
+ * O que dizQueEVirtual reconhece (palavras inteiras, sem caixa e sem acento);
+ * era o espelho do CHECK da 20261109120000 e hoje decide so a resposta ao
+ * "robô?".
  */
-const AMOSTRAS_DO_BANCO: readonly (readonly [string, boolean])[] = [
+const AMOSTRAS_DO_VIRTUAL: readonly (readonly [string, boolean])[] = [
   [FRASE_DO_ASSISTENTE_VIRTUAL, true],
   ["Oi! Sou a Ana, inteligência artificial da clínica.", true],
   ["SOU A ASSISTENTE VIRTUAL DA CLÍNICA.", true],
@@ -47,6 +52,24 @@ const AMOSTRAS_DO_BANCO: readonly (readonly [string, boolean])[] = [
   ["Sou a assistente virtua l.", false],
   ["inteligenciaartificial", false],
   ["Sou a assistente virtual_da clínica", false],
+];
+
+/**
+ * O que o CHECK da 20261110120000 aceita (so o tamanho e o link), conferido no
+ * ensaio na producao (~/.claude/plans/agente-completo/frase-livre/
+ * ensaio-20261110120000.sql, com a mesma lista): a tela recusa tudo o que o
+ * banco recusa, para o banco nunca recusar o que a tela aceitou.
+ */
+const AMOSTRAS_DO_BANCO: readonly (readonly [string, boolean])[] = [
+  [FRASE_DO_ASSISTENTE_VIRTUAL, true],
+  ["Aqui é a Ana, da recepção.", true],
+  ["Oi! Sou a Ana, atendente digital da Clínica Sol.", true],
+  ["Sou virtualmente sua assistente.", true],
+  ["a".repeat(300), true],
+  ["a".repeat(301), false],
+  ["Sou a Ana. Veja www.clinica.com.br", false],
+  ["Sou a Ana: http://clinica", false],
+  ["Sou a Ana: HTTPS://clinica", false],
 ];
 
 const LINHA: LinhaDaConfigDoAgente = {
@@ -77,18 +100,31 @@ describe("a frase de assistente virtual da clínica: as regras", () => {
     expect(dizQueEVirtual(FRASE_DO_ASSISTENTE_VIRTUAL)).toBe(true);
   });
 
-  it("dizQueEVirtual diz o mesmo que o CHECK do banco em cada amostra", () => {
-    for (const [frase, aceita] of AMOSTRAS_DO_BANCO) {
-      expect(dizQueEVirtual(frase), frase).toBe(aceita);
+  it("dizQueEVirtual: palavras inteiras, sem caixa e sem acento", () => {
+    for (const [frase, diz] of AMOSTRAS_DO_VIRTUAL) {
+      expect(dizQueEVirtual(frase), frase).toBe(diz);
     }
   });
 
-  it("sem dizer que é virtual, com link, com promessa ou com telefone: a mensagem de recepcionista, sem travessão", () => {
-    const casos = [
-      [
+  it("o banco nunca recusa o que a tela aceita (as amostras do ensaio da 20261110120000)", () => {
+    for (const [frase, aceitaNoBanco] of AMOSTRAS_DO_BANCO) {
+      const naTela =
+        frase.length <= LIMITES_DO_AGENTE.fraseDoAssistente &&
+        problemaNoTextoDoAgente(frase, "fraseDoAssistente") === null;
+      if (!aceitaNoBanco) {
+        expect(naTela, frase).toBe(false);
+      }
+    }
+  });
+
+  it("sem dizer que é virtual passa (10/11/2026); com link, com promessa ou com telefone: a mensagem de recepcionista, sem travessão", () => {
+    expect(
+      problemaNoTextoDoAgente(
         "Aqui é a Ana, da recepção.",
-        "Diga na frase que é a assistente virtual ou uma inteligência artificial: o paciente precisa saber que não está falando com uma pessoa.",
-      ],
+        "fraseDoAssistente",
+      ),
+    ).toBeNull();
+    const casos = [
       ["Sou a assistente virtual. Veja www.clinica.com.br", "Tire o link"],
       ["Sou a assistente virtual: http://clinica", "Tire o link"],
       [
@@ -104,17 +140,13 @@ describe("a frase de assistente virtual da clínica: as regras", () => {
     }
   });
 
-  it("dizer que é virtual vem antes do filtro, e a regra é só da frase", () => {
+  it("a frase passa só pelo filtro, sem a regra do virtual (10/11/2026)", () => {
     expect(
       problemasNoTextoDoAgente(
         "Aqui é a Ana. Ligue (85) 99999-0000.",
         "fraseDoAssistente",
       ).map((p) => p.regra),
-    ).toEqual(["sem_dizer_que_e_virtual", "dado_pessoal"]);
-    // A saudacao nao precisa dizer que e virtual.
-    expect(
-      problemaNoTextoDoAgente("Olá! Aqui é a Ana.", "saudacao"),
-    ).toBeNull();
+    ).toEqual(["dado_pessoal"]);
   });
 
   it("em branco não tem problema: vale a padrão", () => {
@@ -137,6 +169,22 @@ describe("a frase de assistente virtual da clínica: a que vale e a do banco", (
       fraseDoAssistenteVirtual({} as Pick<ConfigDoAgente, "fraseDoAssistente">),
     ).toBe(FRASE_DO_ASSISTENTE_VIRTUAL);
     expect(configPadraoDoAgente().fraseDoAssistente).toBeNull();
+  });
+
+  it("a resposta ao 'robô?': a da clínica quando diz que é virtual; senão, a padrão", () => {
+    expect(
+      respostaAoRobo({ fraseDoAssistente: " Sou a Ana, assistente virtual. " }),
+    ).toBe("Sou a Ana, assistente virtual.");
+    for (const fraseDoAssistente of [
+      "Aqui é a Ana, da recepção.",
+      null,
+      "   ",
+    ]) {
+      expect(
+        respostaAoRobo({ fraseDoAssistente }),
+        String(fraseDoAssistente),
+      ).toBe(FRASE_DO_ASSISTENTE_VIRTUAL);
+    }
   });
 
   it("configDaLinha lê frase_do_assistente aparada; em branco ou fora do select, nula", () => {
@@ -232,5 +280,25 @@ describe("a frase de assistente virtual da clínica: a migration", () => {
       "frase_do_assistente = v_origem.frase_do_assistente,",
     );
     expect(sql.match(/create or replace function/g)).toHaveLength(2);
+  });
+
+  it("a 20261110120000 troca o CHECK por um só com o tamanho e o link, e o rollback volta o de antes byte a byte", () => {
+    const nova = readFileSync(MIGRATION_SEM_VIRTUAL, "utf-8");
+    const alter = nova.slice(
+      nova.indexOf("alter table public.ai_agent_config"),
+      nova.indexOf(");", nova.indexOf("alter table public.ai_agent_config")) +
+        2,
+    );
+    expect(alter.replace(/\s+/g, " ")).toBe(
+      `alter table public.ai_agent_config drop constraint ai_agent_config_frase_do_assistente_valida, add constraint ai_agent_config_frase_do_assistente_valida check ( frase_do_assistente is null or ( char_length(frase_do_assistente) <= ${LIMITES_DO_AGENTE.fraseDoAssistente} and frase_do_assistente !~* '(http|://|www\\.)' ) );`,
+    );
+    const antes = sql.slice(
+      sql.indexOf(
+        "  add constraint ai_agent_config_frase_do_assistente_valida",
+      ),
+      sql.indexOf("  );", sql.indexOf("add constraint")) + 4,
+    );
+    expect(antes).toContain("virtual|inteligencia");
+    expect(readFileSync(ROLLBACK_SEM_VIRTUAL, "utf-8")).toContain(antes);
   });
 });

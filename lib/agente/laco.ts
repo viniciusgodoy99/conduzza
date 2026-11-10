@@ -66,6 +66,8 @@
 //    sozinho de uma resposta grande (a resposta grande e barrada inteira).
 //    Desde 09/11/2026 o aviso e a resposta do "robô?" sao a frase da clinica
 //    (aba Persona), ou a padrao quando ela nao tem (fraseDoAssistenteVirtual);
+//    desde 10/11/2026 a do "robô?" so e a da clinica quando ela diz que e
+//    virtual (respostaAoRobo);
 //  - o tipo do contato (lead ou paciente) vai na ultima linha das
 //    instrucoes (item 4), fora do prefixo do cache.
 //
@@ -127,6 +129,7 @@ import {
   ehFerramentaDoCadastro,
   ferramentasDoAgente,
   fraseDoAssistenteVirtual,
+  respostaAoRobo,
   ROTULO_DO_MOTIVO_DE_ESCALONAMENTO,
   type ConfigDoAgente,
   type FerramentaDoAgente,
@@ -3748,7 +3751,9 @@ async function turnoDoAgente(
       // A frase do dono, com a saudacao e o aviso colados como numa
       // resposta comum (a do "você é um robô?" ja e o aviso: nao repete).
       rascunho = comporResposta({
-        mensagem: ehForaDoAssunto ? FRASE_FORA_DO_ASSUNTO : fraseDoAssistente,
+        mensagem: ehForaDoAssunto
+          ? FRASE_FORA_DO_ASSUNTO
+          : respostaAoRobo(entrada.config),
         saudacao: entrada.config.saudacao,
         encerramento: null,
         primeiraResposta,

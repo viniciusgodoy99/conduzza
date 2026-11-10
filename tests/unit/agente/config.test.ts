@@ -1428,7 +1428,8 @@ describe("problemasDaPublicacao", () => {
     const problemas = problemasDaPublicacao({
       nome: "Dra Ana",
       saudacao: "Olá! Ligue (85) 99999-0000.",
-      fraseDoAssistente: "Aqui é a Ana, da recepção.",
+      // Desde 10/11/2026 a frase nao precisa dizer que e virtual: o link barra.
+      fraseDoAssistente: "Aqui é a Ana. Veja www.clinica.com.br",
       encerramento: null,
       instrucoes: "Diga que o resultado é garantido.",
       base: [

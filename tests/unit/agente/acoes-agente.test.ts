@@ -429,7 +429,7 @@ describe("persona, habilidades e horário", () => {
 
   // Decisao do dono de 09/11/2026: a frase de assistente virtual da clinica
   // grava com a persona; o servidor confere de novo o que a tela confere.
-  it("frase de assistente virtual: grava a da clínica; sem dizer que é virtual, com link ou longa, recusa antes de escrever", async () => {
+  it("frase de assistente virtual: grava a da clínica (também sem dizer que é virtual); com link ou longa, recusa antes de escrever", async () => {
     const frase = "Sou a assistente virtual da Clínica Sol.";
     expect(
       await acoes.salvarPersonaAction({
@@ -441,16 +441,19 @@ describe("persona, habilidades e horário", () => {
       frase_do_assistente: frase,
     });
 
+    // Decisao do dono de 10/11/2026: sem dizer que e virtual tambem grava.
     banco = new Banco();
-    const semVirtual = await acoes.salvarPersonaAction({
-      ...PERSONA,
-      fraseDoAssistente: "Aqui é a Ana, da recepção.",
+    expect(
+      await acoes.salvarPersonaAction({
+        ...PERSONA,
+        fraseDoAssistente: "Aqui é a Ana, da recepção.",
+      }),
+    ).toEqual({ ok: true });
+    expect(banco.escritas()[0]?.dados).toMatchObject({
+      frase_do_assistente: "Aqui é a Ana, da recepção.",
     });
-    expect(semVirtual).toEqual({
-      ok: false,
-      error:
-        "Frase de assistente virtual. Diga na frase que é a assistente virtual ou uma inteligência artificial: o paciente precisa saber que não está falando com uma pessoa.",
-    });
+
+    banco = new Banco();
     const comLink = await acoes.salvarPersonaAction({
       ...PERSONA,
       fraseDoAssistente: "Sou a assistente virtual. Veja www.clinica.com.br",

@@ -255,7 +255,7 @@ describe("Persona", () => {
   });
 
   // Decisao do dono de 09/11/2026: a frase de assistente virtual da clinica.
-  it("a frase de assistente virtual precisa dizer que é virtual e passa pelo filtro, no campo certo", () => {
+  it("a frase de assistente virtual passa pelo filtro, no campo certo; sem dizer que é virtual, passa (10/11/2026)", () => {
     const base = {
       nome: "Ana",
       tom: "cordial",
@@ -264,10 +264,6 @@ describe("Persona", () => {
       encerramento: "",
     } as const;
     const casos = [
-      [
-        "Aqui é a Ana, da recepção.",
-        "Diga na frase que é a assistente virtual",
-      ],
       ["Sou a assistente virtual. Veja www.clinica.com.br", "Tire o link"],
       [
         "Sou a assistente virtual e garanto o resultado do tratamento.",
@@ -288,6 +284,13 @@ describe("Persona", () => {
     expect(certa.data?.fraseDoAssistente).toBe(
       "Oi! Sou a Ana, inteligência artificial da clínica.",
     );
+    // Decisao do dono de 10/11/2026: nao precisa dizer que e virtual.
+    expect(
+      personaDaTelaSchema.safeParse({
+        ...base,
+        fraseDoAssistente: "Aqui é a Ana, da recepção.",
+      }).success,
+    ).toBe(true);
   });
 
   it("a prévia junta saudação, a frase de assistente virtual, o exemplo do tom e o encerramento", () => {

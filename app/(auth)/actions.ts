@@ -349,7 +349,8 @@ export async function inviteMemberAction(
       existente.userId,
       parsed.data.role,
       email,
-      context.isProductAdmin,
+      () =>
+        conviteDaEquipeConduzza(admin, context.userId, context.isProductAdmin),
     );
   }
 
@@ -369,7 +370,12 @@ export async function inviteMemberAction(
           deNovo.userId,
           parsed.data.role,
           email,
-          context.isProductAdmin,
+          () =>
+            conviteDaEquipeConduzza(
+              admin,
+              context.userId,
+              context.isProductAdmin,
+            ),
         );
       }
     }
@@ -570,7 +576,7 @@ async function vincularContaExistente(
   userId: string,
   role: PapelNaTela,
   email: string,
-  quemConvidaEDaEquipeConduzza: boolean,
+  quemConvidaEDaEquipeConduzza: () => Promise<boolean>,
 ): Promise<ActionState> {
   const { error } = await criarVinculo(supabase, clinicId, userId, role);
   if (!error) {
@@ -602,8 +608,27 @@ async function vincularContaExistente(
   // admin, que nao entra em clinica. So a equipe Conduzza le o motivo: para o
   // administrador da clinica, seria o oraculo de "este e-mail e da equipe
   // Conduzza" (achados L17/L20).
-  if (error.code === "CZSA1" && quemConvidaEDaEquipeConduzza) {
+  if (error.code === "CZSA1" && (await quemConvidaEDaEquipeConduzza())) {
     return { error: CONTA_DA_EQUIPE_CONDUZZA };
   }
   return { error: recusaDoVinculo(error, CONVITE_NAO_CONCLUIDO) };
+}
+
+// A equipe Conduzza: o super admin ou a conta normal marcada em
+// equipe_conduzza (10/11/2026: o dono convida pela conta normal). A sessao
+// nao le essa tabela; o service role ja esta no convite. Na duvida, nao e.
+async function conviteDaEquipeConduzza(
+  admin: ReturnType<typeof createAdminClient>,
+  userId: string,
+  superAdmin: boolean,
+): Promise<boolean> {
+  if (superAdmin) {
+    return true;
+  }
+  const { data } = await admin
+    .from("equipe_conduzza")
+    .select("user_id")
+    .eq("user_id", userId)
+    .maybeSingle();
+  return data !== null;
 }

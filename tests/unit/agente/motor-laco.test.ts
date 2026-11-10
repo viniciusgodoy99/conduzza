@@ -1737,6 +1737,35 @@ describe("a frase de assistente virtual da clínica (09/11/2026)", () => {
       );
     }
   });
+
+  // Decisao do dono de 10/11/2026: a frase nao precisa dizer que e virtual;
+  // quem pergunta se e robo ouve a padrao, que diz.
+  it("sem dizer que é virtual: vai no aviso, e o 'robô?' responde com a padrão (10/11/2026)", async () => {
+    const SEM_VIRTUAL = "Oi! Aqui é a Ana, da Clínica Sol.";
+    const aviso = clienteComRoteiro([final("Temos sim.")]);
+    const r1 = await executarTurnoDoAgente(
+      entrada({
+        cliente: aviso.cliente,
+        config: config({ fraseDoAssistente: SEM_VIRTUAL }),
+      }),
+    );
+    expect(r1.resposta).toBe(
+      `Olá! Aqui é a Ana, da clínica.\n\n${SEM_VIRTUAL}\n\nTemos sim.`,
+    );
+    const robo = clienteComRoteiro([ferramenta("sou_assistente_virtual", {})]);
+    const r2 = await executarTurnoDoAgente(
+      entrada({
+        cliente: robo.cliente,
+        config: config({ fraseDoAssistente: SEM_VIRTUAL }),
+        mensagens: [paciente("você é um robô?")],
+      }),
+    );
+    expect(r2.desfecho).toEqual({ tipo: "respondeu" });
+    expect(r2.resposta).toBe(
+      `Olá! Aqui é a Ana, da clínica.\n\n${FRASE_DO_ASSISTENTE_VIRTUAL}`,
+    );
+    expect(r2.resposta).not.toContain(SEM_VIRTUAL);
+  });
 });
 
 describe("onda 2: aviso de assistente virtual (P11a)", () => {

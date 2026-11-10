@@ -57,6 +57,7 @@ import { TZDate } from "@date-fns/tz";
 import {
   ferramentasDoAgente,
   fraseDoAssistenteVirtual,
+  respostaAoRobo,
   type ConfigDoAgente,
 } from "@/lib/domain/agente/config";
 import type {
@@ -334,11 +335,15 @@ export function montarFatosDoTurno(entrada: {
     nome: c.nome,
     plano: c.plano,
   }));
+  const fraseDaClinica = fraseDoAssistenteVirtual(config);
+  const respostaDoRobo = respostaAoRobo(config);
   const colados = [
     config.saudacao,
     config.encerramento,
     // A frase de assistente virtual da clinica, ou a padrao (09/11/2026).
-    fraseDoAssistenteVirtual(config),
+    fraseDaClinica,
+    // A resposta ao "robô?", quando nao e a frase da clinica (10/11/2026).
+    respostaDoRobo === fraseDaClinica ? null : respostaDoRobo,
     FRASE_FORA_DO_ASSUNTO,
     // [AG7 preparo] A F2, quando o turno a colou.
     entrada.fraseDoPreparo,
