@@ -16,9 +16,10 @@ import { adminClient, anonClient } from "../rls/stack";
 //   midia_bloqueada, procedimento_invalido), o que grava (transcricao,
 //   sem_fala, o pedido com os itens do Cadastro, a figurinha local) e a
 //   primeira leitura que vale (reutilizado, o mesmo job e outro job);
-// - o portao do aviso: o telefone com o aviso de hoje (1) nao manda midia;
-//   reconfirmado com o aviso novo (2), manda; desligado, volta a 1; a versao
-//   fora de 1 ou 2, 22023; a trilha com {versao};
+// - o portao do aviso (desde 10/11/2026 a versao nao decide a midia,
+//   20261110100000): o telefone ligado com o aviso antigo (1) manda midia;
+//   reconfirmado com o aviso novo (2), vai a 2; desligado, nao manda e volta
+//   a 1; a versao fora de 1 ou 2, 22023; a trilha com {versao};
 // - o apagamento pela tela e pelo WhatsApp leva a leitura; depois, a
 //   gravacao recusa mensagem_invalida;
 // - a poda (pela manutencao do motor): a leitura da mensagem apagada sai; a
@@ -507,7 +508,7 @@ beforeAll(async () => {
   ]) {
     await telefoneLiberado(clinicaM, nome, 2);
   }
-  // O portao do aviso: o aviso de hoje (1); reconfirmado com o novo (2); desligado.
+  // O portao do aviso: o aviso antigo (1); reconfirmado com o novo (2); desligado.
   const v1 = await telefoneLiberado(clinicaM, "aviso-1", 1);
   aviso.set("v1-liberada", await liberada(clinicaM, v1));
   const v12 = await telefoneLiberado(clinicaM, "aviso-1-depois-2", 1);
@@ -576,10 +577,10 @@ afterAll(async () => {
 }, 120_000);
 
 describe("o portao do aviso dos telefones (D-60, D-95)", () => {
-  it("o aviso de hoje nao manda midia; reconfirmado com o novo, manda; desligado, volta a 1; a versao 3, 22023", () => {
+  it("o aviso antigo tambem manda midia (decisao do dono de 09/11/2026); reconfirmado, vai a 2; desligado, nao manda e volta a 1; a versao 3, 22023", () => {
     expect(Object.fromEntries(aviso)).toEqual({
-      "v1-liberada": false,
-      "v12-antes": false,
+      "v1-liberada": true,
+      "v12-antes": true,
       "v12-depois": true,
       "v12-versao": 2,
       "desligado-liberada": false,
@@ -698,19 +699,19 @@ describe("gravar_leitura_da_midia: as recusas, na ordem do contrato", () => {
     await concluir(job);
   });
 
-  it("fora_da_ia (a conversa na fila) e midia_bloqueada (o telefone com o aviso de hoje)", async () => {
+  it("fora_da_ia (a conversa na fila) e midia_bloqueada (o telefone desligado)", async () => {
     const naFila = await direta(clinicaM, numeroM, telefonesM.get("fila")!, "audio", "aguardando_humano");
     const job = await jobQueLeu(clinicaM, numeroM, naFila.conversa, [naFila.mensagem]);
     expect(await gravar(doAudio(job, naFila.mensagem))).toEqual({ ok: false, motivo: "fora_da_ia" });
     await concluir(job);
-    const doAvisoDeHoje = await direta(clinicaM, numeroM, telefonesM.get("aviso-1")!, "audio");
-    const outro = await jobQueLeu(clinicaM, numeroM, doAvisoDeHoje.conversa, [doAvisoDeHoje.mensagem]);
-    expect(await gravar(doAudio(outro, doAvisoDeHoje.mensagem))).toEqual({ ok: false, motivo: "midia_bloqueada" });
+    const doDesligado = await direta(clinicaM, numeroM, telefonesM.get("desligado")!, "audio");
+    const outro = await jobQueLeu(clinicaM, numeroM, doDesligado.conversa, [doDesligado.mensagem]);
+    expect(await gravar(doAudio(outro, doDesligado.mensagem))).toEqual({ ok: false, motivo: "midia_bloqueada" });
     // midia_bloqueada antes de procedimento_invalido.
-    const imagem = await outraMensagem(clinicaM, doAvisoDeHoje.conversa, "imagem");
+    const imagem = await outraMensagem(clinicaM, doDesligado.conversa, "imagem");
     await admin
       .from("ai_turno")
-      .update({ mensagens_lidas: [doAvisoDeHoje.mensagem, imagem] })
+      .update({ mensagens_lidas: [doDesligado.mensagem, imagem] })
       .eq("job_id", outro)
       .throwOnError();
     expect(await gravar({ ...doPedido(outro, imagem), p_procedimentos: [exameInativo] })).toEqual({
@@ -723,6 +724,11 @@ describe("gravar_leitura_da_midia: as recusas, na ordem do contrato", () => {
     const terceiro = await jobQueLeu(clinicaM, numeroM, reconfirmado.conversa, [reconfirmado.mensagem]);
     expect(await gravar(doAudio(terceiro, reconfirmado.mensagem))).toMatchObject({ ok: true, reutilizado: false });
     await concluir(terceiro);
+    // Desde 10/11/2026, o telefone ligado com o aviso antigo tambem manda midia.
+    const doAvisoAntigo = await direta(clinicaM, numeroM, telefonesM.get("aviso-1")!, "audio");
+    const quarto = await jobQueLeu(clinicaM, numeroM, doAvisoAntigo.conversa, [doAvisoAntigo.mensagem]);
+    expect(await gravar(doAudio(quarto, doAvisoAntigo.mensagem))).toMatchObject({ ok: true, reutilizado: false });
+    await concluir(quarto);
   });
 
   it("o pedido: os itens do Cadastro (procedimento_invalido: inativo, de outra clinica); o que grava", async () => {

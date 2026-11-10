@@ -22,9 +22,6 @@ import type {
   DadosDaIa,
   LiberacaoDaClinica,
   ModoDaIa,
-  // [AG6b mídia] início
-  TelefoneDaIa,
-  // [AG6b mídia] fim
 } from "@/lib/queries/ia-liberacao";
 
 // Regras da aba "WhatsApp" da tela Agente de IA (Tela 6). Ate a onda 2 era a
@@ -646,25 +643,12 @@ export const TELEFONE_DA_EQUIPE_STATUS: Record<
  * (TEXTOS_DA_IA.confirmarAvisoDaOpenai) e grava no telefone ao adicionar e ao
  * ligar de novo (definir_contato_liberado_da_ia, p_versao_do_aviso;
  * migration 20261030100000). 1 = o aviso so de texto (ate a AG6b); 2 =
- * texto, audio, foto e documento (D-60). So o telefone com a 2 manda midia a
- * OpenAI (D-95): o banco (midia_da_ia_liberada) e o motor conferem antes.
+ * texto, audio, foto e documento (D-60). Desde a decisao do dono de
+ * 09/11/2026 a midia vale para todo telefone ligado da lista, com qualquer
+ * versao (midia_da_ia_liberada, migration 20261110100000): o chip "Sem audio,
+ * foto e documento" saiu.
  */
 export const VERSAO_DO_AVISO_DA_OPENAI = 2;
-
-/**
- * O telefone ligado que ainda nao confirmou o aviso novo, com alguma
- * habilidade de midia ligada: o audio, a foto e o documento dele nao vao a
- * OpenAI (a conversa vai para a equipe, como hoje). Hourglass warning: o
- * mesmo sentido (pendencia, falta reconfirmar o aviso) e a mesma cor do
- * "Não aciona o assistente" e do "Ligado, mas parado" (um icone, uma cor;
- * docs/06 4.6). O mesmo telefone nunca leva os dois: este chip so vale no
- * telefone ligado (telefoneSemMidia).
- */
-export const TELEFONE_SEM_MIDIA_STATUS: StatusDefinition = {
-  label: "Sem áudio, foto e documento",
-  tone: "warning",
-  icon: Hourglass,
-};
 
 /** O numero conectado marcado para teste: FlaskConical info, o mesmo sentido de teste. */
 export const TELEFONE_ENTRE_NUMEROS_STATUS: StatusDefinition = {
@@ -673,75 +657,6 @@ export const TELEFONE_ENTRE_NUMEROS_STATUS: StatusDefinition = {
   icon: FlaskConical,
 };
 
-/** A versao do aviso que o telefone confirmou; ausente vale 1 (o lado seguro). */
-export function versaoDoAvisoDoTelefone(
-  telefone: Pick<TelefoneDaIa, "avisoDaOpenaiVersao">,
-): number {
-  return telefone.avisoDaOpenaiVersao ?? 1;
-}
-
-/**
- * O telefone leva o chip "Sem áudio, foto e documento"? So o LIGADO (o que
- * aciona o assistente) com o aviso antigo, e so com alguma habilidade de
- * midia ligada no rascunho ou na versao publicada (`midiaLigada`; sem ela a
- * midia nao vai a OpenAI de jeito nenhum, e o chip seria ruido).
- */
-export function telefoneSemMidia(
-  dados: DadosDaIa,
-  telefone: TelefoneDaIa,
-  midiaLigada: boolean,
-): boolean {
-  return (
-    midiaLigada &&
-    estadoDoTelefone(dados, telefone.id) === "ligado" &&
-    versaoDoAvisoDoTelefone(telefone) < VERSAO_DO_AVISO_DA_OPENAI
-  );
-}
-
-/**
- * Quem ve pode confirmar o aviso novo deste telefone? O comum: desligar
- * (dicas.escolha) e ligar de novo pelo dialogo do aviso (dicas.telefone). O
- * forcado: adicionar de novo pelo formulario (dicas.telefone), com o "Usar
- * mesmo assim" (dicas.forcar). Na Tela 6, o gestor nao pode (so o
- * administrador da clinica e o super admin; revisao das telas da AG6b, item
- * 5). No Painel geral quem ve e sempre a equipe Conduzza, que pode: com a
- * conta suspensa ou o agente desligado, os botoes ficam presos e o porque
- * ja esta escrito no topo dos cartoes.
- */
-export function podeConfirmarOAvisoNovo(entrada: {
-  dicas: Pick<Record<AcaoDaIa, string | null>, "escolha" | "telefone" | "forcar">;
-  forcado: boolean;
-  noPainel: boolean;
-}): boolean {
-  const { dicas, forcado, noPainel } = entrada;
-  if (noPainel) {
-    return true;
-  }
-  return forcado
-    ? dicas.telefone === null && dicas.forcar === null
-    : dicas.escolha === null && dicas.telefone === null;
-}
-
-/**
- * O que fazer, escrito na linha do telefone sem midia. O usado mesmo sendo
- * de paciente (o forcado) so volta pelo formulario, com o "Usar mesmo
- * assim": desligar e ligar de novo nao serve para ele. Quem nao pode
- * (podeConfirmar falso: o gestor) le a quem pedir, nunca uma instrucao para
- * um botao preso.
- */
-export function textoDoTelefoneSemMidia(
-  forcado: boolean,
-  podeConfirmar = true,
-): string {
-  if (!podeConfirmar) {
-    return forcado
-      ? TEXTOS_DA_IA.semMidiaNaLinhaForcadoSemPermissao
-      : TEXTOS_DA_IA.semMidiaNaLinhaSemPermissao;
-  }
-  return forcado
-    ? TEXTOS_DA_IA.semMidiaNaLinhaForcado
-    : TEXTOS_DA_IA.semMidiaNaLinha;
-}
 // [AG6b mídia] fim
 
 /**
@@ -974,23 +889,6 @@ export const TEXTOS_DA_IA = {
   religando: "Ligando...",
   avisoDaOpenaiObrigatorioAoLigar:
     "Confirme o aviso sobre a OpenAI antes de ligar o telefone de novo.",
-  // O telefone ligado com o aviso antigo (so texto), quando alguma habilidade
-  // de midia esta ligada no rascunho ou na versao publicada: o chip
-  // TELEFONE_SEM_MIDIA_STATUS e o que fazer, escrito na linha. O texto do
-  // telefone comum e o do desenho; o do telefone usado mesmo sendo de
-  // paciente (o forcado) e PROPOSTA: desligado, ele so volta pelo
-  // formulario, com o "Usar mesmo assim", entao "desligue e ligue de novo"
-  // levaria a um beco.
-  semMidiaNaLinha: "Desligue e ligue de novo para confirmar o aviso novo.",
-  semMidiaNaLinhaForcado:
-    "Para confirmar o aviso novo, adicione este telefone de novo pelo formulário acima.",
-  // Revisao das telas da AG6b (item 5; PROPOSTA, espera o dono): quem ve e
-  // nao pode desligar nem ligar (o gestor, na Tela 6) le a quem pedir, e nao
-  // a instrucao de um botao preso para ele.
-  semMidiaNaLinhaSemPermissao:
-    "Para confirmar o aviso novo, peça ao administrador da clínica para desligar e ligar de novo este telefone.",
-  semMidiaNaLinhaForcadoSemPermissao:
-    "Para confirmar o aviso novo, peça ao administrador da clínica para adicionar este telefone de novo.",
   // [AG6b mídia] fim
 } as const;
 

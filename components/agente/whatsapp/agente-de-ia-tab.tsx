@@ -67,14 +67,8 @@ import {
   textoDoLimiteDeGasto,
   textoDoTelefoneQueNaoAciona,
   textosDaParada,
-  // [AG6b mídia] início
-  podeConfirmarOAvisoNovo,
   TELEFONE_ENTRE_NUMEROS_STATUS,
-  TELEFONE_SEM_MIDIA_STATUS,
   TEXTOS_DO_ENTRE_NUMEROS,
-  telefoneSemMidia,
-  textoDoTelefoneSemMidia,
-  // [AG6b mídia] fim
   whatsappLigado,
   type AcaoDaIa,
   type EscolhaDaAba,
@@ -199,15 +193,6 @@ export type DadosDaAbaWhatsapp = {
    * falhou (o dialogo fica com o texto de sempre).
    */
   telefonesForcados: string[] | null;
-  // [AG6b mídia] início
-  /**
-   * Alguma habilidade de midia ("Entender áudio" ou "Ler imagem e
-   * documento") ligada no rascunho ou na versao publicada (a pagina decide,
-   * midiaLigadaNasHabilidades): so com ela o telefone com o aviso antigo
-   * ganha o chip "Sem áudio, foto e documento". Ausente: sem chip.
-   */
-  midiaLigada?: boolean;
-  // [AG6b mídia] fim
 };
 
 type Resultado = { tom: "alert" | "success"; texto: string };
@@ -407,9 +392,6 @@ function AbaWhatsappCarregada({
   agoraMs,
   fuso,
   telefonesForcados,
-  // [AG6b mídia] início
-  midiaLigada = false,
-  // [AG6b mídia] fim
 }: DadosDaAbaWhatsapp & { dados: DadosDaIa }) {
   const ids = useId();
   const { pendente, resultado, executar, ocupado } = useAcaoDaIa();
@@ -717,8 +699,6 @@ function AbaWhatsappCarregada({
         dicas={dicas}
         pendente={pendente}
         ocupado={ocupado}
-        // [AG6b mídia] o chip do telefone com o aviso antigo
-        midiaLigada={midiaLigada}
         aoAlternar={(telefone, ligado, religar) =>
           executar(
             `telefone-${telefone.id}`,
@@ -1196,9 +1176,6 @@ export function CartaoDosTelefones({
   aoExcluir,
   aoAdicionar,
   noPainel = false,
-  // [AG6b mídia] início
-  midiaLigada = false,
-  // [AG6b mídia] fim
 }: {
   dados: DadosDaIa;
   /**
@@ -1236,17 +1213,6 @@ export function CartaoDosTelefones({
   aoAdicionar: (valores: TelefoneValidado, depois: DepoisDeAdicionar) => void;
   /** Painel geral: a clinica nao e a ativa de quem ve. */
   noPainel?: boolean;
-  // [AG6b mídia] início
-  /**
-   * Alguma habilidade de midia ligada no rascunho ou na versao publicada: o
-   * telefone ligado com o aviso antigo ganha o chip "Sem áudio, foto e
-   * documento" e o que fazer. A Tela 6 manda o que a pagina leu da
-   * configuracao; o Painel geral, o que a leitura da liberacao traz
-   * (DadosDaIa.midiaLigada; revisao das telas da AG6b, item 5). Sem a prop,
-   * sem chip.
-   */
-  midiaLigada?: boolean;
-  // [AG6b mídia] fim
 }) {
   const tituloId = useId();
   const ids = useId();
@@ -1598,21 +1564,6 @@ export function CartaoDosTelefones({
               const dicaDaLinha = telefone.ativo
                 ? dicas.escolha
                 : (dicas.telefone ?? textoDeQueNaoAciona);
-              // [AG6b mídia] início
-              // O telefone ligado com o aviso antigo, com alguma habilidade
-              // de midia ligada: o chip e o que fazer (desligar e ligar de
-              // novo; o forcado, pelo formulario). Leitura dos forcados que
-              // falhou: o texto de sempre. Quem nao pode (o gestor) le a
-              // quem pedir (revisao das telas da AG6b, item 5).
-              const semMidia = telefoneSemMidia(dados, telefone, midiaLigada);
-              const forcado = forcados !== null && forcados.has(telefone.id);
-              const textoDeSemMidia = semMidia
-                ? textoDoTelefoneSemMidia(
-                    forcado,
-                    podeConfirmarOAvisoNovo({ dicas, forcado, noPainel }),
-                  )
-                : null;
-              // [AG6b mídia] fim
               const botao = (
                 <Button
                   variant={telefone.ativo ? "ghost" : "outline"}
@@ -1680,14 +1631,6 @@ export function CartaoDosTelefones({
                               : undefined
                           }
                         />
-                        {/* [AG6b mídia] início */}
-                        {semMidia ? (
-                          <StatusChip
-                            size="sm"
-                            definition={TELEFONE_SEM_MIDIA_STATUS}
-                          />
-                        ) : null}
-                        {/* [AG6b mídia] fim */}
                         {telefone.entreNumeros ? (
                           <StatusChip
                             size="sm"
@@ -1706,17 +1649,6 @@ export function CartaoDosTelefones({
                       {textoDeQueNaoAciona}
                     </Aviso>
                   ) : null}
-                  {/* [AG6b mídia] início: o que fazer, escrito (a cor e o
-                      chip nao vao sozinhos). */}
-                  {textoDeSemMidia !== null ? (
-                    <p
-                      data-sem-midia
-                      className="text-[12.5px] font-semibold text-text-secondary"
-                    >
-                      {textoDeSemMidia}
-                    </p>
-                  ) : null}
-                  {/* [AG6b mídia] fim */}
                   {conversasAbertas.map((conversa) =>
                     noPainel ? (
                       <Aviso

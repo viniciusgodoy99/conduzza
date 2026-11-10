@@ -1,5 +1,4 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { Hourglass } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,10 +7,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // recomendacao, pendentes do dono): o aviso da OpenAI cobre texto, audio,
 // foto e documento (a versao 2); a tela grava no telefone a versao que
 // mostrou, ao adicionar e ao ligar de novo (o "Ligar de novo" passa a pedir
-// o aviso num dialogo, e a acao recusa sem ele); o telefone ligado com o
-// aviso antigo, com alguma habilidade de midia ligada, ganha o chip "Sem
-// áudio, foto e documento" (Hourglass warning, 3 camadas) e o que fazer,
-// escrito. Tudo com dubles: nenhuma rede, nenhum banco.
+// o aviso num dialogo, e a acao recusa sem ele). Desde 09/11/2026 o
+// telefone com o aviso antigo tem audio, foto e documento como os outros,
+// sem chip. Tudo com dubles: nenhuma rede, nenhum banco.
 
 const registro = vi.hoisted(() => ({
   papel: "admin" as string,
@@ -125,16 +123,9 @@ import {
   alternarTelefoneDaIaAction,
 } from "@/app/(app)/agente/whatsapp-actions";
 import {
-  // [AG6b mídia] revisao das telas (item 5)
-  podeConfirmarOAvisoNovo,
-  TELEFONE_DA_EQUIPE_STATUS,
-  TELEFONE_SEM_MIDIA_STATUS,
-  telefoneSemMidia,
   TEXTOS_DA_IA,
   TEXTOS_DO_TESTE_COM_PACIENTE,
-  textoDoTelefoneSemMidia,
   VERSAO_DO_AVISO_DA_OPENAI,
-  versaoDoAvisoDoTelefone,
 } from "@/components/agente/whatsapp/agente-de-ia";
 import {
   AbaWhatsapp,
@@ -148,7 +139,6 @@ import {
   COLUNAS_DOS_TELEFONES,
   COLUNAS_DOS_TELEFONES_SEM_O_AVISO,
   EVENTO_DOS_TELEFONES_SEM_O_AVISO,
-  versaoDoAvisoDaLinha,
   type DadosDaIa,
   type TelefoneDaIa,
 } from "@/lib/queries/ia-liberacao";
@@ -246,7 +236,6 @@ function aba(
         agoraMs={Date.parse("2026-10-30T15:00:00.000Z")}
         fuso="America/Fortaleza"
         telefonesForcados={[]}
-        midiaLigada
         {...props}
       />
     </TooltipProvider>,
@@ -260,14 +249,6 @@ function texto(html: string): string {
     .replace(/&#x27;/g, "'")
     .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ");
-}
-
-/** A linha (li) de um telefone, pelo rotulo. */
-function linhaDoTelefone(html: string, rotulo: string): string {
-  const indice = html.indexOf(`>${rotulo}<`);
-  expect(indice, `linha do telefone ${rotulo}`).toBeGreaterThan(-1);
-  const inicio = html.lastIndexOf("<li", indice);
-  return html.slice(inicio, html.indexOf("</li>", indice) + 5);
 }
 
 // ---------------------------------------------------------------------------
@@ -288,7 +269,7 @@ describe("os avisos novos (D-60)", () => {
     );
   });
 
-  it("o Ligar de novo e o chip: os textos, sem travessão e sem jargão", () => {
+  it("o Ligar de novo: os textos, sem travessão e sem jargão", () => {
     expect(TEXTOS_DA_IA.religarTitulo).toBe("Ligar este telefone de novo?");
     expect(TEXTOS_DA_IA.religarTexto).toBe(
       "Antes de ligar, confirme o aviso sobre a OpenAI. Ele vale para tudo o que a pessoa escrever ou mandar ao assistente.",
@@ -296,13 +277,6 @@ describe("os avisos novos (D-60)", () => {
     expect(TEXTOS_DA_IA.avisoDaOpenaiObrigatorioAoLigar).toBe(
       "Confirme o aviso sobre a OpenAI antes de ligar o telefone de novo.",
     );
-    expect(TEXTOS_DA_IA.semMidiaNaLinha).toBe(
-      "Desligue e ligue de novo para confirmar o aviso novo.",
-    );
-    expect(TEXTOS_DA_IA.semMidiaNaLinhaForcado).toBe(
-      "Para confirmar o aviso novo, adicione este telefone de novo pelo formulário acima.",
-    );
-    expect(TELEFONE_SEM_MIDIA_STATUS.label).toBe("Sem áudio, foto e documento");
     for (const frase of [
       TEXTOS_DA_IA.confirmarAvisoDaOpenai,
       TEXTOS_DA_IA.religarTitulo,
@@ -310,10 +284,7 @@ describe("os avisos novos (D-60)", () => {
       TEXTOS_DA_IA.religar,
       TEXTOS_DA_IA.religando,
       TEXTOS_DA_IA.avisoDaOpenaiObrigatorioAoLigar,
-      TEXTOS_DA_IA.semMidiaNaLinha,
-      TEXTOS_DA_IA.semMidiaNaLinhaForcado,
       TEXTOS_DO_TESTE_COM_PACIENTE.confirmacao,
-      TELEFONE_SEM_MIDIA_STATUS.label,
     ]) {
       expect(frase).not.toMatch(/[—–]/);
       expect(frase).not.toMatch(/\b(opt-in|handoff|tenant|whisper|upload)\b/i);
@@ -478,194 +449,19 @@ describe("a action manda a versão do aviso", () => {
 // O chip "Sem áudio, foto e documento"
 // ---------------------------------------------------------------------------
 
-describe("o chip do telefone com o aviso antigo", () => {
-  it("3 camadas: Hourglass, o rótulo e o tom de aviso, o mesmo par do Não aciona o assistente", () => {
-    expect(TELEFONE_SEM_MIDIA_STATUS).toEqual({
-      label: "Sem áudio, foto e documento",
-      tone: "warning",
-      icon: Hourglass,
+describe("áudio, foto e documento valem para todo telefone ligado (09/11/2026)", () => {
+  it("o telefone ligado com o aviso antigo não leva chip nem o que fazer", () => {
+    const html = aba({
+      dados: {
+        ...dados(),
+        telefones: dados().telefones.map((telefone) => ({
+          ...telefone,
+          avisoDaOpenaiVersao: 1,
+        })),
+      },
     });
-    expect(TELEFONE_SEM_MIDIA_STATUS.icon).toBe(
-      TELEFONE_DA_EQUIPE_STATUS.invalido.icon,
-    );
-    expect(TELEFONE_SEM_MIDIA_STATUS.tone).toBe(
-      TELEFONE_DA_EQUIPE_STATUS.invalido.tone,
-    );
-  });
-
-  it("só no telefone ligado, com o aviso antigo e alguma habilidade de mídia ligada", () => {
-    const d = dados();
-    expect(telefoneSemMidia(d, telefone(), true)).toBe(true);
-    // A versao ausente (leitura de antes) vale 1: o lado seguro.
-    expect(
-      telefoneSemMidia(d, telefone({ avisoDaOpenaiVersao: undefined }), true),
-    ).toBe(true);
-    expect(
-      telefoneSemMidia(d, telefone({ avisoDaOpenaiVersao: 2 }), true),
-    ).toBe(false);
-    expect(telefoneSemMidia(d, telefone(), false)).toBe(false);
-    // Desligado, ou o que nao aciona o assistente (o chip dele e outro).
-    expect(
-      telefoneSemMidia(d, telefone({ id: "t2", ativo: false }), true),
-    ).toBe(false);
-    expect(
-      telefoneSemMidia(
-        dados({
-          situacao: { ...d.situacao, telefonesInvalidos: ["t1"] },
-        }),
-        telefone(),
-        true,
-      ),
-    ).toBe(false);
-  });
-
-  it("a versão: ausente vale 1; da linha do banco, só o 2 vale como o aviso novo", () => {
-    expect(versaoDoAvisoDoTelefone({})).toBe(1);
-    expect(versaoDoAvisoDoTelefone({ avisoDaOpenaiVersao: 2 })).toBe(2);
-    expect(versaoDoAvisoDaLinha(2)).toBe(2);
-    for (const valor of [1, null, undefined, "2", 3, 0]) {
-      expect(versaoDoAvisoDaLinha(valor)).toBe(1);
-    }
-  });
-
-  it("a lista de telefones lê a versão do aviso", async () => {
-    expect(COLUNAS_DOS_TELEFONES).toBe(
-      "id, phone_key, rotulo, ativo, aviso_da_openai_versao, entre_numeros",
-    );
-    const banco = sessaoDaAba();
-    const lidos = await lerLiberacaoDeVerdade(banco.cliente, CLINICA_LIDA);
-    expect(banco.colunasDosTelefones()).toEqual([COLUNAS_DOS_TELEFONES]);
-    expect(lidos.telefones.map((t) => t.avisoDaOpenaiVersao)).toEqual([2, 1]);
-  });
-
-  it("na linha: o chip junto do Ligado e o que fazer, escrito", () => {
-    const html = aba();
-    const linha = linhaDoTelefone(html, "Vinicius, equipe");
-    expect(linha).toContain("Sem áudio, foto e documento");
-    expect(linha).toContain("lucide-hourglass");
-    expect(linha).toContain("var(--warning-text)");
-    expect(texto(linha)).toContain(TEXTOS_DA_IA.semMidiaNaLinha);
-    // O Ligado continua (o texto vai): o chip e outro fato.
-    expect(texto(linha)).toMatch(/Conversa com o assistente|Ligado/);
-    // O telefone desligado nao leva chip (ao ligar de novo, confirma o aviso).
-    expect(linhaDoTelefone(html, "Ana")).not.toContain(
-      "Sem áudio, foto e documento",
-    );
-  });
-
-  it("o telefone usado mesmo sendo de paciente: o caminho é o formulário", () => {
-    const linha = linhaDoTelefone(
-      aba({ telefonesForcados: ["t1"] }),
-      "Vinicius, equipe",
-    );
-    expect(texto(linha)).toContain(TEXTOS_DA_IA.semMidiaNaLinhaForcado);
-    expect(texto(linha)).not.toContain(TEXTOS_DA_IA.semMidiaNaLinha);
-    expect(textoDoTelefoneSemMidia(true)).toBe(
-      TEXTOS_DA_IA.semMidiaNaLinhaForcado,
-    );
-    expect(textoDoTelefoneSemMidia(false)).toBe(TEXTOS_DA_IA.semMidiaNaLinha);
-  });
-
-  it("sem chip: com o aviso novo, sem mídia ligada, ou sem a prop (o Painel geral)", () => {
-    const comAvisoNovo = aba({
-      dados: dados({ telefones: [telefone({ avisoDaOpenaiVersao: 2 })] }),
-    });
-    expect(comAvisoNovo).not.toContain("Sem áudio, foto e documento");
-    expect(aba({ midiaLigada: false })).not.toContain(
-      "Sem áudio, foto e documento",
-    );
-    expect(aba({ midiaLigada: undefined })).not.toContain(
-      "Sem áudio, foto e documento",
-    );
-  });
-
-  it("o gestor vê o chip e a quem pedir, com os botões presos e a dica (revisão das telas, item 5)", () => {
-    const html = aba({ podeEditar: false });
-    const linha = linhaDoTelefone(html, "Vinicius, equipe");
-    expect(linha).toContain("Sem áudio, foto e documento");
-    expect(linha).toMatch(/<button[^>]*disabled=""[^>]*>Desligar<\/button>/);
-    // Nunca a instrucao de um botao preso para ele: a quem pedir.
-    expect(texto(linha)).toContain(TEXTOS_DA_IA.semMidiaNaLinhaSemPermissao);
-    expect(texto(linha)).not.toContain(TEXTOS_DA_IA.semMidiaNaLinha);
-    // O usado mesmo sendo de paciente: pedir para adicionar de novo.
-    const forcado = linhaDoTelefone(
-      aba({ podeEditar: false, telefonesForcados: ["t1"] }),
-      "Vinicius, equipe",
-    );
-    expect(texto(forcado)).toContain(
-      TEXTOS_DA_IA.semMidiaNaLinhaForcadoSemPermissao,
-    );
-    expect(texto(forcado)).not.toContain(TEXTOS_DA_IA.semMidiaNaLinhaForcado);
-  });
-
-  it("o administrador e o super admin leem o que fazer, nunca a quem pedir", () => {
-    for (const props of [{}, { superAdmin: true }]) {
-      const linha = linhaDoTelefone(aba(props), "Vinicius, equipe");
-      expect(texto(linha)).toContain(TEXTOS_DA_IA.semMidiaNaLinha);
-      expect(texto(linha)).not.toContain("peça ao administrador");
-    }
-  });
-
-  it("quem pode confirmar o aviso novo: pela permissão de desligar e ligar (o forçado, de adicionar e usar mesmo assim); no Painel geral, sempre", () => {
-    const livres = { escolha: null, telefone: null, forcar: null };
-    const doGestor = {
-      escolha: TEXTOS_DA_IA.semPermissao,
-      telefone: TEXTOS_DA_IA.semPermissao,
-      forcar: TEXTOS_DA_IA.semPermissao,
-    };
-    for (const forcado of [false, true]) {
-      expect(
-        podeConfirmarOAvisoNovo({ dicas: livres, forcado, noPainel: false }),
-      ).toBe(true);
-      expect(
-        podeConfirmarOAvisoNovo({ dicas: doGestor, forcado, noPainel: false }),
-      ).toBe(false);
-      // A equipe Conduzza no painel: com os cartoes travados (conta
-      // suspensa, agente desligado), o porque esta no topo.
-      expect(
-        podeConfirmarOAvisoNovo({ dicas: doGestor, forcado, noPainel: true }),
-      ).toBe(true);
-    }
-    // Cada caminho pela dica dele.
-    expect(
-      podeConfirmarOAvisoNovo({
-        dicas: { ...livres, escolha: "x" },
-        forcado: false,
-        noPainel: false,
-      }),
-    ).toBe(false);
-    expect(
-      podeConfirmarOAvisoNovo({
-        dicas: { ...livres, escolha: "x" },
-        forcado: true,
-        noPainel: false,
-      }),
-    ).toBe(true);
-    expect(
-      podeConfirmarOAvisoNovo({
-        dicas: { ...livres, forcar: "x" },
-        forcado: true,
-        noPainel: false,
-      }),
-    ).toBe(false);
-    expect(textoDoTelefoneSemMidia(false, false)).toBe(
-      TEXTOS_DA_IA.semMidiaNaLinhaSemPermissao,
-    );
-    expect(textoDoTelefoneSemMidia(true, false)).toBe(
-      TEXTOS_DA_IA.semMidiaNaLinhaForcadoSemPermissao,
-    );
-    for (const frase of [
-      TEXTOS_DA_IA.semMidiaNaLinhaSemPermissao,
-      TEXTOS_DA_IA.semMidiaNaLinhaForcadoSemPermissao,
-    ]) {
-      expect(frase).not.toMatch(/[—–]/);
-      expect(frase).toContain("peça ao administrador da clínica");
-    }
-  });
-
-  it("nenhum travessão na aba com o chip", () => {
-    expect(aba()).not.toMatch(/[—–]/);
-    expect(aba({ telefonesForcados: ["t1"] })).not.toMatch(/[—–]/);
+    expect(html).not.toContain("Sem áudio, foto e documento");
+    expect(html).not.toContain("confirmar o aviso novo");
   });
 });
 
@@ -816,20 +612,6 @@ describe("a lista de telefones antes da migration (item 2)", () => {
     const tudo = JSON.stringify(registro.logs);
     expect(tudo).not.toContain("99999");
     expect(tudo).not.toContain("Vinicius");
-  });
-
-  it("com a mídia ligada, o telefone lido sem a coluna ganha o chip (o aviso novo ainda não existe)", async () => {
-    const lidos = await lerLiberacaoDeVerdade(
-      sessaoDaAba({
-        semAColuna: true,
-        rascunho: { skills: { ler_audio: true } },
-      }).cliente,
-      CLINICA_LIDA,
-    );
-    const html = aba({ dados: { ...dados(), telefones: lidos.telefones } });
-    expect(linhaDoTelefone(html, "Vinicius")).toContain(
-      "Sem áudio, foto e documento",
-    );
   });
 
   it("outro erro continua derrubando a aba (nunca uma lista que não foi lida), sem ler de novo", async () => {

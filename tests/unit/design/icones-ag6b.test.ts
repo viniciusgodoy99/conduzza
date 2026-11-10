@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
-import { Hourglass, ScanText } from "lucide-react";
+import { ScanText } from "lucide-react";
 import { describe, expect, it } from "vitest";
 
 import * as daAba from "@/components/agente/whatsapp/agente-de-ia";
@@ -13,9 +13,6 @@ import * as status from "@/lib/design/status";
 // - ScanText, tom ia = SO a linha "Lido pelo assistente" embaixo da foto e
 //   do documento do paciente no Atendimento (dono novo e unico, conferido
 //   em 30/10/2026 que ninguem usava). Nao e status: nenhum mapa o usa.
-// - O chip "Sem áudio, foto e documento" do telefone da equipe reaproveita o
-//   Hourglass warning (pendencia), o mesmo par do "Não aciona o assistente":
-//   nenhum icone novo, nenhuma cor nova.
 
 const RAIZ = path.resolve(__dirname, "../../..");
 
@@ -120,32 +117,6 @@ describe("o ScanText da AG6b", () => {
     expect(todas.length).toBeGreaterThan(20);
     expect(todas.some(({ definicao }) => definicao.icon === ScanText)).toBe(
       false,
-    );
-  });
-});
-
-describe("o chip Sem áudio, foto e documento", () => {
-  it("reaproveita o Hourglass em aviso; o Hourglass é sempre aviso em todo mapa", () => {
-    expect(daAba.TELEFONE_SEM_MIDIA_STATUS.icon).toBe(Hourglass);
-    expect(daAba.TELEFONE_SEM_MIDIA_STATUS.tone).toBe("warning");
-    const comAmpulheta = [
-      ...definicoesDe(status as Record<string, unknown>),
-      ...definicoesDe(daAba as Record<string, unknown>),
-    ].filter(({ definicao }) => definicao.icon === Hourglass);
-    expect(comAmpulheta.map(({ nome }) => nome)).toContain(
-      "TELEFONE_SEM_MIDIA_STATUS",
-    );
-    for (const { nome, definicao } of comAmpulheta) {
-      expect(definicao.tone, nome).toBe("warning");
-    }
-  });
-
-  it("nunca o triângulo (só do Faltou) nem o relógio (só do Aguardando)", () => {
-    expect(daAba.TELEFONE_SEM_MIDIA_STATUS.icon).not.toBe(
-      status.APPOINTMENT_STATUS.faltou.icon,
-    );
-    expect(daAba.TELEFONE_SEM_MIDIA_STATUS.label).toBe(
-      "Sem áudio, foto e documento",
     );
   });
 });
