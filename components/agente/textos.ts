@@ -292,7 +292,7 @@ export const TEXTOS_DO_AGENTE = {
   // clinica (em branco, vale a padrao, que aparece como exemplo no campo).
   fraseDoAssistente: "Frase de assistente virtual",
   fraseDoAssistenteDica:
-    "Entra antes da primeira resposta de cada conversa e responde quem pergunta se está falando com um robô. Precisa dizer que é a assistente virtual ou uma inteligência artificial. Em branco, vale a frase padrão, que aparece no campo.",
+    "Entra antes da primeira resposta de cada conversa. Se disser que é a assistente virtual, também responde quem pergunta se está falando com um robô. Em branco, vale a frase padrão, que aparece no campo.",
   encerramento: "Encerramento",
   encerramentoDica: "Entra no fim da resposta que fecha a conversa.",
   comoOPacienteVe: "Como o paciente vê",

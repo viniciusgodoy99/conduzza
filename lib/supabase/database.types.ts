@@ -2255,6 +2255,24 @@ export type Database = {
         }
         Relationships: []
       }
+      equipe_conduzza: {
+        Row: {
+          entrou_em: string
+          marcado_por: string | null
+          user_id: string
+        }
+        Insert: {
+          entrou_em?: string
+          marcado_por?: string | null
+          user_id: string
+        }
+        Update: {
+          entrou_em?: string
+          marcado_por?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       etapa_pendente_da_passagem: {
         Row: {
           clinic_id: string

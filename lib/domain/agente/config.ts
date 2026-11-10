@@ -2229,8 +2229,8 @@ export const personaSchema = z.object({
   ),
   /**
    * A frase de assistente virtual da clinica (decisao do dono de 09/11/2026).
-   * Vazio vira nulo: vale a frase padrao (fraseDoAssistenteVirtual). Dizer que
-   * e virtual e as regras do filtro ficam em problemaNoTextoDoAgente.
+   * Vazio vira nulo: vale a frase padrao (fraseDoAssistenteVirtual). As regras
+   * do filtro ficam em problemaNoTextoDoAgente.
    */
   fraseDoAssistente: textoOpcional(
     LIMITES_DO_AGENTE.fraseDoAssistente,
@@ -2491,11 +2491,10 @@ function temTituloDeProfissional(nome: string): boolean {
     .some((palavra) => TITULOS_DE_PROFISSIONAL.has(palavra));
 }
 
-// A frase de assistente virtual diz que e virtual (decisao do dono de
-// 09/11/2026: o assistente nunca passa por uma pessoa). Espelho do CHECK
-// ai_agent_config_frase_do_assistente_valida (migration 20261109120000):
-// minusculas, os mesmos acentos tirados e a mesma fronteira de palavra (\m e
-// \M do Postgres), para o banco nunca recusar o que a tela aceitou.
+// A frase diz que e virtual: decide so a resposta ao "você é um robô?"
+// (respostaAoRobo). Desde 10/11/2026 a frase da clinica nao precisa dizer
+// (decisao do dono; o CHECK do banco saiu na migration 20261110120000).
+// Minusculas, acentos tirados e fronteira de palavra, como era no banco.
 const ACENTOS_COMO_NO_BANCO: readonly (readonly [RegExp, string])[] = [
   [/[áàâãä]/g, "a"],
   [/[éèêë]/g, "e"],
@@ -2516,15 +2515,9 @@ export function dizQueEVirtual(texto: string): boolean {
   return DIZ_QUE_E_VIRTUAL.test(semAcento);
 }
 
-const MENSAGEM_DA_FRASE_SEM_VIRTUAL =
-  "Diga na frase que é a assistente virtual ou uma inteligência artificial: o paciente precisa saber que não está falando com uma pessoa.";
-
 export type ProblemaNoTexto = {
-  /**
-   * Categoria do filtro; "titulo" e "assistente_virtual" sao as regras do
-   * nome e da frase de assistente virtual, fora do filtro.
-   */
-  categoria: CategoriaDeConformidade | "titulo" | "assistente_virtual";
+  /** Categoria do filtro; "titulo" e a regra do nome, fora do filtro. */
+  categoria: CategoriaDeConformidade | "titulo";
   /** Nome da regra (nunca o trecho do texto): pode ir para log e auditoria. */
   regra: string;
   /** O que a pessoa precisa mudar, em texto de recepcionista. */
@@ -2570,7 +2563,8 @@ function posicaoDoAchado(achado: AchadoDaRegra): [number, number] {
  *   elas vao ao modelo, nao ao paciente); o resto vale, porque o modelo pode
  *   repetir qualquer trecho;
  * - nome: alem do filtro, nada de titulo de profissional de saude;
- * - fraseDoAssistente: alem do filtro, diz que e virtual (dizQueEVirtual);
+ * - fraseDoAssistente: so o filtro (desde 10/11/2026 nao precisa dizer que
+ *   e virtual, decisao do dono);
  * - campo opcional vazio nao tem problema (vazio = sem texto; na frase de
  *   assistente virtual, vale a padrao).
  */
@@ -2617,13 +2611,6 @@ export function problemasNoTextoDoAgente(
       categoria: "titulo",
       regra: "titulo_de_profissional",
       mensagem: MENSAGEM_DO_TITULO,
-    });
-  }
-  if (campo === "fraseDoAssistente" && !dizQueEVirtual(texto)) {
-    anotar({
-      categoria: "assistente_virtual",
-      regra: "sem_dizer_que_e_virtual",
-      mensagem: MENSAGEM_DA_FRASE_SEM_VIRTUAL,
     });
   }
   for (const { achado } of ordenados) {
@@ -2950,6 +2937,18 @@ export function fraseDoAssistenteVirtual(
   config: Pick<ConfigDoAgente, "fraseDoAssistente">,
 ): string {
   return config.fraseDoAssistente?.trim() || FRASE_DO_ASSISTENTE_VIRTUAL;
+}
+
+/**
+ * A resposta ao "você é um robô?": a frase da clinica quando ela diz que e
+ * virtual; senao, a padrao. Desde 10/11/2026 a frase nao precisa dizer
+ * (decisao do dono), mas quem pergunta se e robo sempre ouve que e.
+ */
+export function respostaAoRobo(
+  config: Pick<ConfigDoAgente, "fraseDoAssistente">,
+): string {
+  const frase = fraseDoAssistenteVirtual(config);
+  return dizQueEVirtual(frase) ? frase : FRASE_DO_ASSISTENTE_VIRTUAL;
 }
 
 function textoOuNulo(valor: string | null | undefined): string | null {

@@ -11,6 +11,9 @@ type Linha = Record<string, unknown>;
 const inseridos: { tabela: string; linha: Linha }[] = [];
 let erroDoVinculo: { code: string; message: string } | null = null;
 let ehDaEquipeConduzza = false;
+// A conta normal marcada em equipe_conduzza (lida pelo service role).
+let marcadaNaEquipeConduzza = false;
+const lidasDaEquipe: string[] = [];
 
 function construtor(tabela: string) {
   return {
@@ -34,6 +37,22 @@ vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => ({
     rpc,
     auth: { admin: { inviteUserByEmail } },
+    from: (tabela: string) => ({
+      select: () => ({
+        eq: (_coluna: string, userId: string) => ({
+          maybeSingle: async () => {
+            lidasDaEquipe.push(`${tabela}:${userId}`);
+            return {
+              data:
+                tabela === "equipe_conduzza" && marcadaNaEquipeConduzza
+                  ? { user_id: userId }
+                  : null,
+              error: null,
+            };
+          },
+        }),
+      }),
+    }),
   }),
 }));
 vi.mock("@/lib/auth/active-clinic", () => ({
@@ -102,6 +121,8 @@ beforeEach(() => {
   inseridos.length = 0;
   erroDoVinculo = null;
   ehDaEquipeConduzza = false;
+  marcadaNaEquipeConduzza = false;
+  lidasDaEquipe.length = 0;
   rpc.mockReset();
   inviteUserByEmail.mockReset();
 });
@@ -209,6 +230,32 @@ describe("inviteMemberAction: a conta de super admin não entra em clínica (06/
       },
     );
     expect(trilha()).toEqual([]);
+  });
+
+  it("a conta normal marcada como equipe Conduzza também lê o motivo (10/11/2026)", async () => {
+    marcadaNaEquipeConduzza = true;
+    erroDoVinculo = RECUSA_DO_SUPER_ADMIN;
+    contaJaExiste("super-admin");
+    expect(await inviteMemberAction({}, convite("time@conduzza.test"))).toEqual(
+      {
+        error:
+          "Esta conta é de super admin da equipe Conduzza e não entra em clínica. Para trabalhar na clínica, convide a conta normal da pessoa.",
+      },
+    );
+    expect(lidasDaEquipe).toEqual(["equipe_conduzza:quem-convida"]);
+  });
+
+  it("a marca da equipe só é lida quando o banco recusa com CZSA1", async () => {
+    marcadaNaEquipeConduzza = true;
+    contaJaExiste("pessoa");
+    expect(
+      (await inviteMemberAction({}, convite("ana@outra.test"))).error,
+    ).toBe(undefined);
+    erroDoVinculo = { code: "XX000", message: "falha qualquer" };
+    expect(await inviteMemberAction({}, convite("ana@outra.test"))).toEqual({
+      error: "Não foi possível concluir o convite. Tente de novo.",
+    });
+    expect(lidasDaEquipe).toEqual([]);
   });
 
   it("o administrador da clínica lê a recusa de sempre (nada revela que o e-mail é da equipe Conduzza)", async () => {

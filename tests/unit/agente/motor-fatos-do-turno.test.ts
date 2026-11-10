@@ -593,4 +593,18 @@ describe("os fatos que o turno monta", () => {
     expect(fatos.textosColados).toContain(frase);
     expect(fatos.textosColados).not.toContain(FRASE_DO_ASSISTENTE_VIRTUAL);
   });
+
+  it("a frase da clínica sem dizer que é virtual entra com a padrão, a resposta ao 'robô?' (10/11/2026)", () => {
+    const frase = "Oi! Aqui é a Ana, da Clínica Sol.";
+    const fatos = montarFatosDoTurno({
+      config: { ...configComAgenda(), fraseDoAssistente: frase },
+      catalogo: CATALOGO,
+      agoraTexto: "x",
+      agoraMs: AGORA,
+      fuso: FUSO,
+      ferramentas: [],
+    });
+    expect(fatos.textosColados).toContain(frase);
+    expect(fatos.textosColados).toContain(FRASE_DO_ASSISTENTE_VIRTUAL);
+  });
 });

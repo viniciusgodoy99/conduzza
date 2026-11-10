@@ -1890,6 +1890,14 @@ Arquitetura no `docs/03`, seção 28; banco no `docs/04`, seção 44; LGPD no `d
 
 **Estado (06/11/2026):** publicado. Conferência da junção com os remédios e o portão: 20.285 testes, typecheck, lint e build verdes; ensaio e provas na produção no `docs/04`, seção 44. **Não rodou:** a OpenAI de verdade com o esquema novo do leitor (se recusar, toda foto e PDF vão para a equipe: falha fechada). **Limites conhecidos:** a nota interna só aparece quando a equipe abre a conversa; o agente não pede RG, CNH ou CPF (não construído); a carteirinha de dependente grava no contato da conversa, só quando o campo está vazio.
 
+### [x] A frase da clínica sem exigir o "virtual" `P` (decisão do dono de 10/11/2026: "nao precisa disso"; migration `20261110120000`, aplicada e publicada em 10/11/2026)
+
+A frase de assistente virtual da aba Persona deixa de precisar dizer "assistente virtual" ou "inteligência artificial": só o tamanho (até 300), sem link e as regras do filtro, na tela, no servidor, no publicar, em cada resposta e no banco. Quem pergunta "você é um robô?" continua ouvindo que é a assistente virtual: a frase da clínica quando ela diz, senão a padrão. Detalhe no `docs/03`, seção 35, e no `docs/04`, seção 49.
+
+### [x] Convite: a conta normal da equipe Conduzza também lê por que a conta de super admin não entra `P` (10/11/2026; publicado, sem migration)
+
+Quem convida e é da equipe Conduzza (o super admin, ou a conta normal marcada em `equipe_conduzza`) lê "Esta conta é de super admin da equipe Conduzza e não entra em clínica. Para trabalhar na clínica, convide a conta normal da pessoa." ao convidar um e-mail de super admin; o administrador de clínica continua com "Não foi possível concluir o convite. Tente de novo.", para o formulário não revelar quais e-mails são da equipe Conduzza. Detalhe no `docs/03`, 15.6.
+
 ### [x] Áudio, foto e documento para todo telefone liberado, sem o aviso novo `P` (decisão do dono de 09/11/2026; migration `20261110100000`, aplicada e publicada em 10/11/2026)
 
 A mídia pela IA deixa de exigir que o telefone tenha confirmado o aviso novo da OpenAI: todo telefone ativo da lista tem áudio (Whisper), foto e documento. Saem da aba WhatsApp o chip "Sem áudio, foto e documento" e o "adicione este telefone de novo". Detalhe no `docs/03`, seção 34.
