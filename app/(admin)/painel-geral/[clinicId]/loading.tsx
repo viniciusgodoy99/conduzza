@@ -54,14 +54,16 @@ export default function CarregandoClinicaNoPainel() {
           ))}
         </div>
         <div className="grid items-start gap-4 lg:grid-cols-2">
-          <CartaoEsqueleto linhas={3} />
-          <CartaoEsqueleto linhas={6} />
+          <div className="grid content-start gap-4">
+            <CartaoEsqueleto linhas={3} />
+            <CartaoEsqueleto linhas={4} />
+          </div>
+          <div className="grid content-start gap-4">
+            <CartaoEsqueleto linhas={6} />
+            <CartaoEsqueleto linhas={4} />
+          </div>
         </div>
         <CartaoEsqueleto linhas={2} />
-        <div className="grid items-start gap-4 lg:grid-cols-2">
-          <CartaoEsqueleto linhas={4} />
-          <CartaoEsqueleto linhas={4} />
-        </div>
         <div className="overflow-hidden rounded-card border border-border bg-card shadow-sm">
           <div className="flex min-h-[64px] items-center gap-3 border-b border-border px-4">
             <Skeleton className="size-10 rounded-md" />

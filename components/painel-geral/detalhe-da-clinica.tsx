@@ -330,18 +330,21 @@ export function DetalheDaClinica({
         )}
       </section>
 
+      {/* Duas colunas que empilham sozinhas: em linhas, a Implantacao (alta)
+          deixava um vazio embaixo da Saude ate as Notas. */}
       <div className="grid items-start gap-4 lg:grid-cols-2">
-        <SaudeDaClinicaCartao clinica={clinica} />
-        <ImplantacaoDaClinicaCartao clinica={clinica} />
-      </div>
-
-      <div className="grid items-start gap-4 lg:grid-cols-2">
-        <NotasDaClinica
-          clinicId={clinica.id}
-          leitura={notas}
-          fuso={clinica.fuso}
-        />
-        <HistoricoDaConta historico={historico} fuso={clinica.fuso} />
+        <div className="grid min-w-0 content-start gap-4">
+          <SaudeDaClinicaCartao clinica={clinica} />
+          <NotasDaClinica
+            clinicId={clinica.id}
+            leitura={notas}
+            fuso={clinica.fuso}
+          />
+        </div>
+        <div className="grid min-w-0 content-start gap-4">
+          <ImplantacaoDaClinicaCartao clinica={clinica} />
+          <HistoricoDaConta historico={historico} fuso={clinica.fuso} />
+        </div>
       </div>
 
       {equipe === "erro" ? (
