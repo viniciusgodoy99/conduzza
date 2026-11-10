@@ -10,6 +10,7 @@ import {
   avaliarRegras,
   type AchadoDaRegra,
 } from "@/lib/domain/conformidade/filtro-deterministico";
+import { FRASE_DO_ASSISTENTE_VIRTUAL } from "@/lib/domain/conformidade/frase-fixa";
 import { minimizarParaLlm } from "@/lib/domain/conformidade/minimizar";
 import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
 import {
@@ -55,6 +56,8 @@ export const LIMITES_DO_AGENTE = {
   nome: 40,
   saudacao: 300,
   encerramento: 300,
+  /** A frase de assistente virtual da clinica (migration 20261109120000). */
+  fraseDoAssistente: 300,
   instrucoes: 2000,
   pergunta: 200,
   resposta: 600,
@@ -2224,6 +2227,15 @@ export const personaSchema = z.object({
     LIMITES_DO_AGENTE.encerramento,
     `O encerramento vai até ${LIMITES_DO_AGENTE.encerramento} caracteres.`,
   ),
+  /**
+   * A frase de assistente virtual da clinica (decisao do dono de 09/11/2026).
+   * Vazio vira nulo: vale a frase padrao (fraseDoAssistenteVirtual). Dizer que
+   * e virtual e as regras do filtro ficam em problemaNoTextoDoAgente.
+   */
+  fraseDoAssistente: textoOpcional(
+    LIMITES_DO_AGENTE.fraseDoAssistente,
+    `A frase de assistente virtual vai até ${LIMITES_DO_AGENTE.fraseDoAssistente} caracteres.`,
+  ),
 });
 
 export type PersonaDoAgente = z.output<typeof personaSchema>;
@@ -2268,6 +2280,7 @@ export type InstrucoesEntrada = z.output<typeof instrucoesSchema>;
 export const CAMPOS_DE_TEXTO_DO_AGENTE = [
   "nome",
   "saudacao",
+  "fraseDoAssistente",
   "encerramento",
   "pergunta",
   "resposta",
@@ -2280,6 +2293,7 @@ export const ROTULO_DO_CAMPO_DE_TEXTO: Readonly<
 > = {
   nome: "Nome do assistente",
   saudacao: "Saudação",
+  fraseDoAssistente: "Frase de assistente virtual",
   encerramento: "Encerramento",
   pergunta: "Pergunta",
   resposta: "Resposta",
@@ -2289,6 +2303,7 @@ export const ROTULO_DO_CAMPO_DE_TEXTO: Readonly<
 /** Campos que podem ficar vazios (vazio = sem texto, nada a conferir). */
 const CAMPOS_OPCIONAIS: ReadonlySet<CampoDeTextoDoAgente> = new Set([
   "saudacao",
+  "fraseDoAssistente",
   "encerramento",
   "instrucoes",
 ]);
@@ -2476,9 +2491,40 @@ function temTituloDeProfissional(nome: string): boolean {
     .some((palavra) => TITULOS_DE_PROFISSIONAL.has(palavra));
 }
 
+// A frase de assistente virtual diz que e virtual (decisao do dono de
+// 09/11/2026: o assistente nunca passa por uma pessoa). Espelho do CHECK
+// ai_agent_config_frase_do_assistente_valida (migration 20261109120000):
+// minusculas, os mesmos acentos tirados e a mesma fronteira de palavra (\m e
+// \M do Postgres), para o banco nunca recusar o que a tela aceitou.
+const ACENTOS_COMO_NO_BANCO: readonly (readonly [RegExp, string])[] = [
+  [/[áàâãä]/g, "a"],
+  [/[éèêë]/g, "e"],
+  [/[íìîï]/g, "i"],
+  [/[óòôõö]/g, "o"],
+  [/[úùûü]/g, "u"],
+  [/ç/g, "c"],
+];
+const DIZ_QUE_E_VIRTUAL =
+  /(?<![\p{L}\p{N}_])(?:virtual|inteligencia[^\p{L}\p{N}]+artificial)(?![\p{L}\p{N}_])/u;
+
+/** O texto diz "virtual" ou "inteligência artificial" (palavras inteiras). */
+export function dizQueEVirtual(texto: string): boolean {
+  const semAcento = ACENTOS_COMO_NO_BANCO.reduce(
+    (atual, [acento, letra]) => atual.replace(acento, letra),
+    texto.toLowerCase(),
+  );
+  return DIZ_QUE_E_VIRTUAL.test(semAcento);
+}
+
+const MENSAGEM_DA_FRASE_SEM_VIRTUAL =
+  "Diga na frase que é a assistente virtual ou uma inteligência artificial: o paciente precisa saber que não está falando com uma pessoa.";
+
 export type ProblemaNoTexto = {
-  /** Categoria do filtro; "titulo" e a regra do nome, fora do filtro. */
-  categoria: CategoriaDeConformidade | "titulo";
+  /**
+   * Categoria do filtro; "titulo" e "assistente_virtual" sao as regras do
+   * nome e da frase de assistente virtual, fora do filtro.
+   */
+  categoria: CategoriaDeConformidade | "titulo" | "assistente_virtual";
   /** Nome da regra (nunca o trecho do texto): pode ir para log e auditoria. */
   regra: string;
   /** O que a pessoa precisa mudar, em texto de recepcionista. */
@@ -2524,7 +2570,9 @@ function posicaoDoAchado(achado: AchadoDaRegra): [number, number] {
  *   elas vao ao modelo, nao ao paciente); o resto vale, porque o modelo pode
  *   repetir qualquer trecho;
  * - nome: alem do filtro, nada de titulo de profissional de saude;
- * - campo opcional vazio nao tem problema (vazio = sem texto).
+ * - fraseDoAssistente: alem do filtro, diz que e virtual (dizQueEVirtual);
+ * - campo opcional vazio nao tem problema (vazio = sem texto; na frase de
+ *   assistente virtual, vale a padrao).
  */
 export function problemasNoTextoDoAgente(
   texto: string,
@@ -2571,6 +2619,13 @@ export function problemasNoTextoDoAgente(
       mensagem: MENSAGEM_DO_TITULO,
     });
   }
+  if (campo === "fraseDoAssistente" && !dizQueEVirtual(texto)) {
+    anotar({
+      categoria: "assistente_virtual",
+      regra: "sem_dizer_que_e_virtual",
+      mensagem: MENSAGEM_DA_FRASE_SEM_VIRTUAL,
+    });
+  }
   for (const { achado } of ordenados) {
     anotar({
       categoria: achado.categoria,
@@ -2587,8 +2642,8 @@ export function problemasNoTextoDoAgente(
  * acham nada. Nulo NAO e aprovacao: em producao a resposta ainda passa pelo
  * filtro de saida inteiro, com o verificador por modelo.
  *
- * Usado ao salvar saudacao, encerramento, nome, item da base e instrucoes, e
- * ao publicar (problemasDaPublicacao).
+ * Usado ao salvar saudacao, frase de assistente virtual, encerramento, nome,
+ * item da base e instrucoes, e ao publicar (problemasDaPublicacao).
  */
 export function problemaNoTextoDoAgente(
   texto: string,
@@ -2618,6 +2673,14 @@ export type ConfigDoAgente = {
   usarEmoji: boolean;
   saudacao: string | null;
   encerramento: string | null;
+  /**
+   * A frase de assistente virtual da clinica (decisao do dono de 09/11/2026;
+   * coluna frase_do_assistente, migration 20261109120000): o aviso antes da
+   * primeira resposta da IA em cada janela e a resposta ao "você é um robô?".
+   * Nulo = a frase padrao (fraseDoAssistenteVirtual). Coluna fora do select
+   * le nulo.
+   */
+  fraseDoAssistente: string | null;
   /**
    * Ja efetivas (habilidadesComAgenda): travadas ligadas, chaves conhecidas,
    * "agendar" desligada enquanto a agenda nao estiver completa e (AG4)
@@ -2680,6 +2743,7 @@ export function configPadraoDoAgente(): ConfigDoAgente {
     usarEmoji: false,
     saudacao: null,
     encerramento: null,
+    fraseDoAssistente: null,
     habilidades: habilidadesComAgenda({}, agendaPadrao(), prazosPadrao()),
     horario: horarioPadrao(),
     agenda: agendaPadrao(),
@@ -2759,6 +2823,12 @@ export type LinhaDaConfigDoAgente = {
    */
   escalation_rules?: unknown;
   // [AG6 passagem] fim
+  /**
+   * A frase de assistente virtual (migration 20261109120000). Opcional pelo
+   * mesmo motivo de publico_atendido: fora do select le nulo (a padrao), e so
+   * entra nos selects DEPOIS da migration aplicada (antes, 42703).
+   */
+  frase_do_assistente?: string | null;
 };
 
 function ehTom(valor: unknown): valor is TomDoAgente {
@@ -2859,6 +2929,7 @@ export function personaParaOBanco(persona: PersonaDoAgente): {
   use_emoji: boolean;
   greeting: string | null;
   closing: string | null;
+  frase_do_assistente: string | null;
 } {
   return {
     agent_name: persona.nome,
@@ -2866,7 +2937,19 @@ export function personaParaOBanco(persona: PersonaDoAgente): {
     use_emoji: persona.usarEmoji,
     greeting: persona.saudacao,
     closing: persona.encerramento,
+    frase_do_assistente: persona.fraseDoAssistente,
   };
+}
+
+/**
+ * A frase de assistente virtual que vale: a da clinica, ou a padrao
+ * (FRASE_DO_ASSISTENTE_VIRTUAL) quando ela nao tem (nula, vazia ou ausente
+ * numa configuracao montada a mao). O aviso nunca fica vazio (P11a).
+ */
+export function fraseDoAssistenteVirtual(
+  config: Pick<ConfigDoAgente, "fraseDoAssistente">,
+): string {
+  return config.fraseDoAssistente?.trim() || FRASE_DO_ASSISTENTE_VIRTUAL;
 }
 
 function textoOuNulo(valor: string | null | undefined): string | null {
@@ -2925,6 +3008,7 @@ export function configDaLinha(
     usarEmoji: linha.use_emoji === true,
     saudacao: textoOuNulo(linha.greeting),
     encerramento: textoOuNulo(linha.closing),
+    fraseDoAssistente: textoOuNulo(linha.frase_do_assistente),
     habilidades: habilidadesComAgenda(linha.skills, agenda, prazos),
     horario: horarioDoBanco(linha),
     agenda,
@@ -2967,14 +3051,19 @@ function trecho(texto: string): string {
 
 /**
  * Roda problemaNoTextoDoAgente em tudo que a versao vai levar: nome,
- * saudacao, encerramento, instrucoes e cada pergunta e resposta ATIVA da
- * base. Lista vazia = pode publicar (pelas regras; o filtro de saida
- * continua valendo em cada resposta).
+ * saudacao, frase de assistente virtual, encerramento, instrucoes e cada
+ * pergunta e resposta ATIVA da base. Lista vazia = pode publicar (pelas
+ * regras; o filtro de saida continua valendo em cada resposta).
  */
 export function problemasDaPublicacao(
   config: Pick<
     ConfigDoAgente,
-    "nome" | "saudacao" | "encerramento" | "instrucoes" | "base"
+    | "nome"
+    | "saudacao"
+    | "fraseDoAssistente"
+    | "encerramento"
+    | "instrucoes"
+    | "base"
   >,
 ): ProblemaDaPublicacao[] {
   const problemas: ProblemaDaPublicacao[] = [];
@@ -2997,6 +3086,12 @@ export function problemasDaPublicacao(
     config.saudacao,
     "saudacao",
     ROTULO_DO_CAMPO_DE_TEXTO.saudacao,
+    null,
+  );
+  conferir(
+    config.fraseDoAssistente,
+    "fraseDoAssistente",
+    ROTULO_DO_CAMPO_DE_TEXTO.fraseDoAssistente,
     null,
   );
   conferir(
@@ -3087,6 +3182,7 @@ export type CampoDaMudanca =
   | "tom"
   | "usarEmoji"
   | "saudacao"
+  | "fraseDoAssistente"
   | "encerramento"
   | "habilidades"
   | "horario"
@@ -3375,6 +3471,13 @@ export function diferencasDoRascunho(
   }
   if (!mesmoTexto(rascunho.saudacao, referencia.saudacao)) {
     mudancas.push({ campo: "saudacao", rotulo: "Saudação" });
+  }
+  // Ausente num lado (uma configuracao montada a mao) vale nulo, a padrao.
+  if (!mesmoTexto(rascunho.fraseDoAssistente, referencia.fraseDoAssistente)) {
+    mudancas.push({
+      campo: "fraseDoAssistente",
+      rotulo: ROTULO_DO_CAMPO_DE_TEXTO.fraseDoAssistente,
+    });
   }
   if (!mesmoTexto(rascunho.encerramento, referencia.encerramento)) {
     mudancas.push({ campo: "encerramento", rotulo: "Encerramento" });

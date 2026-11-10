@@ -36,6 +36,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   EXEMPLO_DO_TOM,
+  fraseDoAssistenteVirtual,
   LIMITES_DO_AGENTE,
   personaSchema,
   problemaNoTextoDoAgente,
@@ -44,22 +45,29 @@ import {
   type ConfigDoAgente,
   type PersonaDoAgente,
 } from "@/lib/domain/agente/config";
+import { FRASE_DO_ASSISTENTE_VIRTUAL } from "@/lib/domain/conformidade/frase-fixa";
 
 // Aba Persona da Tela 6: nome, tom de voz em 3 cartoes com a frase de
 // exemplo, usar emoji (Checkbox: so vale depois de salvar e publicar, C31),
-// saudacao e encerramento com contador e a previa no balao do WhatsApp
-// (ponto de vista do paciente, C30). Salvar grava no RASCUNHO; o paciente so
-// ve depois de publicar.
+// saudacao, frase de assistente virtual e encerramento com contador e a
+// previa no balao do WhatsApp (ponto de vista do paciente, C30). Salvar grava
+// no RASCUNHO; o paciente so ve depois de publicar.
+//
+// A frase de assistente virtual (decisao do dono de 09/11/2026) e o aviso
+// antes da primeira resposta de cada conversa e a resposta ao "você é um
+// robô?". Em branco, vale a padrao (o placeholder do campo e a previa).
 //
 // O formulario confere o mesmo schema da acao e, por cima, as regras do
-// filtro do CFM em nome, saudacao e encerramento (problemaNoTextoDoAgente):
-// o erro aparece no campo, antes de ir ao servidor, que confere de novo.
+// filtro do CFM em nome, saudacao, frase e encerramento
+// (problemaNoTextoDoAgente; a frase tambem precisa dizer que e virtual): o
+// erro aparece no campo, antes de ir ao servidor, que confere de novo.
 
 /** O schema da acao com as regras do filtro, campo a campo. */
 export const personaDaTelaSchema = personaSchema.superRefine((persona, ctx) => {
   const campos = [
     ["nome", persona.nome],
     ["saudacao", persona.saudacao],
+    ["fraseDoAssistente", persona.fraseDoAssistente],
     ["encerramento", persona.encerramento],
   ] as const;
   for (const [campo, texto] of campos) {
@@ -81,14 +89,21 @@ export function valoresDaPersona(config: ConfigDoAgente): ValoresDaPersona {
     tom: config.tom,
     usarEmoji: config.usarEmoji,
     saudacao: config.saudacao ?? "",
+    fraseDoAssistente: config.fraseDoAssistente ?? "",
     encerramento: config.encerramento ?? "",
   };
 }
 
-/** O texto da previa: saudacao, a frase de exemplo do tom e o encerramento. */
+/**
+ * O texto da previa: saudacao, a frase de assistente virtual (a digitada ou a
+ * padrao), a frase de exemplo do tom e o encerramento.
+ */
 export function textoDaPrevia(valores: ValoresDaPersona): string {
   return [
     (valores.saudacao ?? "").trim(),
+    fraseDoAssistenteVirtual({
+      fraseDoAssistente: valores.fraseDoAssistente ?? null,
+    }),
     EXEMPLO_DO_TOM[valores.tom],
     (valores.encerramento ?? "").trim(),
   ]
@@ -278,6 +293,35 @@ export function AbaPersona({
                           />
                         </FormControl>
                         <FormDescription>{T.saudacaoDica}</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="fraseDoAssistente"
+                    render={({ field }) => (
+                      <FormItem>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <FormLabel>{T.fraseDoAssistente}</FormLabel>
+                          <Contador
+                            valor={field.value ?? ""}
+                            limite={LIMITES_DO_AGENTE.fraseDoAssistente}
+                          />
+                        </div>
+                        <FormControl>
+                          <Textarea
+                            {...field}
+                            value={field.value ?? ""}
+                            rows={3}
+                            maxLength={LIMITES_DO_AGENTE.fraseDoAssistente}
+                            placeholder={FRASE_DO_ASSISTENTE_VIRTUAL}
+                            className="text-sm"
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {T.fraseDoAssistenteDica}
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}

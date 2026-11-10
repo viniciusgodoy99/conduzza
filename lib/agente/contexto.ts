@@ -70,12 +70,18 @@ type Cliente = SupabaseClient;
  * conversa que a IA passa, D-15 e D-55). A coluna existe desde o E0
  * (20261006100000): entra sem o risco do 42703. Sem ela no select, a regra
  * le a fila.
+ *
+ * 09/11/2026: frase_do_assistente (a frase de assistente virtual da clinica,
+ * decisao do dono). Existe so DEPOIS da migration
+ * 20261109120000_frase_do_assistente.sql: este codigo vai ao ar com ela
+ * aplicada (antes, 42703 e a IA de todas as clinicas falha fechada).
  */
 const COLUNAS_DA_CONFIG =
   "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, publico_atendido, exige_nome_completo, exige_nascimento, exige_cpf, cancelar_antecedencia_horas, remarcar_antecedencia_horas, instrucoes, conhecimento, updated_at" +
   // [AG6 passagem] início
-  ", escalation_rules";
-// [AG6 passagem] fim
+  ", escalation_rules" +
+  // [AG6 passagem] fim
+  ", frase_do_assistente";
 
 type LinhaDoMotor = LinhaDaConfigDoAgente & {
   id: string;

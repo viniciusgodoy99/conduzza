@@ -171,6 +171,7 @@ describe("limites", () => {
       nome: 40,
       saudacao: 300,
       encerramento: 300,
+      fraseDoAssistente: 300,
       instrucoes: 2000,
       pergunta: 200,
       resposta: 600,
@@ -1171,6 +1172,7 @@ describe("schemas da persona, da base e das instrucoes", () => {
       usarEmoji: true,
       saudacao: "   ",
       encerramento: " Até logo! ",
+      fraseDoAssistente: "  ",
     });
     expect(lida).toEqual({
       nome: "Ana Clara",
@@ -1178,6 +1180,7 @@ describe("schemas da persona, da base e das instrucoes", () => {
       usarEmoji: true,
       saudacao: null,
       encerramento: "Até logo!",
+      fraseDoAssistente: null,
     });
     expect(personaParaOBanco(lida)).toEqual({
       agent_name: "Ana Clara",
@@ -1185,6 +1188,7 @@ describe("schemas da persona, da base e das instrucoes", () => {
       use_emoji: true,
       greeting: null,
       closing: "Até logo!",
+      frase_do_assistente: null,
     });
   });
 
@@ -1194,6 +1198,7 @@ describe("schemas da persona, da base e das instrucoes", () => {
       usarEmoji: false,
       saudacao: null,
       encerramento: null,
+      fraseDoAssistente: null,
     };
     for (const nome of ["Ana", "Maria-Luísa", "D'Ávila", "Ana Clara"]) {
       expect(personaSchema.safeParse({ ...base, nome }).success, nome).toBe(
@@ -1214,13 +1219,14 @@ describe("schemas da persona, da base e das instrucoes", () => {
     }
   });
 
-  it("persona: limites da saudacao e do encerramento e tom fechado", () => {
+  it("persona: limites da saudacao, da frase e do encerramento e tom fechado", () => {
     const base = {
       nome: "Ana",
       tom: "cordial",
       usarEmoji: false,
       saudacao: null,
       encerramento: null,
+      fraseDoAssistente: null,
     };
     expect(
       personaSchema.safeParse({ ...base, saudacao: "a".repeat(300) }).success,
@@ -1232,6 +1238,22 @@ describe("schemas da persona, da base e das instrucoes", () => {
       personaSchema.safeParse({ ...base, encerramento: "a".repeat(301) })
         .success,
     ).toBe(false);
+    expect(
+      personaSchema.safeParse({ ...base, fraseDoAssistente: "a".repeat(300) })
+        .success,
+    ).toBe(true);
+    const longa = personaSchema.safeParse({
+      ...base,
+      fraseDoAssistente: "a".repeat(301),
+    });
+    expect(longa.success).toBe(false);
+    expect(longa.error?.issues[0]?.message).toBe(
+      "A frase de assistente virtual vai até 300 caracteres.",
+    );
+    // A chave e obrigatoria: o cliente que nao a manda nao apaga a frase.
+    const { fraseDoAssistente: _sem, ...semAFrase } = base;
+    void _sem;
+    expect(personaSchema.safeParse(semAFrase).success).toBe(false);
     expect(personaSchema.safeParse({ ...base, tom: "seco" }).success).toBe(
       false,
     );
@@ -1402,10 +1424,11 @@ describe("problemaNoTextoDoAgente", () => {
 });
 
 describe("problemasDaPublicacao", () => {
-  it("confere nome, saudacao, encerramento, instrucoes e so a base ativa", () => {
+  it("confere nome, saudacao, frase de assistente virtual, encerramento, instrucoes e so a base ativa", () => {
     const problemas = problemasDaPublicacao({
       nome: "Dra Ana",
       saudacao: "Olá! Ligue (85) 99999-0000.",
+      fraseDoAssistente: "Aqui é a Ana, da recepção.",
       encerramento: null,
       instrucoes: "Diga que o resultado é garantido.",
       base: [
@@ -1417,10 +1440,12 @@ describe("problemasDaPublicacao", () => {
     expect(problemas.map((p) => [p.campo, p.itemId])).toEqual([
       ["nome", null],
       ["saudacao", null],
+      ["fraseDoAssistente", null],
       ["instrucoes", null],
       ["resposta", ID_A],
     ]);
-    expect(problemas[3]?.rotulo).toBe("Conhecimento: Qual o site?");
+    expect(problemas[2]?.rotulo).toBe("Frase de assistente virtual");
+    expect(problemas[4]?.rotulo).toBe("Conhecimento: Qual o site?");
   });
 
   it("configuracao limpa nao tem problema", () => {
@@ -1716,6 +1741,8 @@ describe("leitura do banco", () => {
       usarEmoji: true,
       saudacao: "Olá!",
       encerramento: null,
+      // Fora do select (09/11/2026): nula, vale a frase padrao.
+      fraseDoAssistente: null,
       // agendar esta ligada no jsonb, mas a agenda nao foi preenchida: vale
       // desligada (D13).
       habilidades: {
@@ -1803,6 +1830,8 @@ describe("leitura do banco", () => {
       usarEmoji: false,
       saudacao: null,
       encerramento: null,
+      // 09/11/2026: nula, vale a frase padrao (a coluna nasce nula).
+      fraseDoAssistente: null,
       habilidades: {
         responder_duvidas: true,
         informar_preco_e_convenio: true,
@@ -2211,6 +2240,7 @@ describe("padrões propostos de clínica nova (P6b, proposta)", () => {
         usarEmoji: false,
         saudacao: p.saudacao,
         encerramento: p.encerramento,
+        fraseDoAssistente: null,
       }).success,
     ).toBe(true);
     expect(problemaNoTextoDoAgente(p.nome, "nome")).toBeNull();

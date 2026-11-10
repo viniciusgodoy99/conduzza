@@ -30,9 +30,13 @@ export const FRASE_FORA_DO_ASSUNTO =
   "Desculpe, por aqui eu só consigo ajudar com assuntos da clínica. Posso ajudar com alguma coisa sobre a clínica?";
 
 /**
- * PROPOSTA, espera aprovacao do dono (P5c e P11a; nao vai ao ar antes).
- * O MESMO texto (contrato da onda 2, P5c: "é o mesmo texto do aviso de
- * assistente virtual da P11a") serve a duas coisas:
+ * A frase PADRAO de assistente virtual (P5c e P11a; no ar desde 22/10/2026).
+ * Desde a decisao do dono de 09/11/2026 ("Isso é pra ser configurado na aba
+ * de agente de IA de cada clinica") cada clinica pode escrever a sua na aba
+ * Persona da Tela 6 (ai_agent_config.frase_do_assistente, versionada); esta
+ * vale quando a clinica nao escreveu (fraseDoAssistenteVirtual,
+ * lib/domain/agente/config.ts). O MESMO texto (contrato da onda 2, P5c: "é o
+ * mesmo texto do aviso de assistente virtual da P11a") serve a duas coisas:
  *  - a resposta a "você é um robô?" (ferramenta sou_assistente_virtual): diz
  *    que e a assistente virtual da clinica e oferece uma pessoa da equipe;
  *  - o aviso que o sistema cola antes da primeira resposta da IA em cada

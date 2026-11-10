@@ -45,9 +45,12 @@ import { fetchProfileNames } from "@/lib/queries/profiles";
  * AG6a) existe desde o E0, com o grant de select e de update da sessao
  * (migration 20261006150000): entra aqui sem migration nova e sem 42703.
  * [AG6 passagem] fim
+ * A frase de assistente virtual (frase_do_assistente, decisao do dono de
+ * 09/11/2026) tem o mesmo grant desde a migration 20261109120000, com a
+ * mesma regra: a migration vai primeiro.
  */
 export const COLUNAS_DA_CONFIG_DO_AGENTE =
-  "id, version, status, agent_name, tone, use_emoji, greeting, closing, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, publico_atendido, exige_nome_completo, exige_nascimento, exige_cpf, cancelar_antecedencia_horas, remarcar_antecedencia_horas, escalation_rules, conhecimento, published_at, published_by";
+  "id, version, status, agent_name, tone, use_emoji, greeting, closing, frase_do_assistente, skills, operating_mode, fallback_minutes, operating_hours, agenda_antecedencia_horas, agenda_horizonte_dias, publico_atendido, exige_nome_completo, exige_nascimento, exige_cpf, cancelar_antecedencia_horas, remarcar_antecedencia_horas, escalation_rules, conhecimento, published_at, published_by";
 
 type LinhaDaSessao = LinhaDaConfigDoAgente & {
   id: string;

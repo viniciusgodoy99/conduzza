@@ -105,6 +105,10 @@ import { createClient } from "@/lib/supabase/server";
 //    responsavel do lead) grava no rascunho pelo mesmo caminho, sem perder
 //    as outras chaves do jsonb, com a trilha editou_passagem_do_agente sem o
 //    valor. A coluna e o grant existem desde o E0. [AG6 passagem] fim
+//  - 09/11/2026 (decisao do dono): a frase de assistente virtual
+//    (frase_do_assistente) grava com a persona, na mesma trilha
+//    editou_persona_do_agente. A coluna e o grant so existem depois da
+//    migration 20261109120000.
 // Trilha: audit_log sem texto nenhum (so a acao, a entidade e o id); as
 // RPCs gravam a propria. Log so com clinica, tipo da acao e codigo do erro.
 
@@ -451,7 +455,13 @@ async function gravarNoRascunho(
 // Persona, habilidades e horario
 // ---------------------------------------------------------------------------
 
-/** Nome, tom, emoji, saudacao e encerramento do rascunho. */
+/**
+ * Nome, tom, emoji, saudacao, frase de assistente virtual e encerramento do
+ * rascunho. A frase (decisao do dono de 09/11/2026) passa pelo filtro como os
+ * outros textos e tem de dizer que e virtual (problemaNoTextoDoAgente); vazia,
+ * grava nulo e vale a padrao. O CHECK do banco confere tamanho, link e o
+ * "virtual" de novo.
+ */
 export async function salvarPersonaAction(
   entrada: unknown,
 ): Promise<ResultadoDoAgente> {
@@ -467,6 +477,7 @@ export async function salvarPersonaAction(
   const problema = problemaNosCampos([
     [persona.nome, "nome"],
     [persona.saudacao, "saudacao"],
+    [persona.fraseDoAssistente, "fraseDoAssistente"],
     [persona.encerramento, "encerramento"],
   ]);
   if (problema !== null) {

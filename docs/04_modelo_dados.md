@@ -5187,3 +5187,28 @@ O dono: "preciso que nem tudo vá para a equipe". A decisão de cada arquivo é 
 - **`gravar_leitura_da_midia`:** igual à da `20261106140000`, mais o passo que grava o documento na primeira leitura da mensagem: o tipo `documento_de_identidade` vira `documento_com_foto` e a `carteirinha` vira `carteirinha`, só com confiança alta ou média (`on conflict (message_id) do nothing`). Nada do documento é guardado: o tipo e a mensagem. Corpo novo md5 `509a2ab193bbe13617f8551e255bfdae`; o de antes, `0ab0639ca252ebb7eeac638a07bdf79c`.
 - **Rollback:** `supabase/operacao/rollback/20261109100000-documentos.sql` (volta o corpo de antes e tira a tabela), depois de voltar o código.
 - **Tipos:** o bloco da tabela gerado pelo `supabase gen types` foi para `lib/supabase/database.types.ts`; as diferenças com o gerado continuam as 26 + 2 antigas.
+
+## 47. A frase de assistente virtual de cada clínica (decisão do dono de 09/11/2026, migration `20261109120000_frase_do_assistente.sql`; **construída na branch `frase-do-assistente`; aplicar e publicar só com o ok do dono**)
+
+O dono: "Isso é pra ser configurado na aba de agente de IA de cada clínica". Arquitetura e regras no `docs/03`, seção 31.
+
+| Objeto | O que muda |
+|---|---|
+| `ai_agent_config.frase_do_assistente` | `text`, nula, sem default. Nula = a frase padrão do código (`FRASE_DO_ASSISTENTE_VIRTUAL`). As versões que já existem leem nula: nada muda para o paciente até a clínica escrever e publicar. |
+| `ai_agent_config_frase_do_assistente_valida` | CHECK: nula, ou até 300 caracteres, sem `http`, `://` nem `www.` (sem caixa) e com "virtual" ou "inteligência artificial" como palavras inteiras, depois de `lower` e de tirar os acentos do português (`translate`). É o espelho de `dizQueEVirtual` e do zod, nunca mais estrito que eles. O filtro do CFM não cabe no banco: fica na Server Action, no publicar e em cada resposta. |
+| Grant por coluna | `select` e `update` para `authenticated`, como os `exige_*` e os prazos (sem `insert`; `anon`, nada). A policy de UPDATE continua só no rascunho, só administrador e gestor (e o super admin); a publicada não muda. |
+| `agente_garantir_rascunho` | O rascunho copia a frase da última publicada (marcador `[frase do assistente]`; o resto igual ao corpo da `20261028100000`). md5 do corpo `c6ad1170...` para `bf90bbc3...`. |
+| `restaurar_versao_do_agente` | Restaurar devolve a frase da versão. md5 `fa367843...` para `a98b7545...`. Segurança, `search_path` e grants iguais. |
+
+`publicar_agente` não muda: publicar só troca o status do rascunho, que já tem a frase.
+
+**Travas:** `ACCESS EXCLUSIVE` em `ai_agent_config` pelo `ADD COLUMN` (sem reescrever a tabela) e pelo CHECK (varre as poucas versões), até o commit: a Tela 6 e o turno da IA esperam os milissegundos. `lock_timeout` de 3 s. O resto é catálogo.
+
+**Ordem:** a migration antes do código. O código novo lê a coluna (sem ela, 42703: a Tela 6 não abre e a IA de todas as clínicas falha fechada) e a grava ao salvar a persona. Com a migration e o código de hoje, nada muda.
+
+**Rollback:** `supabase/operacao/rollback/20261109120000-corpos-anteriores.sql`, depois de voltar o código: devolve os dois corpos e os dois comentários de antes (conferidos por md5) e tira o CHECK e a coluna (o grant sai junto). Se perdem as frases escritas pelas clínicas (o assistente volta à padrão).
+
+**Tipos:** à mão em `lib/supabase/database.types.ts` (`frase_do_assistente` em `Row`, `Insert` e `Update`). Conferir com `supabase gen types` depois de aplicar.
+
+**Provas no Postgres local** (`~/.claude/plans/agente-completo/frase-do-assistente/banco`, 127.0.0.1:55642, as 134 migrations do repositório até a `20261106140000` sobre os stubs do Supabase; sem ler a produção): os md5 dos dois corpos de antes batem com os lidos da produção na AG4 (`c6ad1170...` e `fa367843...`); entre os corpos de antes e os de depois, só as linhas do marcador. O ensaio `~/.claude/plans/agente-completo/frase-do-assistente/ensaio-20261109120000.sql` (termina em ROLLBACK; só catálogo e uma cópia temporária da tabela, nenhuma linha de clínica lida nem escrita; a migration e o miolo do rollback copiados byte a byte por `banco/m/montar.sh`) confere o banco de antes, a coluna, o CHECK, o grant, os corpos e os comentários por md5, os atributos e os grants das funções, as amostras do CHECK (as mesmas de `tests/unit/agente/frase-do-assistente.test.ts`, mais o tamanho e o link) e a volta do rollback: `ENSAIO OK` em menos de 0,1 s, **9 sabotagens pegas de 9** (`banco/sabotagens.sh`). A prova de comportamento (`banco/prova-local.sql`, só no local, com clínicas sintéticas): o rascunho copia a frase da última publicada; o restaurar devolve a da versão; o administrador grava e lê a frase pela sessão; o CHECK recusa a frase sem "virtual" também pela sessão (23514); a recepção não grava; a clínica B não lê a frase da clínica A; `anon` não lê a coluna (42501); a publicada não muda; a versão sem frase dá rascunho nulo: `PROVA OK`. Aplicar, voltar e aplicar sem erro. md5: migration `d58ab6224e8f575030bf98642bf8d3e4`, rollback `748b3ce8f1e970c6ff0dc55c19599afb`, ensaio `b75c2b3be0829d599930a818e93c1f0d`. **Não rodou na produção.**
+

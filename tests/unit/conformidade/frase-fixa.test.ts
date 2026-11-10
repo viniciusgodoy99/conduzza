@@ -47,7 +47,9 @@ describe("frases fixas da resposta da IA (onda 2)", () => {
     );
   });
 
-  it("assistente virtual (PROPOSTA): diz que é a assistente virtual da clínica e oferece uma pessoa", () => {
+  // Desde 09/11/2026 e a frase PADRAO: cada clinica pode escrever a sua na
+  // aba Persona (tests/unit/agente/frase-do-assistente.test.ts).
+  it("assistente virtual (a padrão): diz que é a assistente virtual da clínica e oferece uma pessoa", () => {
     expect(FRASE_DO_ASSISTENTE_VIRTUAL).toContain(
       "assistente virtual da clínica",
     );

@@ -288,11 +288,16 @@ export const TEXTOS_DO_AGENTE = {
     "No máximo um emoji discreto por mensagem. Emoji de remédio, injeção ou bebida nunca sai.",
   saudacao: "Saudação",
   saudacaoDica: "Entra no começo da primeira resposta de cada conversa.",
+  // Decisao do dono de 09/11/2026: a frase de assistente virtual de cada
+  // clinica (em branco, vale a padrao, que aparece como exemplo no campo).
+  fraseDoAssistente: "Frase de assistente virtual",
+  fraseDoAssistenteDica:
+    "Entra antes da primeira resposta de cada conversa e responde quem pergunta se está falando com um robô. Precisa dizer que é a assistente virtual ou uma inteligência artificial. Em branco, vale a frase padrão, que aparece no campo.",
   encerramento: "Encerramento",
   encerramentoDica: "Entra no fim da resposta que fecha a conversa.",
   comoOPacienteVe: "Como o paciente vê",
   previaExplicacao:
-    "A frase do meio é o exemplo do tom: a resposta de verdade depende da pergunta do paciente.",
+    "Depois da frase de assistente virtual vem o exemplo do tom: a resposta de verdade depende da pergunta do paciente.",
   personaSalva: "Persona salva no rascunho.",
   // Habilidades
   habilidadesTitulo: "Habilidades",

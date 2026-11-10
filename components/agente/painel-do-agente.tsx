@@ -159,6 +159,7 @@ export function chavesDosFormularios(config: DadosDoPainel["config"]): {
       config.usarEmoji,
       config.saudacao,
       config.encerramento,
+      config.fraseDoAssistente,
     ]),
     publico: JSON.stringify(config.publico),
     horario: JSON.stringify(config.horario),

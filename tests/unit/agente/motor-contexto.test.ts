@@ -969,6 +969,38 @@ describe("ordem da leitura para o carimbo da publicação", () => {
 // Onda 2: o publico na configuracao (item 4) e as especialidades no catalogo
 // (item 6). As colunas novas so entram nos selects com a migration
 // 20261022110000 aplicada (contrato, secao 7).
+// Decisao do dono de 09/11/2026: a frase de assistente virtual da clinica
+// (frase_do_assistente) e lida pelo motor e pela Tela 6 (migration
+// 20261109120000 antes do codigo).
+describe("a frase de assistente virtual (09/11/2026)", () => {
+  it("o motor e a Tela 6 leem frase_do_assistente; sem a coluna na linha, nula (a padrão)", async () => {
+    const frase = "Sou a assistente virtual da Clínica Sol.";
+    const { cliente, consultas } = bancoFalso({
+      ai_agent_config: [
+        linhaDaConfig({
+          clinic_id: CLINICA,
+          version: 3,
+          frase_do_assistente: ` ${frase} `,
+        }),
+      ],
+      knowledge_item: [],
+    });
+    const publicada = await carregarConfigPublicada(cliente, CLINICA);
+    expect(publicada?.fraseDoAssistente).toBe(frase);
+    const daConfig = consultas.filter((c) => c.tabela === "ai_agent_config");
+    expect(daConfig[0]?.colunas).toContain("frase_do_assistente");
+    expect(COLUNAS_DA_CONFIG_DO_AGENTE).toContain("frase_do_assistente");
+
+    const semColuna = bancoFalso({
+      ai_agent_config: [linhaDaConfig({ clinic_id: CLINICA, version: 3 })],
+    });
+    expect(
+      (await carregarConfigPublicada(semColuna.cliente, CLINICA))
+        ?.fraseDoAssistente,
+    ).toBeNull();
+  });
+});
+
 describe("onda 2: público e especialidades", () => {
   it("a configuração publicada e o rascunho leem publico_atendido (motor e sessão)", async () => {
     const tabelas = {

@@ -49,6 +49,7 @@ export type Database = {
           exige_nascimento: boolean
           exige_nome_completo: boolean
           fallback_minutes: number | null
+          frase_do_assistente: string | null
           greeting: string | null
           id: string
           instrucoes: string | null
@@ -79,6 +80,7 @@ export type Database = {
           exige_nascimento?: boolean
           exige_nome_completo?: boolean
           fallback_minutes?: number | null
+          frase_do_assistente?: string | null
           greeting?: string | null
           id?: string
           instrucoes?: string | null
@@ -109,6 +111,7 @@ export type Database = {
           exige_nascimento?: boolean
           exige_nome_completo?: boolean
           fallback_minutes?: number | null
+          frase_do_assistente?: string | null
           greeting?: string | null
           id?: string
           instrucoes?: string | null
