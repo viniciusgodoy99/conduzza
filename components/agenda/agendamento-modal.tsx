@@ -71,7 +71,11 @@ import {
   type AgendaDia,
   type ConsultaDaAgenda,
 } from "@/lib/queries/agenda";
-import { catalogoKeys, type Vinculo } from "@/lib/queries/catalogo";
+import {
+  catalogoKeys,
+  type Profissional,
+  type Vinculo,
+} from "@/lib/queries/catalogo";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -89,6 +93,18 @@ import { cn } from "@/lib/utils";
 // chave, com ou sem o nono digito.
 
 const PARTICULAR = "particular";
+
+/**
+ * A grade do profissional (Cadastros) para o motor de horarios, como a IA
+ * oferece (buscar_horario): os inicios partem do comeco da jornada. Sem
+ * grade, a de 15 minutos de sempre.
+ */
+export function gradeDoProfissional(
+  profissional: Pick<Profissional, "grade_minutos">,
+): Pick<EntradaDisponibilidade, "gridMin" | "ancorarNaJornada"> {
+  const grade = profissional.grade_minutos ?? null;
+  return grade === null ? {} : { gridMin: grade, ancorarNaJornada: true };
+}
 
 /** Encaixe: um icone, um rotulo e uma cor, igual no bloco da grade. */
 const ENCAIXE: StatusDefinition = {
@@ -386,6 +402,7 @@ export function AgendamentoModal({
     const naoCancelada = (status: string) =>
       status !== "cancelado_paciente" && status !== "cancelado_clinica";
     return {
+      ...gradeDoProfissional(vinculo.profissional),
       timezone,
       rangeStart: instanteLocal(timezone, dataEscolhida, "00:00"),
       // Meia-noite do dia seguinte: '23:59' descartava o ultimo minuto e

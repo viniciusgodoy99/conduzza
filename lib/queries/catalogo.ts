@@ -16,6 +16,11 @@ export type Profissional = {
   specialties: string[];
   calendar_color: string | null;
   active: boolean;
+  /**
+   * A grade de horarios do profissional (Cadastros): o intervalo entre os
+   * inicios de consulta, em minutos. Nulo ou ausente: sem grade definida.
+   */
+  grade_minutos?: number | null;
 };
 
 export type Jornada = {
@@ -280,7 +285,7 @@ export async function fetchCatalogo(
     supabase
       .from("professional")
       .select(
-        "id, name, photo_url, council_type, council_number, specialties, calendar_color, active",
+        "id, name, photo_url, council_type, council_number, specialties, calendar_color, active, grade_minutos",
       )
       .eq("clinic_id", clinicId)
       .order("name"),
