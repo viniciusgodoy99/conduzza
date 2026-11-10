@@ -10,6 +10,7 @@ type Linha = Record<string, unknown>;
 
 const inseridos: { tabela: string; linha: Linha }[] = [];
 let erroDoVinculo: { code: string; message: string } | null = null;
+let ehDaEquipeConduzza = false;
 
 function construtor(tabela: string) {
   return {
@@ -48,7 +49,7 @@ vi.mock("@/lib/auth/active-clinic", () => ({
       role: "admin",
       status: "ativo",
     },
-    isProductAdmin: false,
+    isProductAdmin: ehDaEquipeConduzza,
     vinculoIndisponivel: false,
   }),
 }));
@@ -100,6 +101,7 @@ function trilha() {
 beforeEach(() => {
   inseridos.length = 0;
   erroDoVinculo = null;
+  ehDaEquipeConduzza = false;
   rpc.mockReset();
   inviteUserByEmail.mockReset();
 });
@@ -187,5 +189,40 @@ describe("inviteMemberAction: conta nova e conta existente são indistinguíveis
     expect(existente.error).toBeDefined();
     expect(existente).toEqual(nova);
     expect(trilha()).toEqual([]);
+  });
+});
+
+describe("inviteMemberAction: a conta de super admin não entra em clínica (06/11/2026)", () => {
+  const RECUSA_DO_SUPER_ADMIN = {
+    code: "CZSA1",
+    message: "Esta conta é da equipe Conduzza e não entra em clínica.",
+  };
+
+  it("a equipe Conduzza lê o motivo", async () => {
+    ehDaEquipeConduzza = true;
+    erroDoVinculo = RECUSA_DO_SUPER_ADMIN;
+    contaJaExiste("super-admin");
+    expect(await inviteMemberAction({}, convite("time@conduzza.test"))).toEqual(
+      {
+        error:
+          "Esta conta é de super admin da equipe Conduzza e não entra em clínica. Para trabalhar na clínica, convide a conta normal da pessoa.",
+      },
+    );
+    expect(trilha()).toEqual([]);
+  });
+
+  it("o administrador da clínica lê a recusa de sempre (nada revela que o e-mail é da equipe Conduzza)", async () => {
+    erroDoVinculo = RECUSA_DO_SUPER_ADMIN;
+    contaJaExiste("super-admin");
+    const doSuperAdmin = await inviteMemberAction(
+      {},
+      convite("time@conduzza.test"),
+    );
+    erroDoVinculo = { code: "XX000", message: "falha qualquer" };
+    const outraFalha = await inviteMemberAction({}, convite("ana@outra.test"));
+    expect(doSuperAdmin).toEqual(outraFalha);
+    expect(doSuperAdmin.error).toBe(
+      "Não foi possível concluir o convite. Tente de novo.",
+    );
   });
 });

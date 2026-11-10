@@ -349,6 +349,7 @@ export async function inviteMemberAction(
       existente.userId,
       parsed.data.role,
       email,
+      context.isProductAdmin,
     );
   }
 
@@ -368,6 +369,7 @@ export async function inviteMemberAction(
           deNovo.userId,
           parsed.data.role,
           email,
+          context.isProductAdmin,
         );
       }
     }
@@ -449,6 +451,9 @@ async function criarVinculo(
 
 const CONVITE_NAO_CONCLUIDO =
   "Não foi possível concluir o convite. Tente de novo.";
+
+const CONTA_DA_EQUIPE_CONDUZZA =
+  "Esta conta é de super admin da equipe Conduzza e não entra em clínica. Para trabalhar na clínica, convide a conta normal da pessoa.";
 
 // Trilha do convite (regra 3.1; achados L17/L20): a MESMA linha para conta
 // nova e para conta que ja existia, porque administrador e gestor leem a
@@ -565,6 +570,7 @@ async function vincularContaExistente(
   userId: string,
   role: PapelNaTela,
   email: string,
+  quemConvidaEDaEquipeConduzza: boolean,
 ): Promise<ActionState> {
   const { error } = await criarVinculo(supabase, clinicId, userId, role);
   if (!error) {
@@ -591,6 +597,13 @@ async function vincularContaExistente(
       };
     }
     return { error: `${email} já faz parte da equipe.` };
+  }
+  // CZSA1 (impedir_vinculo_de_super_admin, 06/11/2026): a conta e de super
+  // admin, que nao entra em clinica. So a equipe Conduzza le o motivo: para o
+  // administrador da clinica, seria o oraculo de "este e-mail e da equipe
+  // Conduzza" (achados L17/L20).
+  if (error.code === "CZSA1" && quemConvidaEDaEquipeConduzza) {
+    return { error: CONTA_DA_EQUIPE_CONDUZZA };
   }
   return { error: recusaDoVinculo(error, CONVITE_NAO_CONCLUIDO) };
 }
