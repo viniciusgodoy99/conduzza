@@ -464,6 +464,24 @@ describe("no painel", () => {
     expect(depois.horario).toBe(antes.horario);
   });
 
+  it("os cartões irmãos nunca têm a mesma chave, nem com limites e prazos iguais (10/11/2026)", () => {
+    // Limites e prazos vazios davam "[null,null]" nos dois: o React perdia
+    // um cartão ao remontar e o antigo ficava na tela, duplicado.
+    for (const config of [
+      configDeTeste({ agenda: SEM_AGENDA }),
+      configDeTeste({
+        agenda: { antecedenciaHoras: 24, horizonteDias: 48 },
+        prazos: { cancelarHoras: 24, remarcarHoras: 48 },
+      }),
+    ]) {
+      expect(config.prazos.cancelarHoras ?? null).toBe(
+        config.agenda.antecedenciaHoras,
+      );
+      const chaves = Object.values(chavesDosFormularios(config));
+      expect(new Set(chaves).size).toBe(chaves.length);
+    }
+  });
+
   it("o que mudou: cada prazo conta uma vez, com o número ou não preenchido", () => {
     // A mesma base nos dois lados: so os prazos mudam.
     const publicada = {

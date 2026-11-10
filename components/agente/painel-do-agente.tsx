@@ -139,6 +139,11 @@ import {
  * novos (o useForm so le os valores iniciais na montagem). Mudanca em outra
  * parte nao mexe no formulario aberto: o horario e os limites para marcar
  * consulta (E4) moram na mesma aba, cada um com a sua chave.
+ *
+ * Cada chave leva o nome da parte na frente (10/11/2026): os cartoes da aba
+ * Regras sao irmaos, e os limites e os prazos vazios davam a mesma chave
+ * ("[null,null]"). Com duas chaves iguais o React perde um dos cartoes ao
+ * remontar: o antigo ficava na tela, duplicado e sem aceitar digitacao.
  */
 export function chavesDosFormularios(config: DadosDoPainel["config"]): {
   persona: string;
@@ -152,7 +157,7 @@ export function chavesDosFormularios(config: DadosDoPainel["config"]): {
   // [AG6 passagem] fim
   instrucoes: string;
 } {
-  return {
+  const valores = {
     persona: JSON.stringify([
       config.nome,
       config.tom,
@@ -181,6 +186,12 @@ export function chavesDosFormularios(config: DadosDoPainel["config"]): {
     // [AG6 passagem] fim
     instrucoes: JSON.stringify(config.instrucoes),
   };
+  return Object.fromEntries(
+    Object.entries(valores).map(([parte, valor]) => [
+      parte,
+      `${parte}:${valor}`,
+    ]),
+  ) as typeof valores;
 }
 
 export function PainelDoAgente({

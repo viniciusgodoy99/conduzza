@@ -18,6 +18,7 @@ import {
   ACTIVE_CLINIC_COOKIE,
   getSessionContext,
 } from "@/lib/auth/active-clinic";
+import { ehDaEquipeConduzza } from "@/lib/auth/equipe-conduzza";
 import {
   CONFERENCIA_DAS_SENHAS,
   confirmacaoSchema,
@@ -349,8 +350,7 @@ export async function inviteMemberAction(
       existente.userId,
       parsed.data.role,
       email,
-      () =>
-        conviteDaEquipeConduzza(admin, context.userId, context.isProductAdmin),
+      () => ehDaEquipeConduzza(admin, context.userId, context.isProductAdmin),
     );
   }
 
@@ -371,11 +371,7 @@ export async function inviteMemberAction(
           parsed.data.role,
           email,
           () =>
-            conviteDaEquipeConduzza(
-              admin,
-              context.userId,
-              context.isProductAdmin,
-            ),
+            ehDaEquipeConduzza(admin, context.userId, context.isProductAdmin),
         );
       }
     }
@@ -612,23 +608,4 @@ async function vincularContaExistente(
     return { error: CONTA_DA_EQUIPE_CONDUZZA };
   }
   return { error: recusaDoVinculo(error, CONVITE_NAO_CONCLUIDO) };
-}
-
-// A equipe Conduzza: o super admin ou a conta normal marcada em
-// equipe_conduzza (10/11/2026: o dono convida pela conta normal). A sessao
-// nao le essa tabela; o service role ja esta no convite. Na duvida, nao e.
-async function conviteDaEquipeConduzza(
-  admin: ReturnType<typeof createAdminClient>,
-  userId: string,
-  superAdmin: boolean,
-): Promise<boolean> {
-  if (superAdmin) {
-    return true;
-  }
-  const { data } = await admin
-    .from("equipe_conduzza")
-    .select("user_id")
-    .eq("user_id", userId)
-    .maybeSingle();
-  return data !== null;
 }

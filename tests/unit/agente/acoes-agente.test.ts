@@ -63,10 +63,18 @@ class Banco {
     answer: "Sim, ao lado.",
   };
   rascunhoAtualizado = true;
+  /** A conta normal marcada em equipe_conduzza (lida pelo service role). */
+  equipeConduzza = false;
 
   responder(op: Operacao): Resposta {
     if (op.tabela === "audit_log") {
       return { error: null };
+    }
+    if (op.tabela === "equipe_conduzza") {
+      return {
+        data: this.equipeConduzza ? { user_id: "marcada" } : null,
+        error: null,
+      };
     }
     if (op.tabela === "ai_agent_config") {
       if (op.tipo === "select" && op.colunas === "id") {
@@ -1177,6 +1185,38 @@ describe("simulador", () => {
     });
     expect(simularTurno.mock.calls.at(-1)?.[0]).toMatchObject({
       superAdmin: true,
+    });
+  });
+
+  it("a conta normal marcada como equipe Conduzza também vê o texto barrado (10/11/2026)", async () => {
+    simularTurno.mockResolvedValue({
+      ...OK,
+      tipo: "frase_fixa",
+      rascunhoBloqueado: "texto barrado",
+    });
+    const entrada = {
+      mensagens: [{ autor: "paciente", texto: "Oi" }],
+      cenario: null,
+    };
+    admin.equipeConduzza = true;
+    expect(await acoes.simularAction(entrada)).toMatchObject({
+      ok: true,
+      rascunhoBloqueado: "texto barrado",
+    });
+    expect(simularTurno.mock.calls.at(-1)?.[0]).toMatchObject({
+      superAdmin: true,
+    });
+    expect(
+      admin.operacoes.find((op) => op.tabela === "equipe_conduzza")?.filtros,
+    ).toEqual([["eq", "user_id", USUARIO]]);
+    // O administrador comum (sem a marca) continua sem ver.
+    admin.equipeConduzza = false;
+    expect(await acoes.simularAction(entrada)).toMatchObject({
+      ok: true,
+      rascunhoBloqueado: null,
+    });
+    expect(simularTurno.mock.calls.at(-1)?.[0]).toMatchObject({
+      superAdmin: false,
     });
   });
 

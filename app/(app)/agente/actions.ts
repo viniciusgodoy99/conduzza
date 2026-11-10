@@ -12,6 +12,7 @@ import { agoraNaClinica, previaDoPrompt } from "@/lib/agente/prompt";
 import { TAMANHO_MAXIMO_DO_ESTADO } from "@/lib/agente/assinatura";
 import { simularTurno } from "@/lib/agente/simulador";
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import { ehDaEquipeConduzza } from "@/lib/auth/equipe-conduzza";
 import {
   agendaDoAgenteSchema,
   agendaDoBanco,
@@ -1245,14 +1246,23 @@ export async function simularAction(
     return { ok: false, error: TEXTOS.ultimaDoPaciente };
   }
   try {
+    const admin = createAdminClient();
+    // O texto barrado e os passos do texto descartado: so a equipe Conduzza,
+    // o super admin ou a conta normal marcada (10/11/2026: o super admin nao
+    // entra mais em clinica, e sem isto ninguem via o que foi barrado).
+    const daEquipe = await ehDaEquipeConduzza(
+      admin,
+      quem.userId,
+      quem.superAdmin,
+    );
     const resultado = await simularTurno({
-      admin: createAdminClient(),
+      admin,
       clinicId: quem.clinicId,
       userId: quem.userId,
       fuso: quem.timezone,
       mensagens,
       agoraMs: Date.now(),
-      superAdmin: quem.superAdmin,
+      superAdmin: daEquipe,
       contato: parsed.data.contato ?? null,
       estado: parsed.data.estado ?? null,
     });
@@ -1268,7 +1278,7 @@ export async function simularAction(
       trilha: resultado.trilha,
       // O texto barrado so para a equipe Conduzza (decisao 1 do dono: as
       // instrucoes, que o modelo pode repetir, so ela le).
-      rascunhoBloqueado: quem.superAdmin ? resultado.rascunhoBloqueado : null,
+      rascunhoBloqueado: daEquipe ? resultado.rascunhoBloqueado : null,
       assinatura: resultado.assinatura,
       estado: resultado.estado,
     };
