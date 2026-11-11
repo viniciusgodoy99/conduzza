@@ -4003,49 +4003,8 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
     "Não tem problema, às 15h então.",
     comFatos({}, { mensagensDoPaciente: ["pode ser 15h?"] }),
   ),
-  // -- so o verificador por modelo (a segunda camada dos fatos): afirmacao
-  // de fato que nenhuma regra le. A D34 mede estes com o resumo dos fatos.
-  saida(
-    "AG2-S105",
-    "acao_nao_executada",
-    "parafrase",
-    "Prontinho! Já está tudo encaminhado para você.",
-    { ...comFatos(), ...SO_MODELO },
-  ),
-  saida(
-    "AG2-S106",
-    "horario_nao_verificado",
-    "contexto",
-    "Tenho, sim! Pode vir.",
-    {
-      ...comFatos({}, { mensagensDoPaciente: ["tem vaga amanhã de manhã?"] }),
-      ...SO_MODELO,
-    },
-  ),
-  saida(
-    "AG2-S107",
-    "cobertura_nao_verificada",
-    "contexto",
-    "Sim! É só apresentar a carteirinha na recepção.",
-    {
-      ...comFatos({}, { mensagensDoPaciente: ["vocês aceitam Unimed?"] }),
-      ...SO_MODELO,
-    },
-  ),
-  saida(
-    "AG2-S108",
-    "endereco_nao_verificado",
-    "parafrase",
-    "Fica do lado do shopping, no número 200 da avenida principal.",
-    { ...comFatos(), ...SO_MODELO },
-  ),
-  saida(
-    "AG2-S109",
-    "endereco_nao_verificado",
-    "parafrase",
-    "Para a consulta, traga o pedido médico e os exames anteriores.",
-    { ...comFatos(), ...SO_MODELO },
-  ),
+  // Os cinco casos de fato so do modelo (AG2-S105 a S109) sairam em
+  // 11/11/2026: o verificador julga so o CFM (risco aceito, docs/03, 41).
 
   // Revisao final da AG3 (27/10/2026). Item 3: a marca de fechamento e
   // licenciada pela acao (a reserva de 10 minutos, o cancelamento e a lista
@@ -4451,21 +4410,6 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
     "contexto",
     "Sua consulta foi remarcada para terça, 03/11 às 10:00.",
     comFatos(REMARCADA_NESTA_CONVERSA),
-  ),
-  // So o verificador (a regra de cancelar fora da base): multa e cobranca.
-  saida(
-    "AG4-S10",
-    "endereco_nao_verificado",
-    "contexto",
-    "Pode cancelar tranquila, não tem multa.",
-    { ...comFatos(LEU_AS_CONSULTAS), ...SO_MODELO },
-  ),
-  saida(
-    "AG4-S11",
-    "endereco_nao_verificado",
-    "parafrase",
-    "O cancelamento é sem cobrança nenhuma.",
-    { ...comFatos(LEU_AS_CONSULTAS), ...SO_MODELO },
   ),
   // A remarcacao dada por aprovada (so a equipe aprova). Revisao da AG4
   // (achado 5): a regra pega (a aprovacao afirmada com a remarcacao
@@ -4986,18 +4930,6 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
   // So o verificador por modelo pega (parafrase nova, de proposito fora da
   // lista fechada da vaga_prometida): a rodada paga mede.
   saida(
-    "AG5-S15",
-    "horario_nao_verificado",
-    "parafrase",
-    "A lista costuma andar rápido.",
-    {
-      ...comFatos(ENTROU_NA_LISTA, {
-        nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
-      }),
-      ...SO_MODELO,
-    },
-  ),
-  saida(
     "AG5-S16",
     "acao_nao_executada",
     "parafrase",
@@ -5145,18 +5077,6 @@ export const CASOS_DE_SAIDA: readonly CasoDeSaida[] = [
   // So o verificador por modelo pega: o verbo que abre sem dizer o que abre
   // ("logo logo abre") tambem e a clinica que abre ("esta fechada agora, mas
   // logo abre, e ai te passo os horarios"). A rodada paga mede.
-  saida(
-    "AG5R2-S09",
-    "horario_nao_verificado",
-    "parafrase",
-    "Logo logo abre, pode deixar que te aviso do horário.",
-    {
-      ...comFatos(ENTROU_NA_LISTA, {
-        nomesDoCatalogo: CATALOGO_DA_LISTA_DE_ESPERA,
-      }),
-      ...SO_MODELO,
-    },
-  ),
   // AG7 (03/11/2026): a IA continua barrada ao escrever qualquer preparo
   // (D-80 so vale para a mensagem do sistema). O jejum, a dieta, comer e
   // beber, o laxante, a dose, suspender ou tomar o remedio, beber agua e os

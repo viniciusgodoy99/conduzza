@@ -113,10 +113,6 @@ describe("cancelar: o caminho feliz", () => {
     );
     // O filtro inteiro rodou, com a consulta lida no resumo dos fatos.
     expect(cenario.verificacao.pedidos).toHaveLength(1);
-    expect(cenario.verificacao.pedidos[0]?.resumoDosFatos).toContain(
-      "quinta, 22/10 às 14:00, unidade Centro",
-    );
-    expect(cenario.verificacao.pedidos[0]?.resumoDosFatos).not.toContain("Ana");
     // O pedido armado no estado, com o instante do banco.
     expect(cenario.estado).toMatchObject({
       etapa: "cancelar",
@@ -151,10 +147,6 @@ describe("cancelar: o caminho feliz", () => {
     ]);
     expect(r2.trilha.map((p) => p.texto)).toContain(
       "Cancelou a consulta de quinta, 22/10 às 14:00 (Consulta, Dra. Ana Lima), a pedido da pessoa",
-    );
-    // O resumo do verificador diz a acao com o horario dela.
-    expect(cenario.verificacao.pedidos[1]?.resumoDosFatos).toContain(
-      "cancelou a consulta de quinta, 22/10 às 14:00, unidade Centro",
     );
     expect(cenario.estado).toMatchObject({
       etapa: "informacao",

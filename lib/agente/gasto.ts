@@ -26,7 +26,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { LIMITE_DO_RASCUNHO } from "@/lib/domain/conformidade/filtro-deterministico";
-import { LIMITE_DO_RESUMO_DOS_FATOS } from "@/lib/domain/conformidade/resumo-dos-fatos";
 import type {
   MotivoDaFalha,
   UsoDoLlm,
@@ -122,9 +121,8 @@ export function usoEstimadoDoClassificador(
 
 /**
  * O maximo de uma chamada do verificador. rascunho null = o pior caso (o
- * maior texto que o filtro deixa chegar ao verificador). Revisao 2 da AG2:
- * o resumo dos fatos do turno entra sempre pelo teto dele
- * (LIMITE_DO_RESUMO_DOS_FATOS; o resumo maior nem e montado).
+ * maior texto que o filtro deixa chegar ao verificador). Desde 11/11/2026 o
+ * verificador nao recebe mais o resumo dos fatos (so julga o CFM).
  */
 export function usoEstimadoDoVerificador(
   rascunho: string | null,
@@ -133,13 +131,11 @@ export function usoEstimadoDoVerificador(
   const envelope = montarEnvelope({
     rascunho: rascunho ?? "",
     mensagensDoPaciente,
-    resumoDosFatos: null,
     nonce: NONCE_DE_MEDIDA,
   });
   return usoDeEstimativa(
     tokensNoMaximo(POLITICA_DO_VERIFICADOR) +
       tokensNoMaximo(envelope) +
-      LIMITE_DO_RESUMO_DOS_FATOS * BYTES_POR_CARACTERE +
       (rascunho === null ? LIMITE_DO_RASCUNHO * BYTES_POR_CARACTERE : 0) +
       FOLGA_DA_CHAMADA,
     MAX_TOKENS_DO_VERIFICADOR,

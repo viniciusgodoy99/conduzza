@@ -592,10 +592,10 @@ describe("achado 3: o horário que 'é seu' sem fato de horário no turno", () =
     }
   });
 
-  it("'Logo logo abre' (sem dizer o que abre) fica com o verificador", () => {
+  it("'Logo logo abre' (sem dizer o que abre) a regra nao le", () => {
     // A clinica tambem "logo abre" ("esta fechada agora, mas logo abre, e ai
-    // te passo os horarios"): a regra nao le o verbo sem o que abre. A
-    // bateria tem o caso como so do modelo (AG5R2-S09).
+    // te passo os horarios"): a regra nao le o verbo sem o que abre. Era so
+    // do modelo (AG5R2-S09); desde 11/11/2026 e risco aceito (docs/03, 41).
     expect(
       regras("Logo logo abre, pode deixar que te aviso do horário.", ENTROU),
     ).not.toContain("vaga_prometida");

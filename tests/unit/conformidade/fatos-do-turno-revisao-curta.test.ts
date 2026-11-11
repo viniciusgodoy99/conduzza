@@ -10,7 +10,6 @@ import {
   type HorarioDoFato,
 } from "@/lib/domain/conformidade/fatos-do-turno";
 import { versaoDasRegras } from "@/lib/domain/conformidade/filtro";
-import { resumirFatosDoTurno } from "@/lib/domain/conformidade/resumo-dos-fatos";
 import {
   CADASTRO_DA_AGENDA,
   CATALOGO_DA_AGENDA,
@@ -608,21 +607,6 @@ describe("os fatos novos: validação, resumo sem o profissional e versão", () 
     ).toBe(true);
   });
 
-  it("o resumo do verificador nunca leva o profissional da ação nem da consulta", () => {
-    const resumo = resumirFatosDoTurno(
-      fatos({
-        ...MARCOU,
-        consultaLida: true,
-        consultasLidas: [{ ...QUINTA, marcadaNestaConversa: false }],
-      }),
-      "Oi",
-    );
-    expect(resumo.ok).toBe(true);
-    if (resumo.ok) {
-      expect(resumo.texto).toContain("terça, 21/10 às 14:00, unidade Centro");
-      expect(resumo.texto).not.toMatch(/Ana Lima|Bruno Costa|Maria das Dores/);
-    }
-  });
 
   it("as regras novas entram na versão das regras", () => {
     expect(

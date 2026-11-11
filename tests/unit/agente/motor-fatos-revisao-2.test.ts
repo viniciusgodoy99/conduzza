@@ -4,26 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-// O resumo dos fatos que nao se deixa montar (falha fechada): o modulo e
-// trocado por um que, com a trava ligada, devolve "nao montou"; o resto do
-// turno e o de verdade.
-const resumo = vi.hoisted(() => ({ falhar: false }));
-vi.mock("@/lib/domain/conformidade/resumo-dos-fatos", async (original) => {
-  const real =
-    await original<
-      typeof import("@/lib/domain/conformidade/resumo-dos-fatos")
-    >();
-  return {
-    ...real,
-    resumirFatosDoTurno: (
-      ...args: Parameters<typeof real.resumirFatosDoTurno>
-    ) =>
-      resumo.falhar
-        ? { ok: false as const, motivo: "longo" as const }
-        : real.resumirFatosDoTurno(...args),
-  };
-});
-
 import { portaDaAgendaDoSimulador } from "@/lib/agente/agenda";
 import { buscarProfissionais } from "@/lib/agente/ferramentas/buscar-profissionais";
 import type { PortaDaAgenda } from "@/lib/agente/ferramentas/agenda-do-turno";
@@ -59,12 +39,12 @@ import {
 import { catalogoDoCadastro, TUDO_LIGADO, UNID } from "./cadastro-fixtures";
 
 // Revisao 2 da AG2 (27/10/2026) no turno inteiro, com um LLM FALSO de
-// roteiro e um verificador FALSO (nenhum teste fala com a OpenAI): o
-// verificador recebe o resumo dos fatos do turno, sem dado de paciente, e o
-// que ele aponta como fato sem fonte bloqueia na camada "modelo"; resumo que
-// nao monta bloqueia sem chamar o verificador; buscar_profissionais com o
-// procedimento que so a equipe informa; a cidade da unidade citada sozinha;
-// a resposta da base que o modelo usou; e o prompt sem a unidade do horario.
+// roteiro e um verificador FALSO (nenhum teste fala com a OpenAI):
+// buscar_profissionais com o procedimento que so a equipe informa; a cidade
+// da unidade citada sozinha; a resposta da base que o modelo usou; e o
+// prompt sem a unidade do horario. Desde a decisao do dono de 11/11/2026 o
+// verificador so julga o CFM: recebe o rascunho e as mensagens, sem resumo
+// dos fatos, e o que veio do Cadastro passa (o caso real das especialidades).
 // Agora e terca, 20/10/2026, 09:00 em Fortaleza.
 
 const CATALOGO = catalogoDaAgenda();
@@ -198,17 +178,8 @@ async function turno(roteiro: unknown[], extra: Partial<EntradaDoTurno> = {}) {
   );
 }
 
-/** O resumo que o verificador recebeu na unica chamada do turno. */
-function resumoRecebido(): string {
-  expect(entradasDoVerificador).toHaveLength(1);
-  const recebido = entradasDoVerificador[0]?.resumoDosFatos;
-  expect(typeof recebido).toBe("string");
-  return recebido ?? "";
-}
-
 beforeEach(() => {
   banco = bancoComJornadas();
-  resumo.falhar = false;
   entradasDoVerificador = [];
   verificador = vi.fn<Verificador>(async (e) => {
     entradasDoVerificador.push(e);
@@ -219,7 +190,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  resumo.falhar = false;
   vi.restoreAllMocks();
 });
 
@@ -237,8 +207,8 @@ function barrouPelaRegra(r: Resultado, categoria: string) {
   expect(verificador).not.toHaveBeenCalled();
 }
 
-describe("o verificador recebe o resumo dos fatos do turno", () => {
-  it("com buscar_horario: os horários livres vão no resumo; o paciente, não", async () => {
+describe("o verificador recebe só o rascunho e as mensagens (11/11/2026)", () => {
+  it("com buscar_horario: a resposta passa, sem resumo dos fatos para o verificador", async () => {
     const r = await turno(
       [
         ferramenta("buscar_horario", BUSCA_DE_MANHA),
@@ -255,21 +225,17 @@ describe("o verificador recebe o resumo dos fatos do turno", () => {
       },
     );
     expect(r.tipo).toBe("resposta");
-    const texto = resumoRecebido();
-    expect(texto).toContain("- terça, 20/10 às 11:30");
-    expect(texto).toContain("- quarta, 21/10 às 08:00");
-    expect(texto).toContain(
-      "Ações que as ferramentas fizeram com sucesso nesta resposta: nenhuma.",
-    );
-    expect(texto).toContain("Hoje na clínica: terça-feira, 20/10/2026.");
-    for (const proibido of ["Joana", "Prates", "joana.prates", "exemplo.com"]) {
-      expect(texto, proibido).not.toContain(proibido);
-    }
+    expect(entradasDoVerificador).toHaveLength(1);
+    expect(Object.keys(entradasDoVerificador[0] ?? {}).sort()).toEqual([
+      "mensagensDoPaciente",
+      "rascunho",
+      "sinal",
+    ]);
     // As mensagens do paciente seguem no campo delas, como antes.
     expect(entradasDoVerificador[0]?.mensagensDoPaciente).toHaveLength(1);
   });
 
-  it("a resposta da base que o modelo disse ter usado vai no resumo", async () => {
+  it("a resposta da base que o modelo disse ter usado passa", async () => {
     const config = configComAgenda({
       base: [
         {
@@ -284,61 +250,41 @@ describe("o verificador recebe o resumo dos fatos do turno", () => {
       config,
     });
     expect(r.tipo).toBe("resposta");
-    expect(resumoRecebido()).toContain(
-      "Respostas da base publicada pela clínica usadas nesta resposta:\n- Traga um documento com foto.",
-    );
   });
 
-  it("o fato sem fonte que a regra não pega é barrado pelo verificador, na camada modelo", async () => {
-    verificador.mockImplementation(async (e) => {
-      entradasDoVerificador.push(e);
-      return {
-        tipo: "veredicto",
-        veredicto: {
-          aprovado: false,
-          violacoes: [{ categoria: "acao_nao_executada", gravidade: "alta" }],
-          confianca: "alta",
-        },
-        modelo: "gpt-6-luna",
-        uso: null,
-      };
-    });
-    const r = await turno([
-      final("Prontinho! Já está tudo encaminhado para você."),
-    ]);
-    expect(r.tipo).toBe("frase_fixa");
-    expect(r.resposta).toBe(FRASE_DE_ESCALONAMENTO);
-    expect(r.desfecho).toEqual({
-      tipo: "bloqueou",
-      categoria: "acao_nao_executada",
-      camada: "modelo",
-      motivoDaFalha: null,
-    });
-    expect(r.rascunhoBloqueado).toBe(
-      "Prontinho! Já está tudo encaminhado para você.",
+  // O caso real de 11/11/2026 (13:16): "Quais especialidades você tem?". A
+  // IA consultou os profissionais e listou as especialidades; o verificador
+  // barrava por "convênio sem confirmação" e depois por "formato". Agora as
+  // regras conferem e o verificador so julga o CFM: a resposta sai.
+  it("as especialidades que buscar_profissionais trouxe passam (o caso real das 13:16)", async () => {
+    const texto =
+      "Temos Dermatologia, Estética, Cardiologia e Ginecologia. Qual especialidade você procura?";
+    const r = await turno(
+      [
+        ferramenta("buscar_profissionais", {
+          especialidade: null,
+          procedimento: null,
+          convenio: null,
+          unidade: null,
+        }),
+        final(texto),
+      ],
+      {
+        catalogo: catalogoDoCadastro(),
+        mensagens: [
+          paciente("Quais convênios vocês atendem?"),
+          {
+            autor: "assistente",
+            texto: "Para qual consulta ou exame você quer saber os convênios atendidos?",
+          },
+          paciente("Quais especialidades você tem?"),
+        ],
+      },
     );
-    expect(r.trilha).toContainEqual({
-      tipo: "bloqueio",
-      texto:
-        "A resposta foi bloqueada pela conformidade: ação de agenda que não foi feita.",
-    });
-    expect(resumoRecebido()).toContain(
-      "Ações que as ferramentas fizeram com sucesso nesta resposta: nenhuma.",
-    );
-  });
-
-  it("o resumo que não monta é falha fechada: a resposta não sai e o verificador não é chamado", async () => {
-    resumo.falhar = true;
-    const r = await turno([final("Posso ajudar com mais alguma coisa?")]);
-    expect(r.tipo).toBe("frase_fixa");
-    expect(r.resposta).toBe(FRASE_DE_ESCALONAMENTO);
-    expect(r.desfecho).toEqual({
-      tipo: "bloqueou",
-      categoria: "falha_verificador",
-      camada: "falha",
-      motivoDaFalha: "desconhecida",
-    });
-    expect(verificador).not.toHaveBeenCalled();
+    expect(r.tipo).toBe("resposta");
+    expect(r.resposta).toContain(texto);
+    expect(entradasDoVerificador).toHaveLength(1);
+    expect(entradasDoVerificador[0]?.rascunho).toContain(texto);
   });
 });
 
@@ -431,7 +377,7 @@ describe("consultar_unidades: o bairro e a cidade em campos próprios", () => {
     ],
   });
 
-  it("a cidade citada sozinha passa e vai no resumo", async () => {
+  it("a cidade citada sozinha passa", async () => {
     const r = await turno(
       [
         ferramenta("consultar_unidades", { unidade: null }),
@@ -440,9 +386,6 @@ describe("consultar_unidades: o bairro e a cidade em campos próprios", () => {
       { catalogo },
     );
     expect(r.tipo).toBe("resposta");
-    expect(resumoRecebido()).toContain(
-      "- Interior: endereço Rua X, 15, Centro, Nossa Senhora dos Remédios, PI; bairro Centro; cidade Nossa Senhora dos Remédios; funcionamento não cadastrado",
-    );
     const r2 = await turno(
       [
         ferramenta("consultar_unidades", { unidade: null }),

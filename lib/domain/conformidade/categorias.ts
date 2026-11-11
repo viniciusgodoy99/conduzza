@@ -38,11 +38,10 @@ export type CategoriaDeConformidade =
   (typeof CATEGORIAS_DE_CONFORMIDADE)[number];
 
 /**
- * As categorias dos fatos do turno (AG2): a regra deterministica aponta, e
- * so quando quem chama passa os fatos (o turno da IA). Desde a revisao 2 da
- * AG2 (27/10/2026) o verificador por modelo tambem julga fato, com o resumo
- * dos fatos do turno (resumo-dos-fatos.ts): a segunda camada que faltava.
- * Preco continua so na regra.
+ * As categorias dos fatos do turno (AG2): so a regra deterministica aponta,
+ * e so quando quem chama passa os fatos (o turno da IA). Da revisao 2 da AG2
+ * (27/10/2026) ate 11/11/2026 o verificador por modelo tambem julgava fato;
+ * desde a decisao do dono de 11/11/2026 ele julga so as vedacoes do CFM.
  */
 export const CATEGORIAS_DOS_FATOS = [
   "acao_nao_executada",
@@ -68,18 +67,13 @@ export const CATEGORIAS_CLINICAS = [
 export type CategoriaClinica = (typeof CATEGORIAS_CLINICAS)[number];
 
 /**
- * O que o verificador por modelo pode apontar: as vedacoes do CFM, o
- * formato (texto que vaza instrucao, ferramenta ou marcacao) e, desde a
- * revisao 2 da AG2, as quatro dos fatos do turno (afirmacao que o resumo dos
- * fatos nao sustenta; camada "modelo", sem mudar o CHECK do banco). Preco e
- * falha nunca vem do modelo: preco e conferido contra o turno, falha e
- * nossa.
+ * O que o verificador por modelo pode apontar: so as vedacoes do CFM
+ * (decisao do dono de 11/11/2026). Formato, fato, preco e falha nunca vem do
+ * modelo: as regras deterministicas conferem formato, fato e preco contra o
+ * turno (no uso real, o formato e o fato pelo modelo barraram as respostas
+ * que vinham do Cadastro), e a falha e nossa.
  */
-export const CATEGORIAS_DO_VERIFICADOR = [
-  ...CATEGORIAS_CLINICAS,
-  "formato_invalido",
-  ...CATEGORIAS_DOS_FATOS,
-] as const satisfies readonly CategoriaDeConformidade[];
+export const CATEGORIAS_DO_VERIFICADOR = CATEGORIAS_CLINICAS;
 
 export type CategoriaDoVerificador = (typeof CATEGORIAS_DO_VERIFICADOR)[number];
 

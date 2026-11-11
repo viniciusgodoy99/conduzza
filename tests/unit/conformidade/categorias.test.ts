@@ -37,9 +37,9 @@ describe("categorias do filtro", () => {
     ]);
   });
 
-  // Revisao 2 da AG2 (27/10/2026): o verificador por modelo tambem julga
-  // fato, com o resumo dos fatos do turno (a segunda camada que faltava).
-  it("as quatro dos fatos do turno sao da regra e do verificador, sem categoria nova no banco", () => {
+  // Da revisao 2 da AG2 (27/10/2026) ate 11/11/2026 o verificador tambem
+  // julgava fato; desde a decisao do dono de 11/11/2026, fato e so da regra.
+  it("as quatro dos fatos do turno sao so da regra, sem categoria nova no banco", () => {
     expect(CATEGORIAS_DOS_FATOS).toEqual([
       "acao_nao_executada",
       "cobertura_nao_verificada",
@@ -47,7 +47,7 @@ describe("categorias do filtro", () => {
       "endereco_nao_verificado",
     ]);
     for (const categoria of CATEGORIAS_DOS_FATOS) {
-      expect(CATEGORIAS_DO_VERIFICADOR).toContain(categoria);
+      expect(CATEGORIAS_DO_VERIFICADOR).not.toContain(categoria);
       expect(CATEGORIAS_DE_CONFORMIDADE).toContain(categoria);
     }
   });
@@ -68,18 +68,15 @@ describe("categorias do filtro", () => {
     expect([...valores].sort()).toEqual([...CATEGORIAS_DE_CONFORMIDADE].sort());
   });
 
-  it("as oito do CFM, o formato e as quatro dos fatos sao o que o verificador julga; preco e falha nunca", () => {
+  it("so as oito do CFM sao o que o verificador julga (11/11/2026); formato, fato, preco e falha nunca", () => {
     expect(CATEGORIAS_CLINICAS).toHaveLength(8);
-    expect(CATEGORIAS_DO_VERIFICADOR).toEqual([
-      ...CATEGORIAS_CLINICAS,
-      "formato_invalido",
-      ...CATEGORIAS_DOS_FATOS,
-    ]);
+    expect(CATEGORIAS_DO_VERIFICADOR).toEqual([...CATEGORIAS_CLINICAS]);
+    expect(CATEGORIAS_DO_VERIFICADOR).not.toContain("formato_invalido");
     expect(CATEGORIAS_DO_VERIFICADOR).not.toContain("preco_nao_verificado");
     expect(CATEGORIAS_DO_VERIFICADOR).not.toContain("falha_verificador");
   });
 
-  it("camadas (o verificador que julga fato e a camada modelo: o CHECK nao muda)", () => {
+  it("camadas (o CHECK nao muda)", () => {
     expect(CAMADAS_DO_FILTRO).toEqual(["regra", "modelo", "falha"]);
   });
 });

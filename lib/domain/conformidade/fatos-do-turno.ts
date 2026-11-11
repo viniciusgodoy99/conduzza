@@ -72,9 +72,9 @@
 //    paciente citou;
 //  - endereco: o bairro e a cidade que consultar_unidades traz em campos
 //    proprios sao nome de lugar (duas palavras de nome, no minimo).
-// E, fora deste arquivo, a SEGUNDA camada: o verificador por modelo recebe
-// o resumo destes fatos, sem dado de paciente (resumo-dos-fatos.ts), e julga
-// fato tambem.
+// Ate 11/11/2026 o verificador por modelo tambem julgava fato, com um resumo
+// destes fatos; desde a decisao do dono daquele dia ele julga so as vedacoes
+// do CFM, e fato e so destas regras.
 //
 // Revisao curta das correcoes da AG3 (27/10/2026), os achados da revisao
 // das correcoes da revisao final:
@@ -426,8 +426,7 @@ export type FatosDoTurno = {
   /**
    * Revisao 2 da AG2: as respostas da base publicada que o modelo disse ter
    * usado (perguntas_da_base). Texto publicado pela clinica, nunca do
-   * paciente: vai no resumo dos fatos do verificador (resumo-dos-fatos.ts)
-   * como fonte de endereco e de requisito.
+   * paciente: fonte de endereco e de requisito para as regras.
    */
   respostasDaBase: readonly string[];
   /**
@@ -2634,19 +2633,6 @@ export function enderecosDoTexto(base: string): EnderecoLido[] {
     nome,
     numero,
   }));
-}
-
-/**
- * Revisao 2 da AG2: as frases dos textos (ja normalizadas) que trazem
- * logradouro com numero. O resumo dos fatos do verificador leva as dos
- * textos publicados (resumo-dos-fatos.ts).
- */
-export function frasesComEndereco(textos: readonly string[]): string[] {
-  return textos.flatMap((texto) =>
-    frasesComPosicao(normalizarBase(texto))
-      .map((frase) => frase.texto.trim())
-      .filter((frase) => enderecosDoTexto(frase).length > 0),
-  );
 }
 
 function palavraBate(doRascunho: string, doFato: string): boolean {
