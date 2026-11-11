@@ -409,6 +409,18 @@ describe("politica do verificador na AG2", () => {
     ]);
   });
 
+  // 11/11/2026, primeiro teste real: "constam Bradesco Saúde (Nacional Flex
+  // e Top), Saúde Petrobras (Nacional) e Unimed (Unimed Natal (Estadual e
+  // Nacional)." foi barrado como formato_invalido. A linha da categoria
+  // fica igual (o teste acima); o permitido diz que o nome do cadastro,
+  // com parenteses, nao e formato.
+  it("o nome do cadastro com parênteses e o que a clínica atende não são formato_invalido (11/11/2026)", () => {
+    expect(POLITICA_DO_VERIFICADOR).toContain(
+      'repeti-los, mesmo com a pontuação imperfeita, e dizer o que a clínica atende, aceita ou tem ("atendemos", "constam") não é formato_invalido nem menção a sistema.',
+    );
+    expect(POLITICA_DO_VERIFICADOR).not.toMatch(/[–—]/);
+  });
+
   it("o permitido inclui os requisitos administrativos e o endereco completo da unidade", () => {
     for (const trecho of [
       "informar os requisitos administrativos da consulta ou do procedimento",
