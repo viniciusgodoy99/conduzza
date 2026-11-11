@@ -140,7 +140,6 @@ export function CartoesDoAgenteNoPainel({
         estadoDoAssistente={estado}
         emProducao={emProducao}
         dicas={dicas}
-        apoioDoDesligar={null}
         pendente={pendente}
         ocupado={ocupado}
         telefoneDoNumero={(numero) => {

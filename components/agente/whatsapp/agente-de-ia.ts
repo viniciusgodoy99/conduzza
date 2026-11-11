@@ -39,11 +39,12 @@ import type {
 // - Quem altera: o administrador da clinica e o super admin. Gestor ve tudo
 //   desabilitado, com a dica ("Só o administrador da clínica muda isto.").
 //   Recepcao ve so a linha de quem cuida (a RLS nao entrega as linhas).
-// - Nesta fase (E3, 13/10/2026), LIGAR o atendimento pelo WhatsApp e so da
-//   equipe Conduzza: escolher "Conversar com a equipe" e ligar um numero. O
-//   administrador ve esses controles desabilitados, com a dica
-//   soEquipeConduzzaLiga; desligar continua com ele. O banco confere de novo
-//   (ia_exigir_equipe_conduzza).
+// - Ligar o atendimento pelo WhatsApp: desde 10/11/2026 (decisao do dono,
+//   migration 20261110140000) o administrador da clinica escolhe "Conversar
+//   com a equipe" e liga um numero, como a equipe Conduzza (de 13/10 ate
+//   ali era so ela). Com o assistente em producao, ligar numero continua so
+//   com a equipe Conduzza (numeroEmProducaoSoPelaEquipe). O banco confere de
+//   novo (ia_exigir_quem_libera e, na producao, ia_exigir_equipe_conduzza).
 // - Producao (onda 2, item 11, decisoes P11a a P11e): "Atendendo os
 //   contatos" (o modo numero_inteiro do banco) aparece aqui e so muda pelo
 //   Painel geral, com os requisitos cumpridos. A clinica pausa e retoma
@@ -76,9 +77,6 @@ import type {
 //     conversa; "Conversa com o assistente" so com pelo menos um numero
 //     ligado e conectado SEM conversa aberta para aquele telefone (nesse
 //     numero a proxima mensagem dele abre conversa nova com o assistente);
-//   - quem desliga e nao liga de novo (o administrador da clinica) le
-//     "Depois de desligar, só a equipe Conduzza liga de novo." junto do
-//     Desligado, do So simulador e do Desligar de numero;
 //   - para o super admin (a equipe Conduzza), os motivos do servidor, do
 //     interruptor e do motor dizem o que conferir, sem mandar avisar a
 //     propria equipe Conduzza (textoDoMotivo).
@@ -728,8 +726,10 @@ export const TEXTOS_DA_IA = {
   soAdministradorEGestor:
     "Os números e os telefones do assistente ficam com o administrador e o gestor.",
   soEquipeConduzza: "A equipe Conduzza liga e desliga.",
-  soEquipeConduzzaLiga:
-    "Nesta fase, só a equipe Conduzza liga o atendimento pelo WhatsApp.",
+  // Com o assistente em producao, ligar numero fica com a equipe Conduzza
+  // (cada numero ligado passa a atender todos os contatos dele).
+  numeroEmProducaoSoPelaEquipe:
+    "Com o assistente atendendo os contatos, só a equipe Conduzza liga número, pelo Painel geral.",
   // A opcao "Atendendo os contatos" (producao, onda 2): so o Painel geral
   // liga e muda.
   producaoSoPeloPainel:
@@ -844,8 +844,6 @@ export const TEXTOS_DA_IA = {
   conversaAbertaAcao:
     "Para o assistente começar neste número, assuma e resolva a conversa aberta no Atendimento.",
   abrirConversa: "Abrir conversa",
-  /** Junto do Desligado, do So simulador e do Desligar de numero, para quem nao liga de novo. */
-  depoisDeDesligar: "Depois de desligar, só a equipe Conduzza liga de novo.",
   avisoTelefoneInvalido:
     "Há telefone da equipe que não aciona o assistente. Veja a lista de telefones.",
   naoConferidoTitulo: "Não deu para conferir agora",
@@ -964,35 +962,6 @@ export function textosDosMotivos(
   superAdmin = false,
 ): string[] {
   return motivos.map((motivo) => textoDoMotivo(motivo, superAdmin));
-}
-
-/**
- * A linha de apoio junto do desligar (Desligado, So simulador com o
- * WhatsApp ligado e Desligar de numero): para quem desliga, mas nao liga de
- * novo nesta fase (o administrador da clinica). O super admin liga de novo,
- * e quem nao altera nao desliga: nula, sem linha.
- */
-export function apoioAoDesligar(entrada: {
-  podeEditar: boolean;
-  superAdmin: boolean;
-}): string | null {
-  return entrada.podeEditar && !entrada.superAdmin
-    ? TEXTOS_DA_IA.depoisDeDesligar
-    : null;
-}
-
-/**
- * A mesma linha junto do seletor e no dialogo do "Só simulador": so com o
- * WhatsApp ligado no modo equipe. Saindo do "Só simulador" para
- * "Desligado", ou voltando a ele, o administrador religa sozinho: sem
- * linha. Em producao o seletor fica preso (revisao da onda 2): sem linha.
- */
-export function apoioAoDesligarOWhatsapp(entrada: {
-  escolha: EscolhaDaIa;
-  podeEditar: boolean;
-  superAdmin: boolean;
-}): string | null {
-  return entrada.escolha === "equipe" ? apoioAoDesligar(entrada) : null;
 }
 
 /** O motivo numero_desconectado de UM numero ligado, com o nome dele. */
@@ -1242,9 +1211,10 @@ export type AcaoDaIa =
  * telefone; `excluir` = excluir um telefone (onda 2, item 9); `forcar` = o
  * "Usar mesmo assim" do telefone de paciente (onda 2, item 3: o
  * administrador tambem); `pausa` = pausar e retomar (onda 2, item 11).
- * Ligar o atendimento pelo WhatsApp (modo e numero) e so da equipe Conduzza
- * nesta fase: o administrador recebe soEquipeConduzzaLiga nos dois. Com o
- * assistente em producao, o modo so muda pelo Painel geral.
+ * Desde 10/11/2026 (decisao do dono) o administrador da clinica liga
+ * "Conversar com a equipe" e o numero, como a equipe Conduzza. Com o
+ * assistente em producao, o modo so muda pelo Painel geral, e ligar numero
+ * fica com a equipe Conduzza (cada numero ligado atende todos os contatos).
  */
 export function dicasDaIa(entrada: {
   podeEditar: boolean;
@@ -1256,8 +1226,6 @@ export function dicasDaIa(entrada: {
   const { podeEditar, superAdmin, faltasParaAEquipe: faltas } = entrada;
   const emProducao = entrada.emProducao ?? false;
   const permissao = podeEditar ? null : TEXTOS_DA_IA.semPermissao;
-  const quemLiga =
-    permissao ?? (superAdmin ? null : TEXTOS_DA_IA.soEquipeConduzzaLiga);
   return {
     modo:
       permissao ?? (emProducao ? TEXTOS_DA_IA.emProducaoSoPeloPainel : null),
@@ -1266,10 +1234,15 @@ export function dicasDaIa(entrada: {
       permissao ??
       (emProducao
         ? TEXTOS_DA_IA.emProducaoSoPeloPainel
-        : (quemLiga ??
-          (faltas.length > 0 ? TEXTOS_DA_IA.faltaParaAEquipe : null))),
+        : faltas.length > 0
+          ? TEXTOS_DA_IA.faltaParaAEquipe
+          : null),
     producao: emProducao ? null : TEXTOS_DA_IA.producaoSoPeloPainel,
-    numero: quemLiga,
+    numero:
+      permissao ??
+      (emProducao && !superAdmin
+        ? TEXTOS_DA_IA.numeroEmProducaoSoPelaEquipe
+        : null),
     telefone: permissao,
     excluir: permissao,
     forcar: permissao,

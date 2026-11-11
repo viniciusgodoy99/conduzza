@@ -51,12 +51,13 @@ import { createClient } from "@/lib/supabase/server";
 // pagina) e so o administrador da clinica ou o super admin chega a RPC.
 // Cada RPC grava a trilha (audit_log) sozinha, sem telefone.
 //
-// LIGAR O ATENDIMENTO PELO WHATSAPP E SO DA EQUIPE CONDUZZA NESTA FASE (E3,
-// decisao do dono em 13/10/2026): escolher "Conversar com a equipe" e ligar
-// um numero exigem o super admin, aqui e no banco (ia_exigir_equipe_conduzza).
-// Desligar continua com o administrador da clinica. A producao ("Atendendo
-// os contatos", o modo numero_inteiro) nunca e ligada daqui: so pelo Painel
-// geral, com os requisitos cumpridos (onda 2, P11c). TELEFONE DA EQUIPE
+// LIGAR O ATENDIMENTO PELO WHATSAPP (decisao do dono de 10/11/2026, migration
+// 20261110140000; de 13/10 ate ali era so da equipe Conduzza): o
+// administrador da clinica escolhe "Conversar com a equipe" e liga um numero,
+// como desliga. Com o assistente em producao, ligar numero continua so com
+// a equipe Conduzza, aqui e no banco (ia_exigir_equipe_conduzza). A producao
+// ("Atendendo os contatos", o modo numero_inteiro) nunca e ligada daqui: so
+// pelo Painel geral, com os requisitos cumpridos (onda 2, P11c). TELEFONE DA EQUIPE
 // (decisao do dono em 19/10/2026, migration 20261019100000): adicionar e
 // ligar de novo voltam para quem passa na guarda. O telefone novo exige a
 // confirmacao do aviso da OpenAI (LGPD, D32), que vai ao BANCO
@@ -283,17 +284,6 @@ function revalidar() {
 }
 
 /**
- * Ligar o atendimento pelo WhatsApp (modo "equipe" e ligar um numero) e so
- * do super admin nesta fase. O telefone nao passa por aqui desde 19/10/2026:
- * basta a guarda. null: pode.
- */
-function recusaDeLigar(guardaOk: Guarda): ResultadoDaIa | null {
-  return guardaOk.superAdmin
-    ? null
-    : { ok: false, error: TEXTOS_DA_IA.soEquipeConduzzaLiga };
-}
-
-/**
  * O forcar do telefone de paciente ("Usar mesmo assim"): desde a onda 2
  * (item 3, decisao P3 do dono) o administrador da clinica tambem forca,
  * mas SEMPRE com a confirmacao do teste, inclusive o super admin. Sem ela,
@@ -350,11 +340,7 @@ function textoDoErro(kind: string, error: ErroDoBanco, outro: string): string {
     return TEXTOS.aindaNaoDisponivel;
   }
   if (codigo === "42501") {
-    // Ligar o modo equipe e ligar um numero e so da equipe Conduzza.
-    // Telefone (desde 19/10/2026) e o resto: o texto de permissao.
-    return kind === "escolha_equipe" || kind === "numero_ligar"
-      ? TEXTOS_DA_IA.soEquipeConduzzaLiga
-      : TEXTOS_DA_IA.semPermissao;
+    return TEXTOS_DA_IA.semPermissao;
   }
   if (kind.startsWith("telefone_") && codigo === "23514") {
     if (chave === "telefone_invalido_para_equipe") {
@@ -470,12 +456,6 @@ export async function definirEscolhaDaIaAction(
     return { ok: false, error: TEXTOS.dadosInvalidos };
   }
   const { escolha } = parsed.data;
-  if (escolha === "equipe") {
-    const recusa = recusaDeLigar(guardaOk);
-    if (recusa) {
-      return recusa;
-    }
-  }
   const supabase = await createClient();
 
   // Com o assistente em producao, so o Painel geral muda o modo. A leitura
@@ -539,8 +519,9 @@ export async function definirEscolhaDaIaAction(
  * Liga ou desliga UM numero da clinica para o assistente, sem mexer nos
  * outros: a clinica pode ter varios numeros ligados ao mesmo tempo (decisao
  * do dono de 19/10/2026; o banco deixou de desligar os outros ao ligar,
- * migration 20261019110000). Ligar: so o super admin nesta fase, e so
- * numero conectado da clinica. Desligar: o administrador da clinica tambem,
+ * migration 20261019110000). Ligar: o administrador da clinica e o super
+ * admin (desde 10/11/2026), so numero conectado da clinica; com o
+ * assistente em producao, so o super admin. Desligar: tambem
  * mesmo com o numero desconectado; o banco devolve para a equipe so as
  * conversas DESTE numero. Pelo Painel geral (clinicId na entrada), a
  * conexao vem do painel (numeroDaClinica).
@@ -557,12 +538,6 @@ export async function alternarNumeroDaIaAction(
     return { ok: false, error: TEXTOS.dadosInvalidos };
   }
   const { whatsappAccountId, ligado } = parsed.data;
-  if (ligado) {
-    const recusa = recusaDeLigar(guardaOk);
-    if (recusa) {
-      return recusa;
-    }
-  }
   const supabase = await createClient();
 
   const definir = (ativo: boolean) =>
@@ -597,6 +572,11 @@ export async function alternarNumeroDaIaAction(
   const dados = await lerDados(supabase, guardaOk.clinicId);
   if (!dados) {
     return { ok: false, error: TEXTOS.naoLeu };
+  }
+  // Na producao, cada numero ligado atende todos os contatos dele: so a
+  // equipe Conduzza liga (o banco recusa de novo).
+  if (escolhaAtual(dados.liberacao) === "producao" && !guardaOk.superAdmin) {
+    return { ok: false, error: TEXTOS_DA_IA.numeroEmProducaoSoPelaEquipe };
   }
   const linha = await garantirLinha(supabase, guardaOk, dados);
   if (linha !== "ok") {

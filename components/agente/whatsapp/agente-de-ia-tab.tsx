@@ -29,8 +29,6 @@ import {
   type ResultadoDaIa,
 } from "@/app/(app)/agente/whatsapp-actions";
 import {
-  apoioAoDesligar,
-  apoioAoDesligarOWhatsapp,
   avisosAoLigar,
   conversasAbertasDoTelefone,
   dicasDaIa,
@@ -152,10 +150,10 @@ import type { DadosDaIa, TelefoneDaIa } from "@/lib/queries/ia-liberacao";
 //   o aviso antigo, com alguma habilidade de midia ligada no rascunho ou na
 //   versao publicada, ganha o chip "Sem áudio, foto e documento" e o que
 //   fazer, escrito na linha.
-// - Quem desliga e nao liga de novo (o administrador da clinica) le "Depois
-//   de desligar, só a equipe Conduzza liga de novo." junto do seletor (com
-//   o WhatsApp ligado), no dialogo do "Só simulador" e em cada numero
-//   ligado.
+// - Desde 10/11/2026 (decisao do dono) o administrador da clinica liga
+//   "Conversar com a equipe" e o numero, como desliga: saiu a linha "Depois
+//   de desligar, só a equipe Conduzza liga de novo.". Na producao, ligar
+//   numero continua com a equipe Conduzza (a dica do botao).
 // Sem permissao (gestor), tudo visivel e desabilitado, com a dica e a linha
 // escrita no topo. A recepcao ve so a linha de quem cuida
 // (AbaWhatsappDaRecepcao): a RLS nao entrega as linhas. Uma acao por vez:
@@ -425,15 +423,6 @@ function AbaWhatsappCarregada({
     modo: confirmando ?? "equipe",
     superAdmin,
   });
-  // "Depois de desligar, só a equipe Conduzza liga de novo.": para quem
-  // desliga e nao liga de novo (o administrador). No seletor e no dialogo
-  // do "Só simulador", so com o WhatsApp ligado (o simulador ele religa).
-  const apoioDoDesligar = apoioAoDesligar({ podeEditar, superAdmin });
-  const apoioNoSeletor = apoioAoDesligarOWhatsapp({
-    escolha,
-    podeEditar,
-    superAdmin,
-  });
   const pausada = dados.liberacao?.pausadaPelaClinica ?? false;
   const forcados = telefonesForcados ? new Set(telefonesForcados) : null;
 
@@ -603,9 +592,6 @@ function AbaWhatsappCarregada({
           {dicas.producao ? (
             <p className="text-[13px] text-text-secondary">{dicas.producao}</p>
           ) : null}
-          {apoioNoSeletor ? (
-            <p className="text-[13px] text-text-secondary">{apoioNoSeletor}</p>
-          ) : null}
 
           {/* Pausar e retomar (onda 2, P11c): pausar so com o WhatsApp
               ligado; retomar sempre que a pausa estiver gravada, em
@@ -672,7 +658,6 @@ function AbaWhatsappCarregada({
         estadoDoAssistente={estado}
         emProducao={emProducao}
         dicas={dicas}
-        apoioDoDesligar={apoioDoDesligar}
         pendente={pendente}
         ocupado={ocupado}
         aoAlternar={(numero, ligado) =>
@@ -760,13 +745,6 @@ function AbaWhatsappCarregada({
                 : "O assistente responde só no simulador, dentro do sistema. Ninguém recebe mensagem dele pelo WhatsApp."}
             </DialogDescription>
           </DialogHeader>
-          {confirmando === "simulador" && apoioNoSeletor ? (
-            // Com o WhatsApp ligado, "Só simulador" desliga o atendimento
-            // pelo WhatsApp, e o administrador nao liga de novo.
-            <Aviso tom="warning" role="note">
-              {apoioNoSeletor}
-            </Aviso>
-          ) : null}
           {avisosDoLigar.length > 0 ? (
             <Aviso
               tom="info"
@@ -877,7 +855,6 @@ export function CartaoDosNumeros({
   estadoDoAssistente,
   emProducao = false,
   dicas,
-  apoioDoDesligar,
   pendente,
   ocupado,
   aoAlternar,
@@ -890,13 +867,8 @@ export function CartaoDosNumeros({
   estadoDoAssistente: EstadoDaIa;
   /** O assistente atende os contatos (producao): a descricao muda. */
   emProducao?: boolean;
-  /** escolha: desligar (so permissao); numero: ligar (equipe Conduzza). */
+  /** escolha: desligar (so permissao); numero: ligar (na producao, so a equipe Conduzza). */
   dicas: Record<AcaoDaIa, string | null>;
-  /**
-   * A linha de apoio junto do "Desligar" de cada numero ligado, para quem
-   * nao liga de novo (apoioAoDesligar). Nula: sem linha.
-   */
-  apoioDoDesligar: string | null;
   pendente: boolean;
   ocupado: (qual: string) => boolean;
   aoAlternar: (numero: NumeroDoWhatsapp, ligado: boolean) => void;
@@ -1017,11 +989,6 @@ export function CartaoDosNumeros({
                     </div>
                     {comDica(botao, dica)}
                   </div>
-                  {ligado && apoioDoDesligar ? (
-                    <p className="text-[12px] text-text-secondary">
-                      {apoioDoDesligar}
-                    </p>
-                  ) : null}
                   {ligado && !conectado ? (
                     <Aviso tom="warning" role="note">
                       {TEXTOS_DA_IA.numeroDesconectado}

@@ -122,9 +122,5 @@ test("fora da fase, o link antigo de Configurações leva ao vazio da tela Agent
   await page.goto("/configuracoes?aba=ia");
   await expect(page).toHaveURL(/\/agente\?aba=whatsapp/);
   await expect(page.getByRole("tab", { name: "WhatsApp" })).toHaveCount(0);
-  await expect(
-    page.getByText(
-      "Nesta fase, só a equipe Conduzza liga o atendimento pelo WhatsApp.",
-    ),
-  ).toHaveCount(0);
+  await expect(page.getByText("Assistente de IA nesta clínica")).toHaveCount(0);
 });

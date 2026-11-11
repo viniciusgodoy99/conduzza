@@ -9,8 +9,6 @@ import {
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  apoioAoDesligar,
-  apoioAoDesligarOWhatsapp,
   avisoDeContatoDaClinica,
   avisosAoLigar,
   conversasAbertasDoTelefone,
@@ -598,10 +596,10 @@ describe("teto e dicas", () => {
     expect(TEXTOS_DA_IA.semPermissao).toBe(
       "Só o administrador da clínica muda isto.",
     );
-    // E3: o administrador desliga, mas ligar o atendimento pelo WhatsApp
-    // (modo equipe e usar número) é só da equipe Conduzza. Telefone
-    // (adicionar e ligar de novo): o administrador também, desde 19/10/2026
-    // (decisão do dono).
+    // Desde 10/11/2026 (decisão do dono), o administrador liga o modo
+    // equipe e o número, como a equipe Conduzza: sem número ou telefone, só
+    // o que falta. Telefone (adicionar e ligar de novo): o administrador
+    // também, desde 19/10/2026.
     expect(
       dicasDaIa({
         podeEditar: true,
@@ -611,9 +609,9 @@ describe("teto e dicas", () => {
     ).toEqual({
       modo: null,
       escolha: null,
-      equipe: TEXTOS_DA_IA.soEquipeConduzzaLiga,
+      equipe: TEXTOS_DA_IA.faltaParaAEquipe,
       producao: TEXTOS_DA_IA.producaoSoPeloPainel,
-      numero: TEXTOS_DA_IA.soEquipeConduzzaLiga,
+      numero: null,
       telefone: null,
       // onda 2: excluir, o "Usar mesmo assim" (P3) e a pausa ficam com o
       // administrador
@@ -621,11 +619,13 @@ describe("teto e dicas", () => {
       forcar: null,
       pausa: null,
     });
-    // a dica de hoje não fala de telefone (ela continua no modo e no número)
-    expect(TEXTOS_DA_IA.soEquipeConduzzaLiga).not.toMatch(/telefone/i);
-    expect(TEXTOS_DA_IA.soEquipeConduzzaLiga).toBe(
-      "Nesta fase, só a equipe Conduzza liga o atendimento pelo WhatsApp.",
-    );
+    expect(
+      dicasDaIa({
+        podeEditar: true,
+        superAdmin: false,
+        faltasParaAEquipe: [],
+      }).equipe,
+    ).toBeNull();
     // o super admin liga; sem número ou telefone, o que falta
     expect(
       dicasDaIa({
@@ -669,6 +669,12 @@ describe("teto e dicas", () => {
     expect(doAdministrador.modo).toBe(TEXTOS_DA_IA.emProducaoSoPeloPainel);
     expect(doAdministrador.escolha).toBeNull();
     expect(doAdministrador.pausa).toBeNull();
+    // Em produção, ligar número fica com a equipe Conduzza (cada número
+    // ligado atende todos os contatos dele); o super admin liga.
+    expect(doAdministrador.numero).toBe(
+      TEXTOS_DA_IA.numeroEmProducaoSoPelaEquipe,
+    );
+    expect(emProducao.numero).toBeNull();
     expect(TEXTOS_DA_IA.emProducaoSoPeloPainel).toContain(
       "Para parar agora, use Pausar o assistente.",
     );
@@ -1603,43 +1609,12 @@ describe("revisão de produção (19/10/2026)", () => {
     });
   });
 
-  describe("desligar sem volta para o administrador", () => {
-    it("a linha de apoio: só para quem desliga e não liga de novo", () => {
-      expect(apoioAoDesligar({ podeEditar: true, superAdmin: false })).toBe(
-        "Depois de desligar, só a equipe Conduzza liga de novo.",
-      );
-      expect(TEXTOS_DA_IA.depoisDeDesligar).toBe(
-        "Depois de desligar, só a equipe Conduzza liga de novo.",
-      );
-      // o super admin liga de novo; quem não altera não desliga
-      expect(
-        apoioAoDesligar({ podeEditar: true, superAdmin: true }),
-      ).toBeNull();
-      expect(
-        apoioAoDesligar({ podeEditar: false, superAdmin: false }),
-      ).toBeNull();
-    });
-
-    it("no seletor e no diálogo do Só simulador: só com o WhatsApp ligado", () => {
-      const administrador = { podeEditar: true, superAdmin: false };
-      expect(
-        apoioAoDesligarOWhatsapp({ ...administrador, escolha: "equipe" }),
-      ).toBe(TEXTOS_DA_IA.depoisDeDesligar);
-      // o simulador o administrador religa sozinho
-      expect(
-        apoioAoDesligarOWhatsapp({ ...administrador, escolha: "simulador" }),
-      ).toBeNull();
-      expect(
-        apoioAoDesligarOWhatsapp({ ...administrador, escolha: "desligado" }),
-      ).toBeNull();
-      expect(
-        apoioAoDesligarOWhatsapp({
-          podeEditar: true,
-          superAdmin: true,
-          escolha: "equipe",
-        }),
-      ).toBeNull();
-    });
+  it("desligar tem volta: o administrador liga de novo, sem a linha de apoio (10/11/2026)", () => {
+    // Até 10/11/2026 o administrador lia "Depois de desligar, só a equipe
+    // Conduzza liga de novo."; agora ele mesmo liga de novo.
+    expect(Object.values(TEXTOS_DA_IA).join(" ")).not.toContain(
+      "liga de novo",
+    );
   });
 
   describe("motivos para o super admin (a equipe Conduzza)", () => {
@@ -1790,29 +1765,13 @@ describe("onda 2: produção (Atendendo os contatos, item 11)", () => {
     ).toEqual(["numero"]);
   });
 
-  it("os rótulos verdes valem também em produção; o apoio do desligar também", () => {
+  it("os rótulos verdes valem também em produção", () => {
     expect(rotuloDoTelefoneLigado("producao", 1)).toBe(
       "Conversa com o assistente",
     );
     expect(rotuloDoNumeroLigado("producao", true)).toBe(
       "Em uso pelo assistente",
     );
-    // Revisao da onda 2: em producao o seletor fica preso, entao nao ha
-    // "depois de desligar" junto dele.
-    expect(
-      apoioAoDesligarOWhatsapp({
-        podeEditar: true,
-        superAdmin: false,
-        escolha: "producao",
-      }),
-    ).toBeNull();
-    expect(
-      apoioAoDesligarOWhatsapp({
-        podeEditar: true,
-        superAdmin: false,
-        escolha: "equipe",
-      }),
-    ).toBe(TEXTOS_DA_IA.depoisDeDesligar);
   });
 });
 

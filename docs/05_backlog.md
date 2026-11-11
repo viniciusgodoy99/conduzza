@@ -1890,6 +1890,10 @@ Arquitetura no `docs/03`, seção 28; banco no `docs/04`, seção 44; LGPD no `d
 
 **Estado (06/11/2026):** publicado. Conferência da junção com os remédios e o portão: 20.285 testes, typecheck, lint e build verdes; ensaio e provas na produção no `docs/04`, seção 44. **Não rodou:** a OpenAI de verdade com o esquema novo do leitor (se recusar, toda foto e PDF vão para a equipe: falha fechada). **Limites conhecidos:** a nota interna só aparece quando a equipe abre a conversa; o agente não pede RG, CNH ou CPF (não construído); a carteirinha de dependente grava no contato da conversa, só quando o campo está vazio.
 
+### [x] O administrador da clínica liga "Conversar com a equipe" `P` (decisão do dono de 10/11/2026: "preciso que todos os admin das clinicas consigam colocar para conversar a equipe"; migration `20261110140000`, aplicada em 10/11/2026 e publicada em 11/11/2026)
+
+O administrador escolhe "Conversar com a equipe" e liga número na aba WhatsApp, como a equipe Conduzza; saem a dica "Nesta fase, só a equipe Conduzza liga..." e a linha "Depois de desligar, só a equipe Conduzza liga de novo.". Continuam com a equipe Conduzza: "Atendendo os contatos" e, com a clínica nele, ligar número. Detalhe no `docs/03`, seção 36, e no `docs/04`, seção 50.
+
 ### [x] Correções do teste de 10/11/2026 `P` (relato do dono; publicado, sem migration)
 
 - **Cartão "Limites para marcar consulta" duplicado em Regras e limites:** os limites e os prazos vazios davam a mesma chave aos dois cartões (`[null,null]`), e o React, ao remontar depois de salvar, deixava o cartão antigo na tela, duplicado e sem aceitar digitação. Cada chave leva agora o nome da parte (`chavesDosFormularios`).

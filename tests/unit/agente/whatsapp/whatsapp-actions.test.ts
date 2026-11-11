@@ -22,9 +22,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //     entra com a confirmacao explicita: sem ela, o aviso com o nome e a
 //     leitura na trilha, sem gravar;
 //   - 42501 vira texto de permissao; telefone e nome nunca vao para log;
-//   - E3: ligar o atendimento pelo WhatsApp (modo equipe e ligar numero) e
-//     so do super admin; o administrador recebe soEquipeConduzzaLiga sem
-//     banco e continua desligando. O telefone novo exige a confirmacao do
+//   - ligar o atendimento pelo WhatsApp (modo equipe e ligar numero): o
+//     administrador e o super admin desde 10/11/2026 (de 13/10 ate ali, so o
+//     super admin); na producao, ligar numero so o super admin
+//     (numeroEmProducaoSoPelaEquipe). O telefone novo exige a confirmacao do
 //     aviso da OpenAI, que vai para audit_log; a recusa do banco por numero
 //     da plataforma ou telefone de paciente vira o texto certo, e so o super
 //     admin recebe pedeForcar;
@@ -567,14 +568,9 @@ describe("ligar e desligar na clínica", () => {
       telefones: [],
       interruptorLigado: true,
     } satisfies DadosFalsos;
-    // (O administrador escolhendo "Conversar com a equipe" ja para antes,
-    // em "so a equipe Conduzza liga"; o super admin chega na producao.)
     for (const superAdmin of [false, true]) {
       registro.superAdmin = superAdmin;
-      const escolhas = superAdmin
-        ? (["desligado", "simulador", "equipe"] as const)
-        : (["desligado", "simulador"] as const);
-      for (const escolha of escolhas) {
+      for (const escolha of ["desligado", "simulador", "equipe"] as const) {
         expect(
           await definirEscolhaDaIaAction({ escolha }),
           `${escolha} ${superAdmin}`,
@@ -956,7 +952,7 @@ describe("telefones da equipe", () => {
   });
 });
 
-describe("E3: ligar o modo e o número é só da equipe Conduzza", () => {
+describe("ligar o modo e o número: o administrador e a equipe Conduzza (10/11/2026)", () => {
   const ligarOAtendimento = [
     () => definirEscolhaDaIaAction({ escolha: "equipe" }),
     () => alternarNumeroDaIaAction({ whatsappAccountId: NUMERO, ligado: true }),
@@ -978,15 +974,48 @@ describe("E3: ligar o modo e o número é só da equipe Conduzza", () => {
       }),
   ] as const;
 
-  it("administrador da clínica: modo equipe e número com a dica da equipe Conduzza, sem banco", async () => {
-    for (const acao of ligarOAtendimento) {
-      expect(await acao()).toEqual({
-        ok: false,
-        error: TEXTOS_DA_IA.soEquipeConduzzaLiga,
-      });
+  it("administrador da clínica liga modo, número e telefone (decisão do dono de 10/11/2026)", async () => {
+    for (const acao of ligarTudo) {
+      expect(await acao()).toEqual({ ok: true });
     }
-    expect(registro.rpcs).toEqual([]);
-    expect(registro.revalidados).toEqual([]);
+    expect(
+      registro.rpcs
+        .filter((r) => r.nome !== "definir_contato_liberado_da_ia")
+        .map((r) => [r.nome, r.args.p_modo ?? r.args.p_ativo]),
+    ).toEqual([
+      ["definir_liberacao_da_ia", "contatos"],
+      ["definir_numero_da_ia", true],
+    ]);
+  });
+
+  it("em produção, ligar número fica com a equipe Conduzza; desligar continua livre", async () => {
+    registro.dados = dadosCompletos({
+      liberacao: {
+        liberada: true,
+        modo: "numero_inteiro",
+        pausadaPelaClinica: false,
+        tetoDiarioCentavosUsd: 500,
+      },
+    });
+    expect(
+      await alternarNumeroDaIaAction({ whatsappAccountId: NUMERO, ligado: true }),
+    ).toEqual({
+      ok: false,
+      error: TEXTOS_DA_IA.numeroEmProducaoSoPelaEquipe,
+    });
+    expect(registro.rpcs.map((r) => r.nome)).not.toContain(
+      "definir_numero_da_ia",
+    );
+    expect(
+      await alternarNumeroDaIaAction({
+        whatsappAccountId: NUMERO,
+        ligado: false,
+      }),
+    ).toEqual({ ok: true });
+    registro.superAdmin = true;
+    expect(
+      await alternarNumeroDaIaAction({ whatsappAccountId: NUMERO, ligado: true }),
+    ).toEqual({ ok: true });
   });
 
   it("administrador desliga: modo, número e telefone", async () => {
@@ -1021,7 +1050,7 @@ describe("E3: ligar o modo e o número é só da equipe Conduzza", () => {
     }
   });
 
-  it("42501 do banco ao ligar o modo ou o número vira a dica da equipe Conduzza", async () => {
+  it("42501 do banco ao ligar o modo ou o número: o texto de permissão", async () => {
     registro.superAdmin = true;
     registro.errosDoRpc.set("definir_liberacao_da_ia", {
       code: "42501",
@@ -1034,10 +1063,10 @@ describe("E3: ligar o modo e o número é só da equipe Conduzza", () => {
     for (const acao of ligarOAtendimento) {
       expect(await acao()).toEqual({
         ok: false,
-        error: TEXTOS_DA_IA.soEquipeConduzzaLiga,
+        error: TEXTOS_DA_IA.semPermissao,
       });
     }
-    // Desligar recusado continua com o texto de permissao.
+    // Desligar recusado tambem.
     expect(
       await alternarNumeroDaIaAction({
         whatsappAccountId: NUMERO,

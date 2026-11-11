@@ -38,9 +38,10 @@ import { adminClient, anonClient } from "./stack";
 //   - conversation em 'ia_atendendo' pela sessao: 42501 (so_pelo_devolver)
 //     no UPDATE e no INSERT, mesmo com tudo liberado; troca de contact_id
 //     com a conversa na IA tambem 42501;
-//   - ligar o atendimento pelo WhatsApp (modo contatos e numero) so pela
-//     equipe Conduzza: o administrador recebe 42501 e consegue desligar; o
-//     servidor (service role) liga;
+//   - ligar o atendimento pelo WhatsApp (modo contatos e numero): o
+//     administrador liga e desliga desde a decisao do dono de 10/11/2026
+//     (migration 20261110140000; antes, so a equipe Conduzza); o servidor
+//     (service role) tambem liga;
 //   - telefone da equipe (decisao do dono de 19/10/2026, migration
 //     20261019100000): o administrador da clinica liga (sem forcar),
 //     desliga e liga de novo, com a trilha no nome dele; gestor, recepcao,
@@ -56,8 +57,8 @@ import { adminClient, anonClient } from "./stack";
 //     (com o booleano motor_parado); recepcao e outra clinica 42501;
 //   - varios numeros (decisao do dono de 19/10/2026, migration
 //     20261019110000): o servidor liga o segundo numero da A sem desligar o
-//     primeiro; o administrador desliga um sem mexer no outro e nao liga
-//     nenhum (42501, mesmo com o outro ligado); a situacao ve a conversa
+//     primeiro; o administrador desliga um sem mexer no outro e, desde
+//     10/11/2026, liga de novo; a situacao ve a conversa
 //     aberta com a equipe em qualquer numero ligado e deixa de ver a do
 //     numero desligado.
 //   - revisao de producao de 19/10/2026 (migration 20261019120000): a
@@ -1080,10 +1081,8 @@ describe("devolver_para_ia e ia_devolver_disponivel", () => {
   });
 });
 
-describe("ligar o WhatsApp: modo e numero so pela equipe Conduzza; telefone tambem pelo administrador", () => {
-  const SO_A_EQUIPE = "Somente a equipe do Conduzza libera a IA.";
-
-  it("o administrador recebe 42501 ao ligar modo contatos e numero; o forcar sem a confirmacao do teste da 23514 (com e sem sinal de paciente); e desliga", async () => {
+describe("ligar o WhatsApp: modo, numero e telefone tambem pelo administrador (10/11/2026)", () => {
+  it("o administrador liga o modo contatos e o numero; o forcar sem a confirmacao do teste da 23514 (com e sem sinal de paciente); e desliga", async () => {
     const adminA = como("admin-a");
     for (const [nome, args] of [
       [
@@ -1099,9 +1098,10 @@ describe("ligar o WhatsApp: modo e numero so pela equipe Conduzza; telefone tamb
         },
       ],
     ] as const) {
-      const { error } = await adminA.rpc(nome, args);
-      expect(error?.code, nome).toBe(PERMISSAO_NEGADA);
-      expect(error?.message, nome).toBe(SO_A_EQUIPE);
+      // a A ja estava em contatos, com o numero ligado: nada muda
+      const { data: ligou, error } = await adminA.rpc(nome, args);
+      expect(error, nome).toBeNull();
+      expect(ligou, nome).toBe(true);
     }
     // Onda 2 (P3 (a), migration 20261022110000): o forcar do administrador
     // nao e mais 42501; sem a confirmacao do teste com paciente, 23514,
@@ -1498,8 +1498,6 @@ describe("confirmacao do aviso da OpenAI no banco (migration 20261019120000)", (
 });
 
 describe("varios numeros ligados (decisao do dono de 19/10/2026)", () => {
-  const SO_A_EQUIPE = "Somente a equipe do Conduzza libera a IA.";
-
   async function numerosDaA(): Promise<Record<string, boolean>> {
     const { data } = await admin
       .from("ia_numero_liberado")
@@ -1614,22 +1612,28 @@ describe("varios numeros ligados (decisao do dono de 19/10/2026)", () => {
       ),
     ).toEqual([]);
 
-    // o administrador nao liga de novo, mesmo com o outro ligado: 42501, a
-    // mensagem de hoje, e nada muda
-    const { error: aoLigar } = await adminA.rpc("definir_numero_da_ia", {
-      p_clinic_id: clinicaA,
-      p_whatsapp_account_id: segundoNumeroA,
-      p_ativo: true,
-    });
-    expect(aoLigar?.code).toBe(PERMISSAO_NEGADA);
-    expect(aoLigar?.message).toBe(SO_A_EQUIPE);
-    expect(await numerosDaA()).toEqual({
-      [numeroA]: true,
-      [segundoNumeroA]: false,
-    });
+    // o administrador liga de novo (10/11/2026) sem mexer no primeiro, e
+    // desliga outra vez (o estado do fim e o de antes)
+    for (const ativo of [true, false]) {
+      const { data: ficou, error: erro } = await adminA.rpc(
+        "definir_numero_da_ia",
+        {
+          p_clinic_id: clinicaA,
+          p_whatsapp_account_id: segundoNumeroA,
+          p_ativo: ativo,
+        },
+      );
+      expect(erro).toBeNull();
+      expect(ficou).toBe(ativo);
+      expect(await numerosDaA()).toEqual({
+        [numeroA]: true,
+        [segundoNumeroA]: ativo,
+      });
+    }
 
-    // a trilha do segundo: a do servidor ao ligar e a do administrador ao
-    // desligar; nenhuma do primeiro (ninguem o desligou junto)
+    // a trilha do segundo: a do servidor ao ligar e as tres do
+    // administrador (desligar, ligar e desligar); nenhuma do primeiro
+    // (ninguem o desligou junto)
     const { data: trilha } = await admin
       .from("audit_log")
       .select("user_id")
@@ -1639,7 +1643,14 @@ describe("varios numeros ligados (decisao do dono de 19/10/2026)", () => {
       .throwOnError();
     expect(
       (trilha as { user_id: string | null }[]).map((l) => l.user_id).sort(),
-    ).toEqual([ids.get("admin-a")!, null].sort());
+    ).toEqual(
+      [
+        ids.get("admin-a")!,
+        ids.get("admin-a")!,
+        ids.get("admin-a")!,
+        null,
+      ].sort(),
+    );
     const { count: trilhaDoPrimeiroDepois } = await admin
       .from("audit_log")
       .select("id", { count: "exact", head: true })
