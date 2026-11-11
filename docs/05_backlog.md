@@ -1890,6 +1890,10 @@ Arquitetura no `docs/03`, seção 28; banco no `docs/04`, seção 44; LGPD no `d
 
 **Estado (06/11/2026):** publicado. Conferência da junção com os remédios e o portão: 20.285 testes, typecheck, lint e build verdes; ensaio e provas na produção no `docs/04`, seção 44. **Não rodou:** a OpenAI de verdade com o esquema novo do leitor (se recusar, toda foto e PDF vão para a equipe: falha fechada). **Limites conhecidos:** a nota interna só aparece quando a equipe abre a conversa; o agente não pede RG, CNH ou CPF (não construído); a carteirinha de dependente grava no contato da conversa, só quando o campo está vazio.
 
+### [x] Verificador: o nome do cadastro com parênteses não é formato inválido `P` (11/11/2026, publicado, sem migration)
+
+A lista de convênios ("constam Bradesco Saúde (Nacional Flex e Top)... Unimed (Unimed Natal (Estadual e Nacional).") foi barrada como formato inválido e a conversa foi para a equipe. A política do verificador passa a dizer que os nomes do cadastro, com parênteses e pontuação imperfeita, e dizer o que a clínica atende não são formato inválido. As vedações não mudam. Detalhe no `docs/03`, seção 38.
+
 ### [x] O envio da IA espera o uazapi pelo que sobrou do turno `P` (11/11/2026, publicado, sem migration)
 
 No primeiro teste real, o uazapi respondeu depois de 10 s com a resposta da IA já entregue: a mensagem ficou "Não foi entregue" e a conversa saiu da IA. O envio da IA passa a esperar de 10 a 25 s, pelo que sobrou do turno. Detalhe no `docs/03`, seção 37.
