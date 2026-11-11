@@ -470,33 +470,32 @@ describe("teto e textos", () => {
   });
 });
 
-// E3 (13/10/2026): nesta fase, ligar o atendimento pelo WhatsApp (modo
-// equipe e usar numero) e so da equipe Conduzza. O administrador ve esses
-// controles desabilitados, com a dica; desligar continua com ele. Telefone
+// Ligar o atendimento pelo WhatsApp: de 13/10 (E3) ate 10/11/2026 era so da
+// equipe Conduzza; desde a decisao do dono de 10/11/2026 o administrador
+// escolhe "Conversar com a equipe" e liga numero (na producao, ligar numero
+// continua com a equipe Conduzza). Telefone
 // da equipe (decisao do dono de 19/10/2026): adicionar e "Ligar de novo"
 // habilitados para o administrador; "Usar mesmo assim" so para o super
 // admin. A aba diz a verdade (motivos novos), a linha do telefone que nao
 // aciona o assistente tem estado proprio, e o formulario pede sempre a
 // confirmacao do aviso da OpenAI.
-describe("ligar só pela equipe Conduzza (E3)", () => {
+describe("ligar pelo WhatsApp: o administrador e a equipe Conduzza (10/11/2026)", () => {
   const DOIS_NUMEROS = [
     numero(),
     numero({ id: SEGUNDO, nome: "Unidade Centro" }),
   ];
 
-  it("administrador: modo equipe e número visíveis e presos, com a dica; desligar livre", () => {
+  it("administrador: modo equipe e número livres, ligar e desligar", () => {
     const html = aba({ numeros: DOIS_NUMEROS });
-    // o modo equipe ja gravado continua pressionado; a troca para equipe so
-    // e possivel saindo dele, e ai fica presa (ver o teste seguinte)
     expect(botaoDesabilitado(html, "Desligado")).toBe(false);
     expect(botaoDesabilitado(html, "Só simulador")).toBe(false);
-    // numero: desligar livre; ligar outro, preso com a dica
+    // numero: desligar e ligar outro, livres e sem dica
     const ligado = linhaDoNumero(html, "Número principal");
     expect(botaoDesabilitado(ligado, "Desligar")).toBe(false);
     expect(botaoComDica(ligado, "Desligar")).toBe(false);
     const outro = linhaDoNumero(html, "Unidade Centro");
-    expect(botaoDesabilitado(outro, "Ligar")).toBe(true);
-    expect(botaoComDica(outro, "Ligar")).toBe(true);
+    expect(botaoDesabilitado(outro, "Ligar")).toBe(false);
+    expect(botaoComDica(outro, "Ligar")).toBe(false);
     // telefone: desligar livre
     const telefones = html.slice(html.indexOf("Telefones da equipe"));
     expect(botaoDesabilitado(telefones, "Desligar")).toBe(false);
@@ -571,14 +570,40 @@ describe("ligar só pela equipe Conduzza (E3)", () => {
     expect(html).toContain(escapado(TEXTOS_DA_IA.telefoneInvalidoNaLinha));
   });
 
-  it("administrador com o assistente desligado: Conversar com a equipe preso, e a frase visível", () => {
+  it("administrador com o assistente desligado: liga Conversar com a equipe e o número, como o super admin (10/11/2026)", () => {
     const html = aba({
+      numeros: DOIS_NUMEROS,
       dados: dados({ liberacao: null }),
     });
-    expect(botaoDesabilitado(html, "Conversar com a equipe")).toBe(true);
+    expect(botaoDesabilitado(html, "Conversar com a equipe")).toBe(false);
     expect(botaoDesabilitado(html, "Só simulador")).toBe(false);
-    expect(html).toContain(escapado(TEXTOS_DA_IA.soEquipeConduzzaLiga));
+    expect(botaoDesabilitado(cartaoDosNumeros(html), "Ligar")).toBe(false);
+    expect(html).not.toContain("Nesta fase, só a equipe Conduzza liga");
     expect(html).not.toContain(escapado(TEXTOS_DA_IA.faltaParaAEquipe));
+  });
+
+  it("administrador com o assistente atendendo os contatos: ligar número fica com a equipe Conduzza", () => {
+    const emProducao = dados({
+      numerosLigados: [NUMERO],
+      liberacao: {
+        liberada: true,
+        modo: "numero_inteiro",
+        pausadaPelaClinica: false,
+        tetoDiarioCentavosUsd: 500,
+      },
+    });
+    const doAdministrador = aba({ dados: emProducao, numeros: DOIS_NUMEROS });
+    const desligado = linhaDoNumero(doAdministrador, "Unidade Centro");
+    expect(botaoDesabilitado(desligado, "Ligar")).toBe(true);
+    expect(botaoComDica(desligado, "Ligar")).toBe(true);
+    const doSuperAdmin = aba({
+      superAdmin: true,
+      dados: emProducao,
+      numeros: DOIS_NUMEROS,
+    });
+    expect(
+      botaoDesabilitado(linhaDoNumero(doSuperAdmin, "Unidade Centro"), "Ligar"),
+    ).toBe(false);
   });
 
   it("super admin: liga tudo", () => {
@@ -591,7 +616,6 @@ describe("ligar só pela equipe Conduzza (E3)", () => {
     expect(botaoDesabilitado(cartaoDosNumeros(html), "Ligar")).toBe(false);
     expect(botaoDesabilitado(html, "Adicionar")).toBe(false);
     expect(botaoDesabilitado(html, "Ligar de novo")).toBe(false);
-    expect(html).not.toContain(escapado(TEXTOS_DA_IA.soEquipeConduzzaLiga));
   });
 });
 
@@ -933,7 +957,7 @@ describe("vários números ligados (19/10/2026)", () => {
     }
   });
 
-  it("administrador: desliga qualquer um; ligar o outro fica preso com a dica de hoje", () => {
+  it("administrador: desliga qualquer um e liga o outro (10/11/2026)", () => {
     const html = aba({
       dados: dados({ numerosLigados: [NUMERO] }),
       numeros: DOIS_NUMEROS,
@@ -941,11 +965,7 @@ describe("vários números ligados (19/10/2026)", () => {
     const ligado = linhaDoNumero(html, "Número principal");
     expect(botaoDesabilitado(ligado, "Desligar")).toBe(false);
     const desligado = linhaDoNumero(html, "Numero 2 teste pessoal");
-    expect(botaoDesabilitado(desligado, "Ligar")).toBe(true);
-    expect(botaoComDica(desligado, "Ligar")).toBe(true);
-    expect(TEXTOS_DA_IA.soEquipeConduzzaLiga).toBe(
-      "Nesta fase, só a equipe Conduzza liga o atendimento pelo WhatsApp.",
-    );
+    expect(botaoDesabilitado(desligado, "Ligar")).toBe(false);
   });
 
   it("nenhum travessão com vários números", () => {
@@ -975,55 +995,12 @@ describe("vários números ligados (19/10/2026)", () => {
 // novo (A4); para o super admin, os motivos sem "avise a equipe Conduzza"
 // (A3 do caminho).
 describe("revisão de produção (19/10/2026)", () => {
-  const APOIO = "Depois de desligar, só a equipe Conduzza liga de novo.";
-
-  it("administrador com o WhatsApp ligado: a linha de apoio junto do seletor e de cada número ligado", () => {
+  it("administrador: sem a linha de quem não liga de novo (10/11/2026: ele liga)", () => {
     const html = aba({
       dados: dados({ numerosLigados: [NUMERO, SEGUNDO] }),
       numeros: [numero(), numero({ id: SEGUNDO, nome: "Unidade Centro" })],
     });
-    // o seletor (antes do cartao dos numeros) e as duas linhas
-    const antesDosNumeros = html.slice(
-      0,
-      html.indexOf("Números do assistente"),
-    );
-    expect(antesDosNumeros).toContain(escapado(APOIO));
-    expect(linhaDoNumero(html, "Número principal")).toContain(escapado(APOIO));
-    expect(linhaDoNumero(html, "Unidade Centro")).toContain(escapado(APOIO));
-  });
-
-  it("número desligado do assistente: sem a linha (o Ligar já diz quem liga)", () => {
-    const html = aba({
-      superAdmin: false,
-      numeros: [numero(), numero({ id: SEGUNDO, nome: "Unidade Centro" })],
-    });
-    expect(linhaDoNumero(html, "Unidade Centro")).not.toContain(
-      escapado(APOIO),
-    );
-  });
-
-  it("super admin e gestor: sem a linha de apoio", () => {
-    expect(aba({ superAdmin: true })).not.toContain(escapado(APOIO));
-    expect(aba({ podeEditar: false })).not.toContain(escapado(APOIO));
-  });
-
-  it("só simulador: o seletor sem a linha (o simulador ele religa); os números ligados com ela", () => {
-    const html = aba({
-      dados: dados({
-        liberacao: {
-          liberada: true,
-          modo: "simulador",
-          pausadaPelaClinica: false,
-          tetoDiarioCentavosUsd: 500,
-        },
-      }),
-    });
-    const antesDosNumeros = html.slice(
-      0,
-      html.indexOf("Números do assistente"),
-    );
-    expect(antesDosNumeros).not.toContain(escapado(APOIO));
-    expect(linhaDoNumero(html, "Número principal")).toContain(escapado(APOIO));
+    expect(html).not.toContain("liga de novo");
   });
 
   it("super admin: os motivos dizem o que conferir; os outros papéis, o texto de sempre", () => {

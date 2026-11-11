@@ -19,11 +19,12 @@ import { adminClient, anonClient } from "./stack";
 //     autenticado le so o booleano, anon nao;
 //   - definir_liberacao_da_ia, definir_numero_da_ia e
 //     definir_contato_liberado_da_ia: o ADMINISTRADOR ativo da propria
-//     clinica (da lista ou de teste) DESLIGA e poe em "So simulador", com a
-//     trilha no nome dele; LIGAR o atendimento pelo WhatsApp (modo contatos
-//     e numero) e so da equipe Conduzza nesta fase (E3, decisao do dono de
-//     13/10/2026, migration 20261013100000): o administrador recebe 42501 e
-//     o sistema liga. TELEFONE da equipe (decisao do dono de 19/10/2026,
+//     clinica (da lista ou de teste) DESLIGA, poe em "So simulador" e, desde
+//     a decisao do dono de 10/11/2026 (migration 20261110140000), LIGA o
+//     modo contatos e o numero, com a trilha no nome dele (de 13/10 ate ali
+//     era so a equipe Conduzza); numero_inteiro (a producao) continua so da
+//     equipe Conduzza (42501), e o numero de outra clinica, o gatilho
+//     recusa (23503). TELEFONE da equipe (decisao do dono de 19/10/2026,
 //     migration 20261019100000): o administrador liga (sem o nono digito,
 //     gravado pela chave canonica) e desliga; o forcar dele da 42501.
 //     Telefone NOVO exige a confirmacao do aviso da OpenAI, que o banco
@@ -791,7 +792,7 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
     }
   });
 
-  it("o administrador da A desliga e poe em So simulador; ligar o modo contatos e o numero e so da equipe Conduzza (42501); telefone, o administrador liga e desliga (19/10/2026)", async () => {
+  it("o administrador da A liga e desliga o modo contatos e o numero (10/11/2026), nunca numero_inteiro (42501) nem numero de outra clinica (23503); telefone, o administrador liga e desliga (19/10/2026)", async () => {
     const adminA = como("admin-a");
     const ok = async (
       cliente: SupabaseClient,
@@ -809,9 +810,10 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
     };
     const antes = await liberacaoDaA();
 
-    // modo: o administrador poe em simulador; voltar para contatos (com o
-    // modo informado ou religando com o modo nulo numa linha em contatos) e
-    // so da equipe Conduzza; o sistema religa
+    // modo: o administrador poe em simulador e volta para contatos (com o
+    // modo informado e religando com o modo nulo numa linha em contatos),
+    // desde a decisao do dono de 10/11/2026; numero_inteiro (a producao)
+    // continua so da equipe Conduzza
     await ok(
       adminA,
       "definir_liberacao_da_ia",
@@ -828,28 +830,36 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       modo: "simulador",
       alterado_por: ids.get("admin-a"),
     });
-    await negado("definir_liberacao_da_ia", {
-      p_clinic_id: clinicaA,
-      p_liberada: true,
-      p_modo: "contatos",
-    });
     await ok(
-      admin,
+      adminA,
       "definir_liberacao_da_ia",
-      {
-        p_clinic_id: clinicaA,
-        p_liberada: true,
-        p_modo: "contatos",
-        p_motivo: "teste de RLS",
-      },
+      { p_clinic_id: clinicaA, p_liberada: true, p_modo: "contatos" },
       true,
     );
+    await ok(
+      adminA,
+      "definir_liberacao_da_ia",
+      { p_clinic_id: clinicaA, p_liberada: true, p_modo: null },
+      true,
+    );
+    const { data: emContatos } = await admin
+      .from("ia_liberacao")
+      .select("modo, liberada, alterado_por")
+      .eq("clinic_id", clinicaA)
+      .single()
+      .throwOnError();
+    expect(emContatos).toEqual({
+      modo: "contatos",
+      liberada: true,
+      alterado_por: ids.get("admin-a"),
+    });
     await negado("definir_liberacao_da_ia", {
       p_clinic_id: clinicaA,
       p_liberada: true,
-      p_modo: null,
+      p_modo: "numero_inteiro",
     });
-    // desligar continua com o administrador; o sistema religa
+    // desligar continua com o administrador; o sistema religa (o motivo de
+    // antes, para o retrato do fim)
     await ok(
       adminA,
       "definir_liberacao_da_ia",
@@ -868,12 +878,12 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       true,
     );
 
-    // numeros (decisao do dono de 19/10/2026, migration 20261019110000):
-    // o sistema liga o segundo e o da A CONTINUA ligado (os dois ao mesmo
-    // tempo); o administrador desliga o segundo sem mexer no da A e nao
-    // liga nenhum (42501, nem com o outro ligado)
+    // numeros (decisao do dono de 19/10/2026, migration 20261019110000; o
+    // administrador liga desde 10/11/2026): o administrador liga o segundo e
+    // o da A CONTINUA ligado (os dois ao mesmo tempo), e desliga o segundo
+    // sem mexer no da A
     await ok(
-      admin,
+      adminA,
       "definir_numero_da_ia",
       {
         p_clinic_id: clinicaA,
@@ -900,18 +910,10 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       [numeroA]: true,
       [segundoNumeroA]: false,
     });
-    await negado("definir_numero_da_ia", {
-      p_clinic_id: clinicaA,
-      p_whatsapp_account_id: segundoNumeroA,
-      p_ativo: true,
-    });
-    expect(await numerosDaA()).toEqual({
-      [numeroA]: true,
-      [segundoNumeroA]: false,
-    });
-    // o numero da B pela A (pelo sistema): o gatilho recusa (numero de outra
-    // clinica) e nada muda, nem o desligar do numero da A que vinha antes
-    const { error: numeroDaB } = await admin.rpc("definir_numero_da_ia", {
+    // o numero da B pelo administrador da A: o gatilho recusa (numero de
+    // outra clinica) e nada muda, nem o desligar do numero da A que vinha
+    // antes
+    const { error: numeroDaB } = await adminA.rpc("definir_numero_da_ia", {
       p_clinic_id: clinicaA,
       p_whatsapp_account_id: numeroB,
       p_ativo: true,
@@ -985,10 +987,11 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
     );
     expect(depois.contatos).toHaveLength((antes.contatos ?? []).length + 1);
 
-    // trilha no nome do administrador: so o que ele fez (simulador e
-    // desligar, desligar o segundo numero, ligar e desligar o telefone); os
-    // 42501 nao deixaram trilha, e ligar o segundo pelo sistema nao gravou
-    // linha de "numero desligado junto" no nome de ninguem
+    // trilha no nome do administrador: so o que ele fez (simulador, contatos,
+    // religar e desligar; ligar e desligar o segundo numero; ligar e
+    // desligar o telefone); o 42501 e o 23503 nao deixaram trilha, e ligar
+    // o segundo nao gravou linha de "numero desligado junto" no nome de
+    // ninguem
     const { data: trilha } = await admin
       .from("audit_log")
       .select("entity, action, entity_id")
@@ -1005,9 +1008,14 @@ describe("RPCs de liberacao: o administrador da propria clinica da lista (ou de 
       action: string;
       entity_id: string | null;
     }[];
-    expect(linhas.filter((l) => l.entity === "ia_liberacao")).toHaveLength(2);
+    expect(linhas.filter((l) => l.entity === "ia_liberacao")).toHaveLength(4);
     const doNumero = linhas.filter((l) => l.entity === "ia_numero_liberado");
     expect(doNumero).toEqual([
+      {
+        entity: "ia_numero_liberado",
+        action: "editou",
+        entity_id: segundoNumeroA,
+      },
       {
         entity: "ia_numero_liberado",
         action: "editou",
@@ -1575,7 +1583,8 @@ describe("onda 2: excluir telefone, numero_inteiro fora da producao e a pausa", 
           .update({ modo: "numero_inteiro" })
           .eq("clinic_id", clinicaF);
         expect(direto?.code).toBe(PERMISSAO_NEGADA);
-        // o administrador nem chega na trava (ligar e da equipe Conduzza)
+        // o administrador nem chega na trava (numero_inteiro e da equipe
+        // Conduzza)
         const { error: doAdmin } = await como("admin-f").rpc(
           "definir_liberacao_da_ia",
           {
