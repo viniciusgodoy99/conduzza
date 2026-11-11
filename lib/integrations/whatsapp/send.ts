@@ -1269,7 +1269,17 @@ export type EnvioDaIaInput = {
   workerId: string;
   /** O numero da conversa (assercao, como hoje). */
   whatsappAccountId: string;
+  /**
+   * Quanto o provedor pode demorar a responder, em ms (o que sobrou do
+   * turno; responder-com-ia, prazoDoEnvioMs). Ausente: o padrao dele.
+   */
+  prazoDoEnvioMs?: number;
 };
+
+/** O prazo do envio no extra do provedor, quando quem chamou deu um. */
+function comPrazo(extra: EnvioExtra, prazoMs: number | undefined): EnvioExtra {
+  return prazoMs === undefined ? extra : { ...extra, prazoMs };
+}
 
 /** Teto curto da espera do slot: adiar nao custa nada (o motor reagenda). */
 const ESPERA_MAXIMA_DA_IA_MS = 3_000;
@@ -1334,7 +1344,12 @@ export async function enviarRespostaDaIa(
     {
       bodyRegistrado: texto,
       enviar: (provider, ref, to, extra) =>
-        provider.sendText(ref, to, texto, extra),
+        provider.sendText(
+          ref,
+          to,
+          texto,
+          comPrazo(extra, input.prazoDoEnvioMs),
+        ),
     },
     { tipo: "resposta", jobId: input.jobId, workerId: input.workerId },
   );
@@ -1425,7 +1440,12 @@ export async function enviarPreparoAprovadoDaIa(
               "A orientação de preparo não confere com o texto aprovado. Nada foi enviado.",
           };
         }
-        return provider.sendText(ref, to, agora, extra);
+        return provider.sendText(
+          ref,
+          to,
+          agora,
+          comPrazo(extra, input.prazoDoEnvioMs),
+        );
       },
     },
     { tipo: "resposta", jobId: input.jobId, workerId: input.workerId },
@@ -1464,7 +1484,12 @@ export async function enviarFraseFixaDaIa(
     {
       bodyRegistrado: FRASE_DE_ESCALONAMENTO,
       enviar: (provider, ref, to, extra) =>
-        provider.sendText(ref, to, FRASE_DE_ESCALONAMENTO, extra),
+        provider.sendText(
+          ref,
+          to,
+          FRASE_DE_ESCALONAMENTO,
+          comPrazo(extra, input.prazoDoEnvioMs),
+        ),
     },
     { tipo: "frase", jobId: input.jobId, workerId: input.workerId },
   );

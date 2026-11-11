@@ -52,6 +52,13 @@ export type EnvioExtra = {
    * envio da Tela 7.
    */
   rastreioId?: string | null;
+  /**
+   * Quanto esperar a resposta do provedor, em ms. Ausente: o padrao dele. O
+   * envio da IA, que roda em segundo plano, espera o que sobrou do turno
+   * (11/11/2026: o uazapi respondeu depois de 10 s com a mensagem ja
+   * entregue, e o envio virou "incerto"). Nunca vai no corpo da chamada.
+   */
+  prazoMs?: number;
 };
 
 export type DeleteResult =

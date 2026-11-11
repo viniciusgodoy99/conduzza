@@ -287,6 +287,31 @@ export const RESERVA_DO_ENVIO_MS = 14_000;
 export const RESERVA_DAS_GRAVACOES_MS = 3_000;
 /** Abaixo disto de prazo para o turno, nem comeca: volta para a fila. */
 export const PRAZO_MINIMO_DO_TURNO_MS = 20_000;
+/**
+ * Quanto o envio espera a resposta do provedor: no minimo o de sempre (10 s,
+ * o que a RESERVA_DO_ENVIO_MS cobre, com os 3 s da espera do slot) e no
+ * maximo isto. Em 11/11/2026 o uazapi respondeu depois de 10 s com a
+ * mensagem ja entregue: o envio virou "incerto" e a conversa saiu da IA.
+ */
+export const PRAZO_MINIMO_DO_ENVIO_MS = 10_000;
+export const PRAZO_MAXIMO_DO_ENVIO_MS = 25_000;
+/** A espera do slot (3 s, send.ts) e uma folga, antes do envio. */
+const ANTES_DO_ENVIO_MS = 4_000;
+
+/**
+ * O prazo da chamada ao provedor: o que sobrou da invocacao, menos a espera
+ * do slot e as gravacoes depois do envio, entre o minimo e o maximo. O turno
+ * so envia com RESERVA_DO_ENVIO_MS sobrando, entao o minimo sempre cabe.
+ */
+export function prazoDoEnvioMs(restante: number): number {
+  return Math.min(
+    PRAZO_MAXIMO_DO_ENVIO_MS,
+    Math.max(
+      PRAZO_MINIMO_DO_ENVIO_MS,
+      restante - ANTES_DO_ENVIO_MS - RESERVA_DAS_GRAVACOES_MS,
+    ),
+  );
+}
 // [AG6b mídia] início
 /**
  * AG6b (desenho 5.1): com audio a transcrever ou arquivo a ler, o turno
@@ -2522,6 +2547,7 @@ async function enviarAFrase(
         jobId: c.job.id,
         workerId: c.workerId,
         whatsappAccountId: destino.whatsappAccountId,
+        prazoDoEnvioMs: prazoDoEnvioMs(restanteMs(c)),
       });
     } catch {
       resultado = null;
@@ -2693,6 +2719,7 @@ async function enviarResposta(
     jobId: c.job.id,
     workerId: c.workerId,
     whatsappAccountId: destino.whatsappAccountId,
+    prazoDoEnvioMs: prazoDoEnvioMs(restanteMs(c)),
   };
   // [AG7 preparo] O despacho: a resposta ou o preparo.
   const resultado =
