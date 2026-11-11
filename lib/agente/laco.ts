@@ -32,10 +32,8 @@
 //     das ferramentas, a configuracao publicada que vai ao modelo e o que
 //     cada ferramenta afirmou de convenio e de acao. Data e hora, endereco,
 //     convenio e acao de agenda so passam com fato; erro ao montar os fatos
-//     e falha fechada. Revisao 2 da AG2: o filtro monta com os fatos um
-//     resumo sem dado de paciente (resumo-dos-fatos.ts, com as respostas da
-//     base que o modelo disse ter usado) e o verificador por modelo tambem
-//     julga fato; resumo que nao monta e falha fechada.
+//     e falha fechada. Desde 11/11/2026 (decisao do dono) o verificador por
+//     modelo julga so as vedacoes do CFM: fato e formato sao so das regras.
 //
 // AG2 (27/10/2026): as consultas do Cadastro (consultar_unidades,
 // consultar_requisitos e buscar_profissionais) leem so o catalogo carregado

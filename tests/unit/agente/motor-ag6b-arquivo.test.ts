@@ -167,9 +167,6 @@ describe("o pedido de exame com os itens no Cadastro (o caminho feliz)", () => {
     // O classificador leu a legenda (antes do leitor).
     expect(textosAoClassificador).toEqual([["quanto fica?"]]);
     // O verificador recebe o fato do pedido (so nomes do Cadastro).
-    expect(pedidosAoVerificador[0]?.resumoDosFatos).toContain(
-      "A pessoa mandou um pedido com: Hemograma, Glicemia de jejum.",
-    );
     expect(r.trilha.map((p) => p.texto)).toContain(
       "Leu o arquivo que a pessoa mandou: pedido com 2 itens do Cadastro.",
     );

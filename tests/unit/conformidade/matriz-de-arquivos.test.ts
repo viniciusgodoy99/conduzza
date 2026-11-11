@@ -36,7 +36,6 @@ import {
   type ItemDoCatalogoDaLeitura,
 } from "@/lib/integrations/llm/leitor-de-midia";
 import { POLITICA_DO_VERIFICADOR } from "@/lib/integrations/llm/verificador";
-import { resumirFatosDoTurno } from "@/lib/domain/conformidade/resumo-dos-fatos";
 import {
   fatosValidos,
   fatosVazios,
@@ -64,7 +63,6 @@ const CONVENIOS: ItemDoCatalogoDaLeitura[] = [
 ];
 const SENTINELA = "99887766554433ZQ";
 const TRAVESSAO = /[–—]/;
-const HOJE = { dia: 6, mes: 11, ano: 2026 };
 
 const CARTEIRINHA = {
   tipo: "carteirinha",
@@ -535,48 +533,14 @@ describe("o filtro nao confia em quem chama", () => {
   });
 });
 
-describe("o resumo dos fatos do verificador", () => {
-  const resumo = (arquivos: FatoDoArquivo[]) => {
-    const r = resumirFatosDoTurno({ ...fatosVazios(2026), hoje: HOJE, arquivos }, "Oi.");
-    if (!r.ok) {
-      throw new Error(r.motivo);
-    }
-    return r.texto;
-  };
-
-  it("cada arquivo numa linha fixa; sem texto do arquivo, sem numero, sem repetir", () => {
-    const texto = resumo([
-      { tipo: "ilegivel" },
-      { tipo: "ilegivel" },
-      { tipo: "outro" },
-      { tipo: "documento" },
-      { tipo: "resto_do_pedido" },
-      { tipo: "carteirinha", convenio: null },
-      { tipo: "carteirinha", convenio: "Unimed\nNacional" },
-    ]);
-    expect(texto.match(/não deu para ler/g)).toHaveLength(1);
-    expect(texto).toContain("perguntar como pode ajudar é permitido");
-    expect(texto).toContain("fica guardado para a equipe");
-    expect(texto).toContain("esses itens a equipe confere na conversa, que continua com a assistente");
-    expect(texto).toContain("convênio que o sistema não reconheceu");
-    expect(texto).toContain("A pessoa mandou a carteirinha do convênio Unimed Nacional: agradecer é permitido. Isso não confirma que a clínica atende o convênio.");
-    expect(texto).not.toMatch(TRAVESSAO);
-  });
-
-  it("sem arquivo, o resumo nao muda", () => {
-    expect(resumirFatosDoTurno({ ...fatosVazios(2026), hoje: HOJE, arquivos: [] }, "Oi.")).toEqual(
-      resumirFatosDoTurno({ ...fatosVazios(2026), hoje: HOJE }, "Oi."),
-    );
-  });
-});
-
 describe("a politica do verificador", () => {
-  it("aceita o que o resumo disser do arquivo, sem liberar o conteudo dele nem as categorias", () => {
+  it("aceita agradecer o arquivo e pedir foto mais nitida, sem liberar o conteudo dele nem as categorias", () => {
     expect(POLITICA_DO_VERIFICADOR).toContain(
-      "Também é permitido o que o resumo dos fatos disser sobre um arquivo que a pessoa mandou, como pedir uma foto mais nítida do arquivo que não deu para ler; isso nunca libera comentar o conteúdo do arquivo.",
+      "Também é permitido agradecer um arquivo que a pessoa mandou, dizer que ele fica guardado para a equipe e pedir uma foto mais nítida; isso nunca libera comentar o conteúdo do arquivo.",
     );
-    expect(POLITICA_DO_VERIFICADOR).toContain("cobertura_nao_verificada");
     expect(POLITICA_DO_VERIFICADOR).toContain("orientacao_clinica");
+    // Desde 11/11/2026 o verificador so julga o CFM.
+    expect(POLITICA_DO_VERIFICADOR).not.toContain("cobertura_nao_verificada");
   });
 });
 

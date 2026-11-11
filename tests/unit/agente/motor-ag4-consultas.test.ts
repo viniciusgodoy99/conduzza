@@ -109,11 +109,6 @@ describe("a lista: só o dia, a hora e a situação", () => {
     expect(r.trilha.map((p) => p.texto)).toContain(
       "Leu as consultas do paciente: quinta, 22/10 às 14:00 (Consulta, Dra. Ana Lima), marcada; terça, 27/10 às 09:00 (Consulta, Dra. Ana Lima), esperando a aprovação da equipe",
     );
-    // O resumo do verificador: dia, hora e unidade; nunca o profissional.
-    const resumo = cenario.verificacao.pedidos[0]?.resumoDosFatos ?? "";
-    expect(resumo).toContain("quinta, 22/10 às 14:00, unidade Centro");
-    expect(resumo).toContain("terça, 27/10 às 09:00, unidade Aldeota");
-    expect(resumo).not.toMatch(/Ana|Consulta,/);
     // A consulta lida nao muda o pedido nem a etapa.
     expect(cenario.estado.pedido_pendente).toBeNull();
   });

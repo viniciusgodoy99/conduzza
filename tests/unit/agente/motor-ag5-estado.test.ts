@@ -200,12 +200,6 @@ describe("a entrada relida no turno seguinte", () => {
       LINHA_DA_ENTRADA,
     );
     expect(r.tipo).toBe("resposta");
-    // O resumo do verificador diz so que a pessoa esta na lista.
-    const resumo = cenario.verificacao.pedidos.at(-1)?.resumoDosFatos ?? "";
-    expect(resumo).toContain(
-      "A pessoa está na lista de espera (entrada feita pela assistente nesta conversa",
-    );
-    expect(resumo).not.toMatch(/Limpeza de pele|Ana Lima|noite/);
   });
 
   it("a entrada relida com outro profissional ou outra preferência dita pelo modelo é barrada", async () => {

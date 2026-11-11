@@ -146,10 +146,6 @@ describe("lista de espera: o caminho feliz", () => {
       "Colocou a pessoa na lista de espera para Limpeza de pele, com Dra. Ana Lima, no particular, à noite, às segundas e às quartas",
     );
     expect(r2.ferramentasUsadas).toEqual(["entrar_na_lista_de_espera"]);
-    // O filtro inteiro rodou nas duas frases, com o resumo sem os nomes.
-    const resumo = cenario.verificacao.pedidos.at(-1)?.resumoDosFatos ?? "";
-    expect(resumo).toContain("colocou a pessoa na lista de espera");
-    expect(resumo).not.toContain("Ana");
     expect(cenario.estado.falhas_seguidas).toBe(0);
     // Nada de texto do paciente em log.
     expect(escrito.join("")).not.toMatch(/Segunda ou quarta|Sim/);

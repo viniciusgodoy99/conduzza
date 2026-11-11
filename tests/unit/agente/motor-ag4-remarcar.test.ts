@@ -207,10 +207,6 @@ describe("remarcar: o caminho feliz", () => {
       horarios_oferecidos: [],
       desfecho: "remarcou",
     });
-    // O resumo do verificador: pendente, e a antiga continua marcada.
-    expect(cenario.verificacao.pedidos.at(-1)?.resumoDosFatos).toContain(
-      "pediu a remarcação para segunda, 26/10 às 08:00, unidade Aldeota, pendente da aprovação da equipe; a consulta de quinta, 22/10 às 14:00, unidade Centro continua marcada até lá",
-    );
 
     // Depois: dizer que ja remarcou sem a pendencia barra; com ela, passa.
     const sem = await cenario.fala({
@@ -247,9 +243,6 @@ describe("remarcar: o caminho feliz", () => {
       ],
     });
     expect(r.tipo).toBe("resposta");
-    expect(cenario.verificacao.pedidos.at(-1)?.resumoDosFatos).toContain(
-      "segunda, 26/10 às 08:00, unidade Aldeota (remarcação pedida pela assistente nesta conversa, pendente da aprovação da equipe)",
-    );
   });
 });
 

@@ -1591,7 +1591,7 @@ describe("a F2 depois de marcar", () => {
     return { r: ultimo!, pedidos, banco3 };
   }
 
-  it("o turno que marcou um procedimento com texto em vigor: a F2 depois da resposta, pelo filtro inteiro e nos colados dos fatos", async () => {
+  it("o turno que marcou um procedimento com texto em vigor: a F2 depois da resposta, pelo filtro inteiro", async () => {
     const catalogo = comPreparo(catalogoDoCadastro());
     const { r, pedidos, banco3 } = await marcar({
       catalogo,
@@ -1602,54 +1602,9 @@ describe("a F2 depois de marcar", () => {
     expect(r.resposta).toBe(
       `Pronto! Sua Consulta de quarta, 21/10 às 14:00 com a Dra. Ana Lima ficou marcada e fica pendente da aprovação da equipe. A confirmação chega por aqui.\n\n${FRASE_DO_PREPARO_DEPOIS_DE_MARCAR}`,
     );
-    // O verificador leu a F2 no rascunho e a viu como texto colado pelo
-    // sistema (nao e afirmacao da recepcionista).
+    // O verificador leu a F2 no rascunho.
     const ultimo = pedidos.at(-1);
     expect(ultimo?.rascunho).toContain(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR);
-    expect(ultimo?.resumoDosFatos).toContain(
-      "Textos fixos da clínica colados pelo sistema nesta resposta",
-    );
-    expect(ultimo?.resumoDosFatos).toContain(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR);
-  });
-
-  it("revisao da AG7 (MOTOR-3): a F2 que o modelo escreve sozinho (sem marcar) nao vai ao verificador como colada pelo sistema", async () => {
-    const pedidos: EntradaDoVerificador[] = [];
-    verificador.mockImplementation(async (pedido) => {
-      pedidos.push(pedido);
-      return {
-        tipo: "veredicto",
-        veredicto: { aprovado: true, violacoes: [], confianca: "alta" },
-        modelo: "gpt-6-luna",
-        uso: { ...USO_LIDO },
-      };
-    });
-    await turno(
-      [
-        final(
-          `Atendemos de segunda a sexta. ${FRASE_DO_PREPARO_DEPOIS_DE_MARCAR}`,
-        ),
-      ],
-      {
-        mensagens: [
-          paciente("Oi"),
-          {
-            autor: "assistente",
-            autoria: "ia",
-            texto: "Olá! Como posso ajudar?",
-          },
-          paciente("Vocês atendem aos sábados?"),
-        ],
-      },
-    );
-    const ultimo = pedidos.at(-1);
-    expect(ultimo?.rascunho).toContain(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR);
-    // A secao dos textos colados nao a lista (so o rascunho a tem).
-    expect(ultimo?.resumoDosFatos).toContain(
-      "Textos fixos da clínica colados pelo sistema nesta resposta",
-    );
-    expect(ultimo?.resumoDosFatos ?? "").not.toContain(
-      FRASE_DO_PREPARO_DEPOIS_DE_MARCAR,
-    );
   });
 
   it("sem texto em vigor do procedimento marcado, ou com a habilidade desligada: sem a F2", async () => {

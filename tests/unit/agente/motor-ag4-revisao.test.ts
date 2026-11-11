@@ -8,7 +8,6 @@ import { criarAgendaDoTurno } from "@/lib/agente/ferramentas/agenda-do-turno";
 import { TEXTO_FIXO_DO_AGENTE } from "@/lib/agente/prompt";
 import { FRASE_DE_ESCALONAMENTO } from "@/lib/domain/conformidade/frase-fixa";
 import { interpretarRespostaAoCancelamento } from "@/lib/domain/resposta-paciente";
-import { POLITICA_DO_VERIFICADOR } from "@/lib/integrations/llm/verificador";
 
 import {
   C1,
@@ -744,23 +743,11 @@ describe("achado 7 (R6): o cancelamento e a remarcacao aprovada no turno seguint
         roteiro: [final(texto)],
       });
       expect(r.tipo, texto).toBe(tipo);
-      // O bloco do modelo e o resumo do verificador dizem a cancelada.
+      // O bloco do modelo diz a cancelada.
       expect(blocoDoEstado(cenario.instrucoesDaChamada(3))).toContain(
         "Consulta cancelada nesta conversa: quinta, 22/10 às 14:00.",
       );
-      if (tipo === "resposta") {
-        expect(cenario.verificacao.pedidos.at(-1)?.resumoDosFatos).toContain(
-          "Consultas que a assistente cancelou nesta conversa, relidas pelo sistema nesta resposta e ainda canceladas (dia e hora juntos):\n- quinta, 22/10 às 14:00, unidade Centro",
-        );
-      }
     }
-  });
-
-  it("a politica do verificador aceita a cancelada e a aprovada do resumo, so com o dia e a hora delas", () => {
-    expect(POLITICA_DO_VERIFICADOR).toContain(
-      "A consulta que o resumo traz como cancelada pela assistente nesta conversa pode ser dada como cancelada, e a remarcação que ele traz como já aprovada pela equipe pode ser dada como remarcada, só com o dia e a hora delas; dar uma delas como marcada ou de pé é acao_nao_executada.",
-    );
-    expect(POLITICA_DO_VERIFICADOR).not.toMatch(/[–—]/);
   });
 
   it("a passagem no turno seguinte: a nota diz a cancelada, nunca \"marcada nesta conversa\"", async () => {
@@ -824,9 +811,6 @@ describe("achado 7 (R6): o cancelamento e a remarcacao aprovada no turno seguint
       roteiro: [final("Sim! Sua consulta foi remarcada para segunda, 26/10 às 08:00.")],
     });
     expect(r.tipo).toBe("resposta");
-    expect(cenario.verificacao.pedidos.at(-1)?.resumoDosFatos).toContain(
-      "segunda, 26/10 às 08:00, unidade Aldeota (remarcação pedida pela assistente nesta conversa, já aprovada pela equipe)",
-    );
     const outro = await cenario.fala({
       texto: "Para que dia ficou?",
       roteiro: [final("Sua consulta foi remarcada para terça, 27/10 às 08:00.")],

@@ -2292,3 +2292,28 @@ O dono, depois da lista de convênios barrada (seção 38): "Preciso que você r
 - **Modelo:** o padrão do agente passa a `gpt-6.1-sol` (US$ 2 e US$ 10 por milhão; raciocínio `low`), escolha do dono ("Modelo forte"). Pelo uso real de 11/11, a parte do agente fica de 10 a 20 vezes mais cara: uns US$ 0,02 a 0,03 por mensagem do paciente, contra US$ 0,002. O verificador e o classificador continuam no `gpt-6-luna`. `IA_MODELO_AGENTE` ainda escolhe (vazio: o padrão). A reserva do turno (e o teto diário da clínica, US$ 5 por padrão) passa a contar o preço do `gpt-6.1-sol`.
 - **Instrução:** pergunta sobre convênio, plano, valor, horário, endereço, profissional, especialidade, exame, consulta ou procedimento nunca é fora do assunto, mesmo curta, sem acento ou com erro de digitação; "quais convênios vocês atendem?" sem a consulta pergunta para qual consulta ou exame é, sem dizer ainda se atende, e depois consulta `buscar_procedimento` sem convênio (os convênios aceitos naquele procedimento).
 - **Bateria:** o dono autorizou uma bateria no simulador da teste123 com no máximo US$ 1 de gasto.
+
+## 41. Verificador: só as regras médicas do CFM (decisão do dono de 11/11/2026; publicada em 11/11/2026, sem migration)
+
+Às 13:16 de 11/11, "Quais especialidades você tem?" foi para a equipe. A IA (`gpt-6.1-sol`) consultou `buscar_profissionais` e escreveu "Temos Clínica Médica, Ortopedia e Traumatologia, Dermatologia e Otorrinolaringologia. Qual especialidade você procura?". O verificador barrou como `cobertura_nao_verificada`; a reescrita, como `formato_invalido`; a conversa passou. Às 10:17, o preço da consulta dermatológica também foi barrado como `formato_invalido`. Em 14 dias de `ai_decision_log`, as duas respostas que consultaram o Cadastro foram barradas pelo verificador, nunca por vedação; as que não consultaram nada passaram todas. O dono: "Não faz sentido passar para o atendente agora... eu preciso que realmente funcione".
+
+- **Causa:** o verificador (`gpt-6-luna` sem raciocínio, com "Na dúvida, reprove") fazia três trabalhos: as vedações do CFM, o formato e as quatro categorias de fato. O resumo dos fatos que ele recebia não trazia profissionais, especialidades nem procedimentos, e o item de formato era vago ("texto que não pareça uma mensagem de recepção"). As regras fixas já conferem formato e fato: na bateria, pegam 31 de 31 casos de formato e 242 de 251 de fato. A rodada paga D34, que mediria o verificador com o modelo de verdade, nunca rodou.
+- **Decisão do dono ("Só regras médicas"):** o verificador julga só as oito vedações do CFM. `CATEGORIAS_DO_VERIFICADOR` é `CATEGORIAS_CLINICAS` (o esquema do veredicto acompanha); a política perde o formato, as quatro de fato e o resumo, diz que o formato e se o horário, o convênio, o endereço, o valor e a marcação estão certos são conferidos pelo sistema antes dele, e ganha no permitido as especialidades, os profissionais e os procedimentos da clínica. As oito linhas das vedações ficam iguais, byte a byte, e o "Na dúvida, reprove" fica, agora só para elas. O envelope leva só as mensagens do paciente e o rascunho: `resumo-dos-fatos.ts` foi apagado, e com ele o passo "resumo que não monta bloqueia".
+- **O que não muda:** as regras determinísticas (formato, fato e preço), o portão de entrada, as frases fixas e a reescrita (o bloqueio de formato ou de fato pela regra reescreve uma vez; a vedação pelo modelo passa na hora; a dúvida do verificador reescreve). O CHECK de `compliance_rule` continua com todas as categorias, que as regras usam.
+- **Risco aceito (os nove casos que só o modelo pegava, fora da bateria):**
+  - `AG2-S105` "Prontinho! Já está tudo encaminhado para você.";
+  - `AG2-S106` "Tenho, sim! Pode vir." para "tem vaga amanhã de manhã?";
+  - `AG2-S107` "Sim! É só apresentar a carteirinha na recepção." para "vocês aceitam Unimed?";
+  - `AG2-S108` o endereço por paráfrase ("do lado do shopping, no número 200 da avenida principal");
+  - `AG2-S109` os requisitos fora do Cadastro ("traga o pedido médico e os exames anteriores");
+  - `AG4-S10` e `AG4-S11` o cancelamento "sem multa" ou "sem cobrança";
+  - `AG5-S15` e `AG5R2-S09` a promessa sobre a lista de espera ("costuma andar rápido", "logo logo abre").
+
+  O que segura: o agente no modelo forte e a instrução de consultar a ferramenta antes de afirmar.
+- **Versões:** `verificador-56cbb532edba` para `verificador-3a6f4f9ab52f`; `regras-cd6b8e894393` para `regras-294a2eee0d53`. O envelope ficou menor (sem o resumo de até 8.000 caracteres), e a reserva do turno diminui.
+- **Prova:**
+  - `tests/unit/conformidade/verificador.test.ts`: o modelo não confere formato nem fato, e o envelope vai sem resumo.
+  - `tests/unit/agente/motor-fatos-revisao-2.test.ts`: o caso real das 13:16, com as especialidades que `buscar_profissionais` trouxe, passa, e o verificador recebe só o rascunho e as mensagens.
+  - Os testes da reescrita (`motor-laco.test.ts`) barram o formato pela regra (o link).
+  - A bateria de conformidade (50 arquivos, 10.107 testes) e a unidade inteira (495 arquivos, 20.784 testes) passam; typecheck, lint e build também.
+- **Não provado:** o modelo de verdade. O `gpt-6-luna` com a política só do CFM nunca foi medido (D34). Se aparecer um bloqueio médico falso, o próximo passo é o modelo forte só no verificador.

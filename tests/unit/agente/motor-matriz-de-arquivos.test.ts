@@ -173,12 +173,8 @@ describe("a matriz de arquivos: o pedido com parte fora do Cadastro", () => {
     );
   });
 
-  it("os itens achados continuam os unicos que o verificador ouve; o resto so como fato", async () => {
+  it("o aviso do resto vai ao verificador no rascunho", async () => {
     await textoQueSaiu("No pedido que você mandou, vi Hemograma. É isso mesmo?", PARCIAL);
-    const resumo = pedidosAoVerificador[0]?.resumoDosFatos ?? "";
-    expect(resumo).toContain("A pessoa mandou um pedido com: Hemograma.");
-    expect(resumo).not.toMatch(/pedido com:[^\n]*Glicemia/);
-    expect(resumo).toContain("esses itens a equipe confere na conversa");
     // O aviso e texto colado pelo sistema, que o verificador recebe no rascunho.
     expect(pedidosAoVerificador[0]?.rascunho).toContain(AVISO_DO_RESTO_DO_PEDIDO);
   });
@@ -189,7 +185,6 @@ describe("a matriz de arquivos: o pedido com parte fora do Cadastro", () => {
       procedimentos: [HEMOGRAMA],
     });
     expect(String(r.resposta)).not.toContain(AVISO_DO_RESTO_DO_PEDIDO);
-    expect(pedidosAoVerificador[0]?.resumoDosFatos).not.toContain("a equipe confere");
   });
 });
 
@@ -202,9 +197,6 @@ describe("a matriz de arquivos: a carteirinha", () => {
     expect(r.desfecho).toEqual({ tipo: "respondeu" });
     expect(ultimaNoAgente(agente)).toBe("(a pessoa mandou a carteirinha do convênio Unimed Nacional)");
     expect(r.trilha.map((p) => p.texto)).toContain(PASSOS_DA_MIDIA.leuCarteirinha);
-    expect(pedidosAoVerificador[0]?.resumoDosFatos).toContain(
-      "A pessoa mandou a carteirinha do convênio Unimed Nacional: agradecer é permitido. Isso não confirma que a clínica atende o convênio.",
-    );
   });
 
   it("plano nao reconhecido: pergunta qual e, sem dizer que a clinica nao atende", async () => {
@@ -215,9 +207,6 @@ describe("a matriz de arquivos: a carteirinha", () => {
     expect(r.desfecho).toEqual({ tipo: "respondeu" });
     expect(ultimaNoAgente(agente)).toBe(DESCRICOES_DO_ARQUIVO.carteirinhaSemPlano);
     expect(ultimaNoAgente(agente)).toContain("sem dizer se a clínica atende ou não");
-    expect(pedidosAoVerificador[0]?.resumoDosFatos).toContain(
-      "convênio que o sistema não reconheceu",
-    );
   });
 
   it("o convenio que saiu do Cadastro depois da leitura vira nao reconhecido", async () => {
@@ -290,7 +279,6 @@ describe("a matriz de arquivos: o documento pessoal", () => {
     expect(r.desfecho).toEqual({ tipo: "respondeu" });
     expect(ultimaNoAgente(agente)).toBe(DESCRICOES_DO_ARQUIVO.documento);
     expect(r.trilha.map((p) => p.texto)).toContain(PASSOS_DA_MIDIA.documentoGuardado);
-    expect(pedidosAoVerificador[0]?.resumoDosFatos).toContain("documento pessoal");
   });
 
   it("baixa: equipe", async () => {
@@ -313,9 +301,6 @@ describe("a matriz de arquivos: o ilegivel", () => {
       expect(String(r.resposta)).toBe(PEDE);
       expect(ultimaNoAgente(agente)).toBe(DESCRICOES_DO_ARQUIVO.ilegivel);
       expect(r.trilha.map((p) => p.texto)).toContain(PASSOS_DA_MIDIA.pediuFotoMelhor);
-      expect(pedidosAoVerificador[0]?.resumoDosFatos).toContain(
-        "pedir uma foto mais nítida do arquivo é permitido",
-      );
     },
   );
 
