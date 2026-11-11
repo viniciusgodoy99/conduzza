@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   FakeProvider,
@@ -74,6 +74,49 @@ describe("FakeProvider", () => {
 });
 
 describe("UazapiProvider", () => {
+  it("o envio de texto espera o prazo pedido (prazoMs) e, sem ele, os 10 s de sempre (11/11/2026)", async () => {
+    vi.useFakeTimers();
+    try {
+      // O provedor que nunca responde: so o prazo encerra a chamada.
+      const pendurado = ((_url: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_, rejeitar) => {
+          init?.signal?.addEventListener("abort", () =>
+            rejeitar(new DOMException("aborted", "AbortError")),
+          );
+        })) as typeof fetch;
+      type Resultado = Awaited<ReturnType<UazapiProvider["sendText"]>>;
+      let semPrazo: Resultado | undefined;
+      void testProvider(pendurado)
+        .sendText(REF, "+5584", "oi")
+        .then((r) => {
+          semPrazo = r;
+        });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(semPrazo).toMatchObject({ ok: false, errorCode: "envio_incerto" });
+
+      let comPrazo: Resultado | undefined;
+      void testProvider(pendurado)
+        .sendText(REF, "+5584", "oi", { prazoMs: 25_000 })
+        .then((r) => {
+          comPrazo = r;
+        });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(comPrazo).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(comPrazo).toMatchObject({ ok: false, errorCode: "envio_incerto" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("o prazo nunca vai no corpo da chamada", async () => {
+    const { fn, calls } = fetchStub([
+      { status: 200, body: { messageid: "w1" } },
+    ]);
+    await testProvider(fn).sendText(REF, "+5584", "oi", { prazoMs: 25_000 });
+    expect(JSON.stringify(calls[0]?.body)).not.toContain("prazo");
+  });
+
   it("faz retry em erro 5xx nas operações que podem repetir (status da instância)", async () => {
     const { fn, calls } = fetchStub([
       { status: 500 },

@@ -241,6 +241,7 @@ export class UazapiProvider implements WhatsAppProvider {
         {
           payload: { number: to, text: body, ...camposDoExtra(extra) },
           semRetry: true,
+          ...(extra.prazoMs === undefined ? {} : { timeoutMs: extra.prazoMs }),
         },
       );
       return toSendResult(status, response);

@@ -600,8 +600,13 @@ describe("o turno e a saída", () => {
       jobId: JOB,
       workerId: EXECUTOR,
       whatsappAccountId: NUMERO,
+      // 11/11/2026: o envio espera o que sobrou do turno (10 a 25 s)
+      prazoDoEnvioMs: expect.any(Number),
       texto: RESPOSTA,
     });
+    const prazo = enviarResposta.mock.calls[0]![1].prazoDoEnvioMs;
+    expect(prazo).toBeGreaterThanOrEqual(10_000);
+    expect(prazo).toBeLessThanOrEqual(25_000);
     expect(turnoGravado()).toMatchObject({
       estado: "enviado",
       texto: null,
