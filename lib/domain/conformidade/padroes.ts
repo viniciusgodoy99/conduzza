@@ -3287,7 +3287,7 @@ const QUANTOS_EXAMES = "(?:\\d{1,2}|dois|tres|quatro|cinco|seis)";
  * calmante". Nome fora daqui escala, como o resto fora do molde.
  */
 const NOME_DO_EXAME =
-  "(?:sangue|urina|fezes|vista|rotina|imagem|covid|prostata|mama|tireoide|glicose|glicemia|colesterol|hemograma|ultrassom|ultrassonografia|tomografia|ressonancia|mamografia|eletrocardiograma|ecocardiograma|colonoscopia|endoscopia|preventivo|papanicolau|audiometria|admissao|admissional|demissional|periodico)";
+  "(?:sangue|urina|fezes|vista|rotina|imagem|covid|prostata|mama|tireoide|glicose|glicemia|colesterol|hemograma|ultrassom|ultrassonografia|tomografia|ressonancia|mamografia|eletrocardiograma|ecocardiograma|colonoscopia|endoscopia|preventivo|papanicolau|audiometria|admissao|admissional|demissional|periodico|ouvido|audicao|pele|coracao)";
 const MEDICO_DO_PEDIDO = "(?:medico|medica|doutor|doutora|dr|dra)";
 const PEDIDO_MEDICO = `pedidos?(?: medicos?| d[oa] ${MEDICO_DO_PEDIDO})?`;
 /**
@@ -3296,7 +3296,7 @@ const PEDIDO_MEDICO = `pedidos?(?: medicos?| d[oa] ${MEDICO_DO_PEDIDO})?`;
  * Sem "meu" antes do exame ("meus exames" continua clinico) e sem "nesse".
  */
 const EXAME_NA_RECEPCAO = new RegExp(
-  `\\b(?:(?:todos )?(?:o|os|do|dos|de|um|uns|esse|esses|este|estes|desse|desses|deste|destes) )?(?:${QUANTOS_EXAMES} )?exames?(?: de ${NOME_DO_EXAME})?(?: aqui)?(?: (?:do|desse|deste|no) ${PEDIDO_MEDICO})?(?: que (?:o|a|meu|minha) ${MEDICO_DO_PEDIDO} (?:me )?pediu)?\\b`,
+  `\\b(?:(?:todos )?(?:o|os|do|dos|de|um|uns|esse|esses|este|estes|desse|desses|deste|destes) )?(?:${QUANTOS_EXAMES} )?exames?(?: de ${NOME_DO_EXAME}| (?:admissional|demissional|periodico))?(?: aqui)?(?: (?:do|desse|deste|no) ${PEDIDO_MEDICO})?(?: que (?:o|a|meu|minha) ${MEDICO_DO_PEDIDO} (?:me )?pediu)?\\b`,
   "g",
 );
 /** Sem "tarde" e "manha" soltas: "boa tarde" e cumprimento. */
@@ -3336,6 +3336,10 @@ const ORACOES_DA_RECEPCAO: readonly string[] = [
     `${CLINICA_NA_RECEPCAO} ${SERVICO_NA_RECEPCAO}(?: ai| aqui)?`,
     `§ (?:${CLINICA_NA_RECEPCAO} )?(?:fazem|faz|realizam|realiza)(?: ai| aqui)?`,
     `(?:${CLINICA_NA_RECEPCAO} )?(?:conseguem|consegue) (?:fazer|realizar) §(?: ¤)*`,
+    // 11/11/2026: a pergunta de quais exames a clinica faz ("quais exames
+    // voces fazem?", "que exames tem ai?"). "Qual exame eu faco" continua
+    // fora: o verbo e da clinica, nunca de quem pergunta.
+    `(?:quais|que)(?: sao)? § (?:que )?(?:${CLINICA_NA_RECEPCAO} )?(?:fazem|faz|realizam|realiza|tem|oferecem|oferece)(?: ai| aqui)?`,
     // Agenda.
     "(?:(?:quero|queria|gostaria de|preciso|vou|pode|poderia|podem|consigo|da pra|da para|tem como|como faco (?:pra|para)) )?(?:marcar|agendar|remarcar|reagendar|desmarcar|cancelar|marca|agenda|remarca|reagenda|desmarca|cancela|marque|agende|remarque|reagende|desmarque|cancele) (?:meus? )?§(?: ¤)*",
     "(?:quero|queria|gostaria de) fazer §(?: ¤)*",
@@ -3347,6 +3351,10 @@ const ORACOES_DA_RECEPCAO: readonly string[] = [
     `(?:tenho|to com|estou com|recebi|peguei|segue|seguem|mando|mandei|enviei|envio|vou mandar|vou enviar|aqui esta|aqui ta) (?:(?:o|um|uns|os|meu|esse|este) )?${PEDIDO_MEDICO}(?:(?: pra| para)? §)?`,
     `(?:(?:o|um|meu|esse|este) )?${PEDIDO_MEDICO}(?:(?: pra| para)? §)? (?:esta|ta) aqui`,
     `(?:(?:o|a|meu|minha) )?${MEDICO_DO_PEDIDO} (?:me )?(?:pediu|passou|solicitou) §`,
+    // 11/11/2026: se o exame exige o pedido do medico (pergunta
+    // administrativa; "preciso fazer o exame?" continua fora).
+    `(?:preciso|precisa|precisaria|e preciso|tem que ter|tenho que ter|exige|pede)(?: de)?(?: (?:um|o))? ${PEDIDO_MEDICO}(?: (?:pra|para)(?: fazer)? §(?: ¤)*)?`,
+    `(?:pra|para)(?: fazer)? §(?: ¤)* (?:precisa|exige|pede|tem que ter)(?: de)?(?: (?:um|o))? ${PEDIDO_MEDICO}`,
 ];
 
 // A pergunta do preparo e do remedio do exame (decisao do dono de 06/11/2026,

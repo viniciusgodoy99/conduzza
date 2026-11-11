@@ -783,9 +783,12 @@ describe("AG7: a variante do preparo no classificador", () => {
     // rodada). Quem mudar o portao depois atualiza esta linha: as decisoes de
     // 06/11/2026 o mudaram (o pedido de recepcao sobre o exame,
     // portao-ac8922f0785a; a pergunta do preparo e do remedio com a habilidade,
-    // portao-918d49469e1f), e a revisao do portao na conversa normal de
-    // 09/11/2026 (portao-conversa-normal.test.ts).
-    expect(versaoDoPortao()).toBe("portao-da88be1e9fa6");
+    // portao-918d49469e1f), a revisao do portao na conversa normal de
+    // 09/11/2026 (portao-conversa-normal.test.ts, portao-da88be1e9fa6) e a
+    // revisao de 11/11/2026: "quais exames voces fazem?", o exame de ouvido,
+    // pele e coracao, o admissional e o pedido medico como exigencia
+    // (revisao-1111-recepcao.test.ts).
+    expect(versaoDoPortao()).toBe("portao-cf660cdd7872");
   });
 });
 // [AG7 preparo] fim

@@ -584,6 +584,26 @@ describe("identificarConvenio", () => {
     return "convenios" in r ? [r.tipo, r.convenios.map((c) => c.id)] : r.tipo;
   };
 
+  // 11/11/2026: o plano escrito como lista no Cadastro (a teste123 tem
+  // "SulAmérica (Clássico, Especial e Executivo)" e "Unimed (Unimed Natal
+  // (Estadual e Nacional))"): a operadora com um dos itens casa direto.
+  it("plano escrito como lista: a operadora com um dos itens casa; o item sozinho e dois candidatos não casam", () => {
+    const cadastro = [
+      conv("s", "SulAmérica", "Clássico, Especial e Executivo"),
+      conv("u", "Unimed", "Unimed Natal (Estadual e Nacional)"),
+      conv("b", "Bradesco Saúde", "Nacional Flex e Top"),
+    ];
+    expect(resumo(cadastro, "SulAmérica Especial")).toEqual(["casou", ["s"]]);
+    expect(resumo(cadastro, "sulamerica executivo")).toEqual(["casou", ["s"]]);
+    expect(resumo(cadastro, "Unimed Natal")).toEqual(["casou", ["u"]]);
+    expect(resumo(cadastro, "Unimed Nacional")).toEqual(["casou", ["u"]]);
+    expect(resumo(cadastro, "Bradesco Saúde Top")).toEqual(["casou", ["b"]]);
+    expect(resumo(cadastro, "Especial")).toEqual(["convenio_nao_confirmado", ["s"]]);
+    expect(resumo(cadastro, "SulAmérica Prestige")[0]).not.toBe("casou");
+    const dois = [...cadastro, conv("n", "Unimed", "Nacional")];
+    expect(resumo(dois, "Unimed Nacional")).toEqual(["plano_nao_informado", ["n", "u"]]);
+  });
+
   it("seletor exato: o texto cru do rótulo de exatamente uma entrada casa, sem contar acento, caixa e espaços repetidos", () => {
     const cadastro = [
       conv("n", "Unimed", "Nacional"),

@@ -4516,6 +4516,9 @@ function sujeitoAntes(frase: string, ate: number): string {
   return corte === -1 ? antes : antes.slice(corte + 1);
 }
 
+/** O nome do Cadastro protegido na lista do objeto (a marca tem o "§"). */
+const MARCA_DO_NOME = "\u00a7convenio";
+
 type AnaliseDoObjeto = {
   /** O objeto cita convenio (palavra generica, operadora ou Cadastro). */
   citaConvenio: boolean;
@@ -4546,9 +4549,21 @@ function analisarObjeto(
   const vazio = palavrasDe(semPlanoDeTratamento).every((p) =>
     FUNCAO_NO_OBJETO.has(p),
   );
-  for (const item of semPlanoDeTratamento.split(/\s*,\s*|\s+(?:e|ou)\s+/)) {
+  // 11/11/2026: o nome do Cadastro com virgula ou "e" dentro ("Nacional Flex
+  // e Top") vira uma marca antes de partir a lista; partido, sobrava "Top"
+  // desconhecido e a lista dos aceitos que a ferramenta trouxe barrava.
+  let lista = semPlanoDeTratamento;
+  for (const nome of nomesDeConvenio) {
+    if (/,|\s(?:e|ou)\s/.test(nome)) {
+      lista = lista.replace(regexDoNome(nome, "g"), ` ${MARCA_DO_NOME} `);
+    }
+  }
+  // As palavras dos nomes do Cadastro ("Unimed Natal, Estadual e Nacional",
+  // dito sem os parenteses do plano) nunca sao convenio desconhecido.
+  const doCadastro = new Set(nomesDeConvenio.flatMap(palavrasDe));
+  for (const item of lista.split(/\s*,\s*|\s+(?:e|ou)\s+/)) {
     let resto = ` ${item} `;
-    let citouNoItem = false;
+    let citouNoItem = resto.includes(MARCA_DO_NOME);
     for (const nome of nomesDeConvenio) {
       if (contem(resto, nome)) {
         citouNoItem = true;
@@ -4568,7 +4583,7 @@ function analisarObjeto(
       citaConvenio = true;
     }
     for (const palavra of conteudo) {
-      if (CONVENIO_NO_OBJETO.has(palavra)) {
+      if (CONVENIO_NO_OBJETO.has(palavra) || doCadastro.has(palavra)) {
         citaConvenio = true;
         continue;
       }
