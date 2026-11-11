@@ -347,6 +347,12 @@ export const PRAZO_DO_TURNO_MS = 45_000;
 export const PRAZO_DA_RODADA_MS = 20_000;
 /** Tempo guardado para o verificador do filtro depois do agente. */
 export const RESERVA_DO_FILTRO_MS = 10_000;
+/**
+ * A reescrita (decisao do dono de 11/11/2026): o minimo que precisa sobrar,
+ * fora a reserva do filtro, para a chamada que reescreve. Abaixo disto, a
+ * resposta barrada passa para a equipe como antes.
+ */
+export const PRAZO_MINIMO_DA_REESCRITA_MS = 8_000;
 // [AG6b mídia] início
 /**
  * AG6b (revisao do prazo): a janela minima do agente que a midia (o preparo,
@@ -835,6 +841,92 @@ const ROTULO_DO_BLOQUEIO: Readonly<Record<CategoriaDeConformidade, string>> = {
 
 export function rotuloDoBloqueio(categoria: CategoriaDeConformidade): string {
   return ROTULO_DO_BLOQUEIO[categoria];
+}
+
+// ---------------------------------------------------------------------------
+// A reescrita (decisao do dono de 11/11/2026)
+// ---------------------------------------------------------------------------
+// "Preciso que voce revise esse verificador ... para nao acontecer isso com
+// ele de jeito nenhum, preciso que o agente der certo": a resposta escrita
+// pelo modelo e barrada SO por formato, por fato que o turno nao confirmou
+// ou por preco fora do turno ganha UMA reescrita, sem ferramenta, com o aviso
+// fixo do motivo; o filtro inteiro roda de novo. Barrada de novo, sem tempo
+// ou com falha na chamada, passa para a equipe como antes. As vedacoes do
+// CFM nunca reescrevem: passam na hora (CLAUDE.md 3.2). Nada barrado sai.
+
+/** As categorias que reescrevem (nunca as do CFM). */
+export const CATEGORIAS_QUE_REESCREVEM = [
+  "preco_nao_verificado",
+  "acao_nao_executada",
+  "cobertura_nao_verificada",
+  "horario_nao_verificado",
+  "endereco_nao_verificado",
+  "formato_invalido",
+] as const satisfies readonly CategoriaDeConformidade[];
+
+export type CategoriaQueReescreve =
+  | (typeof CATEGORIAS_QUE_REESCREVEM)[number]
+  /** O verificador em duvida (confianca baixa ou veredicto incoerente). */
+  | "duvida_do_verificador";
+
+/**
+ * O motivo da reescrita, ou nulo (passa para a equipe como antes). A falha
+ * do verificador so reescreve quando ele respondeu em duvida: prazo, rede,
+ * cota e saida invalida nao melhoram com outro texto.
+ */
+export function motivoDaReescrita(
+  filtro: DecisaoDoFiltro,
+): CategoriaQueReescreve | null {
+  if (filtro.aprovado) {
+    return null;
+  }
+  if (
+    filtro.categoria === "falha_verificador" &&
+    (filtro.motivoDaFalha === "confianca_baixa" ||
+      filtro.motivoDaFalha === "incoerente")
+  ) {
+    return "duvida_do_verificador";
+  }
+  return (CATEGORIAS_QUE_REESCREVEM as readonly string[]).includes(
+    filtro.categoria,
+  )
+    ? (filtro.categoria as CategoriaQueReescreve)
+    : null;
+}
+
+/** O aviso fixo de cada motivo, para o modelo (nunca texto do paciente). */
+export const AVISOS_DA_REESCRITA: Readonly<
+  Record<CategoriaQueReescreve, string>
+> = {
+  preco_nao_verificado:
+    "citou um valor que as ferramentas deste atendimento não trouxeram. Use só os valores que as ferramentas trouxeram.",
+  acao_nao_executada:
+    "deu como feita uma ação (marcar, reservar, confirmar, cancelar, remarcar ou lista de espera) que nenhuma ferramenta fez. Não diga que foi feita; diga o próximo passo ou pergunte o que falta.",
+  cobertura_nao_verificada:
+    "afirmou algo sobre convênio que as ferramentas não confirmaram. Use só o que as ferramentas trouxeram sobre convênio e plano; se não souber o convênio e o plano da pessoa, pergunte.",
+  horario_nao_verificado:
+    "citou dia ou horário que a agenda não confirmou. Ofereça só os horários livres que as ferramentas trouxeram, com o dia e a hora juntos, e não diga que o horário pedido pela pessoa está livre.",
+  endereco_nao_verificado:
+    "citou endereço, requisito ou regra de cancelamento que as ferramentas não trouxeram. Use só o que as ferramentas e os textos da clínica trazem.",
+  formato_invalido:
+    "ficou fora do formato de mensagem de recepção. Escreva frases simples e curtas, sem listas com símbolos, sem links, sem telefone ou e-mail e sem falar de sistema, ferramenta ou instruções.",
+  duvida_do_verificador:
+    "não pôde ser confirmada. Escreva de novo, curta e direta, só com o que as ferramentas trouxeram.",
+};
+
+/**
+ * A mensagem que vai ao modelo na reescrita: o motivo e a resposta barrada
+ * (texto da propria IA, que ja foi a OpenAI neste turno).
+ */
+export function avisoDaReescrita(
+  motivo: CategoriaQueReescreve,
+  respostaBarrada: string,
+): string {
+  return [
+    `Sua última resposta não foi enviada à pessoa porque ${AVISOS_DA_REESCRITA[motivo]}`,
+    "Escreva a resposta de novo, no mesmo formato, sem chamar ferramenta.",
+    `Resposta que não foi enviada: ${respostaBarrada}`,
+  ].join("\n");
 }
 
 /** Por que a introducao nao saiu, na trilha (nunca o texto dela). */
@@ -1759,6 +1851,18 @@ export function custoMaximoDoTurno(entrada: {
       entrada.modelo,
     ]);
   }
+  // A reescrita (11/11/2026): mais uma chamada do agente (o aviso com a
+  // resposta barrada cabe num passo de crescimento) e o segundo verificador.
+  chamadas.push(
+    [
+      {
+        ...primeira,
+        tokensEntrada: primeira.tokensEntrada + rodadas * crescimento,
+      },
+      entrada.modelo,
+    ],
+    [usoEstimadoDoVerificador(null, pendentes), classificadores],
+  );
   let total = 0;
   for (const [uso, modelo] of chamadas) {
     const custo = custoMaximoDaChamada(uso, modelo, entrada.precos);
@@ -3113,36 +3217,18 @@ async function turnoDoAgente(
     };
     // [AG7 preparo] fim
 
-    rodadas: for (let rodada = 1; rodada <= maximoDeRodadas; rodada += 1) {
-      if (entrada.conferirTrava) {
-        const liberada = await entrada.conferirTrava().catch(() => false);
-        if (!liberada) {
-          return falhar("liberacao_suspensa");
-        }
-      }
-      const restante = prazoEm - agora() - RESERVA_DO_FILTRO_MS;
-      if (restante < 1_000) {
-        return falhar("prazo");
-      }
-      const prazoDaChamada = Math.min(PRAZO_DA_RODADA_MS, restante);
-
-      const corpo: ResponseCreateParamsNonStreaming = {
-        model: fixos.model,
-        reasoning: { effort: fixos.reasoning.effort },
-        include: [...fixos.include],
-        store: fixos.store,
-        service_tier: fixos.service_tier,
-        instructions: instrucoes,
-        input: historico,
-        tools: ferramentas,
-        tool_choice: "auto",
-        parallel_tool_calls: false,
-        max_output_tokens: MAX_TOKENS_DO_AGENTE,
-        text: { format: FORMATO_DA_RESPOSTA },
-        prompt_cache_key: chaveDeCacheDaClinica("agente", entrada.clinicId),
-        safety_identifier: identificador.valor,
-      };
-
+    /**
+     * Uma chamada do agente (uma rodada, ou a reescrita): o uso (ou a
+     * estimativa, quando a chamada pode ter sido cobrada sem voltar o
+     * usage), os logs sem texto e a resposta lida, ou o motivo da falha.
+     */
+    const chamarOAgente = async (
+      corpo: ResponseCreateParamsNonStreaming,
+      prazoDaChamada: number,
+    ): Promise<
+      | { ok: true; lida: NonNullable<ReturnType<typeof lerResposta>> }
+      | { ok: false; motivo: FalhaDoAgente }
+    > => {
       const inicioDaRodada = agora();
       const corrida = await correrComPrazo(async (sinal) => {
         try {
@@ -3175,7 +3261,10 @@ async function turnoDoAgente(
           error_code: corrida.tipo === "prazo" ? "timeout" : "desconhecida",
           duration_ms: duracao,
         });
-        return falhar(corrida.tipo === "prazo" ? "timeout" : "desconhecida");
+        return {
+          ok: false,
+          motivo: corrida.tipo === "prazo" ? "timeout" : "desconhecida",
+        };
       }
       if (!corrida.valor.ok) {
         const classificado = classificarErroDoLlm(corrida.valor.erro);
@@ -3197,7 +3286,7 @@ async function turnoDoAgente(
         } else {
           log.warn("ia_agente_falhou", campos);
         }
-        return falhar(classificado.motivo);
+        return { ok: false, motivo: classificado.motivo };
       }
 
       const lida = lerResposta(corrida.valor.resposta, modelo);
@@ -3209,7 +3298,7 @@ async function turnoDoAgente(
           clinic_id: entrada.clinicId,
           modelo,
         });
-        return falhar("saida_invalida");
+        return { ok: false, motivo: "saida_invalida" };
       }
       if (lida.uso === null) {
         estimarARodada();
@@ -3229,8 +3318,46 @@ async function turnoDoAgente(
           request_id: lida.requestId,
           duration_ms: duracao,
         });
-        return falhar(problema);
+        return { ok: false, motivo: problema };
       }
+      return { ok: true, lida };
+    };
+
+    rodadas: for (let rodada = 1; rodada <= maximoDeRodadas; rodada += 1) {
+      if (entrada.conferirTrava) {
+        const liberada = await entrada.conferirTrava().catch(() => false);
+        if (!liberada) {
+          return falhar("liberacao_suspensa");
+        }
+      }
+      const restante = prazoEm - agora() - RESERVA_DO_FILTRO_MS;
+      if (restante < 1_000) {
+        return falhar("prazo");
+      }
+      const prazoDaChamada = Math.min(PRAZO_DA_RODADA_MS, restante);
+
+      const corpo: ResponseCreateParamsNonStreaming = {
+        model: fixos.model,
+        reasoning: { effort: fixos.reasoning.effort },
+        include: [...fixos.include],
+        store: fixos.store,
+        service_tier: fixos.service_tier,
+        instructions: instrucoes,
+        input: historico,
+        tools: ferramentas,
+        tool_choice: "auto",
+        parallel_tool_calls: false,
+        max_output_tokens: MAX_TOKENS_DO_AGENTE,
+        text: { format: FORMATO_DA_RESPOSTA },
+        prompt_cache_key: chaveDeCacheDaClinica("agente", entrada.clinicId),
+        safety_identifier: identificador.valor,
+      };
+
+      const chamada = await chamarOAgente(corpo, prazoDaChamada);
+      if (!chamada.ok) {
+        return falhar(chamada.motivo);
+      }
+      const lida = chamada.lida;
 
       const chamadas = lida.itens.filter(
         (item) => item.type === "function_call",
@@ -3710,6 +3837,121 @@ async function turnoDoAgente(
     // Matriz do dono de 06/11/2026: o pedido com o resto fora do Cadastro. O
     // sistema cola o aviso, como a F2, e ele passa pelo filtro inteiro.
     let comOAvisoDoResto = false;
+    // As perguntas da base ja usadas (a reescrita nao repete na trilha).
+    const basesUsadas = new Set<string>();
+    /**
+     * O rascunho da mensagem que o modelo escreveu: a promessa de passar
+     * para a equipe vira passagem, a base usada vai para a trilha e para os
+     * fatos, a marca do nome sai, e a saudacao, o aviso e o encerramento sao
+     * colados. Serve a resposta e a reescrita (11/11/2026).
+     */
+    const montarRascunhoDaMensagem = (
+      mensagemFinal: RespostaFinal,
+    ):
+      | { tipo: "rascunho"; rascunho: string }
+      | { tipo: "resultado"; resultado: ResultadoDoTurno } => {
+
+      // Q5 (revisao de producao de 19/10/2026): a resposta que promete
+      // passar para a equipe sem ter chamado escalar_humano e uma passagem.
+      // O texto do modelo nunca sai (a conversa ficaria na IA sem ninguem
+      // avisado); sai a frase fixa, e a conversa vai para a equipe como em
+      // toda passagem. Revisao da AG2: com o que o turno fez (o aviso da
+      // aprovacao depois de marcar e informacao; "vou conferir a agenda"
+      // sem ferramenta e promessa).
+      if (
+        prometePassagemParaAEquipe(mensagemFinal.mensagem, {
+          usouFerramenta: ferramentasDoTurno.length > 0,
+          acoes: ferramentasDoTurno.flatMap(({ fatos }) =>
+            fatos?.acao === undefined ? [] : [fatos.acao],
+          ),
+          arquivoFicaComAEquipe: fatosDosArquivos().some(
+            (fato) =>
+              fato.tipo === "resto_do_pedido" || fato.tipo === "documento",
+          ),
+        })
+      ) {
+        trilha.push({ tipo: "outro", texto: PASSO_DA_PASSAGEM_EM_TEXTO });
+        return {
+          tipo: "resultado",
+          resultado: escalar(
+            "agente_pediu",
+            "texto_do_agente",
+            null,
+            ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.agente_pediu,
+          ),
+        };
+      }
+
+      // A base que o modelo disse que usou (codigos conhecidos, sem
+      // repetir).
+      for (const codigo of mensagemFinal.perguntas_da_base) {
+        const pergunta = perguntas.find(
+          (p) => p.codigo === codigo.trim().toLowerCase(),
+        );
+        if (pergunta !== undefined && !basesUsadas.has(pergunta.codigo)) {
+          basesUsadas.add(pergunta.codigo);
+          respostasDaBase.push(pergunta.item.resposta);
+          trilha.push({
+            tipo: "base",
+            texto: `Usou a pergunta da base: ${trecho(pergunta.item.pergunta)}`,
+          });
+        }
+      }
+
+      if (
+        !trilha.some(
+          (passo) =>
+            passo.tipo === "preco" ||
+            passo.tipo === "base" ||
+            passo.tipo === "agenda" ||
+            passo.tipo === "cadastro" ||
+            passo.texto === PASSO_SEM_CONSULTA,
+        )
+      ) {
+        trilha.push({ tipo: "outro", texto: PASSO_SEM_CONSULTA });
+      }
+
+      // 5. Saudacao, aviso (P11a) e encerramento antes do filtro. A marca do
+      // nome do contato (historico do WhatsApp) nunca vira vocativo na
+      // resposta; se so sobrar pontuacao ("Fulano!" vira "!"), falha
+      // fechada.
+      const mensagemSemMarca = semAMarcaDoNome(mensagemFinal.mensagem);
+      if (!/\p{L}/u.test(mensagemSemMarca)) {
+        return { tipo: "resultado", resultado: falhar("saida_invalida") };
+      }
+      // [AG7 preparo] início
+      // AG7 (D-76): o turno marcou (nao a remarcacao) um procedimento com
+      // orientacao de preparo em vigor, com a habilidade ligada: o sistema
+      // cola a F2 depois da resposta, e ela passa pelo filtro inteiro.
+      const marcado = agendaDoTurno.procedimentoMarcadoNoTurno();
+      comAF2 =
+        marcado !== null &&
+        permitidas.has(NOME_DO_ENVIO_DO_PREPARO) &&
+        entrada.catalogo.preparosEmVigor?.has(marcado) === true;
+      // [AG7 preparo] fim
+      comOAvisoDoResto = pendentesDoTurno().some(
+        (m) => m.arquivo?.avisarDoResto === true,
+      );
+      return {
+        tipo: "rascunho",
+        rascunho: comporResposta({
+          mensagem: mensagemSemMarca,
+          saudacao: entrada.config.saudacao,
+          encerramento: entrada.config.encerramento,
+          primeiraResposta,
+          encerra: mensagemFinal.encerra_a_conversa,
+          aviso,
+          // [AG7 preparo]
+          depoisDaMensagem:
+            [
+              comOAvisoDoResto ? AVISO_DO_RESTO_DO_PEDIDO : null,
+              comAF2 ? FRASE_DO_PREPARO_DEPOIS_DE_MARCAR : null,
+            ]
+              .filter((frase): frase is string => frase !== null)
+              .join(" ") || null,
+        }),
+      };
+    };
 
     if (fraseDaAgenda !== null) {
       // AG4: a frase fixa da agenda, com a saudacao e o aviso colados como
@@ -3764,125 +4006,115 @@ async function turnoDoAgente(
       if (final === null) {
         return falhar("rodadas_esgotadas");
       }
-
-      // Q5 (revisao de producao de 19/10/2026): a resposta que promete
-      // passar para a equipe sem ter chamado escalar_humano e uma passagem.
-      // O texto do modelo nunca sai (a conversa ficaria na IA sem ninguem
-      // avisado); sai a frase fixa, e a conversa vai para a equipe como em
-      // toda passagem. Revisao da AG2: com o que o turno fez (o aviso da
-      // aprovacao depois de marcar e informacao; "vou conferir a agenda"
-      // sem ferramenta e promessa).
-      if (
-        prometePassagemParaAEquipe(final.mensagem, {
-          usouFerramenta: ferramentasDoTurno.length > 0,
-          acoes: ferramentasDoTurno.flatMap(({ fatos }) =>
-            fatos?.acao === undefined ? [] : [fatos.acao],
-          ),
-          arquivoFicaComAEquipe: fatosDosArquivos().some(
-            (fato) =>
-              fato.tipo === "resto_do_pedido" || fato.tipo === "documento",
-          ),
-        })
-      ) {
-        trilha.push({ tipo: "outro", texto: PASSO_DA_PASSAGEM_EM_TEXTO });
-        return escalar(
-          "agente_pediu",
-          "texto_do_agente",
-          null,
-          ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.agente_pediu,
-        );
+      const montado = montarRascunhoDaMensagem(final);
+      if (montado.tipo === "resultado") {
+        return montado.resultado;
       }
-
-      // A base que o modelo disse que usou (codigos conhecidos, sem
-      // repetir).
-      const usadas = new Set<string>();
-      for (const codigo of final.perguntas_da_base) {
-        const pergunta = perguntas.find(
-          (p) => p.codigo === codigo.trim().toLowerCase(),
-        );
-        if (pergunta !== undefined && !usadas.has(pergunta.codigo)) {
-          usadas.add(pergunta.codigo);
-          respostasDaBase.push(pergunta.item.resposta);
-          trilha.push({
-            tipo: "base",
-            texto: `Usou a pergunta da base: ${trecho(pergunta.item.pergunta)}`,
-          });
-        }
-      }
-
-      if (
-        !trilha.some(
-          (passo) =>
-            passo.tipo === "preco" ||
-            passo.tipo === "base" ||
-            passo.tipo === "agenda" ||
-            passo.tipo === "cadastro",
-        )
-      ) {
-        trilha.push({ tipo: "outro", texto: PASSO_SEM_CONSULTA });
-      }
-
-      // 5. Saudacao, aviso (P11a) e encerramento antes do filtro. A marca do
-      // nome do contato (historico do WhatsApp) nunca vira vocativo na
-      // resposta; se so sobrar pontuacao ("Fulano!" vira "!"), falha
-      // fechada.
-      const mensagemSemMarca = semAMarcaDoNome(final.mensagem);
-      if (!/\p{L}/u.test(mensagemSemMarca)) {
-        return falhar("saida_invalida");
-      }
-      // [AG7 preparo] início
-      // AG7 (D-76): o turno marcou (nao a remarcacao) um procedimento com
-      // orientacao de preparo em vigor, com a habilidade ligada: o sistema
-      // cola a F2 depois da resposta, e ela passa pelo filtro inteiro.
-      const marcado = agendaDoTurno.procedimentoMarcadoNoTurno();
-      comAF2 =
-        marcado !== null &&
-        permitidas.has(NOME_DO_ENVIO_DO_PREPARO) &&
-        entrada.catalogo.preparosEmVigor?.has(marcado) === true;
-      // [AG7 preparo] fim
-      comOAvisoDoResto = pendentesDoTurno().some(
-        (m) => m.arquivo?.avisarDoResto === true,
-      );
-      rascunho = comporResposta({
-        mensagem: mensagemSemMarca,
-        saudacao: entrada.config.saudacao,
-        encerramento: entrada.config.encerramento,
-        primeiraResposta,
-        encerra: final.encerra_a_conversa,
-        aviso,
-        // [AG7 preparo]
-        depoisDaMensagem:
-          [
-            comOAvisoDoResto ? AVISO_DO_RESTO_DO_PEDIDO : null,
-            comAF2 ? FRASE_DO_PREPARO_DEPOIS_DE_MARCAR : null,
-          ]
-            .filter((frase): frase is string => frase !== null)
-            .join(" ") || null,
-      });
+      rascunho = montado.rascunho;
     }
 
     // 6. Filtro de saida, com os fatos do turno (AG2). Montar os fatos que
     // lanca e falha fechada: a resposta nao sai e a conversa passa.
-    let fatos: FatosDoTurno;
-    try {
-      fatos = fatosPara(
+    const fatosDoRascunho = (texto: string): FatosDoTurno =>
+      fatosPara(
         ferramentasDoTurno,
         respostasDaBase,
-        comAF2 && rascunho.includes(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR)
+        comAF2 && texto.includes(FRASE_DO_PREPARO_DEPOIS_DE_MARCAR)
           ? FRASE_DO_PREPARO_DEPOIS_DE_MARCAR
           : null,
-        comOAvisoDoResto && rascunho.includes(AVISO_DO_RESTO_DO_PEDIDO)
+        comOAvisoDoResto && texto.includes(AVISO_DO_RESTO_DO_PEDIDO)
           ? AVISO_DO_RESTO_DO_PEDIDO
           : null,
       );
-    } catch {
+    const fatosFalharam = () => {
       log.warn("ia_agente_fatos_falharam", {
         kind: "agente",
         clinic_id: entrada.clinicId,
       });
       return falhar("desconhecida");
+    };
+    let fatos: FatosDoTurno;
+    try {
+      fatos = fatosDoRascunho(rascunho);
+    } catch {
+      return fatosFalharam();
     }
     filtro = await passarNoFiltro(rascunho, fatos, false);
+
+    // 7. A reescrita (decisao do dono de 11/11/2026): so a mensagem que o
+    // modelo escreveu (nunca a frase fixa da agenda ou do "robô?"), barrada
+    // por formato, fato, preco ou duvida do verificador, e com tempo. Uma
+    // chamada, sem ferramenta (os resultados delas ja estao no historico),
+    // com o aviso fixo do motivo; o filtro inteiro roda de novo. A falha da
+    // chamada deixa o bloqueio de antes (a conversa passa, como sempre).
+    const motivoDaPrimeira =
+      final !== null && fraseDaAgenda === null && fraseEscolhida === null
+        ? motivoDaReescrita(filtro)
+        : null;
+    if (
+      motivoDaPrimeira !== null &&
+      final !== null &&
+      !filtro.aprovado &&
+      prazoEm - agora() - RESERVA_DO_FILTRO_MS >= PRAZO_MINIMO_DA_REESCRITA_MS
+    ) {
+      trilha.push({
+        tipo: "bloqueio",
+        texto: `A resposta foi barrada pela conformidade: ${
+          motivoDaPrimeira === "duvida_do_verificador"
+            ? "a verificação ficou em dúvida"
+            : rotuloDoBloqueio(motivoDaPrimeira)
+        }. A assistente escreveu de novo.`,
+      });
+      log.info("ia_agente_reescreveu", {
+        kind: "agente",
+        clinic_id: entrada.clinicId,
+        error_code: motivoDaPrimeira,
+        camada: filtro.camada,
+      });
+      const chamada = await chamarOAgente(
+        {
+          model: fixos.model,
+          reasoning: { effort: fixos.reasoning.effort },
+          include: [...fixos.include],
+          store: fixos.store,
+          service_tier: fixos.service_tier,
+          instructions: instrucoes,
+          input: [
+            ...historico,
+            {
+              role: "developer",
+              content: avisoDaReescrita(motivoDaPrimeira, final.mensagem),
+            },
+          ],
+          tools: ferramentas,
+          tool_choice: "none",
+          parallel_tool_calls: false,
+          max_output_tokens: MAX_TOKENS_DO_AGENTE,
+          text: { format: FORMATO_DA_RESPOSTA },
+          prompt_cache_key: chaveDeCacheDaClinica("agente", entrada.clinicId),
+          safety_identifier: identificador.valor,
+        },
+        Math.min(PRAZO_DA_RODADA_MS, prazoEm - agora() - RESERVA_DO_FILTRO_MS),
+      );
+      const reescrita =
+        chamada.ok &&
+        chamada.lida.itens.every((item) => item.type !== "function_call")
+          ? lerRespostaFinal(textoDaMensagemFinal(chamada.lida.itens))
+          : null;
+      if (reescrita !== null) {
+        const montado = montarRascunhoDaMensagem(reescrita);
+        if (montado.tipo === "resultado") {
+          return montado.resultado;
+        }
+        rascunho = montado.rascunho;
+        try {
+          fatos = fatosDoRascunho(rascunho);
+        } catch {
+          return fatosFalharam();
+        }
+        filtro = await passarNoFiltro(rascunho, fatos, false);
+      }
+    }
     if (!filtro.aprovado) {
       trilha.push({
         tipo: "bloqueio",
