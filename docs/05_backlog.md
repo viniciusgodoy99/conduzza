@@ -1890,6 +1890,14 @@ Arquitetura no `docs/03`, seção 28; banco no `docs/04`, seção 44; LGPD no `d
 
 **Estado (06/11/2026):** publicado. Conferência da junção com os remédios e o portão: 20.285 testes, typecheck, lint e build verdes; ensaio e provas na produção no `docs/04`, seção 44. **Não rodou:** a OpenAI de verdade com o esquema novo do leitor (se recusar, toda foto e PDF vão para a equipe: falha fechada). **Limites conhecidos:** a nota interna só aparece quando a equipe abre a conversa; o agente não pede RG, CNH ou CPF (não construído); a carteirinha de dependente grava no contato da conversa, só quando o campo está vazio.
 
+### [x] A reescrita antes de passar para a equipe `M` (decisão do dono de 11/11/2026; publicada, sem migration)
+
+A resposta da IA barrada só por formato, fato não confirmado, preço fora do turno ou dúvida do verificador ganha uma reescrita, sem ferramenta, e passa pelo filtro inteiro de novo; barrada de novo, vai para a equipe. As vedações do CFM continuam indo na hora. Detalhe no `docs/03`, seção 39.
+
+### [ ] A rodada paga do verificador `P` (adiada pelo dono em 11/11/2026)
+
+Rodar `scripts/ia/avaliar-conformidade.ts` com os 395 controles de saída e os casos proibidos, antes e depois de mexer na política, para saber a taxa real de falso bloqueio e de vazamento. Precisa de uma chave do projeto "avaliacao" da OpenAI com limite rígido (até US$ 5).
+
 ### [x] Verificador: o nome do cadastro com parênteses não é formato inválido `P` (11/11/2026, publicado, sem migration)
 
 A lista de convênios ("constam Bradesco Saúde (Nacional Flex e Top)... Unimed (Unimed Natal (Estadual e Nacional).") foi barrada como formato inválido e a conversa foi para a equipe. A política do verificador passa a dizer que os nomes do cadastro, com parênteses e pontuação imperfeita, e dizer o que a clínica atende não são formato inválido. As vedações não mudam. Detalhe no `docs/03`, seção 38.

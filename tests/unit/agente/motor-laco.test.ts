@@ -14,6 +14,7 @@ import {
   semArgumentos,
 } from "@/lib/agente/ferramentas/fora-do-assunto";
 import {
+  AVISOS_DA_REESCRITA,
   comporResposta,
   custoMaximoDoTurno,
   executarTurnoDoAgente,
@@ -28,6 +29,8 @@ import {
   PASSO_DO_FORA_DO_ASSUNTO,
   PASSO_SEM_CONSULTA,
   PRAZO_DA_RODADA_MS,
+  PRAZO_MINIMO_DA_REESCRITA_MS,
+  RESERVA_DO_FILTRO_MS,
   TEXTO_DA_FALHA,
   type ClienteDoAgente,
   type EntradaDoTurno,
@@ -1342,8 +1345,10 @@ describe("revisão de produção: teto de saída do agente", () => {
     expect(custo).toBeGreaterThanOrEqual(
       Math.ceil((MAXIMO_DE_RODADAS * 8_192 * 500_000) / 1e6),
     );
-    // E continua bem abaixo do teto diario de US$ 5 (5.000.000).
-    expect(custo).toBeLessThan(100_000);
+    // E continua bem abaixo do teto diario de US$ 5 (5.000.000). Desde
+    // 11/11/2026 a reserva cobre a reescrita (mais uma chamada do agente e
+    // o segundo verificador): passou de US$ 0,10 para perto de US$ 0,11.
+    expect(custo).toBeLessThan(150_000);
   });
 });
 
@@ -1889,5 +1894,203 @@ describe("onda 2: tipo do contato no prompt (item 4)", () => {
         expect(JSON.stringify(aprovador.mock.calls[0])).not.toContain(linha);
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A reescrita (decisao do dono de 11/11/2026)
+// ---------------------------------------------------------------------------
+
+describe("a reescrita: barrada por formato, fato ou preço, a assistente escreve de novo uma vez", () => {
+  function verificadorEmSequencia(
+    vereditos: ("aprova" | "formato" | "medicamento" | "duvida")[],
+  ) {
+    return vi.fn<Verificador>(async () => {
+      const proximo = vereditos.shift() ?? "aprova";
+      if (proximo === "aprova") {
+        return {
+          tipo: "veredicto",
+          veredicto: { aprovado: true, violacoes: [], confianca: "alta" },
+          modelo: "gpt-6-luna",
+          uso: { ...USO_LIDO },
+        };
+      }
+      if (proximo === "duvida") {
+        return {
+          tipo: "veredicto",
+          veredicto: { aprovado: true, violacoes: [], confianca: "baixa" },
+          modelo: "gpt-6-luna",
+          uso: { ...USO_LIDO },
+        };
+      }
+      return {
+        tipo: "veredicto",
+        veredicto: {
+          aprovado: false,
+          violacoes: [
+            {
+              categoria:
+                proximo === "formato" ? "formato_invalido" : "medicamento",
+              gravidade: "alta",
+            },
+          ],
+          confianca: "alta",
+        },
+        modelo: "gpt-6-luna",
+        uso: { ...USO_LIDO },
+      };
+    });
+  }
+
+  // Frases que passam nas regras fixas: so o verificador (falso) barra.
+  const BARRADA = "Temos sim (na rua ao lado (em frente à clínica).";
+  const NOVA = "Temos sim, na rua ao lado, em frente à clínica.";
+
+  it("o verificador barra por formato: uma chamada sem ferramenta, com o aviso e a resposta barrada; a nova sai", async () => {
+    const verificador = verificadorEmSequencia(["formato", "aprova"]);
+    const { cliente, chamadas } = clienteComRoteiro([final(BARRADA), final(NOVA)]);
+    const r = await executarTurnoDoAgente(entrada({ cliente, verificador }));
+    expect(r.tipo).toBe("resposta");
+    expect(r.resposta).toContain(NOVA);
+    expect(r.resposta).not.toContain("(na rua");
+    expect(r.desfecho).toEqual({ tipo: "respondeu" });
+    expect(verificador).toHaveBeenCalledTimes(2);
+    expect(chamadas).toHaveLength(2);
+    const reescrita = chamadas[1]?.corpo as {
+      tool_choice: unknown;
+      input: { role?: string; content?: unknown }[];
+    };
+    expect(reescrita.tool_choice).toBe("none");
+    const aviso = reescrita.input.at(-1);
+    expect(aviso?.role).toBe("developer");
+    expect(String(aviso?.content)).toContain(AVISOS_DA_REESCRITA.formato_invalido);
+    expect(String(aviso?.content)).toContain(BARRADA);
+    expect(r.trilha.map((p) => p.texto)).toContain(
+      "A resposta foi barrada pela conformidade: formato de resposta não permitido. A assistente escreveu de novo.",
+    );
+    // As duas chamadas do agente e os dois verificadores entram no gasto.
+    expect(r.uso.filter((u) => u.papel === "agente")).toHaveLength(2);
+    expect(r.uso.filter((u) => u.papel === "verificador")).toHaveLength(2);
+    expect(escrito.join("")).toContain('"evento":"ia_agente_reescreveu"');
+    expect(escrito.join("")).not.toContain("em frente");
+  });
+
+  it("vedação do CFM pelo verificador: não reescreve, passa para a equipe na hora", async () => {
+    const verificador = verificadorEmSequencia(["medicamento"]);
+    const { cliente, chamadas } = clienteComRoteiro([final(BARRADA), final(NOVA)]);
+    const r = await executarTurnoDoAgente(entrada({ cliente, verificador }));
+    expect(r.tipo).toBe("frase_fixa");
+    expect(r.desfecho).toMatchObject({
+      tipo: "bloqueou",
+      categoria: "medicamento",
+      camada: "modelo",
+    });
+    expect(chamadas).toHaveLength(1);
+    expect(verificador).toHaveBeenCalledTimes(1);
+  });
+
+  it("vedação do CFM pela regra fixa: não reescreve", async () => {
+    const verificador = verificadorEmSequencia([]);
+    const { cliente, chamadas } = clienteComRoteiro([
+      final("Pode tomar dipirona antes da consulta."),
+      final(NOVA),
+    ]);
+    const r = await executarTurnoDoAgente(entrada({ cliente, verificador }));
+    expect(r.tipo).toBe("frase_fixa");
+    expect(r.desfecho).toMatchObject({ tipo: "bloqueou", camada: "regra" });
+    expect(chamadas).toHaveLength(1);
+    expect(verificador).not.toHaveBeenCalled();
+  });
+
+  it("barrada de novo: passa para a equipe com o motivo e o texto da segunda", async () => {
+    const verificador = verificadorEmSequencia(["formato", "formato"]);
+    const { cliente } = clienteComRoteiro([final(BARRADA), final(NOVA)]);
+    const r = await executarTurnoDoAgente(entrada({ cliente, verificador }));
+    expect(r.tipo).toBe("frase_fixa");
+    expect(r.desfecho).toMatchObject({
+      tipo: "bloqueou",
+      categoria: "formato_invalido",
+      camada: "modelo",
+    });
+    expect(r.rascunhoBloqueado).toContain(NOVA);
+    expect(verificador).toHaveBeenCalledTimes(2);
+  });
+
+  it("a chamada da reescrita que falha deixa o bloqueio de antes", async () => {
+    const verificador = verificadorEmSequencia(["formato"]);
+    const { cliente } = clienteComRoteiro([final(BARRADA), new Error("rede")]);
+    const r = await executarTurnoDoAgente(entrada({ cliente, verificador }));
+    expect(r.tipo).toBe("frase_fixa");
+    expect(r.desfecho).toMatchObject({ tipo: "bloqueou", categoria: "formato_invalido" });
+    expect(r.rascunhoBloqueado).toContain("(na rua");
+  });
+
+  it("a reescrita que chama ferramenta não vale: o bloqueio de antes", async () => {
+    const verificador = verificadorEmSequencia(["formato"]);
+    const { cliente } = clienteComRoteiro([
+      final(BARRADA),
+      ferramenta("buscar_procedimento", { procedimento: "p1", convenio: null }),
+    ]);
+    const r = await executarTurnoDoAgente(entrada({ cliente, verificador }));
+    expect(r.tipo).toBe("frase_fixa");
+    expect(verificador).toHaveBeenCalledTimes(1);
+  });
+
+  it("o verificador em dúvida (confiança baixa) também reescreve", async () => {
+    const verificador = verificadorEmSequencia(["duvida", "aprova"]);
+    const { cliente } = clienteComRoteiro([final(BARRADA), final(NOVA)]);
+    const r = await executarTurnoDoAgente(entrada({ cliente, verificador }));
+    expect(r.tipo).toBe("resposta");
+    expect(r.trilha.map((p) => p.texto)).toContain(
+      "A resposta foi barrada pela conformidade: a verificação ficou em dúvida. A assistente escreveu de novo.",
+    );
+  });
+
+  it("a regra fixa que barra (link) também reescreve, e o verificador só vê a nova", async () => {
+    const verificador = verificadorEmSequencia(["aprova"]);
+    const { cliente } = clienteComRoteiro([
+      final("Veja o mapa do estacionamento em www.clinica.com.br"),
+      final(NOVA),
+    ]);
+    const r = await executarTurnoDoAgente(entrada({ cliente, verificador }));
+    expect(r.tipo).toBe("resposta");
+    expect(r.resposta).toContain(NOVA);
+    expect(verificador).toHaveBeenCalledTimes(1);
+  });
+
+  it("sem tempo para a reescrita: passa para a equipe como antes", async () => {
+    const verificador = verificadorEmSequencia(["formato"]);
+    const { cliente, chamadas } = clienteComRoteiro([final(BARRADA), final(NOVA)]);
+    const r = await executarTurnoDoAgente(
+      entrada({
+        cliente,
+        verificador,
+        prazoMs: RESERVA_DO_FILTRO_MS + PRAZO_MINIMO_DA_REESCRITA_MS - 1,
+      }),
+    );
+    expect(r.tipo).toBe("frase_fixa");
+    expect(chamadas).toHaveLength(1);
+  });
+
+  it("a reserva do turno cobre a reescrita", async () => {
+    const custo =
+      custoMaximoDoTurno({
+        config: config(),
+        catalogo: CATALOGO,
+        mensagens: [paciente("Oi, vocês têm estacionamento?")],
+        agoraMs: Date.UTC(2026, 9, 6, 20, 45),
+        fuso: "America/Fortaleza",
+        modelo: "gpt-6-luna",
+        modeloDosClassificadores: "gpt-6-luna",
+        precos: PRECOS,
+      }) ?? 0;
+    const verificador = verificadorEmSequencia(["formato", "aprova"]);
+    const { cliente } = clienteComRoteiro([final(BARRADA), final(NOVA)]);
+    const r = await executarTurnoDoAgente(entrada({ cliente, verificador }));
+    const real = r.uso.reduce(
+      (soma, u) => soma + (custoMaximoDaChamada(u.uso, u.modelo, PRECOS) ?? 0),
+      0,
+    );
+    expect(custo).toBeGreaterThan(real);
   });
 });
