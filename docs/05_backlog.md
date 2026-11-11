@@ -1890,6 +1890,10 @@ Arquitetura no `docs/03`, seção 28; banco no `docs/04`, seção 44; LGPD no `d
 
 **Estado (06/11/2026):** publicado. Conferência da junção com os remédios e o portão: 20.285 testes, typecheck, lint e build verdes; ensaio e provas na produção no `docs/04`, seção 44. **Não rodou:** a OpenAI de verdade com o esquema novo do leitor (se recusar, toda foto e PDF vão para a equipe: falha fechada). **Limites conhecidos:** a nota interna só aparece quando a equipe abre a conversa; o agente não pede RG, CNH ou CPF (não construído); a carteirinha de dependente grava no contato da conversa, só quando o campo está vazio.
 
+### [x] O agente no modelo forte e a pergunta de convênio `P` (decisão do dono de 11/11/2026; publicada, sem migration)
+
+O agente passa do `gpt-6-luna` para o `gpt-6.1-sol` (uns US$ 0,02 a 0,03 por mensagem); a pergunta de convênio, valor, horário ou consulta nunca é "fora do assunto", e "quais convênios vocês atendem?" pergunta a consulta antes. Detalhe no `docs/03`, seção 40.
+
 ### [x] A reescrita antes de passar para a equipe `M` (decisão do dono de 11/11/2026; publicada, sem migration)
 
 A resposta da IA barrada só por formato, fato não confirmado, preço fora do turno ou dúvida do verificador ganha uma reescrita, sem ferramenta, e passa pelo filtro inteiro de novo; barrada de novo, vai para a equipe. As vedações do CFM continuam indo na hora. Detalhe no `docs/03`, seção 39.

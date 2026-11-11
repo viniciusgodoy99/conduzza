@@ -2284,3 +2284,11 @@ O dono, depois da lista de convênios barrada (seção 38): "Preciso que você r
 - **Custo:** a reserva do turno ganha uma chamada do agente e um verificador (o teto reservado vai de cerca de US$ 0,10 para US$ 0,11; o custo real só sobe nas vezes em que barrar).
 - **Prova:** `tests/unit/agente/motor-laco.test.ts` ("a reescrita"): formato pelo verificador reescreve e a nova sai, com o aviso e o `tool_choice`; CFM pelo verificador e pela regra não reescreve; barrada de novo passa com o texto da segunda; a chamada que falha e a que chama ferramenta deixam o bloqueio de antes; dúvida do verificador reescreve; a regra fixa (link) também; sem tempo não reescreve; a reserva cobre.
 - **Não provado:** o efeito com o modelo de verdade (sem a rodada paga, os testes nunca chamam a OpenAI).
+
+## 40. Agente de IA: o modelo forte e a pergunta de convênio (decisão do dono de 11/11/2026; publicada em 11/11/2026, sem migration)
+
+"Quais convênios vocês atendem?", como primeira mensagem, foi respondida com a frase de fora do assunto (o modelo chamou `fora_do_assunto`). O dono: "ela tá muito burra... preciso que você verifique isso totalmente para fazer um agente bom". O agente rodava no `gpt-6-luna` (raciocínio `low`, US$ 0,10 e US$ 0,50 por milhão de tokens), o mais barato, com uma instrução longa e cheia de regras.
+
+- **Modelo:** o padrão do agente passa a `gpt-6.1-sol` (US$ 2 e US$ 10 por milhão; raciocínio `low`), escolha do dono ("Modelo forte"). Pelo uso real de 11/11, a parte do agente fica de 10 a 20 vezes mais cara: uns US$ 0,02 a 0,03 por mensagem do paciente, contra US$ 0,002. O verificador e o classificador continuam no `gpt-6-luna`. `IA_MODELO_AGENTE` ainda escolhe (vazio: o padrão). A reserva do turno (e o teto diário da clínica, US$ 5 por padrão) passa a contar o preço do `gpt-6.1-sol`.
+- **Instrução:** pergunta sobre convênio, plano, valor, horário, endereço, profissional, especialidade, exame, consulta ou procedimento nunca é fora do assunto, mesmo curta, sem acento ou com erro de digitação; "quais convênios vocês atendem?" sem a consulta pergunta para qual consulta ou exame é, sem dizer ainda se atende, e depois consulta `buscar_procedimento` sem convênio (os convênios aceitos naquele procedimento).
+- **Bateria:** o dono autorizou uma bateria no simulador da teste123 com no máximo US$ 1 de gasto.
