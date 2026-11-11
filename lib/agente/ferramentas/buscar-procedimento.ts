@@ -1431,7 +1431,33 @@ type Entrada = {
   distintivas: ReadonlySet<string>;
   /** O texto cru do rotulo (o seletor exato). */
   rotulo: string;
+  /**
+   * 11/11/2026: o plano escrito como lista ("Clássico, Especial e
+   * Executivo", "Unimed Natal (Estadual e Nacional)"), cada item em L; vazio
+   * quando o plano e um so. N com um item e candidato ("SulAmérica
+   * Especial"), como N+P.
+   */
+  itens: string[][];
 };
+
+/** Os itens do plano escrito como lista; vazio quando ele e um so. */
+function itensDoPlano(plano: string | null): string[][] {
+  if (plano === null) {
+    return [];
+  }
+  const itens = normalizarBase(plano)
+    .split(/\s*[(),;/]\s*|\s+(?:e|ou)\s+/)
+    .map((item) => semLigacao(palavras(item)))
+    .filter((item) => item.length > 0);
+  return itens.length > 1 ? itens : [];
+}
+
+/** As mesmas palavras, sem contar ordem nem repeticao. */
+function mesmasPalavras(a: readonly string[], b: readonly string[]): boolean {
+  const de = new Set(a);
+  const para = new Set(b);
+  return de.size === para.size && [...de].every((p) => para.has(p));
+}
 
 /**
  * Todos os convenios, sem excecao: um nome sem letra nem numero ("++") e
@@ -1459,6 +1485,7 @@ function entradasDe(convenios: readonly ConvenioDoAgente[]): Entrada[] {
       distingue: new Set(fragil ? [...n, ...p] : distintivas),
       distintivas: new Set(distintivas),
       rotulo: textoCru(rotuloDe(convenio)),
+      itens: itensDoPlano(convenio.plano),
     };
   });
 }
@@ -1633,7 +1660,8 @@ function identificar(
         iguais(cru, [...e.nome, ...e.plano])
       : iguais(alvo, e.n) ||
         iguais(alvo, [...e.n, ...e.p]) ||
-        iguais(alvo, [...e.p, ...e.n]),
+        iguais(alvo, [...e.p, ...e.n]) ||
+        e.itens.some((item) => mesmasPalavras(alvo, [...e.n, ...item])),
   );
   if (alvo.length === 0 && candidatos.length === 0) {
     return { tipo: "convenio_nao_informado" };

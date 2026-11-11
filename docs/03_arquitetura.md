@@ -2317,3 +2317,44 @@ O dono, depois da lista de convênios barrada (seção 38): "Preciso que você r
   - Os testes da reescrita (`motor-laco.test.ts`) barram o formato pela regra (o link).
   - A bateria de conformidade (50 arquivos, 10.107 testes) e a unidade inteira (495 arquivos, 20.784 testes) passam; typecheck, lint e build também.
 - **Não provado:** o modelo de verdade. O `gpt-6-luna` com a política só do CFM nunca foi medido (D34). Se aparecer um bloqueio médico falso, o próximo passo é o modelo forte só no verificador.
+
+## 42. Agente de IA: a revisão com o motor de verdade (pedido do dono de 11/11/2026; publicada em 11/11/2026, sem migration)
+
+O dono: "Revise isso para realmente funcionar da forma como deveria". Sem a chave da OpenAI fora da Vercel e com o navegador sem sessão, a revisão rodou o turno de verdade (`executarTurnoDoAgente`) com:
+- o Cadastro real da teste123, lido do banco só para leitura;
+- a agenda do simulador, que lê a agenda e não grava;
+- um roteiro de respostas no estilo do modelo, sem OpenAI;
+- o verificador que aprova e o classificador limpo.
+
+O portão determinístico foi testado com 85 perguntas comuns de recepção. A ferramenta ficou no scratchpad, fora do repositório.
+
+**Achados e correções:**
+1. **Portão.** Sete perguntas de recepção sobre exame escalavam como assunto clínico. Exemplos: "Quais exames vocês fazem?", "Que exames tem aí?", "Fazem exame de ouvido?", "Fazem exame admissional?" e "Preciso de pedido médico para o exame?". O molde de recepção do exame (decisão de 06/11/2026) ganhou:
+   - "quais/que exames" com a clínica fazendo, realizando, tendo ou oferecendo;
+   - os nomes ouvido, audição, pele e coração;
+   - admissional, demissional e periódico sem o "de";
+   - o pedido médico como exigência.
+
+   O exame clínico continua escalando, porque o molde vale para o turno inteiro: "quais exames eu preciso fazer?", "minha glicose tá alterada, quais exames vocês fazem?" e "o exame de pele deu alterado". Versão do portão: `portao-da88be1e9fa6` passa a `portao-cf660cdd7872`.
+2. **Regra do convênio.** "Aceitamos" (e "trabalhamos com") seguido da lista dos aceitos que a própria ferramenta trouxe barrava como `aceitacao_sem_fato`. A lista era partida por vírgula e por "e" sem respeitar o plano escrito como lista: "Bradesco Saúde (Nacional Flex e Top)" virava "...Flex" e "Top)".
+   - Agora o nome do Cadastro com vírgula ou "e" vira uma marca antes de partir.
+   - As palavras dos nomes do Cadastro nunca contam como convênio desconhecido.
+   - Continuam barrando o convênio fora do Cadastro ("Aceitamos Amil", "Humana Saúde") e a lista sem fato.
+3. **Ferramentas de convênio.** O plano escrito como lista no Cadastro nunca casava: "SulAmérica (Clássico, Especial e Executivo)" com "SulAmérica Especial", e "Unimed (Unimed Natal (Estadual e Nacional))" com "Unimed Natal". Voltava "convênio não confirmado" e a IA tinha de perguntar.
+   - Agora a operadora com um dos itens do plano casa direto. A mudança está em `identificar`, a regra única de `buscar_procedimento`, `buscar_horario` e das outras ferramentas.
+   - O item sozinho continua sendo opção, e dois convênios da mesma operadora continuam pedindo o plano.
+
+**Por desenho, sem mudança:** criança e adolescente (`menor_de_idade`), desconto (`valor_fora_da_tabela`), sintoma, pedido de pessoa e o cancelamento dentro do prazo da clínica (24 h na teste123) vão para a equipe.
+
+**O roteiro, depois das correções:** 21 de 22 falas passaram.
+- Passaram: especialidades, quem atende, convênios (geral e por consulta), Unimed, Unimed Natal, SulAmérica Especial, preço, endereço, sábado, horário pedido na primeira mensagem, a lista de exames, a saudação e a marcação inteira no particular e pela Unimed (horário, reserva, dados, "Confirma ...?" e marcação).
+- A que barrou foi do roteiro, que pulou o "Confirma ...?". No turno de verdade, `agendar` devolve `sem_confirmacao_do_paciente` e a instrução manda perguntar.
+
+**Prova:**
+- `tests/unit/conformidade/revisao-1111-recepcao.test.ts`;
+- `tests/unit/agente/motor-ferramentas.test.ts` (o plano em lista);
+- a unidade inteira (496 arquivos, 20.810 testes), typecheck, lint e build.
+
+**Não provado:**
+- O modelo de verdade: o roteiro imita o modelo, e o classificador e o verificador de verdade não rodaram.
+- Dado da teste123 que confunde: o funcionamento da unidade no Cadastro (segunda a sexta, 07:00 às 19:00; sábado, 08:00 às 12:00) é diferente do expediente do agente (segunda a sexta, 08:00 às 18:00; sábado fechado).
