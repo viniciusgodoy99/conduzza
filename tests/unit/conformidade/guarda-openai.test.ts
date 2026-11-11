@@ -488,13 +488,16 @@ describe("identificador de seguranca (HMAC, nunca telefone)", () => {
 });
 
 describe("modelo do agente (E2, lista fechada)", () => {
-  it("vazio usa o gpt-6-luna", () => {
-    expect(MODELO_PADRAO_DO_AGENTE).toBe("gpt-6-luna");
-    expect(modeloDoAgente({})).toBe("gpt-6-luna");
-    expect(modeloDoAgente({ IA_MODELO_AGENTE: "  " })).toBe("gpt-6-luna");
+  it("vazio usa o gpt-6.1-sol (decisão do dono de 11/11/2026)", () => {
+    expect(MODELO_PADRAO_DO_AGENTE).toBe("gpt-6.1-sol");
+    expect(modeloDoAgente({})).toBe("gpt-6.1-sol");
+    expect(modeloDoAgente({ IA_MODELO_AGENTE: "  " })).toBe("gpt-6.1-sol");
   });
 
-  it("aceita a alternativa gpt-6.1-sol", () => {
+  it("aceita a alternativa gpt-6-luna e o gpt-6.1-sol pelo ambiente", () => {
+    expect(modeloDoAgente({ IA_MODELO_AGENTE: " gpt-6-luna " })).toBe(
+      "gpt-6-luna",
+    );
     expect(modeloDoAgente({ IA_MODELO_AGENTE: " gpt-6.1-sol " })).toBe(
       "gpt-6.1-sol",
     );

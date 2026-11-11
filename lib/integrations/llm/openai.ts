@@ -254,7 +254,10 @@ export const MODELOS_DO_AGENTE = {
 
 export type ModeloDoAgente = keyof typeof MODELOS_DO_AGENTE;
 
-export const MODELO_PADRAO_DO_AGENTE: ModeloDoAgente = "gpt-6-luna";
+// Decisao do dono de 11/11/2026 ("Modelo forte"): o gpt-6-luna errava regra
+// simples (a pergunta de convenio virou "fora do assunto"). O verificador e
+// o classificador continuam no gpt-6-luna. IA_MODELO_AGENTE ainda escolhe.
+export const MODELO_PADRAO_DO_AGENTE: ModeloDoAgente = "gpt-6.1-sol";
 
 /**
  * Modelo do agente pelo ambiente (IA_MODELO_AGENTE). Vazio usa o padrao;
