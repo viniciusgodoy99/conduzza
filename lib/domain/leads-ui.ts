@@ -477,13 +477,19 @@ export function ehLeadDeAnuncio(
 }
 
 /**
- * Lead do clique rastreado pelo site: anuncio do Google que levou ao site da
- * clinica e dali ao WhatsApp (metodo clique_site).
+ * Lead do clique rastreado pelo site VINDO DE ANUNCIO DO GOOGLE (metodo
+ * clique_site com origem Google): e o que tem "Campanha do Google". Desde a
+ * etapa 2 do plano de 16/11/2026 o mesmo metodo serve ao anuncio da Meta que
+ * leva ao site (origem Meta, campanha pelo anuncio) e a visita com UTM
+ * (campanha em texto), que caem nas regras comuns.
  */
 export function ehLeadDoCliqueNoSite(
-  contato: Pick<OrigemDoContato, "source_method">,
+  contato: Pick<OrigemDoContato, "source_method" | "source_origin">,
 ): boolean {
-  return contato.source_method === METODO_CLIQUE_SITE;
+  return (
+    contato.source_method === METODO_CLIQUE_SITE &&
+    contato.source_origin === "Google"
+  );
 }
 
 /** O id de campanha do Google que o banco aceita (check ^[0-9]{1,20}$). */

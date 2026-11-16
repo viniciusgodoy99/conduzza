@@ -239,18 +239,18 @@ describe("POST /api/publico/clique", () => {
     expect(chamadas).toHaveLength(0);
   });
 
-  it("corpo maior que 2 KB: 204 sem banco", async () => {
-    const grande = corpoValido({ gbraid: "b".repeat(3000) });
-    expect(Buffer.byteLength(grande)).toBeGreaterThan(2048);
+  it("corpo maior que 4 KB: 204 sem banco", async () => {
+    const grande = corpoValido({ gbraid: "b".repeat(5000) });
+    expect(Buffer.byteLength(grande)).toBeGreaterThan(4096);
     await esperar204(await POST(pedido(grande)));
     expect(chamadas).toHaveLength(0);
     expect(escrito.join("")).toContain('"status":"corpo_grande"');
     nadaSensivelNoLog();
   });
 
-  it("Content-Length declarado acima de 2 KB corta antes de ler", async () => {
+  it("Content-Length declarado acima de 4 KB corta antes de ler", async () => {
     await esperar204(
-      await POST(pedido(corpoValido(), { "content-length": "4096" })),
+      await POST(pedido(corpoValido(), { "content-length": "8192" })),
     );
     expect(chamadas).toHaveLength(0);
   });
@@ -270,9 +270,9 @@ describe("POST /api/publico/clique", () => {
     await esperar204(await POST(pedido(infinito)));
     expect(chamadas).toHaveLength(0);
     expect(cancelado).toBe(true);
-    // 2 KB em pedacos de 512: o quinto estoura. Folga para o que o
+    // 4 KB em pedacos de 512: o nono estoura. Folga para o que o
     // ReadableStream puxa adiantado.
-    expect(entregues).toBeLessThanOrEqual(8);
+    expect(entregues).toBeLessThanOrEqual(12);
   });
 
   it("UTF-8 invalido: 204 sem banco", async () => {
@@ -287,7 +287,7 @@ describe("POST /api/publico/clique", () => {
     expect(chamadas).toHaveLength(0);
   });
 
-  it("o maior corpo valido (os 3 identificadores cheios) passa", async () => {
+  it("o maior corpo valido (os 4 identificadores e as 5 UTMs cheios, com acento) passa", async () => {
     const maior = corpoValido({
       gclid: "a".repeat(512),
       gbraid: "b".repeat(512),
@@ -296,8 +296,15 @@ describe("POST /api/publico/clique", () => {
       gad_campaignid: "1".repeat(20),
       cz_campanha: "2".repeat(20),
       cz_grupo: "3".repeat(20),
+      fbclid: "e".repeat(512),
+      cz_anuncio: "4".repeat(20),
+      utm_source: "á".repeat(100),
+      utm_medium: "é".repeat(100),
+      utm_campaign: "í".repeat(100),
+      utm_content: "ó".repeat(100),
+      utm_term: "ú".repeat(100),
     });
-    expect(Buffer.byteLength(maior)).toBeLessThanOrEqual(2048);
+    expect(Buffer.byteLength(maior)).toBeLessThanOrEqual(4096);
     await esperar204(await POST(pedido(maior)));
     expect(chamadas).toHaveLength(1);
   });

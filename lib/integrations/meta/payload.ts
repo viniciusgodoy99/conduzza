@@ -25,6 +25,14 @@ export function hashTelefoneParaMeta(phoneE164: string): string {
   return createHash("sha256").update(digitos).digest("hex");
 }
 
+/**
+ * O clique da Meta que levou ao site, no formato que a Meta casa (fbc):
+ * fb.1.<hora do clique em ms>.<fbclid>.
+ */
+export function fbcDoClique(fbclid: string, cliqueEmMs: number): string {
+  return `fb.1.${cliqueEmMs}.${fbclid}`;
+}
+
 export type EventoCapi = {
   event_name: string;
   event_time: number;
@@ -35,6 +43,7 @@ export type EventoCapi = {
     whatsapp_business_account_id?: string;
     ctwa_clid?: string;
     ph?: string[];
+    fbc?: string;
   };
   custom_data?: { value: number; currency: string };
 };
@@ -48,6 +57,12 @@ export type EntradaDoEvento = {
   /** WABA da clinica; sem ele nao existe evento business_messaging. */
   wabaId: string | null;
   phoneE164: string | null;
+  /**
+   * fbcDoClique do clique do site casado com o contato (anuncio da Meta que
+   * levou ao site). E identificador de clique, nao dado pessoal: entra nos
+   * dois modos.
+   */
+  fbc?: string | null;
   valueCents: number | null;
   currency: string;
   modo: ModoUserData;
@@ -63,10 +78,11 @@ export type EventoMontado =
  *
  * - Com ctwa_clid E waba: business_messaging (o formato do anuncio CTWA),
  *   com ph junto no modo telefone (dado a mais so melhora o casamento).
- * - Sem o par, no modo telefone: evento generico com ph. E o evento "sem
- *   identificador do anuncio": quem decide se ele vale e o interruptor
- *   send_unmatched, NO JOB, nao aqui.
- * - Sem o par, no modo ctwa_apenas: nao ha o que enviar; descarte com codigo.
+ * - Sem o par: evento generico com o que houver, o fbc (clique da Meta que
+ *   passou pelo site, nos dois modos) e o ph (so no modo telefone). So com
+ *   ph e o evento "sem identificador do anuncio": quem decide se ele vale e
+ *   o interruptor send_unmatched, NO JOB, nao aqui.
+ * - Sem o par, sem fbc e sem ph: nao ha o que enviar; descarte com codigo.
  */
 export function montarEventoCapi(entrada: EntradaDoEvento): EventoMontado {
   const ph =
@@ -106,14 +122,14 @@ export function montarEventoCapi(entrada: EntradaDoEvento): EventoMontado {
     };
   }
 
-  if (entrada.modo === "ctwa_apenas") {
-    return {
-      ok: false,
-      descarte: entrada.ctwaClid ? "sem_waba_id" : "sem_ctwa_clid",
-    };
-  }
-
-  if (!ph) {
+  const fbc = entrada.fbc ?? undefined;
+  if (!ph && !fbc) {
+    if (entrada.modo === "ctwa_apenas") {
+      return {
+        ok: false,
+        descarte: entrada.ctwaClid ? "sem_waba_id" : "sem_ctwa_clid",
+      };
+    }
     return { ok: false, descarte: "sem_identificador" };
   }
   return {
@@ -121,7 +137,7 @@ export function montarEventoCapi(entrada: EntradaDoEvento): EventoMontado {
     evento: {
       ...base,
       action_source: "system_generated",
-      user_data: { ph },
+      user_data: { ...(ph ? { ph } : {}), ...(fbc ? { fbc } : {}) },
       ...customData,
     },
   };

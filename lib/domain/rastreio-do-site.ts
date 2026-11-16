@@ -34,8 +34,11 @@ import type { Database } from "@/lib/supabase/database.types";
 // registrar_clique_do_site (supabase/migrations/20261005100000): o que passa
 // aqui nunca volta 22023 do banco.
 
-/** Teto do corpo do aviso. Os 3 identificadores somam ate 1,5 KB. */
-export const LIMITE_DO_CORPO_EM_BYTES = 2048;
+/**
+ * Teto do corpo do aviso. Os 4 identificadores somam ate 2 KB e as 5 UTMs,
+ * com acento, ate 1,5 KB.
+ */
+export const LIMITE_DO_CORPO_EM_BYTES = 4096;
 
 /** Onde o script fica, a partir do endereco do sistema. */
 export const CAMINHO_DO_SCRIPT = "/rastreio/v1.js";
@@ -99,11 +102,62 @@ export const PARAMETROS_DO_GOOGLE = [
   "cz_grupo",
 ] as const;
 
-export type ParametroDoGoogle = (typeof PARAMETROS_DO_GOOGLE)[number];
+/**
+ * Sinais do anuncio da Meta que leva ao site (etapa 2 do plano de 16/11/2026):
+ * o fbclid que a Meta poe na URL e o numero do anuncio, que vem dos
+ * PARAMETROS_DE_URL_DA_META.
+ */
+export const PARAMETROS_DA_META = ["fbclid", "cz_anuncio"] as const;
 
-export type SinaisDoGoogle = Partial<Record<ParametroDoGoogle, string>>;
+/** As UTMs da visita (bio, e-mail, anuncio): detalhe da origem do lead. */
+export const PARAMETROS_UTM = [
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_content",
+  "utm_term",
+] as const;
 
-const FORMATO_DO_PARAMETRO: Record<ParametroDoGoogle, RegExp> = {
+/**
+ * As familias de sinal. Na pagina seguinte da mesma aba, a familia que vem
+ * na URL substitui a guardada INTEIRA e as outras ficam (juntarSinais): um
+ * link interno com UTM nao apaga o clique do anuncio que trouxe a visita.
+ */
+export const FAMILIAS_DE_SINAL = [
+  PARAMETROS_DO_GOOGLE,
+  PARAMETROS_DA_META,
+  PARAMETROS_UTM,
+] as const;
+
+/** Todos os sinais que o script le, na ordem em que os le. */
+export const PARAMETROS_DO_RASTREIO = [
+  ...PARAMETROS_DO_GOOGLE,
+  ...PARAMETROS_DA_META,
+  ...PARAMETROS_UTM,
+] as const;
+
+export type ParametroDoRastreio = (typeof PARAMETROS_DO_RASTREIO)[number];
+
+export type SinaisDoRastreio = Partial<Record<ParametroDoRastreio, string>>;
+
+/**
+ * Parametros de URL que a clinica (ou a agencia) poe no anuncio da Meta que
+ * leva ao site. A Meta troca as chaves pelos valores do anuncio.
+ */
+export const PARAMETROS_DE_URL_DA_META =
+  "utm_source={{site_source_name}}&utm_medium={{placement}}&utm_campaign={{campaign.name}}&utm_content={{ad.name}}&cz_anuncio={{ad.id}}";
+
+/** Numero do anuncio da Meta (so digitos), o mesmo formato do id do Google. */
+export const FORMATO_DO_ID_DA_META = FORMATO_DO_ID_DO_GOOGLE;
+
+/**
+ * UTM: texto livre de ate 100 caracteres, sem caractere de controle nem
+ * quebra de linha. O regex conta unidades UTF-16 e o banco conta caracteres:
+ * o que passa aqui cabe la.
+ */
+export const FORMATO_DA_UTM = /^[^\u0000-\u001f\u007f-\u009f\u2028\u2029]{1,100}$/;
+
+const FORMATO_DO_PARAMETRO: Record<ParametroDoRastreio, RegExp> = {
   gclid: FORMATO_DO_IDENTIFICADOR,
   gbraid: FORMATO_DO_IDENTIFICADOR,
   wbraid: FORMATO_DO_IDENTIFICADOR,
@@ -111,26 +165,68 @@ const FORMATO_DO_PARAMETRO: Record<ParametroDoGoogle, RegExp> = {
   gad_campaignid: FORMATO_DO_ID_DO_GOOGLE,
   cz_campanha: FORMATO_DO_ID_DO_GOOGLE,
   cz_grupo: FORMATO_DO_ID_DO_GOOGLE,
+  fbclid: FORMATO_DO_IDENTIFICADOR,
+  cz_anuncio: FORMATO_DO_ID_DA_META,
+  utm_source: FORMATO_DA_UTM,
+  utm_medium: FORMATO_DA_UTM,
+  utm_campaign: FORMATO_DA_UTM,
+  utm_content: FORMATO_DA_UTM,
+  utm_term: FORMATO_DA_UTM,
 };
 
 /**
- * Sinais do Google na query da pagina (`location.search`). Valor vazio ou
- * fora do formato e descartado SOZINHO: um `cz_grupo` vazio (Performance Max
- * nao tem grupo) nao pode custar o gclid que veio junto. Nenhum sinal
- * valido: null, e o script nao faz nada.
+ * Sinais (Google, Meta e UTMs) na query da pagina (`location.search`). Valor
+ * vazio ou fora do formato e descartado SOZINHO: um `cz_grupo` vazio
+ * (Performance Max nao tem grupo) nao pode custar o gclid que veio junto.
+ * Nenhum sinal valido: null, e o script nao faz nada.
  */
-export function sinaisDaUrl(busca: string): SinaisDoGoogle | null {
+export function sinaisDaUrl(busca: string): SinaisDoRastreio | null {
   const parametros = new URLSearchParams(busca);
-  const sinais: SinaisDoGoogle = {};
+  return sinaisValidos((nome) => parametros.get(nome));
+}
+
+/** So os sinais conhecidos e no formato, na ordem de PARAMETROS_DO_RASTREIO. */
+export function sinaisValidos(
+  ler: (nome: ParametroDoRastreio) => unknown,
+): SinaisDoRastreio | null {
+  const sinais: SinaisDoRastreio = {};
   let algum = false;
-  for (const nome of PARAMETROS_DO_GOOGLE) {
-    const valor = parametros.get(nome);
-    if (valor !== null && FORMATO_DO_PARAMETRO[nome].test(valor)) {
+  for (const nome of PARAMETROS_DO_RASTREIO) {
+    const valor = ler(nome);
+    if (typeof valor === "string" && FORMATO_DO_PARAMETRO[nome].test(valor)) {
       sinais[nome] = valor;
       algum = true;
     }
   }
   return algum ? sinais : null;
+}
+
+/**
+ * Os sinais guardados na aba com os da URL desta pagina: a familia que veio
+ * na URL substitui a guardada inteira, as outras ficam (FAMILIAS_DE_SINAL).
+ */
+export function juntarSinais(
+  guardados: SinaisDoRastreio | null,
+  daUrl: SinaisDoRastreio | null,
+): SinaisDoRastreio | null {
+  const juntos: SinaisDoRastreio = {};
+  let algum = false;
+  for (const familia of FAMILIAS_DE_SINAL) {
+    const veioNaUrl =
+      daUrl !== null && familia.some((nome) => daUrl[nome] !== undefined);
+    const fonte = veioNaUrl ? daUrl : guardados;
+    if (!fonte) {
+      continue;
+    }
+    for (const nome of familia) {
+      const valor = fonte[nome];
+      if (valor !== undefined) {
+        juntos[nome] = valor;
+        algum = true;
+      }
+    }
+  }
+  return algum ? juntos : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -139,8 +235,8 @@ export function sinaisDaUrl(busca: string): SinaisDoGoogle | null {
 
 /**
  * Corpo que o script manda (JSON em text/plain). Estrito: campo a mais,
- * formato errado ou nenhum sinal do Google recusam o corpo inteiro, e a rota
- * responde 204 sem tocar no banco.
+ * formato errado ou nenhum sinal recusam o corpo inteiro, e a rota responde
+ * 204 sem tocar no banco.
  */
 export const corpoDoCliqueSchema = z
   .strictObject({
@@ -153,16 +249,23 @@ export const corpoDoCliqueSchema = z
     gad_campaignid: z.string().regex(FORMATO_DO_ID_DO_GOOGLE).optional(),
     cz_campanha: z.string().regex(FORMATO_DO_ID_DO_GOOGLE).optional(),
     cz_grupo: z.string().regex(FORMATO_DO_ID_DO_GOOGLE).optional(),
+    fbclid: z.string().regex(FORMATO_DO_IDENTIFICADOR).optional(),
+    cz_anuncio: z.string().regex(FORMATO_DO_ID_DA_META).optional(),
+    utm_source: z.string().regex(FORMATO_DA_UTM).optional(),
+    utm_medium: z.string().regex(FORMATO_DA_UTM).optional(),
+    utm_campaign: z.string().regex(FORMATO_DA_UTM).optional(),
+    utm_content: z.string().regex(FORMATO_DA_UTM).optional(),
+    utm_term: z.string().regex(FORMATO_DA_UTM).optional(),
   })
   .refine((corpo) => contarSinais(corpo) > 0, {
-    message: "Nenhum sinal do Google.",
+    message: "Nenhum sinal.",
   });
 
 export type CorpoDoClique = z.infer<typeof corpoDoCliqueSchema>;
 
-/** Quantos dos 7 parametros do Google vieram (vai no log como `count`). */
-export function contarSinais(corpo: SinaisDoGoogle): number {
-  return PARAMETROS_DO_GOOGLE.filter((nome) => corpo[nome] !== undefined)
+/** Quantos dos sinais vieram (vai no log como `count`). */
+export function contarSinais(corpo: SinaisDoRastreio): number {
+  return PARAMETROS_DO_RASTREIO.filter((nome) => corpo[nome] !== undefined)
     .length;
 }
 
@@ -264,6 +367,27 @@ export function argumentosDoRegistro(
   }
   if (corpo.cz_grupo !== undefined) {
     argumentos.p_google_adgroup_id = corpo.cz_grupo;
+  }
+  if (corpo.fbclid !== undefined) {
+    argumentos.p_fbclid = corpo.fbclid;
+  }
+  if (corpo.cz_anuncio !== undefined) {
+    argumentos.p_meta_ad_id = corpo.cz_anuncio;
+  }
+  if (corpo.utm_source !== undefined) {
+    argumentos.p_utm_source = corpo.utm_source;
+  }
+  if (corpo.utm_medium !== undefined) {
+    argumentos.p_utm_medium = corpo.utm_medium;
+  }
+  if (corpo.utm_campaign !== undefined) {
+    argumentos.p_utm_campaign = corpo.utm_campaign;
+  }
+  if (corpo.utm_content !== undefined) {
+    argumentos.p_utm_content = corpo.utm_content;
+  }
+  if (corpo.utm_term !== undefined) {
+    argumentos.p_utm_term = corpo.utm_term;
   }
   const host = hostDoOrigin(origin);
   if (host !== null) {

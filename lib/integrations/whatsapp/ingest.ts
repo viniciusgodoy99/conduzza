@@ -185,8 +185,9 @@ async function textoEFraseDoBotao(
  * Casa os codigos da mensagem (na ordem dada) com um clique do site da
  * clinica pela RPC casar_clique_do_site. O banco faz tudo numa transacao:
  * so casa clique da mesma clinica, nao casado e no prazo, e so grava a
- * origem (Trafego pago, Google, clique_site, ids da campanha e do grupo) em
- * contato sem origem e sem sinal de anuncio da Meta.
+ * origem em contato sem origem e sem sinal de anuncio da Meta: pelo sinal do
+ * clique, Google (ids da campanha e do grupo), Meta (o anuncio, que o banco
+ * manda resolver na Meta) ou so UTMs (migration 20261116110000).
  *
  * Para no primeiro origem_gravada ou vinculado; senao devolve expirado (se
  * algum codigo era clique vencido) ou nao_achado. Devolve null quando a RPC

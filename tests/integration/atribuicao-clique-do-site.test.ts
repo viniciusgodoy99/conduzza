@@ -234,6 +234,138 @@ describe("clique do site na ingestão", () => {
     expect(clique.casado_em).not.toBeNull();
   });
 
+  // Etapa 2 do plano de 16/11/2026 (migration 20261116110000): o anuncio da
+  // Meta que leva ao site e a visita com UTM.
+  it("lead do anúncio da Meta pelo site: origem Meta, plataforma e o anúncio; o fbclid fica no clique", async () => {
+    const clinicId = await criarClinica("meta-site");
+    const codigo = codigoNovo();
+    const fbclid = `IwAR0-teste_${sufixo}`;
+    const { data: registro } = await admin
+      .rpc("registrar_clique_do_site", {
+        p_chave: await ligarRastreio(clinicId),
+        p_codigo: codigo,
+        p_fbclid: fbclid,
+        p_meta_ad_id: "120211223344556",
+        p_utm_source: "ig",
+        p_utm_medium: "Instagram_Stories",
+        p_utm_campaign: "Black Friday",
+      })
+      .throwOnError();
+    expect(registro).toBe("ok");
+
+    const data = await ingerir(
+      clinicId,
+      evento(
+        "+5584976660021",
+        `clq-meta-${sufixo}`,
+        `Quero agendar [#${codigo}]`,
+      ),
+    );
+    expect(await origemDe(data.contact_id!)).toMatchObject({
+      source_channel: "trafego_pago",
+      source_origin: "Meta",
+      source_medium: "Instagram",
+      source_campaign: null,
+      source_method: "clique_site",
+      // O numero do anuncio liga o lead a campanha pela Meta (meta_anuncio).
+      source_ad_id: "120211223344556",
+      source_google_campaign_id: null,
+      source_google_adgroup_id: null,
+      ctwa_clid: null,
+    });
+    const { data: clique } = await admin
+      .from("clique_do_site")
+      .select("fbclid, utm_campaign, contact_id")
+      .eq("clinic_id", clinicId)
+      .eq("codigo", codigo)
+      .single()
+      .throwOnError();
+    expect(clique).toEqual({
+      fbclid,
+      utm_campaign: "Black Friday",
+      contact_id: data.contact_id,
+    });
+  });
+
+  it("visita só com UTM: o canal pela utm_medium, a origem em minúsculas e a campanha em texto", async () => {
+    const clinicId = await criarClinica("utm-site");
+    const chave = await ligarRastreio(clinicId);
+    const casos = [
+      {
+        utm: {
+          p_utm_source: "Instagram",
+          p_utm_medium: "bio",
+          p_utm_campaign: "Link da bio",
+        },
+        esperado: {
+          source_channel: "redes_sociais",
+          source_origin: "instagram",
+          source_medium: "bio",
+          source_campaign: "Link da bio",
+        },
+      },
+      {
+        utm: { p_utm_source: "newsletter", p_utm_medium: "email" },
+        esperado: {
+          source_channel: "direto",
+          source_origin: "newsletter",
+          source_medium: "email",
+          source_campaign: null,
+        },
+      },
+      {
+        // 'Google' com maiuscula e organico: nao e o anuncio, vai em minusculas.
+        utm: { p_utm_source: "Google", p_utm_medium: "organic" },
+        esperado: {
+          source_channel: "busca_organica",
+          source_origin: "google",
+          source_medium: "organic",
+          source_campaign: null,
+        },
+      },
+      {
+        // Pago do Google sem gclid (marcacao automatica desligada): e o
+        // anuncio do Google, sem os ids.
+        utm: {
+          p_utm_source: "google",
+          p_utm_medium: "cpc",
+          p_utm_campaign: "Marca",
+        },
+        esperado: {
+          source_channel: "trafego_pago",
+          source_origin: "Google",
+          source_medium: null,
+          source_campaign: null,
+        },
+      },
+    ];
+    for (const [indice, caso] of casos.entries()) {
+      const codigo = codigoNovo();
+      const { data: registro } = await admin
+        .rpc("registrar_clique_do_site", {
+          p_chave: chave,
+          p_codigo: codigo,
+          ...caso.utm,
+        })
+        .throwOnError();
+      expect(registro).toBe("ok");
+      const data = await ingerir(
+        clinicId,
+        evento(
+          `+558497666003${indice}`,
+          `clq-utm-${indice}-${sufixo}`,
+          `Olá! [#${codigo}]`,
+        ),
+      );
+      expect(await origemDe(data.contact_id!)).toMatchObject({
+        ...caso.esperado,
+        source_method: "clique_site",
+        source_ad_id: null,
+        source_google_campaign_id: null,
+      });
+    }
+  });
+
   it("o clique vem antes da palavra-chave", async () => {
     const clinicId = await criarClinica("antesdapalavra");
     await admin

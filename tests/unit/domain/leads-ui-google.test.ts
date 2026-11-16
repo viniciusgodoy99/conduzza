@@ -175,6 +175,36 @@ describe("o lead do Google não é lead de anúncio da Meta", () => {
     );
   });
 
+  it("clique no site vindo da Meta ou só com UTM não é lead do Google (etapa 2, 16/11/2026)", () => {
+    // O mesmo metodo clique_site, com outra origem: o anuncio da Meta que
+    // leva ao site e lead de anuncio da Meta (campanha pelo id do anuncio)...
+    const doSiteDaMeta: OrigemDoContato = {
+      source_channel: "trafego_pago",
+      source_origin: "Meta",
+      source_medium: "Instagram",
+      source_method: "clique_site",
+      source_campaign: null,
+      source_ad_id: "120211223344556",
+      source_google_campaign_id: null,
+    };
+    expect(ehLeadDoCliqueNoSite(doSiteDaMeta)).toBe(false);
+    expect(ehLeadDeAnuncio(doSiteDaMeta)).toBe(true);
+    // ...e a visita com UTM leva a campanha em texto, como o link.
+    const doSiteComUtm: OrigemDoContato = {
+      source_channel: "redes_sociais",
+      source_origin: "instagram",
+      source_medium: "bio",
+      source_method: "clique_site",
+      source_campaign: "Black Friday",
+      source_ad_id: null,
+      source_google_campaign_id: null,
+    };
+    expect(ehLeadDoCliqueNoSite(doSiteComUtm)).toBe(false);
+    expect(campanhaDoContato(doSiteComUtm, LEITURA_SEM_ANUNCIO).texto).toBe(
+      "Black Friday",
+    );
+  });
+
   it("nenhum texto do Google tem travessão", () => {
     const textos = [
       textoDaOrigem(leadDoGoogle()),

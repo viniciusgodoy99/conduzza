@@ -1563,13 +1563,20 @@ export type Database = {
           codigo: string
           contact_id: string | null
           criado_em: string
+          fbclid: string | null
           gad_source: string | null
           gbraid: string | null
           gclid: string | null
           google_adgroup_id: string | null
           google_campaign_id: string | null
           id: string
+          meta_ad_id: string | null
           site_host: string | null
+          utm_campaign: string | null
+          utm_content: string | null
+          utm_medium: string | null
+          utm_source: string | null
+          utm_term: string | null
           valido_ate: string
           wbraid: string | null
         }
@@ -1579,13 +1586,20 @@ export type Database = {
           codigo: string
           contact_id?: string | null
           criado_em?: string
+          fbclid?: string | null
           gad_source?: string | null
           gbraid?: string | null
           gclid?: string | null
           google_adgroup_id?: string | null
           google_campaign_id?: string | null
           id?: string
+          meta_ad_id?: string | null
           site_host?: string | null
+          utm_campaign?: string | null
+          utm_content?: string | null
+          utm_medium?: string | null
+          utm_source?: string | null
+          utm_term?: string | null
           valido_ate?: string
           wbraid?: string | null
         }
@@ -1595,13 +1609,20 @@ export type Database = {
           codigo?: string
           contact_id?: string | null
           criado_em?: string
+          fbclid?: string | null
           gad_source?: string | null
           gbraid?: string | null
           gclid?: string | null
           google_adgroup_id?: string | null
           google_campaign_id?: string | null
           id?: string
+          meta_ad_id?: string | null
           site_host?: string | null
+          utm_campaign?: string | null
+          utm_content?: string | null
+          utm_medium?: string | null
+          utm_source?: string | null
+          utm_term?: string | null
           valido_ate?: string
           wbraid?: string | null
         }
@@ -7042,12 +7063,19 @@ export type Database = {
         Args: {
           p_chave: string
           p_codigo: string
+          p_fbclid?: string
           p_gad_source?: string
           p_gbraid?: string
           p_gclid?: string
           p_google_adgroup_id?: string
           p_google_campaign_id?: string
+          p_meta_ad_id?: string
           p_site_host?: string
+          p_utm_campaign?: string
+          p_utm_content?: string
+          p_utm_medium?: string
+          p_utm_source?: string
+          p_utm_term?: string
           p_wbraid?: string
         }
         Returns: string

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { enviarEventosCapi } from "@/lib/integrations/meta/capi";
 import {
+  fbcDoClique,
   montarEventoCapi,
   type ModoUserData,
 } from "@/lib/integrations/meta/payload";
@@ -141,8 +142,28 @@ export async function executarEnvioDeConversao(
       ? ((contato.phone_e164 as string | null) ?? null)
       : null;
 
-  // A regra do send_unmatched vale pelo ctwa RESOLVIDO, nao pelo snapshot.
-  if (!ctwaClid && !conta.send_unmatched) {
+  // Anuncio da Meta que levou ao SITE: o clique casado com o contato guarda o
+  // fbclid, que vai no evento como fbc. Erro de leitura repete (o mesmo
+  // principio do contato): sem ele o evento sairia pior ou seria descartado.
+  const { data: clique, error: erroClique } = await admin
+    .from("clique_do_site")
+    .select("fbclid, criado_em")
+    .eq("clinic_id", job.clinic_id)
+    .eq("contact_id", evento.contact_id)
+    .not("fbclid", "is", null)
+    .order("criado_em", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (erroClique) {
+    return { ok: false, erro: "clique_indisponivel" };
+  }
+  const fbc = clique?.fbclid
+    ? fbcDoClique(clique.fbclid, new Date(clique.criado_em).getTime())
+    : null;
+
+  // A regra do send_unmatched vale pelo clique RESOLVIDO (ctwa ou fbc), nao
+  // pelo snapshot.
+  if (!ctwaClid && !fbc && !conta.send_unmatched) {
     return descartar(admin, evento.id, "sem_identificador");
   }
 
@@ -153,6 +174,7 @@ export async function executarEnvioDeConversao(
     ctwaClid,
     wabaId: conta.whatsapp_business_account_id ?? null,
     phoneE164,
+    fbc,
     valueCents: evento.value_cents,
     currency: evento.currency,
     modo,

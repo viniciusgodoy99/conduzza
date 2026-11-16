@@ -380,7 +380,7 @@ Pedido do dono em 16/11/2026: um benchmark da parte de métricas do Tintim (feit
 
 **Etapas e estado:**
 - **1. Ligar o envio de conversões à Meta** `P`: construída em 16/11/2026 (migration `20261116100000`, **a aplicar com o ok do dono**; seletor do modo liberado na aba; o job não corta mais por autorização). Falta a validação com `test_event_code` numa clínica real.
-- **2. Script do site com Meta e UTMs** `G`: `fbclid`, `cz_anuncio` e `utm_*` no mesmo `rastreio/v1.js`; origem Meta pelo clique do site; `fbc` no evento. A construir.
+- **2. Script do site com Meta e UTMs** `G`: construída em 16/11/2026 (migration `20261116110000`, **a aplicar com o ok do dono, antes do código**). `fbclid`, `cz_anuncio` e `utm_*` no mesmo `rastreio/v1.js`, com a regra das famílias de sinal entre páginas; a origem do lead pelo sinal do clique (Google, Meta com o anúncio, ou só UTMs); o `fbc` no evento de conversão; os parâmetros de URL da Meta no cartão do rastreio. Unidade verde; os testes de integração novos (`tests/integration/atribuicao-clique-do-site.test.ts`) dependem da migration aplicada. Detalhe no `docs/04`, 15.9, e no `docs/01`, 10.13.
 - **3. Link da bio rastreado** `G`, em cinco entregas: 3a endereço próprio com o clique gravado e a contagem; 3b rodízio entre números; 3c código invisível (só liga depois de teste com celular real); 3d casamento sem código (mensagem pronta e janela de 10 minutos, "provável"); 3e evento para a Meta no clique. A construir.
 - **4. QR Code do link** `P` (dependência nova: `qrcode`). A construir.
 - **5. Faturamento e retorno por campanha** `M` em Resultados. A construir.
