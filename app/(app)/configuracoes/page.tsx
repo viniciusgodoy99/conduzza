@@ -28,6 +28,7 @@ import {
 } from "@/components/whatsapp/numeros";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { corDoNumero } from "@/lib/domain/cor-do-numero";
+import { baseDosLinks } from "@/lib/domain/link-rastreado";
 import {
   canEdit,
   ehAdminPleno as ehAdministradorPleno,
@@ -55,7 +56,10 @@ import {
   frasesDoBotaoDoSite,
   numerosParaOLink,
 } from "@/lib/domain/regras-de-origem";
-import { fetchRegrasDeOrigem } from "@/lib/queries/regras-de-origem";
+import {
+  fetchRegrasDeOrigem,
+  fetchResumoDosLinks,
+} from "@/lib/queries/regras-de-origem";
 import { fetchRespostasRapidas } from "@/lib/queries/respostas-rapidas";
 import type { Pendente } from "./equipe-client";
 // [AG7 preparo] início
@@ -217,6 +221,7 @@ export default async function ConfiguracoesPage({
     // [AG7 preparo] início
     responsavelTecnicoLido,
     // [AG7 preparo] fim
+    resumoDosLinks,
   ] = await Promise.all([
     supabase
       .from("clinic_member")
@@ -320,6 +325,9 @@ export default async function ConfiguracoesPage({
     // lote: a policy deixa todo membro ativo ler. Tolerante.
     lerResponsavelTecnico(supabase, active.clinicId),
     // [AG7 preparo] fim
+    // Cliques e leads dos links rastreados (so agregados). Tolerante: sem
+    // ele a aba Origem dos leads mostra os links sem a contagem.
+    fetchResumoDosLinks(supabase, active.clinicId),
   ]);
 
   type MemberRow = {
@@ -616,6 +624,14 @@ export default async function ConfiguracoesPage({
           origensDaClinica
             ? {
                 regras: origensDaClinica,
+                // O endereco dos links rastreados: o dominio curto dos
+                // links, quando existe, senao o do sistema (a rota responde
+                // nos dois).
+                enderecoDosLinks: baseDosLinks(
+                  process.env.LINK_BASE_URL,
+                  process.env.PUBLIC_APP_URL,
+                ),
+                resumoDosLinks,
                 // Os numeros ativos da leitura da aba WhatsApp (o principal
                 // primeiro), so os que ja tem telefone. Nulo: a leitura
                 // falhou, e o bloco do link diz isso.

@@ -1308,6 +1308,7 @@ export type Database = {
           campaign: string | null
           channel: string
           clinic_id: string
+          codigo_publico: string
           created_at: string
           default_message: string | null
           id: string
@@ -1323,6 +1324,7 @@ export type Database = {
           campaign?: string | null
           channel: string
           clinic_id: string
+          codigo_publico?: string
           created_at?: string
           default_message?: string | null
           id?: string
@@ -1338,6 +1340,7 @@ export type Database = {
           campaign?: string | null
           channel?: string
           clinic_id?: string
+          codigo_publico?: string
           created_at?: string
           default_message?: string | null
           id?: string
@@ -1556,8 +1559,55 @@ export type Database = {
           },
         ]
       }
+      clique_do_link_dia: {
+        Row: {
+          campaign_link_id: string
+          clinic_id: string
+          cliques: number
+          dia: string
+          whatsapp_account_id: string
+        }
+        Insert: {
+          campaign_link_id: string
+          clinic_id: string
+          cliques?: number
+          dia: string
+          whatsapp_account_id: string
+        }
+        Update: {
+          campaign_link_id?: string
+          clinic_id?: string
+          cliques?: number
+          dia?: string
+          whatsapp_account_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "clique_do_link_dia_campaign_link_id_fkey"
+            columns: ["campaign_link_id"]
+            isOneToOne: false
+            referencedRelation: "campaign_link"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "clique_do_link_dia_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "clique_do_link_dia_whatsapp_account_id_fkey"
+            columns: ["whatsapp_account_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_account"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       clique_do_site: {
         Row: {
+          campaign_link_id: string | null
           casado_em: string | null
           clinic_id: string
           codigo: string
@@ -1578,9 +1628,12 @@ export type Database = {
           utm_source: string | null
           utm_term: string | null
           valido_ate: string
+          via: string
           wbraid: string | null
+          whatsapp_account_id: string | null
         }
         Insert: {
+          campaign_link_id?: string | null
           casado_em?: string | null
           clinic_id: string
           codigo: string
@@ -1601,9 +1654,12 @@ export type Database = {
           utm_source?: string | null
           utm_term?: string | null
           valido_ate?: string
+          via?: string
           wbraid?: string | null
+          whatsapp_account_id?: string | null
         }
         Update: {
+          campaign_link_id?: string | null
           casado_em?: string | null
           clinic_id?: string
           codigo?: string
@@ -1624,9 +1680,18 @@ export type Database = {
           utm_source?: string | null
           utm_term?: string | null
           valido_ate?: string
+          via?: string
           wbraid?: string | null
+          whatsapp_account_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "clique_do_site_campaign_link_id_fkey"
+            columns: ["campaign_link_id"]
+            isOneToOne: false
+            referencedRelation: "campaign_link"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "clique_do_site_clinic_id_fkey"
             columns: ["clinic_id"]
@@ -1639,6 +1704,13 @@ export type Database = {
             columns: ["contact_id"]
             isOneToOne: false
             referencedRelation: "contact"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "clique_do_site_whatsapp_account_id_fkey"
+            columns: ["whatsapp_account_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_account"
             referencedColumns: ["id"]
           },
         ]
@@ -7059,6 +7131,26 @@ export type Database = {
         }
         Returns: string
       }
+      registrar_clique_do_link: {
+        Args: {
+          p_codigo_publico: string
+          p_fbclid?: string
+          p_gad_source?: string
+          p_gbraid?: string
+          p_gclid?: string
+          p_google_adgroup_id?: string
+          p_google_campaign_id?: string
+          p_gravar?: boolean
+          p_meta_ad_id?: string
+          p_utm_campaign?: string
+          p_utm_content?: string
+          p_utm_medium?: string
+          p_utm_source?: string
+          p_utm_term?: string
+          p_wbraid?: string
+        }
+        Returns: Json
+      }
       registrar_clique_do_site: {
         Args: {
           p_chave: string
@@ -7254,6 +7346,14 @@ export type Database = {
         Args: { p_clinic_id: string }
         Returns: Json
       }
+      resumo_dos_links_rastreados: {
+        Args: { p_clinic_id: string; p_dias?: number }
+        Returns: {
+          campaign_link_id: string
+          cliques: number
+          leads: number
+        }[]
+      }
       situacao_do_rastreio: { Args: { p_clinic_id: string }; Returns: Json }
       sincronizar_convenios_do_profissional: {
         Args: {
@@ -7275,6 +7375,7 @@ export type Database = {
         }
         Returns: Json
       }
+      sortear_codigo: { Args: { p_tamanho: number }; Returns: string }
       substituir_jornada: {
         Args: { p_clinic_id: string; p_faixas: Json; p_professional_id: string }
         Returns: undefined

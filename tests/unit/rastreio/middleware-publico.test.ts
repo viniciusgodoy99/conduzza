@@ -23,6 +23,15 @@ describe("matcher do middleware e o rastreio do site", () => {
     ).toBe(false);
   });
 
+  it("o link rastreado da origem e a pagina de indisponivel ficam fora", () => {
+    expect(passaPeloMiddleware("/l/k7q2mxab")).toBe(false);
+    expect(passaPeloMiddleware("/l/indisponivel")).toBe(false);
+    // So o prefixo l/: leads, login e lista de espera continuam dentro.
+    expect(passaPeloMiddleware("/leads")).toBe(true);
+    expect(passaPeloMiddleware("/login")).toBe(true);
+    expect(passaPeloMiddleware("/l")).toBe(true);
+  });
+
   it("o resto continua protegido", () => {
     expect(passaPeloMiddleware("/inicio")).toBe(true);
     expect(passaPeloMiddleware("/configuracoes")).toBe(true);

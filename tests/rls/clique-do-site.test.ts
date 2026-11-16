@@ -771,3 +771,107 @@ describe("frases do rastreio", () => {
     expect(data).toEqual(await frasesDe(clinicaA));
   });
 });
+
+// Link rastreado da origem (migration 20261116120000, etapa 3a do plano de
+// 16/11/2026): a contagem por dia so o sistema le e escreve; o redirect so a
+// service role chama; o resumo (so agregados) e de quem e membro ativo da
+// propria clinica.
+describe("link rastreado da origem", () => {
+  it("clique_do_link_dia: nenhuma sessao le nem escreve, nem anon; o sistema le", async () => {
+    for (const papel of ["admin-a", "gestor-a", "recepcao-a", "admin-b"]) {
+      const cliente = await logado(papel);
+      const leitura = await cliente.from("clique_do_link_dia").select("cliques");
+      expect(leitura.error?.code).toBe(PERMISSAO_NEGADA);
+      const escrita = await cliente.from("clique_do_link_dia").insert({
+        clinic_id: clinicaA,
+        campaign_link_id: crypto.randomUUID(),
+        whatsapp_account_id: crypto.randomUUID(),
+        dia: "2026-11-16",
+        cliques: 99,
+      });
+      expect(escrita.error?.code).toBe(PERMISSAO_NEGADA);
+    }
+    const anon = await anonClient().from("clique_do_link_dia").select("cliques");
+    expect(anon.error?.code).toBe(PERMISSAO_NEGADA);
+    // contraprova: o sistema le
+    const { error } = await admin.from("clique_do_link_dia").select("cliques");
+    expect(error).toBeNull();
+  });
+
+  it("registrar_clique_do_link: 42501 para qualquer sessao e para anon", async () => {
+    for (const papel of ["admin-a", "gestor-a", "recepcao-a"]) {
+      const cliente = await logado(papel);
+      const { error } = await cliente.rpc("registrar_clique_do_link", {
+        p_codigo_publico: "22222222",
+      });
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
+    }
+    const { error: erroAnon } = await anonClient().rpc(
+      "registrar_clique_do_link",
+      { p_codigo_publico: "22222222" },
+    );
+    expect(erroAnon?.code).toBe(PERMISSAO_NEGADA);
+    // contraprova: a service role (o redirect) chama
+    const { data, error } = await admin.rpc("registrar_clique_do_link", {
+      p_codigo_publico: "22222222",
+    });
+    expect(error).toBeNull();
+    expect(data).toEqual({ resultado: "indisponivel" });
+  });
+
+  it("resumo_dos_links_rastreados: membro ativo da propria clinica le; pendente, outra clinica e anon nao", async () => {
+    const { data: origem } = await admin
+      .from("campaign_link")
+      .insert({
+        clinic_id: clinicaA,
+        name: `Link RLS ${sufixo}`,
+        token: "R7S2MK",
+        channel: "redes_sociais",
+        default_message: "Olá! Vi o perfil da clínica e quero agendar.",
+      })
+      .select("id, codigo_publico")
+      .single()
+      .throwOnError();
+
+    for (const papel of ["admin-a", "gestor-a", "recepcao-a", "leitura-a"]) {
+      const cliente = await logado(papel);
+      const { data, error } = await cliente.rpc("resumo_dos_links_rastreados", {
+        p_clinic_id: clinicaA,
+      });
+      expect(error).toBeNull();
+      expect(data).toContainEqual({
+        campaign_link_id: origem!.id,
+        cliques: 0,
+        leads: 0,
+      });
+    }
+    for (const papel of ["pendente-a", "admin-b"]) {
+      const cliente = await logado(papel);
+      const { data, error } = await cliente.rpc("resumo_dos_links_rastreados", {
+        p_clinic_id: clinicaA,
+      });
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
+      expect(data).toBeNull();
+    }
+    const { error: erroAnon } = await anonClient().rpc(
+      "resumo_dos_links_rastreados",
+      { p_clinic_id: clinicaA },
+    );
+    expect(erroAnon?.code).toBe(PERMISSAO_NEGADA);
+
+    // O codigo publico da origem da A: a B nao le a origem (policy de
+    // campaign_link), a A le.
+    const b = await logado("admin-b");
+    const daB = await b
+      .from("campaign_link")
+      .select("codigo_publico")
+      .eq("id", origem!.id);
+    expect(daB.data).toEqual([]);
+    const a = await logado("recepcao-a");
+    const daA = await a
+      .from("campaign_link")
+      .select("codigo_publico")
+      .eq("id", origem!.id);
+    expect(daA.data).toEqual([{ codigo_publico: origem!.codigo_publico }]);
+  });
+});

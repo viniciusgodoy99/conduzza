@@ -50,13 +50,15 @@ export const PALAVRA_CHAVE_MAXIMA = 40;
 
 /** Colunas de campaign_link que a aba le (lib/queries/regras-de-origem.ts). */
 export const REGRA_DE_ORIGEM_SELECT =
-  "id, name, token, channel, origin, medium, campaign, default_message, keywords, active, created_at";
+  "id, name, token, codigo_publico, channel, origin, medium, campaign, default_message, keywords, active, created_at";
 
 /** Uma linha de campaign_link como o PostgREST devolve. */
 export type LinhaDaRegraDeOrigem = {
   id: string;
   name: string;
   token: string | null;
+  /** o codigo do endereco publico do link rastreado (migration 20261116120000) */
+  codigo_publico: string;
   channel: SourceChannel;
   origin: string | null;
   medium: string | null;
@@ -73,6 +75,8 @@ export type RegraDeOrigem = {
   nome: string;
   /** o codigo do link, sem a cerquilha; nulo = sem codigo */
   codigo: string | null;
+  /** o codigo do endereco publico do link rastreado (<sistema>/l/<codigo>) */
+  codigoPublico: string;
   canal: SourceChannel;
   origem: string | null;
   /** o "meio" (medium): Bio, Perfil, QR da recepcao */
@@ -89,6 +93,7 @@ export function regraDaLinha(linha: LinhaDaRegraDeOrigem): RegraDeOrigem {
     id: linha.id,
     nome: linha.name,
     codigo: linha.token ? linha.token.toUpperCase() : null,
+    codigoPublico: linha.codigo_publico,
     canal: linha.channel,
     origem: linha.origin,
     detalhe: linha.medium,
