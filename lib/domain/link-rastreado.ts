@@ -93,25 +93,52 @@ export type ArgumentosDoCliqueDoLink =
   Database["public"]["Functions"]["registrar_clique_do_link"]["Args"];
 
 /**
- * Argumentos de registrar_clique_do_link. Sem gravar (robo, previa, segunda
- * tentativa), os sinais nem viajam.
+ * Argumentos de registrar_clique_do_link. Sem gravar (robo, previa), os
+ * sinais nem viajam. O numero fixado (etapa 3b, o rodizio) e o que o cookie
+ * do visitante guarda: o mesmo navegador cai sempre no mesmo numero.
  */
 export function argumentosDoCliqueDoLink(
   codigoPublico: string,
   gravar: boolean,
   sinais: SinaisDoRastreio | null,
+  numeroFixado: string | null = null,
 ): ArgumentosDoCliqueDoLink {
   return {
     p_codigo_publico: codigoPublico,
     p_gravar: gravar,
     ...(gravar && sinais ? argumentosDosSinais(sinais) : {}),
+    ...(numeroFixado ? { p_numero_fixado: numeroFixado } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// O numero fixado do visitante (etapa 3b: rodizio entre numeros)
+// ---------------------------------------------------------------------------
+
+/** 90 dias, como no Q5. */
+export const VALIDADE_DO_NUMERO_FIXADO_EM_SEGUNDOS = 90 * 24 * 60 * 60;
+
+const FORMATO_DO_NUMERO =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** O cookie do link: um por origem, so com o id do numero (nada da pessoa). */
+export function cookieDoNumeroFixado(codigoPublico: string): string {
+  return `cz_lk_${codigoPublico}`;
+}
+
+/** O id do numero que o cookie guarda, ou null se nao for um id. */
+export function numeroFixadoDoCookie(
+  valor: string | null | undefined,
+): string | null {
+  return valor && FORMATO_DO_NUMERO.test(valor) ? valor : null;
 }
 
 const destinoSchema = z.object({
   digitos: z.string().regex(/^[0-9]{10,15}$/),
   mensagem: z.string().min(1),
   codigo_fixo: z.string().nullable(),
+  /** whatsapp_account.id do numero escolhido (vai para o cookie). */
+  numero: z.string().regex(FORMATO_DO_NUMERO),
 });
 
 const respostaSchema = z.discriminatedUnion("resultado", [
@@ -154,4 +181,57 @@ export function destinoDoCliqueDoLink(
   const codigo =
     resposta.resultado === "ok" ? resposta.codigo : resposta.codigo_fixo;
   return linkDoWhatsApp(resposta.digitos, resposta.mensagem, codigo);
+}
+
+// ---------------------------------------------------------------------------
+// Os numeros escolhidos para o link (etapa 3b)
+// ---------------------------------------------------------------------------
+
+export const PESO_MINIMO = 1;
+export const PESO_MAXIMO = 10;
+/** Teto de numeros por link (a clinica nem chega perto). */
+export const LIMITE_DE_NUMEROS_DO_LINK = 20;
+
+/** Um numero escolhido para o link: whatsapp_account.id e o peso. */
+export type NumeroDoLink = { id: string; peso: number };
+
+/** O que a tela manda para salvarNumerosDoLinkAction. */
+export const numerosDoLinkSchema = z.object({
+  id: z.uuid(),
+  numeros: z
+    .array(
+      z.object({
+        id: z.uuid(),
+        peso: z.number().int().min(PESO_MINIMO).max(PESO_MAXIMO),
+      }),
+    )
+    .max(LIMITE_DE_NUMEROS_DO_LINK)
+    .refine(
+      (numeros) => new Set(numeros.map((numero) => numero.id)).size === numeros.length,
+      { message: "Número repetido." },
+    ),
+});
+
+export const TEXTO_DO_NUMERO_PADRAO = "o número principal da clínica";
+
+/**
+ * "Recepção (peso 2) e Comercial (peso 1)". Um so: so o nome. Nenhum (ou
+ * nenhum que ainda exista na clinica): o numero principal.
+ */
+export function textoDosNumerosDoLink(
+  escolhidos: readonly NumeroDoLink[],
+  numerosDaClinica: readonly { id: string; nome: string }[],
+): string {
+  const comNome = escolhidos.flatMap((escolhido) => {
+    const numero = numerosDaClinica.find((item) => item.id === escolhido.id);
+    return numero ? [{ nome: numero.nome, peso: escolhido.peso }] : [];
+  });
+  if (comNome.length === 0) {
+    return TEXTO_DO_NUMERO_PADRAO;
+  }
+  if (comNome.length === 1) {
+    return comNome[0]!.nome;
+  }
+  const partes = comNome.map((item) => `${item.nome} (peso ${item.peso})`);
+  return `${partes.slice(0, -1).join(", ")} e ${partes[partes.length - 1]}`;
 }

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { criarNumeroDeTeste } from "./numeros";
 import { adminClient, anonClient } from "./stack";
 
 // Clique rastreado pelo site (migration 20261005100000, F1 do Google),
@@ -873,5 +874,174 @@ describe("link rastreado da origem", () => {
       .select("codigo_publico")
       .eq("id", origem!.id);
     expect(daA.data).toEqual([{ codigo_publico: origem!.codigo_publico }]);
+  });
+});
+
+// Os numeros do link (migration 20261116130000, etapa 3b: rodizio): membro
+// ativo le os da propria clinica; administrador e gestor escolhem; a sessao
+// nunca escreve "entregues"; a FK composta nao deixa o link de uma clinica
+// apontar para o numero de outra.
+describe("numeros do link rastreado (rodizio)", () => {
+  const VIOLACAO_DE_RLS = "42501";
+  let origemA = "";
+  let numeroA = "";
+  let outroNumeroA = "";
+  let numeroB = "";
+
+  beforeAll(async () => {
+    const { data } = await admin
+      .from("campaign_link")
+      .insert({
+        clinic_id: clinicaA,
+        name: `Rodizio RLS ${sufixo}`,
+        token: "R8D2ZK",
+        channel: "redes_sociais",
+        default_message: "Olá! Vi o perfil da clínica e quero agendar.",
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    origemA = data!.id as string;
+    numeroA = (
+      await criarNumeroDeTeste(admin, clinicaA, { nome: `Rodizio A ${sufixo}` })
+    ).id;
+    outroNumeroA = (
+      await criarNumeroDeTeste(admin, clinicaA, { nome: `Rodizio A2 ${sufixo}` })
+    ).id;
+    numeroB = (
+      await criarNumeroDeTeste(admin, clinicaB, { nome: `Rodizio B ${sufixo}` })
+    ).id;
+  });
+
+  it("administrador e gestor escolhem e mudam o peso; os demais nao escrevem", async () => {
+    const adminA = await logado("admin-a");
+    const inserido = await adminA.from("campaign_link_numero").insert({
+      clinic_id: clinicaA,
+      campaign_link_id: origemA,
+      whatsapp_account_id: numeroA,
+      peso: 2,
+    });
+    expect(inserido.error).toBeNull();
+    const gestor = await logado("gestor-a");
+    const mudou = await gestor
+      .from("campaign_link_numero")
+      .update({ peso: 3 })
+      .eq("campaign_link_id", origemA)
+      .eq("whatsapp_account_id", numeroA)
+      .select("peso");
+    expect(mudou.data).toEqual([{ peso: 3 }]);
+
+    for (const papel of ["recepcao-a", "leitura-a", "prof-a", "pendente-a"]) {
+      const cliente = await logado(papel);
+      const tentou = await cliente.from("campaign_link_numero").insert({
+        clinic_id: clinicaA,
+        campaign_link_id: origemA,
+        whatsapp_account_id: outroNumeroA,
+      });
+      expect(tentou.error?.code).toBe(VIOLACAO_DE_RLS);
+      const mexeu = await cliente
+        .from("campaign_link_numero")
+        .update({ peso: 9 })
+        .eq("campaign_link_id", origemA)
+        .select("peso");
+      expect(mexeu.data ?? []).toEqual([]);
+      const apagou = await cliente
+        .from("campaign_link_numero")
+        .delete()
+        .eq("campaign_link_id", origemA)
+        .select("peso");
+      expect(apagou.data ?? []).toEqual([]);
+    }
+    // contraprova: a linha continua la, com o peso do gestor
+    const { data } = await admin
+      .from("campaign_link_numero")
+      .select("peso, entregues")
+      .eq("campaign_link_id", origemA)
+      .throwOnError();
+    expect(data).toEqual([{ peso: 3, entregues: 0 }]);
+  });
+
+  it("membro ativo da A le; pendente, a B e anon nao", async () => {
+    for (const papel of ["admin-a", "recepcao-a", "leitura-a"]) {
+      const cliente = await logado(papel);
+      const { data } = await cliente
+        .from("campaign_link_numero")
+        .select("whatsapp_account_id, peso")
+        .eq("campaign_link_id", origemA);
+      expect(data).toEqual([{ whatsapp_account_id: numeroA, peso: 3 }]);
+    }
+    for (const papel of ["pendente-a", "admin-b"]) {
+      const cliente = await logado(papel);
+      const { data } = await cliente
+        .from("campaign_link_numero")
+        .select("peso")
+        .eq("campaign_link_id", origemA);
+      expect(data ?? []).toEqual([]);
+    }
+    const anon = await anonClient().from("campaign_link_numero").select("peso");
+    expect(anon.error?.code).toBe(PERMISSAO_NEGADA);
+  });
+
+  it("a sessao nunca escreve entregues nem troca a linha de clinica, origem ou numero", async () => {
+    const adminA = await logado("admin-a");
+    const tentativas = [
+      adminA
+        .from("campaign_link_numero")
+        .update({ entregues: 99 })
+        .eq("campaign_link_id", origemA),
+      adminA
+        .from("campaign_link_numero")
+        .update({ whatsapp_account_id: outroNumeroA })
+        .eq("campaign_link_id", origemA),
+      adminA
+        .from("campaign_link_numero")
+        .update({ clinic_id: clinicaB })
+        .eq("campaign_link_id", origemA),
+      adminA.from("campaign_link_numero").insert({
+        clinic_id: clinicaA,
+        campaign_link_id: origemA,
+        whatsapp_account_id: outroNumeroA,
+        entregues: 99,
+      }),
+    ];
+    for (const tentativa of tentativas) {
+      const { error } = await tentativa;
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
+    }
+  });
+
+  it("o link de uma clinica nunca aponta para o numero de outra; peso so de 1 a 10", async () => {
+    const adminA = await logado("admin-a");
+    // Numero da B no link da A: a FK composta recusa (23503).
+    const cruzado = await adminA.from("campaign_link_numero").insert({
+      clinic_id: clinicaA,
+      campaign_link_id: origemA,
+      whatsapp_account_id: numeroB,
+    });
+    expect(cruzado.error?.code).toBe("23503");
+    // A B tentando por o proprio numero no link da A: dizendo que a linha e
+    // da B, a FK recusa (o link nao e da B); dizendo que e da A, a RLS.
+    const b = await logado("admin-b");
+    const daB = await b.from("campaign_link_numero").insert({
+      clinic_id: clinicaB,
+      campaign_link_id: origemA,
+      whatsapp_account_id: numeroB,
+    });
+    expect(daB.error?.code).toBe("23503");
+    const fingindoA = await b.from("campaign_link_numero").insert({
+      clinic_id: clinicaA,
+      campaign_link_id: origemA,
+      whatsapp_account_id: outroNumeroA,
+    });
+    expect(fingindoA.error?.code).toBe(VIOLACAO_DE_RLS);
+    for (const peso of [0, 11]) {
+      const { error } = await adminA.from("campaign_link_numero").insert({
+        clinic_id: clinicaA,
+        campaign_link_id: origemA,
+        whatsapp_account_id: outroNumeroA,
+        peso,
+      });
+      expect(error?.code).toBe("23514");
+    }
   });
 });

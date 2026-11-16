@@ -4,10 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   argumentosDoCliqueDoLink,
   baseDosLinks,
+  cookieDoNumeroFixado,
   destinoDoCliqueDoLink,
   ehRoboOuPrevia,
   enderecoDoLinkRastreado,
   lerRespostaDoCliqueDoLink,
+  numeroFixadoDoCookie,
 } from "@/lib/domain/link-rastreado";
 
 // Link rastreado da origem (etapa 3a do plano de 16/11/2026, o link da bio
@@ -42,10 +44,13 @@ const CODIGO_PUBLICO = "k7q2mxab";
 const BASE = "https://go.exemplo.com.br";
 const NAVEGADOR =
   "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 350.0.0.0";
+const NUMERO = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+const OUTRO_NUMERO = "11111111-2222-4333-8444-555555555555";
 const DESTINO = {
   digitos: "5585999990000",
   mensagem: "Olá! Vi o perfil e quero agendar uma avaliação.",
   codigo_fixo: "F1X0AB",
+  numero: NUMERO,
 };
 const FBCLID = "IwAR0segredo_do_clique-123";
 
@@ -55,11 +60,17 @@ function pedido(
   busca = "",
   userAgent: string | null = NAVEGADOR,
   codigo = CODIGO_PUBLICO,
+  cookie: string | null = null,
 ): [NextRequest, { params: Promise<{ codigo: string }> }] {
+  const cabecalhos: Record<string, string> = {};
+  if (userAgent !== null) {
+    cabecalhos["user-agent"] = userAgent;
+  }
+  if (cookie !== null) {
+    cabecalhos.cookie = cookie;
+  }
   return [
-    new NextRequest(`${BASE}/l/${codigo}${busca}`, {
-      headers: userAgent === null ? {} : { "user-agent": userAgent },
-    }),
+    new NextRequest(`${BASE}/l/${codigo}${busca}`, { headers: cabecalhos }),
     { params: Promise.resolve({ codigo }) },
   ];
 }
@@ -194,6 +205,16 @@ describe("resposta do banco e destino", () => {
     expect(
       lerRespostaDoCliqueDoLink({ ...DESTINO, resultado: "ok" }),
     ).toBeNull();
+    // Sem o numero (banco de antes do rodizio) ou com um que nao e id.
+    for (const numero of [undefined, "nao e id"]) {
+      expect(
+        lerRespostaDoCliqueDoLink({
+          ...DESTINO,
+          numero,
+          resultado: "sem_gravar",
+        }),
+      ).toBeNull();
+    }
   });
 
   it("os argumentos: sem gravar, os sinais nem viajam", () => {
@@ -209,6 +230,114 @@ describe("resposta do banco e destino", () => {
       p_codigo_publico: CODIGO_PUBLICO,
       p_gravar: false,
     });
+  });
+});
+
+describe("o numero fixado do visitante (rodizio, etapa 3b)", () => {
+  it("o cookie e um por origem e so vale com um id de numero", () => {
+    expect(cookieDoNumeroFixado(CODIGO_PUBLICO)).toBe(`cz_lk_${CODIGO_PUBLICO}`);
+    expect(numeroFixadoDoCookie(NUMERO)).toBe(NUMERO);
+    for (const valor of [null, undefined, "", "5585999990000", `${NUMERO}x`]) {
+      expect(numeroFixadoDoCookie(valor)).toBeNull();
+    }
+    expect(
+      argumentosDoCliqueDoLink(CODIGO_PUBLICO, true, null, NUMERO),
+    ).toEqual({
+      p_codigo_publico: CODIGO_PUBLICO,
+      p_gravar: true,
+      p_numero_fixado: NUMERO,
+    });
+  });
+
+  it("gente: o cookie do pedido vira o numero fixado e a resposta grava o numero escolhido por 90 dias", async () => {
+    respostas = [
+      {
+        data: {
+          ...DESTINO,
+          numero: OUTRO_NUMERO,
+          resultado: "ok",
+          codigo: "K7Q2MX",
+        },
+        error: null,
+      },
+    ];
+    const resposta = await GET(
+      ...pedido(
+        "",
+        NAVEGADOR,
+        CODIGO_PUBLICO,
+        `outro=1; cz_lk_${CODIGO_PUBLICO}=${NUMERO}`,
+      ),
+    );
+    expect(chamadas[0]?.args).toEqual({
+      p_codigo_publico: CODIGO_PUBLICO,
+      p_gravar: true,
+      p_numero_fixado: NUMERO,
+    });
+    const gravado = resposta.headers.get("set-cookie") ?? "";
+    expect(gravado).toContain(`cz_lk_${CODIGO_PUBLICO}=${OUTRO_NUMERO}`);
+    expect(gravado).toContain("Max-Age=7776000");
+    expect(gravado).toContain("Path=/l/");
+    expect(gravado).toContain("HttpOnly");
+    expect(gravado).toContain("Secure");
+    expect(gravado.toLowerCase()).toContain("samesite=lax");
+  });
+
+  it("cookie adulterado e ignorado; sem cookie, nenhum numero fixado", async () => {
+    for (const cookie of [`cz_lk_${CODIGO_PUBLICO}=5585999990000`, null]) {
+      chamadas.length = 0;
+      respostas = [
+        { data: { ...DESTINO, resultado: "ok", codigo: "K7Q2MX" }, error: null },
+      ];
+      await GET(...pedido("", NAVEGADOR, CODIGO_PUBLICO, cookie));
+      expect(chamadas[0]?.args).toEqual({
+        p_codigo_publico: CODIGO_PUBLICO,
+        p_gravar: true,
+      });
+    }
+  });
+
+  it("robo e previa: o cookie nao e lido nem gravado", async () => {
+    respostas = [{ data: { ...DESTINO, resultado: "sem_gravar" }, error: null }];
+    const resposta = await GET(
+      ...pedido(
+        "",
+        "WhatsApp/2.23.20.0 A",
+        CODIGO_PUBLICO,
+        `cz_lk_${CODIGO_PUBLICO}=${NUMERO}`,
+      ),
+    );
+    expect(chamadas[0]?.args).toEqual({
+      p_codigo_publico: CODIGO_PUBLICO,
+      p_gravar: false,
+    });
+    expect(resposta.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("gravar falhou: a segunda chamada leva o mesmo numero fixado e o cookie e gravado", async () => {
+    respostas = [
+      new Error("timeout"),
+      { data: { ...DESTINO, resultado: "sem_gravar" }, error: null },
+    ];
+    const resposta = await GET(
+      ...pedido(
+        "",
+        NAVEGADOR,
+        CODIGO_PUBLICO,
+        `cz_lk_${CODIGO_PUBLICO}=${NUMERO}`,
+      ),
+    );
+    expect(chamadas.map((chamada) => chamada.args)).toEqual([
+      { p_codigo_publico: CODIGO_PUBLICO, p_gravar: true, p_numero_fixado: NUMERO },
+      {
+        p_codigo_publico: CODIGO_PUBLICO,
+        p_gravar: false,
+        p_numero_fixado: NUMERO,
+      },
+    ]);
+    expect(resposta.headers.get("set-cookie")).toContain(
+      `cz_lk_${CODIGO_PUBLICO}=${NUMERO}`,
+    );
   });
 });
 

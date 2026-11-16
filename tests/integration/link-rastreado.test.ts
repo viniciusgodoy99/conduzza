@@ -237,12 +237,13 @@ describe("link rastreado da origem", () => {
       p_gravar: false,
       p_utm_source: "instagram",
     });
-    expect(resposta).toEqual({
+    expect(resposta).toMatchObject({
       resultado: "sem_gravar",
       digitos: "5584977770001",
       mensagem: MENSAGEM,
       codigo_fixo: "C7K3F9",
     });
+    expect(resposta.codigo).toBeUndefined();
     expect(await cliquesDe(clinicId)).toEqual([]);
     const { data: contagem } = await admin
       .from("clique_do_link_dia")
@@ -300,12 +301,13 @@ describe("link rastreado da origem", () => {
       expect((await clicar(origem.codigoPublico)).resultado).toBe("ok");
     }
     const resposta = await clicar(origem.codigoPublico);
-    expect(resposta).toEqual({
+    expect(resposta).toMatchObject({
       resultado: "limite",
       digitos: "5584977770001",
       mensagem: MENSAGEM,
       codigo_fixo: "C7K3F9",
     });
+    expect(resposta.codigo).toBeUndefined();
     expect(await cliquesDe(clinicId)).toHaveLength(30);
   });
 
@@ -324,5 +326,141 @@ describe("link rastreado da origem", () => {
       });
       expect(error?.code).toBe("22023");
     }
+  });
+});
+
+// Rodizio entre numeros (etapa 3b, migration 20261116130000).
+describe("rodízio entre números do link", () => {
+  it("peso 2 e peso 1 dão 20 e 10 em 30 pessoas; o número fixado do visitante volta sempre", async () => {
+    const clinicId = await criarClinica("rodizio", false);
+    const principal = await criarNumeroDeTeste(admin, clinicId, {
+      nome: "Recepção",
+      display_phone: "+55 (84) 97777-0011",
+    });
+    const comercial = await criarNumeroDeTeste(admin, clinicId, {
+      nome: "Comercial",
+      display_phone: "+55 (84) 97777-0012",
+    });
+    const origem = await criarOrigem(clinicId);
+    await admin
+      .from("campaign_link_numero")
+      .insert([
+        {
+          clinic_id: clinicId,
+          campaign_link_id: origem.id,
+          whatsapp_account_id: principal.id,
+          peso: 2,
+        },
+        {
+          clinic_id: clinicId,
+          campaign_link_id: origem.id,
+          whatsapp_account_id: comercial.id,
+          peso: 1,
+        },
+      ])
+      .throwOnError();
+
+    const contagem: Record<string, number> = {};
+    for (let i = 0; i < 30; i += 1) {
+      const clique = await clicar(origem.codigoPublico);
+      expect(clique.resultado).toBe("ok");
+      const digitos = String(clique.digitos);
+      contagem[digitos] = (contagem[digitos] ?? 0) + 1;
+      // O numero devolvido e o do destino (vai para o cookie).
+      expect(clique.numero).toBe(
+        digitos === "5584977770011" ? principal.id : comercial.id,
+      );
+    }
+    expect(contagem).toEqual({ "5584977770011": 20, "5584977770012": 10 });
+
+    const { data: entregues } = await admin
+      .from("campaign_link_numero")
+      .select("whatsapp_account_id, entregues")
+      .eq("campaign_link_id", origem.id)
+      .throwOnError();
+    expect(
+      Object.fromEntries(
+        (entregues ?? []).map((linha) => [
+          linha.whatsapp_account_id,
+          linha.entregues,
+        ]),
+      ),
+    ).toEqual({ [principal.id]: 20, [comercial.id]: 10 });
+
+    // Robo nao entra no rodizio: recebe um numero e nao conta.
+    const robo = await clicar(origem.codigoPublico, { p_gravar: false });
+    expect(robo.resultado).toBe("sem_gravar");
+    // O mesmo visitante (cookie) volta para o mesmo numero, mesmo com o
+    // rodizio apontando para o outro; aqui ja no limite de 30 por minuto, e
+    // o destino vem do mesmo jeito.
+    for (const fixado of [comercial, principal, comercial]) {
+      const volta = await clicar(origem.codigoPublico, {
+        p_numero_fixado: fixado.id,
+      });
+      expect(volta).toMatchObject({ resultado: "limite", numero: fixado.id });
+    }
+    // Numero fixado que nao e do link (ou nem existe): vale o rodizio.
+    const estranho = await clicar(origem.codigoPublico, {
+      p_gravar: false,
+      p_numero_fixado: "00000000-0000-4000-8000-000000000000",
+    });
+    expect([principal.id, comercial.id]).toContain(estranho.numero);
+  });
+
+  it("número desconectado fica de fora; todos caídos, qualquer um; nenhum escolhido serve, valem os da clínica", async () => {
+    const clinicId = await criarClinica("caidos", false);
+    const a = await criarNumeroDeTeste(admin, clinicId, {
+      nome: "A",
+      display_phone: "+55 (84) 97777-0021",
+    });
+    const b = await criarNumeroDeTeste(admin, clinicId, {
+      nome: "B",
+      display_phone: "+55 (84) 97777-0022",
+    });
+    // Fora do link: so entra se nenhum escolhido servir.
+    const c = await criarNumeroDeTeste(admin, clinicId, {
+      nome: "C",
+      display_phone: "+55 (84) 97777-0023",
+    });
+    const origem = await criarOrigem(clinicId);
+    await admin
+      .from("campaign_link_numero")
+      .insert(
+        [a, b].map((numero) => ({
+          clinic_id: clinicId,
+          campaign_link_id: origem.id,
+          whatsapp_account_id: numero.id,
+        })),
+      )
+      .throwOnError();
+    const destino = async (fixado?: string) =>
+      (
+        await clicar(origem.codigoPublico, {
+          p_gravar: false,
+          ...(fixado ? { p_numero_fixado: fixado } : {}),
+        })
+      ).numero;
+    const situacao = async (id: string, connection_status: string) =>
+      admin
+        .from("whatsapp_account")
+        .update({ connection_status })
+        .eq("id", id)
+        .throwOnError();
+
+    // B caiu: mesmo fixado em B, vai para A (o unico conectado do link).
+    await situacao(b.id, "desconectado");
+    expect(await destino(b.id)).toBe(a.id);
+    // Os dois do link cairam: qualquer um DO LINK (o fixado, se houver),
+    // nunca o C, que esta conectado mas nao foi escolhido.
+    await situacao(a.id, "desconectado");
+    expect(await destino(b.id)).toBe(b.id);
+    expect([a.id, b.id]).toContain(await destino());
+    // Nenhum escolhido serve mais (sem telefone): valem os da clinica.
+    await admin
+      .from("whatsapp_account")
+      .update({ display_phone: null })
+      .in("id", [a.id, b.id])
+      .throwOnError();
+    expect(await destino()).toBe(c.id);
   });
 });

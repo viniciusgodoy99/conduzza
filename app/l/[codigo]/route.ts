@@ -2,11 +2,15 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import {
   argumentosDoCliqueDoLink,
+  CAMINHO_DO_LINK,
   CAMINHO_DO_LINK_INDISPONIVEL,
+  cookieDoNumeroFixado,
   destinoDoCliqueDoLink,
   ehRoboOuPrevia,
   FORMATO_DO_CODIGO_PUBLICO,
   lerRespostaDoCliqueDoLink,
+  numeroFixadoDoCookie,
+  VALIDADE_DO_NUMERO_FIXADO_EM_SEGUNDOS,
   type ArgumentosDoCliqueDoLink,
   type RespostaDoCliqueDoLink,
 } from "@/lib/domain/link-rastreado";
@@ -35,6 +39,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // sem gravar e a pessoa segue para o WhatsApp com o codigo fixo da origem,
 // que a ingestao reconhece. So sem resposta do banco (nao da para saber o
 // numero), ou com o link desativado, aparece a pagina de indisponivel.
+//
+// RODIZIO ENTRE NUMEROS (etapa 3b): o banco escolhe o numero entre os do
+// link. Para o mesmo navegador cair sempre no mesmo numero, a resposta grava
+// um cookie por origem so com o id do numero (90 dias, HttpOnly, restrito a
+// /l/). Nada da pessoa vai no cookie; robo e previa nao recebem.
 //
 // O matcher de middleware.ts exclui l/: sem isso, o visitante sem sessao
 // seria redirecionado para /login.
@@ -94,13 +103,17 @@ async function responder(
   const gravar =
     contaClique && !ehRoboOuPrevia(request.headers.get("user-agent"));
   const sinais = gravar ? sinaisDaUrl(request.nextUrl.search) : null;
+  const cookie = cookieDoNumeroFixado(codigo);
+  const fixado = gravar
+    ? numeroFixadoDoCookie(request.cookies.get(cookie)?.value)
+    : null;
 
   let resposta = await perguntarAoBanco(
-    argumentosDoCliqueDoLink(codigo, gravar, sinais),
+    argumentosDoCliqueDoLink(codigo, gravar, sinais, fixado),
   );
   if (resposta === null && gravar) {
     resposta = await perguntarAoBanco(
-      argumentosDoCliqueDoLink(codigo, false, null),
+      argumentosDoCliqueDoLink(codigo, false, null, fixado),
     );
   }
   const destino = resposta ? destinoDoCliqueDoLink(resposta) : null;
@@ -114,7 +127,17 @@ async function responder(
     status: resposta.resultado,
     count: sinais ? contarSinais(sinais) : 0,
   });
-  return redirecionar(destino);
+  const redirecionamento = redirecionar(destino);
+  if (gravar && "numero" in resposta) {
+    redirecionamento.cookies.set(cookie, resposta.numero, {
+      maxAge: VALIDADE_DO_NUMERO_FIXADO_EM_SEGUNDOS,
+      path: CAMINHO_DO_LINK,
+      httpOnly: true,
+      sameSite: "lax",
+      secure: request.nextUrl.protocol === "https:",
+    });
+  }
+  return redirecionamento;
 }
 
 type Contexto = { params: Promise<{ codigo: string }> };

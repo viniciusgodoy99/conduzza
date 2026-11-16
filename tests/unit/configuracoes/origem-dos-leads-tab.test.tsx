@@ -9,6 +9,7 @@ vi.mock("@/app/(app)/configuracoes/regras-de-origem-actions", () => ({
   ativarRegraDeOrigemAction: vi.fn(),
   desativarRegraDeOrigemAction: vi.fn(),
   excluirRegraDeOrigemAction: vi.fn(),
+  salvarNumerosDoLinkAction: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), refresh: vi.fn(), push: vi.fn() }),
@@ -89,6 +90,7 @@ function dados(campos: Partial<DadosDasOrigens> = {}): DadosDasOrigens {
       [BIO.id]: { cliques: 12, leads: 1 },
       [PARCEIRO.id]: { cliques: 0, leads: 0 },
     },
+    numerosDosLinks: {},
     ...campos,
   };
 }
@@ -216,6 +218,55 @@ describe("a lista de origens", () => {
     );
     expect(nomeDoArquivoDoQr("???")).toBe("qr-link.png");
     expect(nomeDoArquivoDoQr(undefined)).toBe("qr-link.png");
+  });
+
+  // Etapa 3b: o rodizio entre numeros.
+  it("números do link: sem escolha, o número principal; quem gerencia escolhe, quem não gerencia vê desabilitado", () => {
+    expect(visivel).toContain(
+      "O link manda para: o número principal da clínica",
+    );
+    expect(html).toMatch(/aria-label="Escolher números de Link da bio"/);
+    expect(html).not.toMatch(desabilitado("Escolher números de Link da bio"));
+    const semGerenciar = aba(dados(), false);
+    expect(semGerenciar).toMatch(
+      desabilitado("Escolher números de Link da bio"),
+    );
+  });
+
+  it("números do link: os escolhidos com o peso; um só, só o nome; leitura que falhou avisa", () => {
+    const dois: NumeroParaOLink[] = [
+      ...NUMEROS,
+      {
+        id: "n2",
+        nome: "Comercial",
+        digitos: "5585988880000",
+        telefone: "(85) 98888-0000",
+      },
+    ];
+    const comRodizio = texto(
+      aba(
+        dados({
+          numeros: dois,
+          numerosDosLinks: {
+            [BIO.id]: [
+              { id: "n1", peso: 2 },
+              { id: "n2", peso: 1 },
+              // Numero que nao existe mais na clinica: nao aparece.
+              { id: "sumiu", peso: 5 },
+            ],
+            [PARCEIRO.id]: [{ id: "n2", peso: 3 }],
+          },
+        }),
+      ),
+    );
+    expect(comRodizio).toContain(
+      "O link manda para: Recepção (peso 2) e Comercial (peso 1)",
+    );
+    expect(comRodizio).toContain("O link manda para: Comercial");
+    expect(comRodizio).not.toContain("Comercial (peso 3)");
+    expect(texto(aba(dados({ numerosDosLinks: null })))).toContain(
+      "Não foi possível carregar os números deste link.",
+    );
   });
 
   it("os dois links têm nomes diferentes: o rastreado e o direto do WhatsApp", () => {

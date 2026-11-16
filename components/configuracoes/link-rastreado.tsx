@@ -81,6 +81,7 @@ export function LinkRastreado({
   motivoSemCopiar = null,
   nomeDaOrigem,
   className,
+  children,
 }: {
   /** o dominio curto dos links ou o endereco do sistema; nulo: nao ha */
   enderecoBase: string | null;
@@ -92,6 +93,8 @@ export function LinkRastreado({
   /** Para o nome acessivel do botao, na linha da lista. */
   nomeDaOrigem?: string;
   className?: string;
+  /** Linhas a mais no fim do bloco (os numeros do link, etapa 3b). */
+  children?: React.ReactNode;
 }) {
   const id = useId();
   const [copiado, setCopiado] = useState(false);
@@ -244,6 +247,7 @@ export function LinkRastreado({
               <span className="cz-num">{textoDoResumoDoLink(resumo)}</span>
             </p>
           ) : null}
+          {children}
           {erro ? (
             <p role="alert" className="text-[12.5px] text-alert-text">
               {erro}

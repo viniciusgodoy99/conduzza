@@ -245,4 +245,51 @@ test.describe("aba Origem dos leads", () => {
       });
     }
   });
+
+  test("Escolher números: marca um número com peso, salva e o bloco passa a dizer para onde o link manda", async ({
+    page,
+  }) => {
+    await login(page, dados().emails.admin);
+    await page.goto("/configuracoes?aba=origem");
+    const bloco = page
+      .getByRole("group", { name: "Link rastreado" })
+      .filter({ hasText: codigoDaTela });
+    await expect(bloco).toContainText(
+      "O link manda para: o número principal da clínica",
+    );
+
+    await page
+      .getByRole("button", { name: `Escolher números de ${NOME}` })
+      .click();
+    const dialogo = page.getByRole("dialog");
+    await expect(dialogo).toContainText(`Números do link de ${NOME}`);
+    const caixa = dialogo.getByRole("checkbox").first();
+    await caixa.click();
+    await expect(caixa).toBeChecked();
+    await dialogo.getByRole("combobox").first().click();
+    await page.getByRole("option", { name: "Peso 3" }).click();
+    if (process.env.FOTO_DO_QR) {
+      await page.screenshot({
+        path: `${process.env.FOTO_DO_QR}/numeros-do-link.png`,
+      });
+    }
+    await dialogo.getByRole("button", { name: "Salvar números" }).click();
+    await expect(page.getByText("Números do link salvos.")).toBeVisible();
+    await expect(dialogo).toBeHidden();
+    await expect(bloco).not.toContainText("o número principal da clínica");
+
+    const { data } = await admin
+      .from("campaign_link_numero")
+      .select("whatsapp_account_id, peso, entregues, clinic_id")
+      .eq("campaign_link_id", origemDaTela)
+      .throwOnError();
+    expect(data).toEqual([
+      {
+        whatsapp_account_id: dados().whatsappAccountId,
+        peso: 3,
+        entregues: 0,
+        clinic_id: dados().clinicId,
+      },
+    ]);
+  });
 });

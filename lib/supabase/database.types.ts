@@ -1361,6 +1361,55 @@ export type Database = {
           },
         ]
       }
+      campaign_link_numero: {
+        Row: {
+          campaign_link_id: string
+          clinic_id: string
+          created_at: string
+          entregues: number
+          peso: number
+          whatsapp_account_id: string
+        }
+        Insert: {
+          campaign_link_id: string
+          clinic_id: string
+          created_at?: string
+          entregues?: number
+          peso?: number
+          whatsapp_account_id: string
+        }
+        Update: {
+          campaign_link_id?: string
+          clinic_id?: string
+          created_at?: string
+          entregues?: number
+          peso?: number
+          whatsapp_account_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "campaign_link_numero_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "campaign_link_numero_da_origem"
+            columns: ["campaign_link_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "campaign_link"
+            referencedColumns: ["id", "clinic_id"]
+          },
+          {
+            foreignKeyName: "campaign_link_numero_do_numero"
+            columns: ["whatsapp_account_id", "clinic_id"]
+            isOneToOne: false
+            referencedRelation: "whatsapp_account"
+            referencedColumns: ["id", "clinic_id"]
+          },
+        ]
+      }
       clinic: {
         Row: {
           allow_code_signup: boolean
@@ -7142,6 +7191,7 @@ export type Database = {
           p_google_campaign_id?: string
           p_gravar?: boolean
           p_meta_ad_id?: string
+          p_numero_fixado?: string
           p_utm_campaign?: string
           p_utm_content?: string
           p_utm_medium?: string
