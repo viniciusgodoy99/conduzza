@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import type { ResumoDoLink } from "@/lib/domain/link-rastreado";
 import {
   REGRA_DE_ORIGEM_SELECT,
   regraDaLinha,
@@ -34,4 +35,34 @@ export async function fetchRegrasDeOrigem(
     throw new Error(error.message);
   }
   return ((data ?? []) as LinhaDaRegraDeOrigem[]).map(regraDaLinha);
+}
+
+/**
+ * O resumo dos links rastreados da clinica, por id da origem
+ * (resumo_dos_links_rastreados, migration 20261116120000: membro ativo le; so
+ * agregados, nunca o clique nem o contato). Nulo quando a leitura falha: a
+ * aba mostra os links sem a contagem.
+ */
+export async function fetchResumoDosLinks(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<Record<string, ResumoDoLink> | null> {
+  const { data, error } = await supabase.rpc("resumo_dos_links_rastreados", {
+    p_clinic_id: clinicId,
+  });
+  if (error || !Array.isArray(data)) {
+    return null;
+  }
+  const resumo: Record<string, ResumoDoLink> = {};
+  for (const linha of data as {
+    campaign_link_id: string;
+    cliques: number | string;
+    leads: number | string;
+  }[]) {
+    resumo[linha.campaign_link_id] = {
+      cliques: Number(linha.cliques) || 0,
+      leads: Number(linha.leads) || 0,
+    };
+  }
+  return resumo;
 }

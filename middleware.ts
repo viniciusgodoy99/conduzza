@@ -22,6 +22,10 @@ export const config = {
     // rastreio/v1.js e o aviso do clique em api/publico/clique. Dentro do
     // matcher, os dois virariam um redirecionamento para /login e o rastreio
     // pararia calado.
-    "/((?!_next/static|_next/image|favicon.ico|api/webhooks|api/atendimento/midia|api/publico/|rastreio/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    //
+    // l/ (link rastreado da origem, etapa 3a de 16/11/2026) fica fora pelo
+    // mesmo motivo: quem toca no link da bio nao tem sessao. Sao a rota do
+    // redirect (l/<codigo>) e a pagina de link indisponivel.
+    "/((?!_next/static|_next/image|favicon.ico|api/webhooks|api/atendimento/midia|api/publico/|rastreio/|l/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

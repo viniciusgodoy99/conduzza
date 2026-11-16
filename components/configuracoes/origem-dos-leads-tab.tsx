@@ -12,6 +12,7 @@ import {
 } from "@/app/(app)/configuracoes/regras-de-origem-actions";
 import { DialogoDaOrigem } from "@/components/configuracoes/dialogo-da-origem";
 import { LinkParaABio } from "@/components/configuracoes/link-para-a-bio";
+import { LinkRastreado } from "@/components/configuracoes/link-rastreado";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ListSkeleton } from "@/components/shared/loading-skeleton";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
@@ -36,6 +37,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RECORD_STATUS } from "@/lib/design/status";
+import type { ResumoDoLink } from "@/lib/domain/link-rastreado";
 import {
   fraseDoTeste,
   LIMITE_DE_ORIGENS_ATIVAS,
@@ -94,6 +96,10 @@ export type DadosDasOrigens = {
   numeros: NumeroParaOLink[] | null;
   /** as frases do botao do site da clinica e as de fabrica */
   frasesDoSite: string[];
+  /** a base do link rastreado (dominio curto ou o sistema); nulo: nao ha */
+  enderecoDosLinks: string | null;
+  /** cliques e leads por id da origem; nulo: a leitura falhou */
+  resumoDosLinks: Record<string, ResumoDoLink> | null;
 };
 
 /** O esqueleto da lista, enquanto a aba carrega de novo. */
@@ -162,7 +168,8 @@ function ListaDeOrigens({
   podeGerenciar: boolean;
   dica: string;
 }) {
-  const { regras, numeros, frasesDoSite } = dados;
+  const { regras, numeros, frasesDoSite, enderecoDosLinks, resumoDosLinks } =
+    dados;
   // undefined = dialogo fechado; null = criando; regra = editando.
   const [editando, setEditando] = useState<RegraDeOrigem | null | undefined>(
     undefined,
@@ -338,6 +345,17 @@ function ListaDeOrigens({
                     {comDica(motivoDeEscrever, botaoExcluir)}
                   </div>
                 </div>
+                {regra.mensagem ? (
+                  <LinkRastreado
+                    enderecoBase={enderecoDosLinks}
+                    codigoPublico={regra.codigoPublico}
+                    resumo={resumoDosLinks?.[regra.id] ?? null}
+                    nomeDaOrigem={regra.nome}
+                    motivoSemCopiar={
+                      regra.ativa ? null : TEXTOS_DA_ORIGEM.desativadaSemCopiar
+                    }
+                  />
+                ) : null}
                 {regra.mensagem ? (
                   <LinkParaABio
                     numeros={numeros}

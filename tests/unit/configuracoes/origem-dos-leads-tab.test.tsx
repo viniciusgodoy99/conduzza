@@ -47,6 +47,7 @@ const BIO: RegraDeOrigem = {
   id: "11111111-1111-4111-8111-111111111111",
   nome: "Link da bio",
   codigo: "K7Q2MX",
+  codigoPublico: "k7q2mxab",
   canal: "redes_sociais",
   origem: "Instagram",
   detalhe: "Bio",
@@ -59,6 +60,7 @@ const PARCEIRO: RegraDeOrigem = {
   id: "22222222-2222-4222-8222-222222222222",
   nome: "Parceiro academia",
   codigo: null,
+  codigoPublico: "p3r4c5d6",
   canal: "indicacao",
   origem: "Academia Forte",
   detalhe: null,
@@ -81,6 +83,11 @@ function dados(campos: Partial<DadosDasOrigens> = {}): DadosDasOrigens {
     regras: [BIO, PARCEIRO],
     numeros: NUMEROS,
     frasesDoSite: [],
+    enderecoDosLinks: "https://go.exemplo.com.br",
+    resumoDosLinks: {
+      [BIO.id]: { cliques: 12, leads: 1 },
+      [PARCEIRO.id]: { cliques: 0, leads: 0 },
+    },
     ...campos,
   };
 }
@@ -177,6 +184,24 @@ describe("a lista de origens", () => {
     );
     expect(html).toMatch(/aria-label="Copiar link de Link da bio"/);
     expect(html).not.toMatch(desabilitado("Copiar link de Link da bio"));
+  });
+
+  // Etapa 3a do plano de 16/11/2026: o link com endereco proprio.
+  it("link rastreado: o endereço do Conduzza da origem, a contagem e Copiar link rastreado", () => {
+    expect(visivel).toContain("Link rastreado");
+    expect(visivel).toContain("https://go.exemplo.com.br/l/k7q2mxab");
+    expect(visivel).toContain("12 cliques e 1 lead nos últimos 30 dias");
+    expect(html).toMatch(/aria-label="Copiar link rastreado de Link da bio"/);
+    expect(html).not.toMatch(
+      desabilitado("Copiar link rastreado de Link da bio"),
+    );
+    // Desativada: visivel e desabilitado, com a contagem zerada no singular
+    // certo.
+    expect(visivel).toContain("https://go.exemplo.com.br/l/p3r4c5d6");
+    expect(visivel).toContain("0 cliques e 0 leads nos últimos 30 dias");
+    expect(html).toMatch(
+      desabilitado("Copiar link rastreado de Parceiro academia"),
+    );
   });
 
   it("origem desativada: Copiar link visível e desabilitado, com a dica", () => {

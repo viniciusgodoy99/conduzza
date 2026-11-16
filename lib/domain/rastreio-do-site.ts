@@ -334,13 +334,79 @@ export function resultadoDoRegistro(
 export type ArgumentosDoRegistro =
   Database["public"]["Functions"]["registrar_clique_do_site"]["Args"];
 
+/** Os argumentos dos sinais, iguais em registrar_clique_do_site e _do_link. */
+export type ArgumentosDosSinais = Pick<
+  ArgumentosDoRegistro,
+  | "p_gclid"
+  | "p_gbraid"
+  | "p_wbraid"
+  | "p_gad_source"
+  | "p_google_campaign_id"
+  | "p_google_adgroup_id"
+  | "p_fbclid"
+  | "p_meta_ad_id"
+  | "p_utm_source"
+  | "p_utm_medium"
+  | "p_utm_campaign"
+  | "p_utm_content"
+  | "p_utm_term"
+>;
+
 /**
- * Argumentos de registrar_clique_do_site. Campo ausente fica FORA do objeto
- * (o default da funcao e null). Campanha: o sufixo `cz_campanha`
- * ({campaignid}) vence o `gad_campaignid` quando os dois vem, porque e o
- * valor documentado do ValueTrack; que os dois sejam iguais ainda e
- * SUPOSICAO a conferir no primeiro clique real.
+ * Os sinais como argumentos do banco. Campo ausente fica FORA do objeto (o
+ * default da funcao e null). Campanha: o sufixo `cz_campanha` ({campaignid})
+ * vence o `gad_campaignid` quando os dois vem, porque e o valor documentado
+ * do ValueTrack; que os dois sejam iguais ainda e SUPOSICAO a conferir no
+ * primeiro clique real.
  */
+export function argumentosDosSinais(
+  sinais: SinaisDoRastreio,
+): ArgumentosDosSinais {
+  const argumentos: ArgumentosDosSinais = {};
+  if (sinais.gclid !== undefined) {
+    argumentos.p_gclid = sinais.gclid;
+  }
+  if (sinais.gbraid !== undefined) {
+    argumentos.p_gbraid = sinais.gbraid;
+  }
+  if (sinais.wbraid !== undefined) {
+    argumentos.p_wbraid = sinais.wbraid;
+  }
+  if (sinais.gad_source !== undefined) {
+    argumentos.p_gad_source = sinais.gad_source;
+  }
+  const campanha = sinais.cz_campanha ?? sinais.gad_campaignid;
+  if (campanha !== undefined) {
+    argumentos.p_google_campaign_id = campanha;
+  }
+  if (sinais.cz_grupo !== undefined) {
+    argumentos.p_google_adgroup_id = sinais.cz_grupo;
+  }
+  if (sinais.fbclid !== undefined) {
+    argumentos.p_fbclid = sinais.fbclid;
+  }
+  if (sinais.cz_anuncio !== undefined) {
+    argumentos.p_meta_ad_id = sinais.cz_anuncio;
+  }
+  if (sinais.utm_source !== undefined) {
+    argumentos.p_utm_source = sinais.utm_source;
+  }
+  if (sinais.utm_medium !== undefined) {
+    argumentos.p_utm_medium = sinais.utm_medium;
+  }
+  if (sinais.utm_campaign !== undefined) {
+    argumentos.p_utm_campaign = sinais.utm_campaign;
+  }
+  if (sinais.utm_content !== undefined) {
+    argumentos.p_utm_content = sinais.utm_content;
+  }
+  if (sinais.utm_term !== undefined) {
+    argumentos.p_utm_term = sinais.utm_term;
+  }
+  return argumentos;
+}
+
+/** Argumentos de registrar_clique_do_site (os sinais, a chave e o host). */
 export function argumentosDoRegistro(
   corpo: CorpoDoClique,
   origin: string | null,
@@ -348,47 +414,8 @@ export function argumentosDoRegistro(
   const argumentos: ArgumentosDoRegistro = {
     p_chave: corpo.chave,
     p_codigo: corpo.codigo,
+    ...argumentosDosSinais(corpo),
   };
-  if (corpo.gclid !== undefined) {
-    argumentos.p_gclid = corpo.gclid;
-  }
-  if (corpo.gbraid !== undefined) {
-    argumentos.p_gbraid = corpo.gbraid;
-  }
-  if (corpo.wbraid !== undefined) {
-    argumentos.p_wbraid = corpo.wbraid;
-  }
-  if (corpo.gad_source !== undefined) {
-    argumentos.p_gad_source = corpo.gad_source;
-  }
-  const campanha = corpo.cz_campanha ?? corpo.gad_campaignid;
-  if (campanha !== undefined) {
-    argumentos.p_google_campaign_id = campanha;
-  }
-  if (corpo.cz_grupo !== undefined) {
-    argumentos.p_google_adgroup_id = corpo.cz_grupo;
-  }
-  if (corpo.fbclid !== undefined) {
-    argumentos.p_fbclid = corpo.fbclid;
-  }
-  if (corpo.cz_anuncio !== undefined) {
-    argumentos.p_meta_ad_id = corpo.cz_anuncio;
-  }
-  if (corpo.utm_source !== undefined) {
-    argumentos.p_utm_source = corpo.utm_source;
-  }
-  if (corpo.utm_medium !== undefined) {
-    argumentos.p_utm_medium = corpo.utm_medium;
-  }
-  if (corpo.utm_campaign !== undefined) {
-    argumentos.p_utm_campaign = corpo.utm_campaign;
-  }
-  if (corpo.utm_content !== undefined) {
-    argumentos.p_utm_content = corpo.utm_content;
-  }
-  if (corpo.utm_term !== undefined) {
-    argumentos.p_utm_term = corpo.utm_term;
-  }
   const host = hostDoOrigin(origin);
   if (host !== null) {
     argumentos.p_site_host = host;
