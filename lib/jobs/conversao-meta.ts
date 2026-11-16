@@ -134,28 +134,12 @@ export async function executarEnvioDeConversao(
   const ctwaClid =
     evento.ctwa_clid ?? (contato.ctwa_clid as string | null) ?? null;
 
-  let phoneE164: string | null = null;
-  if (modo === "telefone_hasheado") {
-    // Consentimento na hora do envio, como no envio de mensagem: contato que
-    // revogou nao tem dado (nem hasheado) saindo daqui.
-    const { data: vigente, error: erroConsent } = await admin.rpc(
-      "consentimento_vigente",
-      {
-        p_clinic_id: job.clinic_id,
-        p_contact_id: evento.contact_id,
-        p_channel: "whatsapp",
-      },
-    );
-    if (erroConsent) {
-      // Mesmo principio: "sem_consentimento" e um FATO verificado, nunca o
-      // desfecho de uma consulta que falhou.
-      return { ok: false, erro: "consentimento_indisponivel" };
-    }
-    if (vigente !== true) {
-      return descartar(admin, evento.id, "sem_consentimento");
-    }
-    phoneE164 = (contato.phone_e164 as string | null) ?? null;
-  }
+  // Decisao D6 do dono (16/11/2026): no modo telefone, o telefone em hash sai
+  // de todo contato que converte, sem corte por autorizacao.
+  const phoneE164 =
+    modo === "telefone_hasheado"
+      ? ((contato.phone_e164 as string | null) ?? null)
+      : null;
 
   // A regra do send_unmatched vale pelo ctwa RESOLVIDO, nao pelo snapshot.
   if (!ctwaClid && !conta.send_unmatched) {

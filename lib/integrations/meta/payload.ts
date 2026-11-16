@@ -10,8 +10,9 @@ import { createHash } from "node:crypto";
 // Sem esse par, o evento cai no formato generico ("system_generated") casado
 // por telefone hasheado, o mesmo caminho que o Tintim usa.
 //
-// LGPD: o telefone so entra no modo 'telefone_hasheado' (decisao D6 do dono)
-// e SEMPRE como SHA-256; o numero cru nunca sai deste processo.
+// O telefone so entra no modo 'telefone_hasheado' (escolha da clinica; decisao
+// D6 do dono em 16/11/2026: sem corte por autorizacao) e SEMPRE como SHA-256;
+// o numero cru nunca sai deste processo.
 
 export type ModoUserData = "ctwa_apenas" | "telefone_hasheado";
 

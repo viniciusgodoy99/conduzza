@@ -1544,9 +1544,7 @@ export async function salvarContaMetaAction(
   if (error) {
     return {
       ok: false,
-      error: error.message.includes("decisão de privacidade pendente")
-        ? "A forma de envio dos dados ainda está em definição (decisão de privacidade pendente)."
-        : mensagemDeErro(error, "Não foi possível salvar a conta."),
+      error: mensagemDeErro(error, "Não foi possível salvar a conta."),
     };
   }
 

@@ -367,6 +367,29 @@ A parte "Google" do pedido de 04/10/2026 ("tire realmente da Meta ou do Google")
 
 **Registro nos docs:** 01 (10.1, 10.3, 10.12, 10.13 novo, 11.14, 11.15 novo e o resumo dos módulos), 02 (Seção 5, Telas 1, 4, 9, 11 e 12), 03 (árvore e seção 13 nova), 04 (seções 3, 9, 14.1, 14.5, 14.6, 14.9 e a 15 nova), `06_resultados_atribuicao_e_retorno_meta.md` (resumo, R8, R9 novo e D4) e `06_adocao_design_system.md` (cabeçalho, 2, 4.6, 5.12, C25 e a C43 nova).
 
+### [ ] Rastreio completo: o que o Tintim e o Q5 fazem, dentro do Conduzza `G` (pedido e decisões do dono em 16/11/2026; em andamento)
+Pedido do dono em 16/11/2026: um benchmark da parte de métricas do Tintim (feito ao vivo, só leitura, na conta "Dra. Ingrid Tavares") e do Q5 (o documento `rastreamento-leads-links-meta.md` dele), para trazer o que faz sentido. O plano aprovado tem seis etapas; é a continuação da entrada "Resultados: atribuição Meta e retorno de conversão".
+
+**Decisões do dono em 16/11/2026:**
+1. **D6 (dados para a Meta): "Tudo, desconsidere o lgpd do nosso lado".** Clique e telefone em hash, sem corte por autorização. O risco foi avisado antes (CLAUDE.md, 3.1).
+2. **Botão Conectar com a Meta: não agora** ("Manter o token colado"). A F3 continua adiada.
+3. **Script do site: ampliar para Meta e UTMs.**
+4. **Extras: QR Code do link, faturamento por campanha e conversão para o Google.**
+5. **Link da bio "igual no q5", completo:** rodízio entre números, evento para a Meta no clique, código invisível e casamento por janela de 10 minutos.
+6. **Endereço do link: os dois** (o do sistema e um domínio curto, que o dono ainda vai dizer).
+
+**Etapas e estado:**
+- **1. Ligar o envio de conversões à Meta** `P`: construída em 16/11/2026 (migration `20261116100000`, **a aplicar com o ok do dono**; seletor do modo liberado na aba; o job não corta mais por autorização). Falta a validação com `test_event_code` numa clínica real.
+- **2. Script do site com Meta e UTMs** `G`: `fbclid`, `cz_anuncio` e `utm_*` no mesmo `rastreio/v1.js`; origem Meta pelo clique do site; `fbc` no evento. A construir.
+- **3. Link da bio rastreado** `G`, em cinco entregas: 3a endereço próprio com o clique gravado e a contagem; 3b rodízio entre números; 3c código invisível (só liga depois de teste com celular real); 3d casamento sem código (mensagem pronta e janela de 10 minutos, "provável"); 3e evento para a Meta no clique. A construir.
+- **4. QR Code do link** `P` (dependência nova: `qrcode`). A construir.
+- **5. Faturamento e retorno por campanha** `M` em Resultados. A construir.
+- **6. Conversão para o Google** `M`/`G`: 6A, a exportação para a agência subir no Google Ads, agora; 6B, o envio automático pela Data Manager API, só depois dos passos do dono no Google (entrada "Origem e campanha do Google Ads"). A construir.
+
+**Fica de fora:** Pixel por link, escolha do evento do clique por link, atribuição por vários toques, o Inspetor de Vendas por IA, webhooks e API pública.
+
+**Depende do dono:** Pixel, token da API de Conversões e conta do WhatsApp Business de uma clínica para o primeiro teste; o nome do domínio curto; um celular real para o teste do código invisível; o ok de cada migration.
+
 ### [ ] Mensagem enviada pelo celular aparece na conversa ("Pelo WhatsApp") `M` (pedido do dono em 05/10/2026; migration `20261005120000` aplicada e código publicado em 05/10, commit `572e594`; falta o teste com celular real)
 Pedido: "eu consiga saber o que foi enviado via WhatsApp, e sempre aparecer o que foi enviado", com a referência de uma bolha enviada com o rótulo "Pelo WhatsApp" e o ícone de celular. O dono achava que faltava cadastrar um evento no webhook do uazapi.
 
