@@ -258,7 +258,7 @@ async function cliqueNoBanco(codigo: string) {
         const { data } = await adminClient()
           .from("clique_do_site")
           .select(
-            "codigo, gclid, gbraid, wbraid, gad_source, google_campaign_id, google_adgroup_id, site_host, contact_id",
+            "codigo, gclid, gbraid, wbraid, gad_source, google_campaign_id, google_adgroup_id, site_host, contact_id, fbclid, meta_ad_id, utm_source, utm_campaign",
           )
           .eq("clinic_id", dados().clinicId)
           .eq("codigo", codigo)
@@ -419,11 +419,45 @@ test.describe("site da clinica", () => {
     });
   });
 
-  test("sem sinal do Google, o link fica intacto e nada e avisado", async ({
+  // Etapa 2 do plano de 16/11/2026 (migration 20261116110000): o anuncio da
+  // Meta que leva ao site e as UTMs tambem contam.
+  test("com fbclid, numero do anuncio e UTMs, o codigo vai no texto e o clique chega ao banco", async ({
     page,
   }) => {
     const avisos = await prepararSite(page);
-    await page.goto(`${SITE}/site-de-teste/?utm_source=instagram`);
+    await page.goto(
+      `${SITE}/site-de-teste/?fbclid=E2Eteste_fbclid-1&cz_anuncio=120211223344556&utm_source=ig&utm_campaign=Black+Friday`,
+    );
+    const endereco = await clicarNoWhatsApp(page, "#whatsapp");
+    const codigo = CODIGO_NO_TEXTO.exec(textoDoLink(endereco))?.[1] ?? "";
+    expect(textoDoLink(endereco)).toBe(`Quero agendar [#${codigo}]`);
+
+    await expect.poll(() => avisos.length).toBe(1);
+    expect(JSON.parse(avisos[0]?.corpo ?? "{}")).toEqual({
+      chave,
+      codigo,
+      fbclid: "E2Eteste_fbclid-1",
+      cz_anuncio: "120211223344556",
+      utm_source: "ig",
+      utm_campaign: "Black Friday",
+    });
+
+    const linha = await cliqueNoBanco(codigo);
+    expect(linha).toMatchObject({
+      gclid: null,
+      fbclid: "E2Eteste_fbclid-1",
+      meta_ad_id: "120211223344556",
+      utm_source: "ig",
+      utm_campaign: "Black Friday",
+      contact_id: null,
+    });
+  });
+
+  test("sem sinal nenhum, o link fica intacto e nada e avisado", async ({
+    page,
+  }) => {
+    const avisos = await prepararSite(page);
+    await page.goto(`${SITE}/site-de-teste/?ref=abc`);
     const endereco = await clicarNoWhatsApp(page, "#whatsapp");
     expect(endereco).toBe(WA);
     // Tempo para um aviso indevido aparecer, se existisse.
