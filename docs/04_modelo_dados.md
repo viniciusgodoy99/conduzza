@@ -1686,7 +1686,7 @@ Recriada byte a byte a partir do corpo de **produção** de 04/10/2026 (o mesmo 
 ---
 
 
-### 15.9 Anúncio da Meta e UTMs no clique (16/11/2026, migration `20261116110000_clique_do_site_meta_e_utm.sql`, a aplicar)
+### 15.9 Anúncio da Meta e UTMs no clique (16/11/2026, migration `20261116110000_clique_do_site_meta_e_utm.sql`, aplicada em 16/11/2026)
 
 Etapa 2 do plano "Rastreio completo" (`docs/05`), decisão do dono de 16/11/2026.
 
