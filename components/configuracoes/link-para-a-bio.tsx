@@ -29,7 +29,10 @@ import { cn } from "@/lib/utils";
 // fica visivel e desabilitado, com o porque.
 
 export const TEXTOS_DO_LINK = {
-  titulo: "Link para a bio",
+  // Desde 16/11/2026 a origem tem tambem o link rastreado (LinkRastreado),
+  // que e o recomendado para a bio: este bloco passou a se chamar pelo que
+  // ele e, o link direto do WhatsApp.
+  titulo: "Link direto do WhatsApp",
   semNumeros:
     "Conecte um número de WhatsApp na aba WhatsApp para montar o link.",
   numerosNaoCarregaram:
