@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { ResumoDoLink } from "@/lib/domain/link-rastreado";
+import type { NumeroDoLink, ResumoDoLink } from "@/lib/domain/link-rastreado";
 import {
   REGRA_DE_ORIGEM_SELECT,
   regraDaLinha,
@@ -65,4 +65,36 @@ export async function fetchResumoDosLinks(
     };
   }
   return resumo;
+}
+
+/**
+ * Os numeros escolhidos para o link de cada origem da clinica
+ * (campaign_link_numero, migration 20261116130000: membro ativo le), por id
+ * da origem. Origem sem linha usa o numero principal. Nulo quando a leitura
+ * falha: a aba diz que nao carregou.
+ */
+export async function fetchNumerosDosLinks(
+  supabase: SupabaseClient,
+  clinicId: string,
+): Promise<Record<string, NumeroDoLink[]> | null> {
+  const { data, error } = await supabase
+    .from("campaign_link_numero")
+    .select("campaign_link_id, whatsapp_account_id, peso")
+    .eq("clinic_id", clinicId)
+    .order("created_at", { ascending: true });
+  if (error) {
+    return null;
+  }
+  const porOrigem: Record<string, NumeroDoLink[]> = {};
+  for (const linha of (data ?? []) as {
+    campaign_link_id: string;
+    whatsapp_account_id: string;
+    peso: number;
+  }[]) {
+    (porOrigem[linha.campaign_link_id] ??= []).push({
+      id: linha.whatsapp_account_id,
+      peso: linha.peso,
+    });
+  }
+  return porOrigem;
 }

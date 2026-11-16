@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { gerarToken, TOKEN_ALPHABET } from "@/lib/domain/attribution";
+import { numerosDoLinkSchema } from "@/lib/domain/link-rastreado";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
 import {
   avisoDasPalavrasRepetidas,
@@ -377,4 +378,122 @@ export async function excluirRegraDeOrigemAction(
   await auditar(supabase, guarda, "excluiu_regra_de_origem", parsed.data.id);
   revalidar();
   return { ok: true, id: parsed.data.id };
+}
+
+// ---------------------------------------------------------------------------
+// Os numeros do link rastreado (etapa 3b do plano de 16/11/2026: rodizio)
+// ---------------------------------------------------------------------------
+
+export type ResultadoDosNumerosDoLink =
+  | { ok: true }
+  | { ok: false; error: string };
+
+const NUMEROS_NAO_SALVOS =
+  "Não foi possível salvar os números do link. Tente de novo.";
+
+/**
+ * Define os numeros de WhatsApp que o link rastreado da origem usa, com o
+ * peso de cada um (campaign_link_numero, migration 20261116130000). Lista
+ * vazia volta ao padrao: o numero principal da clinica. Mesma guarda das
+ * outras actions de origem (administrador e gestor), Zod, cliente de SESSAO
+ * (a RLS decide de novo; a FK composta recusa numero de outra clinica) e
+ * trilha. Tira os que sairam, muda o peso dos que ficaram e inclui os novos:
+ * quem ficou nao perde a conta do rodizio. Se parar no meio, o link fica com
+ * menos numeros ou no padrao, nunca sem destino.
+ */
+export async function salvarNumerosDoLinkAction(
+  entrada: unknown,
+): Promise<ResultadoDosNumerosDoLink> {
+  const guarda = await exigirGestao();
+  if ("error" in guarda) {
+    return { ok: false, error: guarda.error };
+  }
+  const parsed = numerosDoLinkSchema.safeParse(entrada);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: "Confira os números escolhidos e os pesos (de 1 a 10).",
+    };
+  }
+  const { id, numeros } = parsed.data;
+  const supabase = await createClient();
+
+  const { data: origem, error: erroDaOrigem } = await supabase
+    .from("campaign_link")
+    .select("id")
+    .eq("clinic_id", guarda.clinicId)
+    .eq("id", id)
+    .maybeSingle();
+  if (erroDaOrigem) {
+    return { ok: false, error: LEITURA_FALHOU };
+  }
+  if (!origem) {
+    return { ok: false, error: ORIGEM_SUMIU };
+  }
+
+  const { data: atuais, error: erroDosAtuais } = await supabase
+    .from("campaign_link_numero")
+    .select("whatsapp_account_id, peso")
+    .eq("clinic_id", guarda.clinicId)
+    .eq("campaign_link_id", id);
+  if (erroDosAtuais) {
+    return { ok: false, error: NUMEROS_NAO_SALVOS };
+  }
+  const pesoAtual = new Map(
+    ((atuais ?? []) as { whatsapp_account_id: string; peso: number }[]).map(
+      (linha) => [linha.whatsapp_account_id, linha.peso],
+    ),
+  );
+  const desejados = new Map(numeros.map((numero) => [numero.id, numero.peso]));
+
+  const saem = [...pesoAtual.keys()].filter((numero) => !desejados.has(numero));
+  if (saem.length > 0) {
+    const { error } = await supabase
+      .from("campaign_link_numero")
+      .delete()
+      .eq("clinic_id", guarda.clinicId)
+      .eq("campaign_link_id", id)
+      .in("whatsapp_account_id", saem);
+    if (error) {
+      return { ok: false, error: NUMEROS_NAO_SALVOS };
+    }
+  }
+  for (const [numero, peso] of desejados) {
+    if (pesoAtual.has(numero) && pesoAtual.get(numero) !== peso) {
+      const { error } = await supabase
+        .from("campaign_link_numero")
+        .update({ peso })
+        .eq("clinic_id", guarda.clinicId)
+        .eq("campaign_link_id", id)
+        .eq("whatsapp_account_id", numero);
+      if (error) {
+        return { ok: false, error: NUMEROS_NAO_SALVOS };
+      }
+    }
+  }
+  const novos = numeros
+    .filter((numero) => !pesoAtual.has(numero.id))
+    .map((numero) => ({
+      clinic_id: guarda.clinicId,
+      campaign_link_id: id,
+      whatsapp_account_id: numero.id,
+      peso: numero.peso,
+    }));
+  if (novos.length > 0) {
+    const { error } = await supabase.from("campaign_link_numero").insert(novos);
+    if (error) {
+      return {
+        ok: false,
+        // 23503: o numero nao e desta clinica ou foi removido.
+        error:
+          error.code === "23503"
+            ? "Um dos números não existe mais nesta clínica. Recarregue a página."
+            : NUMEROS_NAO_SALVOS,
+      };
+    }
+  }
+
+  await auditar(supabase, guarda, "definiu_numeros_do_link", id);
+  revalidar();
+  return { ok: true };
 }

@@ -57,6 +57,7 @@ import {
   numerosParaOLink,
 } from "@/lib/domain/regras-de-origem";
 import {
+  fetchNumerosDosLinks,
   fetchRegrasDeOrigem,
   fetchResumoDosLinks,
 } from "@/lib/queries/regras-de-origem";
@@ -222,6 +223,7 @@ export default async function ConfiguracoesPage({
     responsavelTecnicoLido,
     // [AG7 preparo] fim
     resumoDosLinks,
+    numerosDosLinks,
   ] = await Promise.all([
     supabase
       .from("clinic_member")
@@ -328,6 +330,8 @@ export default async function ConfiguracoesPage({
     // Cliques e leads dos links rastreados (so agregados). Tolerante: sem
     // ele a aba Origem dos leads mostra os links sem a contagem.
     fetchResumoDosLinks(supabase, active.clinicId),
+    // Os numeros escolhidos para o link de cada origem (o rodizio).
+    fetchNumerosDosLinks(supabase, active.clinicId),
   ]);
 
   type MemberRow = {
@@ -632,6 +636,7 @@ export default async function ConfiguracoesPage({
                   process.env.PUBLIC_APP_URL,
                 ),
                 resumoDosLinks,
+                numerosDosLinks,
                 // Os numeros ativos da leitura da aba WhatsApp (o principal
                 // primeiro), so os que ja tem telefone. Nulo: a leitura
                 // falhou, e o bloco do link diz isso.

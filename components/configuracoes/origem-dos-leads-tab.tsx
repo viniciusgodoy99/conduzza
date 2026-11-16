@@ -13,6 +13,7 @@ import {
 import { DialogoDaOrigem } from "@/components/configuracoes/dialogo-da-origem";
 import { LinkParaABio } from "@/components/configuracoes/link-para-a-bio";
 import { LinkRastreado } from "@/components/configuracoes/link-rastreado";
+import { NumerosDoLink } from "@/components/configuracoes/numeros-do-link";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ListSkeleton } from "@/components/shared/loading-skeleton";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
@@ -37,7 +38,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { RECORD_STATUS } from "@/lib/design/status";
-import type { ResumoDoLink } from "@/lib/domain/link-rastreado";
+import type { NumeroDoLink, ResumoDoLink } from "@/lib/domain/link-rastreado";
 import {
   fraseDoTeste,
   LIMITE_DE_ORIGENS_ATIVAS,
@@ -100,6 +101,8 @@ export type DadosDasOrigens = {
   enderecoDosLinks: string | null;
   /** cliques e leads por id da origem; nulo: a leitura falhou */
   resumoDosLinks: Record<string, ResumoDoLink> | null;
+  /** os numeros escolhidos por id da origem; nulo: a leitura falhou */
+  numerosDosLinks: Record<string, NumeroDoLink[]> | null;
 };
 
 /** O esqueleto da lista, enquanto a aba carrega de novo. */
@@ -168,8 +171,14 @@ function ListaDeOrigens({
   podeGerenciar: boolean;
   dica: string;
 }) {
-  const { regras, numeros, frasesDoSite, enderecoDosLinks, resumoDosLinks } =
-    dados;
+  const {
+    regras,
+    numeros,
+    frasesDoSite,
+    enderecoDosLinks,
+    resumoDosLinks,
+    numerosDosLinks,
+  } = dados;
   // undefined = dialogo fechado; null = criando; regra = editando.
   const [editando, setEditando] = useState<RegraDeOrigem | null | undefined>(
     undefined,
@@ -354,7 +363,20 @@ function ListaDeOrigens({
                     motivoSemCopiar={
                       regra.ativa ? null : TEXTOS_DA_ORIGEM.desativadaSemCopiar
                     }
-                  />
+                  >
+                    <NumerosDoLink
+                      regraId={regra.id}
+                      nomeDaOrigem={regra.nome}
+                      numeros={numeros}
+                      escolhidos={
+                        numerosDosLinks === null
+                          ? null
+                          : (numerosDosLinks[regra.id] ?? [])
+                      }
+                      podeGerenciar={podeGerenciar}
+                      dica={dica}
+                    />
+                  </LinkRastreado>
                 ) : null}
                 {regra.mensagem ? (
                   <LinkParaABio
