@@ -19,6 +19,7 @@ vi.mock("next/navigation", () => ({
 import { ConfiguracoesClient } from "@/app/(app)/configuracoes/configuracoes-client";
 import { FormularioDaOrigem } from "@/components/configuracoes/dialogo-da-origem";
 import { LinkParaABio } from "@/components/configuracoes/link-para-a-bio";
+import { nomeDoArquivoDoQr } from "@/components/configuracoes/link-rastreado";
 import {
   CarregandoOrigens,
   OrigemDosLeadsTab,
@@ -202,6 +203,24 @@ describe("a lista de origens", () => {
     expect(html).toMatch(
       desabilitado("Copiar link rastreado de Parceiro academia"),
     );
+  });
+
+  // Etapa 4: o QR Code do mesmo link, gerado no navegador.
+  it("QR Code: o botão em cada origem, desabilitado na desativada; o arquivo leva o nome da origem", () => {
+    expect(html).toMatch(/aria-label="Ver QR Code de Link da bio"/);
+    expect(html).not.toMatch(desabilitado("Ver QR Code de Link da bio"));
+    expect(html).toMatch(desabilitado("Ver QR Code de Parceiro academia"));
+    expect(nomeDoArquivoDoQr("Link da bio")).toBe("qr-link-da-bio.png");
+    expect(nomeDoArquivoDoQr("Recepção (térreo) / Balcão 2")).toBe(
+      "qr-recepcao-terreo-balcao-2.png",
+    );
+    expect(nomeDoArquivoDoQr("???")).toBe("qr-link.png");
+    expect(nomeDoArquivoDoQr(undefined)).toBe("qr-link.png");
+  });
+
+  it("os dois links têm nomes diferentes: o rastreado e o direto do WhatsApp", () => {
+    expect(visivel).toContain("Link rastreado");
+    expect(visivel).toContain("Link direto do WhatsApp");
   });
 
   it("origem desativada: Copiar link visível e desabilitado, com a dica", () => {

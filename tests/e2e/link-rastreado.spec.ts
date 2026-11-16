@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 
 import { criarNumeroDeTeste } from "../rls/numeros";
 import { adminClient } from "../rls/stack";
+import { dados } from "./dados";
+import { login } from "./helpers";
 
 // Link rastreado da origem (etapa 3a do plano de 16/11/2026, o link da bio
 // com endereco proprio), no app de verdade e SEM SESSAO: quem toca no link
@@ -129,4 +131,118 @@ test("link que nao existe: a pagina de indisponivel, em portugues e sem login", 
   ).toBeVisible();
   // Nada de tela de login nem de erro do framework.
   await expect(page.getByText("Entrar", { exact: true })).toHaveCount(0);
+});
+
+// ---------------------------------------------------------------------------
+// A tela: o bloco "Link rastreado" e o QR Code (etapa 4), com sessao
+// ---------------------------------------------------------------------------
+
+test.describe("aba Origem dos leads", () => {
+  const NOME = `Bio E2E ${sufixo}`;
+  let codigoDaTela = "";
+  let origemDaTela = "";
+
+  test.beforeAll(async () => {
+    const { data } = await admin
+      .from("campaign_link")
+      .insert({
+        clinic_id: dados().clinicId,
+        name: NOME,
+        token: "E2E8M4",
+        channel: "redes_sociais",
+        default_message: MENSAGEM,
+      })
+      .select("id, codigo_publico")
+      .single()
+      .throwOnError();
+    origemDaTela = data!.id as string;
+    codigoDaTela = data!.codigo_publico as string;
+  });
+
+  test.afterAll(async () => {
+    if (origemDaTela) {
+      await admin.from("campaign_link").delete().eq("id", origemDaTela);
+    }
+  });
+
+  test("mostra o link rastreado com a contagem, e o QR Code leva o mesmo link e baixa em PNG", async ({
+    page,
+  }) => {
+    await login(page, dados().emails.admin);
+    await page.goto("/configuracoes?aba=origem");
+
+    const bloco = page
+      .getByRole("group", { name: "Link rastreado" })
+      .filter({ hasText: codigoDaTela });
+    await expect(bloco).toContainText(`/l/${codigoDaTela}`);
+    await expect(bloco).toContainText("0 cliques e 0 leads nos últimos 30 dias");
+    const link = (await bloco.locator("p.select-all").first().textContent()) ?? "";
+    expect(link.endsWith(`/l/${codigoDaTela}`)).toBe(true);
+
+    await page
+      .getByRole("button", { name: `Ver QR Code de ${NOME}` })
+      .click();
+    const dialogo = page.getByRole("dialog");
+    await expect(dialogo).toContainText("QR Code do link rastreado");
+    const codigo = dialogo.getByRole("img", {
+      name: `QR Code do link rastreado de ${NOME}`,
+    });
+    await expect(codigo).toBeVisible();
+
+    // O QR Code tem de dizer exatamente o link. O leitor do proprio navegador
+    // (BarcodeDetector) nao existe em todo Chromium: quando existe, confere.
+    const lido = await codigo.evaluate(async (canvas) => {
+      const Detector = (
+        window as unknown as {
+          BarcodeDetector?: new (opcoes: { formats: string[] }) => {
+            detect: (alvo: Element) => Promise<{ rawValue: string }[]>;
+          };
+        }
+      ).BarcodeDetector;
+      if (!Detector) {
+        return null;
+      }
+      try {
+        const achados = await new Detector({ formats: ["qr_code"] }).detect(
+          canvas,
+        );
+        return achados[0]?.rawValue ?? "nada lido";
+      } catch {
+        return null;
+      }
+    });
+    test.info().annotations.push({
+      type: "qr",
+      description: lido === null ? "sem leitor no navegador" : `lido: ${lido}`,
+    });
+    if (lido !== null) {
+      expect(lido).toBe(link);
+    }
+
+    const baixando = page.waitForEvent("download");
+    await dialogo.getByRole("button", { name: "Baixar PNG" }).click();
+    const arquivo = await baixando;
+    expect(arquivo.suggestedFilename()).toBe(
+      `qr-bio-e2e-${sufixo.toLowerCase()}.png`,
+    );
+    if (process.env.FOTO_DO_QR) {
+      await arquivo.saveAs(`${process.env.FOTO_DO_QR}/qr-baixado.png`);
+      await page.screenshot({
+        path: `${process.env.FOTO_DO_QR}/qr-dialogo-claro.png`,
+      });
+      await page.keyboard.press("Escape");
+      await page.evaluate(() => window.localStorage.setItem("theme", "dark"));
+      await page.reload();
+      await bloco.scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: `${process.env.FOTO_DO_QR}/aba-origem-escuro.png`,
+      });
+      await page.evaluate(() => window.localStorage.setItem("theme", "light"));
+      await page.reload();
+      await bloco.scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: `${process.env.FOTO_DO_QR}/aba-origem-claro.png`,
+      });
+    }
+  });
 });
