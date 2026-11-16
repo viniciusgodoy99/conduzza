@@ -11,6 +11,7 @@ import {
   FORMATO_DO_CODIGO,
   FRASE_PADRAO,
   frasesDaResposta,
+  juntarSinais,
   lerCorpoDoClique,
   linkComCodigo,
   sinaisDaUrl,
@@ -307,9 +308,9 @@ function codigoDoAviso(corpo: string | undefined): string {
 
 const WA = "https://wa.me/5584999990000?text=Quero%20agendar";
 
-describe("rastreio v1: sem sinal do Google nao faz nada", () => {
-  it("visita sem parametro do Google: nenhum ouvinte, nada guardado", () => {
-    const ambiente = montar({ busca: "?utm_source=instagram" });
+describe("rastreio v1: sem sinal nenhum nao faz nada", () => {
+  it("visita sem sinal na URL: nenhum ouvinte, nada guardado", () => {
+    const ambiente = montar({ busca: "?ref=abc&pagina=2" });
     expect(ambiente.ouvintes).toHaveLength(0);
     expect(ambiente.armazenado.size).toBe(0);
     // Nem busca as frases: visita sem anuncio nao chama o sistema.
@@ -561,6 +562,61 @@ describe("rastreio v1: navegacao entre paginas (sessionStorage)", () => {
     expect(
       montar({ guardado: JSON.stringify({ gclid: "" }) }).ouvintes,
     ).toHaveLength(0);
+  });
+});
+
+describe("rastreio v1: anuncio da Meta e UTMs (paridade com o dominio)", () => {
+  it("visita so com UTM ou so com fbclid ja liga o rastreio e o aviso leva os sinais", () => {
+    for (const busca of [
+      "?utm_source=instagram&utm_medium=bio",
+      "?fbclid=IwAR0_a-b&cz_anuncio=120211223344556&utm_campaign=Black+Friday",
+    ]) {
+      const ambiente = montar({ busca });
+      expect(ambiente.ouvintes).toHaveLength(2);
+      expect(JSON.parse(ambiente.armazenado.get(GUARDADO) ?? "null")).toEqual(
+        sinaisDaUrl(busca),
+      );
+      ambiente.disparar(link(WA));
+      const codigo = codigoDoAviso(ambiente.avisos[0]?.corpo);
+      const corpo = JSON.parse(ambiente.avisos[0]?.corpo ?? "{}");
+      expect(corpo).toEqual({ chave: CHAVE, codigo, ...sinaisDaUrl(busca) });
+      // A rota aceita exatamente o que o script manda.
+      expect(lerCorpoDoClique(JSON.stringify(corpo)).ok).toBe(true);
+    }
+  });
+
+  it("pagina seguinte: a familia da URL troca, as outras ficam (juntarSinais)", () => {
+    const casos: { guardado: string; busca: string }[] = [
+      // Link interno com UTM nao apaga o clique do anuncio.
+      {
+        guardado: "?gclid=Cj0K&cz_campanha=456&utm_source=google",
+        busca: "?utm_source=banner&utm_medium=interno",
+      },
+      // Clique novo da Meta numa aba que veio do Google.
+      { guardado: "?gclid=Cj0K", busca: "?fbclid=IwAR0&cz_anuncio=99" },
+      // Clique novo do Google: a campanha velha nao acompanha.
+      { guardado: "?gclid=velho&cz_campanha=1", busca: "?gclid=novo" },
+      // Sem nada na URL: vale o guardado inteiro.
+      { guardado: "?fbclid=IwAR0&utm_source=ig", busca: "" },
+    ];
+    for (const caso of casos) {
+      const guardados = sinaisDaUrl(caso.guardado);
+      const ambiente = montar({
+        busca: caso.busca,
+        guardado: JSON.stringify(guardados),
+      });
+      const esperado = juntarSinais(guardados, sinaisDaUrl(caso.busca));
+      ambiente.disparar(link(WA));
+      const codigo = codigoDoAviso(ambiente.avisos[0]?.corpo);
+      expect(JSON.parse(ambiente.avisos[0]?.corpo ?? "{}")).toEqual({
+        chave: CHAVE,
+        codigo,
+        ...esperado,
+      });
+      expect(JSON.parse(ambiente.armazenado.get(GUARDADO) ?? "null")).toEqual(
+        esperado,
+      );
+    }
   });
 });
 
@@ -1036,8 +1092,9 @@ describe("rastreio v1: frases da clinica", () => {
 describe("rastreio v1: o arquivo", () => {
   it("pequeno", () => {
     // Era 8 KB; a busca e o sorteio das frases (04/10/2026) levaram a uns
-    // 9,5 KB, quase tudo comentario (o servidor entrega comprimido).
-    expect(Buffer.byteLength(CODIGO_DO_SCRIPT)).toBeLessThan(10 * 1024);
+    // 9,5 KB e os sinais da Meta e as UTMs (16/11/2026) a uns 10,5 KB, quase
+    // tudo comentario (o servidor entrega comprimido).
+    expect(Buffer.byteLength(CODIGO_DO_SCRIPT)).toBeLessThan(12 * 1024);
   });
 
   it("sintaxe que navegador antigo entende e texto so em ASCII", () => {

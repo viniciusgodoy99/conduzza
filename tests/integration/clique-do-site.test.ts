@@ -687,7 +687,11 @@ describe("casar_clique_do_site", () => {
 });
 
 describe("coerencia da origem de clique no site (sistema)", () => {
-  it("clique_site so com Trafego pago, Google, sem meio e sem campanha em texto; ids so com clique_site", async () => {
+  // Regra de 16/11/2026 (migration 20261116110000): o clique no site deixou
+  // de ser so do Google. Com clique_site, canal e origem preenchidos; origem
+  // Google e Meta (exatas) seguem as regras do anuncio; as outras (UTM) sao
+  // livres; os ids do Google so com clique_site de origem Google.
+  it("clique_site: Google e Meta com as regras do anuncio, UTM livre; ids do Google so com origem Google", async () => {
     const base = {
       source_channel: "trafego_pago",
       source_origin: "Google",
@@ -696,9 +700,12 @@ describe("coerencia da origem de clique no site (sistema)", () => {
     const recusados: Record<string, unknown>[] = [
       { ...base, source_channel: null },
       { ...base, source_channel: "redes_sociais" },
-      { ...base, source_origin: "Meta" },
-      { ...base, source_origin: "google" },
       { ...base, source_origin: null },
+      { ...base, source_origin: "Meta", source_channel: "redes_sociais" },
+      { ...base, source_origin: "Meta", source_medium: "cpc" },
+      { ...base, source_origin: "Meta", source_campaign: "Campanha" },
+      { ...base, source_origin: "Meta", source_google_campaign_id: "123" },
+      { ...base, source_origin: "google", source_google_campaign_id: "123" },
       { ...base, source_medium: "cpc" },
       { ...base, source_campaign: "Campanha" },
       { ...base, source_google_campaign_id: "abc" },
@@ -728,6 +735,23 @@ describe("coerencia da origem de clique no site (sistema)", () => {
       source_google_adgroup_id: "456",
     });
     await contato(clinicaA, base);
+    // O anuncio da Meta que leva ao site, com e sem a plataforma...
+    await contato(clinicaA, { ...base, source_origin: "Meta" });
+    await contato(clinicaA, {
+      ...base,
+      source_origin: "Meta",
+      source_medium: "Instagram",
+    });
+    // ...e a visita com UTM: origem em minusculas, qualquer canal, meio e
+    // campanha em texto.
+    await contato(clinicaA, {
+      source_channel: "redes_sociais",
+      source_origin: "instagram",
+      source_medium: "bio",
+      source_campaign: "Link da bio",
+      source_method: "clique_site",
+    });
+    await contato(clinicaA, { ...base, source_origin: "google" });
   });
 });
 

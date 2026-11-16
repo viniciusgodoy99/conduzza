@@ -45,14 +45,10 @@ import { TOKEN_META_STATUS } from "@/lib/design/status";
 // O TOKEN E WRITE-ONLY: o servidor nunca manda o valor para ca, so o fato de
 // existir (temToken). O campo sempre nasce vazio e salvar substitui.
 //
-// A DECISAO D6 (LGPD) AINDA ESTA EM ABERTO: o dono adiou a escolha de como
-// os dados pessoais saem (so o identificador do anuncio, ou telefone
-// protegido com autorizacao). A trava DE VERDADE vive no banco (gatilho da
-// migration 20260910150000, que recusa qualquer modo ate para o service
-// role); esta constante so alinha a tela. A liberacao tem dois passos:
-// a migration de liberacao (substitui a funcao do gatilho) e virar esta
-// constante para true.
-const DECISAO_LGPD_TOMADA = false;
+// DECISAO D6 do dono (16/11/2026): os dois modos ficam liberados e a clinica
+// escolhe. O telefone, quando sai, sai em hash e sem corte por autorizacao.
+// O banco continua exigindo Pixel, modo e token para ligar o envio
+// (migration 20261116100000).
 
 export type ContaMeta = {
   pixel_id: string | null;
@@ -121,8 +117,6 @@ export function MetaAdsTab({
         whatsapp_business_account_id: waba.trim() || null,
         test_event_code: codigoTeste.trim() || null,
         send_unmatched: semIdentificador,
-        // O banco embarga qualquer modo ate a decisao D6; ate la o seletor
-        // vive desabilitado e este campo viaja nulo.
         modo_user_data:
           modoEscolhido === "ctwa_apenas" ||
           modoEscolhido === "telefone_hasheado"
@@ -173,10 +167,28 @@ export function MetaAdsTab({
   const controlesLiberados = podeGerenciar && !pendente;
 
   // A trava do envio: ligado, sempre da para desligar; desligado, so liga
-  // depois da decisao LGPD e com o modo escolhido.
+  // com o modo escolhido e salvo.
   const envioTravado =
-    !controlesLiberados ||
-    (!atual.envio_ativado && (!DECISAO_LGPD_TOMADA || !atual.modo_user_data));
+    !controlesLiberados || (!atual.envio_ativado && !atual.modo_user_data);
+  const seletorDoModo = (
+    <Select
+      value={modoEscolhido}
+      onValueChange={setModoEscolhido}
+      disabled={!controlesLiberados}
+    >
+      <SelectTrigger id="meta-modo" className="w-full">
+        <SelectValue placeholder="Escolha como os dados saem" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="ctwa_apenas">
+          Só o identificador do anúncio (sem dado pessoal)
+        </SelectItem>
+        <SelectItem value="telefone_hasheado">
+          Identificador do anúncio e telefone protegido
+        </SelectItem>
+      </SelectContent>
+    </Select>
+  );
   const chaveDoEnvio = (
     <Switch
       id="meta-envio"
@@ -383,33 +395,13 @@ export function MetaAdsTab({
         <CardContent className="grid gap-4">
           <div className="grid gap-1.5">
             <Label htmlFor="meta-modo">Como os dados saem da clínica</Label>
-            <DisabledWithHint
-              className="w-full"
-              hint={
-                DECISAO_LGPD_TOMADA
-                  ? dica
-                  : "A escolha de como enviar dados pessoais depende de uma decisão de privacidade (LGPD) que ainda está em aberto."
-              }
-            >
-              <Select
-                value={modoEscolhido}
-                onValueChange={setModoEscolhido}
-                disabled={!DECISAO_LGPD_TOMADA || !controlesLiberados}
-              >
-                <SelectTrigger id="meta-modo" className="w-full">
-                  <SelectValue placeholder="Aguardando a decisão de privacidade" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ctwa_apenas">
-                    Só o identificador do anúncio (sem dado pessoal)
-                  </SelectItem>
-                  <SelectItem value="telefone_hasheado">
-                    Identificador do anúncio e telefone protegido (com
-                    autorização do paciente)
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </DisabledWithHint>
+            {podeGerenciar ? (
+              seletorDoModo
+            ) : (
+              <DisabledWithHint className="w-full" hint={dica}>
+                {seletorDoModo}
+              </DisabledWithHint>
+            )}
           </div>
 
           <div className="flex min-h-10 items-center gap-2.5">
@@ -418,7 +410,7 @@ export function MetaAdsTab({
                 hint={
                   !podeGerenciar
                     ? dica
-                    : "Para ligar, cadastre o Pixel e o token e aguarde a definição de como os dados pessoais serão enviados (LGPD)."
+                    : "Para ligar, cadastre o Pixel e o token, escolha como os dados saem e salve."
                 }
               >
                 {chaveDoEnvio}

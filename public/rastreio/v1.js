@@ -1,11 +1,12 @@
 /*
- * Conduzza: rastreio do clique de anuncio do Google no site da clinica (v1).
+ * Conduzza: rastreio da origem da visita no site da clinica (v1).
  * Uso: <script src="https://<sistema>/rastreio/v1.js" data-chave="<chave>"
  *        referrerpolicy="no-referrer" async></script>
- * So age em visita vinda de anuncio do Google. Ao carregar, busca as frases
- * da clinica. No clique do link do WhatsApp, acrescenta um codigo ao texto
- * (" [#K7Q2MX]"; sem texto pronto, antes vai uma das frases, sorteada) e
- * avisa o sistema. Nunca impede o link, nunca guarda IP, pagina ou dado de
+ * So age em visita que chega com sinal na URL: anuncio do Google (gclid e
+ * afins), anuncio da Meta (fbclid, cz_anuncio) ou UTM. Ao carregar, busca as
+ * frases da clinica. No clique do link do WhatsApp, acrescenta um codigo ao
+ * texto (" [#K7Q2MX]"; sem texto pronto, antes vai uma das frases, sorteada)
+ * e avisa o sistema. Nunca impede o link, nunca guarda IP, pagina ou dado de
  * quem visita.
  * Regras espelhadas em lib/domain/rastreio-do-site.ts (o teste confere).
  */
@@ -22,6 +23,7 @@
     var PAR = /[\uD800-\uDBFF][\uDC00-\uDFFF]/g;
     var ID = /^[A-Za-z0-9._~+\/=-]{1,512}$/;
     var NUMERO = /^[0-9]{1,20}$/;
+    var UTM = /^[^\u0000-\u001f\u007f-\u009f\u2028\u2029]{1,100}$/;
     var FORMATOS = {
       gclid: ID,
       gbraid: ID,
@@ -30,7 +32,28 @@
       gad_campaignid: NUMERO,
       cz_campanha: NUMERO,
       cz_grupo: NUMERO,
+      fbclid: ID,
+      cz_anuncio: NUMERO,
+      utm_source: UTM,
+      utm_medium: UTM,
+      utm_campaign: UTM,
+      utm_content: UTM,
+      utm_term: UTM,
     };
+    // Google, Meta e UTM: a familia que vem na URL substitui a guardada.
+    var FAMILIAS = [
+      [
+        "gclid",
+        "gbraid",
+        "wbraid",
+        "gad_source",
+        "gad_campaignid",
+        "cz_campanha",
+        "cz_grupo",
+      ],
+      ["fbclid", "cz_anuncio"],
+      ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"],
+    ];
     var LINK =
       /^(?:(?:https?:)?\/\/(?:www\.)?(?:wa\.me\/\d*|api\.whatsapp\.com\/send|web\.whatsapp\.com\/send)|whatsapp:\/\/send)\/?(?=[?#]|$)/i;
     var CODIGO_NO_TEXTO = /#[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{6}/i;
@@ -59,28 +82,47 @@
       return algum ? sinais : null;
     };
 
+    var tem = function (objeto, nome) {
+      return Object.prototype.hasOwnProperty.call(objeto, nome);
+    };
     var busca = new URLSearchParams(window.location.search);
-    var sinais = filtrar(function (nome) {
+    var daUrl = filtrar(function (nome) {
       return busca.get(nome);
     });
-    if (sinais) {
+    var guardados = null;
+    try {
+      var bruto = JSON.parse(window.sessionStorage.getItem(GUARDADO) || "null");
+      if (bruto && typeof bruto === "object") {
+        guardados = filtrar(function (nome) {
+          return tem(bruto, nome) ? bruto[nome] : null;
+        });
+      }
+    } catch (e) {}
+    // Link interno com UTM nao apaga o clique do anuncio que trouxe a visita:
+    // so a familia que veio na URL troca; as outras ficam como guardadas.
+    var sinais = null;
+    for (var f = 0; f < FAMILIAS.length; f++) {
+      var familia = FAMILIAS[f];
+      var fonte = guardados;
+      for (var n = 0; daUrl && n < familia.length; n++) {
+        if (tem(daUrl, familia[n])) {
+          fonte = daUrl;
+          break;
+        }
+      }
+      for (var m = 0; fonte && m < familia.length; m++) {
+        if (tem(fonte, familia[m])) {
+          sinais = sinais || {};
+          sinais[familia[m]] = fonte[familia[m]];
+        }
+      }
+    }
+    if (daUrl && sinais) {
       try {
         window.sessionStorage.setItem(GUARDADO, JSON.stringify(sinais));
       } catch (e) {}
-    } else {
-      try {
-        var texto = window.sessionStorage.getItem(GUARDADO);
-        var guardado = JSON.parse(texto || "null");
-        if (guardado && typeof guardado === "object") {
-          sinais = filtrar(function (nome) {
-            return Object.prototype.hasOwnProperty.call(guardado, nome)
-              ? guardado[nome]
-              : null;
-          });
-        }
-      } catch (e) {}
     }
-    // Sem sinal do Google: nada de ouvinte, nada de aviso, nada de busca.
+    // Sem sinal nenhum: nada de ouvinte, nada de aviso, nada de busca.
     if (!sinais) return;
 
     // As frases da clinica, buscadas uma vez, sem cookie e sem referrer.
@@ -193,8 +235,7 @@
     var avisar = function (codigo) {
       var corpo = { chave: chave, codigo: codigo };
       for (var nome in sinais) {
-        if (Object.prototype.hasOwnProperty.call(sinais, nome))
-          corpo[nome] = sinais[nome];
+        if (tem(sinais, nome)) corpo[nome] = sinais[nome];
       }
       var texto = JSON.stringify(corpo);
       try {

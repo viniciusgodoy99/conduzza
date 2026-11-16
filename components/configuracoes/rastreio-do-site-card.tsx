@@ -46,6 +46,7 @@ import {
   frasesNoFormato,
   LIMITE_DE_FRASES,
   linhaDoScript,
+  PARAMETROS_DE_URL_DA_META,
   SUFIXO_DE_URL_FINAL,
   TAMANHO_MAXIMO_DA_FRASE,
 } from "@/lib/domain/rastreio-do-site";
@@ -193,6 +194,8 @@ export const TEXTOS_DO_RASTREIO = {
   copiaFalhouLinha: "Não foi possível copiar. Selecione a linha e copie à mão.",
   copiaFalhouSufixo:
     "Não foi possível copiar. Selecione o sufixo e copie à mão.",
+  copiaFalhouParametros:
+    "Não foi possível copiar. Selecione os parâmetros e copie à mão.",
   nenhumClique: "Nenhum clique recebido ainda",
   conectarEmBreve:
     "Em breve. A conexão com o Google Ads ainda está sendo preparada pela Conduzza.",
@@ -589,7 +592,9 @@ export function RastreioDoSiteCard({
   const [acao, setAcao] = useState<Acao | null>(null);
   const [resultado, setResultado] = useState<Resultado | null>(null);
   const [confirmandoTroca, setConfirmandoTroca] = useState(false);
-  const [copiado, setCopiado] = useState<"linha" | "sufixo" | null>(null);
+  const [copiado, setCopiado] = useState<
+    "linha" | "sufixo" | "parametros" | null
+  >(null);
   const [pendente, startTransition] = useTransition();
 
   const timerDaCopia = useRef<number | null>(null);
@@ -688,7 +693,10 @@ export function RastreioDoSiteCard({
       );
     });
 
-  const copiar = async (qual: "linha" | "sufixo", texto: string) => {
+  const copiar = async (
+    qual: "linha" | "sufixo" | "parametros",
+    texto: string,
+  ) => {
     try {
       await navigator.clipboard.writeText(texto);
       setCopiado(qual);
@@ -702,7 +710,9 @@ export function RastreioDoSiteCard({
         texto:
           qual === "linha"
             ? TEXTOS_DO_RASTREIO.copiaFalhouLinha
-            : TEXTOS_DO_RASTREIO.copiaFalhouSufixo,
+            : qual === "sufixo"
+              ? TEXTOS_DO_RASTREIO.copiaFalhouSufixo
+              : TEXTOS_DO_RASTREIO.copiaFalhouParametros,
       });
     }
   };
@@ -985,6 +995,36 @@ export function RastreioDoSiteCard({
                     {copiado === "sufixo"
                       ? "Sufixo copiado"
                       : "Copiar o sufixo"}
+                  </Button>
+                </span>
+              </div>
+            </li>
+            <li>
+              {/* Etapa 2 do plano de 16/11/2026: o anuncio da Meta que leva
+                  ao site e a visita com UTM tambem ganham origem. */}
+              <div className="grid gap-2">
+                <span>
+                  Se a clínica também anuncia no Facebook e no Instagram
+                  levando ao site, cole os parâmetros abaixo no anúncio, em
+                  Parâmetros de URL. Eles dizem qual anúncio e qual campanha
+                  trouxeram a visita. Anúncio que abre o WhatsApp direto não
+                  precisa: a origem já vem sozinha. Visita que chega com UTM
+                  (link da bio, e-mail) também ganha a origem.
+                </span>
+                <span className="flex flex-wrap items-center gap-2">
+                  <code className="rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-[12.5px] break-all text-text-strong select-all">
+                    {PARAMETROS_DE_URL_DA_META}
+                  </code>
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      void copiar("parametros", PARAMETROS_DE_URL_DA_META)
+                    }
+                  >
+                    <Copy aria-hidden />
+                    {copiado === "parametros"
+                      ? "Parâmetros copiados"
+                      : "Copiar os parâmetros"}
                   </Button>
                 </span>
               </div>

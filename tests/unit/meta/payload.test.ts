@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { enviarEventosCapi } from "@/lib/integrations/meta/capi";
 import {
+  fbcDoClique,
   hashTelefoneParaMeta,
   montarEventoCapi,
 } from "@/lib/integrations/meta/payload";
@@ -102,6 +103,44 @@ describe("montarEventoCapi", () => {
       phoneE164: null,
     });
     expect(r).toEqual({ ok: false, descarte: "sem_identificador" });
+  });
+
+  // Etapa 2 do plano de 16/11/2026: o anuncio da Meta que leva ao SITE.
+  it("fbc no formato da Meta: fb.1, a hora do clique em ms e o fbclid", () => {
+    expect(fbcDoClique("IwAR0_a-b", 1_775_000_000_123)).toBe(
+      "fb.1.1775000000123.IwAR0_a-b",
+    );
+  });
+
+  it("sem o par ctwa+waba, o fbc do clique do site vai no evento genérico", () => {
+    const fbc = fbcDoClique("IwAR0_a-b", 1_775_000_000_123);
+    const comTelefone = montarEventoCapi({ ...BASE, ctwaClid: null, fbc });
+    expect(comTelefone.ok && comTelefone.evento.user_data).toEqual({
+      ph: [hashTelefoneParaMeta("+5585999990000")],
+      fbc,
+    });
+    // E identificador de clique, nao dado pessoal: vale no modo ctwa_apenas,
+    // e o telefone continua de fora.
+    const soClique = montarEventoCapi({
+      ...BASE,
+      modo: "ctwa_apenas",
+      ctwaClid: null,
+      fbc,
+    });
+    expect(soClique.ok && soClique.evento).toMatchObject({
+      action_source: "system_generated",
+      user_data: { fbc },
+    });
+    expect(soClique.ok && soClique.evento.user_data.ph).toBeUndefined();
+  });
+
+  it("com o par ctwa+waba o evento continua o do anúncio de WhatsApp, sem fbc", () => {
+    const r = montarEventoCapi({
+      ...BASE,
+      fbc: fbcDoClique("IwAR0_a-b", 1_775_000_000_123),
+    });
+    expect(r.ok && r.evento.action_source).toBe("business_messaging");
+    expect(r.ok && r.evento.user_data.fbc).toBeUndefined();
   });
 });
 

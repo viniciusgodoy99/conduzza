@@ -54,6 +54,7 @@ SaaS multi-tenant que coloca uma recepcionista de IA no WhatsApp de clínicas m�
 - Dado de saúde é dado sensível (LGPD art. 5º, II). Conversa de paciente conta como dado de saúde.
 - Toda leitura de dado de paciente por usuário humano vai para `audit_log`.
 - Nunca logar conteúdo de mensagem de paciente em log de aplicação, Sentry ou console.
+- **Conversões para a Meta (decisão do dono de 16/11/2026, a D6: "Tudo, desconsidere o lgpd do nosso lado"):** a clínica escolhe na aba "Anúncios da Meta" como os dados saem (só o identificador do clique, ou também o telefone) e liga o envio. O telefone sai sempre em SHA-256 e sem corte por autorização. Nunca saem conteúdo de conversa, nome nem procedimento. Ligar o envio exige Pixel, modo e token, no banco (CHECK e gatilho; migration `20261116100000`). Risco informado ao dono e aceito: o evento ligado ao telefone é dado de saúde compartilhado com a Meta, e a Meta pode barrar eventos de fundo de funil de contas de saúde.
 
 ### 3.2 Conformidade CFM (isso pode fechar a clínica do cliente)
 

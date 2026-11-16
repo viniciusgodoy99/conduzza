@@ -236,31 +236,38 @@ describe("meta_ads_account", () => {
     expect(error?.code).toBe(RLS_VIOLATION);
   });
 
-  it("o embargo da decisão D6 segura no banco: nem o service role escolhe o modo", async () => {
-    // A trava NAO e a tela (regra 3.4: esconder botao nao protege nada). O
-    // gatilho recusa qualquer modo_user_data ate a migration de liberacao,
-    // por INSERT e por UPDATE, ate para o service role.
-    const { error: porUpdate } = await admin
-      .from("meta_ads_account")
-      .update({ modo_user_data: "telefone_hasheado" })
-      .eq("clinic_id", clinicaA);
-    expect(porUpdate?.message).toContain("decisão de privacidade pendente");
-
-    const { error: porInsert } = await admin.from("meta_ads_account").insert({
-      clinic_id: clinicaB,
-      pixel_id: "555555555555555",
-      modo_user_data: "ctwa_apenas",
-    });
-    expect(porInsert?.message).toContain("decisão de privacidade pendente");
-
-    // E pela SESSAO de quem gerencia (o caminho do achado da revisao; a
-    // policy trata admin e gestor na mesma clausula): recusado.
+  it("com a D6 liberada, quem gerencia escolhe o modo; ligar continua exigindo o token", async () => {
+    // Decisao do dono de 16/11/2026 (migration 20261116100000): o embargo
+    // saiu. A sessao de quem gerencia a clinica A escolhe o modo...
     const cliente = await logado(email("admin-a"));
     const { error: porSessao } = await cliente
       .from("meta_ads_account")
-      .update({ modo_user_data: "telefone_hasheado", envio_ativado: true })
+      .update({ modo_user_data: "telefone_hasheado" })
       .eq("clinic_id", clinicaA);
-    expect(porSessao?.message).toContain("decisão de privacidade pendente");
+    expect(porSessao).toBeNull();
+    const { data: gravado } = await admin
+      .from("meta_ads_account")
+      .select("modo_user_data")
+      .eq("clinic_id", clinicaA)
+      .single();
+    expect(gravado!.modo_user_data).toBe("telefone_hasheado");
+
+    // ...e a clinica B, sem token, nao liga nem com Pixel e modo: a trava que
+    // ficou e a do gatilho (regra 3.4: esconder botao nao protege nada).
+    const { error: semToken } = await admin.from("meta_ads_account").insert({
+      clinic_id: clinicaB,
+      pixel_id: "555555555555555",
+      modo_user_data: "ctwa_apenas",
+      envio_ativado: true,
+    });
+    expect(semToken?.message).toContain("token da API de conversões");
+
+    // A clinica A volta a ficar sem modo: o teste seguinte parte disso.
+    await admin
+      .from("meta_ads_account")
+      .update({ modo_user_data: null })
+      .eq("clinic_id", clinicaA)
+      .throwOnError();
   });
 
   it("sem modo o envio não liga (CHECK); sem token, nem com tudo o mais", async () => {

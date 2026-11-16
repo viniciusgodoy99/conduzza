@@ -13,6 +13,7 @@ import {
   corpoDoCliqueSchema,
   FORMATO_DO_CODIGO,
   hostDoOrigin,
+  juntarSinais,
   LIMITE_DO_CORPO_EM_BYTES,
   lerCorpoDoClique,
   linhaDoScript,
@@ -59,9 +60,36 @@ describe("formato do codigo", () => {
 });
 
 describe("sinaisDaUrl", () => {
-  it("sem parametro do Google devolve null", () => {
+  it("sem sinal nenhum devolve null", () => {
     expect(sinaisDaUrl("")).toBeNull();
-    expect(sinaisDaUrl("?utm_source=instagram&fbclid=abc")).toBeNull();
+    expect(sinaisDaUrl("?ref=abc&pagina=2")).toBeNull();
+  });
+
+  it("anuncio da Meta e UTMs contam como sinal (etapa 2, 16/11/2026)", () => {
+    expect(
+      sinaisDaUrl(
+        "?utm_source=ig&utm_medium=Instagram_Feed&utm_campaign=Black+Friday&utm_content=V%C3%ADdeo+1&utm_term=botox&fbclid=IwAR0_a-b&cz_anuncio=120211223344556",
+      ),
+    ).toEqual({
+      fbclid: "IwAR0_a-b",
+      cz_anuncio: "120211223344556",
+      utm_source: "ig",
+      utm_medium: "Instagram_Feed",
+      utm_campaign: "Black Friday",
+      utm_content: "Vídeo 1",
+      utm_term: "botox",
+    });
+  });
+
+  it("UTM longa demais, vazia ou com controle sai sozinha; cz_anuncio so com digitos", () => {
+    expect(
+      sinaisDaUrl(
+        `?utm_source=ok&utm_campaign=${"a".repeat(101)}&utm_medium=&utm_term=a%0Ab&cz_anuncio={{ad.id}}`,
+      ),
+    ).toEqual({ utm_source: "ok" });
+    expect(sinaisDaUrl(`?utm_campaign=${"a".repeat(100)}`)).toEqual({
+      utm_campaign: "a".repeat(100),
+    });
   });
 
   it("le os 7 parametros", () => {
@@ -206,10 +234,46 @@ describe("lerCorpoDoClique", () => {
   });
 });
 
+describe("juntarSinais", () => {
+  it("a familia que veio na URL substitui a guardada inteira; as outras ficam", () => {
+    // Link interno com UTM nao apaga o clique do anuncio do Google.
+    expect(
+      juntarSinais(
+        { gclid: "velho", cz_campanha: "1", utm_source: "google" },
+        { utm_source: "banner", utm_medium: "interno" },
+      ),
+    ).toEqual({
+      gclid: "velho",
+      cz_campanha: "1",
+      utm_source: "banner",
+      utm_medium: "interno",
+    });
+    // Clique novo do Google: a campanha velha nao acompanha o gclid novo.
+    expect(
+      juntarSinais({ gclid: "velho", cz_campanha: "1" }, { gclid: "novo" }),
+    ).toEqual({ gclid: "novo" });
+    // Meta e outra familia: o fbclid novo nao mexe no Google guardado.
+    expect(
+      juntarSinais({ gclid: "g" }, { fbclid: "f", cz_anuncio: "9" }),
+    ).toEqual({ gclid: "g", fbclid: "f", cz_anuncio: "9" });
+  });
+
+  it("sem nada dos dois lados: null; um lado so: ele mesmo", () => {
+    expect(juntarSinais(null, null)).toBeNull();
+    expect(juntarSinais({ gclid: "g" }, null)).toEqual({ gclid: "g" });
+    expect(juntarSinais(null, { utm_source: "ig" })).toEqual({
+      utm_source: "ig",
+    });
+  });
+});
+
 describe("contarSinais", () => {
   it("conta os parametros do Google presentes", () => {
     expect(contarSinais({})).toBe(0);
     expect(contarSinais({ gclid: "a", cz_grupo: "1" })).toBe(2);
+    expect(contarSinais({ fbclid: "a", utm_source: "ig", utm_term: "x" })).toBe(
+      3,
+    );
   });
 });
 
@@ -227,6 +291,48 @@ describe("hostDoOrigin", () => {
     expect(hostDoOrigin("null")).toBeNull();
     expect(hostDoOrigin("nao e url")).toBeNull();
     expect(hostDoOrigin("http://[::1]:3000")).toBeNull();
+  });
+});
+
+describe("argumentosDoRegistro: Meta e UTMs", () => {
+  it("fbclid, numero do anuncio e UTMs viram os argumentos novos", () => {
+    const leitura = lerCorpoDoClique(
+      JSON.stringify({
+        chave: "0123456789abcdef0123",
+        codigo: "K7Q2MX",
+        fbclid: "IwAR0_a-b",
+        cz_anuncio: "120211223344556",
+        utm_source: "ig",
+        utm_medium: "feed",
+        utm_campaign: "Black Friday",
+        utm_content: "Vídeo 1",
+        utm_term: "botox",
+      }),
+    );
+    if (!leitura.ok) throw new Error("corpo recusado");
+    expect(argumentosDoRegistro(leitura.corpo, null)).toEqual({
+      p_chave: "0123456789abcdef0123",
+      p_codigo: "K7Q2MX",
+      p_fbclid: "IwAR0_a-b",
+      p_meta_ad_id: "120211223344556",
+      p_utm_source: "ig",
+      p_utm_medium: "feed",
+      p_utm_campaign: "Black Friday",
+      p_utm_content: "Vídeo 1",
+      p_utm_term: "botox",
+    });
+  });
+
+  it("so UTM ja e sinal; UTM fora do formato recusa o corpo inteiro", () => {
+    const base = { chave: "0123456789abcdef0123", codigo: "K7Q2MX" };
+    expect(
+      lerCorpoDoClique(JSON.stringify({ ...base, utm_source: "ig" })).ok,
+    ).toBe(true);
+    expect(
+      lerCorpoDoClique(
+        JSON.stringify({ ...base, utm_source: "a".repeat(101) }),
+      ).ok,
+    ).toBe(false);
   });
 });
 
