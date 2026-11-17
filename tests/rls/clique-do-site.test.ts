@@ -1079,3 +1079,45 @@ describe("numeros do link rastreado (rodizio)", () => {
     }
   });
 });
+
+// Conversoes para o Google (migration 20261116170000, etapa 6A): a funcao
+// devolve identificador de clique (gclid), entao so administrador e gestor da
+// PROPRIA clinica chamam.
+describe("conversoes_para_o_google", () => {
+  const periodo = () => ({
+    p_de: new Date(Date.now() - 30 * 86_400_000).toISOString(),
+    p_ate: new Date(Date.now() + 86_400_000).toISOString(),
+  });
+
+  it("administrador e gestor da A exportam a A; recepcao, leitura, profissional, pendente, a B e anon nao", async () => {
+    for (const papel of ["admin-a", "gestor-a"]) {
+      const cliente = await logado(papel);
+      const { data, error } = await cliente.rpc("conversoes_para_o_google", {
+        p_clinic_id: clinicaA,
+        ...periodo(),
+      });
+      expect(error).toBeNull();
+      expect(data).toMatchObject({ linhas: expect.any(Array), sem_gclid: 0 });
+    }
+    for (const papel of [
+      "recepcao-a",
+      "leitura-a",
+      "prof-a",
+      "pendente-a",
+      "admin-b",
+    ]) {
+      const cliente = await logado(papel);
+      const { data, error } = await cliente.rpc("conversoes_para_o_google", {
+        p_clinic_id: clinicaA,
+        ...periodo(),
+      });
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
+      expect(data).toBeNull();
+    }
+    const { error: erroAnon } = await anonClient().rpc(
+      "conversoes_para_o_google",
+      { p_clinic_id: clinicaA, ...periodo() },
+    );
+    expect(erroAnon?.code).toBe(PERMISSAO_NEGADA);
+  });
+});

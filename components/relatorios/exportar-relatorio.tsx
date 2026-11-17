@@ -1,11 +1,14 @@
 "use client";
 
-import { Download, FileText, Printer } from "lucide-react";
+import { Download, FileText, Megaphone, Printer } from "lucide-react";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 
-import { registrarExportacaoDeRelatorioAction } from "@/app/(app)/relatorios/actions";
+import {
+  exportarConversoesParaOGoogleAction,
+  registrarExportacaoDeRelatorioAction,
+} from "@/app/(app)/relatorios/actions";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,10 +18,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  resumoDaExportacaoParaOGoogle,
+  TEXTOS_DAS_CONVERSOES_DO_GOOGLE,
+} from "@/lib/domain/conversoes-google";
+import {
   linhasDoCsv,
   type ExportavelDaAba,
 } from "@/lib/domain/exportacao-de-resultados";
-import { baixarCsv, gerarCsv } from "@/lib/utils/csv";
+import { baixarArquivo, baixarCsv, gerarCsv } from "@/lib/utils/csv";
 
 // Exportacao da aba ativa dos Relatorios (10.11): CSV de verdade e "PDF"
 // pela impressao do navegador (nao existe gerador de PDF no sistema, e
@@ -41,9 +48,19 @@ export function ExportarRelatorio({
   periodoRotulo,
   montar,
   desabilitado = false,
+  periodo,
+  podeExportarParaOGoogle = false,
 }: {
   aba: string;
   periodoRotulo: string;
+  /**
+   * O periodo em dias civis da clinica: com ele o menu ganha "Conversões
+   * para o Google Ads" (etapa 6A do plano de 16/11/2026). Sem ele (o Inicio),
+   * o item nao aparece.
+   */
+  periodo?: { diaDe: string; diaAte: string };
+  /** So administrador e gestor. Os outros veem o item desabilitado. */
+  podeExportarParaOGoogle?: boolean;
   /** Monta as linhas na hora do clique, sempre da aba ATIVA. */
   montar: () => ExportavelDaAba;
   /** Aba ainda carregando ou em erro: exportar gravaria trilha de um CSV
@@ -62,6 +79,37 @@ export function ExportarRelatorio({
     baixarCsv(
       `resultados-${aba}-${periodoRotulo.replaceAll("/", "-").replaceAll(" ", "")}.csv`,
       gerarCsv(linhasDoCsv(dados)),
+    );
+  };
+
+  // O arquivo para a agencia subir no Google Ads. E montado no servidor (o
+  // identificador do clique nunca fica na tela) e ja volta com a trilha
+  // gravada. Separado por virgula e sem BOM: e para a maquina do Google.
+  const exportarParaOGoogle = async () => {
+    if (!periodo) {
+      return;
+    }
+    let resultado;
+    try {
+      resultado = await exportarConversoesParaOGoogleAction(periodo);
+    } catch {
+      toast.error(TEXTOS_DAS_CONVERSOES_DO_GOOGLE.falhou);
+      return;
+    }
+    if (!resultado.ok) {
+      toast.error(resultado.error);
+      return;
+    }
+    if (!resultado.arquivo) {
+      toast.info(TEXTOS_DAS_CONVERSOES_DO_GOOGLE.vazio);
+      return;
+    }
+    baixarArquivo(
+      resultado.arquivo.nome,
+      new Blob([resultado.arquivo.csv], { type: "text/csv;charset=utf-8" }),
+    );
+    toast.success(
+      resumoDaExportacaoParaOGoogle(resultado.exportadas, resultado.semGclid),
     );
   };
 
@@ -116,6 +164,28 @@ export function ExportarRelatorio({
             <Printer className="size-4" aria-hidden />
             Imprimir ou salvar em PDF
           </DropdownMenuItem>
+          {periodo ? (
+            podeExportarParaOGoogle ? (
+              <DropdownMenuItem onSelect={() => void exportarParaOGoogle()}>
+                <Megaphone className="size-4" aria-hidden />
+                {TEXTOS_DAS_CONVERSOES_DO_GOOGLE.item}
+              </DropdownMenuItem>
+            ) : (
+              // Sem permissao: visivel e desabilitado, com o porque escrito.
+              <DropdownMenuItem
+                disabled
+                className="flex-col items-start gap-0.5"
+              >
+                <span className="flex items-center gap-2">
+                  <Megaphone className="size-4" aria-hidden />
+                  {TEXTOS_DAS_CONVERSOES_DO_GOOGLE.item}
+                </span>
+                <span className="text-xs text-text-secondary">
+                  {TEXTOS_DAS_CONVERSOES_DO_GOOGLE.semPermissao}
+                </span>
+              </DropdownMenuItem>
+            )
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
 

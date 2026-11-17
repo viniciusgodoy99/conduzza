@@ -388,6 +388,8 @@ export function RelatoriosClient({
             periodoRotulo={periodoRotulo}
             montar={montarExportavel}
             desabilitado={carregando || comErro || !blocosProntos}
+            periodo={periodo}
+            podeExportarParaOGoogle={podeVerValores}
           />
         </div>
       </div>

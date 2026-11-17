@@ -4,6 +4,14 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { getSessionContext } from "@/lib/auth/active-clinic";
+import {
+  gerarCsvDoGoogle,
+  lerConversoesParaOGoogle,
+  linhasDoArquivoDoGoogle,
+  nomeDoArquivoDoGoogle,
+  TEXTOS_DAS_CONVERSOES_DO_GOOGLE,
+} from "@/lib/domain/conversoes-google";
+import { janelaDoPeriodo } from "@/lib/queries/relatorios";
 import { createClient } from "@/lib/supabase/server";
 
 // Server Actions da tela de Resultados (Telas 5/11).
@@ -242,4 +250,94 @@ export async function removerObjetivoDeConversaoAction(): Promise<RelatoriosActi
 
   revalidatePath("/relatorios");
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Conversoes para o Google Ads (etapa 6A do plano de 16/11/2026)
+// ---------------------------------------------------------------------------
+
+const PAPEIS_DAS_CONVERSOES_DO_GOOGLE = ["admin", "gestor"] as const;
+
+const periodoDoGoogleSchema = z
+  .object({
+    diaDe: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    diaAte: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  })
+  .refine((periodo) => periodo.diaDe <= periodo.diaAte);
+
+export type ResultadoDasConversoesDoGoogle =
+  | {
+      ok: true;
+      /** nulo: nenhuma conversao no periodo (nada sai, nada na trilha) */
+      arquivo: { nome: string; csv: string } | null;
+      exportadas: number;
+      /** conversoes so com gbraid ou wbraid: o arquivo do Google nao aceita */
+      semGclid: number;
+    }
+  | { ok: false; error: string };
+
+/**
+ * Monta o arquivo de conversoes para a agencia subir no Google Ads
+ * (importacao de conversoes por clique). So administrador e gestor: a guarda
+ * daqui e a funcao do banco (conversoes_para_o_google, migration
+ * 20261116170000) conferem as duas. O periodo vem em dias civis da clinica,
+ * como o resto de Resultados. A trilha vai ANTES de o dado sair (regra 3.1):
+ * sem gravar a auditoria, o arquivo nao volta. Sem conversao no periodo, nada
+ * e gravado e nada sai.
+ */
+export async function exportarConversoesParaOGoogleAction(
+  entrada: unknown,
+): Promise<ResultadoDasConversoesDoGoogle> {
+  const context = await getSessionContext();
+  if (!context?.active) {
+    return { ok: false, error: "Sessão expirada. Entre de novo." };
+  }
+  const { clinicId, role, timezone } = context.active;
+  if (
+    !(PAPEIS_DAS_CONVERSOES_DO_GOOGLE as readonly string[]).includes(role)
+  ) {
+    return { ok: false, error: TEXTOS_DAS_CONVERSOES_DO_GOOGLE.semPermissao };
+  }
+  const parsed = periodoDoGoogleSchema.safeParse(entrada);
+  if (!parsed.success) {
+    return { ok: false, error: "Período inválido." };
+  }
+  const fuso = timezone ?? "America/Fortaleza";
+  const janela = janelaDoPeriodo(fuso, parsed.data.diaDe, parsed.data.diaAte);
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("conversoes_para_o_google", {
+    p_clinic_id: clinicId,
+    p_de: janela.de,
+    p_ate: janela.ate,
+  });
+  const lido = error ? null : lerConversoesParaOGoogle(data);
+  if (!lido) {
+    return { ok: false, error: TEXTOS_DAS_CONVERSOES_DO_GOOGLE.falhou };
+  }
+  const linhas = linhasDoArquivoDoGoogle(lido.linhas, fuso);
+  const exportadas = linhas.length - 1;
+  if (exportadas === 0) {
+    return { ok: true, arquivo: null, exportadas: 0, semGclid: lido.semGclid };
+  }
+
+  const { error: erroDaTrilha } = await supabase.from("audit_log").insert({
+    clinic_id: clinicId,
+    user_id: context.userId,
+    action: "exportou",
+    entity: "conversoes_google",
+    entity_id: null,
+  });
+  if (erroDaTrilha) {
+    return { ok: false, error: TEXTOS_DAS_CONVERSOES_DO_GOOGLE.falhou };
+  }
+  return {
+    ok: true,
+    arquivo: {
+      nome: nomeDoArquivoDoGoogle(parsed.data.diaDe, parsed.data.diaAte),
+      csv: gerarCsvDoGoogle(linhas),
+    },
+    exportadas,
+    semGclid: lido.semGclid,
+  };
 }
