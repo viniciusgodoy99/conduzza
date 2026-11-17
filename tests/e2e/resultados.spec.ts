@@ -607,3 +607,106 @@ test("lead de anúncio mostra Tráfego pago, a campanha e o conjunto da Meta na 
     await limparInvestimento(anterior);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Conversoes para o Google Ads (etapa 6A, 16/11/2026): o item do menu
+// "Exportar" baixa o arquivo no modelo do Google para administrador e gestor;
+// para os outros papeis ele fica visivel e desabilitado, com o motivo.
+// ---------------------------------------------------------------------------
+
+test("admin baixa as conversões para o Google Ads; recepção vê o item desabilitado, com o motivo", async ({
+  page,
+  browser,
+}) => {
+  apenasDesktop();
+  const admin = adminClient();
+  const codigo = "GEE234";
+  const gclid = `gclid-e2e-${Date.now().toString(36)}`;
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const agora = Date.now();
+  const HORA = 3_600_000;
+  // Etapa so deste teste: (clinica, contato, etapa) e unico em conversion_event.
+  const ETAPA = "e2e_google";
+  const limpar = async () => {
+    await admin
+      .from("conversion_event")
+      .delete()
+      .eq("clinic_id", dados().clinicId)
+      .eq("contact_id", dados().leads.comOrigemId)
+      .eq("stage_chave", ETAPA);
+    await admin
+      .from("clique_do_site")
+      .delete()
+      .eq("clinic_id", dados().clinicId)
+      .eq("codigo", codigo);
+  };
+  try {
+    await limpar();
+    await admin
+      .from("clique_do_site")
+      .insert({
+        clinic_id: dados().clinicId,
+        codigo,
+        criado_em: iso(agora - 2 * HORA),
+        valido_ate: iso(agora + 24 * HORA),
+        contact_id: dados().leads.comOrigemId,
+        casado_em: iso(agora - 2 * HORA + 60_000),
+        gclid,
+      })
+      .throwOnError();
+    const { data } = await admin
+      .from("conversion_event")
+      .insert({
+        clinic_id: dados().clinicId,
+        contact_id: dados().leads.comOrigemId,
+        stage_chave: ETAPA,
+        event_name: "Schedule",
+        value_cents: 25000,
+        created_at: iso(agora - HORA),
+      })
+      .select("event_id")
+      .single()
+      .throwOnError();
+    const eventoId = data!.event_id as string;
+
+    await login(page, dados().emails.admin);
+    await page.goto("/relatorios");
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Exportar" }).click();
+    await page
+      .getByRole("menuitem", { name: "Conversões para o Google Ads (CSV)" })
+      .click();
+    const arquivo = await download;
+    expect(arquivo.suggestedFilename()).toMatch(
+      /^conversoes-google-\d{4}-\d{2}-\d{2}-a-\d{4}-\d{2}-\d{2}\.csv$/,
+    );
+    const { readFile } = await import("node:fs/promises");
+    const csv = await readFile(await arquivo.path(), "utf-8");
+    expect(csv.split("\r\n")[0]).toBe(
+      "Google Click ID,Conversion Name,Conversion Time,Conversion Value,Conversion Currency,Order ID",
+    );
+    expect(csv).toContain(`${gclid},${ETAPA},`);
+    expect(csv).toContain(`,250.00,BRL,${eventoId}`);
+    await expect(page.getByText("1 conversão exportada.")).toBeVisible();
+
+    // Recepcao: o item aparece, desabilitado, com o porque escrito.
+    const outra = await browser.newContext();
+    try {
+      const tela = await outra.newPage();
+      await login(tela, dados().emails.recepcao);
+      await tela.goto("/relatorios");
+      await tela.getByRole("button", { name: "Exportar" }).click();
+      const item = tela.getByRole("menuitem", {
+        name: /Conversões para o Google Ads/,
+      });
+      await expect(item).toBeDisabled();
+      await expect(item).toContainText(
+        "Só administrador e gestor exportam as conversões para o Google.",
+      );
+    } finally {
+      await outra.close();
+    }
+  } finally {
+    await limpar();
+  }
+});

@@ -15,6 +15,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      conversoes_para_o_google: {
+        Args: { p_ate: string; p_clinic_id: string; p_de: string }
+        Returns: Json
+      }
       graphql: {
         Args: {
           extensions?: Json
