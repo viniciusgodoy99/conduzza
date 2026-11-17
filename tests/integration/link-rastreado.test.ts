@@ -408,6 +408,83 @@ describe("rodízio entre números do link", () => {
     expect([principal.id, comercial.id]).toContain(estranho.numero);
   });
 
+  // Revisao de 17/11/2026 (migration 20261117100000): a contagem era
+  // vitalicia, e o numero novo (ou com peso trocado) recebia TODOS os cliques
+  // ate alcancar os outros.
+  it("número novo, peso trocado ou número que sai: a contagem recomeça do zero e o peso vale já no próximo clique", async () => {
+    const clinicId = await criarClinica("rodizio-zera", false);
+    const a = await criarNumeroDeTeste(admin, clinicId, {
+      nome: "A",
+      display_phone: "+55 (84) 97777-0021",
+    });
+    const b = await criarNumeroDeTeste(admin, clinicId, {
+      nome: "B",
+      display_phone: "+55 (84) 97777-0022",
+    });
+    const origem = await criarOrigem(clinicId);
+    const linha = (numero: string, peso: number) => ({
+      clinic_id: clinicId,
+      campaign_link_id: origem.id,
+      whatsapp_account_id: numero,
+      peso,
+    });
+    const entregues = async () => {
+      const { data } = await admin
+        .from("campaign_link_numero")
+        .select("whatsapp_account_id, entregues")
+        .eq("campaign_link_id", origem.id)
+        .throwOnError();
+      return Object.fromEntries(
+        (data ?? []).map((n) => [n.whatsapp_account_id, n.entregues]),
+      );
+    };
+    const clicarVezes = async (vezes: number) => {
+      const contagem: Record<string, number> = {};
+      for (let i = 0; i < vezes; i += 1) {
+        const numero = String((await clicar(origem.codigoPublico)).numero);
+        contagem[numero] = (contagem[numero] ?? 0) + 1;
+      }
+      return contagem;
+    };
+
+    await admin.from("campaign_link_numero").insert(linha(a.id, 1)).throwOnError();
+    expect(await clicarVezes(6)).toEqual({ [a.id]: 6 });
+
+    // B entra: os dois recomecam do zero e dividem meio a meio.
+    await admin.from("campaign_link_numero").insert(linha(b.id, 1)).throwOnError();
+    expect(await entregues()).toEqual({ [a.id]: 0, [b.id]: 0 });
+    expect(await clicarVezes(6)).toEqual({ [a.id]: 3, [b.id]: 3 });
+
+    // Gravar o MESMO peso nao zera nada.
+    const doB = () =>
+      admin
+        .from("campaign_link_numero")
+        .update({ peso: 1 })
+        .eq("campaign_link_id", origem.id)
+        .eq("whatsapp_account_id", b.id);
+    await doB().throwOnError();
+    expect(await entregues()).toEqual({ [a.id]: 3, [b.id]: 3 });
+
+    // Peso trocado: zera, e o peso novo ja vale (2 de B para 1 de A).
+    await admin
+      .from("campaign_link_numero")
+      .update({ peso: 2 })
+      .eq("campaign_link_id", origem.id)
+      .eq("whatsapp_account_id", b.id)
+      .throwOnError();
+    expect(await entregues()).toEqual({ [a.id]: 0, [b.id]: 0 });
+    expect(await clicarVezes(6)).toEqual({ [a.id]: 2, [b.id]: 4 });
+
+    // B sai: quem fica recomeca.
+    await admin
+      .from("campaign_link_numero")
+      .delete()
+      .eq("campaign_link_id", origem.id)
+      .eq("whatsapp_account_id", b.id)
+      .throwOnError();
+    expect(await entregues()).toEqual({ [a.id]: 0 });
+  });
+
   it("número desconectado fica de fora; todos caídos, qualquer um; nenhum escolhido serve, valem os da clínica", async () => {
     const clinicId = await criarClinica("caidos", false);
     const a = await criarNumeroDeTeste(admin, clinicId, {
@@ -553,6 +630,93 @@ describe("a pessoa apagou o código do link", () => {
       "Oi, tudo bem?",
     );
     expect((await origemDoContato(outro)).source_method).toBeNull();
+  });
+
+  // Revisao de 17/11/2026 (migration 20261117100000): o provavel ficava com
+  // o clique, e quem chegava depois COM o codigo perdia as UTMs e o anuncio.
+  it("quem chega com o código retoma o clique que estava com outro contato só como provável", async () => {
+    const clinicId = await criarClinica("retoma");
+    const origem = await criarOrigem(clinicId);
+    const clique = await clicar(origem.codigoPublico, {
+      p_utm_source: "instagram",
+      p_meta_ad_id: "120211223344556",
+    });
+    // Q, contato novo sem sinal nenhum, escreve antes: ganha o clique como
+    // provavel.
+    const q = await ingerir(
+      clinicId,
+      "+5584974440011",
+      "ret-q",
+      "Boa tarde, vocês atendem sábado?",
+    );
+    expect((await origemDoContato(q)).source_method).toBe("link_provavel");
+    // P, quem tocou no link de verdade, envia a mensagem com o codigo.
+    const p = await ingerir(
+      clinicId,
+      "+5584974440012",
+      "ret-p",
+      `${MENSAGEM} [#${String(clique.codigo)}]`,
+    );
+    expect(await origemDoContato(p)).toEqual({
+      source_channel: "redes_sociais",
+      source_campaign: "Bio novembro",
+      source_method: "link_token",
+      source_ad_id: "120211223344556",
+    });
+    const { data: linha } = await admin
+      .from("clique_do_site")
+      .select("contact_id, provavel")
+      .eq("clinic_id", clinicId)
+      .single()
+      .throwOnError();
+    expect(linha).toEqual({ contact_id: p, provavel: false });
+    const { data: resumo } = await admin
+      .rpc("resumo_dos_links_rastreados", { p_clinic_id: clinicId })
+      .throwOnError();
+    expect(resumo).toEqual([
+      { campaign_link_id: origem.id, cliques: 1, leads: 1, provaveis: 0 },
+    ]);
+  });
+
+  it("leads do link contam pessoas, não cliques; e o clique do link não entra no cartão do rastreio do site", async () => {
+    const clinicId = await criarClinica("pessoas");
+    const origem = await criarOrigem(clinicId);
+    const primeiro = await clicar(origem.codigoPublico);
+    const contato = await ingerir(
+      clinicId,
+      "+5584974440021",
+      "pes-1",
+      `${MENSAGEM} [#${String(primeiro.codigo)}]`,
+    );
+    // A mesma pessoa toca no link de novo, dias depois, e manda outra vez.
+    const segundo = await clicar(origem.codigoPublico);
+    expect(
+      await ingerir(
+        clinicId,
+        "+5584974440021",
+        "pes-2",
+        `${MENSAGEM} [#${String(segundo.codigo)}]`,
+      ),
+    ).toBe(contato);
+    const { data: cliques } = await admin
+      .from("clique_do_site")
+      .select("contact_id")
+      .eq("clinic_id", clinicId)
+      .throwOnError();
+    expect(cliques).toEqual([{ contact_id: contato }, { contact_id: contato }]);
+
+    const { data: resumo } = await admin
+      .rpc("resumo_dos_links_rastreados", { p_clinic_id: clinicId })
+      .throwOnError();
+    expect(resumo).toEqual([
+      { campaign_link_id: origem.id, cliques: 2, leads: 1, provaveis: 0 },
+    ]);
+
+    // O cartao "Rastreio do site" conta so o que veio do script do site.
+    const { data: situacao } = await admin
+      .rpc("situacao_do_rastreio", { p_clinic_id: clinicId })
+      .throwOnError();
+    expect(situacao).toMatchObject({ cliques_7_dias: 0, casados_7_dias: 0 });
   });
 
   it("dois cliques na janela, clique velho ou de outro número: ninguém casa (na dúvida, vazio)", async () => {

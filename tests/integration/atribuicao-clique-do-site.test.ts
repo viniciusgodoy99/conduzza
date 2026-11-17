@@ -338,6 +338,42 @@ describe("clique do site na ingestão", () => {
           source_campaign: null,
         },
       },
+      // Decisao do dono de 17/11/2026 (migration 20261117100000): o fbclid
+      // SOZINHO nao prova anuncio, porque a Meta o poe tambem em clique de
+      // post, de bio e de mensagem. Vira Redes sociais.
+      {
+        utm: { p_fbclid: `IwAR0-sozinho_${sufixo}` },
+        esperado: {
+          source_channel: "redes_sociais",
+          source_origin: "facebook ou instagram",
+          source_medium: null,
+          source_campaign: null,
+        },
+      },
+      {
+        // Com UTM de post: continua Redes sociais, com a fonte da UTM.
+        utm: {
+          p_fbclid: `IwAR0-post_${sufixo}`,
+          p_utm_source: "ig",
+          p_utm_medium: "social",
+        },
+        esperado: {
+          source_channel: "redes_sociais",
+          source_origin: "ig",
+          source_medium: "social",
+          source_campaign: null,
+        },
+      },
+      {
+        // Com UTM de anuncio: ai sim e o anuncio da Meta.
+        utm: { p_fbclid: `IwAR0-pago_${sufixo}`, p_utm_medium: "cpc" },
+        esperado: {
+          source_channel: "trafego_pago",
+          source_origin: "Meta",
+          source_medium: null,
+          source_campaign: null,
+        },
+      },
     ];
     for (const [indice, caso] of casos.entries()) {
       const codigo = codigoNovo();

@@ -66,8 +66,13 @@ async function clique(
 ): Promise<void> {
   codigo += 1;
   const criado = agora - diasAtras * DIA;
-  // Alfabeto dos codigos: sem 0, 1, I, L e O.
-  const digitos = String(codigo).padStart(3, "2").replace(/[01]/g, "9");
+  // Alfabeto dos codigos: sem 0, 1, I, L e O. Um codigo por contador, sem
+  // repetir (antes o 1 e o 9 viravam o mesmo "229" e o nono clique batia no
+  // primeiro).
+  const digitos = String(codigo)
+    .padStart(3, "Z")
+    .replace(/0/g, "A")
+    .replace(/1/g, "B");
   await admin
     .from("clique_do_site")
     .insert({
@@ -164,6 +169,14 @@ beforeAll(async () => {
   await clique(clinicId, antiga, 80, { gclid: `gclid-antigo-${sufixo}` });
   await conversao(clinicId, antiga, 60);
 
+  // 8. Clique com gclid e, DEPOIS, outro so com gbraid: o arquivo so leva
+  // gclid, entao vale o clique que tem (revisao de 17/11/2026, migration
+  // 20261117100000; antes o mais novo escondia o valido).
+  const misto = await contato(clinicId);
+  await clique(clinicId, misto, 10, { gclid: `gclid-misto-${sufixo}` });
+  await clique(clinicId, misto, 5, { gbraid: `gbraid-misto-${sufixo}` });
+  eventos.misto = await conversao(clinicId, misto, 0.5);
+
   // 7. Outra clinica.
   const daOutra = await contato(outraClinica);
   await clique(outraClinica, daOutra, 5, { gclid: `gclid-outra-${sufixo}` });
@@ -193,6 +206,14 @@ describe("conversoes_para_o_google", () => {
         valor_cents: null,
         moeda: "BRL",
         evento_id: eventos.semValor,
+      },
+      {
+        gclid: `gclid-misto-${sufixo}`,
+        etapa: "agendou",
+        convertido_em: expect.any(String),
+        valor_cents: 25000,
+        moeda: "BRL",
+        evento_id: eventos.misto,
       },
     ]);
     // O clique de iPhone (so gbraid) fica de fora do arquivo e e contado.
