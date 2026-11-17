@@ -17,7 +17,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // lib/domain/rastreio-do-site.ts.
 //
 // ROTA PUBLICA, SEM LOGIN. Por isso:
-// - corpo de ate 2 KB, lido aos pedacos (corta antes de ler tudo) e validado
+// - corpo de ate 4 KB, lido aos pedacos (corta antes de ler tudo) e validado
 //   com Zod estrito (campo a mais, formato errado ou nenhum sinal recusam o
 //   corpo inteiro, sem tocar no banco);
 // - RESPONDE SEMPRE 204, venha o que vier: nao revela se a chave existe, se o

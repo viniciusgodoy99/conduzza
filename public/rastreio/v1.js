@@ -7,7 +7,9 @@
  * frases da clinica. No clique do link do WhatsApp, acrescenta um codigo ao
  * texto (" [#K7Q2MX]"; sem texto pronto, antes vai uma das frases, sorteada)
  * e avisa o sistema. Nunca impede o link, nunca guarda IP, pagina ou dado de
- * quem visita.
+ * quem visita. Os sinais ficam no navegador de quem visita por 7 dias
+ * (decisao do dono de 17/11/2026): quem fecha a aba e volta continua com a
+ * origem.
  * Regras espelhadas em lib/domain/rastreio-do-site.ts (o teste confere).
  */
 /* eslint-disable @typescript-eslint/no-unused-vars -- catch (e) em vez de
@@ -64,9 +66,14 @@
     if (!script) return;
     var chave = script.getAttribute("data-chave") || "";
     if (!/^[0-9a-f]{20}$/.test(chave)) return;
-    // O sinal guardado e da chave: duas clinicas no mesmo site (mesma origem,
-    // mesma aba) nunca levam o anuncio uma da outra.
+    // O sinal guardado e da chave: duas clinicas no mesmo site (mesma origem)
+    // nunca levam o anuncio uma da outra.
     var GUARDADO = "conduzza_rastreio_v1_" + chave;
+    // Guardado com a hora, vale 7 dias. Sem localStorage (navegador privado,
+    // bloqueio), fica no sessionStorage, que dura enquanto a aba esta aberta.
+    var PRAZO_DO_SINAL_GUARDADO = 7 * 24 * 60 * 60 * 1000;
+    var GUARDAS = ["localStorage", "sessionStorage"];
+    var agora = new Date().getTime();
     var destino = new URL("/api/publico/clique", script.src).href;
 
     var filtrar = function (ler) {
@@ -90,15 +97,33 @@
       return busca.get(nome);
     });
     var guardados = null;
-    try {
-      var bruto = JSON.parse(window.sessionStorage.getItem(GUARDADO) || "null");
-      if (bruto && typeof bruto === "object") {
-        guardados = filtrar(function (nome) {
-          return tem(bruto, nome) ? bruto[nome] : null;
-        });
-      }
-    } catch (e) {}
-    // Link interno com UTM nao apaga o clique do anuncio que trouxe a visita:
+    for (var g = 0; !guardados && g < GUARDAS.length; g++) {
+      try {
+        var guarda = window[GUARDAS[g]];
+        var bruto = JSON.parse(guarda.getItem(GUARDADO) || "null");
+        var antigos = bruto && bruto.sinais;
+        if (
+          antigos &&
+          typeof antigos === "object" &&
+          typeof bruto.guardado_em === "number" &&
+          Math.abs(agora - bruto.guardado_em) <= PRAZO_DO_SINAL_GUARDADO
+        ) {
+          guardados = filtrar(function (nome) {
+            return tem(antigos, nome) ? antigos[nome] : null;
+          });
+          // Outra visita (guardado ha mais de 30 minutos) que chega com sinal
+          // novo: o ultimo clique vence, nada do antigo fica.
+          if (daUrl && Math.abs(agora - bruto.guardado_em) > 1800000) {
+            guardados = null;
+            break;
+          }
+        } else if (bruto) {
+          // Fora do prazo ou sem a hora: ignorado e apagado.
+          guarda.removeItem(GUARDADO);
+        }
+      } catch (e) {}
+    }
+    // Na mesma visita, link interno com UTM nao apaga o clique do anuncio:
     // so a familia que veio na URL troca; as outras ficam como guardadas.
     var sinais = null;
     for (var f = 0; f < FAMILIAS.length; f++) {
@@ -118,9 +143,16 @@
       }
     }
     if (daUrl && sinais) {
-      try {
-        window.sessionStorage.setItem(GUARDADO, JSON.stringify(sinais));
-      } catch (e) {}
+      var item = JSON.stringify({ guardado_em: agora, sinais: sinais });
+      for (g = 0; g < GUARDAS.length; g++) {
+        try {
+          guarda = window[GUARDAS[g]];
+          // Apaga antes: se o novo nao couber, o velho nao vence o novo.
+          guarda.removeItem(GUARDADO);
+          guarda.setItem(GUARDADO, item);
+          break;
+        } catch (e) {}
+      }
     }
     // Sem sinal nenhum: nada de ouvinte, nada de aviso, nada de busca.
     if (!sinais) return;

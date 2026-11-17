@@ -186,7 +186,7 @@ describe("corpoDoCliqueSchema", () => {
     ).toBe(true);
   });
 
-  it("o maior corpo valido cabe nos 2 KB", () => {
+  it("o maior corpo valido, com Google, Meta e UTMs, cabe no limite (4 KB)", () => {
     const maior = JSON.stringify({
       chave: CHAVE,
       codigo: CODIGO,
@@ -197,6 +197,13 @@ describe("corpoDoCliqueSchema", () => {
       gad_campaignid: "1".repeat(20),
       cz_campanha: "2".repeat(20),
       cz_grupo: "3".repeat(20),
+      fbclid: "e".repeat(512),
+      cz_anuncio: "4".repeat(20),
+      utm_source: "f".repeat(100),
+      utm_medium: "g".repeat(100),
+      utm_campaign: "h".repeat(100),
+      utm_content: "i".repeat(100),
+      utm_term: "j".repeat(100),
     });
     expect(lerCorpoDoClique(maior).ok).toBe(true);
     expect(Buffer.byteLength(maior, "utf8")).toBeLessThanOrEqual(

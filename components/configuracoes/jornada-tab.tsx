@@ -934,6 +934,13 @@ function FormularioDaEtapa({
                   Conversão ativa (desmarcada, fica pausada)
                 </Label>
               </div>
+              {/* As duas marcas sao gravadas e nenhum numero as le (revisao
+                  de 17/11/2026): a tela diz isso, em vez de deixar supor. */}
+              <p className="basis-full text-[11px] text-text-secondary">
+                As marcas de venda e de primeiro contato ficam guardadas na
+                etapa e ainda não mudam nenhum número. O faturamento em
+                Resultados vem das consultas com comparecimento.
+              </p>
             </div>
           ) : null}
         </div>

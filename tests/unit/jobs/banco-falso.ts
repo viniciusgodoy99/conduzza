@@ -32,6 +32,8 @@ const METODOS_ENCADEADOS = [
   "in",
   "gt",
   "gte",
+  "lt",
+  "or",
   "order",
   "limit",
   "update",

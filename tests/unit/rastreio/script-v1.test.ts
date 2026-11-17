@@ -14,7 +14,10 @@ import {
   juntarSinais,
   lerCorpoDoClique,
   linkComCodigo,
+  MESMA_VISITA_EM_MS,
+  PRAZO_DO_SINAL_GUARDADO_EM_MS,
   sinaisDaUrl,
+  sinalGuardadoVale,
   sortearFrase,
 } from "@/lib/domain/rastreio-do-site";
 
@@ -28,7 +31,7 @@ import {
 //    diz (sinais da URL, frases da resposta, sorteio, link com o codigo,
 //    corpo que a rota aceita). O script nao importa o modulo (e estatico,
 //    sem build), entao este teste e o que impede os dois de divergirem.
-// 2. O SCRIPT NUNCA QUEBRA O SITE: sessionStorage bloqueado, sem crypto, sem
+// 2. O SCRIPT NUNCA QUEBRA O SITE: armazenamento bloqueado, sem crypto, sem
 //    sendBeacon, sendBeacon que lanca, link que nao e do WhatsApp, busca das
 //    frases que falha, demora ou volta lixo. Em nenhum caso ele chama
 //    preventDefault ou deixa escapar excecao.
@@ -43,9 +46,22 @@ const SRC = "https://app.conduzza.test/rastreio/v1.js";
 const DESTINO = "https://app.conduzza.test/api/publico/clique";
 /** Onde o script busca as frases da clinica (GET pela chave). */
 const BUSCA = new URL(caminhoDasFrases(CHAVE) ?? "", SRC).href;
-/** O item do sessionStorage e da chave (outra clinica no mesmo site nao o le). */
+/** O item guardado e da chave (outra clinica no mesmo site nao o le). */
 const guardadoDa = (chave: string) => `conduzza_rastreio_v1_${chave}`;
 const GUARDADO = guardadoDa(CHAVE);
+/**
+ * A hora do navegador falso (o script le `new Date().getTime()`). Longe da
+ * hora de verdade de proposito: se o relogio falso nao entrasse, todo item
+ * guardado em AGORA estaria fora do prazo e os testes cairiam.
+ */
+const AGORA = Date.UTC(2031, 0, 15, 12);
+const DIA = 24 * 60 * 60 * 1000;
+/** O item como o script guarda: os sinais e a hora em que foram guardados. */
+const guardar = (sinais: unknown, guardadoEm: unknown = AGORA) =>
+  JSON.stringify({ guardado_em: guardadoEm, sinais });
+/** O que esta guardado para a chave (o item inteiro, ou null). */
+const lerGuardado = (mapa: Map<string, string>, chave = CHAVE): unknown =>
+  JSON.parse(mapa.get(guardadoDa(chave)) ?? "null");
 /** Outra clinica do Conduzza com pagina no MESMO site (mesma origem). */
 const CHAVE_DE_OUTRA_CLINICA = "b".repeat(20);
 
@@ -91,13 +107,24 @@ type Opcoes = {
   chave?: string | null;
   semCurrentScript?: boolean;
   scriptPeloSeletor?: boolean;
+  /** "quebrado": localStorage e sessionStorage lancam ao serem lidos. */
   armazenamento?: "ok" | "quebrado";
+  /**
+   * So o localStorage falha: lanca ao ser lido (bloqueio), nao existe, ou
+   * esta cheio (le, mas o setItem lanca, como no modo privado antigo).
+   */
+  semLocal?: "lanca" | "ausente" | "cheio";
+  /** O item ja guardado no localStorage (use `guardar`). */
   guardado?: string;
   /**
-   * sessionStorage da aba, dividido entre montagens: duas paginas do mesmo
-   * site (mesma origem) na mesma aba, uma depois da outra.
+   * localStorage do navegador, dividido entre montagens: duas visitas ao
+   * mesmo site (mesma origem), na mesma aba ou em outra, outro dia.
    */
+  local?: Map<string, string>;
+  /** sessionStorage da aba, dividido entre montagens (so vale sem o local). */
   sessao?: Map<string, string>;
+  /** A hora do navegador nesta visita (padrao: AGORA). */
+  agora?: number;
   sendBeacon?: "ok" | "recusa" | "lanca" | "ausente";
   crypto?: "real" | "ausente" | ((bytes: Uint8Array) => void);
   /** Quantas vezes a linha foi colada na pagina (GTM e HTML, por exemplo). */
@@ -137,10 +164,12 @@ function montar(opcoes: Opcoes = {}) {
           : Promise.resolve(resposta.corpo),
     });
   };
-  const armazenado = opcoes.sessao ?? new Map<string, string>();
+  const armazenado = opcoes.local ?? new Map<string, string>();
+  const daSessao = opcoes.sessao ?? new Map<string, string>();
   if (opcoes.guardado !== undefined) {
     armazenado.set(GUARDADO, opcoes.guardado);
   }
+  const agora = opcoes.agora ?? AGORA;
 
   const atributosDoScript: Record<string, string> = { src: SRC };
   if (opcoes.chave !== null) {
@@ -150,12 +179,20 @@ function montar(opcoes: Opcoes = {}) {
     src: SRC,
   });
 
-  const sessionStorage = {
-    getItem: (k: string) => armazenado.get(k) ?? null,
+  const armazenamento = (mapa: Map<string, string>, cheio = false) => ({
+    getItem: (k: string) => mapa.get(k) ?? null,
     setItem: (k: string, v: string) => {
-      armazenado.set(k, String(v));
+      if (cheio) {
+        throw new DOMException("cheio", "QuotaExceededError");
+      }
+      mapa.set(k, String(v));
     },
-  };
+    removeItem: (k: string) => {
+      mapa.delete(k);
+    },
+  });
+  const localStorage = armazenamento(armazenado, opcoes.semLocal === "cheio");
+  const sessionStorage = armazenamento(daSessao);
 
   const navigator: Record<string, unknown> = {};
   if (opcoes.sendBeacon !== "ausente") {
@@ -206,6 +243,10 @@ function montar(opcoes: Opcoes = {}) {
     },
     URL,
     URLSearchParams,
+    // `new Date().getTime()` do script devolve a hora desta visita.
+    Date: function DataFalsa() {
+      return { getTime: () => agora };
+    },
   };
   if (opcoes.fetch === "ausente") {
     delete contexto.fetch;
@@ -222,6 +263,19 @@ function montar(opcoes: Opcoes = {}) {
       return sessionStorage;
     },
   });
+  if (opcoes.semLocal !== "ausente") {
+    Object.defineProperty(contexto, "localStorage", {
+      get() {
+        if (
+          opcoes.armazenamento === "quebrado" ||
+          opcoes.semLocal === "lanca"
+        ) {
+          throw new DOMException("bloqueado", "SecurityError");
+        }
+        return localStorage;
+      },
+    });
+  }
   const crypto = opcoes.crypto ?? "real";
   if (crypto !== "ausente") {
     contexto.crypto = {
@@ -277,6 +331,7 @@ function montar(opcoes: Opcoes = {}) {
     buscas,
     timers,
     armazenado,
+    daSessao,
     disparar,
     liberar: (resposta: RespostaDaBusca) => liberar(resposta),
   };
@@ -344,7 +399,7 @@ describe("rastreio v1: sem sinal nenhum nao faz nada", () => {
 });
 
 describe("rastreio v1: com sinal do Google", () => {
-  it("ouve click e auxclick na fase de captura e guarda os sinais na sessao", () => {
+  it("ouve click e auxclick na fase de captura e guarda os sinais com a hora", () => {
     const busca =
       "?gclid=Cj0K_a-b&gad_campaignid=123&cz_grupo=&utm_source=google";
     const ambiente = montar({ busca });
@@ -352,9 +407,12 @@ describe("rastreio v1: com sinal do Google", () => {
       ["click", true],
       ["auxclick", true],
     ]);
-    expect(JSON.parse(ambiente.armazenado.get(GUARDADO) ?? "null")).toEqual(
-      sinaisDaUrl(busca),
-    );
+    expect(lerGuardado(ambiente.armazenado)).toEqual({
+      guardado_em: AGORA,
+      sinais: sinaisDaUrl(busca),
+    });
+    // No localStorage: o sessionStorage so entra quando ele falha.
+    expect(ambiente.daSessao.size).toBe(0);
   });
 
   it("no clique do wa.me: codigo no texto, aviso por sendBeacon que a rota aceita", () => {
@@ -513,7 +571,7 @@ describe("rastreio v1: linha colada duas vezes", () => {
   });
 });
 
-describe("rastreio v1: navegacao entre paginas (sessionStorage)", () => {
+describe("rastreio v1: navegacao entre paginas (sinal guardado)", () => {
   it("o sinal guardado na pagina do anuncio vale na pagina seguinte", () => {
     const primeira = montar({ busca: "?gbraid=0AAA&gad_source=1" });
     const guardado = primeira.armazenado.get(GUARDADO);
@@ -529,16 +587,17 @@ describe("rastreio v1: navegacao entre paginas (sessionStorage)", () => {
   it("sinal novo na URL substitui o guardado", () => {
     const ambiente = montar({
       busca: "?gclid=novo",
-      guardado: JSON.stringify({ gclid: "velho", cz_campanha: "1" }),
+      guardado: guardar({ gclid: "velho", cz_campanha: "1" }),
     });
-    expect(JSON.parse(ambiente.armazenado.get(GUARDADO) ?? "{}")).toEqual({
-      gclid: "novo",
+    expect(lerGuardado(ambiente.armazenado)).toEqual({
+      guardado_em: AGORA,
+      sinais: { gclid: "novo" },
     });
   });
 
   it("guardado adulterado: so o que esta no formato vale, o resto e ignorado", () => {
     const ambiente = montar({
-      guardado: JSON.stringify({
+      guardado: guardar({
         gclid: "<script>",
         cz_campanha: "123",
         pagina: "/tratamento-x",
@@ -559,9 +618,11 @@ describe("rastreio v1: navegacao entre paginas (sessionStorage)", () => {
   it("guardado ilegivel ou sem sinal: nada", () => {
     expect(montar({ guardado: "{quebrado" }).ouvintes).toHaveLength(0);
     expect(montar({ guardado: '"texto"' }).ouvintes).toHaveLength(0);
-    expect(
-      montar({ guardado: JSON.stringify({ gclid: "" }) }).ouvintes,
-    ).toHaveLength(0);
+    expect(montar({ guardado: guardar({ gclid: "" }) }).ouvintes).toHaveLength(
+      0,
+    );
+    expect(montar({ guardado: guardar("gclid=abc") }).ouvintes).toHaveLength(0);
+    expect(montar({ guardado: guardar(null) }).ouvintes).toHaveLength(0);
   });
 });
 
@@ -573,9 +634,10 @@ describe("rastreio v1: anuncio da Meta e UTMs (paridade com o dominio)", () => {
     ]) {
       const ambiente = montar({ busca });
       expect(ambiente.ouvintes).toHaveLength(2);
-      expect(JSON.parse(ambiente.armazenado.get(GUARDADO) ?? "null")).toEqual(
-        sinaisDaUrl(busca),
-      );
+      expect(lerGuardado(ambiente.armazenado)).toEqual({
+        guardado_em: AGORA,
+        sinais: sinaisDaUrl(busca),
+      });
       ambiente.disparar(link(WA));
       const codigo = codigoDoAviso(ambiente.avisos[0]?.corpo);
       const corpo = JSON.parse(ambiente.avisos[0]?.corpo ?? "{}");
@@ -603,7 +665,7 @@ describe("rastreio v1: anuncio da Meta e UTMs (paridade com o dominio)", () => {
       const guardados = sinaisDaUrl(caso.guardado);
       const ambiente = montar({
         busca: caso.busca,
-        guardado: JSON.stringify(guardados),
+        guardado: guardar(guardados),
       });
       const esperado = juntarSinais(guardados, sinaisDaUrl(caso.busca));
       ambiente.disparar(link(WA));
@@ -613,29 +675,205 @@ describe("rastreio v1: anuncio da Meta e UTMs (paridade com o dominio)", () => {
         codigo,
         ...esperado,
       });
-      expect(JSON.parse(ambiente.armazenado.get(GUARDADO) ?? "null")).toEqual(
-        esperado,
-      );
+      expect(lerGuardado(ambiente.armazenado)).toEqual({
+        guardado_em: AGORA,
+        sinais: esperado,
+      });
     }
   });
 });
 
-describe("rastreio v1: duas clinicas no mesmo site (mesma origem, mesma aba)", () => {
+describe("rastreio v1: o sinal vale 7 dias (decisao do dono de 17/11/2026)", () => {
+  const SINAIS = { gclid: "Cj0K", cz_campanha: "456" };
+
+  it("o prazo e de 7 dias", () => {
+    expect(PRAZO_DO_SINAL_GUARDADO_EM_MS).toBe(7 * DIA);
+  });
+
+  it("guardado ha menos de 7 dias vale numa visita sem sinal na URL, em outra aba", () => {
+    const local = new Map<string, string>();
+    montar({ busca: "?gclid=Cj0K&cz_campanha=456", local });
+    // Seis dias depois, aba nova (sessionStorage vazio), endereco sem sinal.
+    const volta = montar({ local, agora: AGORA + 6 * DIA });
+    expect(volta.ouvintes).toHaveLength(2);
+    expect(volta.buscas).toHaveLength(1);
+    volta.disparar(link(WA));
+    const codigo = codigoDoAviso(volta.avisos[0]?.corpo);
+    // So os sinais: a hora guardada nunca vai para o servidor.
+    expect(JSON.parse(volta.avisos[0]?.corpo ?? "{}")).toEqual({
+      chave: CHAVE,
+      codigo,
+      ...SINAIS,
+    });
+    // Ler nao renova o prazo: a hora continua a da visita do anuncio.
+    expect(lerGuardado(local)).toEqual({ guardado_em: AGORA, sinais: SINAIS });
+  });
+
+  it("guardado ha mais de 7 dias e ignorado e apagado", () => {
+    const local = new Map([[GUARDADO, guardar(SINAIS)]]);
+    const volta = montar({ local, agora: AGORA + 7 * DIA + 1 });
+    expect(volta.ouvintes).toHaveLength(0);
+    expect(volta.buscas).toHaveLength(0);
+    const botao = link(WA);
+    volta.disparar(botao);
+    expect(botao.getAttribute("href")).toBe(WA);
+    expect(volta.avisos).toHaveLength(0);
+    expect(local.has(GUARDADO)).toBe(false);
+  });
+
+  it("o limite e a hora estranha: igual ao sinalGuardadoVale do dominio", () => {
+    const casos: [unknown, boolean][] = [
+      [AGORA, true],
+      [AGORA - 7 * DIA, true],
+      [AGORA - 7 * DIA - 1, false],
+      // Relogio do aparelho acertado para tras: vale ate o mesmo prazo.
+      [AGORA + 7 * DIA, true],
+      [AGORA + 7 * DIA + 1, false],
+      // Hora que nao e numero: nunca vale.
+      [null, false],
+      [String(AGORA), false],
+    ];
+    for (const [guardadoEm, vale] of casos) {
+      expect(sinalGuardadoVale(guardadoEm, AGORA), String(guardadoEm)).toBe(
+        vale,
+      );
+      const ambiente = montar({ guardado: guardar(SINAIS, guardadoEm) });
+      expect(ambiente.ouvintes, String(guardadoEm)).toHaveLength(vale ? 2 : 0);
+      expect(ambiente.armazenado.has(GUARDADO), String(guardadoEm)).toBe(vale);
+    }
+  });
+
+  it("o item do script antigo, sem a hora, e ignorado e apagado", () => {
+    expect(sinalGuardadoVale(undefined, AGORA)).toBe(false);
+    const ambiente = montar({ guardado: JSON.stringify(SINAIS) });
+    expect(ambiente.ouvintes).toHaveLength(0);
+    expect(ambiente.armazenado.has(GUARDADO)).toBe(false);
+  });
+
+  it("visita com sinal novo substitui o guardado, com a hora nova", () => {
+    const local = new Map([[GUARDADO, guardar(SINAIS)]]);
+    const volta = montar({
+      busca: "?gclid=novo",
+      local,
+      agora: AGORA + 3 * DIA,
+    });
+    expect(lerGuardado(local)).toEqual({
+      guardado_em: AGORA + 3 * DIA,
+      sinais: { gclid: "novo" },
+    });
+    volta.disparar(link(WA));
+    const codigo = codigoDoAviso(volta.avisos[0]?.corpo);
+    expect(JSON.parse(volta.avisos[0]?.corpo ?? "{}")).toEqual({
+      chave: CHAVE,
+      codigo,
+      gclid: "novo",
+    });
+  });
+
+  it("outra visita com sinal de outra familia: o ultimo clique vence, o antigo nao acompanha", () => {
+    // Clique do Google no dia 1, clique da Meta no dia 5: so a Meta.
+    const local = new Map([[GUARDADO, guardar(SINAIS)]]);
+    const volta = montar({
+      busca: "?fbclid=IwAR0&cz_anuncio=99",
+      local,
+      agora: AGORA + 4 * DIA,
+    });
+    const daMeta = { fbclid: "IwAR0", cz_anuncio: "99" };
+    expect(lerGuardado(local)).toEqual({
+      guardado_em: AGORA + 4 * DIA,
+      sinais: daMeta,
+    });
+    volta.disparar(link(WA));
+    const codigo = codigoDoAviso(volta.avisos[0]?.corpo);
+    expect(JSON.parse(volta.avisos[0]?.corpo ?? "{}")).toEqual({
+      chave: CHAVE,
+      codigo,
+      ...daMeta,
+    });
+  });
+
+  it("na mesma visita (ate 30 minutos), o link interno com UTM ainda nao apaga o clique do anuncio", () => {
+    expect(MESMA_VISITA_EM_MS).toBe(30 * 60 * 1000);
+    // O script escreve o numero por extenso (ES5, sem import).
+    expect(CODIGO_DO_SCRIPT).toContain(`> ${MESMA_VISITA_EM_MS})`);
+    const local = new Map([[GUARDADO, guardar(SINAIS)]]);
+    montar({ busca: "?utm_source=banner", local, agora: AGORA + MESMA_VISITA_EM_MS });
+    expect(lerGuardado(local)).toEqual({
+      guardado_em: AGORA + MESMA_VISITA_EM_MS,
+      sinais: { ...SINAIS, utm_source: "banner" },
+    });
+    // Um milissegundo depois ja e outra visita.
+    const outro = new Map([[GUARDADO, guardar(SINAIS)]]);
+    montar({ busca: "?utm_source=banner", local: outro, agora: AGORA + MESMA_VISITA_EM_MS + 1 });
+    expect(lerGuardado(outro)).toEqual({
+      guardado_em: AGORA + MESMA_VISITA_EM_MS + 1,
+      sinais: { utm_source: "banner" },
+    });
+  });
+
+  it("guardado fora do prazo nao volta junto com o sinal novo de outra familia", () => {
+    const local = new Map([[GUARDADO, guardar(SINAIS)]]);
+    montar({ busca: "?utm_source=ig", local, agora: AGORA + 8 * DIA });
+    expect(lerGuardado(local)).toEqual({
+      guardado_em: AGORA + 8 * DIA,
+      sinais: { utm_source: "ig" },
+    });
+  });
+
+  it("localStorage que lanca, nao existe ou esta cheio: cai no sessionStorage, sem excecao", () => {
+    for (const semLocal of ["lanca", "ausente", "cheio"] as const) {
+      const local = new Map<string, string>();
+      const sessao = new Map<string, string>();
+      expect(
+        () => montar({ busca: "?gclid=Cj0K", semLocal, local, sessao }),
+        semLocal,
+      ).not.toThrow();
+      expect(local.size, semLocal).toBe(0);
+      expect(lerGuardado(sessao), semLocal).toEqual({
+        guardado_em: AGORA,
+        sinais: { gclid: "Cj0K" },
+      });
+      // Pagina seguinte da mesma aba, sem sinal na URL: vale o da sessao.
+      const seguinte = montar({ semLocal, local, sessao });
+      expect(seguinte.ouvintes, semLocal).toHaveLength(2);
+      seguinte.disparar(link(WA));
+      expect(JSON.parse(seguinte.avisos[0]?.corpo ?? "{}")).toMatchObject({
+        gclid: "Cj0K",
+      });
+      // Aba nova (sessionStorage vazio): sem localStorage, nao ha o que ler.
+      expect(montar({ semLocal, local }).ouvintes, semLocal).toHaveLength(0);
+    }
+  });
+
+  it("localStorage cheio com sinal velho guardado: o velho sai e vale o novo", () => {
+    const local = new Map([[GUARDADO, guardar({ gclid: "velho" })]]);
+    const sessao = new Map<string, string>();
+    montar({ busca: "?gclid=novo", semLocal: "cheio", local, sessao });
+    expect(local.has(GUARDADO)).toBe(false);
+    const seguinte = montar({ semLocal: "cheio", local, sessao });
+    seguinte.disparar(link(WA));
+    expect(JSON.parse(seguinte.avisos[0]?.corpo ?? "{}")).toMatchObject({
+      gclid: "novo",
+    });
+  });
+});
+
+describe("rastreio v1: duas clinicas no mesmo site (mesma origem)", () => {
   // Agencia com paginas de varias clinicas no mesmo dominio, ou rede com uma
-  // pagina por unidade, cada unidade uma clinica: o sessionStorage e da
+  // pagina por unidade, cada unidade uma clinica: o localStorage e da
   // origem, nao do script. O anuncio de uma clinica nunca pode virar a
   // origem (imutavel) de um contato da outra.
 
   it("o sinal guardado pela clinica A nao vale na pagina da clinica B", () => {
-    const sessao = new Map<string, string>();
+    const local = new Map<string, string>();
     const paginaDeA = montar({
       busca: "?gclid=G&gad_campaignid=111",
-      sessao,
+      local,
     });
     expect(paginaDeA.ouvintes).toHaveLength(2);
-    expect(sessao.has(GUARDADO)).toBe(true);
+    expect(local.has(GUARDADO)).toBe(true);
 
-    const paginaDeB = montar({ chave: CHAVE_DE_OUTRA_CLINICA, sessao });
+    const paginaDeB = montar({ chave: CHAVE_DE_OUTRA_CLINICA, local });
     expect(paginaDeB.ouvintes).toHaveLength(0);
     expect(paginaDeB.buscas).toHaveLength(0);
     const botao = link(WA);
@@ -644,35 +882,34 @@ describe("rastreio v1: duas clinicas no mesmo site (mesma origem, mesma aba)", (
     expect(paginaDeB.fetches).toHaveLength(0);
     expect(botao.getAttribute("href")).toBe(WA);
     // E a pagina de B nao apaga nem copia o guardado de A.
-    expect(sessao.has(guardadoDa(CHAVE_DE_OUTRA_CLINICA))).toBe(false);
-    expect(JSON.parse(sessao.get(GUARDADO) ?? "null")).toEqual({
-      gclid: "G",
-      gad_campaignid: "111",
+    expect(local.has(guardadoDa(CHAVE_DE_OUTRA_CLINICA))).toBe(false);
+    expect(lerGuardado(local)).toEqual({
+      guardado_em: AGORA,
+      sinais: { gclid: "G", gad_campaignid: "111" },
     });
   });
 
   it("o item antigo, sem a chave no nome, e ignorado", () => {
-    const sessao = new Map([
-      ["conduzza_rastreio_v1", JSON.stringify({ gclid: "G" })],
-    ]);
-    expect(montar({ sessao }).ouvintes).toHaveLength(0);
+    const local = new Map([["conduzza_rastreio_v1", guardar({ gclid: "G" })]]);
+    expect(montar({ local }).ouvintes).toHaveLength(0);
   });
 
   it("sinal na URL de B nao sobrescreve o guardado de A", () => {
-    const sessao = new Map<string, string>();
-    montar({ busca: "?gclid=deA&cz_campanha=111", sessao });
+    const local = new Map<string, string>();
+    montar({ busca: "?gclid=deA&cz_campanha=111", local });
     const paginaDeB = montar({
       chave: CHAVE_DE_OUTRA_CLINICA,
       busca: "?gclid=deB&cz_campanha=222",
-      sessao,
+      local,
     });
-    expect(JSON.parse(sessao.get(GUARDADO) ?? "null")).toEqual({
-      gclid: "deA",
-      cz_campanha: "111",
+    expect(lerGuardado(local)).toEqual({
+      guardado_em: AGORA,
+      sinais: { gclid: "deA", cz_campanha: "111" },
     });
-    expect(
-      JSON.parse(sessao.get(guardadoDa(CHAVE_DE_OUTRA_CLINICA)) ?? "null"),
-    ).toEqual({ gclid: "deB", cz_campanha: "222" });
+    expect(lerGuardado(local, CHAVE_DE_OUTRA_CLINICA)).toEqual({
+      guardado_em: AGORA,
+      sinais: { gclid: "deB", cz_campanha: "222" },
+    });
     paginaDeB.disparar(link(WA));
     expect(JSON.parse(paginaDeB.avisos[0]?.corpo ?? "{}")).toMatchObject({
       chave: CHAVE_DE_OUTRA_CLINICA,
@@ -682,9 +919,9 @@ describe("rastreio v1: duas clinicas no mesmo site (mesma origem, mesma aba)", (
   });
 
   it("com a mesma chave, o guardado continua valendo na pagina seguinte", () => {
-    const sessao = new Map<string, string>();
-    montar({ busca: "?gclid=G&gad_campaignid=111", sessao });
-    const seguinte = montar({ sessao });
+    const local = new Map<string, string>();
+    montar({ busca: "?gclid=G&gad_campaignid=111", local });
+    const seguinte = montar({ local });
     expect(seguinte.ouvintes).toHaveLength(2);
     seguinte.disparar(link(WA));
     expect(JSON.parse(seguinte.avisos[0]?.corpo ?? "{}")).toMatchObject({
@@ -696,7 +933,7 @@ describe("rastreio v1: duas clinicas no mesmo site (mesma origem, mesma aba)", (
 });
 
 describe("rastreio v1: nunca quebra o link", () => {
-  it("sessionStorage bloqueado com gclid: o codigo entra do mesmo jeito", () => {
+  it("localStorage e sessionStorage bloqueados com gclid: o codigo entra do mesmo jeito", () => {
     const ambiente = montar({ busca: "?gclid=abc", armazenamento: "quebrado" });
     const botao = link(WA);
     ambiente.disparar(botao);
@@ -705,7 +942,7 @@ describe("rastreio v1: nunca quebra o link", () => {
     expect(botao.getAttribute("href")).toBe(linkComCodigo(WA, codigo));
   });
 
-  it("sessionStorage bloqueado sem gclid: nada, e nada lanca", () => {
+  it("localStorage e sessionStorage bloqueados sem gclid: nada, e nada lanca", () => {
     expect(() => montar({ armazenamento: "quebrado" })).not.toThrow();
     expect(montar({ armazenamento: "quebrado" }).ouvintes).toHaveLength(0);
   });
@@ -825,14 +1062,14 @@ describe("rastreio v1: frases da clinica", () => {
   });
 
   it("o sinal guardado da pagina anterior tambem busca; a pagina de outra clinica busca pela propria chave", () => {
-    const sessao = new Map<string, string>();
-    montar({ busca: "?gclid=G", sessao });
-    const seguinte = montar({ sessao });
+    const local = new Map<string, string>();
+    montar({ busca: "?gclid=G", local });
+    const seguinte = montar({ local });
     expect(seguinte.buscas.map((b) => b.url)).toEqual([BUSCA]);
     const deB = montar({
       chave: CHAVE_DE_OUTRA_CLINICA,
       busca: "?gclid=B",
-      sessao,
+      local,
     });
     expect(deB.buscas.map((b) => b.url)).toEqual([
       new URL(caminhoDasFrases(CHAVE_DE_OUTRA_CLINICA) ?? "", SRC).href,
@@ -1092,8 +1329,9 @@ describe("rastreio v1: frases da clinica", () => {
 describe("rastreio v1: o arquivo", () => {
   it("pequeno", () => {
     // Era 8 KB; a busca e o sorteio das frases (04/10/2026) levaram a uns
-    // 9,5 KB e os sinais da Meta e as UTMs (16/11/2026) a uns 10,5 KB, quase
-    // tudo comentario (o servidor entrega comprimido).
+    // 9,5 KB, os sinais da Meta e as UTMs (16/11/2026) a uns 10,5 KB e o
+    // prazo de 7 dias no localStorage (17/11/2026) a uns 11,8 KB, quase tudo
+    // comentario (o servidor entrega comprimido).
     expect(Buffer.byteLength(CODIGO_DO_SCRIPT)).toBeLessThan(12 * 1024);
   });
 
@@ -1115,8 +1353,10 @@ describe("rastreio v1: o arquivo", () => {
   });
 
   it("nao le nem manda IP, user agent, caminho ou cookie", () => {
+    // O localStorage saiu desta lista em 17/11/2026 (decisao do dono: o sinal
+    // vale 7 dias): la ficam so os sinais do anuncio e a hora.
     expect(CODIGO_DO_SCRIPT).not.toMatch(
-      /userAgent|document\.cookie|location\.pathname|location\.href|document\.referrer|localStorage/,
+      /userAgent|document\.cookie|location\.pathname|location\.href|document\.referrer/,
     );
   });
 });

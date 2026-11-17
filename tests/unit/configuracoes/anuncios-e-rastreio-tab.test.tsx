@@ -49,7 +49,8 @@ const META: DadosDaMeta = {
   conta: {
     pixel_id: "123456789012345",
     ad_account_id: "act_123456789",
-    whatsapp_business_account_id: null,
+    // Com a conta do WhatsApp Business o passo 1 fica pronto (sem ela, falta).
+    whatsapp_business_account_id: "109876543210987",
     test_event_code: null,
     envio_ativado: false,
     modo_user_data: null,
@@ -134,8 +135,24 @@ describe("AnunciosERastreioTab", () => {
     const html = aba();
     expect(abertos(html)).toEqual(["token"]);
     expect(html).toContain("Gerar token de acesso");
-    // O cartao da conta (passo 1, pronto) fica fechado.
-    expect(html).not.toContain('id="meta-pixel"');
+    // O cartao da conta (passo 1, pronto) fica fechado, mas MONTADO e so
+    // escondido: fechar um passo nao pode apagar o que foi digitado nele
+    // (revisao de 17/11/2026).
+    expect(html).toContain('id="meta-pixel"');
+    expect(html).toMatch(
+      /data-state="closed"[^>]*class="[^"]*data-\[state=closed\]:hidden/,
+    );
+  });
+
+  it("conta sem o WhatsApp Business: o passo 1 falta e é ele que nasce aberto", () => {
+    const html = aba({
+      meta: {
+        ...META,
+        conta: { ...META.conta!, whatsapp_business_account_id: null },
+      },
+    });
+    expect(abertos(html)).toEqual(["conta"]);
+    expect(texto(html)).toContain("Falta a conta do WhatsApp Business.");
   });
 
   it("?passo= abre o passo pedido; o link antigo de aba abre os passos dela", () => {

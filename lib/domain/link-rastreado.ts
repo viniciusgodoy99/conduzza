@@ -58,6 +58,29 @@ export function ehRoboOuPrevia(userAgent: string | null | undefined): boolean {
   return !limpo || ROBO_OU_PREVIA.test(limpo);
 }
 
+const CABECALHOS_DE_PRE_CARREGAMENTO = [
+  "purpose",
+  "x-purpose",
+  "sec-purpose",
+  "x-moz",
+] as const;
+
+/**
+ * Verdadeiro quando o navegador (ou o app que mostra o anuncio) busca o
+ * destino ANTES de a pessoa tocar: chega com o user agent de gente, mas com
+ * um destes cabecalhos dizendo prefetch, preview ou prerender. Como o robo,
+ * nao grava clique: contaria um toque que nao houve e deixaria um clique
+ * pendente que a janela de 10 minutos daria a outra pessoa (revisao de
+ * 17/11/2026). O toque de verdade faz outro pedido (a resposta e no-store).
+ */
+export function ehPreCarregamento(
+  lerCabecalho: (nome: string) => string | null,
+): boolean {
+  return CABECALHOS_DE_PRE_CARREGAMENTO.some((nome) =>
+    /prefetch|preview|prerender/i.test(lerCabecalho(nome) ?? ""),
+  );
+}
+
 /**
  * O endereco publico do link de uma origem. A base e o dominio curto dos
  * links (LINK_BASE_URL), quando existe, ou o endereco do sistema

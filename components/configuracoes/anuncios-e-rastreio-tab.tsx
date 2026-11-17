@@ -116,9 +116,13 @@ export function AnunciosERastreioTab({
     meta: meta
       ? {
           temPixel: Boolean(meta.conta?.pixel_id),
+          temWaba: Boolean(meta.conta?.whatsapp_business_account_id),
           temToken: meta.temToken,
+          temModo: Boolean(meta.conta?.modo_user_data),
           envioLigado: meta.conta?.envio_ativado ?? false,
+          temContaDeAnuncios: Boolean(meta.conta?.ad_account_id),
           temTokenDeLeitura: meta.temTokenDeLeitura,
+          leituraComProblema: meta.leitura?.situacao === "com_problema",
         }
       : null,
     site: google ? { ligado: google.linha?.ativo ?? false } : null,
@@ -289,7 +293,14 @@ export function AnunciosERastreioTab({
                 </AccordionPrimitive.Trigger>
               </h3>
             </AccordionPrimitive.Header>
-            <AccordionPrimitive.Content className="grid gap-4 pb-2">
+            {/* forceMount: o Radix desmonta o passo fechado e o que foi
+                digitado nele (token de leitura, frases do site, teste de
+                mensagem) sumia ao fechar e reabrir. Fechado, fica so
+                escondido (revisao de 17/11/2026). */}
+            <AccordionPrimitive.Content
+              forceMount
+              className="grid gap-4 pb-2 data-[state=closed]:hidden"
+            >
               <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
                 <span className="font-semibold text-text-strong">
                   Para que serve:{" "}

@@ -390,7 +390,7 @@ async function tentarAtribuirOrigem(
 
   // Primeira captura vence: o predicado source_channel is null mais o trigger
   // impedir_reatribuicao_de_origem garantem que origem preenchida nunca muda.
-  const { error: erroGravacao } = await admin
+  const { data: gravados, error: erroGravacao } = await admin
     .from("contact")
     .update({
       source_channel: atribuicao.channel,
@@ -401,7 +401,8 @@ async function tentarAtribuirOrigem(
       source_captured_at: new Date().toISOString(),
     })
     .eq("id", contactId)
-    .is("source_channel", null);
+    .is("source_channel", null)
+    .select("id");
   if (erroGravacao) {
     log.error("atribuicao_gravar_origem_falhou", {
       clinic_id: clinicId,
@@ -415,7 +416,15 @@ async function tentarAtribuirOrigem(
   // dessa origem neste numero nos ultimos 10 minutos, ele fica ligado ao
   // contato (UTMs e identificadores para a conversao). Com o codigo fixo nao:
   // quem chega por ele veio pelo link direto, ou o clique nao foi gravado.
-  if (contatoRecemCriado && atribuicao.method !== "link_token") {
+  // So quando ESTA mensagem gravou a origem: se o contato ja tinha uma (a do
+  // anuncio da Meta, gravada antes), o clique pendente e de outra pessoa e
+  // levaria os identificadores dela para as conversoes deste contato
+  // (revisao de 17/11/2026).
+  if (
+    contatoRecemCriado &&
+    atribuicao.method !== "link_token" &&
+    (gravados?.length ?? 0) > 0
+  ) {
     await casarCliqueSemCodigo(
       admin,
       clinicId,
@@ -1068,6 +1077,27 @@ export async function ingerirMensagemRecebida(
       );
     } catch {
       // Falha inesperada nao derruba a ingestao; a mensagem ja esta salva.
+      log.error("atribuicao_origem_falhou", {
+        clinic_id: clinicId,
+        contact_id: resultado.contact_id,
+      });
+    }
+  } else if (resultado?.contact_id && resultado.contact_created) {
+    // Primeira mensagem SEM texto (audio, foto, figurinha): a pessoa tocou no
+    // link, apagou a mensagem pronta e mandou outra coisa. Sem texto nao ha
+    // codigo, mensagem pronta nem palavra-chave, mas a janela de 10 minutos
+    // (etapa 3d) ainda vale; a segunda mensagem ja nao e de contato novo, e o
+    // lead ficava sem origem para sempre (revisao de 17/11/2026). O banco so
+    // grava em contato sem origem e sem anuncio, e so com um unico clique.
+    try {
+      await casarCliqueSemCodigo(
+        admin,
+        clinicId,
+        resultado.contact_id,
+        resultado.whatsapp_account_id ?? accountId,
+        null,
+      );
+    } catch {
       log.error("atribuicao_origem_falhou", {
         clinic_id: clinicId,
         contact_id: resultado.contact_id,

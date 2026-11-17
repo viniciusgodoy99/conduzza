@@ -119,9 +119,10 @@ export const PARAMETROS_UTM = [
 ] as const;
 
 /**
- * As familias de sinal. Na pagina seguinte da mesma aba, a familia que vem
- * na URL substitui a guardada INTEIRA e as outras ficam (juntarSinais): um
- * link interno com UTM nao apaga o clique do anuncio que trouxe a visita.
+ * As familias de sinal. Na MESMA visita (MESMA_VISITA_EM_MS), a familia que
+ * vem na URL substitui a guardada INTEIRA e as outras ficam (juntarSinais):
+ * um link interno com UTM nao apaga o clique do anuncio que trouxe a visita.
+ * Em OUTRA visita, o sinal novo substitui tudo: o ultimo clique vence.
  */
 export const FAMILIAS_DE_SINAL = [
   PARAMETROS_DO_GOOGLE,
@@ -202,8 +203,39 @@ export function sinaisValidos(
 }
 
 /**
- * Os sinais guardados na aba com os da URL desta pagina: a familia que veio
- * na URL substitui a guardada inteira, as outras ficam (FAMILIAS_DE_SINAL).
+ * Por quanto tempo o script lembra os sinais da visita: 7 dias (decisao do
+ * dono de 17/11/2026). Ele os guarda no localStorage do site da clinica com a
+ * hora (`{ guardado_em, sinais }`), para valerem depois de fechar a aba; sem
+ * localStorage (navegador privado, bloqueio), no sessionStorage, que dura
+ * enquanto a aba esta aberta. A hora nunca vai para o servidor.
+ */
+export const PRAZO_DO_SINAL_GUARDADO_EM_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Sinal novo na URL com o guardado ha mais que isto e de OUTRA visita: nada
+ * do guardado fica (o ultimo clique vence; sem isto, o clique do Google do
+ * dia 1 ganharia do clique da Meta do dia 5). Dentro disto e a mesma visita,
+ * e vale a regra das familias.
+ */
+export const MESMA_VISITA_EM_MS = 30 * 60 * 1000;
+
+/**
+ * O sinal guardado em `guardadoEm` (epoch em ms) ainda vale em `agora`? Fora
+ * do prazo, ou sem a hora, o script ignora e apaga o item. Hora no futuro
+ * (relogio do aparelho acertado para tras) vale ate o mesmo prazo: nenhum
+ * item dura para sempre.
+ */
+export function sinalGuardadoVale(guardadoEm: unknown, agora: number): boolean {
+  return (
+    typeof guardadoEm === "number" &&
+    Math.abs(agora - guardadoEm) <= PRAZO_DO_SINAL_GUARDADO_EM_MS
+  );
+}
+
+/**
+ * Os sinais guardados no navegador com os da URL desta pagina: a familia que
+ * veio na URL substitui a guardada inteira, as outras ficam
+ * (FAMILIAS_DE_SINAL).
  */
 export function juntarSinais(
   guardados: SinaisDoRastreio | null,

@@ -387,6 +387,26 @@ describe("GET /l/<codigo>", () => {
     });
   });
 
+  it("pré-carregamento do navegador ou do app do anúncio: user agent de gente, mas não conta clique", async () => {
+    for (const [nome, valor] of [
+      ["sec-purpose", "prefetch;prerender"],
+      ["x-purpose", "preview"],
+      ["purpose", "prefetch"],
+      ["x-moz", "prefetch"],
+    ] as const) {
+      chamadas.length = 0;
+      respostas = [{ data: { ...DESTINO, resultado: "sem_gravar" }, error: null }];
+      const [request, contexto] = pedido(`?fbclid=${FBCLID}`);
+      request.headers.set(nome, valor);
+      const resposta = await GET(request, contexto);
+      expect(textoDoDestino(resposta)).toBe(`${DESTINO.mensagem} [#F1X0AB]`);
+      expect(chamadas[0]?.args, nome).toEqual({
+        p_codigo_publico: CODIGO_PUBLICO,
+        p_gravar: false,
+      });
+    }
+  });
+
   it("HEAD nunca conta clique, mesmo de navegador", async () => {
     respostas = [{ data: { ...DESTINO, resultado: "sem_gravar" }, error: null }];
     const resposta = await HEAD(...pedido("?utm_source=ig"));

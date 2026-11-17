@@ -510,7 +510,11 @@ export function montarCampanhas(
             ? celulaDeEstado(CELULA_NAO_MEDIDO)
             : linha.compareceram === 0
               ? celulaDeEstado(TEXTO_SEM_COMPARECIMENTO)
-              : celulaEmReais(linha.faturamentoCents);
+              : linha.faturamentoCents === 0
+                ? // Compareceu, mas so em consulta sem preco (convenio sem
+                  // valor): o mesmo estado do cartao, nunca "R$ 0,00".
+                  celulaDeEstado(TEXTO_SEM_PRECO_PARA_SOMAR)
+                : celulaEmReais(linha.faturamentoCents);
         const vezes =
           linha.faturamentoCents === null
             ? null
@@ -526,6 +530,8 @@ export function montarCampanhas(
           retorno = celulaDeEstado(CELULA_SEM_INVESTIMENTO);
         } else if (linha.compareceram === 0) {
           retorno = celulaDeEstado(TEXTO_SEM_COMPARECIMENTO);
+        } else if (linha.faturamentoCents === 0) {
+          retorno = celulaDeEstado(TEXTO_SEM_PRECO_PARA_SOMAR);
         } else {
           retorno = { texto: textoDoRetorno(vezes), estado: false };
         }

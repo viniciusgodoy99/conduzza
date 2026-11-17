@@ -136,8 +136,11 @@ export const ONDE_ENCONTRAR = {
   },
   conversoesDoGoogle: {
     passos: [
-      "No Google Ads, em Metas, crie uma ação de conversão off-line com o mesmo nome da etapa (por exemplo, compareceu).",
+      // O arquivo leva a CHAVE da etapa, nao o nome da tela (etapa renomeada
+      // mantem a chave): a agencia copia o nome do proprio arquivo.
       "No Conduzza, em Resultados, use Exportar e escolha Conversões para o Google Ads (CSV).",
+      "Abra o arquivo e veja a coluna Conversion Name: é o nome de cada conversão (por exemplo, compareceu).",
+      "No Google Ads, em Metas, crie uma ação de conversão off-line para cada nome dessa coluna, escrito igual.",
       "No Google Ads, em Metas, Conversões, Uploads, envie o arquivo.",
     ],
     link: {
