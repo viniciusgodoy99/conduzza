@@ -59,6 +59,9 @@ export const FUNIL: FunilDoPeriodo = {
       compareceram: 160,
     },
   ],
+  // Painel por origem: os 300 de trafego pago sao 162 de anuncio da Meta e
+  // 138 do Google; os 186 sem canal nao foram rastreados. Sempre sem filtro.
+  porGrupo: { meta: 162, google: 138, outras: 0, nao_rastreada: 186 },
 };
 
 export function agenda(receitaCents: number | null): AgendaDoPeriodo {

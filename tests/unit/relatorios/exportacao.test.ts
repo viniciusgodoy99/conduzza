@@ -38,8 +38,8 @@ function entrada(
     agenda: { atual: agenda(null), anterior: agenda(null) },
     atendimento: { atual: ATENDIMENTO, anterior: null },
     serie: [
-      { dia: "2026-09-01", leads: 10, agendadas: 4 },
-      { dia: "2026-09-02", leads: 0, agendadas: 0 },
+      { dia: "2026-09-01", leads: 10, agendadas: 4, porGrupo: null },
+      { dia: "2026-09-02", leads: 0, agendadas: 0, porGrupo: null },
     ],
     linhaDeBase: {
       ratePercent: 18,

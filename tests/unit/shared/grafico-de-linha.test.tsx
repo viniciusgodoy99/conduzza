@@ -108,6 +108,69 @@ describe("GraficoDeLinha, duas séries", () => {
   });
 });
 
+describe("GraficoDeLinha, quatro séries (painel por origem)", () => {
+  const QUATRO: GraficoDeLinhaProps = {
+    titulo: "Origem dos leads por dia",
+    rotulos: ["01/09", "02/09"],
+    series: [
+      { nome: "A", valores: [3, 1] },
+      { nome: "B", valores: [2, 0] },
+      { nome: "C", valores: [1, 4] },
+      { nome: "D", valores: [0, 2], detalhe: "2 leads" },
+    ],
+  };
+  const markup = html(QUATRO);
+
+  it("quatro marcadores de forma diferente, um por ponto", () => {
+    for (const forma of ["circulo", "quadrado", "triangulo", "losango"]) {
+      expect(contar(markup, `data-marcador="${forma}"`)).toBe(2);
+      expect(contar(markup, `data-legenda="${forma}"`)).toBe(1);
+    }
+    expect(markup).toMatch(/data-marcador="triangulo"[^>]*clip-path/);
+    expect(markup).toMatch(/data-marcador="losango"[^>]*rotate-45/);
+    // Na legenda, triangulo e losango sao poligonos (nao circulo nem rect).
+    expect(markup).toMatch(/data-legenda="triangulo"[\s\S]*?<polygon/);
+    expect(markup).toMatch(/data-legenda="losango"[\s\S]*?<polygon/);
+  });
+
+  it("quatro traços e quatro cores, todas por token", () => {
+    const linhas = [...markup.matchAll(/<polyline[^>]*>/g)].map((m) => m[0]);
+    expect(linhas).toHaveLength(4);
+    expect(linhas[0]).not.toContain("stroke-dasharray");
+    expect(linhas[1]).toContain('stroke-dasharray="6 4"');
+    expect(linhas[2]).toContain('stroke-dasharray="2 4"');
+    expect(linhas[3]).toContain('stroke-dasharray="10 4 2 4"');
+    expect(linhas.map((l) => /stroke="([^"]+)"/.exec(l)?.[1])).toEqual([
+      "var(--chart-bar)",
+      "var(--chart-bar-muted)",
+      "var(--chart-serie-3)",
+      "var(--chart-serie-4)",
+    ]);
+    expect(markup).not.toMatch(/#[0-9a-fA-F]{3,6}\b/);
+    expect(markup).not.toMatch(/rgba?\(/);
+  });
+
+  it("o complemento da legenda vai escrito ao lado do nome", () => {
+    expect(markup).toMatch(
+      /data-legenda="losango"[\s\S]*?D<span[^>]*>2 leads<\/span><\/li>/,
+    );
+    // Sem complemento, o nome fecha o item (como nas duas series).
+    expect(markup).toMatch(/data-legenda="circulo"[\s\S]*?A<\/li>/);
+  });
+
+  it("estilo escolhido: a série mantém a própria cara sozinha no gráfico", () => {
+    const sozinha = html({
+      titulo: "T",
+      rotulos: ["01/09", "02/09"],
+      series: [{ nome: "C", valores: [1, 4], estilo: 2 }],
+    });
+    expect(contar(sozinha, 'data-marcador="triangulo"')).toBe(2);
+    expect(sozinha).not.toContain('data-marcador="circulo"');
+    expect(sozinha).toContain('stroke-dasharray="2 4"');
+    expect(sozinha).toContain("var(--chart-serie-3)");
+  });
+});
+
 describe("GraficoDeLinha, empate entre as séries", () => {
   it("no empate o quadrado é maior que o círculo, e as duas formas aparecem", () => {
     const markup = html({

@@ -7,6 +7,7 @@ import { CartaoCustoPorLead } from "@/components/relatorios/cartoes-de-valor";
 import { ConversoesMetaSecao } from "@/components/relatorios/conversoes-meta-secao";
 import { DetalheDaOrigem } from "@/components/relatorios/detalhe-da-origem";
 import { OrigemDosLeads } from "@/components/relatorios/origem-dos-leads";
+import { OrigemDosLeadsPorDia } from "@/components/relatorios/origem-dos-leads-por-dia";
 import { CartaoDeMetrica } from "@/components/shared/cartao-de-metrica";
 import { Button } from "@/components/ui/button";
 import type { PeriodoDaLista } from "@/lib/domain/campanha-e-anuncio-do-lead";
@@ -15,12 +16,14 @@ import {
   formatarPercentual,
   percentualDe,
 } from "@/lib/domain/formato-compacto";
+import type { GrupoDeOrigem } from "@/lib/domain/grupos-de-origem";
 import type { ConversoesResumo } from "@/lib/queries/conversoes-meta";
 import type {
   AnunciosDoPeriodo,
   CampanhasDoPeriodo,
   FunilDoPeriodo,
   Periodizado,
+  PontoDaSerie,
 } from "@/lib/queries/relatorios";
 
 // Aba Marketing (Fase 3, recebe a antiga Origem): de qual canal e de qual
@@ -36,6 +39,10 @@ import type {
 // os anuncios, e a Origem dos leads, a divisao por plataforma.
 // Os rotulos da Origem dos leads e do Detalhe da origem abrem essa lista com
 // o mesmo periodo e os mesmos leads da linha (pedido do dono em 20/10/2026).
+// Painel por origem (17/11/2026): "Origem dos leads por dia" (a serie diaria
+// por grupo de origem) fica junto da Origem dos leads; com uma origem
+// escolhida na tela (grupo), o funil ja vem filtrado, e saem os links e a
+// divisao por plataforma, que nao conhecem o filtro.
 
 function tentarDeNovo(acao: () => void) {
   return (
@@ -54,6 +61,10 @@ export function AbaMarketing({
   anuncios,
   anunciosComErro = false,
   aoTentarAnunciosDeNovo,
+  serie,
+  serieComErro = false,
+  aoTentarSerieDeNovo,
+  grupo = null,
   conversoes,
   timezone,
   podeVerValores,
@@ -71,6 +82,12 @@ export function AbaMarketing({
   anuncios?: AnunciosDoPeriodo;
   anunciosComErro?: boolean;
   aoTentarAnunciosDeNovo?: () => void;
+  /** serie_diaria_do_periodo; undefined = carregando */
+  serie?: PontoDaSerie[];
+  serieComErro?: boolean;
+  aoTentarSerieDeNovo?: () => void;
+  /** A origem escolhida na tela; null = todas as origens. */
+  grupo?: GrupoDeOrigem | null;
   conversoes: ConversoesResumo;
   timezone: string;
   podeVerValores: boolean;
@@ -151,7 +168,12 @@ export function AbaMarketing({
       </section>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
-        <OrigemDosLeads funil={atual} periodo={periodo} anuncios={anuncios} />
+        <OrigemDosLeads
+          funil={atual}
+          periodo={periodo}
+          anuncios={anuncios}
+          filtrado={grupo !== null}
+        />
         <CampanhasSecao
           campanhas={campanhas}
           podeVerValores={podeVerValores}
@@ -164,6 +186,16 @@ export function AbaMarketing({
           periodo={periodo}
         />
       </div>
+
+      <OrigemDosLeadsPorDia
+        serie={serie}
+        timezone={timezone}
+        grupo={grupo}
+        erro={serieComErro}
+        tentarDeNovo={
+          aoTentarSerieDeNovo ? tentarDeNovo(aoTentarSerieDeNovo) : undefined
+        }
+      />
 
       <DetalheDaOrigem
         funil={atual}
@@ -180,6 +212,7 @@ export function AbaMarketing({
         }
         dimensao={dimensao}
         aoMudarDimensao={aoMudarDimensao}
+        filtrado={grupo !== null}
       />
 
       <ConversoesMetaSecao

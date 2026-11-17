@@ -30,11 +30,17 @@ import type {
 // Embaixo de Trafego pago, a divisao por plataforma dos leads de anuncio
 // (pedido do dono em 26/10/2026: ver em Resultados o que o uazapi grava),
 // quando os anuncios do periodo carregaram com a divisao.
+//
+// Com uma origem escolhida na tela (painel por origem, 17/11/2026), as barras
+// ja vem filtradas pelo banco, e saem daqui as duas coisas que nao conhecem o
+// filtro: a divisao por plataforma (anuncios_do_periodo) e o link para a
+// lista de Leads (que abriria mais leads do que a barra mostra).
 
 export function OrigemDosLeads({
   funil,
   periodo,
   anuncios,
+  filtrado = false,
   className,
 }: {
   funil: FunilDoPeriodo;
@@ -42,12 +48,16 @@ export function OrigemDosLeads({
   periodo: PeriodoDaLista;
   /** anuncios_do_periodo; sem ele (ou sem a divisao), a linha nao aparece. */
   anuncios?: AnunciosDoPeriodo;
+  /** Ha uma origem escolhida na tela: sem plataformas e sem links. */
+  filtrado?: boolean;
   className?: string;
 }) {
   const linhas = linhasDaOrigem(funil);
-  const plataformas = textoDasPlataformas(plataformasDosAnuncios(anuncios), {
-    comContagem: true,
-  });
+  const plataformas = filtrado
+    ? null
+    : textoDasPlataformas(plataformasDosAnuncios(anuncios), {
+        comContagem: true,
+      });
   const maior = linhas.reduce((max, linha) => Math.max(max, linha.leads), 0);
   // Denominador da participacao de cada canal: a soma das proprias barras.
   const total = linhas.reduce((soma, linha) => soma + linha.leads, 0);
@@ -86,10 +96,14 @@ export function OrigemDosLeads({
               maximo={maior}
               total={total}
               destaque={linha.destaque}
-              link={{
-                href: hrefDaListaDeLeads(periodo, linha.filtro),
-                nome: nomeDoLinkDaLista(linha.rotulo, linha.leads),
-              }}
+              link={
+                filtrado
+                  ? undefined
+                  : {
+                      href: hrefDaListaDeLeads(periodo, linha.filtro),
+                      nome: nomeDoLinkDaLista(linha.rotulo, linha.leads),
+                    }
+              }
             />
           );
           return linha.chave === "trafego_pago" && plataformas ? (

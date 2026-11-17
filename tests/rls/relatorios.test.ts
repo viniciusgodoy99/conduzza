@@ -352,3 +352,140 @@ describe("linha de base: só admin registra, ninguém reescreve", () => {
     expect(data).toHaveLength(0);
   });
 });
+
+// Painel por origem (migration 20261117110000): funil_do_periodo e
+// serie_diaria_do_periodo com p_grupo. Escrito em 17/11/2026 com a migration
+// NAO aplicada e NAO rodado: bate no banco de verdade e so passa depois dela
+// (npm run test:rls -- relatorios). O lead de cada clinica da fixture nao tem
+// origem: cai em "nao_rastreada".
+describe("painel por origem: p_grupo não fura o isolamento nem a trava do profissional", () => {
+  type Funil = {
+    atual: {
+      leads: number;
+      agendamentos_criados: number;
+      coorte: { leads: number };
+      por_canal: unknown[];
+      por_grupo: Record<string, number>;
+    };
+  };
+  type Ponto = {
+    leads: number;
+    agendadas: number;
+    por_grupo: Record<string, number>;
+  };
+  const SEM_LEAD = { meta: 0, google: 0, outras: 0, nao_rastreada: 0 };
+
+  it("gestor da B pedindo a A com p_grupo não vê lead nenhum da A, em grupo nenhum", async () => {
+    const clienteB = await logado(email("gestor-b"));
+    for (const grupo of ["nao_rastreada", "meta", "google", "outras"]) {
+      const funil = await clienteB.rpc("funil_do_periodo", {
+        p_clinic_id: clinicaA,
+        ...JANELA,
+        p_grupo: grupo,
+      });
+      expect(funil.error).toBeNull();
+      const atual = (funil.data as Funil).atual;
+      expect(atual.leads).toBe(0);
+      expect(atual.coorte.leads).toBe(0);
+      expect(atual.por_canal).toEqual([]);
+      expect(atual.agendamentos_criados).toBe(0);
+      // por_grupo vem sem o filtro, mas a RLS continua valendo nele: vazio.
+      expect(atual.por_grupo).toEqual({});
+
+      const serie = await clienteB.rpc("serie_diaria_do_periodo", {
+        p_clinic_id: clinicaA,
+        ...JANELA,
+        p_grupo: grupo,
+      });
+      expect(serie.error).toBeNull();
+      const pontos = serie.data as Ponto[];
+      expect(pontos.length).toBeGreaterThan(0);
+      for (const ponto of pontos) {
+        expect(ponto.leads).toBe(0);
+        expect(ponto.agendadas).toBe(0);
+        expect(ponto.por_grupo).toEqual(SEM_LEAD);
+      }
+    }
+  });
+
+  it("contraprova: admin da A vê o lead dela no grupo certo, e só nele", async () => {
+    const clienteA = await logado(email("admin-a"));
+    const doGrupo = await clienteA.rpc("funil_do_periodo", {
+      p_clinic_id: clinicaA,
+      ...JANELA,
+      p_grupo: "nao_rastreada",
+    });
+    expect(doGrupo.error).toBeNull();
+    expect((doGrupo.data as Funil).atual.leads).toBe(1);
+    expect((doGrupo.data as Funil).atual.por_grupo).toEqual({
+      nao_rastreada: 1,
+    });
+
+    const deOutroGrupo = await clienteA.rpc("funil_do_periodo", {
+      p_clinic_id: clinicaA,
+      ...JANELA,
+      p_grupo: "meta",
+    });
+    expect((deOutroGrupo.data as Funil).atual.leads).toBe(0);
+    // O numero ao lado de cada opcao nao depende do filtro.
+    expect((deOutroGrupo.data as Funil).atual.por_grupo).toEqual({
+      nao_rastreada: 1,
+    });
+
+    const serie = await clienteA.rpc("serie_diaria_do_periodo", {
+      p_clinic_id: clinicaA,
+      ...JANELA,
+      p_grupo: "nao_rastreada",
+    });
+    const pontos = serie.data as Ponto[];
+    expect(pontos.reduce((soma, p) => soma + p.leads, 0)).toBe(1);
+    expect(
+      pontos.reduce((soma, p) => soma + (p.por_grupo.nao_rastreada ?? 0), 0),
+    ).toBe(1);
+  });
+
+  it("profissional continua recebendo null, com p_grupo ou sem", async () => {
+    const cliente = await logado(email("prof-a"));
+    for (const filtro of [{}, { p_grupo: "nao_rastreada" }, { p_grupo: "x" }]) {
+      const funil = await cliente.rpc("funil_do_periodo", {
+        p_clinic_id: clinicaA,
+        ...JANELA,
+        ...filtro,
+      });
+      expect(funil.error).toBeNull();
+      expect(funil.data).toBeNull();
+      const serie = await cliente.rpc("serie_diaria_do_periodo", {
+        p_clinic_id: clinicaA,
+        ...JANELA,
+        ...filtro,
+      });
+      expect(serie.error).toBeNull();
+      expect(serie.data).toBeNull();
+    }
+  });
+
+  it("anônimo não executa nenhuma das três funções", async () => {
+    const anonimo = anonClient();
+    const funil = await anonimo.rpc("funil_do_periodo", {
+      p_clinic_id: clinicaA,
+      ...JANELA,
+      p_grupo: "meta",
+    });
+    expect(funil.error).not.toBeNull();
+    const serie = await anonimo.rpc("serie_diaria_do_periodo", {
+      p_clinic_id: clinicaA,
+      ...JANELA,
+      p_grupo: "meta",
+    });
+    expect(serie.error).not.toBeNull();
+    const grupo = await anonimo.rpc("grupo_de_origem", {
+      p_canal: null,
+      p_origem: null,
+      p_ctwa_clid: null,
+      p_anuncio: null,
+      p_campanha_meta: null,
+      p_campanha_google: null,
+    });
+    expect(grupo.error).not.toBeNull();
+  });
+});

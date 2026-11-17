@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { Card } from "@/components/ui/card";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { createT } from "@/lib/branding/labels";
+import { lerGrupoDeOrigem } from "@/lib/domain/grupos-de-origem";
 import { diaCivil, somarDias } from "@/lib/domain/horarios";
 import { fetchConversoesDevolvidas } from "@/lib/queries/conversoes-meta";
 import {
@@ -38,6 +39,10 @@ import { VisaoDoProfissional } from "./visao-do-profissional";
 // contagens de leads por campanha sao de todos); o investimento da Meta vem
 // null do banco para quem nao e admin nem gestor, e a tela nem olha para ele
 // sem podeVerValores.
+//
+// Painel por origem (decisao do dono de 17/11/2026): ?origem= escolhe um dos
+// quatro grupos (meta, google, outras, nao_rastreada). Valor fora da lista e
+// "todas as origens". So o funil e a serie diaria acompanham o filtro.
 
 const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -80,7 +85,12 @@ function rotuloDoRecorte(diaDe: string, diaAte: string): string {
 export default async function ResultadosPage({
   searchParams,
 }: {
-  searchParams: Promise<{ aba?: string; de?: string; ate?: string }>;
+  searchParams: Promise<{
+    aba?: string;
+    de?: string;
+    ate?: string;
+    origem?: string | string[];
+  }>;
 }) {
   const context = await getSessionContext();
   const active = context?.active;
@@ -152,7 +162,10 @@ export default async function ResultadosPage({
     );
   }
 
-  const { aba, de, ate } = await searchParams;
+  const { aba, de, ate, origem } = await searchParams;
+  // Parametro repetido chega como lista: vale o primeiro, como no cliente
+  // (URLSearchParams.get).
+  const grupo = lerGrupoDeOrigem(Array.isArray(origem) ? origem[0] : origem);
   const recorteValido =
     de !== undefined &&
     ate !== undefined &&
@@ -185,6 +198,7 @@ export default async function ResultadosPage({
       active.timezone,
       diaDe,
       diaAte,
+      { grupo },
     ),
     fetchAgendaDoPeriodo(
       supabase,
@@ -206,6 +220,7 @@ export default async function ResultadosPage({
       active.timezone,
       diaDe,
       diaAte,
+      { grupo },
     ),
     podeVerValores
       ? fetchFaturamentoDoPeriodo(
@@ -256,6 +271,7 @@ export default async function ResultadosPage({
         diaAteInicial={diaAte}
         diaDePadrao={diaDePadrao}
         diaAtePadrao={diaAtePadrao}
+        grupoInicial={grupo}
         funilInicial={funil}
         agendaInicial={agenda}
         atendimentoInicial={atendimento}

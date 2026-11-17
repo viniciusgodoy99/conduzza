@@ -25,6 +25,7 @@ import {
   linhasDoCsv,
   type ExportavelDaAba,
 } from "@/lib/domain/exportacao-de-resultados";
+import type { GrupoDeOrigem } from "@/lib/domain/grupos-de-origem";
 import { baixarArquivo, baixarCsv, gerarCsv } from "@/lib/utils/csv";
 
 // Exportacao da aba ativa dos Relatorios (10.11): CSV de verdade e "PDF"
@@ -40,6 +41,11 @@ import { baixarArquivo, baixarCsv, gerarCsv } from "@/lib/utils/csv";
 //
 // A trilha vai ANTES de o dado sair da tela (regra 3.1): sem gravar a
 // auditoria, nada e baixado nem impresso.
+//
+// Com uma origem escolhida na tela (painel por origem, 17/11/2026), o nome
+// do arquivo leva "origem-<grupo>" (no PDF, pelo titulo da pagina durante a
+// impressao, que e o nome que o navegador sugere) e o conteudo abre com a
+// origem e o que ela filtra. Sem filtro, nome e conteudo sao os de sempre.
 
 export type { ExportavelDaAba };
 
@@ -50,9 +56,12 @@ export function ExportarRelatorio({
   desabilitado = false,
   periodo,
   podeExportarParaOGoogle = false,
+  grupo = null,
 }: {
   aba: string;
   periodoRotulo: string;
+  /** A origem escolhida na tela; null = todas as origens. */
+  grupo?: GrupoDeOrigem | null;
   /**
    * O periodo em dias civis da clinica: com ele o menu ganha "Conversões
    * para o Google Ads" (etapa 6A do plano de 16/11/2026). Sem ele (o Inicio),
@@ -68,6 +77,7 @@ export function ExportarRelatorio({
   desabilitado?: boolean;
 }) {
   const [imprimindo, setImprimindo] = useState<ExportavelDaAba | null>(null);
+  const nomeDoArquivo = `resultados-${aba}${grupo ? `-origem-${grupo}` : ""}-${periodoRotulo.replaceAll("/", "-").replaceAll(" ", "")}`;
 
   const exportarCsv = async () => {
     const auditoria = await registrarExportacaoDeRelatorioAction("csv", aba);
@@ -76,10 +86,7 @@ export function ExportarRelatorio({
       return;
     }
     const dados = montar();
-    baixarCsv(
-      `resultados-${aba}-${periodoRotulo.replaceAll("/", "-").replaceAll(" ", "")}.csv`,
-      gerarCsv(linhasDoCsv(dados)),
-    );
+    baixarCsv(`${nomeDoArquivo}.csv`, gerarCsv(linhasDoCsv(dados)));
   };
 
   // O arquivo para a agencia subir no Google Ads. E montado no servidor (o
@@ -126,11 +133,16 @@ export function ExportarRelatorio({
     // desmonta para nao duplicar conteudo para leitores de tela.
     setImprimindo(montar());
     setTimeout(() => {
+      const tituloDaPagina = document.title;
       const aoTerminar = () => {
         setImprimindo(null);
+        document.title = tituloDaPagina;
         window.removeEventListener("afterprint", aoTerminar);
       };
       window.addEventListener("afterprint", aoTerminar);
+      if (grupo) {
+        document.title = nomeDoArquivo;
+      }
       window.print();
     }, 80);
   };
@@ -196,6 +208,12 @@ export function ExportarRelatorio({
             <div className="hidden bg-white text-black print:block">
               <h1 className="mb-1 text-xl font-bold">{imprimindo.titulo}</h1>
               <p className="mb-4 text-sm">{periodoRotulo}</p>
+              {imprimindo.filtro ? (
+                <p className="mb-4 text-sm">
+                  <strong>{imprimindo.filtro.titulo}.</strong>{" "}
+                  {imprimindo.filtro.texto}
+                </p>
+              ) : null}
               {imprimindo.secoes.map((secao, indiceDaSecao) => (
                 <section key={indiceDaSecao} className="mb-6 break-inside-avoid">
                   <h2 className="mb-2 text-sm font-bold">{secao.titulo}</h2>

@@ -224,8 +224,9 @@ describe.each(Object.entries(themes))("tema %s", (_themeName, tokens) => {
     );
   });
 
-  // Linha com marcadores: as duas series sobre o cartao.
-  it.each(["chart-bar", "chart-bar-muted"])(
+  // Linha com marcadores: as quatro series sobre o cartao (a 3a e a 4a
+  // desde o painel por origem, 17/11/2026).
+  it.each(["chart-bar", "chart-bar-muted", "chart-serie-3", "chart-serie-4"])(
     "linha do gráfico (--%s) tem 3.0:1 sobre o card",
     (serie) => {
       expect(contrast(tokens, serie, "surface-2")).toBeGreaterThanOrEqual(3.0);

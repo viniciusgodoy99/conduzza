@@ -674,11 +674,20 @@ describe("faturamento, série diária e lista de espera", () => {
     const { data, error } = await admin.rpc("serie_diaria_do_periodo", janela);
     expect(error).toBeNull();
     // 23:30 local e 02:30 UTC do dia seguinte: conta no dia local.
+    // por_grupo (migration 20261117110000, painel por origem): os leads do
+    // dia em cada grupo, sempre as quatro chaves. Estes contatos nao tem
+    // origem: todos em "nao rastreada".
+    const semOrigem = (n: number) => ({
+      meta: 0,
+      google: 0,
+      outras: 0,
+      nao_rastreada: n,
+    });
     expect(data).toEqual([
-      { dia: dia(-12), leads: 1, agendadas: 1 },
-      { dia: dia(-11), leads: 2, agendadas: 0 },
-      { dia: dia(-10), leads: 0, agendadas: 0 },
-      { dia: dia(-9), leads: 1, agendadas: 1 },
+      { dia: dia(-12), leads: 1, agendadas: 1, por_grupo: semOrigem(1) },
+      { dia: dia(-11), leads: 2, agendadas: 0, por_grupo: semOrigem(2) },
+      { dia: dia(-10), leads: 0, agendadas: 0, por_grupo: semOrigem(0) },
+      { dia: dia(-9), leads: 1, agendadas: 1, por_grupo: semOrigem(1) },
     ]);
 
     const { data: funil } = await admin.rpc("funil_do_periodo", janela);

@@ -68,6 +68,7 @@ export function AbaVisaoGeral({
   aoTentarCampanhasDeNovo,
   anuncios,
   anunciosComErro = false,
+  filtrado = false,
   linhaDeBase,
   objetivo,
   podeVerValores,
@@ -100,6 +101,11 @@ export function AbaVisaoGeral({
    */
   anuncios?: AnunciosDoPeriodo;
   anunciosComErro?: boolean;
+  /**
+   * Ha uma origem escolhida na tela (painel por origem, 17/11/2026): a
+   * Origem dos leads sai sem os links e sem a divisao por plataforma.
+   */
+  filtrado?: boolean;
   linhaDeBase: LinhaDeBase;
   objetivo: ObjetivoDeConversao | undefined;
   podeVerValores: boolean;
@@ -193,7 +199,12 @@ export function AbaVisaoGeral({
           erro={serieComErro}
           tentarDeNovo={tentarDeNovo(aoTentarSerieDeNovo)}
         />
-        <OrigemDosLeads funil={atual} periodo={periodo} anuncios={anuncios} />
+        <OrigemDosLeads
+          funil={atual}
+          periodo={periodo}
+          anuncios={anuncios}
+          filtrado={filtrado}
+        />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">

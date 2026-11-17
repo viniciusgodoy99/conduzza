@@ -19,6 +19,27 @@ import type { PontoDaSerie } from "@/lib/queries/relatorios";
 
 const ALTURA = 200;
 
+/**
+ * Os rotulos do eixo dos dias, curto ("01/09") e por extenso ("1 de
+ * setembro"), no fuso da clinica. Tambem serve a "Origem dos leads por dia".
+ */
+export function rotulosDosDias(
+  serie: readonly PontoDaSerie[],
+  timezone: string,
+): { rotulos: string[]; rotulosFalados: string[] } {
+  return {
+    rotulos: serie.map((ponto) => {
+      const [, mes, dia] = ponto.dia.split("-");
+      return `${dia}/${mes}`;
+    }),
+    rotulosFalados: serie.map((ponto) =>
+      format(new TZDate(`${ponto.dia}T12:00:00`, timezone), "d 'de' MMMM", {
+        locale: ptBR,
+      }),
+    ),
+  };
+}
+
 export function SerieLeadsAgendadas({
   serie,
   timezone,
@@ -54,15 +75,7 @@ export function SerieLeadsAgendadas({
       </div>
     );
   } else {
-    const rotulos = serie.map((ponto) => {
-      const [, mes, dia] = ponto.dia.split("-");
-      return `${dia}/${mes}`;
-    });
-    const rotulosFalados = serie.map((ponto) =>
-      format(new TZDate(`${ponto.dia}T12:00:00`, timezone), "d 'de' MMMM", {
-        locale: ptBR,
-      }),
-    );
+    const { rotulos, rotulosFalados } = rotulosDosDias(serie, timezone);
     corpo = (
       <GraficoDeLinha
         titulo="Leads x consultas agendadas"

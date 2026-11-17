@@ -35,6 +35,13 @@ import {
   formatarReaisCompleto,
   percentualDe,
 } from "@/lib/domain/formato-compacto";
+import {
+  GRUPOS_DE_ORIGEM,
+  ROTULO_DO_GRUPO_DE_ORIGEM,
+  avisoDoFiltroDeOrigem,
+  type AvisoDoFiltroDeOrigem,
+  type GrupoDeOrigem,
+} from "@/lib/domain/grupos-de-origem";
 import type { EntradaDaVariacao, Polaridade } from "@/lib/domain/variacao";
 import type { ConversoesResumo } from "@/lib/queries/conversoes-meta";
 import type {
@@ -1102,6 +1109,12 @@ export type SecaoExportavel = {
 
 export type ExportavelDaAba = {
   titulo: string;
+  /**
+   * So com uma origem escolhida na tela (painel por origem, 17/11/2026): a
+   * origem e o que ela filtra nesta aba, o titulo e o texto do aviso da
+   * tela. Abre o CSV e a impressao. Sem filtro, o campo nao existe.
+   */
+  filtro?: AvisoDoFiltroDeOrigem;
   secoes: SecaoExportavel[];
 };
 
@@ -1126,6 +1139,8 @@ export type EntradaDaExportacao = {
   anuncios?: AnunciosDoPeriodo;
   /** Fuso da clinica: o "Atualizado em" do investimento sai nele */
   timezone?: string;
+  /** A origem escolhida na tela; null ou ausente = todas as origens */
+  grupo?: GrupoDeOrigem | null;
   dimensaoOrigem: DimensaoDaOrigem;
   dimensaoAgenda: DimensaoDaAgenda;
 };
@@ -1158,6 +1173,40 @@ function secaoDeOrigem(funil: FunilDoPeriodo): SecaoExportavel {
         numero(linha.leads),
         percentualOuSemDados(linha.leads, total),
       ]),
+    ],
+  };
+}
+
+/**
+ * "Origem dos leads por dia" (Marketing): uma coluna por grupo de origem (so
+ * a escolhida, com filtro), um dia por linha e o total embaixo, como a
+ * legenda do grafico. Sem por_grupo (banco de antes da migration
+ * 20261117110000) a secao nao sai: zero inventado nao vai para o arquivo.
+ */
+function secaoDaOrigemPorDia(
+  serie: PontoDaSerie[],
+  grupo: GrupoDeOrigem | null,
+): SecaoExportavel | null {
+  if (serie.some((ponto) => ponto.porGrupo === null)) {
+    return null;
+  }
+  const grupos: readonly GrupoDeOrigem[] = grupo ? [grupo] : GRUPOS_DE_ORIGEM;
+  const leads = (ponto: PontoDaSerie, chave: GrupoDeOrigem) =>
+    ponto.porGrupo?.[chave] ?? 0;
+  return {
+    titulo: "Origem dos leads por dia",
+    linhas: [
+      ["Dia", ...grupos.map((chave) => ROTULO_DO_GRUPO_DE_ORIGEM[chave])],
+      ...serie.map((ponto) => [
+        diaCurto(ponto.dia),
+        ...grupos.map((chave) => numero(leads(ponto, chave))),
+      ]),
+      [
+        "Total",
+        ...grupos.map((chave) =>
+          numero(serie.reduce((soma, ponto) => soma + leads(ponto, chave), 0)),
+        ),
+      ],
     ],
   };
 }
@@ -1479,6 +1528,12 @@ function montarMarketing(entrada: EntradaDaExportacao): SecaoExportavel[] {
     );
     secoes.push({ titulo: "Indicadores do período", linhas: indicadores });
     secoes.push(secaoDeOrigem(funil));
+    const porDia = entrada.serie
+      ? secaoDaOrigemPorDia(entrada.serie, entrada.grupo ?? null)
+      : null;
+    if (porDia) {
+      secoes.push(porDia);
+    }
     const detalhe = montarDetalheDeOrigem(
       funil,
       entrada.dimensaoOrigem,
@@ -1663,15 +1718,31 @@ export function montarExportavelDaAba(
         : entrada.aba === "comercial"
           ? montarComercial(entrada)
           : montarAgente(entrada);
-  return { titulo: TITULO_DA_ABA[entrada.aba], secoes };
+  return {
+    titulo: TITULO_DA_ABA[entrada.aba],
+    ...(entrada.grupo
+      ? {
+          filtro: avisoDoFiltroDeOrigem(
+            entrada.aba,
+            entrada.grupo,
+            entrada.dimensaoOrigem,
+          ),
+        }
+      : {}),
+    secoes,
+  };
 }
 
 /**
  * Linhas do CSV: cada secao abre com uma linha so com o titulo e termina com
- * uma linha vazia antes da proxima.
+ * uma linha vazia antes da proxima. Com uma origem escolhida na tela, o
+ * arquivo abre com a origem e o que ela filtra; sem filtro, nada muda.
  */
 export function linhasDoCsv(exportavel: ExportavelDaAba): string[][] {
   const linhas: string[][] = [];
+  if (exportavel.filtro) {
+    linhas.push([exportavel.filtro.titulo], [exportavel.filtro.texto], []);
+  }
   exportavel.secoes.forEach((secao, indice) => {
     if (indice > 0) {
       linhas.push([]);
