@@ -11,6 +11,7 @@ import {
   removerCodigosDoClique,
   type CampaignRule,
 } from "@/lib/domain/attribution";
+import { mensagemComCodigoInvisivel } from "@/lib/domain/codigo-invisivel";
 import { FRASE_PADRAO } from "@/lib/domain/rastreio-do-site";
 import type {
   AnuncioDeOrigem,
@@ -1280,5 +1281,47 @@ describe("ingestão sem o código do link (reclamar e janela)", () => {
     // que case, nada de janela.
     await ingerir(mensagem("Boa tarde [#ZZZZZZ]"));
     expect(semCodigo()).toEqual([]);
+  });
+});
+
+// Etapa 3c do plano de 16/11/2026: o codigo do clique escondido em
+// caracteres invisiveis. A ingestao tira o codigo do texto ANTES de gravar a
+// mensagem e atribui a origem por ele.
+describe("ingestão com o código invisível do link", () => {
+  const MENSAGEM_PRONTA =
+    "Olá! Vi o perfil da clínica e quero agendar uma avaliação.";
+  const corpoGravado = () =>
+    banco.rpcs.find((chamada) => chamada.nome === "ingest_inbound_message")
+      ?.args.p_body;
+
+  it("a mensagem é gravada sem o código, e o clique casa pelo código escondido", async () => {
+    banco.clique();
+    const escondida = mensagemComCodigoInvisivel(MENSAGEM_PRONTA, CODIGO)!;
+    expect(escondida).not.toBe(MENSAGEM_PRONTA);
+
+    await ingerir(mensagem(escondida));
+
+    // O que vai para a conversa (e para a IA) e a frase limpa.
+    expect(corpoGravado()).toBe(MENSAGEM_PRONTA);
+    expect(banco.chamadasDoCasar()).toEqual([
+      expect.objectContaining({ p_codigo: CODIGO }),
+    ]);
+    expect(banco.contato.source_method).toBe("clique_site");
+  });
+
+  it("contato que já existia também casa pelo código escondido (é sinal explícito, como o visível)", async () => {
+    banco.clique();
+    banco.ingestao = { ...banco.ingestao, contact_created: false };
+
+    await ingerir(mensagem(mensagemComCodigoInvisivel(MENSAGEM_PRONTA, CODIGO)!));
+
+    expect(banco.chamadasDoCasar()).toHaveLength(1);
+  });
+
+  it("texto sem código escondido é gravado como veio, com os invisíveis que tiver", async () => {
+    const comEmoji = "Oi 👨‍👩‍👧 quero agendar";
+    await ingerir(mensagem(comEmoji));
+    expect(corpoGravado()).toBe(comEmoji);
+    expect(banco.chamadasDoCasar()).toEqual([]);
   });
 });

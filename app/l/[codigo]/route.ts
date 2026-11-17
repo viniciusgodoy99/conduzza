@@ -10,10 +10,12 @@ import {
   FORMATO_DO_CODIGO_PUBLICO,
   lerRespostaDoCliqueDoLink,
   numeroFixadoDoCookie,
+  usarCodigoInvisivel,
   VALIDADE_DO_NUMERO_FIXADO_EM_SEGUNDOS,
   type ArgumentosDoCliqueDoLink,
   type RespostaDoCliqueDoLink,
 } from "@/lib/domain/link-rastreado";
+import { PARAMETRO_DO_CODIGO_INVISIVEL } from "@/lib/domain/codigo-invisivel";
 import { contarSinais, sinaisDaUrl } from "@/lib/domain/rastreio-do-site";
 import { log } from "@/lib/log";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -116,7 +118,16 @@ async function responder(
       argumentosDoCliqueDoLink(codigo, false, null, fixado),
     );
   }
-  const destino = resposta ? destinoDoCliqueDoLink(resposta) : null;
+  // Codigo invisivel (etapa 3c): desligado ate o teste com celular real;
+  // ?cz_invisivel=1 liga so naquele clique, para o teste.
+  const destino = resposta
+    ? destinoDoCliqueDoLink(resposta, {
+        codigoInvisivel: usarCodigoInvisivel(
+          process.env.LINK_CODIGO_INVISIVEL,
+          request.nextUrl.searchParams.get(PARAMETRO_DO_CODIGO_INVISIVEL),
+        ),
+      })
+    : null;
   if (!resposta || !destino) {
     log.info("clique_do_link", {
       status: resposta?.resultado ?? "sem_resposta",
