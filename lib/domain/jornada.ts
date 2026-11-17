@@ -384,7 +384,7 @@ export function rodapeDaJornada(
     );
   }
   partes.push(
-    "Os eventos de conversão ainda não são enviados à Meta: esta tela define o que será enviado quando a conta de anúncios for conectada.",
+    "Os eventos de conversão vão para a Meta quando o envio está ligado em Configurações, aba Anúncios e rastreio; desligado, a clínica só registra as conversões.",
   );
   return partes.join(" ");
 }

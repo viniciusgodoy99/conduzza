@@ -389,7 +389,7 @@ describe("ehRecusaDaOrdemFixa", () => {
 describe("rodapeDaJornada", () => {
   it("cita as seis etapas de sistema e a ordem fixa das cinco", () => {
     expect(rodapeDaJornada(PADRAO)).toBe(
-      "As etapas de sistema (Novo, Aguardando resposta, Em contato, Agendou, Compareceu e Perdido) podem mudar de nome e de lugar, nunca sair: são elas que movem o contato sozinho e que protegem o motivo de perda. A ordem entre Novo, Aguardando resposta, Em contato, Agendou e Compareceu não muda; as outras etapas vão para qualquer lugar. Os eventos de conversão ainda não são enviados à Meta: esta tela define o que será enviado quando a conta de anúncios for conectada.",
+      "As etapas de sistema (Novo, Aguardando resposta, Em contato, Agendou, Compareceu e Perdido) podem mudar de nome e de lugar, nunca sair: são elas que movem o contato sozinho e que protegem o motivo de perda. A ordem entre Novo, Aguardando resposta, Em contato, Agendou e Compareceu não muda; as outras etapas vão para qualquer lugar. Os eventos de conversão vão para a Meta quando o envio está ligado em Configurações, aba Anúncios e rastreio; desligado, a clínica só registra as conversões.",
     );
   });
 

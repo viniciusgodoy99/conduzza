@@ -20,10 +20,10 @@ import { dados } from "./dados";
 // - com gclid, o codigo vai no texto do wa.me e o clique chega ao banco com
 //   o host do site e a campanha;
 // - sem sinal do Google, o link fica intacto e nada e avisado;
-// - o sinal da pagina do anuncio vale na pagina seguinte (sessionStorage);
+// - o sinal da pagina do anuncio vale na pagina seguinte (localStorage, 7 dias);
 // - o sinal guardado e da chave: a pagina de OUTRA clinica no mesmo site
 //   (mesma origem, mesma aba) nao leva o anuncio da primeira;
-// - com sessionStorage bloqueado, o link continua funcionando;
+// - com o armazenamento do navegador bloqueado, o link continua funcionando;
 // - frases da clinica (04/10/2026): o link sem texto pronto leva a frase que
 //   a clinica cadastrou, o script sorteia entre duas, e se a busca das
 //   frases falhar vai a frase de fabrica. A rota GET das frases responde sem
@@ -639,15 +639,19 @@ test.describe("site da clinica", () => {
     });
   });
 
-  test.describe("com sessionStorage bloqueado", () => {
+  // Desde 17/11/2026 o sinal fica no localStorage (7 dias) e o sessionStorage
+  // e a reserva: o caminho bloqueado so existe com os dois fora.
+  test.describe("com o armazenamento do navegador bloqueado", () => {
     test.beforeEach(async ({ page }) => {
       await page.addInitScript(() => {
-        Object.defineProperty(window, "sessionStorage", {
-          configurable: true,
-          get() {
-            throw new DOMException("bloqueado", "SecurityError");
-          },
-        });
+        for (const nome of ["localStorage", "sessionStorage"]) {
+          Object.defineProperty(window, nome, {
+            configurable: true,
+            get() {
+              throw new DOMException("bloqueado", "SecurityError");
+            },
+          });
+        }
       });
     });
 

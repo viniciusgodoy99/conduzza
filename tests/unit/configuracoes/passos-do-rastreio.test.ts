@@ -11,9 +11,13 @@ import {
 const VAZIO: EstadoDoRastreio = {
   meta: {
     temPixel: false,
+    temWaba: false,
     temToken: false,
+    temModo: false,
     envioLigado: false,
+    temContaDeAnuncios: false,
     temTokenDeLeitura: false,
+    leituraComProblema: false,
   },
   site: { ligado: false },
   origens: 0,
@@ -22,9 +26,13 @@ const VAZIO: EstadoDoRastreio = {
 const TUDO: EstadoDoRastreio = {
   meta: {
     temPixel: true,
+    temWaba: true,
     temToken: true,
+    temModo: true,
     envioLigado: true,
+    temContaDeAnuncios: true,
     temTokenDeLeitura: true,
+    leituraComProblema: false,
   },
   site: { ligado: true },
   origens: 4,
@@ -78,13 +86,42 @@ describe("passosDoRastreio", () => {
     expect(passosDoRastreio({ ...TUDO, origens: 1 })[5]!.rotulo).toBe("1 origem");
   });
 
-  it("com o Pixel e o token, o envio desligado diz que está pronto para ligar", () => {
-    const passos = passosDoRastreio({
+  it("com o Pixel, o token e o modo, o envio desligado diz que está pronto para ligar", () => {
+    const comPixelEToken = { ...VAZIO.meta!, temPixel: true, temToken: true };
+    const semModo = passosDoRastreio({ ...VAZIO, meta: comPixelEToken });
+    expect(semModo[2]!.situacao).toBe("desligado");
+    // Sem o modo a chave fica travada: dizer "pronto para ligar" seria mentira.
+    expect(semModo[2]!.detalhe).toBe("Falta escolher como enviar os dados.");
+    const comModo = passosDoRastreio({
       ...VAZIO,
-      meta: { ...VAZIO.meta!, temPixel: true, temToken: true },
+      meta: { ...comPixelEToken, temModo: true },
     });
-    expect(passos[2]!.situacao).toBe("desligado");
-    expect(passos[2]!.detalhe).toBe("Pronto para ligar.");
+    expect(comModo[2]!.detalhe).toBe("Pronto para ligar.");
+  });
+
+  it("pronto só quando funciona: conta sem WhatsApp Business e investimento sem conta ou com problema faltam", () => {
+    // Sem a conta do WhatsApp Business, a conversão do anúncio que abre o
+    // WhatsApp é descartada (sem_waba_id): o passo não pode ficar verde.
+    const semWaba = passosDoRastreio({
+      ...TUDO,
+      meta: { ...TUDO.meta!, temWaba: false },
+    });
+    expect(semWaba[0]!.situacao).toBe("falta");
+    expect(semWaba[0]!.detalhe).toBe("Falta a conta do WhatsApp Business.");
+
+    const semConta = passosDoRastreio({
+      ...TUDO,
+      meta: { ...TUDO.meta!, temContaDeAnuncios: false },
+    });
+    expect(semConta[3]!.situacao).toBe("falta");
+    expect(semConta[3]!.detalhe).toBe("Falta a conta de anúncios, no passo 1.");
+
+    const comProblema = passosDoRastreio({
+      ...TUDO,
+      meta: { ...TUDO.meta!, leituraComProblema: true },
+    });
+    expect(comProblema[3]!.situacao).toBe("falta");
+    expect(comProblema[3]!.detalhe).toBe("A leitura está com problema.");
   });
 
   it("leitura que falhou não vira pronto nem falta: indisponível, só nos passos dela", () => {
@@ -130,7 +167,10 @@ describe("passosAbertosDeInicio", () => {
     ]);
     expect(
       passosAbertosDeInicio(
-        passosDoRastreio({ ...VAZIO, meta: { ...VAZIO.meta!, temPixel: true } }),
+        passosDoRastreio({
+          ...VAZIO,
+          meta: { ...VAZIO.meta!, temPixel: true, temWaba: true },
+        }),
         "nao-existe",
         "rastreio",
       ),

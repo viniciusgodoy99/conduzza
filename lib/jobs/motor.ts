@@ -80,8 +80,10 @@ export const CUSTO_ESTIMADO_MS: Record<string, number> = {
   // reconciliacao no fechamento.
   enviar_mensagem_agendada: 25_000,
   baixar_midia: 30_000,
-  // 10s de timeout da CAPI + 2 retries com backoff curto + RPCs.
-  enviar_conversao_meta: 15_000,
+  // Pior caso da CAPI: 3 tentativas de 10 s mais as esperas (cerca de 32 s)
+  // e as leituras. Os 15 s de antes deixavam o job passar do prazo da
+  // invocacao (revisao de 17/11/2026).
+  enviar_conversao_meta: 35_000,
   // Orquestracao: consultas ao banco + 1 RPC; o envio sai por outro job.
   oferecer_lista_espera: 10_000,
   // 35 s de prazo da leitura na Meta (PRAZO_DA_LEITURA_MS) + as RPCs de

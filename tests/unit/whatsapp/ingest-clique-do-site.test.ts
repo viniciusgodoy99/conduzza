@@ -1282,6 +1282,43 @@ describe("ingestão sem o código do link (reclamar e janela)", () => {
     await ingerir(mensagem("Boa tarde [#ZZZZZZ]"));
     expect(semCodigo()).toEqual([]);
   });
+
+  // Revisao de 17/11/2026: a pessoa toca no link, apaga a mensagem pronta e
+  // manda audio, foto ou figurinha. Sem texto a atribuicao nem rodava, e a
+  // segunda mensagem ja nao e de contato novo: o lead ficava sem origem.
+  it("primeira mensagem sem texto (áudio, foto): o contato novo ainda tenta a janela", async () => {
+    await ingerir(mensagem(null));
+    expect(semCodigo()).toEqual([
+      {
+        p_clinic_id: CLINICA,
+        p_contact_id: CONTATO,
+        p_whatsapp_account_id: NUMERO,
+      },
+    ]);
+
+    // Contato que ja existia: mensagem sem texto nao pergunta nada.
+    banco.limpar();
+    banco.ingestao = { ...banco.ingestao, contact_created: false };
+    await ingerir(mensagem(null));
+    expect(semCodigo()).toEqual([]);
+  });
+
+  it("contato que já ganhou a origem do anúncio da Meta não reclama o clique de outra pessoa pela palavra-chave", async () => {
+    banco.campanhas = [
+      campanhaFixa({
+        token: "F7X2AB",
+        channel: "busca_organica",
+        keywords: ["agendar"],
+      }),
+    ];
+
+    await ingerir(mensagem("quero agendar", anuncioDaMeta()));
+
+    // A origem e a do anuncio (gravada antes); esta mensagem nao gravou nada,
+    // entao o clique pendente da origem nao e deste contato.
+    expect(banco.contato.source_method).toBe("anuncio_ctwa");
+    expect(semCodigo()).toEqual([]);
+  });
 });
 
 // Etapa 3c do plano de 16/11/2026: o codigo do clique escondido em

@@ -168,7 +168,7 @@ describe("aba Jornada: as etapas de sistema da onda 3", () => {
     expect(html).toContain(
       "A ordem entre Novo, Aguardando resposta, Em contato, Agendou e Compareceu não muda",
     );
-    expect(html).toContain("Os eventos de conversão ainda não são enviados");
+    expect(html).toContain("Os eventos de conversão vão para a Meta quando o envio está ligado");
   });
 });
 

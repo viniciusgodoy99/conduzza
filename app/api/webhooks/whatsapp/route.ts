@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 
+import { separarCodigoInvisivel } from "@/lib/domain/codigo-invisivel";
 import {
   ecoContaParaTermo,
   ecoEsperaPeloContatoNovo,
@@ -997,7 +998,9 @@ export async function POST(request: NextRequest) {
           clinicId,
           contactId: data.contact_id,
           conversationId: data.conversation_id,
-          body: event.body,
+          // Sem o codigo invisivel do link (etapa 3c): a mensagem foi gravada
+          // limpa, e a resposta do paciente e lida do mesmo texto.
+          body: separarCodigoInvisivel(event.body).texto,
           contentType: event.contentType,
           // A citacao decide a que pergunta a resposta se refere (o botao
           // tocado cita o menu do toque daquela consulta).

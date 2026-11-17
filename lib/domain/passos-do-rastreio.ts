@@ -33,9 +33,16 @@ export type EstadoDoRastreio = {
   /** nulo: a leitura da conta da Meta falhou */
   meta: {
     temPixel: boolean;
+    /** Conta do WhatsApp Business: sem ela a conversao do anuncio que abre o WhatsApp e descartada. */
+    temWaba: boolean;
     temToken: boolean;
+    /** Como os dados saem ja foi escolhido (sem isso o envio nao liga). */
+    temModo: boolean;
     envioLigado: boolean;
+    temContaDeAnuncios: boolean;
     temTokenDeLeitura: boolean;
+    /** A leitura do investimento gravou um problema (token vencido, conta sem acesso). */
+    leituraComProblema: boolean;
   } | null;
   /** nulo: a leitura do rastreio do site falhou */
   site: { ligado: boolean } | null;
@@ -92,9 +99,14 @@ function falta(detalhe: string): Situacao {
 function situacaoDoPasso(chave: ChaveDoPasso, estado: EstadoDoRastreio): Situacao {
   const { meta, site, origens } = estado;
   switch (chave) {
+    // "Pronto" so quando o passo funciona de verdade (revisao de 17/11/2026):
+    // a tela verde com conversao descartada e pior que um "falta".
     case "conta":
       if (!meta) return INDISPONIVEL;
-      return meta.temPixel ? PRONTO : falta("Falta o Pixel.");
+      if (!meta.temPixel) return falta("Falta o Pixel.");
+      return meta.temWaba
+        ? PRONTO
+        : falta("Falta a conta do WhatsApp Business.");
     case "token":
       if (!meta) return INDISPONIVEL;
       return meta.temToken ? PRONTO : falta("Falta colar o token.");
@@ -106,16 +118,21 @@ function situacaoDoPasso(chave: ChaveDoPasso, estado: EstadoDoRastreio): Situaca
       return {
         situacao: "desligado",
         rotulo: null,
-        detalhe:
-          meta.temPixel && meta.temToken
+        detalhe: !(meta.temPixel && meta.temToken)
+          ? "Precisa do Pixel e do token."
+          : meta.temModo
             ? "Pronto para ligar."
-            : "Precisa do Pixel e do token.",
+            : "Falta escolher como enviar os dados.",
       };
     case "investimento":
       if (!meta) return INDISPONIVEL;
-      return meta.temTokenDeLeitura
-        ? PRONTO
-        : falta("Falta o token de leitura.");
+      if (!meta.temTokenDeLeitura) return falta("Falta o token de leitura.");
+      if (!meta.temContaDeAnuncios) {
+        return falta("Falta a conta de anúncios, no passo 1.");
+      }
+      return meta.leituraComProblema
+        ? falta("A leitura está com problema.")
+        : PRONTO;
     case "site":
       if (!site) return INDISPONIVEL;
       return site.ligado

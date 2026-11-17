@@ -65,6 +65,11 @@ export async function enviarEventoDoCliqueDoLink(
         pixelId: clique.pixelId,
         accessToken: segredo.capi_access_token as string,
         testEventCode: (conta.test_event_code as string | null) ?? null,
+        // A rota do link vive 10 s (maxDuration): 3 s por tentativa e uma
+        // nova tentativa cabem; o padrao do adaptador (ate 32 s) nao cabia e
+        // a funcao morria no meio, sem registro.
+        timeoutMs: 3_000,
+        maxRetries: 1,
         ...(fetchFn ? { fetchFn } : {}),
       },
       [

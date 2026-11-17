@@ -5,6 +5,7 @@ import {
   CELULA_NAO_MEDIDO,
   CELULA_SEM_LEADS,
   NOTA_DOS_VALORES_DAS_CAMPANHAS,
+  TEXTO_SEM_PRECO_PARA_SOMAR,
   TEXTOS_DO_VAZIO_DAS_CAMPANHAS,
   campanhasComValores,
   estadoVazioDasCampanhas,
@@ -124,6 +125,21 @@ describe("rodapesDasCampanhas", () => {
     const [implante, , botox] = montarCampanhas(campanhasDoPeriodo(), true);
     expect(implante?.retorno).toEqual({ texto: "3,5x", estado: false });
     expect(botox?.retorno?.estado).toBe(true);
+
+    // Compareceu, mas so em consulta sem preco (convenio sem valor): o mesmo
+    // estado do cartao de faturamento, nunca R$ 0,00 nem 0,0x (revisao de
+    // 17/11/2026).
+    const semPreco = campanhasDoPeriodo();
+    semPreco.linhas[0]!.faturamentoCents = 0;
+    const [dePreco] = montarCampanhas(semPreco, true);
+    expect(dePreco?.faturamento).toEqual({
+      texto: TEXTO_SEM_PRECO_PARA_SOMAR,
+      estado: true,
+    });
+    expect(dePreco?.retorno).toEqual({
+      texto: TEXTO_SEM_PRECO_PARA_SOMAR,
+      estado: true,
+    });
 
     // Sem a medida do investimento: o faturamento continua, o retorno nao.
     expect(

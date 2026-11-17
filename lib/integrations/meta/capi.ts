@@ -25,6 +25,10 @@ export type CapiConfig = {
   /** Codigo do Gerenciador de Eventos para validar sem sujar dado real. */
   testEventCode: string | null;
   fetchFn?: typeof fetch;
+  /** Prazo de cada tentativa. Padrao 10 s; quem tem pouco tempo (o clique do link) passa menos. */
+  timeoutMs?: number;
+  /** Novas tentativas depois da primeira. Padrao 2. */
+  maxRetries?: number;
 };
 
 export type CapiResult =
@@ -74,13 +78,15 @@ export async function enviarEventosCapi(
     errorCode: "sem_tentativa",
     retryable: true,
   };
-  for (let tentativa = 0; tentativa <= MAX_RETRIES; tentativa++) {
+  const timeoutMs = config.timeoutMs ?? CAPI_TIMEOUT_MS;
+  const maxRetries = config.maxRetries ?? MAX_RETRIES;
+  for (let tentativa = 0; tentativa <= maxRetries; tentativa++) {
     if (tentativa > 0) {
       const espera = 500 * 2 ** (tentativa - 1) + Math.random() * 250;
       await new Promise((resolve) => setTimeout(resolve, espera));
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), CAPI_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const resposta = await fetchFn(url, {
         method: "POST",

@@ -7,6 +7,7 @@ import {
   CAMINHO_DO_LINK_INDISPONIVEL,
   cookieDoNumeroFixado,
   destinoDoCliqueDoLink,
+  ehPreCarregamento,
   ehRoboOuPrevia,
   FORMATO_DO_CODIGO_PUBLICO,
   ipDoVisitante,
@@ -115,7 +116,9 @@ async function responder(
     return indisponivel;
   }
   const gravar =
-    contaClique && !ehRoboOuPrevia(request.headers.get("user-agent"));
+    contaClique &&
+    !ehRoboOuPrevia(request.headers.get("user-agent")) &&
+    !ehPreCarregamento((nome) => request.headers.get(nome));
   const sinais = gravar ? sinaisDaUrl(request.nextUrl.search) : null;
   const cookie = cookieDoNumeroFixado(codigo);
   const fixado = gravar

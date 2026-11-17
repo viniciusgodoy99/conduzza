@@ -136,16 +136,27 @@ export function useCartoesDaMeta({
   // dados saem), para o erro aparecer ao lado de quem clicou.
   const salvarConta = (onde: "conta" | "envio") => {
     setErro(null);
+    // Cada botao grava so o que e do cartao dele; o resto vai como esta
+    // salvo. Sem isto, "Salvar conta" gravava junto a escolha de enviar o
+    // telefone, mexida no passo 3 e nao confirmada (revisao de 17/11/2026).
+    const daConta = onde === "conta";
     startTransition(async () => {
       const resultado = await salvarContaMetaAction({
-        pixel_id: pixel.trim() || null,
-        ad_account_id: contaAnuncios.trim() || null,
-        whatsapp_business_account_id: waba.trim() || null,
-        test_event_code: codigoTeste.trim() || null,
-        send_unmatched: semIdentificador,
-        modo_user_data:
-          modoEscolhido === "ctwa_apenas" ||
-          modoEscolhido === "telefone_hasheado"
+        pixel_id: daConta ? pixel.trim() || null : atual.pixel_id,
+        ad_account_id: daConta
+          ? contaAnuncios.trim() || null
+          : atual.ad_account_id,
+        whatsapp_business_account_id: daConta
+          ? waba.trim() || null
+          : atual.whatsapp_business_account_id,
+        test_event_code: daConta
+          ? codigoTeste.trim() || null
+          : atual.test_event_code,
+        send_unmatched: daConta ? semIdentificador : atual.send_unmatched,
+        modo_user_data: daConta
+          ? atual.modo_user_data
+          : modoEscolhido === "ctwa_apenas" ||
+              modoEscolhido === "telefone_hasheado"
             ? modoEscolhido
             : null,
       });
@@ -154,7 +165,9 @@ export function useCartoesDaMeta({
         return;
       }
       // O servidor grava sempre act_<digitos>: o campo mostra o que ficou.
-      setContaAnuncios(resultado.adAccountId ?? "");
+      if (daConta) {
+        setContaAnuncios(resultado.adAccountId ?? "");
+      }
       toast.success(
         onde === "conta" ? "Conta de anúncios salva." : "Escolha salva.",
       );

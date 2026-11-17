@@ -38,6 +38,7 @@ import {
   permissionHint,
 } from "@/lib/domain/permissions";
 import type { PapelNaTela, Role } from "@/lib/domain/permissions";
+import { repescarConversoesDaMeta } from "@/lib/jobs/repescar-conversoes-meta";
 import { lerMarcasDaClinica } from "@/lib/queries/implementadores";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -1604,6 +1605,26 @@ export async function salvarTokenMetaAction(
     entity_id: guard.clinicId,
   });
   revalidatePath("/configuracoes");
+
+  // Token trocado com o envio ja ligado: o que falhou com o token antigo
+  // (dentro dos 7 dias) volta para a fila. Sem isto, corrigir o token nao
+  // recuperava nada (achado da revisao de 17/11/2026).
+  const { data: conta } = await admin
+    .from("meta_ads_account")
+    .select("envio_ativado")
+    .eq("clinic_id", guard.clinicId)
+    .maybeSingle();
+  if (conta?.envio_ativado) {
+    const repescagem = await repescarConversoesDaMeta(admin, guard.clinicId);
+    if (!repescagem.ok) {
+      return {
+        ok: false,
+        error:
+          "O token foi salvo, mas as conversões com falha não voltaram para a fila. Desligue e ligue o envio para tentar outra vez.",
+      };
+    }
+    revalidatePath("/relatorios");
+  }
   return { ok: true };
 }
 
@@ -1635,63 +1656,9 @@ export async function alternarEnvioMetaAction(
     return { ok: false, error: recusa };
   }
 
-  if (parsed.data.ligar) {
-    // Backfill da janela da CAPI: eventos registrados dos ultimos 7 dias
-    // entram na fila; os mais antigos sao descartados com codigo. Escrita de
-    // sistema (conversion_event e job_queue nao tem policy de escrita).
-    //
-    // ORDEM IMPORTA (achado da revisao adversarial de 09/09/2026): o job
-    // nasce ANTES de o status virar 'enfileirado'. Se o insert do job
-    // falhar, o evento continua 'registrado' e o proximo religar o repesca;
-    // 'enfileirado' sem job seria orfao para sempre. O job aceita evento
-    // 'registrado' numa boa (ele so recusa 'enviado'/'descartado'/'falhou').
-    const admin = createAdminClient();
-    const corte = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const { error: erroDescarte } = await admin
-      .from("conversion_event")
-      .update({ status: "descartado", erro: "fora_da_janela_capi" })
-      .eq("clinic_id", guard.clinicId)
-      .eq("status", "registrado")
-      .lt("created_at", corte);
-    const { data: recentes, error: erroLeitura } = await admin
-      .from("conversion_event")
-      .select("id")
-      .eq("clinic_id", guard.clinicId)
-      .eq("status", "registrado")
-      .gte("created_at", corte)
-      .limit(1000);
-    if (erroDescarte || erroLeitura) {
-      return {
-        ok: false,
-        error:
-          "O envio ligou, mas os registros antigos não entraram na fila. Desligue e ligue de novo para tentar outra vez.",
-      };
-    }
-    let falhas = 0;
-    for (const evento of recentes ?? []) {
-      const { error: erroJob } = await admin.from("job_queue").insert({
-        clinic_id: guard.clinicId,
-        kind: "enviar_conversao_meta",
-        payload: { conversion_event_id: evento.id },
-      });
-      if (erroJob) {
-        falhas += 1;
-        continue;
-      }
-      await admin
-        .from("conversion_event")
-        .update({ status: "enfileirado" })
-        .eq("id", evento.id)
-        .eq("status", "registrado");
-    }
-    if (falhas > 0) {
-      return {
-        ok: false,
-        error: `O envio ligou, mas ${falhas} ${falhas === 1 ? "registro antigo não entrou" : "registros antigos não entraram"} na fila. Desligue e ligue de novo para tentar outra vez.`,
-      };
-    }
-  }
-
+  // Trilha e telas ANTES da repescagem: o envio ja mudou no banco. Se a fila
+  // falhar no meio, a chave nao pode continuar mostrando "desligado" nem o
+  // ligar ficar sem registro (achado da revisao de 17/11/2026).
   await supabase.from("audit_log").insert({
     clinic_id: guard.clinicId,
     user_id: guard.context.userId,
@@ -1703,5 +1670,22 @@ export async function alternarEnvioMetaAction(
   });
   revalidatePath("/configuracoes");
   revalidatePath("/relatorios");
+
+  if (parsed.data.ligar) {
+    const repescagem = await repescarConversoesDaMeta(
+      createAdminClient(),
+      guard.clinicId,
+    );
+    if (!repescagem.ok) {
+      const falhas = repescagem.falhas;
+      return {
+        ok: false,
+        error:
+          falhas === null
+            ? "O envio ligou, mas os registros antigos não entraram na fila. Desligue e ligue de novo para tentar outra vez."
+            : `O envio ligou, mas ${falhas} ${falhas === 1 ? "registro antigo não entrou" : "registros antigos não entraram"} na fila. Desligue e ligue de novo para tentar outra vez.`,
+      };
+    }
+  }
   return { ok: true };
 }

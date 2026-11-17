@@ -83,6 +83,11 @@ export const TEXTOS_DO_DIALOGO = {
     "O texto do link ganha um código como [#K7Q2MX] no fim. Ele reconhece também quem já é contato, e quem apagar o código ainda é reconhecido pela mensagem.",
   mensagemMudouSemCodigo:
     "Com a mensagem nova, o link antigo deixa de ser reconhecido. Troque o link onde ele já estiver publicado.",
+  // O link rastreado so existe com mensagem pronta: sem ela, o link e o QR
+  // Code ja publicados passam a dar "Link indisponível" (revisao de
+  // 17/11/2026).
+  mensagemApagada:
+    "Sem a mensagem pronta, o link rastreado e o QR Code desta origem param de funcionar. Quem já tem o link ou o QR Code impresso vai ver Link indisponível.",
   salvarAntesDeCopiar: "Salve a origem antes de copiar o link.",
   salvarMudancaAntesDeCopiar: "Salve a mudança antes de copiar o link novo.",
 } as const;
@@ -161,6 +166,8 @@ export function FormularioDaOrigem({
   const mensagemMudou =
     regra !== null &&
     normalizarTexto(mensagem) !== normalizarTexto(regra.mensagem ?? "");
+  const mensagemApagada =
+    Boolean(regra?.mensagem) && normalizarTexto(mensagem) === "";
 
   // Devolve false quando a palavra digitada nao entra (o erro fica no
   // campo); true quando entrou ou nao havia nada para entrar.
@@ -388,7 +395,9 @@ export function FormularioDaOrigem({
             {aviso.texto}
           </Aviso>
         ))}
-        {mensagemMudou && regra?.codigo === null && regra.mensagem ? (
+        {mensagemApagada ? (
+          <Aviso tom="warning">{TEXTOS_DO_DIALOGO.mensagemApagada}</Aviso>
+        ) : mensagemMudou && regra?.codigo === null && regra.mensagem ? (
           <Aviso tom="warning">
             {TEXTOS_DO_DIALOGO.mensagemMudouSemCodigo}
           </Aviso>
