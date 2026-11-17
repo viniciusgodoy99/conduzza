@@ -177,9 +177,9 @@ async function convidadosQueAindaNaoEntraram(
 export default async function ConfiguracoesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ aba?: string }>;
+  searchParams: Promise<{ aba?: string; passo?: string }>;
 }) {
-  const { aba } = await searchParams;
+  const { aba, passo } = await searchParams;
   if (aba === "fluxo") {
     redirect("/automacoes?aba=fluxo");
   }
@@ -566,6 +566,7 @@ export default async function ConfiguracoesPage({
       <AvisoCelular />
       <ConfiguracoesClient
         abaInicial={aba}
+        passoInicial={passo}
         equipe={
           memberResult.error
             ? null

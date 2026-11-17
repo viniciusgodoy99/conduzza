@@ -444,7 +444,7 @@ export function InvestimentoMetaCard({
         <CardTitle id={tituloId}>Investimento nos anúncios</CardTitle>
         <CardDescription>
           Quanto a clínica investiu nos anúncios, para o custo por lead em
-          Resultados. A leitura usa a conta de anúncios do cartão ao lado e
+          Resultados. A leitura usa a conta de anúncios do passo 1 e
           roda sozinha todo dia de manhã.
         </CardDescription>
         <CardAction>

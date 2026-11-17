@@ -227,7 +227,7 @@ describe("leitura parada: o fim do período conta, com folga", () => {
     });
     expect(textoDoCustoPorLead(estado)).toBe("Ainda não medido");
     expect(dicaDoCustoPorLead(estado)).toBe(
-      "O investimento foi lido até 13/09/2026. A leitura do investimento está com problema. Veja o motivo em Configurações, aba Anúncios da Meta.",
+      "O investimento foi lido até 13/09/2026. A leitura do investimento está com problema. Veja o motivo em Configurações, aba Anúncios e rastreio.",
     );
     expect(rodapeDoCustoPorLead(estado)).toBeNull();
   });
@@ -343,7 +343,7 @@ describe("estadoDoCustoPorLead e os textos do contrato", () => {
     expect(estado.tipo).toBe("nao-configurado");
     expect(textoDoCustoPorLead(estado)).toBe("Ainda não medido");
     expect(dicaDoCustoPorLead(estado)).toBe(
-      "Ligue a leitura do investimento em Configurações, aba Anúncios da Meta.",
+      "Ligue a leitura do investimento em Configurações, aba Anúncios e rastreio.",
     );
   });
 
@@ -374,7 +374,7 @@ describe("estadoDoCustoPorLead e os textos do contrato", () => {
     );
     expect(estado).toEqual({ tipo: "aguardando-primeira-leitura", comProblema: true });
     expect(dicaDoCustoPorLead(estado)).toBe(
-      "A leitura do investimento está com problema. Veja o motivo em Configurações, aba Anúncios da Meta.",
+      "A leitura do investimento está com problema. Veja o motivo em Configurações, aba Anúncios e rastreio.",
     );
   });
 

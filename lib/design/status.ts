@@ -58,6 +58,7 @@ import type { ComponentType, SVGProps } from "react";
 import { BuildingSlash } from "@/components/shared/icons/building-slash";
 import type { SituacaoDaAtividade } from "@/lib/domain/atividades";
 import type { EstadoDoItemDaAgendada } from "@/lib/domain/mensagem-agendada";
+import type { SituacaoDoPasso } from "@/lib/domain/passos-do-rastreio";
 import { ACCESS_LABELS, type Access } from "@/lib/domain/permissions";
 // [AG7 preparo] início
 import type { SituacaoDoChipDoPreparo } from "@/lib/domain/preparo";
@@ -452,6 +453,19 @@ export const TOKEN_META_STATUS: Record<TokenMetaStatus, StatusDefinition> = {
   salvo: { label: "Token salvo", tone: "success", icon: KeyRound },
   ausente: { label: "Sem token", tone: "neutral", icon: CircleDashed },
 };
+
+// Passo a passo da aba "Anuncios e rastreio" (Configuracoes, 17/11/2026). So
+// icones que ja tem dono, no mesmo sentido e na mesma cor: CircleCheck
+// success (pronto ou ligado, com o rotulo trocado pelo chip), Hourglass
+// warning (o passo pendente do checklist), CirclePause neutral (desligado) e
+// OctagonAlert alert (a leitura falhou).
+export const PASSO_DO_RASTREIO_STATUS: Record<SituacaoDoPasso, StatusDefinition> =
+  {
+    pronto: { label: "Pronto", tone: "success", icon: CircleCheck },
+    falta: { label: "Falta fazer", tone: "warning", icon: Hourglass },
+    desligado: { label: "Desligado", tone: "neutral", icon: CirclePause },
+    indisponivel: { label: "Não carregou", tone: "alert", icon: OctagonAlert },
+  };
 
 // Leitura do investimento da Meta (Configuracoes, anuncios; Fase 4). So
 // icones que ja tem dono, no mesmo sentido e na mesma cor (C15 da critica,

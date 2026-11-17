@@ -4,12 +4,14 @@ import { Hourglass } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
-import { ClinicaTab } from "@/components/configuracoes/clinica-tab";
-import { EtiquetasTab } from "@/components/configuracoes/etiquetas-tab";
 import {
-  GoogleAdsTab,
-  type DadosDoRastreio,
-} from "@/components/configuracoes/google-ads-tab";
+  AnunciosERastreioTab,
+  type DadosDaMeta,
+} from "@/components/configuracoes/anuncios-e-rastreio-tab";
+import { ClinicaTab } from "@/components/configuracoes/clinica-tab";
+import { ErroDaAba } from "@/components/configuracoes/erro-da-aba";
+import { EtiquetasTab } from "@/components/configuracoes/etiquetas-tab";
+import type { DadosDoRastreio } from "@/components/configuracoes/google-ads-tab";
 import { JornadaTab } from "@/components/configuracoes/jornada-tab";
 import { ListaEquipe } from "@/components/configuracoes/lista-equipe";
 import { MensagensPadraoTab } from "@/components/configuracoes/mensagens-padrao-tab";
@@ -17,16 +19,7 @@ import type {
   MembroEquipe,
   ProfissionalDaAgenda,
 } from "@/components/configuracoes/lista-equipe";
-import type { LeituraDoInvestimento } from "@/components/configuracoes/investimento-meta";
-import {
-  MetaAdsTab,
-  type ContaMeta,
-} from "@/components/configuracoes/meta-ads-tab";
-import {
-  OrigemDosLeadsTab,
-  TEXTOS_DA_ORIGEM,
-  type DadosDasOrigens,
-} from "@/components/configuracoes/origem-dos-leads-tab";
+import type { DadosDasOrigens } from "@/components/configuracoes/origem-dos-leads-tab";
 import { PainelPapeis } from "@/components/configuracoes/painel-papeis";
 // [AG7 preparo] início
 import {
@@ -35,7 +28,6 @@ import {
 } from "@/components/configuracoes/responsavel-tecnico-card";
 // [AG7 preparo] fim
 import { Aviso } from "@/components/shared/aviso";
-import { EmptyState } from "@/components/shared/empty-state";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -57,6 +49,7 @@ import {
 } from "@/components/whatsapp/lista-de-numeros";
 import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
+import { ehAbaAntigaDoRastreio } from "@/lib/domain/passos-do-rastreio";
 import type { RespostaRapida } from "@/lib/domain/respostas-rapidas";
 
 import { CodigoAcesso, PendentesList } from "./equipe-client";
@@ -90,15 +83,12 @@ const ABAS = [
   ["jornada", "Jornada e conversões"],
   ["etiquetas", "Etiquetas de conversa"],
   ["mensagens", "Mensagens padrão"],
-  ["meta", "Anúncios da Meta"],
-  // Anuncios do Google (F1, 04/10/2026): o rastreio do site e, em breve, a
-  // conexao com o Google Ads. Logo depois da Meta.
-  ["google", "Anúncios do Google"],
-  // Origem dos leads (onda 5, item 17; P17-1 do dono em 21/10/2026): as
-  // regras que reconhecem o lead do link da bio, do perfil no Google, do QR
-  // code ou de um parceiro. Logo depois dos anuncios: com ela, a fileira
-  // fixa tem 9 abas (e o esqueleto de loading.tsx, 9 barras).
-  ["origem", "Origem dos leads"],
+  // Anuncios e rastreio (decisao do dono de 17/11/2026): um lugar so para o
+  // que substitui o Tintim. Juntou as abas Anuncios da Meta, Anuncios do
+  // Google e Origem dos leads, que viraram os passos dela; os links antigos
+  // (?aba=meta, ?aba=google e ?aba=origem) caem aqui, com o passo aberto. Com
+  // ela, a fileira tem 7 abas (e o esqueleto de loading.tsx, 7 barras).
+  ["rastreio", "Anúncios e rastreio"],
 ] as const;
 
 type AbaKey = (typeof ABAS)[number][0];
@@ -133,18 +123,6 @@ function AvisoDoAssistente() {
   );
 }
 
-function ErroDaAba({ titulo }: { titulo: string }) {
-  return (
-    <Card>
-      <EmptyState
-        tom="erro"
-        title={titulo}
-        description="Recarregue a página. Se continuar, fale com o suporte."
-      />
-    </Card>
-  );
-}
-
 // Espaco literal antes do numero: o nome acessivel da aba fica "Etiquetas
 // de conversa 4", e nao "conversa4".
 function Contagem({ valor, rotulo }: { valor: number; rotulo: string }) {
@@ -163,6 +141,7 @@ function Contagem({ valor, rotulo }: { valor: number; rotulo: string }) {
 
 export function ConfiguracoesClient({
   abaInicial,
+  passoInicial,
   equipe,
   meuUserId,
   podeGerenciar,
@@ -185,6 +164,8 @@ export function ConfiguracoesClient({
   comAgenteDeIa = false,
 }: {
   abaInicial?: string;
+  /** ?passo= do endereco: o passo aberto da aba Anuncios e rastreio. */
+  passoInicial?: string;
   /** nulo: a leitura da equipe falhou */
   equipe: {
     membros: MembroEquipe[];
@@ -237,27 +218,22 @@ export function ConfiguracoesClient({
     nomeDaClinica: string;
   } | null;
   /**
-   * A aba Origem dos leads: as origens (todas), os numeros que servem ao
-   * link e as frases do botao do site. Nulo (ou ausente): a leitura das
-   * origens falhou, e a aba mostra o erro com "Tentar de novo".
+   * O passo "Links e origens" da aba Anuncios e rastreio: as origens
+   * (todas), os numeros que servem ao link e as frases do botao do site.
+   * Nulo (ou ausente): a leitura das origens falhou, e o passo mostra o
+   * erro com "Tentar de novo".
    */
   origens?: DadosDasOrigens | null;
   /**
-   * A aba Anuncios da Meta: a conta, se existe cada token (nunca o valor) e
-   * a situacao da leitura do investimento. Nulo: alguma leitura falhou.
+   * Os passos da Meta na aba Anuncios e rastreio: a conta, se existe cada
+   * token (nunca o valor) e a situacao da leitura do investimento. Nulo:
+   * alguma leitura falhou.
    */
-  meta: {
-    conta: ContaMeta | null;
-    temToken: boolean;
-    temTokenDeLeitura: boolean;
-    leitura: LeituraDoInvestimento | null;
-    timezone: string;
-    agoraMs: number;
-  } | null;
+  meta: DadosDaMeta | null;
   /**
-   * A aba Anuncios do Google: a linha do rastreio do site (com a chave, que
-   * e publica), a resposta crua dos totais e o endereco do sistema. Nulo: a
-   * leitura do rastreio falhou.
+   * O passo "Rastreio do site" da aba Anuncios e rastreio: a linha do
+   * rastreio do site (com a chave, que e publica), a resposta crua dos
+   * totais e o endereco do sistema. Nulo: a leitura do rastreio falhou.
    */
   google: DadosDoRastreio | null;
   /**
@@ -278,7 +254,9 @@ export function ConfiguracoesClient({
     ? (abaInicial as AbaKey)
     : abaInicial === "conversoes" // link antigo, antes de a jornada absorver
       ? "jornada"
-      : "equipe";
+      : ehAbaAntigaDoRastreio(abaInicial) // meta, google e origem (17/11/2026)
+        ? "rastreio"
+        : "equipe";
 
   const trocarAba = (aba: string) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -317,9 +295,6 @@ export function ConfiguracoesClient({
     }
     if (aba === "mensagens" && mensagens) {
       return <Contagem valor={mensagens.lista.length} rotulo="mensagens" />;
-    }
-    if (aba === "origem" && origens) {
-      return <Contagem valor={origens.regras.length} rotulo="origens" />;
     }
     return null;
   };
@@ -493,56 +468,16 @@ export function ConfiguracoesClient({
         )}
       </TabsContent>
 
-      <TabsContent value="meta" className="grid gap-4">
-        <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
-          A conta de anúncios da clínica serve a duas coisas: ler quanto foi
-          investido, para o custo por lead em Resultados, e devolver as
-          conversões para a Meta medir o anúncio quando um contato chega numa
-          etapa com evento configurado na Jornada.
-        </p>
-        {meta ? (
-          <MetaAdsTab
-            conta={meta.conta}
-            temToken={meta.temToken}
-            temTokenDeLeitura={meta.temTokenDeLeitura}
-            leitura={meta.leitura}
-            timezone={meta.timezone}
-            agoraMs={meta.agoraMs}
-            podeGerenciar={podeGerenciar}
-            dica={dica}
-          />
-        ) : (
-          <ErroDaAba titulo="Não foi possível carregar a conta de anúncios" />
-        )}
-      </TabsContent>
-
-      <TabsContent value="origem" className="grid gap-4">
-        <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
-          {TEXTOS_DA_ORIGEM.descricaoDaAba}
-        </p>
-        <OrigemDosLeadsTab
-          dados={origens}
+      <TabsContent value="rastreio" className="grid gap-4">
+        <AnunciosERastreioTab
+          meta={meta}
+          google={google}
+          origens={origens ?? null}
           podeGerenciar={podeGerenciar}
           dica={dica}
+          passoDoEndereco={passoInicial}
+          abaDoEndereco={abaInicial}
         />
-      </TabsContent>
-
-      <TabsContent value="google" className="grid gap-4">
-        <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
-          Quando o anúncio do Google leva ao site da clínica, o rastreio do site
-          marca o clique no botão do WhatsApp, e o lead chega com a origem e a
-          campanha do Google, sem cadastro manual. O investimento em cada
-          campanha chega com a conexão com o Google, em breve.
-        </p>
-        {google ? (
-          <GoogleAdsTab
-            rastreio={google}
-            podeGerenciar={podeGerenciar}
-            dica={dica}
-          />
-        ) : (
-          <ErroDaAba titulo="Não foi possível carregar o rastreio do site" />
-        )}
       </TabsContent>
     </Tabs>
   );

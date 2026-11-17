@@ -42,7 +42,7 @@ import {
   InvestimentoMetaCard,
   resultadoDoTesteNaTela,
 } from "@/components/configuracoes/investimento-meta-card";
-import { MetaAdsTab } from "@/components/configuracoes/meta-ads-tab";
+import { useCartoesDaMeta } from "@/components/configuracoes/meta-ads-tab";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   ACCESS_LEVEL_STATUS,
@@ -717,7 +717,21 @@ describe("LEITURA_META_STATUS", () => {
   });
 });
 
-describe("aba Anúncios da Meta", () => {
+// Desde 17/11/2026 os cartoes da Meta sao os passos 1 a 4 da aba Anuncios e
+// rastreio: o gancho devolve os quatro e aqui eles entram juntos.
+function MetaAdsTab(props: Parameters<typeof useCartoesDaMeta>[0]) {
+  const cartoes = useCartoesDaMeta(props);
+  return (
+    <>
+      {cartoes.conta}
+      {cartoes.token}
+      {cartoes.envio}
+      {cartoes.investimento}
+    </>
+  );
+}
+
+describe("os cartões da Meta (passos 1 a 4 de Anúncios e rastreio)", () => {
   function aba(props: Partial<React.ComponentProps<typeof MetaAdsTab>> = {}) {
     return renderToStaticMarkup(
       <TooltipProvider>
@@ -754,6 +768,31 @@ describe("aba Anúncios da Meta", () => {
     // Os dois tokens tem campos proprios.
     expect(html).toContain("Token da API de conversões");
     expect(html).toContain("Token de leitura de anúncios");
+  });
+
+  it("cada campo diz onde encontrar o dado, com o link que abre a Meta em outra aba", () => {
+    const html = aba();
+    // Pixel, conta de anuncios, conta do WhatsApp e codigo de teste.
+    expect(html.match(/Onde encontro: /g)).toHaveLength(4);
+    // O token tem o passo a passo inteiro e o botao do Gerenciador de Eventos.
+    expect(html).toContain("Gerar token de acesso");
+    expect(html).toContain(
+      'href="https://business.facebook.com/events_manager2/list"',
+    );
+    expect(html).toContain('href="https://www.facebook.com/adsmanager/manage"');
+    // Todo link de fora abre em outra aba, sem entregar a pagina de origem.
+    const deFora = html.match(/<a [^>]*href="https:\/\/[^>]*>/g) ?? [];
+    expect(deFora.length).toBeGreaterThan(4);
+    for (const link of deFora) {
+      expect(link).toContain('target="_blank"');
+      expect(link).toContain('rel="noopener noreferrer"');
+    }
+  });
+
+  it("o passo do envio salva a escolha de como os dados saem e leva à Jornada", () => {
+    const html = aba();
+    expect(html).toContain("Salvar escolha");
+    expect(html).toContain('href="/configuracoes?aba=jornada"');
   });
 
   it("nenhum travessão no texto da aba, em nenhum estado", () => {

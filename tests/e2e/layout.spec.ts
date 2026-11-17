@@ -113,14 +113,14 @@ for (const rota of [
 test("aba aberta por link aparece na fileira mesmo quando a fileira rola", async ({
   page,
 }) => {
-  // A ultima aba fixa de Configuracoes (Origem dos leads, desde a onda 5),
-  // aberta pela URL: sem rolar a fileira ate ela, a aba ativa nasceria
-  // escondida depois da borda.
+  // A ultima aba fixa de Configuracoes (Anuncios e rastreio, desde
+  // 17/11/2026), aberta pela URL: sem rolar a fileira ate ela, a aba ativa
+  // nasceria escondida depois da borda.
   await login(page, dados().emails.admin);
-  await page.goto("/configuracoes?aba=origem");
+  await page.goto("/configuracoes?aba=rastreio");
   const lista = page.locator("main").getByRole("tablist").first();
   const ativa = lista.getByRole("tab", { selected: true });
-  await expect(ativa).toHaveText(/Origem dos leads/);
+  await expect(ativa).toHaveText(/Anúncios e rastreio/);
   await expect
     .poll(async () => {
       const caixa = await lista.boundingBox();

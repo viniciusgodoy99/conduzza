@@ -79,10 +79,10 @@ export const TEXTOS_DO_DIVISOR: Record<DivisorDoCustoPorLead, TextosDoDivisor> =
 export const TEXTOS_DO_CUSTO_POR_LEAD = {
   naoMedido: "Ainda não medido",
   dicaNaoConfigurado:
-    "Ligue a leitura do investimento em Configurações, aba Anúncios da Meta.",
+    "Ligue a leitura do investimento em Configurações, aba Anúncios e rastreio.",
   dicaAguardando: "A primeira leitura do investimento ainda não terminou.",
   dicaComProblema:
-    "A leitura do investimento está com problema. Veja o motivo em Configurações, aba Anúncios da Meta.",
+    "A leitura do investimento está com problema. Veja o motivo em Configurações, aba Anúncios e rastreio.",
   outraMoeda: "Conta em outra moeda",
   rodapeOutraMoeda: "A conta de anúncios não usa real, e o valor não é convertido.",
   semInvestimento: "Sem investimento no período",

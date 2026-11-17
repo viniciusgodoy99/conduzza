@@ -69,7 +69,7 @@ describe("CartaoCustoPorLead", () => {
     expect(html).toContain('data-estado="nao-medido"');
     expect(texto(html)).toContain("Ainda não medido");
     expect(html).toContain(
-      'data-dica="Ligue a leitura do investimento em Configurações, aba Anúncios da Meta."',
+      'data-dica="Ligue a leitura do investimento em Configurações, aba Anúncios e rastreio."',
     );
   });
 
@@ -100,7 +100,7 @@ describe("CartaoCustoPorLead", () => {
     expect(html).toContain('data-estado="nao-medido"');
     expect(texto(html)).toContain("Ainda não medido");
     expect(html).toContain(
-      'data-dica="O investimento foi lido até 13/09/2026. A leitura do investimento está com problema. Veja o motivo em Configurações, aba Anúncios da Meta."',
+      'data-dica="O investimento foi lido até 13/09/2026. A leitura do investimento está com problema. Veja o motivo em Configurações, aba Anúncios e rastreio."',
     );
     expect(html).not.toContain("R$");
     expect(html).not.toContain('data-parte="variacao"');

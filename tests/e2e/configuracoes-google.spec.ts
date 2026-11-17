@@ -178,7 +178,9 @@ async function montar(opcoes: { ativo: boolean } | null): Promise<void> {
 }
 
 function cartaoDoRastreio(page: Page): Locator {
-  return page.getByRole("region", { name: TITULO_DO_CARTAO });
+  // exact: o passo aberto da aba Anuncios e rastreio tambem e uma regiao, e o
+  // nome do cartao e um trecho do nome dela ("Passo 5: Rastreio do site").
+  return page.getByRole("region", { name: TITULO_DO_CARTAO, exact: true });
 }
 
 /**
@@ -194,7 +196,9 @@ async function abrirAba(page: Page, email: string): Promise<Locator> {
   await login(page, email);
   await page.goto("/configuracoes?aba=google");
   await expect(
-    page.getByRole("tab", { name: "Anúncios do Google" }),
+    // O link antigo (?aba=google) cai na aba Anuncios e rastreio, com o
+    // passo do site aberto (17/11/2026).
+    page.getByRole("tab", { name: "Anúncios e rastreio" }),
   ).toHaveAttribute("aria-selected", "true");
   const cartao = cartaoDoRastreio(page);
   await expect(cartao).toBeVisible();
@@ -640,7 +644,7 @@ test("o papel leitura não chega à aba: Configurações é só da gestão", asy
   await page.goto("/configuracoes?aba=google");
   await page.waitForURL(/\/inicio/);
   await expect(
-    page.getByRole("tab", { name: "Anúncios do Google" }),
+    page.getByRole("tab", { name: "Anúncios e rastreio" }),
   ).toHaveCount(0);
   await expect(cartaoDoRastreio(page)).toHaveCount(0);
 });
