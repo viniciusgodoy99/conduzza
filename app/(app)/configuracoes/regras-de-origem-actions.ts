@@ -497,3 +497,55 @@ export async function salvarNumerosDoLinkAction(
   revalidar();
   return { ok: true };
 }
+
+// ---------------------------------------------------------------------------
+// Avisar a Meta no clique do link (etapa 3e do plano de 16/11/2026)
+// ---------------------------------------------------------------------------
+
+const avisoDaMetaSchema = z.object({ id: z.uuid(), ligado: z.boolean() });
+
+/**
+ * Liga ou desliga "Avisar a Meta no clique" no link rastreado da origem
+ * (campaign_link.avisar_meta_no_clique, migration 20261116150000). Mesma
+ * guarda das outras actions de origem, Zod, cliente de SESSAO e trilha. Ligar
+ * sem o Pixel ou o envio de conversoes nao faz mal: o banco confere os dois a
+ * cada clique e, sem eles, o link so redireciona.
+ */
+export async function definirAvisoDaMetaNoLinkAction(
+  entrada: unknown,
+): Promise<ResultadoDosNumerosDoLink> {
+  const guarda = await exigirGestao();
+  if ("error" in guarda) {
+    return { ok: false, error: guarda.error };
+  }
+  const parsed = avisoDaMetaSchema.safeParse(entrada);
+  if (!parsed.success) {
+    return { ok: false, error: "Origem inválida." };
+  }
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("campaign_link")
+    .update({ avisar_meta_no_clique: parsed.data.ligado })
+    .eq("clinic_id", guarda.clinicId)
+    .eq("id", parsed.data.id)
+    .select("id");
+  if (error) {
+    return {
+      ok: false,
+      error: "Não foi possível salvar. Tente de novo.",
+    };
+  }
+  if (!data || data.length === 0) {
+    return { ok: false, error: ORIGEM_SUMIU };
+  }
+  await auditar(
+    supabase,
+    guarda,
+    parsed.data.ligado
+      ? "ligou_aviso_da_meta_no_link"
+      : "desligou_aviso_da_meta_no_link",
+    parsed.data.id,
+  );
+  revalidar();
+  return { ok: true };
+}

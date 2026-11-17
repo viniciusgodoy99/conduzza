@@ -637,6 +637,13 @@ export default async function ConfiguracoesPage({
                 ),
                 resumoDosLinks,
                 numerosDosLinks,
+                // "Avisar a Meta no clique" so funciona com o Pixel e o
+                // envio de conversoes ligados (a policy so mostra a conta
+                // para administrador e gestor, os unicos que mexem na chave).
+                metaProntaParaOClique: Boolean(
+                  contaMetaResult.data?.pixel_id &&
+                    contaMetaResult.data?.envio_ativado,
+                ),
                 // Os numeros ativos da leitura da aba WhatsApp (o principal
                 // primeiro), so os que ja tem telefone. Nulo: a leitura
                 // falhou, e o bloco do link diz isso.

@@ -149,6 +149,13 @@ const respostaSchema = z.discriminatedUnion("resultado", [
   destinoSchema.extend({
     resultado: z.literal("ok"),
     codigo: z.string().regex(/^[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{6}$/),
+    // Etapa 3e: so vem quando a origem pede o aviso a Meta no clique e a
+    // clinica tem o Pixel e o envio ligados. Os tres juntos ou nenhum.
+    pixel_id: z.string().regex(/^[0-9]{1,20}$/).optional(),
+    /** O id do clique: o id do evento no navegador e no servidor. */
+    clique_id: z.string().regex(FORMATO_DO_NUMERO).optional(),
+    /** So para o servidor achar o token; nunca vai ao navegador. */
+    clinica: z.string().regex(FORMATO_DO_NUMERO).optional(),
   }),
   destinoSchema.extend({ resultado: z.literal("sem_gravar") }),
   destinoSchema.extend({ resultado: z.literal("limite") }),
@@ -262,4 +269,125 @@ export function textoDosNumerosDoLink(
   }
   const partes = comNome.map((item) => `${item.nome} (peso ${item.peso})`);
   return `${partes.slice(0, -1).join(", ")} e ${partes[partes.length - 1]}`;
+}
+
+// ---------------------------------------------------------------------------
+// Evento para a Meta no clique (etapa 3e)
+// ---------------------------------------------------------------------------
+
+/** O que o redirect precisa para avisar a Meta deste clique. */
+export type AvisoDaMetaNoClique = {
+  pixelId: string;
+  /** O id do clique: o mesmo no Pixel (eventID) e no servidor (event_id). */
+  eventoId: string;
+  clinicId: string;
+};
+
+/** O aviso deste clique, ou null (a origem nao pede, ou a clinica nao tem). */
+export function avisoDaMetaNoClique(
+  resposta: RespostaDoCliqueDoLink,
+): AvisoDaMetaNoClique | null {
+  if (
+    resposta.resultado !== "ok" ||
+    !resposta.pixel_id ||
+    !resposta.clique_id ||
+    !resposta.clinica
+  ) {
+    return null;
+  }
+  return {
+    pixelId: resposta.pixel_id,
+    eventoId: resposta.clique_id,
+    clinicId: resposta.clinica,
+  };
+}
+
+/** Quanto a pagina espera o Pixel antes de seguir de qualquer jeito. */
+export const TETO_DA_PAGINA_DO_PIXEL_MS = 1500;
+
+function paraAtributo(texto: string): string {
+  return texto
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/** JSON seguro dentro de <script>: nunca fecha a tag nem quebra a linha. */
+function paraScript(valor: string): string {
+  return JSON.stringify(valor)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+/**
+ * A pagina intermediaria do link com aviso a Meta: carrega o Pixel da
+ * clinica, dispara PageView e Contact (com o id do clique, para a Meta
+ * juntar com o evento do servidor) e segue para o WhatsApp. Nunca prende a
+ * pessoa: segue logo depois de o Pixel carregar, na hora se ele falhar e, de
+ * todo jeito, em 1,5 s; sem JavaScript, o proprio navegador redireciona.
+ *
+ * Sem cor fixa: usa as cores do sistema da pessoa (claro e escuro). O
+ * destino e montado pelo servidor (wa.me); o Pixel e so numero e o id do
+ * evento e um uuid, os dois conferidos antes de chegar aqui.
+ */
+export function paginaDoPixel(aviso: {
+  pixelId: string;
+  eventoId: string;
+  destino: string;
+}): string {
+  const destinoNoAtributo = paraAtributo(aviso.destino);
+  return `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>Abrindo o WhatsApp</title>
+<noscript><meta http-equiv="refresh" content="0;url=${destinoNoAtributo}"></noscript>
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;text-align:center;padding:24px;font-size:16px;line-height:1.5}
+a{display:inline-block;min-height:40px;line-height:40px;padding:0 12px}
+</style>
+</head>
+<body>
+<main>
+<p>Abrindo o WhatsApp...</p>
+<p><a href="${destinoNoAtributo}" rel="noreferrer">Se não abrir, toque aqui</a></p>
+</main>
+<script>
+(function () {
+  var destino = ${paraScript(aviso.destino)};
+  var seguiu = false;
+  function seguir() {
+    if (seguiu) return;
+    seguiu = true;
+    window.location.replace(destino);
+  }
+  setTimeout(seguir, ${TETO_DA_PAGINA_DO_PIXEL_MS});
+  try {
+    !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;t.onload=function(){setTimeout(seguir,400)};t.onerror=seguir;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', ${paraScript(aviso.pixelId)});
+    fbq('track', 'PageView');
+    fbq('track', 'Contact', {}, { eventID: ${paraScript(aviso.eventoId)} });
+  } catch (e) {
+    seguir();
+  }
+})();
+</script>
+</body>
+</html>
+`;
+}
+
+/**
+ * O IP do visitante, do cabecalho que a hospedagem preenche. So segue se
+ * parecer um IP: vai a Meta junto do evento do clique e a mais nenhum lugar.
+ */
+export function ipDoVisitante(xForwardedFor: string | null): string | null {
+  const primeiro = xForwardedFor?.split(",")[0]?.trim();
+  return primeiro && /^[0-9a-fA-F:.]{3,45}$/.test(primeiro) ? primeiro : null;
 }

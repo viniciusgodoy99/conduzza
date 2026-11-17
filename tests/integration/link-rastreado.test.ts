@@ -696,3 +696,74 @@ describe("código invisível do link", () => {
     });
   });
 });
+
+// Evento para a Meta no clique (etapa 3e, migration 20261116150000).
+describe("avisar a Meta no clique", () => {
+  it("o Pixel e o id do clique só vêm com a chave da origem ligada e o Pixel e o envio ligados na clínica", async () => {
+    const clinicId = await criarClinica("pixel");
+    const origem = await criarOrigem(clinicId, { avisar_meta_no_clique: true });
+
+    // 1. Chave ligada, clinica sem conta da Meta: redirecionamento comum.
+    const semConta = await clicar(origem.codigoPublico);
+    expect(semConta.resultado).toBe("ok");
+    expect(semConta.pixel_id).toBeUndefined();
+
+    // 2. Com o Pixel e o envio ligados: o Pixel, o id do clique (o do
+    // evento) e a clinica (so para o servidor achar o token).
+    await admin
+      .from("meta_ads_account_secret")
+      .insert({ clinic_id: clinicId, capi_access_token: "tok-integ" })
+      .throwOnError();
+    await admin
+      .from("meta_ads_account")
+      .insert({
+        clinic_id: clinicId,
+        pixel_id: "626829132163238",
+        modo_user_data: "ctwa_apenas",
+        envio_ativado: true,
+      })
+      .throwOnError();
+    const comPixel = await clicar(origem.codigoPublico);
+    expect(comPixel).toMatchObject({
+      resultado: "ok",
+      pixel_id: "626829132163238",
+      clinica: clinicId,
+    });
+    const { data: clique } = await admin
+      .from("clique_do_site")
+      .select("id")
+      .eq("clinic_id", clinicId)
+      .eq("codigo", String(comPixel.codigo))
+      .single()
+      .throwOnError();
+    expect(comPixel.clique_id).toBe(clique!.id);
+    // A resposta nunca traz o token.
+    expect(JSON.stringify(comPixel)).not.toContain("tok-integ");
+
+    // 3. Robo e previa: sem evento.
+    const robo = await clicar(origem.codigoPublico, { p_gravar: false });
+    expect(robo.resultado).toBe("sem_gravar");
+    expect(robo.pixel_id).toBeUndefined();
+
+    // 4. A clinica desligou o envio: volta ao redirecionamento comum.
+    await admin
+      .from("meta_ads_account")
+      .update({ envio_ativado: false })
+      .eq("clinic_id", clinicId)
+      .throwOnError();
+    expect((await clicar(origem.codigoPublico)).pixel_id).toBeUndefined();
+
+    // 5. Envio ligado de novo, mas a origem sem a chave: sem evento.
+    await admin
+      .from("meta_ads_account")
+      .update({ envio_ativado: true })
+      .eq("clinic_id", clinicId)
+      .throwOnError();
+    await admin
+      .from("campaign_link")
+      .update({ avisar_meta_no_clique: false })
+      .eq("id", origem.id)
+      .throwOnError();
+    expect((await clicar(origem.codigoPublico)).pixel_id).toBeUndefined();
+  });
+});

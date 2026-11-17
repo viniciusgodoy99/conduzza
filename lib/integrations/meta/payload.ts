@@ -142,3 +142,62 @@ export function montarEventoCapi(entrada: EntradaDoEvento): EventoMontado {
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Evento do clique no link rastreado (etapa 3e do plano de 16/11/2026)
+// ---------------------------------------------------------------------------
+//
+// Quem toca no link da origem, com a chave "Avisar a Meta no clique" ligada,
+// gera um Contact pelo navegador (o Pixel, na pagina intermediaria) e o MESMO
+// Contact pelo servidor, com o mesmo event_id (o id do clique): a Meta conta
+// uma vez so. Aqui o evento e de SITE (action_source "website"), casado pelo
+// que o visitante trouxe no pedido: IP, navegador e, se veio de anuncio, o
+// fbc. Nada disso e gravado no nosso banco (decisao do dono de 16/11/2026: o
+// IP e o navegador so viajam ate a Meta na hora do clique).
+
+/** O nome do evento do clique, igual no navegador e no servidor. */
+export const EVENTO_DO_CLIQUE_DO_LINK = "Contact";
+
+export type EventoDoCliqueCapi = {
+  event_name: typeof EVENTO_DO_CLIQUE_DO_LINK;
+  event_time: number;
+  event_id: string;
+  action_source: "website";
+  event_source_url: string;
+  user_data: {
+    client_user_agent: string;
+    client_ip_address?: string;
+    fbc?: string;
+  };
+};
+
+export type EntradaDoEventoDoClique = {
+  /** O id do clique: o mesmo eventID do Pixel no navegador. */
+  eventId: string;
+  /** A hora do clique, em milissegundos. */
+  cliqueEmMs: number;
+  /** O endereco do link, sem a query (as UTMs nao vao). */
+  eventSourceUrl: string;
+  userAgent: string;
+  ip: string | null;
+  fbclid: string | null;
+};
+
+export function montarEventoDoCliqueDoLink(
+  entrada: EntradaDoEventoDoClique,
+): EventoDoCliqueCapi {
+  return {
+    event_name: EVENTO_DO_CLIQUE_DO_LINK,
+    event_time: Math.floor(entrada.cliqueEmMs / 1000),
+    event_id: entrada.eventId,
+    action_source: "website",
+    event_source_url: entrada.eventSourceUrl,
+    user_data: {
+      client_user_agent: entrada.userAgent,
+      ...(entrada.ip ? { client_ip_address: entrada.ip } : {}),
+      ...(entrada.fbclid
+        ? { fbc: fbcDoClique(entrada.fbclid, entrada.cliqueEmMs) }
+        : {}),
+    },
+  };
+}

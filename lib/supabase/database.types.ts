@@ -1305,6 +1305,7 @@ export type Database = {
       campaign_link: {
         Row: {
           active: boolean
+          avisar_meta_no_clique: boolean
           campaign: string | null
           channel: string
           clinic_id: string
@@ -1321,6 +1322,7 @@ export type Database = {
         }
         Insert: {
           active?: boolean
+          avisar_meta_no_clique?: boolean
           campaign?: string | null
           channel: string
           clinic_id: string
@@ -1337,6 +1339,7 @@ export type Database = {
         }
         Update: {
           active?: boolean
+          avisar_meta_no_clique?: boolean
           campaign?: string | null
           channel?: string
           clinic_id?: string
