@@ -282,13 +282,17 @@ describe("montarExportavelDaAba: investimento da Meta (Fase 4)", () => {
     expect(indicadores).toContainEqual(["Investimento no período", "Ainda não medido"]);
     expect(indicadores).toContainEqual(["Investimento lido até", "13/09/2026"]);
     const campanhas = secao("geral", "Campanhas", extra)?.linhas;
-    expect(campanhas?.[1]).toEqual([
+    // Sem a medida do investimento, o faturamento continua (nao depende
+    // dela) e o retorno fica "Não medido".
+    expect(semNbsp(campanhas)?.[1]).toEqual([
       "Implante Dentário",
       "Não medido",
       "120",
       "Não medido",
       "80",
       "66,7%",
+      "R$ 11.970,00",
+      "Não medido",
     ]);
     expect(
       campanhas?.flat().some((celula) => celula.startsWith("Investimento sem lead casado")),
@@ -321,14 +325,30 @@ describe("montarExportavelDaAba: investimento da Meta (Fase 4)", () => {
       secao("geral", "Campanhas", { podeVerValores: true })?.linhas,
     );
     expect(linhas).toEqual([
-      ["Campanha", "Investimento", "Leads", "Custo por lead", "Agendados", "Conversão"],
-      ["Implante Dentário", "R$ 3.420,00", "120", "R$ 28,50", "80", "66,7%"],
-      ["Campanha 120000000000000020", "R$ 600,00", "30", "R$ 20,00", "20", "66,7%"],
-      ["Remarketing Botox", "R$ 500,00", "0", "Sem leads", "0", "sem dados"],
-      ["Check-up 2026", "Fora da Meta", "186", "Fora da Meta", "112", "60,2%"],
+      [
+        "Campanha",
+        "Investimento",
+        "Leads",
+        "Custo por lead",
+        "Agendados",
+        "Conversão",
+        "Faturamento",
+        "Retorno",
+      ],
+      // Etapa 5 (16/11/2026): o que os leads da campanha ja renderam e
+      // quantas vezes isso paga o investimento.
+      ["Implante Dentário", "R$ 3.420,00", "120", "R$ 28,50", "80", "66,7%", "R$ 11.970,00", "3,5x"],
+      ["Campanha 120000000000000020", "R$ 600,00", "30", "R$ 20,00", "20", "66,7%", "R$ 450,00", "0,8x"],
+      // Sem comparecimento nao vira R$ 0,00 nem 0,0x.
+      ["Remarketing Botox", "R$ 500,00", "0", "Sem leads", "0", "sem dados", "Nenhum comparecimento", "Nenhum comparecimento"],
+      // Campanha fora da Meta tem faturamento, mas nao tem investimento.
+      ["Check-up 2026", "Fora da Meta", "186", "Fora da Meta", "112", "60,2%", "R$ 22.500,00", "Fora da Meta"],
       ["Investimento sem lead casado: R$ 500,00 em 1 campanha"],
       ["Leads sem campanha: 150 de 486"],
       ["Leads de anúncio sem campanha reconhecida: 12"],
+      [
+        "Faturamento: consultas com comparecimento dos leads da campanha que chegaram no período. Retorno: faturamento dividido pelo investimento.",
+      ],
     ]);
   });
 
@@ -341,7 +361,7 @@ describe("montarExportavelDaAba: investimento da Meta (Fase 4)", () => {
       ["Check-up 2026", "186", "112", "60,2%"],
       ["Leads sem campanha: 150 de 486"],
       ["Leads de anúncio sem campanha reconhecida: 12"],
-      ["Investimento e custo por lead: só administrador e gestor."],
+      ["Investimento, custo por lead, faturamento e retorno: só administrador e gestor."],
     ]);
   });
 
@@ -361,7 +381,7 @@ describe("montarExportavelDaAba: investimento da Meta (Fase 4)", () => {
     });
     expect(celulas.filter((celula) => celula.includes("R$"))).toEqual([]);
     expect(celulas).not.toContain("Custo por lead");
-    expect(celulas).toContain("Investimento e custo por lead: só administrador e gestor.");
+    expect(celulas).toContain("Investimento, custo por lead, faturamento e retorno: só administrador e gestor.");
   });
 
   it("sem leitura configurada: Ainda não medido no custo e Não medido nas células da Meta", () => {
@@ -374,13 +394,17 @@ describe("montarExportavelDaAba: investimento da Meta (Fase 4)", () => {
     expect(indicadores).toContainEqual(["Investimento no período", "Ainda não medido"]);
     expect(indicadores?.map((linha) => linha[0])).not.toContain("Investimento atualizado em");
     const campanhas = secao("geral", "Campanhas", extra)?.linhas;
-    expect(campanhas?.[1]).toEqual([
+    // Sem a medida do investimento, o faturamento continua (nao depende
+    // dela) e o retorno fica "Não medido".
+    expect(semNbsp(campanhas)?.[1]).toEqual([
       "Implante Dentário",
       "Não medido",
       "120",
       "Não medido",
       "80",
       "66,7%",
+      "R$ 11.970,00",
+      "Não medido",
     ]);
     // Sem medida, a conferencia em reais some (nao vira R$ 0,00).
     expect(campanhas?.flat().some((celula) => celula.startsWith("Investimento sem lead casado"))).toBe(false);

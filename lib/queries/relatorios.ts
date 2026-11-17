@@ -204,6 +204,13 @@ export type LinhaDeCampanhaDoPeriodo = {
   compareceram: number;
   /** Centavos de real. null fora da gestao e sempre null em "texto". */
   investimentoCents: number | null;
+  /**
+   * O que os leads desta campanha que chegaram no periodo ja renderam: as
+   * consultas com comparecimento deles, pelo preco de faturamento_do_periodo
+   * (migration 20261116160000, etapa 5 do plano de 16/11/2026). Centavos de
+   * real. null fora da gestao e quando o banco ainda nao manda o campo.
+   */
+  faturamentoCents: number | null;
 };
 
 /** Situacao da leitura do investimento (meta_gasto_leitura.situacao). */
@@ -890,6 +897,8 @@ type LinhaDeCampanhaRpc = {
   agendaram: number;
   compareceram: number;
   investimento_cents: number | null;
+  /** ausente antes da migration 20261116160000 */
+  faturamento_cents?: number | null;
 };
 
 type InvestimentoRpc = {
@@ -966,6 +975,11 @@ function lerCampanhas(bloco: CampanhasRpc, hoje: string): CampanhasDoPeriodo {
         linha.investimento_cents === null
           ? null
           : Number(linha.investimento_cents),
+      faturamentoCents:
+        linha.faturamento_cents === null ||
+        linha.faturamento_cents === undefined
+          ? null
+          : Number(linha.faturamento_cents),
     })),
     investimento: lerInvestimento(bloco.investimento, hoje),
   };

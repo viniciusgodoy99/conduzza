@@ -135,7 +135,7 @@ describe("Visão geral", () => {
     expect(lido).toContain("Leads sem campanha: 150 de 486");
     expect(lido).toContain("Investimento atualizado em 02/10 às 06:00.");
     expect(lido).not.toContain(
-      "Investimento e custo por lead: só administrador e gestor.",
+      "Investimento, custo por lead, faturamento e retorno: só administrador e gestor.",
     );
   });
 
@@ -154,7 +154,7 @@ describe("Visão geral", () => {
     expect(html).not.toContain(">Investimento</th>");
     expect(html).not.toContain(">Custo por lead</th>");
     expect(texto(html)).toContain(
-      "Investimento e custo por lead: só administrador e gestor.",
+      "Investimento, custo por lead, faturamento e retorno: só administrador e gestor.",
     );
     expect(texto(html)).toContain("Leads sem campanha: 150 de 486");
     expect(texto(html)).not.toContain("Remarketing Botox");

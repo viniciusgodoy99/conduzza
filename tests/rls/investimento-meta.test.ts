@@ -45,6 +45,7 @@ type Linha = {
   agendaram: number;
   compareceram: number;
   investimento_cents: number | null;
+  faturamento_cents?: number | null;
 };
 type Bloco = {
   leads: number;
@@ -541,7 +542,16 @@ describe("campanhas_do_periodo", () => {
       expect(
         visto!.atual.linhas.every((l) => l.investimento_cents === null),
       ).toBe(true);
+      // Etapa 5 (migration 20261116160000): o faturamento por campanha
+      // tambem e valor em reais, so da gestao.
+      expect(
+        visto!.atual.linhas.every((l) => l.faturamento_cents === null),
+      ).toBe(true);
     }
+    // contraprova: a gestao recebe numero (zero aqui, sem comparecimento)
+    expect(
+      doAdmin!.atual.linhas.every((l) => typeof l.faturamento_cents === "number"),
+    ).toBe(true);
   });
 
   it("profissional recebe null; admin da B pedindo a A recebe zeros e investimento null", async () => {
