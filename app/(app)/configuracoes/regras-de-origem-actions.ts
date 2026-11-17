@@ -397,8 +397,11 @@ const NUMEROS_NAO_SALVOS =
  * vazia volta ao padrao: o numero principal da clinica. Mesma guarda das
  * outras actions de origem (administrador e gestor), Zod, cliente de SESSAO
  * (a RLS decide de novo; a FK composta recusa numero de outra clinica) e
- * trilha. Tira os que sairam, muda o peso dos que ficaram e inclui os novos:
- * quem ficou nao perde a conta do rodizio. Se parar no meio, o link fica com
+ * trilha. Tira os que sairam, muda o peso dos que ficaram e inclui os novos.
+ * Qualquer mudanca de verdade (numero que entra ou sai, peso trocado) zera a
+ * conta do rodizio de todos os numeros do link, no banco (gatilho da
+ * migration 20261117100000): com a conta vitalicia, o numero novo recebia
+ * todos os cliques ate alcancar os outros. Se parar no meio, o link fica com
  * menos numeros ou no padrao, nunca sem destino.
  */
 export async function salvarNumerosDoLinkAction(

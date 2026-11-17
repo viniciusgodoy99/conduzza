@@ -192,6 +192,51 @@ describe("registro de conversão no funil, contra o banco real", () => {
     const todos = await eventosDe(clinicId);
     expect(todos).toHaveLength(2);
     expect(todos[1]!.value_cents).toBeNull();
+
+    // Vinculo SEM preco e procedimento com preco base: vale o base, a mesma
+    // regra do faturamento (revisao de 17/11/2026, migration 20261117100000;
+    // antes a conversao saia sem valor e o faturamento somava o base).
+    const { data: procBase } = await admin
+      .from("procedure")
+      .insert({
+        clinic_id: clinicId,
+        name: "Avaliacao ConvReg",
+        default_duration_min: 30,
+        base_price_cents: 18000,
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    const { data: vinculoSemPreco } = await admin
+      .from("service_link")
+      .insert({
+        clinic_id: clinicId,
+        professional_id: prof!.id,
+        procedure_id: procBase!.id,
+        insurance_id: null,
+        price_cents: null,
+        covered_by_insurance: false,
+        duration_min: 30,
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    const comBase = await criarContato(clinicId, "+5584974300005");
+    await admin
+      .from("appointment")
+      .insert({
+        clinic_id: clinicId,
+        contact_id: comBase,
+        professional_id: prof!.id,
+        service_link_id: vinculoSemPreco!.id,
+        starts_at: "2026-11-12T11:00:00-03:00",
+        ends_at: "2026-11-12T11:30:00-03:00",
+      })
+      .throwOnError();
+    await mover(comBase, "compareceu");
+    const comOBase = await eventosDe(clinicId);
+    expect(comOBase).toHaveLength(3);
+    expect(comOBase[2]!.value_cents).toBe(18000);
   });
 
   it("sem envio_ativado nenhum job nasce, o evento fica só registrado", async () => {

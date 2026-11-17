@@ -909,6 +909,59 @@ describe("link rastreado da origem", () => {
       .eq("id", origem!.id);
     expect(daA.data).toEqual([{ codigo_publico: origem!.codigo_publico }]);
   });
+
+  // Revisao de 17/11/2026 (migration 20261117100000): a sessao gravava o
+  // codigo que quisesse. Um gestor da clinica A tomava o codigo de um link
+  // excluido da B, e o QR Code impresso da B passava a abrir o WhatsApp da A.
+  it("codigo_publico: a sessao nao escolhe ao criar nem troca depois; o sistema continua podendo", async () => {
+    const FORMATO = /^[23456789abcdefghjkmnpqrstuvwxyz]{8}$/;
+    const escolhido = "zzzzyyyy";
+    const adminA = await logado("admin-a");
+    const { data: criada, error: erroAoCriar } = await adminA
+      .from("campaign_link")
+      .insert({
+        clinic_id: clinicaA,
+        name: `Link codigo ${sufixo}`,
+        token: "K8M3QX",
+        channel: "redes_sociais",
+        default_message: "Olá! Quero agendar uma avaliação na clínica.",
+        codigo_publico: escolhido,
+      })
+      .select("id, codigo_publico")
+      .single();
+    expect(erroAoCriar).toBeNull();
+    expect(criada!.codigo_publico).toMatch(FORMATO);
+    expect(criada!.codigo_publico).not.toBe(escolhido);
+
+    const { data: trocada, error: erroAoTrocar } = await adminA
+      .from("campaign_link")
+      .update({ codigo_publico: escolhido, name: `Link codigo novo ${sufixo}` })
+      .eq("id", criada!.id)
+      .select("name, codigo_publico")
+      .single();
+    expect(erroAoTrocar).toBeNull();
+    // O resto da edicao vale; o codigo fica o que o banco sorteou.
+    expect(trocada).toEqual({
+      name: `Link codigo novo ${sufixo}`,
+      codigo_publico: criada!.codigo_publico,
+    });
+
+    // Sem sessao de usuario (manutencao), o sistema ainda pode trocar.
+    const novo = crypto
+      .randomUUID()
+      .replace(/-/g, "")
+      .slice(0, 8)
+      .replace(/0/g, "2")
+      .replace(/1/g, "3");
+    const { data: peloSistema } = await admin
+      .from("campaign_link")
+      .update({ codigo_publico: novo })
+      .eq("id", criada!.id)
+      .select("codigo_publico")
+      .single()
+      .throwOnError();
+    expect(peloSistema).toEqual({ codigo_publico: novo });
+  });
 });
 
 // Os numeros do link (migration 20261116130000, etapa 3b: rodizio): membro

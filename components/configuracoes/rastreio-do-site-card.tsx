@@ -1007,9 +1007,11 @@ export function RastreioDoSiteCard({
                   Se a clínica também anuncia no Facebook e no Instagram
                   levando ao site, cole os parâmetros abaixo no anúncio, em
                   Parâmetros de URL. Eles dizem qual anúncio e qual campanha
-                  trouxeram a visita. Anúncio que abre o WhatsApp direto não
-                  precisa: a origem já vem sozinha. Visita que chega com UTM
-                  (link da bio, e-mail) também ganha a origem.
+                  trouxeram a visita. Sem eles, quem vem do Facebook ou do
+                  Instagram entra como Redes sociais, não como anúncio.
+                  Anúncio que abre o WhatsApp direto não precisa: a origem já
+                  vem sozinha. Visita que chega com UTM (link da bio, e-mail)
+                  também ganha a origem.
                 </span>
                 <span className="flex flex-wrap items-center gap-2">
                   <code className="rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-[12.5px] break-all text-text-strong select-all">
