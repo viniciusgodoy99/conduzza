@@ -38,6 +38,8 @@ type Linha = {
   agendaram: number;
   compareceram: number;
   investimento_cents: number | null;
+  /** etapa 5 do plano de 16/11/2026 (migration 20261116160000) */
+  faturamento_cents: number | null;
 };
 type Investimento = {
   configurada: boolean;
@@ -205,7 +207,9 @@ beforeAll(async () => {
     .throwOnError();
   const { data: proc } = await admin
     .from("procedure")
-    .insert({ clinic_id: clinicId, name: "Avaliação" })
+    // Preco base de R$ 250,00: e o que a consulta com comparecimento vale no
+    // faturamento por campanha (o vinculo nao tem preco proprio).
+    .insert({ clinic_id: clinicId, name: "Avaliação", base_price_cents: 25000 })
     .select("id")
     .single()
     .throwOnError();
@@ -311,6 +315,8 @@ describe("campanhas_do_periodo", () => {
         agendaram: 1,
         compareceram: 1,
         investimento_cents: 3000,
+        // A consulta com comparecimento do lead do anuncio: R$ 250,00.
+        faturamento_cents: 25000,
       },
       {
         chave: "meta:8002",
@@ -321,6 +327,7 @@ describe("campanhas_do_periodo", () => {
         agendaram: 0,
         compareceram: 0,
         investimento_cents: 3000,
+        faturamento_cents: 0,
       },
       {
         chave: "meta:8003",
@@ -331,6 +338,7 @@ describe("campanhas_do_periodo", () => {
         agendaram: 0,
         compareceram: 0,
         investimento_cents: 0,
+        faturamento_cents: 0,
       },
       // O contato com o NOME da campanha e sem id fica no texto, nunca na Meta.
       {
@@ -342,6 +350,7 @@ describe("campanhas_do_periodo", () => {
         agendaram: 0,
         compareceram: 0,
         investimento_cents: null,
+        faturamento_cents: 0,
       },
       {
         chave: "texto:Promo Inverno",
@@ -352,8 +361,31 @@ describe("campanhas_do_periodo", () => {
         agendaram: 1,
         compareceram: 0,
         investimento_cents: null,
+        // Agendou, mas a consulta nao teve comparecimento: nao soma.
+        faturamento_cents: 0,
       },
     ]);
+  });
+
+  // Etapa 5 do plano de 16/11/2026 (migration 20261116160000).
+  it("o faturamento da campanha é por coorte: a consulta do lead conta mesmo fora do período, e a de outro período não entra em quem não é dela", async () => {
+    // Setembro: o lead do anuncio (8001) chegou em 05/09 e compareceu em
+    // 20/09: R$ 250,00 na campanha dele.
+    const setembro = (await campanhas()).atual;
+    expect(
+      setembro.linhas.find((linha) => linha.chave === "meta:8001")
+        ?.faturamento_cents,
+    ).toBe(25000);
+    // Outubro: a consulta foi em setembro, mas o lead NAO chegou em outubro
+    // (o unico lead de outubro, "Dia seguinte", nao compareceu): zero. O
+    // faturamento segue o lead, nao o dia da consulta.
+    const outubro = (
+      await campanhas("2026-10-01T03:00:00.000Z", "2026-11-01T03:00:00.000Z")
+    ).atual;
+    expect(
+      outubro.linhas.find((linha) => linha.chave === "meta:8001")
+        ?.faturamento_cents,
+    ).toBe(0);
   });
 
   it("a soma das linhas mais os leads sem campanha é igual aos leads do funil", async () => {
@@ -601,6 +633,7 @@ describe("campanhas_do_periodo com a linha da consulta por id", () => {
         agendaram: 0,
         compareceram: 0,
         investimento_cents: 0,
+        faturamento_cents: 0,
       },
       {
         chave: "meta:9700",
@@ -611,6 +644,7 @@ describe("campanhas_do_periodo com a linha da consulta por id", () => {
         agendaram: 0,
         compareceram: 0,
         investimento_cents: 0,
+        faturamento_cents: 0,
       },
     ]);
     // Nenhuma linha de texto: a origem de anuncio nao usa source_campaign.

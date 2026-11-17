@@ -190,6 +190,8 @@ export function campanhasDoPeriodo(
         agendaram: 80,
         compareceram: 60,
         investimentoCents: 342_000,
+        // 3,5 vezes o investimento.
+        faturamentoCents: 1_197_000,
       },
       {
         chave: "meta:120000000000000020",
@@ -200,6 +202,7 @@ export function campanhasDoPeriodo(
         agendaram: 20,
         compareceram: 10,
         investimentoCents: 60_000,
+        faturamentoCents: 45_000,
       },
       {
         chave: "meta:120000000000000030",
@@ -210,6 +213,7 @@ export function campanhasDoPeriodo(
         agendaram: 0,
         compareceram: 0,
         investimentoCents: 50_000,
+        faturamentoCents: 0,
       },
       {
         chave: "texto:Check-up 2026",
@@ -220,6 +224,7 @@ export function campanhasDoPeriodo(
         agendaram: 112,
         compareceram: 90,
         investimentoCents: null,
+        faturamentoCents: 2_250_000,
       },
     ],
     investimento:

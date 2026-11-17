@@ -91,6 +91,20 @@ const COLUNAS_COM_VALORES: ColumnDef<LinhaDeCampanhaDaTela, unknown>[] = [
   },
   { accessorKey: "agendaram", header: "Agendados", meta: { align: "right" } },
   { accessorKey: "conversao", header: "Conversão", meta: { align: "right" } },
+  // Etapa 5 do plano de 16/11/2026: o que os leads da campanha ja renderam
+  // e quantas vezes isso paga o investimento.
+  {
+    id: "faturamento",
+    header: "Faturamento",
+    meta: { align: "right" },
+    cell: ({ row }) => <CelulaDeValor valor={row.original.faturamento} />,
+  },
+  {
+    id: "retorno",
+    header: "Retorno",
+    meta: { align: "right" },
+    cell: ({ row }) => <CelulaDeValor valor={row.original.retorno} />,
+  },
 ];
 
 /**

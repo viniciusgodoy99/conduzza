@@ -10,7 +10,9 @@ import {
   estadoVazioDasCampanhas,
   montarCampanhas,
   montarDetalheDeOrigem,
+  retornoDaCampanha,
   rodapesDasCampanhas,
+  textoDoRetorno,
 } from "@/lib/domain/exportacao-de-resultados";
 import type { FunilDoPeriodo } from "@/lib/queries/relatorios";
 
@@ -93,7 +95,78 @@ describe("rodapesDasCampanhas", () => {
       "Investimento sem lead casado: R$ 500,00 em 1 campanha",
       "Leads sem campanha: 150 de 486",
       "Leads de anúncio sem campanha reconhecida: 12",
+      // Etapa 5: o que Faturamento e Retorno contam, so para quem os ve.
+      "Faturamento: consultas com comparecimento dos leads da campanha que chegaram no período. Retorno: faturamento dividido pelo investimento.",
     ]);
+  });
+
+  // Etapa 5 do plano de 16/11/2026: faturamento e retorno por campanha.
+  it("faturamento e retorno: o valor, as vezes que paga o investimento e o estado escrito quando não há número honesto", () => {
+    const celulas = (campanhas = campanhasDoPeriodo(), ve = true) =>
+      Object.fromEntries(
+        montarCampanhas(campanhas, ve).map((linha) => [
+          linha.rotulo,
+          [
+            linha.faturamento && sem(linha.faturamento.texto),
+            linha.retorno && sem(linha.retorno.texto),
+          ],
+        ]),
+      );
+    expect(celulas()).toEqual({
+      "Implante Dentário": ["R$ 11.970,00", "3,5x"],
+      "Campanha 120000000000000020": ["R$ 450,00", "0,8x"],
+      // Ninguem compareceu ainda: nunca R$ 0,00 nem 0,0x.
+      "Remarketing Botox": ["Nenhum comparecimento", "Nenhum comparecimento"],
+      // Fora da Meta tem faturamento, mas nao tem investimento para dividir.
+      "Check-up 2026": ["R$ 22.500,00", "Fora da Meta"],
+    });
+    // Estado e estado, numero e numero (a tela pinta diferente).
+    const [implante, , botox] = montarCampanhas(campanhasDoPeriodo(), true);
+    expect(implante?.retorno).toEqual({ texto: "3,5x", estado: false });
+    expect(botox?.retorno?.estado).toBe(true);
+
+    // Sem a medida do investimento: o faturamento continua, o retorno nao.
+    expect(
+      celulas(campanhasDoPeriodo({ lidoDesde: "2026-09-10" }))[
+        "Implante Dentário"
+      ],
+    ).toEqual(["R$ 11.970,00", "Não medido"]);
+
+    // Banco de antes da migration (campo ausente): "Não medido" nas duas.
+    const antigo = campanhasDoPeriodo();
+    antigo.linhas = antigo.linhas.map((linha) => ({
+      ...linha,
+      faturamentoCents: null,
+    }));
+    expect(celulas(antigo)["Implante Dentário"]).toEqual([
+      "Não medido",
+      "Não medido",
+    ]);
+
+    // Campanha com lead atendido e investimento zero no periodo.
+    const semGasto = campanhasDoPeriodo();
+    semGasto.linhas = semGasto.linhas.map((linha) =>
+      linha.tipo === "meta" ? { ...linha, investimentoCents: 0 } : linha,
+    );
+    expect(celulas(semGasto)["Implante Dentário"]).toEqual([
+      "R$ 11.970,00",
+      "Sem investimento",
+    ]);
+
+    // Outros papeis: as duas colunas nem existem.
+    expect(celulas(campanhasDoPeriodo(), false)["Implante Dentário"]).toEqual([
+      null,
+      null,
+    ]);
+  });
+
+  it("retornoDaCampanha e textoDoRetorno: divisão simples, uma casa com vírgula", () => {
+    expect(retornoDaCampanha(1_197_000, 342_000)).toBeCloseTo(3.5);
+    expect(retornoDaCampanha(0, 342_000)).toBe(0);
+    expect(retornoDaCampanha(1000, 0)).toBeNull();
+    expect(textoDoRetorno(3.5)).toBe("3,5x");
+    expect(textoDoRetorno(12)).toBe("12,0x");
+    expect(textoDoRetorno(0.04)).toBe("0,0x");
   });
 
   it("plural das campanhas sem lead", () => {
@@ -111,7 +184,7 @@ describe("rodapesDasCampanhas", () => {
       "Leads de anúncio sem campanha reconhecida: 12",
     ]);
     expect(NOTA_DOS_VALORES_DAS_CAMPANHAS).toBe(
-      "Investimento e custo por lead: só administrador e gestor.",
+      "Investimento, custo por lead, faturamento e retorno: só administrador e gestor.",
     );
   });
 

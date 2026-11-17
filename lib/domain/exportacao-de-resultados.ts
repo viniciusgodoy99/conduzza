@@ -384,8 +384,36 @@ export function montarDetalheDeOrigemDaTela(
 export const CELULA_FORA_DA_META = "Fora da Meta";
 export const CELULA_SEM_LEADS = "Sem leads";
 export const CELULA_NAO_MEDIDO = "Não medido";
+export const CELULA_SEM_INVESTIMENTO = "Sem investimento";
 export const NOTA_DOS_VALORES_DAS_CAMPANHAS =
-  "Investimento e custo por lead: só administrador e gestor.";
+  "Investimento, custo por lead, faturamento e retorno: só administrador e gestor.";
+/**
+ * O que as colunas Faturamento e Retorno contam (etapa 5 do plano de
+ * 16/11/2026). E por coorte, como Agendados: os leads que chegaram no
+ * periodo, com as consultas deles quando forem. Nao e o "Faturamento
+ * estimado" do cartao, que soma as consultas do periodo de qualquer paciente.
+ */
+export const NOTA_DO_FATURAMENTO_DAS_CAMPANHAS =
+  "Faturamento: consultas com comparecimento dos leads da campanha que chegaram no período. Retorno: faturamento dividido pelo investimento.";
+
+/** Faturamento dividido pelo investimento; null sem investimento. */
+export function retornoDaCampanha(
+  faturamentoCents: number,
+  investimentoCents: number,
+): number | null {
+  if (!(investimentoCents > 0) || !Number.isFinite(faturamentoCents)) {
+    return null;
+  }
+  return faturamentoCents / investimentoCents;
+}
+
+/** "3,2x": uma casa, com virgula. */
+export function textoDoRetorno(retorno: number): string {
+  return `${retorno.toLocaleString("pt-BR", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  })}x`;
+}
 
 /** Celula de dinheiro: o valor, ou um estado escrito (nunca R$ 0,00 falso). */
 export type CelulaDeCampanha = {
@@ -404,6 +432,10 @@ export type LinhaDeCampanhaDaTela = {
   agendaram: number;
   /** agendaram / leads, a mesma regra da Taxa de conversao */
   conversao: string;
+  /** null = a coluna nao existe para este papel */
+  faturamento: CelulaDeCampanha | null;
+  /** faturamento / investimento ("3,2x"); null = a coluna nao existe */
+  retorno: CelulaDeCampanha | null;
 };
 
 /** As colunas Investimento e Custo por lead existem para este retrato? */
@@ -467,6 +499,37 @@ export function montarCampanhas(
                 : celulaDeEstado(CELULA_NAO_MEDIDO);
         }
       }
+      // Faturamento e retorno (etapa 5): o que os leads da campanha que
+      // chegaram no periodo ja renderam, e quantas vezes isso paga o
+      // investimento. Estado escrito quando nao ha numero honesto.
+      let faturamento: CelulaDeCampanha | null = null;
+      let retorno: CelulaDeCampanha | null = null;
+      if (comValores) {
+        faturamento =
+          linha.faturamentoCents === null
+            ? celulaDeEstado(CELULA_NAO_MEDIDO)
+            : linha.compareceram === 0
+              ? celulaDeEstado(TEXTO_SEM_COMPARECIMENTO)
+              : celulaEmReais(linha.faturamentoCents);
+        const vezes =
+          linha.faturamentoCents === null
+            ? null
+            : retornoDaCampanha(
+                linha.faturamentoCents,
+                linha.investimentoCents ?? 0,
+              );
+        if (linha.tipo === "texto") {
+          retorno = celulaDeEstado(CELULA_FORA_DA_META);
+        } else if (!medido || linha.faturamentoCents === null) {
+          retorno = celulaDeEstado(CELULA_NAO_MEDIDO);
+        } else if (vezes === null) {
+          retorno = celulaDeEstado(CELULA_SEM_INVESTIMENTO);
+        } else if (linha.compareceram === 0) {
+          retorno = celulaDeEstado(TEXTO_SEM_COMPARECIMENTO);
+        } else {
+          retorno = { texto: textoDoRetorno(vezes), estado: false };
+        }
+      }
       return {
         chave: linha.chave,
         rotulo: rotuloDaLinhaDeCampanha(linha),
@@ -475,6 +538,8 @@ export function montarCampanhas(
         custoPorLead,
         agendaram: linha.agendaram,
         conversao: percentualOuSemDados(linha.agendaram, linha.leads),
+        faturamento,
+        retorno,
       };
     });
 }
@@ -736,6 +801,14 @@ export function rodapesDasCampanhas(
         "pt-BR",
       )}`,
     );
+  }
+  // O que Faturamento e Retorno contam (etapa 5), so com a tabela a vista e
+  // para quem ve as duas colunas.
+  if (
+    campanhasComValores(campanhas, podeVerValores) &&
+    campanhas.linhas.length > 0
+  ) {
+    linhas.push(NOTA_DO_FATURAMENTO_DAS_CAMPANHAS);
   }
   return linhas;
 }
@@ -1123,6 +1196,8 @@ function secaoDeCampanhas(
         "Custo por lead",
         "Agendados",
         "Conversão",
+        "Faturamento",
+        "Retorno",
       ]
     : ["Campanha", "Leads", "Agendados", "Conversão"];
   return {
@@ -1150,6 +1225,8 @@ function secaoDeCampanhas(
               celula(linha.custoPorLead),
               numero(linha.agendaram),
               linha.conversao,
+              celula(linha.faturamento),
+              celula(linha.retorno),
             ]
           : [
               linha.rotulo,
