@@ -13,6 +13,7 @@ import {
   lerRespostaDoCliqueDoLink,
   numeroFixadoDoCookie,
   paginaDoPixel,
+  CODIGO_INVISIVEL_LIGADO,
   usarCodigoInvisivel,
   VALIDADE_DO_NUMERO_FIXADO_EM_SEGUNDOS,
   type ArgumentosDoCliqueDoLink,
@@ -134,7 +135,7 @@ async function responder(
   const destino = resposta
     ? destinoDoCliqueDoLink(resposta, {
         codigoInvisivel: usarCodigoInvisivel(
-          process.env.LINK_CODIGO_INVISIVEL,
+          CODIGO_INVISIVEL_LIGADO,
           request.nextUrl.searchParams.get(PARAMETRO_DO_CODIGO_INVISIVEL),
         ),
       })

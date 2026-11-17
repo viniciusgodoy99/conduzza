@@ -9,6 +9,7 @@ import {
 import {
   destinoDoCliqueDoLink,
   lerRespostaDoCliqueDoLink,
+  CODIGO_INVISIVEL_LIGADO,
   usarCodigoInvisivel,
 } from "@/lib/domain/link-rastreado";
 
@@ -146,11 +147,13 @@ describe("o destino do link", () => {
     ).toBe(`${MENSAGEM} [#F7X2AB]`);
   });
 
-  it("a chave: só o ambiente em 1 ou o parâmetro do teste em 1", () => {
-    expect(usarCodigoInvisivel(undefined, null)).toBe(false);
-    expect(usarCodigoInvisivel("0", "0")).toBe(false);
-    expect(usarCodigoInvisivel("true", "sim")).toBe(false);
-    expect(usarCodigoInvisivel("1", null)).toBe(true);
-    expect(usarCodigoInvisivel(undefined, "1")).toBe(true);
+  it("a chave: ligada no código ou o parâmetro do teste em 1", () => {
+    expect(usarCodigoInvisivel(false, null)).toBe(false);
+    expect(usarCodigoInvisivel(false, "0")).toBe(false);
+    expect(usarCodigoInvisivel(false, "sim")).toBe(false);
+    expect(usarCodigoInvisivel(true, null)).toBe(true);
+    expect(usarCodigoInvisivel(false, "1")).toBe(true);
+    // Desligado ate o teste com celular real (decisao do plano de 16/11/2026).
+    expect(CODIGO_INVISIVEL_LIGADO).toBe(false);
   });
 });

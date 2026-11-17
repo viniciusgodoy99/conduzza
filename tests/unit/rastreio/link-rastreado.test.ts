@@ -485,19 +485,10 @@ describe("código invisível (etapa 3c): desligado até o teste com celular real
     });
   });
 
-  it("com LINK_CODIGO_INVISIVEL=1 todo clique gravado esconde o código; o não gravado leva o fixo à vista", async () => {
-    vi.stubEnv("LINK_CODIGO_INVISIVEL", "1");
-    try {
-      respostas = [ok()];
-      const escondido = textoDoDestino(await GET(...pedido()));
-      expect(separarCodigoInvisivel(escondido).codigo).toBe("K7Q2MX");
-
-      respostas = [{ data: { ...DESTINO, resultado: "limite" }, error: null }];
-      expect(textoDoDestino(await GET(...pedido()))).toBe(
-        `${DESTINO.mensagem} [#F1X0AB]`,
-      );
-    } finally {
-      vi.unstubAllEnvs();
-    }
+  it("com o invisível pedido, o clique não gravado leva o código fixo à vista", async () => {
+    respostas = [{ data: { ...DESTINO, resultado: "limite" }, error: null }];
+    expect(textoDoDestino(await GET(...pedido("?cz_invisivel=1")))).toBe(
+      `${DESTINO.mensagem} [#F1X0AB]`,
+    );
   });
 });
