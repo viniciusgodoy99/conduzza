@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { separarCodigoInvisivel } from "@/lib/domain/codigo-invisivel";
 import {
   argumentosDoCliqueDoLink,
   baseDosLinks,
@@ -453,5 +454,50 @@ describe("GET /l/<codigo>", () => {
       ...pedido("?url=https://malicioso.exemplo&text=outra&phone=5511999999999"),
     );
     expect(textoDoDestino(resposta)).toBe(`${DESTINO.mensagem} [#K7Q2MX]`);
+  });
+});
+
+describe("código invisível (etapa 3c): desligado até o teste com celular real", () => {
+  const ok = () => ({
+    data: { ...DESTINO, resultado: "ok", codigo: "K7Q2MX" },
+    error: null,
+  });
+
+  it("por padrão o código vai à vista", async () => {
+    respostas = [ok()];
+    const resposta = await GET(...pedido("?utm_source=ig"));
+    expect(textoDoDestino(resposta)).toBe(`${DESTINO.mensagem} [#K7Q2MX]`);
+  });
+
+  it("?cz_invisivel=1 esconde o código naquele clique, sem virar sinal do clique", async () => {
+    respostas = [ok()];
+    const resposta = await GET(...pedido("?cz_invisivel=1&utm_source=ig"));
+    const texto = textoDoDestino(resposta);
+    expect(texto).not.toContain("[#");
+    expect(separarCodigoInvisivel(texto)).toEqual({
+      texto: DESTINO.mensagem,
+      codigo: "K7Q2MX",
+    });
+    expect(chamadas[0]?.args).toEqual({
+      p_codigo_publico: CODIGO_PUBLICO,
+      p_gravar: true,
+      p_utm_source: "ig",
+    });
+  });
+
+  it("com LINK_CODIGO_INVISIVEL=1 todo clique gravado esconde o código; o não gravado leva o fixo à vista", async () => {
+    vi.stubEnv("LINK_CODIGO_INVISIVEL", "1");
+    try {
+      respostas = [ok()];
+      const escondido = textoDoDestino(await GET(...pedido()));
+      expect(separarCodigoInvisivel(escondido).codigo).toBe("K7Q2MX");
+
+      respostas = [{ data: { ...DESTINO, resultado: "limite" }, error: null }];
+      expect(textoDoDestino(await GET(...pedido()))).toBe(
+        `${DESTINO.mensagem} [#F1X0AB]`,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

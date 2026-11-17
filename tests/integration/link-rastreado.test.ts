@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 
+import { mensagemComCodigoInvisivel } from "@/lib/domain/codigo-invisivel";
 import type { InboundEvent } from "@/lib/integrations/whatsapp/inbound";
 import { ingerirMensagemRecebida } from "@/lib/integrations/whatsapp/ingest";
 import { criarNumeroDeTeste } from "../rls/numeros";
@@ -637,5 +638,61 @@ describe("a pessoa apagou o código do link", () => {
       .single()
       .throwOnError();
     expect(linha).toEqual({ contact_id: null });
+  });
+});
+
+// Codigo invisivel (etapa 3c, sem migration).
+describe("código invisível do link", () => {
+  it("a mensagem é gravada sem o código e o lead ganha a origem cadastrada pelo código escondido", async () => {
+    const clinicId = await criarClinica("invisivel");
+    const origem = await criarOrigem(clinicId);
+    const clique = await clicar(origem.codigoPublico, {
+      p_utm_source: "instagram",
+    });
+    const escondida = mensagemComCodigoInvisivel(
+      MENSAGEM,
+      String(clique.codigo),
+    )!;
+    expect(escondida).not.toContain("[#");
+
+    const resultado = await ingerirMensagemRecebida(
+      admin,
+      clinicId,
+      null,
+      evento("+5584973330001", `inv-1-${sufixo}`, escondida),
+    );
+    expect(resultado.error).toBeNull();
+
+    const { data: mensagem } = await admin
+      .from("message")
+      .select("body")
+      .eq("id", resultado.data!.message_id!)
+      .single()
+      .throwOnError();
+    // A conversa (e a IA) veem a frase limpa, sem invisivel nenhum.
+    expect(mensagem!.body).toBe(MENSAGEM);
+
+    const { data: contato } = await admin
+      .from("contact")
+      .select("source_channel, source_campaign, source_method")
+      .eq("id", resultado.data!.contact_id!)
+      .single()
+      .throwOnError();
+    expect(contato).toEqual({
+      source_channel: "redes_sociais",
+      source_campaign: "Bio novembro",
+      source_method: "link_token",
+    });
+    const { data: linha } = await admin
+      .from("clique_do_site")
+      .select("contact_id, provavel, utm_source")
+      .eq("clinic_id", clinicId)
+      .single()
+      .throwOnError();
+    expect(linha).toEqual({
+      contact_id: resultado.data!.contact_id,
+      provavel: false,
+      utm_source: "instagram",
+    });
   });
 });

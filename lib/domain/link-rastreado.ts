@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { mensagemComCodigoInvisivel } from "@/lib/domain/codigo-invisivel";
 import {
   argumentosDosSinais,
   type SinaisDoRastreio,
@@ -174,6 +175,7 @@ export function lerRespostaDoCliqueDoLink(
  */
 export function destinoDoCliqueDoLink(
   resposta: RespostaDoCliqueDoLink,
+  opcoes: { codigoInvisivel?: boolean } = {},
 ): string | null {
   if (
     resposta.resultado === "indisponivel" ||
@@ -181,9 +183,32 @@ export function destinoDoCliqueDoLink(
   ) {
     return null;
   }
+  if (resposta.resultado === "ok" && opcoes.codigoInvisivel) {
+    // Etapa 3c: o codigo do clique escondido depois da primeira palavra. Se
+    // nao der (mensagem de uma palavra so), vai o visivel, abaixo.
+    const escondida = mensagemComCodigoInvisivel(
+      resposta.mensagem,
+      resposta.codigo,
+    );
+    if (escondida) {
+      return linkDoWhatsApp(resposta.digitos, escondida, null);
+    }
+  }
   const codigo =
     resposta.resultado === "ok" ? resposta.codigo : resposta.codigo_fixo;
   return linkDoWhatsApp(resposta.digitos, resposta.mensagem, codigo);
+}
+
+/**
+ * O link usa o codigo invisivel quando a chave do ambiente esta ligada
+ * (LINK_CODIGO_INVISIVEL=1, so depois do teste com celular real) ou quando o
+ * endereco pede, para o proprio teste (?cz_invisivel=1).
+ */
+export function usarCodigoInvisivel(
+  chaveDoAmbiente: string | undefined,
+  parametroDoEndereco: string | null,
+): boolean {
+  return chaveDoAmbiente === "1" || parametroDoEndereco === "1";
 }
 
 // ---------------------------------------------------------------------------

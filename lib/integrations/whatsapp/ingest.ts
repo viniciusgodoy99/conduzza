@@ -1,5 +1,6 @@
 import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
 
+import { separarCodigoInvisivel } from "@/lib/domain/codigo-invisivel";
 import {
   codigosDoCliqueDoSite,
   eFraseDoBotao,
@@ -916,8 +917,19 @@ export async function ingerirMensagemRecebida(
   admin: SupabaseClient,
   clinicId: string,
   accountId: string | null,
-  event: MensagemRecebida,
+  recebida: MensagemRecebida,
 ): Promise<{ data: IngestResultado | null; error: PostgrestError | null }> {
+  // CODIGO INVISIVEL do link rastreado (etapa 3c do plano de 16/11/2026): se
+  // o texto traz o codigo do clique escondido, ele sai ANTES de a mensagem
+  // ser gravada (a conversa, a equipe e a IA nunca veem o codigo) e a origem
+  // e atribuida como se o texto trouxesse o codigo visivel no fim.
+  const separado = separarCodigoInvisivel(recebida.body);
+  const event: MensagemRecebida = separado.codigo
+    ? { ...recebida, body: separado.texto }
+    : recebida;
+  const corpoDaOrigem = separado.codigo
+    ? `${separado.texto ?? ""} [#${separado.codigo}]`
+    : event.body;
   // A chegada: o horario da mensagem do anuncio quando o payload nao traz o
   // envio (horarioDaMensagemDoAnuncio).
   const chegadaEm = new Date().toISOString();
@@ -1042,15 +1054,15 @@ export async function ingerirMensagemRecebida(
   // idempotente, entao a reentrega e barata).
   const deveAtribuir =
     resultado?.contact_id &&
-    event.body &&
-    (resultado.contact_created || extrairToken(event.body) !== null);
-  if (deveAtribuir && resultado?.contact_id && event.body) {
+    corpoDaOrigem &&
+    (resultado.contact_created || extrairToken(corpoDaOrigem) !== null);
+  if (deveAtribuir && resultado?.contact_id && corpoDaOrigem) {
     try {
       await tentarAtribuirOrigem(
         admin,
         clinicId,
         resultado.contact_id,
-        event.body,
+        corpoDaOrigem,
         resultado.contact_created,
         resultado.whatsapp_account_id ?? accountId,
       );

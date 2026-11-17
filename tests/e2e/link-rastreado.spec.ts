@@ -100,6 +100,22 @@ test("sem sessao: o link grava o clique e manda ao WhatsApp com o codigo do cliq
   });
 });
 
+test("com ?cz_invisivel=1 o codigo do clique vai escondido: a frase chega limpa a vista (teste do dono com celular real)", async ({
+  request,
+}) => {
+  const resposta = await request.get(
+    `${APP}/l/${codigoPublico}?cz_invisivel=1`,
+    { maxRedirects: 0, headers: { "user-agent": NAVEGADOR } },
+  );
+  expect(resposta.status()).toBe(302);
+  const texto =
+    new URL(resposta.headers().location ?? "").searchParams.get("text") ?? "";
+  expect(texto).not.toContain("[#");
+  // Sem os invisiveis, e exatamente a mensagem pronta; com eles, 15 a mais.
+  expect(texto.replace(/[\u200B\u200C\u200D\u2060]/g, "")).toBe(MENSAGEM);
+  expect(texto.length).toBe(MENSAGEM.length + 15);
+});
+
 test("previa de link (robo) chega ao destino com o codigo fixo e nao conta clique", async ({
   request,
 }) => {
