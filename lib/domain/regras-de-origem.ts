@@ -50,7 +50,7 @@ export const PALAVRA_CHAVE_MAXIMA = 40;
 
 /** Colunas de campaign_link que a aba le (lib/queries/regras-de-origem.ts). */
 export const REGRA_DE_ORIGEM_SELECT =
-  "id, name, token, codigo_publico, channel, origin, medium, campaign, default_message, keywords, active, created_at";
+  "id, name, token, codigo_publico, avisar_meta_no_clique, channel, origin, medium, campaign, default_message, keywords, active, created_at";
 
 /** Uma linha de campaign_link como o PostgREST devolve. */
 export type LinhaDaRegraDeOrigem = {
@@ -59,6 +59,8 @@ export type LinhaDaRegraDeOrigem = {
   token: string | null;
   /** o codigo do endereco publico do link rastreado (migration 20261116120000) */
   codigo_publico: string;
+  /** o link avisa a Meta na hora do clique (migration 20261116150000) */
+  avisar_meta_no_clique: boolean;
   channel: SourceChannel;
   origin: string | null;
   medium: string | null;
@@ -77,6 +79,8 @@ export type RegraDeOrigem = {
   codigo: string | null;
   /** o codigo do endereco publico do link rastreado (<sistema>/l/<codigo>) */
   codigoPublico: string;
+  /** o link rastreado avisa a Meta na hora do clique (etapa 3e) */
+  avisarMetaNoClique: boolean;
   canal: SourceChannel;
   origem: string | null;
   /** o "meio" (medium): Bio, Perfil, QR da recepcao */
@@ -94,6 +98,7 @@ export function regraDaLinha(linha: LinhaDaRegraDeOrigem): RegraDeOrigem {
     nome: linha.name,
     codigo: linha.token ? linha.token.toUpperCase() : null,
     codigoPublico: linha.codigo_publico,
+    avisarMetaNoClique: linha.avisar_meta_no_clique,
     canal: linha.channel,
     origem: linha.origin,
     detalhe: linha.medium,

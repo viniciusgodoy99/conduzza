@@ -1,4 +1,7 @@
-import type { EventoCapi } from "@/lib/integrations/meta/payload";
+import type {
+  EventoCapi,
+  EventoDoCliqueCapi,
+} from "@/lib/integrations/meta/payload";
 import { GRAPH_VERSION } from "@/lib/integrations/meta/versao";
 
 // Adaptador HTTP da Conversions API da Meta, no molde do request do uazapi
@@ -54,7 +57,7 @@ function codigoDoErro(status: number, corpo: unknown): string {
 
 export async function enviarEventosCapi(
   config: CapiConfig,
-  eventos: EventoCapi[],
+  eventos: (EventoCapi | EventoDoCliqueCapi)[],
 ): Promise<CapiResult> {
   const fetchFn = config.fetchFn ?? fetch;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${config.pixelId}/events`;

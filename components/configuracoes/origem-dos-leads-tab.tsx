@@ -10,6 +10,7 @@ import {
   desativarRegraDeOrigemAction,
   excluirRegraDeOrigemAction,
 } from "@/app/(app)/configuracoes/regras-de-origem-actions";
+import { AvisoDaMetaNoLink } from "@/components/configuracoes/aviso-da-meta-no-link";
 import { DialogoDaOrigem } from "@/components/configuracoes/dialogo-da-origem";
 import { LinkParaABio } from "@/components/configuracoes/link-para-a-bio";
 import { LinkRastreado } from "@/components/configuracoes/link-rastreado";
@@ -103,6 +104,8 @@ export type DadosDasOrigens = {
   resumoDosLinks: Record<string, ResumoDoLink> | null;
   /** os numeros escolhidos por id da origem; nulo: a leitura falhou */
   numerosDosLinks: Record<string, NumeroDoLink[]> | null;
+  /** a clinica tem o Pixel e o envio de conversoes ligados (etapa 3e) */
+  metaProntaParaOClique: boolean;
 };
 
 /** O esqueleto da lista, enquanto a aba carrega de novo. */
@@ -178,6 +181,7 @@ function ListaDeOrigens({
     enderecoDosLinks,
     resumoDosLinks,
     numerosDosLinks,
+    metaProntaParaOClique,
   } = dados;
   // undefined = dialogo fechado; null = criando; regra = editando.
   const [editando, setEditando] = useState<RegraDeOrigem | null | undefined>(
@@ -373,6 +377,14 @@ function ListaDeOrigens({
                           ? null
                           : (numerosDosLinks[regra.id] ?? [])
                       }
+                      podeGerenciar={podeGerenciar}
+                      dica={dica}
+                    />
+                    <AvisoDaMetaNoLink
+                      regraId={regra.id}
+                      nomeDaOrigem={regra.nome}
+                      ligado={regra.avisarMetaNoClique}
+                      metaPronta={metaProntaParaOClique}
                       podeGerenciar={podeGerenciar}
                       dica={dica}
                     />

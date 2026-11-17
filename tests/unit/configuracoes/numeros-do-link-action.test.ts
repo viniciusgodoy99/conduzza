@@ -45,6 +45,12 @@ function resultadoPara(chamada: Chamada): Resultado {
       error: null,
     };
   }
+  if (chamada.tabela === "campaign_link" && chamada.op === "update") {
+    return {
+      data: registro.origemExiste ? [{ id: ORIGEM }] : [],
+      error: null,
+    };
+  }
   if (chamada.tabela === "campaign_link_numero") {
     if (chamada.op === "select") {
       return { data: registro.atuais, error: null };
@@ -109,9 +115,8 @@ vi.mock("@/lib/auth/active-clinic", () => ({
       : null,
 }));
 
-const { salvarNumerosDoLinkAction } = await import(
-  "@/app/(app)/configuracoes/regras-de-origem-actions"
-);
+const { definirAvisoDaMetaNoLinkAction, salvarNumerosDoLinkAction } =
+  await import("@/app/(app)/configuracoes/regras-de-origem-actions");
 
 const escritas = () =>
   registro.chamadas.filter((chamada) => chamada.op !== "select");
@@ -279,6 +284,62 @@ describe("salvarNumerosDoLinkAction", () => {
       ok: false,
       error:
         "Um dos números não existe mais nesta clínica. Recarregue a página.",
+    });
+    expect(escritas().some((c) => c.tabela === "audit_log")).toBe(false);
+  });
+});
+
+// Etapa 3e: a chave "Avisar a Meta no clique" da origem.
+describe("definirAvisoDaMetaNoLinkAction", () => {
+  it("sem papel de gestão ou com entrada inválida: nada chega ao banco", async () => {
+    registro.papel = "recepcao";
+    expect(
+      (await definirAvisoDaMetaNoLinkAction({ id: ORIGEM, ligado: true })).ok,
+    ).toBe(false);
+    registro.papel = "admin";
+    for (const entrada of [
+      { id: "nao-e-id", ligado: true },
+      { id: ORIGEM, ligado: "sim" },
+      { id: ORIGEM },
+      null,
+    ]) {
+      expect((await definirAvisoDaMetaNoLinkAction(entrada)).ok).toBe(false);
+    }
+    expect(registro.chamadas).toEqual([]);
+  });
+
+  it("liga e desliga só a chave, na clínica da sessão, e grava a trilha", async () => {
+    for (const ligado of [true, false]) {
+      registro.chamadas = [];
+      expect(
+        await definirAvisoDaMetaNoLinkAction({ id: ORIGEM, ligado }),
+      ).toEqual({ ok: true });
+      const feitas = escritas();
+      expect(feitas[0]).toMatchObject({
+        tabela: "campaign_link",
+        op: "update",
+        valores: { avisar_meta_no_clique: ligado },
+        filtros: [
+          ["clinic_id", CLINICA],
+          ["id", ORIGEM],
+        ],
+      });
+      expect(feitas[1]?.valores).toMatchObject({
+        action: ligado
+          ? "ligou_aviso_da_meta_no_link"
+          : "desligou_aviso_da_meta_no_link",
+        entity_id: ORIGEM,
+      });
+    }
+  });
+
+  it("origem que não existe mais: avisa e não grava trilha", async () => {
+    registro.origemExiste = false;
+    expect(
+      await definirAvisoDaMetaNoLinkAction({ id: ORIGEM, ligado: true }),
+    ).toEqual({
+      ok: false,
+      error: "Esta origem não existe mais. Recarregue a página.",
     });
     expect(escritas().some((c) => c.tabela === "audit_log")).toBe(false);
   });

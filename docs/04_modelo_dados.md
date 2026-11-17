@@ -1734,6 +1734,16 @@ Etapa 3d do plano "Rastreio completo".
 - **Ingestão:** `tentarAtribuirOrigem` chama a função para reclamar depois de gravar a origem por mensagem pronta ou palavra-chave em contato novo, e para a janela quando nenhum sinal casou em contato novo de clínica com origens. O job de conversão ignora o clique `provavel` ao montar o `fbc`.
 - **Ordem:** a migration antes do código.
 
+
+### 15.13 Evento para a Meta no clique do link (16/11/2026, migration `20261116150000_evento_meta_no_clique.sql`, aplicada em 16/11/2026)
+
+Etapa 3e do plano "Rastreio completo".
+
+- **`campaign_link.avisar_meta_no_clique`:** `boolean not null default false`. A chave da origem.
+- **`registrar_clique_do_link`:** mesma assinatura. No resultado `ok`, quando a chave da origem está ligada e `meta_ads_account` da clínica tem `pixel_id` e `envio_ativado`, a resposta traz também `pixel_id`, `clique_id` (o id do clique, usado como id do evento no navegador e no servidor) e `clinica` (só para o servidor ler o token; nunca vai ao navegador). O token continua só em `meta_ads_account_secret`.
+- **Servidor:** `lib/integrations/meta/evento-do-clique.ts` confere de novo a conta e o token na hora do envio e manda o `Contact` de site (`action_source` `website`, endereço do link sem a query, navegador, IP e `fbc` quando veio `fbclid`). Nada do visitante é gravado.
+- **Ordem:** a migration antes do código.
+
 ## 16. Mensagem enviada pelo celular (Pelo WhatsApp, 05/10/2026, migration `20261005120000_mensagem_pelo_celular.sql`)
 
 O que a clínica envia **direto** pelo WhatsApp do número pareado (celular, WhatsApp Web, outro aparelho vinculado), sem passar pelo sistema, chega ao webhook como evento `messages` do uazapi com `fromMe` (sem `wasSentByApi` e sem a nossa marca de rastreio). Até aqui ele só derrubava `awaiting_reply` e rodava o termo-chave, e o conteúdo era descartado: a conversa do Atendimento não mostrava o que o paciente leu. Agora ele vira **linha de `message`**, de saída, marcada `pelo_celular`, na conversa aberta daquele número, e a bolha mostra "Pelo WhatsApp". Nenhum evento novo no uazapi: `messages` já traz o que sai do aparelho, e `excludeMessages: ["wasSentByApi"]` só corta o eco da API. Revisada duas vezes em 05/10/2026 depois de revisões adversariais: a primeira trouxe `created_at` sempre a chegada, a janela da automática com limite de cima, a espera separada da autoria, o número da plataforma, a trava do número, `reclassificar_resposta_automatica` e os dois acréscimos da adoção; a segunda trouxe o **horário de envio** guardado (`message.enviada_no_aparelho_em`), a decisão de autoria e espera pelos horários de envio quando os dois existem (rajada de reconexão), a reclassificação com o horário do paciente e a espera derrubada sem linha nas ignoradas de plataforma e colisão (`espera_pelo_celular_sem_linha`). Ensaiada em transação desfeita contra a produção e **ainda não aplicada** em 05/10/2026 (sha256 `ba79f39c6af0d689e3c831c4488ec1a20ce4d30afbf267b58d667eb034697f53`). Os tipos de `lib/supabase/database.types.ts` (as duas colunas e as quatro funções) foram escritos à mão no formato gerado e precisam ser regenerados depois de aplicar.

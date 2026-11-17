@@ -149,6 +149,84 @@ test("link que nao existe: a pagina de indisponivel, em portugues e sem login", 
   await expect(page.getByText("Entrar", { exact: true })).toHaveCount(0);
 });
 
+test("com Avisar a Meta no clique: a pagina carrega o Pixel da clinica e segue sozinha para o WhatsApp", async ({
+  browser,
+}) => {
+  // O navegador de teste se apresenta como HeadlessChrome, que a rota trata
+  // como robo (e robo nunca ve a pagina do Pixel): aqui ele se apresenta como
+  // gente, no navegador de dentro do Instagram.
+  const contexto = await browser.newContext({ userAgent: NAVEGADOR });
+  const page = await contexto.newPage();
+  // A clinica com o Pixel e o envio ligados. O token sai logo depois de
+  // ligar (o gatilho so confere ao ligar): assim o evento do servidor para em
+  // "sem configuracao" e o teste nunca chama a Meta de verdade.
+  await admin
+    .from("meta_ads_account_secret")
+    .insert({ clinic_id: clinicId, capi_access_token: "tok-e2e" })
+    .throwOnError();
+  await admin
+    .from("meta_ads_account")
+    .insert({
+      clinic_id: clinicId,
+      pixel_id: "626829132163238",
+      modo_user_data: "ctwa_apenas",
+      envio_ativado: true,
+    })
+    .throwOnError();
+  await admin
+    .from("meta_ads_account_secret")
+    .update({ capi_access_token: null })
+    .eq("clinic_id", clinicId)
+    .throwOnError();
+  await admin
+    .from("campaign_link")
+    .update({ avisar_meta_no_clique: true })
+    .eq("id", origemId)
+    .throwOnError();
+
+  // Nada sai para fora no teste: o script do Pixel e o WhatsApp sao dubles.
+  const pedidosAoPixel: string[] = [];
+  await page.route("https://connect.facebook.net/**", (rota) => {
+    pedidosAoPixel.push(rota.request().url());
+    return rota.fulfill({
+      contentType: "application/javascript",
+      body: "/* pixel de teste */",
+    });
+  });
+  await page.route("https://www.facebook.com/**", (rota) =>
+    rota.fulfill({ status: 204, body: "" }),
+  );
+  await page.route("https://wa.me/**", (rota) =>
+    rota.fulfill({ contentType: "text/html", body: "<title>WhatsApp de teste</title>" }),
+  );
+
+  // "commit": a pagina segue para o WhatsApp antes de terminar de carregar.
+  const resposta = await page.goto(`${APP}/l/${codigoPublico}?utm_source=ig`, {
+    waitUntil: "commit",
+  });
+  // A primeira resposta e a pagina do Pixel (200), nao o redirecionamento.
+  expect(resposta?.request().redirectedFrom()).toBeNull();
+  expect(resposta?.status()).toBe(200);
+  // E ela segue sozinha para o WhatsApp, com o codigo do clique na mensagem.
+  await page.waitForURL(/^https:\/\/wa\.me\/5584977770009\?text=/, {
+    timeout: 5_000,
+  });
+  expect(new URL(page.url()).searchParams.get("text")).toMatch(
+    /\[#[23456789A-HJKMNP-Z]{6}\]$/,
+  );
+  expect(pedidosAoPixel).toEqual([
+    "https://connect.facebook.net/en_US/fbevents.js",
+  ]);
+
+  await contexto.close();
+  // De volta ao estado dos outros testes.
+  await admin
+    .from("campaign_link")
+    .update({ avisar_meta_no_clique: false })
+    .eq("id", origemId)
+    .throwOnError();
+});
+
 // ---------------------------------------------------------------------------
 // A tela: o bloco "Link rastreado" e o QR Code (etapa 4), com sessao
 // ---------------------------------------------------------------------------

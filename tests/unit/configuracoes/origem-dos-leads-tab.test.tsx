@@ -10,6 +10,7 @@ vi.mock("@/app/(app)/configuracoes/regras-de-origem-actions", () => ({
   desativarRegraDeOrigemAction: vi.fn(),
   excluirRegraDeOrigemAction: vi.fn(),
   salvarNumerosDoLinkAction: vi.fn(),
+  definirAvisoDaMetaNoLinkAction: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), refresh: vi.fn(), push: vi.fn() }),
@@ -53,6 +54,7 @@ const BIO: RegraDeOrigem = {
   nome: "Link da bio",
   codigo: "K7Q2MX",
   codigoPublico: "k7q2mxab",
+  avisarMetaNoClique: false,
   canal: "redes_sociais",
   origem: "Instagram",
   detalhe: "Bio",
@@ -66,6 +68,7 @@ const PARCEIRO: RegraDeOrigem = {
   nome: "Parceiro academia",
   codigo: null,
   codigoPublico: "p3r4c5d6",
+  avisarMetaNoClique: false,
   canal: "indicacao",
   origem: "Academia Forte",
   detalhe: null,
@@ -94,6 +97,7 @@ function dados(campos: Partial<DadosDasOrigens> = {}): DadosDasOrigens {
       [PARCEIRO.id]: { cliques: 0, leads: 0, provaveis: 0 },
     },
     numerosDosLinks: {},
+    metaProntaParaOClique: true,
     ...campos,
   };
 }
@@ -283,6 +287,34 @@ describe("a lista de origens", () => {
     expect(textoDoResumoDoLink({ cliques: 12, leads: 0, provaveis: 2 })).toBe(
       "12 cliques, 0 leads e 2 prováveis nos últimos 30 dias",
     );
+  });
+
+  // Etapa 3e: avisar a Meta na hora do clique.
+  it("Avisar a Meta no clique: a chave em cada origem; sem a Meta pronta ou sem permissão, visível e desabilitada", () => {
+    const chave = (nome: string, desabilitada: boolean) =>
+      new RegExp(
+        `<button(?=[^>]*aria-label="Avisar a Meta no clique de ${nome}")(?=[^>]*role="switch")${
+          desabilitada ? '(?=[^>]*disabled="")' : '(?![^>]*disabled="")'
+        }[^>]*>`,
+      );
+    expect(visivel).toContain("Avisar a Meta no clique");
+    expect(html).toMatch(chave("Link da bio", false));
+
+    // Sem o Pixel e o envio ligados: desabilitada, a nao ser que ja esteja
+    // ligada (sempre da para desligar).
+    const semMeta = aba(
+      dados({
+        metaProntaParaOClique: false,
+        regras: [BIO, { ...PARCEIRO, avisarMetaNoClique: true }],
+      }),
+    );
+    expect(semMeta).toMatch(chave("Link da bio", true));
+    expect(semMeta).toMatch(chave("Parceiro academia", false));
+    expect(semMeta).toMatch(
+      /aria-label="Avisar a Meta no clique de Parceiro academia"[^>]*aria-checked="true"|aria-checked="true"[^>]*aria-label="Avisar a Meta no clique de Parceiro academia"/,
+    );
+
+    expect(aba(dados(), false)).toMatch(chave("Link da bio", true));
   });
 
   it("os dois links têm nomes diferentes: o rastreado e o direto do WhatsApp", () => {

@@ -1,15 +1,18 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 
 import {
   argumentosDoCliqueDoLink,
+  avisoDaMetaNoClique,
   CAMINHO_DO_LINK,
   CAMINHO_DO_LINK_INDISPONIVEL,
   cookieDoNumeroFixado,
   destinoDoCliqueDoLink,
   ehRoboOuPrevia,
   FORMATO_DO_CODIGO_PUBLICO,
+  ipDoVisitante,
   lerRespostaDoCliqueDoLink,
   numeroFixadoDoCookie,
+  paginaDoPixel,
   usarCodigoInvisivel,
   VALIDADE_DO_NUMERO_FIXADO_EM_SEGUNDOS,
   type ArgumentosDoCliqueDoLink,
@@ -17,6 +20,7 @@ import {
 } from "@/lib/domain/link-rastreado";
 import { PARAMETRO_DO_CODIGO_INVISIVEL } from "@/lib/domain/codigo-invisivel";
 import { contarSinais, sinaisDaUrl } from "@/lib/domain/rastreio-do-site";
+import { enviarEventoDoCliqueDoLink } from "@/lib/integrations/meta/evento-do-clique";
 import { log } from "@/lib/log";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -46,6 +50,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // link. Para o mesmo navegador cair sempre no mesmo numero, a resposta grava
 // um cookie por origem so com o id do numero (90 dias, HttpOnly, restrito a
 // /l/). Nada da pessoa vai no cookie; robo e previa nao recebem.
+//
+// EVENTO PARA A META NO CLIQUE (etapa 3e): quando a origem pede e a clinica
+// tem o Pixel e o envio ligados, a resposta deixa de ser o redirecionamento
+// e vira uma pagina que dispara o Pixel e segue para o WhatsApp (ate 1,5 s);
+// o mesmo evento vai pelo servidor DEPOIS da resposta (after), com o mesmo
+// id. So aqui o IP e o navegador do visitante sao usados, para a Meta casar
+// o evento, e nao sao gravados nem escritos em log.
 //
 // O matcher de middleware.ts exclui l/: sem isso, o visitante sem sessao
 // seria redirecionado para /login.
@@ -138,7 +149,38 @@ async function responder(
     status: resposta.resultado,
     count: sinais ? contarSinais(sinais) : 0,
   });
-  const redirecionamento = redirecionar(destino);
+  const aviso = gravar ? avisoDaMetaNoClique(resposta) : null;
+  const redirecionamento = aviso
+    ? new NextResponse(
+        paginaDoPixel({
+          pixelId: aviso.pixelId,
+          eventoId: aviso.eventoId,
+          destino,
+        }),
+        {
+          status: 200,
+          headers: {
+            ...CABECALHOS,
+            "Content-Type": "text/html; charset=utf-8",
+            "X-Robots-Tag": "noindex, nofollow",
+          },
+        },
+      )
+    : redirecionar(destino);
+  if (aviso) {
+    const clique = {
+      clinicId: aviso.clinicId,
+      pixelId: aviso.pixelId,
+      eventId: aviso.eventoId,
+      cliqueEmMs: Date.now(),
+      // Sem a query: as UTMs e os identificadores nao vao no endereco.
+      eventSourceUrl: `${request.nextUrl.origin}${request.nextUrl.pathname}`,
+      userAgent: request.headers.get("user-agent") ?? "",
+      ip: ipDoVisitante(request.headers.get("x-forwarded-for")),
+      fbclid: sinais?.fbclid ?? null,
+    };
+    after(() => enviarEventoDoCliqueDoLink(createAdminClient(), clique));
+  }
   if (gravar && "numero" in resposta) {
     redirecionamento.cookies.set(cookie, resposta.numero, {
       maxAge: VALIDADE_DO_NUMERO_FIXADO_EM_SEGUNDOS,
