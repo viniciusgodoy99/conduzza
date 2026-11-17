@@ -488,13 +488,17 @@ describe("a aba na tela de Configurações", () => {
     );
   }
 
-  it("?aba=origem abre a aba, com a explicação e o contador", () => {
+  // Desde 17/11/2026 a aba Origem dos leads e o passo "Links e origens" da
+  // aba Anuncios e rastreio; o link antigo continua valendo.
+  it("o link antigo ?aba=origem cai em Anúncios e rastreio, com o passo das origens aberto e contado", () => {
     const html = tela("origem", dados());
     const selecionada =
       /<button[^>]*role="tab"[^>]*aria-selected="true"[^>]*>(.*?)<\/button>/.exec(
         html,
       )?.[1] ?? "";
-    expect(texto(selecionada).trim()).toMatch(/^Origem dos leads 2 2 origens$/);
+    expect(texto(selecionada).trim()).toBe("Anúncios e rastreio");
+    // O passo a passo conta as origens no chip do passo 6.
+    expect(texto(html)).toContain("2 origens");
     expect(html).toContain(
       "Quando o lead chega por um link da clínica (a bio do Instagram, o perfil no Google, um QR code, um parceiro)",
     );

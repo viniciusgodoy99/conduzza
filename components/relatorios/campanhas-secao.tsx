@@ -247,7 +247,7 @@ export function CampanhasSecao({
         <div className="px-4 pt-3">
           <Aviso tom="warning" role="note">
             A última leitura do investimento teve problema. Veja o motivo em
-            Configurações, aba Anúncios da Meta.
+            Configurações, aba Anúncios e rastreio.
           </Aviso>
         </div>
       ) : null}

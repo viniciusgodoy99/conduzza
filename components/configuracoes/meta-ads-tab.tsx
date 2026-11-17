@@ -1,7 +1,8 @@
 "use client";
 
 import { Check, Megaphone } from "lucide-react";
-import { useState, useTransition } from "react";
+import Link from "next/link";
+import { useState, useTransition, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import {
@@ -11,6 +12,10 @@ import {
 } from "@/app/(app)/configuracoes/actions";
 import { InvestimentoMetaCard } from "@/components/configuracoes/investimento-meta-card";
 import type { LeituraDoInvestimento } from "@/components/configuracoes/investimento-meta";
+import {
+  OndeEncontro,
+  OndeEncontroDoCampo,
+} from "@/components/configuracoes/onde-encontro";
 import { Aviso } from "@/components/shared/aviso";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
@@ -36,11 +41,17 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { TOKEN_META_STATUS } from "@/lib/design/status";
+import { ONDE_ENCONTRAR } from "@/lib/domain/onde-encontrar";
 
-// Aba Anuncios da Meta (R6): a conta que recebe as conversoes de volta e,
+// Os cartoes da Meta (R6): a conta que recebe as conversoes de volta e,
 // desde a Fase 4, de onde a clinica le o investimento nos anuncios (cartao
 // "Investimento nos anuncios", que usa a MESMA conta deste cartao, sem
 // repetir o campo).
+//
+// Desde 17/11/2026 (decisao do dono: um lugar so, com passo a passo) eles
+// nao sao mais uma aba: useCartoesDaMeta devolve os quatro cartoes, e a aba
+// "Anuncios e rastreio" poe cada um no passo dele. O estado dos campos mora
+// no gancho, entao fechar um passo nao apaga o que foi digitado.
 //
 // O TOKEN E WRITE-ONLY: o servidor nunca manda o valor para ca, so o fato de
 // existir (temToken). O campo sempre nasce vazio e salvar substitui.
@@ -70,7 +81,17 @@ const CONTA_VAZIA: ContaMeta = {
   send_unmatched: false,
 };
 
-export function MetaAdsTab({
+/** Os quatro cartoes da Meta, cada um para o passo dele. */
+export type CartoesDaMeta = {
+  conta: ReactNode;
+  token: ReactNode;
+  envio: ReactNode;
+  investimento: ReactNode;
+};
+
+type ParteDaMeta = "conta" | "token" | "envio";
+
+export function useCartoesDaMeta({
   conta,
   temToken,
   temTokenDeLeitura,
@@ -92,7 +113,7 @@ export function MetaAdsTab({
   agoraMs: number;
   podeGerenciar: boolean;
   dica: string;
-}) {
+}): CartoesDaMeta {
   const atual = conta ?? CONTA_VAZIA;
   const [pixel, setPixel] = useState(atual.pixel_id ?? "");
   const [contaAnuncios, setContaAnuncios] = useState(atual.ad_account_id ?? "");
@@ -105,10 +126,15 @@ export function MetaAdsTab({
     atual.modo_user_data ?? "",
   );
   const [token, setToken] = useState("");
-  const [erro, setErro] = useState<string | null>(null);
+  const [erro, setErro] = useState<{
+    onde: ParteDaMeta;
+    texto: string;
+  } | null>(null);
   const [pendente, startTransition] = useTransition();
 
-  const salvarConta = () => {
+  // "onde": o cartao que pediu (a conta, ou o envio ao escolher como os
+  // dados saem), para o erro aparecer ao lado de quem clicou.
+  const salvarConta = (onde: "conta" | "envio") => {
     setErro(null);
     startTransition(async () => {
       const resultado = await salvarContaMetaAction({
@@ -124,12 +150,14 @@ export function MetaAdsTab({
             : null,
       });
       if (!resultado.ok) {
-        setErro(resultado.error);
+        setErro({ onde, texto: resultado.error });
         return;
       }
       // O servidor grava sempre act_<digitos>: o campo mostra o que ficou.
       setContaAnuncios(resultado.adAccountId ?? "");
-      toast.success("Conta de anúncios salva.");
+      toast.success(
+        onde === "conta" ? "Conta de anúncios salva." : "Escolha salva.",
+      );
     });
   };
 
@@ -140,7 +168,10 @@ export function MetaAdsTab({
         capi_access_token: token,
       });
       if (!resultado.ok) {
-        setErro(resultado.error ?? "Não foi possível salvar o token.");
+        setErro({
+          onde: "token",
+          texto: resultado.error ?? "Não foi possível salvar o token.",
+        });
         return;
       }
       setToken("");
@@ -153,7 +184,10 @@ export function MetaAdsTab({
     startTransition(async () => {
       const resultado = await alternarEnvioMetaAction({ ligar });
       if (!resultado.ok) {
-        setErro(resultado.error ?? "Não foi possível alterar o envio.");
+        setErro({
+          onde: "envio",
+          texto: resultado.error ?? "Não foi possível alterar o envio.",
+        });
         return;
       }
       toast.success(
@@ -199,11 +233,35 @@ export function MetaAdsTab({
   );
 
   const botaoSalvarConta = (
-    <Button onClick={salvarConta} disabled={!podeGerenciar || pendente}>
+    <Button
+      onClick={() => salvarConta("conta")}
+      disabled={!podeGerenciar || pendente}
+    >
       <Check className="size-4" />
       {pendente ? "Salvando..." : "Salvar conta"}
     </Button>
   );
+  // O modo e gravado junto da conta: o passo do envio tem o proprio botao,
+  // para ninguem precisar voltar ao passo 1 so para salvar a escolha.
+  const botaoSalvarModo = (
+    <Button
+      variant="outline"
+      onClick={() => salvarConta("envio")}
+      disabled={
+        !podeGerenciar ||
+        pendente ||
+        modoEscolhido === (atual.modo_user_data ?? "")
+      }
+    >
+      Salvar escolha
+    </Button>
+  );
+  const erroDe = (onde: ParteDaMeta) =>
+    erro?.onde === onde ? (
+      <Aviso tom="alert" role="alert">
+        {erro.texto}
+      </Aviso>
+    ) : null;
   const botaoSalvarToken = (
     <Button
       variant="outline"
@@ -214,15 +272,10 @@ export function MetaAdsTab({
     </Button>
   );
 
-  return (
-    <div className="grid items-start gap-4 lg:grid-cols-2">
-      {erro ? (
-        <Aviso tom="alert" role="alert" className="lg:col-span-2">
-          {erro}
-        </Aviso>
-      ) : null}
-
-      <Card className="lg:row-span-3">
+  const cartaoDaConta = (
+    <>
+      {erroDe("conta")}
+      <Card>
         <CardHeader>
           <div className="flex min-w-0 items-center gap-3">
             {/* Ladrilho da Meta: decorativo, a cor nao diz estado. */}
@@ -236,8 +289,8 @@ export function MetaAdsTab({
               <CardTitle>Conta de anúncios</CardTitle>
               <CardDescription>
                 Usada para ler o investimento nos anúncios e para devolver as
-                conversões. Os identificadores ficam no Gerenciador de Eventos
-                e no Gerenciador de Negócios da Meta.
+                conversões. Embaixo de cada campo está onde achar o número na
+                Meta.
               </CardDescription>
             </div>
           </div>
@@ -248,7 +301,7 @@ export function MetaAdsTab({
             para os anúncios.
           </p>
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-1.5">
+            <div className="grid content-start gap-1.5">
               <Label htmlFor="meta-pixel">Pixel (conjunto de dados)</Label>
               <Input
                 id="meta-pixel"
@@ -259,6 +312,7 @@ export function MetaAdsTab({
                 className="cz-num"
                 disabled={!podeGerenciar}
               />
+              <OndeEncontroDoCampo ajuda={ONDE_ENCONTRAR.pixel} />
             </div>
             <div className="grid content-start gap-1.5">
               <Label htmlFor="meta-conta">Conta de anúncios</Label>
@@ -275,6 +329,7 @@ export function MetaAdsTab({
                 Só os números, com ou sem act_ na frente. Também vale colar o
                 link do Gerenciador de Anúncios.
               </p>
+              <OndeEncontroDoCampo ajuda={ONDE_ENCONTRAR.contaDeAnuncios} />
             </div>
             <div className="grid content-start gap-1.5">
               <Label htmlFor="meta-waba">
@@ -291,9 +346,9 @@ export function MetaAdsTab({
               />
               <p className="text-[11px] text-text-secondary">
                 Necessária para casar a conversão com o clique do anúncio de
-                WhatsApp. Fica no Gerenciador de Negócios, em contas do
                 WhatsApp.
               </p>
+              <OndeEncontroDoCampo ajuda={ONDE_ENCONTRAR.waba} />
             </div>
             <div className="grid content-start gap-1.5">
               <Label htmlFor="meta-teste">Código de evento de teste</Label>
@@ -310,6 +365,7 @@ export function MetaAdsTab({
                 Gerenciador de Eventos, sem sujar o dado real. Apague depois de
                 validar.
               </p>
+              <OndeEncontroDoCampo ajuda={ONDE_ENCONTRAR.codigoDeTeste} />
             </div>
           </div>
           <div className="flex min-h-10 items-start gap-2.5">
@@ -339,17 +395,24 @@ export function MetaAdsTab({
           )}
         </CardFooter>
       </Card>
+    </>
+  );
 
-      <InvestimentoMetaCard
-        adAccountId={atual.ad_account_id}
-        temTokenDeLeitura={temTokenDeLeitura}
-        leitura={leitura}
-        timezone={timezone}
-        agoraMs={agoraMs}
-        podeGerenciar={podeGerenciar}
-        dica={dica}
-      />
+  const cartaoDoInvestimento = (
+    <InvestimentoMetaCard
+      adAccountId={atual.ad_account_id}
+      temTokenDeLeitura={temTokenDeLeitura}
+      leitura={leitura}
+      timezone={timezone}
+      agoraMs={agoraMs}
+      podeGerenciar={podeGerenciar}
+      dica={dica}
+    />
+  );
 
+  const cartaoDoToken = (
+    <>
+      {erroDe("token")}
       <Card>
         <CardHeader>
           <CardTitle>Token da API de conversões</CardTitle>
@@ -364,8 +427,9 @@ export function MetaAdsTab({
           <p className="text-[13px] text-text-secondary">
             {temToken
               ? "Cole um novo para substituir; por segurança, o valor atual nunca é mostrado."
-              : "Gere o token no Gerenciador de Eventos (configurações do conjunto de dados, API de conversões)."}
+              : "Gere o token na Meta, pelo caminho abaixo, e cole aqui. Depois de salvo, ele não aparece de novo, por segurança."}
           </p>
+          <OndeEncontro ajuda={ONDE_ENCONTRAR.tokenDeConversoes} />
           <div className="flex flex-wrap gap-2">
             <Input
               type="password"
@@ -387,7 +451,12 @@ export function MetaAdsTab({
           </div>
         </CardContent>
       </Card>
+    </>
+  );
 
+  const cartaoDoEnvio = (
+    <>
+      {erroDe("envio")}
       <Card>
         <CardHeader>
           <CardTitle>Envio das conversões</CardTitle>
@@ -395,13 +464,22 @@ export function MetaAdsTab({
         <CardContent className="grid gap-4">
           <div className="grid gap-1.5">
             <Label htmlFor="meta-modo">Como os dados saem da clínica</Label>
-            {podeGerenciar ? (
-              seletorDoModo
-            ) : (
-              <DisabledWithHint className="w-full" hint={dica}>
-                {seletorDoModo}
-              </DisabledWithHint>
-            )}
+            <div className="flex flex-wrap items-start gap-2">
+              <div className="min-w-0 flex-1 basis-64">
+                {podeGerenciar ? (
+                  seletorDoModo
+                ) : (
+                  <DisabledWithHint className="w-full" hint={dica}>
+                    {seletorDoModo}
+                  </DisabledWithHint>
+                )}
+              </div>
+              {podeGerenciar ? (
+                botaoSalvarModo
+              ) : (
+                <DisabledWithHint hint={dica}>{botaoSalvarModo}</DisabledWithHint>
+              )}
+            </div>
           </div>
 
           <div className="flex min-h-10 items-center gap-2.5">
@@ -431,8 +509,27 @@ export function MetaAdsTab({
             <span className="cz-num">7</span> dias são enviados (a Meta não
             aceita mais antigos) e o painel de Resultados mostra cada situação.
           </p>
+          <p className="text-xs text-text-secondary">
+            Quais etapas viram conversão, e com qual evento, a clínica escolhe
+            em{" "}
+            <Link
+              href="/configuracoes?aba=jornada"
+              prefetch={false}
+              className="font-semibold text-primary-text underline underline-offset-2"
+            >
+              Jornada e conversões
+            </Link>
+            .
+          </p>
         </CardContent>
       </Card>
-    </div>
+    </>
   );
+
+  return {
+    conta: cartaoDaConta,
+    token: cartaoDoToken,
+    envio: cartaoDoEnvio,
+    investimento: cartaoDoInvestimento,
+  };
 }

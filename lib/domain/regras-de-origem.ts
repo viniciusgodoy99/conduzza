@@ -583,7 +583,7 @@ export function avisosDaMensagem(
     avisos.push({
       chave: "site",
       texto:
-        "Esta mensagem é igual a uma frase do botão do site (aba Anúncios do Google). Quem escrever pelo site também ganharia esta origem: use um texto só deste link.",
+        "Esta mensagem é igual a uma frase do botão do site (passo Rastreio do site). Quem escrever pelo site também ganharia esta origem: use um texto só deste link.",
     });
   }
   return avisos;

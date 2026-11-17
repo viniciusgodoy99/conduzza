@@ -110,14 +110,18 @@ test("o link antigo da aba Agente de IA leva à tela Agente de IA", async ({
   ).toBeVisible();
 
   await page.goto("/configuracoes?aba=whatsapp");
-  // contraprova: a fileira de abas esta la, com o Google e terminando na
-  // Origem dos leads (onda 5), a ultima aba fixa
+  // contraprova: a fileira de abas esta la, terminando em Anuncios e
+  // rastreio (17/11/2026: juntou Anuncios da Meta, Anuncios do Google e
+  // Origem dos leads), a ultima aba fixa
+  await expect(
+    page.getByRole("tab", { name: "Anúncios e rastreio", exact: true }),
+  ).toHaveCount(1);
   await expect(
     page.getByRole("tab", { name: "Anúncios do Google", exact: true }),
-  ).toHaveCount(1);
+  ).toHaveCount(0);
   await expect(
     page.getByRole("tab", { name: /^Origem dos leads/ }),
-  ).toHaveCount(1);
+  ).toHaveCount(0);
   await expect(
     page.getByRole("tab", { name: "Agente de IA", exact: true }),
   ).toHaveCount(0);

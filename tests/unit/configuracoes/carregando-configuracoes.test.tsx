@@ -39,27 +39,26 @@ describe("esqueleto de Configurações", () => {
   it("tem uma barra para cada aba da tela", () => {
     const abas = abasDaTela();
     expect(abas).toContain("mensagens");
-    expect(abas).toContain("google");
+    expect(abas).toContain("rastreio");
     expect(barrasDoEsqueleto()).toBe(abas.length);
   });
 
   it("Automações de fluxo saiu da fileira (mora em Automações)", () => {
     const abas = abasDaTela();
     expect(abas).not.toContain("fluxo");
-    expect(abas).toHaveLength(9);
+    // Em 17/11/2026 as tres abas de anuncios viraram uma: Anuncios e rastreio.
+    expect(abas).toHaveLength(7);
     // A jornada agora e seguida direto pelas etiquetas.
     expect(abas.indexOf("etiquetas")).toBe(abas.indexOf("jornada") + 1);
   });
 
-  it("Anúncios do Google vem logo depois de Anúncios da Meta", () => {
+  it("Anúncios e rastreio é a última aba, no lugar das três de anúncios e origem (17/11/2026)", () => {
     const abas = abasDaTela();
-    expect(abas.indexOf("google")).toBe(abas.indexOf("meta") + 1);
-  });
-
-  it("Origem dos leads vem logo depois de Anúncios do Google (P17-1)", () => {
-    const abas = abasDaTela();
-    expect(abas).toContain("origem");
-    expect(abas.indexOf("origem")).toBe(abas.indexOf("google") + 1);
-    expect(barrasDoEsqueleto()).toBe(9);
+    expect(abas.at(-1)).toBe("rastreio");
+    expect(abas.indexOf("rastreio")).toBe(abas.indexOf("mensagens") + 1);
+    for (const antiga of ["meta", "google", "origem"]) {
+      expect(abas).not.toContain(antiga);
+    }
+    expect(barrasDoEsqueleto()).toBe(7);
   });
 });

@@ -208,7 +208,9 @@ async function montar(opcoes: {
 }
 
 function cartaoDoInvestimento(page: Page): Locator {
-  return page.getByRole("region", { name: TITULO_DO_CARTAO });
+  // exact: o passo aberto da aba Anuncios e rastreio tambem e uma regiao, e o
+  // nome do cartao e um trecho do nome dela ("Passo 5: Rastreio do site").
+  return page.getByRole("region", { name: TITULO_DO_CARTAO, exact: true });
 }
 
 /** A regiao aria-live do resultado das acoes do cartao. */
@@ -220,7 +222,9 @@ async function abrirAba(page: Page): Promise<Locator> {
   await login(page, dados().emails.admin);
   await page.goto("/configuracoes?aba=meta");
   await expect(
-    page.getByRole("tab", { name: "Anúncios da Meta" }),
+    // O link antigo (?aba=meta) cai na aba Anuncios e rastreio, com os
+    // passos da Meta abertos (17/11/2026).
+    page.getByRole("tab", { name: "Anúncios e rastreio" }),
   ).toHaveAttribute("aria-selected", "true");
   const cartao = cartaoDoInvestimento(page);
   await expect(cartao).toBeVisible();
