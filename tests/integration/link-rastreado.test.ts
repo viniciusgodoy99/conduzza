@@ -196,7 +196,7 @@ describe("link rastreado da origem", () => {
       .rpc("resumo_dos_links_rastreados", { p_clinic_id: clinicId })
       .throwOnError();
     expect(resumo).toEqual([
-      { campaign_link_id: origem.id, cliques: 1, leads: 1 },
+      { campaign_link_id: origem.id, cliques: 1, leads: 1, provaveis: 0 },
     ]);
   });
 
@@ -462,5 +462,180 @@ describe("rodízio entre números do link", () => {
       .in("id", [a.id, b.id])
       .throwOnError();
     expect(await destino()).toBe(c.id);
+  });
+});
+
+// Casar sem o codigo (etapa 3d, migration 20261116140000).
+describe("a pessoa apagou o código do link", () => {
+  async function origemDoContato(contactId: string) {
+    const { data } = await admin
+      .from("contact")
+      .select("source_channel, source_campaign, source_method, source_ad_id")
+      .eq("id", contactId)
+      .single()
+      .throwOnError();
+    return data!;
+  }
+  async function ingerir(clinicId: string, telefone: string, id: string, corpo: string) {
+    const resultado = await ingerirMensagemRecebida(
+      admin,
+      clinicId,
+      null,
+      evento(telefone, `${id}-${sufixo}`, corpo),
+    );
+    expect(resultado.error).toBeNull();
+    return resultado.data!.contact_id!;
+  }
+
+  it("mensagem pronta sem o código: a origem vem pela mensagem e o único clique do link fica ligado ao contato (confirmado), com o anúncio da Meta", async () => {
+    const clinicId = await criarClinica("reclamar");
+    const origem = await criarOrigem(clinicId);
+    const clique = await clicar(origem.codigoPublico, {
+      p_utm_source: "instagram",
+      p_meta_ad_id: "120211223344556",
+    });
+    expect(clique.resultado).toBe("ok");
+
+    const contato = await ingerir(clinicId, "+5584974440001", "rec-1", MENSAGEM);
+    expect(await origemDoContato(contato)).toEqual({
+      source_channel: "redes_sociais",
+      source_campaign: "Bio novembro",
+      source_method: "mensagem_padrao",
+      source_ad_id: "120211223344556",
+    });
+    const { data: linha } = await admin
+      .from("clique_do_site")
+      .select("contact_id, provavel")
+      .eq("clinic_id", clinicId)
+      .single()
+      .throwOnError();
+    expect(linha).toEqual({ contact_id: contato, provavel: false });
+
+    const { data: resumo } = await admin
+      .rpc("resumo_dos_links_rastreados", { p_clinic_id: clinicId })
+      .throwOnError();
+    expect(resumo).toEqual([
+      { campaign_link_id: origem.id, cliques: 1, leads: 1, provaveis: 0 },
+    ]);
+  });
+
+  it("contato novo sem nenhum sinal e um único clique de link nos últimos 10 minutos: origem provável, sem o anúncio", async () => {
+    const clinicId = await criarClinica("janela");
+    const origem = await criarOrigem(clinicId);
+    await clicar(origem.codigoPublico, { p_meta_ad_id: "120211223344556" });
+
+    const contato = await ingerir(
+      clinicId,
+      "+5584974440002",
+      "jan-1",
+      "Boa tarde, vocês atendem sábado?",
+    );
+    expect(await origemDoContato(contato)).toEqual({
+      source_channel: "redes_sociais",
+      source_campaign: "Bio novembro",
+      source_method: "link_provavel",
+      // O provavel nao leva o anuncio para o contato.
+      source_ad_id: null,
+    });
+    const { data: resumo } = await admin
+      .rpc("resumo_dos_links_rastreados", { p_clinic_id: clinicId })
+      .throwOnError();
+    expect(resumo).toEqual([
+      { campaign_link_id: origem.id, cliques: 1, leads: 0, provaveis: 1 },
+    ]);
+
+    // O clique ja foi gasto: o proximo contato novo nao casa com nada.
+    const outro = await ingerir(
+      clinicId,
+      "+5584974440003",
+      "jan-2",
+      "Oi, tudo bem?",
+    );
+    expect((await origemDoContato(outro)).source_method).toBeNull();
+  });
+
+  it("dois cliques na janela, clique velho ou de outro número: ninguém casa (na dúvida, vazio)", async () => {
+    const clinicId = await criarClinica("duvida");
+    const origem = await criarOrigem(clinicId);
+    await clicar(origem.codigoPublico);
+    await clicar(origem.codigoPublico);
+    const comDois = await ingerir(
+      clinicId,
+      "+5584974440004",
+      "duv-1",
+      "Oi, quero saber dos horários",
+    );
+    expect((await origemDoContato(comDois)).source_method).toBeNull();
+    const { data: semDono } = await admin
+      .from("clique_do_site")
+      .select("contact_id")
+      .eq("clinic_id", clinicId)
+      .throwOnError();
+    expect(semDono).toEqual([{ contact_id: null }, { contact_id: null }]);
+
+    // Um clique so, mas de 11 minutos atras: fora da janela.
+    const velha = await criarClinica("velha");
+    const origemVelha = await criarOrigem(velha);
+    await clicar(origemVelha.codigoPublico);
+    await admin
+      .from("clique_do_site")
+      // A validade acompanha (o check exige no maximo 7 dias depois do clique).
+      .update({
+        criado_em: new Date(Date.now() - 11 * 60_000).toISOString(),
+        valido_ate: new Date(Date.now() + 6 * 86_400_000).toISOString(),
+      })
+      .eq("clinic_id", velha)
+      .throwOnError();
+    const tarde = await ingerir(velha, "+5584974440005", "duv-2", "Oi, boa noite");
+    expect((await origemDoContato(tarde)).source_method).toBeNull();
+
+    // Direto na funcao: o numero que recebeu nao e o do clique.
+    const { data: outroNumero } = await admin
+      .rpc("casar_clique_sem_codigo", {
+        p_clinic_id: clinicId,
+        p_contact_id: comDois,
+        p_whatsapp_account_id: "00000000-0000-4000-8000-000000000000",
+      })
+      .throwOnError();
+    expect(outroNumero).toBe("nenhum");
+  });
+
+  it("contato que já tem origem (anúncio ou manual) não gasta o clique da janela", async () => {
+    const clinicId = await criarClinica("comorigem");
+    const origem = await criarOrigem(clinicId);
+    await clicar(origem.codigoPublico);
+    const { data: contato } = await admin
+      .from("contact")
+      .insert({
+        clinic_id: clinicId,
+        phone_e164: "+5584974440006",
+        name: "Já tem origem",
+        source_channel: "indicacao",
+        source_method: "manual",
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    const { data: numero } = await admin
+      .from("whatsapp_account")
+      .select("id")
+      .eq("clinic_id", clinicId)
+      .single()
+      .throwOnError();
+    const { data: resposta } = await admin
+      .rpc("casar_clique_sem_codigo", {
+        p_clinic_id: clinicId,
+        p_contact_id: contato!.id,
+        p_whatsapp_account_id: numero!.id,
+      })
+      .throwOnError();
+    expect(resposta).toBe("nenhum");
+    const { data: linha } = await admin
+      .from("clique_do_site")
+      .select("contact_id")
+      .eq("clinic_id", clinicId)
+      .single()
+      .throwOnError();
+    expect(linha).toEqual({ contact_id: null });
   });
 });

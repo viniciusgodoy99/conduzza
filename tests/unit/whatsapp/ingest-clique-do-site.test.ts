@@ -1193,3 +1193,92 @@ describe("ingestão com código de clique do site", () => {
     expect(banco.chamadasDoCasar()).toEqual([]);
   });
 });
+
+// Etapa 3d do plano de 16/11/2026 (casar_clique_sem_codigo, migration
+// 20261116140000): a pessoa apagou o codigo do link rastreado. A ingestao so
+// decide QUANDO chamar o banco e com o que; quem confere a janela de 10
+// minutos e o "exatamente um clique" e a funcao (testes de integracao).
+describe("ingestão sem o código do link (reclamar e janela)", () => {
+  const semCodigo = () =>
+    banco.rpcs
+      .filter((chamada) => chamada.nome === "casar_clique_sem_codigo")
+      .map((chamada) => chamada.args);
+  const MENSAGEM_PRONTA =
+    "Olá! Vi o perfil da clínica e quero agendar uma avaliação.";
+
+  it("contato novo com a mensagem pronta de uma origem: grava a origem e reclama o clique do link dela, no número que recebeu", async () => {
+    const origem = campanhaFixa({
+      token: "F7X2AB",
+      channel: "redes_sociais",
+      default_message: MENSAGEM_PRONTA,
+    });
+    banco.campanhas = [origem];
+
+    await ingerir(mensagem(MENSAGEM_PRONTA));
+
+    expect(banco.contato).toMatchObject({
+      source_channel: "redes_sociais",
+      source_method: "mensagem_padrao",
+    });
+    expect(semCodigo()).toEqual([
+      {
+        p_clinic_id: CLINICA,
+        p_contact_id: CONTATO,
+        p_whatsapp_account_id: NUMERO,
+        p_campaign_link_id: origem.id,
+      },
+    ]);
+  });
+
+  it("palavra-chave também reclama; o código fixo não (veio pelo link direto ou o clique não foi gravado)", async () => {
+    const origem = campanhaFixa({
+      token: "F7X2AB",
+      channel: "busca_organica",
+      keywords: ["agendar"],
+    });
+    banco.campanhas = [origem];
+
+    await ingerir(mensagem("quero agendar"));
+    expect(semCodigo()).toHaveLength(1);
+    expect(semCodigo()[0]?.p_campaign_link_id).toBe(origem.id);
+
+    banco.limpar();
+    banco.campanhas = [origem];
+    await ingerir(mensagem("Oi [#F7X2AB]"));
+    expect(banco.contato.source_method).toBe("link_token");
+    expect(semCodigo()).toEqual([]);
+  });
+
+  it("contato novo sem nenhum sinal, em clínica com origens: tenta a janela, sem dizer a origem", async () => {
+    banco.campanhas = [
+      campanhaFixa({ token: "F7X2AB", default_message: MENSAGEM_PRONTA }),
+    ];
+
+    await ingerir(mensagem("Boa tarde, vocês atendem sábado?"));
+
+    expect(semCodigo()).toEqual([
+      {
+        p_clinic_id: CLINICA,
+        p_contact_id: CONTATO,
+        p_whatsapp_account_id: NUMERO,
+      },
+    ]);
+    // A ingestao nao grava origem nenhuma: quem grava (ou nao) e o banco.
+    expect(banco.contato.source_channel).toBeNull();
+  });
+
+  it("clínica sem origens, ou contato que já existia: nem pergunta ao banco", async () => {
+    await ingerir(mensagem("Boa tarde, vocês atendem sábado?"));
+    expect(semCodigo()).toEqual([]);
+
+    banco.limpar();
+    banco.campanhas = [
+      campanhaFixa({ token: "F7X2AB", default_message: MENSAGEM_PRONTA }),
+    ];
+    banco.ingestao = { ...banco.ingestao, contact_created: false };
+    // Contato antigo so chega a atribuicao com um token no texto; sem regra
+    // que case, nada de janela.
+    await ingerir(mensagem("Boa tarde [#ZZZZZZ]"));
+    expect(semCodigo()).toEqual([]);
+  });
+});

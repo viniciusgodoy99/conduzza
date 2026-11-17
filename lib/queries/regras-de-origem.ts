@@ -58,10 +58,12 @@ export async function fetchResumoDosLinks(
     campaign_link_id: string;
     cliques: number | string;
     leads: number | string;
+    provaveis?: number | string;
   }[]) {
     resumo[linha.campaign_link_id] = {
       cliques: Number(linha.cliques) || 0,
       leads: Number(linha.leads) || 0,
+      provaveis: Number(linha.provaveis) || 0,
     };
   }
   return resumo;

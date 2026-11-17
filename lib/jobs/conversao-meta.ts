@@ -150,6 +150,9 @@ export async function executarEnvioDeConversao(
     .select("fbclid, criado_em")
     .eq("clinic_id", job.clinic_id)
     .eq("contact_id", evento.contact_id)
+    // O clique casado so pela janela de 10 minutos (provavel) nao prova o
+    // anuncio: fica de fora.
+    .eq("provavel", false)
     .not("fbclid", "is", null)
     .order("criado_em", { ascending: false })
     .limit(1)

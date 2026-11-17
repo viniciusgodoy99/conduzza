@@ -72,16 +72,17 @@ describe("origem do lead do Google", () => {
   });
 
   it("todo método do check do banco (com clique_site) tem rótulo humano", () => {
-    // O check vigente vem da migration do clique do site.
+    // O check vigente vem da migration que casa o clique sem codigo (etapa
+    // 3d, 16/11/2026), a ultima a trocar a lista (acrescentou link_provavel).
     const sql = readFileSync(
       join(
         process.cwd(),
-        "supabase/migrations/20261005100000_clique_do_site.sql",
+        "supabase/migrations/20261116140000_casar_sem_codigo.sql",
       ),
       "utf-8",
     );
     const bloco =
-      /add constraint contact_source_method_valido check \(([\s\S]*?)\)\s*\),/.exec(
+      /add constraint contact_source_method_valido check \(([\s\S]*?)\)\s*\);/.exec(
         sql,
       )?.[1];
     expect(bloco, "check contact_source_method_valido").toBeDefined();
@@ -90,6 +91,8 @@ describe("origem do lead do Google", () => {
     );
     expect(metodos).toContain("clique_site");
     expect(metodos).toContain("anuncio_ctwa");
+    expect(metodos).toContain("link_provavel");
+    expect(rotuloDoMetodo("link_provavel")).toBe("Link rastreado (provável)");
     for (const metodo of metodos) {
       const rotulo = rotuloDoMetodo(metodo);
       expect(rotulo, metodo).toBe(METODO_LABELS[metodo]);

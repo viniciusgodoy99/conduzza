@@ -23,8 +23,11 @@ import type { Database } from "@/lib/supabase/database.types";
 // ao WhatsApp enquanto o banco souber o numero. Sem gravar o clique, o link
 // leva o codigo FIXO da origem, que a ingestao ja reconhece.
 
-/** Cliques e leads de uma origem nos ultimos 30 dias (link rastreado). */
-export type ResumoDoLink = { cliques: number; leads: number };
+/**
+ * Cliques e leads de uma origem nos ultimos 30 dias (link rastreado). Os
+ * provaveis (etapa 3d) sao os casados so pela janela de 10 minutos.
+ */
+export type ResumoDoLink = { cliques: number; leads: number; provaveis: number };
 
 /** O prefixo do endereco publico do link. Fora do middleware (matcher). */
 export const CAMINHO_DO_LINK = "/l/";
