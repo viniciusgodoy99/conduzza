@@ -254,6 +254,11 @@
   --ring: var(--cz-lime-400);
   --chart-bar: var(--cz-lime-700);
   --chart-bar-muted: var(--cz-ink-500);
+  /* 3a e 4a series da linha com marcadores (painel por origem, 17/11/2026):
+     azul e tinta forte, 3:1 sobre o card nos dois temas. Identificam a serie
+     junto com o marcador e o nome na legenda, nunca sozinhas */
+  --chart-serie-3: var(--cz-info-500);
+  --chart-serie-4: var(--text-strong);
 
   --secondary: var(--surface-4);
   --secondary-foreground: var(--foreground);
@@ -413,6 +418,8 @@
   --focus: var(--cz-lime-400);
   --chart-bar: var(--cz-lime-400);
   --chart-bar-muted: var(--cz-ink-500);
+  --chart-serie-3: var(--cz-info-500);
+  --chart-serie-4: var(--text-strong);
 
   --secondary: var(--surface-4);
   --secondary-foreground: var(--foreground);

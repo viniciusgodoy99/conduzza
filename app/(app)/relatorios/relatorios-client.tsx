@@ -1,9 +1,9 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { X } from "lucide-react";
+import { ListFilter, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { AbaAgenteIa } from "@/components/relatorios/aba-agente-ia";
 import { AbaComercial } from "@/components/relatorios/aba-comercial";
@@ -14,12 +14,28 @@ import { Aviso } from "@/components/shared/aviso";
 import { CardsSkeleton } from "@/components/shared/loading-skeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   montarExportavelDaAba,
   type DimensaoDaAgenda,
   type DimensaoDaOrigem,
 } from "@/lib/domain/exportacao-de-resultados";
+import {
+  GRUPOS_DE_ORIGEM,
+  ROTULO_DO_GRUPO_DE_ORIGEM,
+  ROTULO_TODAS_AS_ORIGENS,
+  avisoDoFiltroDeOrigem,
+  lerGrupoDeOrigem,
+  textoDeLeads,
+  type GrupoDeOrigem,
+} from "@/lib/domain/grupos-de-origem";
 import { useDadosDoServidor } from "@/lib/hooks/use-dados-do-servidor";
 import type { ConversoesResumo } from "@/lib/queries/conversoes-meta";
 import {
@@ -64,6 +80,15 @@ import { createClient } from "@/lib/supabase/client";
 // campanha) e buscada para todos; o investimento vem null fora da gestao.
 // O detalhe por anuncio (anuncios_do_periodo, 20/10/2026) so e buscado com a
 // aba Marketing e essa dimensao escolhida; a exportacao espera por ele.
+//
+// Painel por origem (decisao do dono de 17/11/2026): o seletor "Origem" vive
+// na URL (?origem=meta, google, outras ou nao_rastreada; sem o parametro,
+// todas as origens). So funil_do_periodo e serie_diaria_do_periodo recebem o
+// filtro; o aviso abaixo das abas diz, pelos nomes da tela, o que acompanha
+// a origem na aba aberta e o que continua com todas (avisoDoFiltroDeOrigem).
+
+/** Valor do seletor para "Todas as origens" (nunca vai para a URL). */
+const TODAS_AS_ORIGENS = "todas";
 
 const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -79,6 +104,7 @@ export function RelatoriosClient({
   diaAteInicial,
   diaDePadrao,
   diaAtePadrao,
+  grupoInicial,
   funilInicial,
   agendaInicial,
   atendimentoInicial,
@@ -106,6 +132,8 @@ export function RelatoriosClient({
   /** Default da tela (últimos 30 dias civis), alvo do "Limpar". */
   diaDePadrao: string;
   diaAtePadrao: string;
+  /** A origem validada que o servidor usou no funil e na serie iniciais. */
+  grupoInicial: GrupoDeOrigem | null;
   funilInicial: Periodizado<FunilDoPeriodo>;
   agendaInicial: Periodizado<AgendaDoPeriodo> & { pivo: PivoDaRegua };
   atendimentoInicial: Periodizado<AtendimentoDoPeriodo>;
@@ -142,6 +170,10 @@ export function RelatoriosClient({
   const diaDe = recorteDaURLValido ? deURL : diaDePadrao;
   const diaAte = recorteDaURLValido ? ateURL : diaAtePadrao;
   const recorteInicial = diaDe === diaDeInicial && diaAte === diaAteInicial;
+  // Mesma validacao do servidor: valor fora da lista e "todas as origens".
+  const grupo = lerGrupoDeOrigem(searchParams.get("origem"));
+  // Funil e serie do servidor so servem ao mesmo recorte E a mesma origem.
+  const filtroInicial = recorteInicial && grupo === grupoInicial;
   // O MESMO recorte vai para a lista de Leads quando uma linha da origem e
   // clicada (pedido do dono em 20/10/2026): os dias civis da clinica, que a
   // lista converte no mesmo fuso.
@@ -152,8 +184,24 @@ export function RelatoriosClient({
   const [dimensaoAgenda, setDimensaoAgenda] =
     useState<DimensaoDaAgenda>("profissional");
 
+  // O que a tela acabou de pedir para o endereco e ainda nao voltou em
+  // searchParams. Duas mudancas seguidas (trocar de aba e, logo depois, a
+  // origem) partem do ultimo pedido, nao do endereco velho: sem isto a
+  // segunda desfazia a primeira (achado do teste do painel por origem,
+  // 17/11/2026). Vale por 2 segundos; depois manda o endereco, que tambem
+  // muda pelo botao de voltar do navegador.
+  const pedido = useRef<{ qs: string; em: number } | null>(null);
+  const paramsAtuais = () => {
+    const ultimo = pedido.current;
+    return new URLSearchParams(
+      ultimo && Date.now() - ultimo.em < 2000
+        ? ultimo.qs
+        : searchParams.toString(),
+    );
+  };
+
   const setParams = (mudancas: Record<string, string | null>) => {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = paramsAtuais();
     for (const [chave, valor] of Object.entries(mudancas)) {
       if (valor === null || valor === "") {
         params.delete(chave);
@@ -162,14 +210,16 @@ export function RelatoriosClient({
       }
     }
     const qs = params.toString();
+    pedido.current = { qs, em: Date.now() };
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   };
 
   // Atalho de dentro de um bloco ("Ver detalhes em Comercial"): troca a aba
   // e leva ao topo da vista nova, ou a ancora pedida.
   const irParaAba = (aba: AbaDeResultados, ancora?: string) => {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = paramsAtuais();
     params.set("aba", aba);
+    pedido.current = { qs: params.toString(), em: Date.now() };
     router.replace(
       `${pathname}?${params.toString()}${ancora ? `#${ancora}` : ""}`,
     );
@@ -181,7 +231,8 @@ export function RelatoriosClient({
   const precisaFunil = abaAtiva !== "ia";
   const precisaAgenda = abaAtiva === "geral" || abaAtiva === "comercial";
   const precisaAtendimento = abaAtiva === "geral" || abaAtiva === "ia";
-  const precisaSerie = abaAtiva === "geral";
+  // Marketing desenha "Origem dos leads por dia" com a serie.
+  const precisaSerie = abaAtiva === "geral" || abaAtiva === "marketing";
   const precisaFaturamento =
     podeVerValores && (abaAtiva === "geral" || abaAtiva === "comercial");
   const precisaCampanhas = abaAtiva === "geral" || abaAtiva === "marketing";
@@ -191,7 +242,7 @@ export function RelatoriosClient({
   const precisaAnuncios = abaAtiva === "geral" || abaAtiva === "marketing";
 
   useDadosDoServidor(
-    relatoriosKeys.funil(clinicId, diaDeInicial, diaAteInicial),
+    relatoriosKeys.funil(clinicId, diaDeInicial, diaAteInicial, grupoInicial),
     funilInicial,
   );
   useDadosDoServidor(
@@ -203,7 +254,7 @@ export function RelatoriosClient({
     atendimentoInicial,
   );
   useDadosDoServidor(
-    relatoriosKeys.serie(clinicId, diaDeInicial, diaAteInicial),
+    relatoriosKeys.serie(clinicId, diaDeInicial, diaAteInicial, grupoInicial),
     serieInicial,
   );
   useDadosDoServidor(
@@ -218,10 +269,12 @@ export function RelatoriosClient({
   useDadosDoServidor(relatoriosKeys.objetivo(clinicId), objetivoInicial);
 
   const funilQuery = useQuery({
-    queryKey: relatoriosKeys.funil(clinicId, diaDe, diaAte),
+    queryKey: relatoriosKeys.funil(clinicId, diaDe, diaAte, grupo),
     queryFn: () =>
-      fetchFunilDoPeriodo(supabase, clinicId, timezone, diaDe, diaAte),
-    initialData: recorteInicial ? funilInicial : undefined,
+      fetchFunilDoPeriodo(supabase, clinicId, timezone, diaDe, diaAte, {
+        grupo,
+      }),
+    initialData: filtroInicial ? funilInicial : undefined,
     staleTime: 60_000,
     enabled: precisaFunil,
   });
@@ -242,10 +295,12 @@ export function RelatoriosClient({
     enabled: precisaAtendimento,
   });
   const serieQuery = useQuery({
-    queryKey: relatoriosKeys.serie(clinicId, diaDe, diaAte),
+    queryKey: relatoriosKeys.serie(clinicId, diaDe, diaAte, grupo),
     queryFn: () =>
-      fetchSerieDiariaDoPeriodo(supabase, clinicId, timezone, diaDe, diaAte),
-    initialData: recorteInicial ? serieInicial : undefined,
+      fetchSerieDiariaDoPeriodo(supabase, clinicId, timezone, diaDe, diaAte, {
+        grupo,
+      }),
+    initialData: filtroInicial ? serieInicial : undefined,
     staleTime: 60_000,
     enabled: precisaSerie,
   });
@@ -330,6 +385,7 @@ export function RelatoriosClient({
       campanhas: campanhasQuery.data,
       anuncios: precisaAnuncios ? anunciosQuery.data : undefined,
       timezone,
+      grupo,
       dimensaoOrigem,
       dimensaoAgenda,
     });
@@ -337,6 +393,14 @@ export function RelatoriosClient({
   const funil = funilQuery.data;
   const agenda = agendaQuery.data;
   const atendimento = atendimentoQuery.data;
+
+  // Leads do periodo em cada origem, sempre sem o filtro: o numero ao lado
+  // de cada opcao. null (banco sem o campo, ou funil ainda carregando): as
+  // opcoes saem so com o nome.
+  const leadsPorGrupo = funil?.atual.porGrupo ?? null;
+  const aviso = grupo
+    ? avisoDoFiltroDeOrigem(abaAtiva, grupo, dimensaoOrigem)
+    : null;
 
   return (
     <div className="grid gap-4 print:hidden">
@@ -382,9 +446,52 @@ export function RelatoriosClient({
             Últimos 30 dias
           </Button>
         ) : null}
+        <div className="flex items-center gap-2">
+          <span className="text-[13px] text-text-secondary">Origem</span>
+          <Select
+            value={grupo ?? TODAS_AS_ORIGENS}
+            onValueChange={(valor) =>
+              setParams({ origem: lerGrupoDeOrigem(valor) })
+            }
+          >
+            <SelectTrigger className="w-44" aria-label="Origem">
+              <SelectValue>
+                {grupo
+                  ? ROTULO_DO_GRUPO_DE_ORIGEM[grupo]
+                  : ROTULO_TODAS_AS_ORIGENS}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={TODAS_AS_ORIGENS}>
+                {ROTULO_TODAS_AS_ORIGENS}
+                {leadsPorGrupo ? (
+                  <span className="cz-num text-text-secondary">
+                    {textoDeLeads(
+                      GRUPOS_DE_ORIGEM.reduce(
+                        (soma, chave) => soma + leadsPorGrupo[chave],
+                        0,
+                      ),
+                    )}
+                  </span>
+                ) : null}
+              </SelectItem>
+              {GRUPOS_DE_ORIGEM.map((chave) => (
+                <SelectItem key={chave} value={chave}>
+                  {ROTULO_DO_GRUPO_DE_ORIGEM[chave]}
+                  {leadsPorGrupo ? (
+                    <span className="cz-num text-text-secondary">
+                      {textoDeLeads(leadsPorGrupo[chave])}
+                    </span>
+                  ) : null}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         <div className="ml-auto">
           <ExportarRelatorio
             aba={abaAtiva}
+            grupo={grupo}
             periodoRotulo={periodoRotulo}
             montar={montarExportavel}
             desabilitado={carregando || comErro || !blocosProntos}
@@ -409,6 +516,13 @@ export function RelatoriosClient({
           ))}
         </TabsList>
       </Tabs>
+
+      {aviso ? (
+        <Aviso tom="neutral" icone={ListFilter} titulo={aviso.titulo}>
+          {aviso.texto}
+          {aviso.notaDaTela ? ` ${aviso.notaDaTela}` : null}
+        </Aviso>
+      ) : null}
 
       {comErro ? (
         <Aviso
@@ -461,6 +575,7 @@ export function RelatoriosClient({
               aoTentarCampanhasDeNovo={() => void campanhasQuery.refetch()}
               anuncios={anunciosQuery.data}
               anunciosComErro={anunciosQuery.isError}
+              filtrado={grupo !== null}
               linhaDeBase={linhaDeBaseQuery.data ?? null}
               objetivo={objetivoQuery.data}
               podeVerValores={podeVerValores}
@@ -486,6 +601,10 @@ export function RelatoriosClient({
               anuncios={anunciosQuery.data}
               anunciosComErro={anunciosQuery.isError}
               aoTentarAnunciosDeNovo={() => void anunciosQuery.refetch()}
+              serie={serieQuery.data}
+              serieComErro={serieQuery.isError}
+              aoTentarSerieDeNovo={() => void serieQuery.refetch()}
+              grupo={grupo}
               conversoes={conversoes}
               timezone={timezone}
               podeVerValores={podeVerValores}

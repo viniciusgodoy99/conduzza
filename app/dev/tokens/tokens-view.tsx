@@ -66,6 +66,8 @@ const ACCENT_TOKENS = [
   { name: "--focus", label: "Contorno de foco" },
   { name: "--chart-bar", label: "Barra de dado" },
   { name: "--chart-bar-muted", label: "Barra neutra" },
+  { name: "--chart-serie-3", label: "3ª série da linha" },
+  { name: "--chart-serie-4", label: "4ª série da linha" },
 ];
 
 const SEMANTIC_TOKENS = [

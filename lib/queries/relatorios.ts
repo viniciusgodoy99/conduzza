@@ -5,6 +5,11 @@ import {
   type AppointmentStatus,
 } from "@/lib/design/status";
 import {
+  lerLeadsPorGrupo,
+  type GrupoDeOrigem,
+  type LeadsPorGrupo,
+} from "@/lib/domain/grupos-de-origem";
+import {
   diaCivil,
   diasEntre,
   limitesDoDia,
@@ -57,6 +62,12 @@ export type FunilDoPeriodo = {
   coorte: { leads: number; agendaram: number; compareceram: number };
   porCanal: LinhaDeCanal[];
   porCampanha: LinhaDeCampanha[];
+  /**
+   * Leads do periodo em cada grupo de origem, SEMPRE sem o filtro da tela
+   * (e o numero ao lado de cada opcao do seletor). null = o banco nao mandou
+   * (antes da migration 20261117110000): nunca vira zero.
+   */
+  porGrupo: LeadsPorGrupo | null;
 };
 
 export type AgendaDoPeriodo = {
@@ -174,6 +185,12 @@ export type PontoDaSerie = {
   dia: string;
   leads: number;
   agendadas: number;
+  /**
+   * Leads do dia em cada grupo de origem, SEMPRE sem o filtro da tela (o
+   * grafico "Origem dos leads por dia"). null = o banco nao mandou (antes da
+   * migration 20261117110000): nunca vira zero.
+   */
+  porGrupo: LeadsPorGrupo | null;
 };
 
 /** Sem linha = sem objetivo (o rodape "Objetivo: X%" some). */
@@ -362,9 +379,15 @@ export function resolverAbaDeResultados(
     : "geral";
 }
 
+// funil e serie levam o grupo de origem escolhido na tela (null = todas as
+// origens): o banco devolve numeros diferentes para cada um.
 export const relatoriosKeys = {
-  funil: (clinicId: string, diaDe: string, diaAte: string) =>
-    ["relatorios", clinicId, "funil", diaDe, diaAte] as const,
+  funil: (
+    clinicId: string,
+    diaDe: string,
+    diaAte: string,
+    grupo: GrupoDeOrigem | null,
+  ) => ["relatorios", clinicId, "funil", diaDe, diaAte, grupo] as const,
   agenda: (
     clinicId: string,
     diaDe: string,
@@ -378,8 +401,12 @@ export const relatoriosKeys = {
     ["relatorios", clinicId, "linha-de-base"] as const,
   faturamento: (clinicId: string, diaDe: string, diaAte: string) =>
     ["relatorios", clinicId, "faturamento", diaDe, diaAte] as const,
-  serie: (clinicId: string, diaDe: string, diaAte: string) =>
-    ["relatorios", clinicId, "serie", diaDe, diaAte] as const,
+  serie: (
+    clinicId: string,
+    diaDe: string,
+    diaAte: string,
+    grupo: GrupoDeOrigem | null,
+  ) => ["relatorios", clinicId, "serie", diaDe, diaAte, grupo] as const,
   objetivo: (clinicId: string) =>
     ["relatorios", clinicId, "objetivo-de-conversao"] as const,
   campanhas: (clinicId: string, diaDe: string, diaAte: string) =>
@@ -423,6 +450,9 @@ export function janelaDoPeriodo(
 
 type Opcoes = { comparar?: boolean };
 
+/** O filtro da tela: null (ou ausente) = todas as origens. */
+type OpcaoDeGrupo = { grupo?: GrupoDeOrigem | null };
+
 function exigirCorpo<T>(
   data: unknown,
   rpc: string,
@@ -454,6 +484,8 @@ type FunilRpc = {
     agendaram: number;
     compareceram: number;
   }[];
+  /** Ausente enquanto a migration 20261117110000 nao for aplicada. */
+  por_grupo?: unknown;
 };
 
 function lerFunil(bloco: FunilRpc): FunilDoPeriodo {
@@ -471,16 +503,24 @@ function lerFunil(bloco: FunilRpc): FunilDoPeriodo {
       agendaram: linha.agendaram,
       compareceram: linha.compareceram,
     })),
+    porGrupo: lerLeadsPorGrupo(bloco.por_grupo),
   };
 }
 
+/**
+ * Com opcoes.grupo, os leads (coorte, por canal, por campanha) e as
+ * contagens de consultas entram so pelo grupo de origem do contato; porGrupo
+ * vem sempre sem o filtro. p_grupo so vai na chamada quando ha grupo: sem
+ * ele a chamada e a de sempre, e serve tambem ao banco de antes da migration
+ * 20261117110000.
+ */
 export async function fetchFunilDoPeriodo(
   supabase: SupabaseClient,
   clinicId: string,
   timezone: string,
   diaDe: string,
   diaAte: string,
-  opcoes: Opcoes = {},
+  opcoes: Opcoes & OpcaoDeGrupo = {},
 ): Promise<Periodizado<FunilDoPeriodo>> {
   const janela = janelaDoPeriodo(timezone, diaDe, diaAte);
   const { data, error } = await supabase.rpc("funil_do_periodo", {
@@ -488,6 +528,7 @@ export async function fetchFunilDoPeriodo(
     p_de: janela.de,
     p_ate: janela.ate,
     ...(opcoes.comparar === false ? {} : { p_de_anterior: janela.deAnterior }),
+    ...(opcoes.grupo ? { p_grupo: opcoes.grupo } : {}),
   });
   if (error) {
     throw new Error(error.message);
@@ -833,10 +874,21 @@ export async function fetchFaturamentoDoPeriodo(
   };
 }
 
+type PontoDaSerieRpc = {
+  dia: string;
+  leads: number;
+  agendadas: number;
+  /** Ausente enquanto a migration 20261117110000 nao for aplicada. */
+  por_grupo?: unknown;
+};
+
 /**
  * Um ponto por dia civil da clinica no periodo, com zero no dia vazio. Os
  * criterios sao os do funil_do_periodo (leads por first_contact_at,
  * agendadas por created_at): a soma bate com os cartoes da Visao geral.
+ * Com opcoes.grupo, leads e agendadas entram so pelo grupo de origem do
+ * contato; porGrupo de cada dia vem sempre sem o filtro. p_grupo so vai na
+ * chamada quando ha grupo.
  */
 export async function fetchSerieDiariaDoPeriodo(
   supabase: SupabaseClient,
@@ -844,12 +896,14 @@ export async function fetchSerieDiariaDoPeriodo(
   timezone: string,
   diaDe: string,
   diaAte: string,
+  opcoes: OpcaoDeGrupo = {},
 ): Promise<PontoDaSerie[]> {
   const janela = janelaDoPeriodo(timezone, diaDe, diaAte);
   const { data, error } = await supabase.rpc("serie_diaria_do_periodo", {
     p_clinic_id: clinicId,
     p_de: janela.de,
     p_ate: janela.ate,
+    ...(opcoes.grupo ? { p_grupo: opcoes.grupo } : {}),
   });
   if (error) {
     throw new Error(error.message);
@@ -860,10 +914,11 @@ export async function fetchSerieDiariaDoPeriodo(
       "Recorte indisponível para este perfil (serie_diaria_do_periodo).",
     );
   }
-  return (data as PontoDaSerie[]).map((ponto) => ({
+  return (data as PontoDaSerieRpc[]).map((ponto) => ({
     dia: ponto.dia,
     leads: ponto.leads,
     agendadas: ponto.agendadas,
+    porGrupo: lerLeadsPorGrupo(ponto.por_grupo),
   }));
 }
 

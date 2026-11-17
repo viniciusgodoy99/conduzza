@@ -6,11 +6,14 @@ import { cn } from "@/lib/utils";
 // nao vai ganhar uma por um grafico so. Server Component.
 //
 // Regras:
-// - ate 2 series, e a identidade nunca e so cor: a 1a e linha cheia com
+// - ate 4 series, e a identidade nunca e so cor: a 1a e linha cheia com
 //   marcador REDONDO em --chart-bar, a 2a e TRACEJADA com marcador QUADRADO
-//   em --chart-bar-muted, e a legenda escreve o nome de cada uma;
-// - cores so por token (os dois passam 3:1 sobre o card e o trilho nos dois
-//   temas, teste de contraste); texto nunca na cor da serie;
+//   em --chart-bar-muted, a 3a e PONTILHADA com marcador em TRIANGULO em
+//   --chart-serie-3 e a 4a e traco e ponto com marcador em LOSANGO em
+//   --chart-serie-4 (as duas ultimas desde o painel por origem, 17/11/2026),
+//   e a legenda escreve o nome de cada uma;
+// - cores so por token (os quatro passam 3:1 sobre o card nos dois temas,
+//   teste de contraste); texto nunca na cor da serie;
 // - responsivo sem JS: as linhas e as grades sao SVG com viewBox esticado
 //   (preserveAspectRatio="none" e vector-effect para o traco ficar com 2px),
 //   e o que nao pode deformar (marcador, texto dos eixos) e HTML posicionado
@@ -28,6 +31,14 @@ export type SerieDoGrafico = {
    * `rotulos`. Contagem: dia sem movimento entra como 0.
    */
   valores: readonly number[];
+  /**
+   * Qual dos 4 estilos (traco, marcador e cor) a serie usa. Padrao: a posicao
+   * dela em `series`. Serve para a serie manter a propria cara quando as
+   * outras saem do grafico (o filtro de origem em Resultados).
+   */
+  estilo?: 0 | 1 | 2 | 3;
+  /** Complemento escrito na legenda, ao lado do nome ("12 leads"). */
+  detalhe?: string;
 };
 
 export type GraficoDeLinhaProps = {
@@ -41,10 +52,12 @@ export type GraficoDeLinhaProps = {
    */
   rotulosFalados?: readonly string[];
   /**
-   * 1 ou 2 series. 1a: linha cheia, marcador redondo, --chart-bar.
+   * De 1 a 4 series. 1a: linha cheia, marcador redondo, --chart-bar.
    * 2a: linha tracejada, marcador quadrado, --chart-bar-muted.
+   * 3a: linha pontilhada, marcador em triangulo, --chart-serie-3.
+   * 4a: traco e ponto, marcador em losango, --chart-serie-4.
    */
-  series: readonly [SerieDoGrafico] | readonly [SerieDoGrafico, SerieDoGrafico];
+  series: readonly [SerieDoGrafico, ...SerieDoGrafico[]];
   /** Cabecalho da 1a coluna da tabela sr-only. Padrao "Dia". */
   rotuloDoEixoX?: string;
   /** Altura da area de plotagem em px. Padrao 200. */
@@ -57,7 +70,69 @@ export type GraficoDeLinhaProps = {
 const ESTILO_DA_SERIE = [
   { cor: "var(--chart-bar)", tracejado: undefined, forma: "circulo" },
   { cor: "var(--chart-bar-muted)", tracejado: "6 4", forma: "quadrado" },
+  { cor: "var(--chart-serie-3)", tracejado: "2 4", forma: "triangulo" },
+  { cor: "var(--chart-serie-4)", tracejado: "10 4 2 4", forma: "losango" },
 ] as const;
+
+type Forma = (typeof ESTILO_DA_SERIE)[number]["forma"];
+
+function estiloDa(serie: SerieDoGrafico, indice: number) {
+  return ESTILO_DA_SERIE[serie.estilo ?? indice] ?? ESTILO_DA_SERIE[0];
+}
+
+/** O marcador da legenda, no meio do traco de 28 por 12. */
+function GlifoDaLegenda({ forma, cor }: { forma: Forma; cor: string }) {
+  switch (forma) {
+    case "circulo":
+      return (
+        <>
+          <circle cx="14" cy="6" r="6" fill="var(--card)" />
+          <circle cx="14" cy="6" r="4" fill={cor} />
+        </>
+      );
+    case "quadrado":
+      return (
+        <>
+          <rect x="8" y="0" width="12" height="12" rx="2" fill="var(--card)" />
+          <rect x="10" y="2" width="8" height="8" rx="1" fill={cor} />
+        </>
+      );
+    case "triangulo":
+      return (
+        <>
+          <polygon points="14,0 21,12 7,12" fill="var(--card)" />
+          <polygon points="14,2.5 18.5,10.5 9.5,10.5" fill={cor} />
+        </>
+      );
+    case "losango":
+      return (
+        <>
+          <polygon points="14,0 20,6 14,12 8,6" fill="var(--card)" />
+          <polygon points="14,1.5 18.5,6 14,10.5 9.5,6" fill={cor} />
+        </>
+      );
+  }
+}
+
+/**
+ * O marcador de um ponto, em HTML (nao deforma com a largura). O recorte do
+ * triangulo corta tambem o anel: ele vai sem anel, e por isso um pouco maior.
+ */
+function classeDoMarcador(forma: Forma, denso: boolean): string {
+  switch (forma) {
+    case "circulo":
+      return cn("rounded-full", denso ? "size-1.5" : "size-2");
+    case "quadrado":
+      return cn("rounded-[1px]", denso ? "size-2.5" : "size-3");
+    case "triangulo":
+      return cn(
+        "[clip-path:polygon(50%_0,100%_100%,0_100%)]",
+        denso ? "size-3" : "size-3.5",
+      );
+    case "losango":
+      return cn("rotate-45 rounded-[1px]", denso ? "size-2" : "size-2.5");
+  }
+}
 
 function numero(valor: number): string {
   return valor.toLocaleString("pt-BR");
@@ -189,7 +264,7 @@ export function GraficoDeLinha({
     <figure className={cn("m-0 grid gap-3", className)}>
       <ul className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-foreground">
         {series.map((serie, indiceDaSerie) => {
-          const estilo = ESTILO_DA_SERIE[indiceDaSerie] ?? ESTILO_DA_SERIE[0];
+          const estilo = estiloDa(serie, indiceDaSerie);
           return (
             <li
               key={indiceDaSerie}
@@ -213,33 +288,14 @@ export function GraficoDeLinha({
                   strokeLinecap="round"
                   strokeDasharray={estilo.tracejado}
                 />
-                {estilo.forma === "circulo" ? (
-                  <>
-                    <circle cx="14" cy="6" r="6" fill="var(--card)" />
-                    <circle cx="14" cy="6" r="4" fill={estilo.cor} />
-                  </>
-                ) : (
-                  <>
-                    <rect
-                      x="8"
-                      y="0"
-                      width="12"
-                      height="12"
-                      rx="2"
-                      fill="var(--card)"
-                    />
-                    <rect
-                      x="10"
-                      y="2"
-                      width="8"
-                      height="8"
-                      rx="1"
-                      fill={estilo.cor}
-                    />
-                  </>
-                )}
+                <GlifoDaLegenda forma={estilo.forma} cor={estilo.cor} />
               </svg>
               {serie.nome}
+              {serie.detalhe ? (
+                <span className="cz-num text-text-secondary">
+                  {serie.detalhe}
+                </span>
+              ) : null}
             </li>
           );
         })}
@@ -283,8 +339,7 @@ export function GraficoDeLinha({
                 />
               ))}
               {series.map((serie, indiceDaSerie) => {
-                const estilo =
-                  ESTILO_DA_SERIE[indiceDaSerie] ?? ESTILO_DA_SERIE[0];
+                const estilo = estiloDa(serie, indiceDaSerie);
                 return (
                   <polyline
                     key={indiceDaSerie}
@@ -313,8 +368,7 @@ export function GraficoDeLinha({
               .map((serie, indiceDaSerie) => ({ serie, indiceDaSerie }))
               .reverse()
               .map(({ serie, indiceDaSerie }) => {
-                const estilo =
-                  ESTILO_DA_SERIE[indiceDaSerie] ?? ESTILO_DA_SERIE[0];
+                const estilo = estiloDa(serie, indiceDaSerie);
                 return indices.map((indice) => (
                   <span
                     key={`${indiceDaSerie}-${indice}`}
@@ -322,9 +376,7 @@ export function GraficoDeLinha({
                     data-marcador={estilo.forma}
                     className={cn(
                       "absolute -translate-x-1/2 -translate-y-1/2 ring-2 ring-card",
-                      estilo.forma === "circulo"
-                        ? cn("rounded-full", denso ? "size-1.5" : "size-2")
-                        : cn("rounded-[1px]", denso ? "size-2.5" : "size-3"),
+                      classeDoMarcador(estilo.forma, denso),
                     )}
                     style={{
                       left: `${xDe(indice)}%`,

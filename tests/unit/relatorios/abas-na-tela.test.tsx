@@ -61,8 +61,8 @@ function visaoGeral(podeVerValores: boolean): string {
       agenda={{ atual: agenda(podeVerValores ? 15_000 : null), anterior: null }}
       atendimento={{ atual: ATENDIMENTO, anterior: null }}
       serie={[
-        { dia: "2026-09-01", leads: 10, agendadas: 4 },
-        { dia: "2026-09-02", leads: 3, agendadas: 1 },
+        { dia: "2026-09-01", leads: 10, agendadas: 4, porGrupo: null },
+        { dia: "2026-09-02", leads: 3, agendadas: 1, porGrupo: null },
       ]}
       serieComErro={false}
       aoTentarSerieDeNovo={nada}
@@ -168,7 +168,7 @@ describe("Visão geral", () => {
         periodo={PERIODO}
         agenda={{ atual: agenda(null), anterior: null }}
         atendimento={{ atual: ATENDIMENTO, anterior: null }}
-        serie={[{ dia: "2026-09-01", leads: 0, agendadas: 0 }]}
+        serie={[{ dia: "2026-09-01", leads: 0, agendadas: 0, porGrupo: null }]}
         serieComErro={false}
         aoTentarSerieDeNovo={nada}
         faturamento={undefined}

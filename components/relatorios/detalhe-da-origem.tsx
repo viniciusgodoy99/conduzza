@@ -49,6 +49,11 @@ import type {
 // cada linha e um link para a lista de Leads com o MESMO periodo e os mesmos
 // leads da linha (o filtro sai da chave que o banco agrupou,
 // montarDetalheDeOrigemDaTela). A exportacao continua igual.
+//
+// Com uma origem escolhida na tela (painel por origem, 17/11/2026), so a
+// dimensao Canal vem filtrada (funil_do_periodo), e nela o rotulo deixa de
+// ser link: a lista de Leads nao conhece o filtro e abriria mais leads do
+// que a linha mostra. Por campanha e por anuncio nada muda.
 
 function celulaOpcional({ getValue }: { getValue: () => unknown }) {
   const valor = getValue() as number | null;
@@ -80,9 +85,14 @@ function celulaDoRotulo(periodo: PeriodoDaLista) {
 
 function colunas(
   periodo: PeriodoDaLista,
+  comLink: boolean,
 ): ColumnDef<LinhaDeOrigemDaTela, unknown>[] {
   return [
-    { accessorKey: "rotulo", header: "Origem", cell: celulaDoRotulo(periodo) },
+    {
+      accessorKey: "rotulo",
+      header: "Origem",
+      ...(comLink ? { cell: celulaDoRotulo(periodo) } : {}),
+    },
     { accessorKey: "leads", header: "Leads", meta: { align: "right" } },
     {
       accessorKey: "agendaram",
@@ -115,6 +125,7 @@ export function DetalheDaOrigem({
   tentarAnunciosDeNovo,
   dimensao,
   aoMudarDimensao,
+  filtrado = false,
 }: {
   funil: FunilDoPeriodo;
   /** O periodo da tela (dias civis da clinica): o mesmo vai para a lista. */
@@ -129,6 +140,8 @@ export function DetalheDaOrigem({
   tentarAnunciosDeNovo?: ReactNode;
   dimensao: DimensaoDaOrigem;
   aoMudarDimensao: (dimensao: DimensaoDaOrigem) => void;
+  /** Ha uma origem escolhida na tela: por canal, o rotulo nao e link. */
+  filtrado?: boolean;
 }) {
   const erro =
     dimensao === "campanha"
@@ -148,9 +161,10 @@ export function DetalheDaOrigem({
     ? null
     : montarDetalheDeOrigemDaTela(funil, dimensao, campanhas, anuncios);
   const { diaDe, diaAte } = periodo;
+  const comLink = !(filtrado && dimensao === "canal");
   const colunasDaTabela = useMemo(
-    () => colunas({ diaDe, diaAte }),
-    [diaDe, diaAte],
+    () => colunas({ diaDe, diaAte }, comLink),
+    [diaDe, diaAte, comLink],
   );
   return (
     <Secao

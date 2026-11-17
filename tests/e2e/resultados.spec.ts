@@ -710,3 +710,142 @@ test("admin baixa as conversões para o Google Ads; recepção vê o item desabi
     await limpar();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Painel por origem (decisao do dono de 17/11/2026): o seletor "Origem" poe
+// ?origem= no endereco, o filtro sobrevive ao recarregar, o aviso diz o que
+// acompanha a origem na aba aberta e os leads sao os do grupo escolhido.
+// Escrito em 17/11/2026 com a migration 20261117110000 NAO aplicada e NAO
+// rodado: so passa depois dela.
+// ---------------------------------------------------------------------------
+
+test("escolher Meta Ads filtra os leads, guarda a origem na URL, avisa o que acompanha e Todas as origens desfaz", async ({
+  page,
+}) => {
+  apenasDesktop();
+  const admin = adminClient();
+  const clinicId = dados().clinicId;
+  // Dois leads da Meta e um do Google.
+  const TELEFONES = ["+5584970000081", "+5584970000082", "+5584970000083"];
+  const limpar = async () => {
+    await admin
+      .from("contact")
+      .delete()
+      .eq("clinic_id", clinicId)
+      .in("phone_e164", TELEFONES);
+  };
+  try {
+    await limpar();
+    const clinica = (
+      await admin
+        .from("clinic")
+        .select("timezone")
+        .eq("id", clinicId)
+        .single()
+        .throwOnError()
+    ).data as { timezone: string };
+    // Um dia so, de tres anos atras: nenhum outro lead da clinica de e2e
+    // chegou nele, entao os numeros da tela sao os destes tres contatos.
+    const chegada = new Date(Date.now() - 1100 * 24 * 60 * 60_000);
+    const dia = new Intl.DateTimeFormat("en-CA", {
+      timeZone: clinica.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(chegada);
+    // Service role: a atribuicao de anuncio so e protegida contra a sessao.
+    const daMeta = {
+      source_method: "anuncio_ctwa",
+      source_channel: "trafego_pago",
+      source_origin: "Meta",
+    };
+    const doGoogle = {
+      source_method: "clique_site",
+      source_channel: "trafego_pago",
+      source_origin: "Google",
+    };
+    await admin
+      .from("contact")
+      .insert(
+        [daMeta, daMeta, doGoogle].map((origem, indice) => ({
+          clinic_id: clinicId,
+          phone_e164: TELEFONES[indice]!,
+          name: null,
+          kind: "lead",
+          first_contact_at: chegada.toISOString(),
+          ...origem,
+        })),
+      )
+      .throwOnError();
+
+    await login(page, dados().emails.admin);
+    await page.goto(`/relatorios?de=${dia}&ate=${dia}`);
+
+    const leads = () =>
+      cartao(page, "Leads recebidos").locator("span.cz-num").first();
+    const seletor = page.getByRole("combobox", { name: "Origem" });
+    const aviso = page
+      .getByRole("status")
+      .filter({ hasText: "Origem escolhida: Meta Ads" });
+
+    // Sem filtro: os tres leads, "Todas as origens" e nenhum aviso.
+    await expect(leads()).toHaveText("3");
+    await expect(seletor).toContainText("Todas as origens");
+    await expect(page.getByText("Origem escolhida:")).toHaveCount(0);
+
+    // As opcoes mostram os leads do periodo em cada origem.
+    await seletor.click();
+    await expect(page.getByRole("option")).toHaveText([
+      /Todas as origens\s*3 leads/,
+      /Meta Ads\s*2 leads/,
+      /Google Ads\s*1 lead$/,
+      /Outras origens\s*0 leads/,
+      /Não rastreada\s*0 leads/,
+    ]);
+    await page.getByRole("option", { name: /Meta Ads/ }).click();
+
+    // Com Meta Ads: a origem no endereco, os dois leads da Meta e o aviso.
+    await expect(page).toHaveURL(/[?&]origem=meta(&|$)/);
+    await expect(leads()).toHaveText("2");
+    await expect(aviso).toContainText("Acompanham a origem: Leads recebidos");
+    await expect(aviso).toContainText(
+      "Continuam com todas as origens: Custo por lead",
+    );
+
+    // Recarregar mantem o filtro.
+    await page.reload();
+    await expect(page).toHaveURL(/[?&]origem=meta(&|$)/);
+    await expect(seletor).toContainText("Meta Ads");
+    await expect(leads()).toHaveText("2");
+    await expect(aviso).toBeVisible();
+
+    // Em Marketing o filtro continua, o aviso fala da aba e o grafico por
+    // dia desenha so a serie da Meta.
+    await page.getByRole("tab", { name: "Marketing" }).click();
+    await expect(page).toHaveURL(/aba=marketing/);
+    await expect(page).toHaveURL(/[?&]origem=meta(&|$)/);
+    await expect(aviso).toContainText("Origem dos leads por dia");
+    const porDia = page.locator('[data-slot="card"]', {
+      has: page.getByRole("heading", { name: "Origem dos leads por dia" }),
+    });
+    await expect(porDia.locator("[data-legenda]")).toHaveText([
+      /Meta Ads\s*2 leads/,
+    ]);
+
+    // Na aba do agente nada acompanha, e o aviso diz isso.
+    await page.getByRole("tab", { name: "Agente de IA" }).click();
+    await expect(aviso).toContainText(
+      "Nada nesta aba acompanha a origem escolhida",
+    );
+
+    // "Todas as origens" tira o parametro e o aviso, e os tres voltam.
+    await page.getByRole("tab", { name: "Visão geral" }).click();
+    await seletor.click();
+    await page.getByRole("option", { name: /Todas as origens/ }).click();
+    await expect(page).not.toHaveURL(/origem=/);
+    await expect(page.getByText("Origem escolhida:")).toHaveCount(0);
+    await expect(leads()).toHaveText("3");
+  } finally {
+    await limpar();
+  }
+});

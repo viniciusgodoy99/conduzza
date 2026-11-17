@@ -6663,6 +6663,7 @@ export type Database = {
           p_clinic_id: string
           p_de: string
           p_de_anterior?: string
+          p_grupo?: string
         }
         Returns: Json
       }
@@ -6721,6 +6722,17 @@ export type Database = {
           p_resolvidos: Json
           p_token_sha256: string
           p_worker: string
+        }
+        Returns: string
+      }
+      grupo_de_origem: {
+        Args: {
+          p_anuncio: string
+          p_campanha_google: string
+          p_campanha_meta: string
+          p_canal: string
+          p_ctwa_clid: string
+          p_origem: string
         }
         Returns: string
       }
@@ -7408,7 +7420,12 @@ export type Database = {
       saude_do_motor: { Args: never; Returns: Json }
       seed_reguas_padrao: { Args: { p_clinic_id: string }; Returns: undefined }
       serie_diaria_do_periodo: {
-        Args: { p_ate: string; p_clinic_id: string; p_de: string }
+        Args: {
+          p_ate: string
+          p_clinic_id: string
+          p_de: string
+          p_grupo?: string
+        }
         Returns: Json
       }
       situacao_da_ia_na_clinica: {

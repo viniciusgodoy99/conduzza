@@ -5,9 +5,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 
 // Esqueleto na forma REAL da Tela 11 (Fase 3): cabecalho com eyebrow, barra
-// de periodo com o botao de exportar, as 4 abas segmentadas, a faixa de 5
-// cartoes da Visao geral, o cartao do grafico ao lado da origem e o cartao da
-// tabela de campanhas. Nunca giratorio no meio da tela.
+// de periodo com o seletor de origem e o botao de exportar, as 4 abas
+// segmentadas, a faixa de 5 cartoes da Visao geral, o cartao do grafico ao
+// lado da origem e o cartao da tabela de campanhas. Nunca giratorio no meio
+// da tela.
 export default function CarregandoRelatorios() {
   return (
     <div
@@ -22,6 +23,7 @@ export default function CarregandoRelatorios() {
       <div className="flex items-center gap-2">
         <Skeleton className="h-10 w-[152px]" />
         <Skeleton className="h-10 w-[152px]" />
+        <Skeleton className="h-10 w-44" />
         <Skeleton className="ml-auto h-10 w-28" />
       </div>
       <div className="flex h-10 w-fit max-w-full gap-0.5 rounded-lg bg-surface-4 p-[3px]">
