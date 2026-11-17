@@ -1,12 +1,12 @@
 import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
 
 import {
-  atribuirOrigem,
   codigosDoCliqueDoSite,
+  eFraseDoBotao,
   extrairToken,
+  reconhecerOrigem,
   type CampaignRule,
   type SourceChannel,
-  eFraseDoBotao,
 } from "@/lib/domain/attribution";
 import {
   apararIdDoAnuncio,
@@ -246,12 +246,55 @@ async function casarCliqueDoSite(
   return resultadoFinal;
 }
 
+/**
+ * Liga o contato a um clique do link rastreado SEM o codigo na mensagem
+ * (etapa 3d do plano de 16/11/2026; casar_clique_sem_codigo, migration
+ * 20261116140000): vale quando existe exatamente um clique de link pendente
+ * no numero que recebeu a mensagem nos ultimos 10 minutos. Com a origem
+ * (`campaignLinkId`), reclama o clique do link dela (a origem ja foi
+ * gravada); sem ela, o banco grava a origem cadastrada como provavel. Melhor
+ * esforco: falha vira log com codigo, nunca derruba a ingestao.
+ */
+async function casarCliqueSemCodigo(
+  admin: SupabaseClient,
+  clinicId: string,
+  contactId: string,
+  whatsappAccountId: string | null,
+  campaignLinkId: string | null,
+): Promise<void> {
+  if (!whatsappAccountId) {
+    return;
+  }
+  const { data, error } = await admin.rpc("casar_clique_sem_codigo", {
+    p_clinic_id: clinicId,
+    p_contact_id: contactId,
+    p_whatsapp_account_id: whatsappAccountId,
+    ...(campaignLinkId ? { p_campaign_link_id: campaignLinkId } : {}),
+  });
+  if (error) {
+    log.error("clique_sem_codigo_falhou", {
+      clinic_id: clinicId,
+      contact_id: contactId,
+      error_code: error.code ?? null,
+    });
+    return;
+  }
+  if (data === "vinculado" || data === "origem_gravada" || data === "varios") {
+    log.info("clique_sem_codigo", {
+      clinic_id: clinicId,
+      contact_id: contactId,
+      status: data,
+    });
+  }
+}
+
 async function tentarAtribuirOrigem(
   admin: SupabaseClient,
   clinicId: string,
   contactId: string,
   corpo: string,
   contatoRecemCriado: boolean,
+  whatsappAccountId: string | null,
 ): Promise<void> {
   const { data, error } = await admin
     .from("campaign_link")
@@ -316,10 +359,30 @@ async function tentarAtribuirOrigem(
   // valido a qualquer momento). Mensagem padrao e palavra-chave valem apenas
   // na primeira mensagem da vida do contato, senao conversa comum viraria
   // atribuicao errada. `codigos` vazio (sem codigo de clique) nao muda nada.
-  const atribuicao = atribuirOrigem(corpo, regras, codigos);
-  if (!atribuicao) {
+  const reconhecimento = reconhecerOrigem(corpo, regras, codigos);
+  if (!reconhecimento) {
+    // JANELA (etapa 3d): contato novo, sem codigo, sem mensagem pronta e sem
+    // palavra-chave. Se a clinica tem origens e ha um unico clique de link
+    // pendente neste numero nos ultimos 10 minutos, o banco da a origem do
+    // link como provavel (so em contato sem origem e sem anuncio da Meta).
+    if (contatoRecemCriado && regras.length > 0) {
+      await casarCliqueSemCodigo(
+        admin,
+        clinicId,
+        contactId,
+        whatsappAccountId,
+        null,
+      );
+    }
     return;
   }
+  const atribuicao = {
+    channel: reconhecimento.regra.channel,
+    origin: reconhecimento.regra.origin,
+    medium: reconhecimento.regra.medium,
+    campaign: reconhecimento.regra.campaign,
+    method: reconhecimento.method,
+  };
   if (!contatoRecemCriado && atribuicao.method !== "link_token") {
     return;
   }
@@ -344,6 +407,21 @@ async function tentarAtribuirOrigem(
       contact_id: contactId,
       error_code: erroGravacao.code ?? null,
     });
+    return;
+  }
+  // RECLAMAR (etapa 3d): a pessoa apagou o codigo mas a mensagem pronta (ou a
+  // palavra-chave) e a de uma origem. Se ha um unico clique pendente do link
+  // dessa origem neste numero nos ultimos 10 minutos, ele fica ligado ao
+  // contato (UTMs e identificadores para a conversao). Com o codigo fixo nao:
+  // quem chega por ele veio pelo link direto, ou o clique nao foi gravado.
+  if (contatoRecemCriado && atribuicao.method !== "link_token") {
+    await casarCliqueSemCodigo(
+      admin,
+      clinicId,
+      contactId,
+      whatsappAccountId,
+      reconhecimento.regra.id,
+    );
   }
 }
 
@@ -974,6 +1052,7 @@ export async function ingerirMensagemRecebida(
         resultado.contact_id,
         event.body,
         resultado.contact_created,
+        resultado.whatsapp_account_id ?? accountId,
       );
     } catch {
       // Falha inesperada nao derruba a ingestao; a mensagem ja esta salva.

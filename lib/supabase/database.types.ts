@@ -1670,6 +1670,7 @@ export type Database = {
           google_campaign_id: string | null
           id: string
           meta_ad_id: string | null
+          provavel: boolean
           site_host: string | null
           utm_campaign: string | null
           utm_content: string | null
@@ -1696,6 +1697,7 @@ export type Database = {
           google_campaign_id?: string | null
           id?: string
           meta_ad_id?: string | null
+          provavel?: boolean
           site_host?: string | null
           utm_campaign?: string | null
           utm_content?: string | null
@@ -1722,6 +1724,7 @@ export type Database = {
           google_campaign_id?: string | null
           id?: string
           meta_ad_id?: string | null
+          provavel?: boolean
           site_host?: string | null
           utm_campaign?: string | null
           utm_content?: string | null
@@ -6095,6 +6098,15 @@ export type Database = {
         Args: { p_clinic_id: string; p_codigo: string; p_contact_id: string }
         Returns: string
       }
+      casar_clique_sem_codigo: {
+        Args: {
+          p_campaign_link_id?: string
+          p_clinic_id: string
+          p_contact_id: string
+          p_whatsapp_account_id: string
+        }
+        Returns: string
+      }
       cancelar_reoferta_de_espera: {
         Args: { p_clinic_id: string; p_offer_id: string }
         Returns: boolean
@@ -7402,6 +7414,7 @@ export type Database = {
           campaign_link_id: string
           cliques: number
           leads: number
+          provaveis: number
         }[]
       }
       situacao_do_rastreio: { Args: { p_clinic_id: string }; Returns: Json }

@@ -376,6 +376,9 @@ export const METODO_LABELS: Readonly<Record<string, string>> = {
   anuncio_ctwa: "Anúncio de clique para WhatsApp",
   clique_site: "Clique no site",
   link_token: "Link com código",
+  // Etapa 3d do plano de 16/11/2026: o lead novo casado com o unico clique
+  // de link dos ultimos 10 minutos, sem codigo nem mensagem pronta.
+  link_provavel: "Link rastreado (provável)",
   mensagem_padrao: "Mensagem pronta do link",
   palavra_chave: "Palavra-chave na primeira mensagem",
   manual: "Cadastro manual",

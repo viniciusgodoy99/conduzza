@@ -820,6 +820,39 @@ describe("link rastreado da origem", () => {
     expect(data).toEqual({ resultado: "indisponivel" });
   });
 
+  it("casar_clique_sem_codigo: 42501 para qualquer sessao e para anon; a sessao nao forja a origem provavel", async () => {
+    const argumentos = {
+      p_clinic_id: clinicaA,
+      p_contact_id: contatoSemOrigem,
+      p_whatsapp_account_id: crypto.randomUUID(),
+    };
+    for (const papel of ["admin-a", "gestor-a", "recepcao-a"]) {
+      const cliente = await logado(papel);
+      const { error } = await cliente.rpc("casar_clique_sem_codigo", argumentos);
+      expect(error?.code).toBe(PERMISSAO_NEGADA);
+    }
+    const { error: erroAnon } = await anonClient().rpc(
+      "casar_clique_sem_codigo",
+      argumentos,
+    );
+    expect(erroAnon?.code).toBe(PERMISSAO_NEGADA);
+    // contraprova: o sistema chama (nada a casar)
+    const { data, error } = await admin.rpc(
+      "casar_clique_sem_codigo",
+      argumentos,
+    );
+    expect(error).toBeNull();
+    expect(data).toBe("nenhum");
+
+    // O metodo link_provavel so nasce pelo sistema: nem o admin grava.
+    const adminA = await logado("admin-a");
+    const forjado = await adminA
+      .from("contact")
+      .update({ source_channel: "redes_sociais", source_method: "link_provavel" })
+      .eq("id", contatoSemOrigem);
+    expect(forjado.error?.code).toBe(PERMISSAO_NEGADA);
+  });
+
   it("resumo_dos_links_rastreados: membro ativo da propria clinica le; pendente, outra clinica e anon nao", async () => {
     const { data: origem } = await admin
       .from("campaign_link")
@@ -844,6 +877,7 @@ describe("link rastreado da origem", () => {
         campaign_link_id: origem!.id,
         cliques: 0,
         leads: 0,
+        provaveis: 0,
       });
     }
     for (const papel of ["pendente-a", "admin-b"]) {

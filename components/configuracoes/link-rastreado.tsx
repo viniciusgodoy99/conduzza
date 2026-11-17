@@ -67,10 +67,18 @@ export function nomeDoArquivoDoQr(nomeDaOrigem: string | undefined): string {
   return `qr-${limpo || "link"}.png`;
 }
 
-/** "12 cliques e 3 leads nos últimos 30 dias", com singular e zero. */
+/**
+ * "12 cliques e 3 leads nos últimos 30 dias", com singular e zero. Com
+ * provaveis (casados so pela janela de 10 minutos): "12 cliques, 3 leads e
+ * 1 provável nos últimos 30 dias".
+ */
 export function textoDoResumoDoLink(resumo: ResumoDoLink): string {
   const cliques = `${resumo.cliques} ${resumo.cliques === 1 ? "clique" : "cliques"}`;
   const leads = `${resumo.leads} ${resumo.leads === 1 ? "lead" : "leads"}`;
+  if (resumo.provaveis > 0) {
+    const provaveis = `${resumo.provaveis} ${resumo.provaveis === 1 ? "provável" : "prováveis"}`;
+    return `${cliques}, ${leads} e ${provaveis} nos últimos 30 dias`;
+  }
   return `${cliques} e ${leads} nos últimos 30 dias`;
 }
 

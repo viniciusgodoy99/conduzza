@@ -20,7 +20,10 @@ vi.mock("next/navigation", () => ({
 import { ConfiguracoesClient } from "@/app/(app)/configuracoes/configuracoes-client";
 import { FormularioDaOrigem } from "@/components/configuracoes/dialogo-da-origem";
 import { LinkParaABio } from "@/components/configuracoes/link-para-a-bio";
-import { nomeDoArquivoDoQr } from "@/components/configuracoes/link-rastreado";
+import {
+  nomeDoArquivoDoQr,
+  textoDoResumoDoLink,
+} from "@/components/configuracoes/link-rastreado";
 import {
   CarregandoOrigens,
   OrigemDosLeadsTab,
@@ -87,8 +90,8 @@ function dados(campos: Partial<DadosDasOrigens> = {}): DadosDasOrigens {
     frasesDoSite: [],
     enderecoDosLinks: "https://go.exemplo.com.br",
     resumoDosLinks: {
-      [BIO.id]: { cliques: 12, leads: 1 },
-      [PARCEIRO.id]: { cliques: 0, leads: 0 },
+      [BIO.id]: { cliques: 12, leads: 1, provaveis: 0 },
+      [PARCEIRO.id]: { cliques: 0, leads: 0, provaveis: 0 },
     },
     numerosDosLinks: {},
     ...campos,
@@ -266,6 +269,19 @@ describe("a lista de origens", () => {
     expect(comRodizio).not.toContain("Comercial (peso 3)");
     expect(texto(aba(dados({ numerosDosLinks: null })))).toContain(
       "Não foi possível carregar os números deste link.",
+    );
+  });
+
+  // Etapa 3d: os casados so pela janela de 10 minutos aparecem a parte.
+  it("resumo do link: os prováveis entram na frase só quando existem, com o singular certo", () => {
+    expect(textoDoResumoDoLink({ cliques: 1, leads: 1, provaveis: 0 })).toBe(
+      "1 clique e 1 lead nos últimos 30 dias",
+    );
+    expect(textoDoResumoDoLink({ cliques: 12, leads: 3, provaveis: 1 })).toBe(
+      "12 cliques, 3 leads e 1 provável nos últimos 30 dias",
+    );
+    expect(textoDoResumoDoLink({ cliques: 12, leads: 0, provaveis: 2 })).toBe(
+      "12 cliques, 0 leads e 2 prováveis nos últimos 30 dias",
     );
   });
 
