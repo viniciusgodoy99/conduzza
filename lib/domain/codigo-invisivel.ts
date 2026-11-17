@@ -16,8 +16,8 @@ import { TOKEN_ALPHABET, TOKEN_LENGTH } from "@/lib/domain/attribution";
 // nao entra (quem chama usa o codigo visivel).
 //
 // SO LIGA DEPOIS DE TESTE COM CELULAR REAL pela uazapi (decisao do plano): a
-// rota do link usa o invisivel com LINK_CODIGO_INVISIVEL=1 ou, para o teste,
-// com ?cz_invisivel=1 no endereco. A LEITURA vale sempre: a ingestao tira o
+// rota do link usa o invisivel com CODIGO_INVISIVEL_LIGADO (link-rastreado.ts)
+// ou, para o teste, com ?cz_invisivel=1 no endereco. A LEITURA vale sempre: a ingestao tira o
 // codigo invisivel do texto antes de gravar a mensagem (a conversa e a IA
 // nunca veem o codigo) e atribui a origem por ele.
 

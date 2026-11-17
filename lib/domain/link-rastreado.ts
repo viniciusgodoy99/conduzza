@@ -207,15 +207,21 @@ export function destinoDoCliqueDoLink(
 }
 
 /**
- * O link usa o codigo invisivel quando a chave do ambiente esta ligada
- * (LINK_CODIGO_INVISIVEL=1, so depois do teste com celular real) ou quando o
+ * Codigo invisivel em todo clique. Desligado ate o teste com celular real
+ * pela uazapi (decisao do plano de 16/11/2026); passado o teste, vira true
+ * aqui. Nao e variavel de ambiente (decisao do dono de 17/11/2026).
+ */
+export const CODIGO_INVISIVEL_LIGADO: boolean = false;
+
+/**
+ * O link usa o codigo invisivel quando ele esta ligado no codigo ou quando o
  * endereco pede, para o proprio teste (?cz_invisivel=1).
  */
 export function usarCodigoInvisivel(
-  chaveDoAmbiente: string | undefined,
+  ligado: boolean,
   parametroDoEndereco: string | null,
 ): boolean {
-  return chaveDoAmbiente === "1" || parametroDoEndereco === "1";
+  return ligado || parametroDoEndereco === "1";
 }
 
 // ---------------------------------------------------------------------------
