@@ -30,6 +30,7 @@ import {
   fetchFunilDoPeriodo,
 } from "@/lib/queries/relatorios";
 
+import { nascerDeMensagem } from "./lead-de-verdade";
 import { adminClient, anonClient } from "./stack";
 
 // Paridade entre Resultados e a lista de Leads, contra o banco real (pedido
@@ -285,6 +286,8 @@ beforeAll(async () => {
       { defaultToNull: false },
     )
     .throwOnError();
+  // Metricas certas (20261123100000): o lead nasce da mensagem do paciente.
+  await nascerDeMensagem(admin, [clinicaA, clinicaB]);
 });
 
 afterAll(async () => {

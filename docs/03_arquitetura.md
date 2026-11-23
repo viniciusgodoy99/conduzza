@@ -2359,7 +2359,7 @@ O portão determinístico foi testado com 85 perguntas comuns de recepção. A f
 - O modelo de verdade: o roteiro imita o modelo, e o classificador e o verificador de verdade não rodaram.
 - Dado da teste123 que confunde: o funcionamento da unidade no Cadastro (segunda a sexta, 07:00 às 19:00; sábado, 08:00 às 12:00) é diferente do expediente do agente (segunda a sexta, 08:00 às 18:00; sábado fechado).
 
-## 43. Agente de IA: anota e continua, a curiosidade de estética e não desistir cedo (decisões do dono de 23/11/2026; construída na branch `revisao-2311-agente`, **não aplicada nem publicada**; a migration `20261123120000` vai antes do código; banco no `docs/04`, seção 51)
+## 43. Agente de IA: anota e continua, a curiosidade de estética e não desistir cedo (decisões do dono de 23/11/2026; publicada em 23/11/2026, com a migration `20261123120000` aplicada antes do código; banco no `docs/04`, seção 53)
 
 Revisão das conversas que iam para a equipe sem precisar. Três decisões, o resto das regras igual.
 

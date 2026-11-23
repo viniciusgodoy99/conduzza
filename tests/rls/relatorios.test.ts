@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { criarNumeroDeTeste } from "./numeros";
+import { nascerDeMensagem } from "./lead-de-verdade";
 import { adminClient, anonClient } from "./stack";
 
 // Fase 5.1/5.2: as RPCs de agregado por periodo (SECURITY INVOKER) e a
@@ -98,6 +99,8 @@ beforeAll(async () => {
       { clinic_id: clinicaB, phone_e164: `+558498${sufixo.slice(0, 2)}0002` },
     ])
     .throwOnError();
+  // Metricas certas (20261123100000): o lead nasce da mensagem do paciente.
+  await nascerDeMensagem(admin, [clinicaA, clinicaB]);
 });
 
 afterAll(async () => {

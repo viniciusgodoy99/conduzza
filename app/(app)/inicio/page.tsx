@@ -32,6 +32,7 @@ import {
 } from "@/lib/queries/inicio";
 import {
   fetchAgendaDoPeriodo,
+  fetchAtendimentoDoPeriodo,
   fetchProximasAcoes,
   type ProximasAcoes,
 } from "@/lib/queries/relatorios";
@@ -209,47 +210,72 @@ export default async function InicioPage() {
   // junto com as leituras abaixo e nunca derruba a tela (falha fechada).
   const leituraDaIa = abaDaIaVisivel(active.clinicId);
 
-  const [numeros, conversas, equipe, pedidos, resumo, funil, proximasAcoes] =
-    await Promise.all([
-      // Os numeros ATIVOS da clinica (docs/07): o passo fica feito com pelo
-      // menos um conectado. So o status, nenhum dado de paciente.
-      supabase
-        .from("whatsapp_account")
-        .select("connection_status")
-        .eq("clinic_id", active.clinicId)
-        .is("removido_em", null),
-      supabase
-        .from("conversation")
-        .select("id", { count: "exact", head: true })
-        .eq("clinic_id", active.clinicId),
-      supabase
-        .from("clinic_member")
-        .select("user_id", { count: "exact", head: true })
-        .eq("clinic_id", active.clinicId)
-        .eq("status", "ativo"),
-      // Pedidos de entrada pelo codigo aguardando liberacao (achados 108 e
-      // 125): so quem libera recebe o numero. So a contagem, nenhum nome.
-      podeConfigurar
-        ? supabase
-            .from("clinic_member")
-            .select("user_id", { count: "exact", head: true })
-            .eq("clinic_id", active.clinicId)
-            .eq("status", "pendente")
-        : Promise.resolve(null),
-      // Os dois blocos de numeros nao derrubam a tela (lerBloco); Proximas
-      // acoes continua derrubando, porque monta a frase do cabecalho.
-      lerBloco(
-        "resumo_do_dia",
+  // Hoje, no fuso da clinica: o dia do cartao "Resolvidas pela IA".
+  const hoje = diaCivil(active.timezone, agora);
+
+  const [
+    numeros,
+    conversas,
+    equipe,
+    pedidos,
+    resumo,
+    funil,
+    proximasAcoes,
+    atendimentoDeHoje,
+  ] = await Promise.all([
+    // Os numeros ATIVOS da clinica (docs/07): o passo fica feito com pelo
+    // menos um conectado. So o status, nenhum dado de paciente.
+    supabase
+      .from("whatsapp_account")
+      .select("connection_status")
+      .eq("clinic_id", active.clinicId)
+      .is("removido_em", null),
+    supabase
+      .from("conversation")
+      .select("id", { count: "exact", head: true })
+      .eq("clinic_id", active.clinicId),
+    supabase
+      .from("clinic_member")
+      .select("user_id", { count: "exact", head: true })
+      .eq("clinic_id", active.clinicId)
+      .eq("status", "ativo"),
+    // Pedidos de entrada pelo codigo aguardando liberacao (achados 108 e
+    // 125): so quem libera recebe o numero. So a contagem, nenhum nome.
+    podeConfigurar
+      ? supabase
+          .from("clinic_member")
+          .select("user_id", { count: "exact", head: true })
+          .eq("clinic_id", active.clinicId)
+          .eq("status", "pendente")
+      : Promise.resolve(null),
+    // Os dois blocos de numeros nao derrubam a tela (lerBloco); Proximas
+    // acoes continua derrubando, porque monta a frase do cabecalho.
+    lerBloco(
+      "resumo_do_dia",
+      active.clinicId,
+      fetchResumoDoDia(supabase, active.clinicId, active.timezone, agora),
+    ),
+    lerBloco(
+      "funil_da_jornada",
+      active.clinicId,
+      fetchFunilDaJornada(supabase, active.clinicId),
+    ),
+    fetchProximasAcoes(supabase, active.clinicId, active.timezone),
+    // A medida de Resultados, so hoje e sem comparacao (metricas certas,
+    // 23/11/2026). Falha so apaga o cartao da IA.
+    lerBloco(
+      "atendimento_do_dia",
+      active.clinicId,
+      fetchAtendimentoDoPeriodo(
+        supabase,
         active.clinicId,
-        fetchResumoDoDia(supabase, active.clinicId, active.timezone, agora),
+        active.timezone,
+        hoje,
+        hoje,
+        { comparar: false },
       ),
-      lerBloco(
-        "funil_da_jornada",
-        active.clinicId,
-        fetchFunilDaJornada(supabase, active.clinicId),
-      ),
-      fetchProximasAcoes(supabase, active.clinicId, active.timezone),
-    ]);
+    ),
+  ]);
   const iaNaFase = await leituraDaIa;
 
   // Leitura que decide o checklist: erro vira a tela de erro, nunca um
@@ -376,6 +402,7 @@ export default async function InicioPage() {
         proximasAcoes={proximasAcoes}
         pedidosDeAcesso={pedidosDeAcesso}
         iaNaFase={iaNaFase}
+        atendimento={atendimentoDeHoje}
       />
     </div>
   );

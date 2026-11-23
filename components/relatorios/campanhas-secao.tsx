@@ -47,11 +47,22 @@ function CelulaDeValor({ valor }: { valor: CelulaDeCampanha | null }) {
   if (!valor) {
     return null;
   }
-  // Estado escrito em texto comum (sans, secundario); valor em mono.
-  return valor.estado ? (
+  // Estado escrito em texto comum (sans, secundario); valor em mono. A nota
+  // ("2 comparecimentos sem preço") vai embaixo, em texto comum.
+  const texto = valor.estado ? (
     <span className="font-sans text-text-secondary">{valor.texto}</span>
   ) : (
     <>{valor.texto}</>
+  );
+  return valor.nota ? (
+    <span className="inline-grid justify-items-end">
+      {texto}
+      <span className="font-sans text-xs text-text-secondary">
+        {valor.nota}
+      </span>
+    </span>
+  ) : (
+    texto
   );
 }
 
@@ -65,15 +76,23 @@ const COLUNA_CAMPANHA: ColumnDef<LinhaDeCampanhaDaTela, unknown> = {
   ),
 };
 
+const COLUNA_COMPARECERAM: ColumnDef<LinhaDeCampanhaDaTela, unknown> = {
+  accessorKey: "compareceram",
+  header: "Compareceram",
+  meta: { align: "right" },
+};
+
 const COLUNAS_SEM_VALORES: ColumnDef<LinhaDeCampanhaDaTela, unknown>[] = [
   COLUNA_CAMPANHA,
   { accessorKey: "leads", header: "Leads", meta: { align: "right" } },
   { accessorKey: "agendaram", header: "Agendados", meta: { align: "right" } },
   { accessorKey: "conversao", header: "Conversão", meta: { align: "right" } },
+  COLUNA_COMPARECERAM,
 ];
 
 // Ordem do prototipo (screens-inteligencia.jsx): Campanha, Investimento,
-// Leads, Custo por lead, Agendados, Conversao.
+// Leads, Custo por lead, Agendados, Conversao; depois Compareceram, Custo por
+// consulta realizada, Faturamento, Retorno, Vendas e Valor das vendas.
 const COLUNAS_COM_VALORES: ColumnDef<LinhaDeCampanhaDaTela, unknown>[] = [
   COLUNA_CAMPANHA,
   {
@@ -91,6 +110,15 @@ const COLUNAS_COM_VALORES: ColumnDef<LinhaDeCampanhaDaTela, unknown>[] = [
   },
   { accessorKey: "agendaram", header: "Agendados", meta: { align: "right" } },
   { accessorKey: "conversao", header: "Conversão", meta: { align: "right" } },
+  // Metricas certas (23/11/2026): quem compareceu e quanto custou cada
+  // consulta realizada.
+  COLUNA_COMPARECERAM,
+  {
+    id: "custoPorConsulta",
+    header: "Custo por consulta realizada",
+    meta: { align: "right" },
+    cell: ({ row }) => <CelulaDeValor valor={row.original.custoPorConsulta} />,
+  },
   // Etapa 5 do plano de 16/11/2026: o que os leads da campanha ja renderam
   // e quantas vezes isso paga o investimento.
   {
@@ -104,6 +132,19 @@ const COLUNAS_COM_VALORES: ColumnDef<LinhaDeCampanhaDaTela, unknown>[] = [
     header: "Retorno",
     meta: { align: "right" },
     cell: ({ row }) => <CelulaDeValor valor={row.original.retorno} />,
+  },
+  // Venda pela Jornada (23/11/2026): fora do faturamento e do retorno.
+  {
+    id: "vendas",
+    header: "Vendas",
+    meta: { align: "right" },
+    cell: ({ row }) => <CelulaDeValor valor={row.original.vendas} />,
+  },
+  {
+    id: "valorDasVendas",
+    header: "Valor das vendas",
+    meta: { align: "right" },
+    cell: ({ row }) => <CelulaDeValor valor={row.original.valorDasVendas} />,
   },
 ];
 

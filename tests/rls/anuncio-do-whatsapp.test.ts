@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { nascerDeMensagem } from "./lead-de-verdade";
 import { adminClient, anonClient } from "./stack";
 
 // Detalhes do anuncio do WhatsApp (migration 20261020100000, pedido do dono
@@ -310,6 +311,8 @@ beforeAll(async () => {
       },
     ])
     .throwOnError();
+  // Metricas certas (20261123100000): o lead nasce da mensagem do paciente.
+  await nascerDeMensagem(admin, [clinicaA, clinicaB]);
 });
 
 afterAll(async () => {

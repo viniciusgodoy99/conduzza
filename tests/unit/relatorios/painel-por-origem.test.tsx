@@ -539,7 +539,7 @@ describe("o aviso do filtro, aba por aba", () => {
     const porCanal = avisoDoFiltroDeOrigem("marketing", "google", "canal");
     expect(porCanal.titulo).toBe("Origem escolhida: Google Ads");
     expect(porCanal.texto).toBe(
-      "Acompanham a origem: Leads recebidos, Com origem identificada, Lead para comparecimento, Origem dos leads, Origem dos leads por dia e Detalhe da origem por canal. Continuam com todas as origens: Custo por lead, Campanhas e Conversões devolvidas à Meta.",
+      "Acompanham a origem: Leads recebidos, Com origem identificada, Lead para comparecimento, Taxa de falta, Origem dos leads, Origem dos leads por dia e Detalhe da origem por canal. Continuam com todas as origens: Custo por lead, Campanhas e Conversões devolvidas à Meta.",
     );
     expect(porCanal.notaDaTela).toContain("no detalhe por canal");
 
@@ -558,11 +558,11 @@ describe("o aviso do filtro, aba por aba", () => {
     expect(avisoDoFiltroDeOrigem("marketing", "google")).toEqual(porCanal);
   });
 
-  it("Comercial: só o Funil comercial acompanha", () => {
+  it("Comercial: Vendas, Valor das vendas e o Funil comercial acompanham", () => {
     const aviso = avisoDoFiltroDeOrigem("comercial", "outras");
     expect(aviso.titulo).toBe("Origem escolhida: Outras origens");
     expect(aviso.texto).toBe(
-      "Acompanham a origem: Funil comercial. Continuam com todas as origens: Consultas agendadas, Comparecimentos, Faltas, Cancelamentos, Consultas recuperadas, Faturamento estimado, Confirmação de consulta e Detalhe da agenda.",
+      "Acompanham a origem: Vendas, Valor das vendas e Funil comercial. Continuam com todas as origens: Consultas agendadas, Comparecimentos, Faltas, Cancelamentos, Consultas recuperadas, Faturamento estimado, Confirmação de consulta e Detalhe da agenda.",
     );
     expect(aviso.notaDaTela).toBeNull();
   });

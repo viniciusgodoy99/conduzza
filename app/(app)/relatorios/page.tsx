@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { Card } from "@/components/ui/card";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { createT } from "@/lib/branding/labels";
+import { ROTULO_DO_MOTIVO_DE_ESCALONAMENTO } from "@/lib/domain/agente/config";
 import { lerGrupoDeOrigem } from "@/lib/domain/grupos-de-origem";
 import { diaCivil, somarDias } from "@/lib/domain/horarios";
 import { fetchConversoesDevolvidas } from "@/lib/queries/conversoes-meta";
@@ -42,7 +43,9 @@ import { VisaoDoProfissional } from "./visao-do-profissional";
 //
 // Painel por origem (decisao do dono de 17/11/2026): ?origem= escolhe um dos
 // quatro grupos (meta, google, outras, nao_rastreada). Valor fora da lista e
-// "todas as origens". So o funil e a serie diaria acompanham o filtro.
+// "todas as origens". O funil, a serie diaria e as vendas da Jornada
+// (vendas_do_periodo, buscada pelo cliente na aba Comercial) acompanham o
+// filtro.
 
 const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -281,6 +284,7 @@ export default async function ResultadosPage({
         conversoes={conversoes}
         linhaDeBaseInicial={linhaDeBase}
         objetivoInicial={objetivo}
+        rotulosDosMotivos={ROTULO_DO_MOTIVO_DE_ESCALONAMENTO}
       />
     </div>
   );

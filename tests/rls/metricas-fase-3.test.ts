@@ -7,6 +7,7 @@ import {
   somarDias,
 } from "@/lib/domain/horarios";
 
+import { nascerDeMensagem } from "./lead-de-verdade";
 import { adminClient, anonClient } from "./stack";
 
 // Fase 3, metricas (migration 20261002110000): as RPCs novas sao SECURITY
@@ -178,6 +179,8 @@ async function montarClinica(
     .select("id")
     .single()
     .throwOnError();
+  // Metricas certas (20261123100000): o lead nasce da mensagem do paciente.
+  await nascerDeMensagem(admin, [clinicId], [contato!.id as string]);
   const consulta = (
     inicio: string,
     status: string,

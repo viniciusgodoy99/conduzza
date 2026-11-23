@@ -5079,7 +5079,7 @@ Em cada janela (`atual` e `anterior`), recortada em `[de, ate)` e na clínica pe
 | `transferidas` | Conversas distintas em `ai_decision_log` com `escalation_reason` não nulo. Pode passar de `atendidas`: o portão de entrada passa para a equipe antes de a IA falar |
 | `insatisfacao` | Dessas, as com `escalation_reason = 'insatisfacao'` |
 | `primeira_resposta_mediana_segundos` | Mediana, sobre o CTE `elegiveis` (a primeira entrada da conversa na janela), do tempo até a primeira resposta da IA que saiu. Sem teto, como a primeira resposta da equipe. Null sem nenhuma, nunca 0 |
-| `agendamentos` | `appointment` com `created_by='ia'`, `created_at` na janela e `approval_status is distinct from 'recusado'` (a consulta nova da remarcação pela IA conta) |
+| `agendamentos` | `appointment` com `created_by='ia'`, `created_at` na janela e `approval_status is distinct from 'recusado'` (a consulta nova da remarcação pela IA conta). Desde a seção 51 (métricas certas), sem a pendente e sem a remarcação |
 
 A clínica sem atividade recebe zeros e mediana nula, e quem pede a clínica de outro também (a RLS zera as linhas, como nas outras chaves). A tela e o CSV leem isso como "Ainda não medido" (`agenteComAtividade`, `lib/domain/exportacao-de-resultados.ts`): sem `atendidas`, `transferidas` nem `agendamentos`, não existe número. Sem o bloco (a migration não aplicada), `lerAtendimento` devolve `agente: null`, e a tela faz o mesmo.
 
@@ -5338,7 +5338,117 @@ O dono: "Isso é pra ser configurado na aba de agente de IA de cada clínica". A
 - **Ensaio** (`~/.claude/plans/agente-completo/equipe-pelo-admin/ensaio-20261110140000.sql`, md5 `de08f760631b25bf1a9e188972bdf9f1`; migration `205026166cdd74514a3a1a280a23b1e8`): os corpos de antes por md5; os novos por md5, com `security definer`, `search_path` e grants; como sessão real (papel `authenticated` com o `sub` no JWT), o administrador da teste123 liga `contatos` e o número e recebe 42501 em `numero_inteiro`; o administrador de outra clínica recebe 42501 nos dois; com a teste123 em produção montada só na transação, o administrador recebe 42501 ao ligar número e desliga, e o super admin liga; a volta do rollback e, depois do ROLLBACK, o banco e a teste123 iguais: `ENSAIO OK`.
 - **Tipos:** nenhum muda (mesmas assinaturas).
 
-## 51. A etiqueta "Pergunta para a equipe" (decisão do dono de 23/11/2026, "anota e continua"; migration `20261123120000_etiqueta_pergunta_para_a_equipe.sql`; **não aplicada**: vai antes do código; motor no `docs/03`, seção 43)
+## 51. Métricas certas (decisão do dono de 23/11/2026: "métricas certas"; migration `20261123100000_metricas_certas.sql`, **aplicada na produção em 23/11/2026**, em 570 ms, com ENSAIO OK)
+
+Corrige o que Resultados e o Início contam. As funções foram tiradas da produção (`pg_get_functiondef`) em 23/11/2026 e só os trechos marcados com `[metricas certas]` mudaram. Nenhuma assinatura de RPC muda (`create or replace` mantém os grants); o `search_path` das funções trocadas passa de `public` a vazio, com os nomes qualificados. Continuam `security invoker` (a RLS de quem chama decide) e nulas para o profissional.
+
+### 51.1 O lead de verdade
+
+- **Regra:** lead é o contato que **nasceu de uma mensagem do paciente**. A ingestão (`ingest_inbound_message`) cria o contato e, na mesma transação, a autorização automática `contact_consent` com `source = 'conversa'` ("Primeira mensagem recebida do contato"); as duas linhas têm o mesmo `created_at` (o `now()` da transação). Contato importado (`criado_por_importacao`), paciente novo da Agenda e cadastro manual não têm essa linha com o mesmo instante e não são lead. Uma autorização "Conversa no WhatsApp" registrada depois pela equipe tem outro instante e não transforma o contato em lead.
+- **Por que este sinal:** é o mais barato e não pede coluna nova, ALTER em `contact` ou `message` nem mudança na ingestão (função quente). Uma busca pelo `contact_consent_contact_id_channel_granted_at_idx`. E resiste à conversa apagada: em 23/11/2026, 232 dos 666 contatos que nasceram de mensagem já não tinham conversa (a autorização fica). "Ter mensagem de entrada" falharia nos dois sentidos: perde esses 232 e conta como lead o paciente da Agenda que responde à confirmação.
+- **`contato_e_lead(p_contato public.contact) returns boolean`** (`stable`, `search_path` vazio, `security invoker`; `execute` para `authenticated` e `service_role`): `not criado_por_importacao` e a autorização `whatsapp`/`conversa` com o mesmo `created_at`. É chamada como `public.contato_e_lead(c)` em `funil_do_periodo` (leads, coorte, por canal, por campanha e `por_grupo`), `serie_diaria_do_periodo` (leads e `por_grupo`), `campanhas_do_periodo` (leads, o custo por lead e as linhas) e `anuncios_do_periodo`. O teste `tests/unit/relatorios/metricas-certas.test.tsx` confere que a ingestão mais nova ainda grava a autorização `conversa`: se ela deixar de gravar, Resultados zera os leads.
+- **Efeito na produção (23/11/2026, conta só leitura com os corpos novos):** numa clínica, os leads dos últimos 30 dias caem de 42 para 29 e os que "agendaram" de 13 para 0 (os 13 eram pacientes da Agenda, que inflavam a taxa de conversão); nas outras três nada muda. Desde 01/08: 247 para 234 nessa clínica.
+- **Não mudam:** o Painel geral (`painel_cs_das_clinicas` e `painel_geral_das_clinicas`, "contatos novos") e a lista de Leads. A lista que abre de uma linha de Origem dos leads continua mostrando todos os contatos do período e da origem: o contato importado ou da Agenda aparece lá e não conta na linha.
+
+### 51.2 "Agendou" igual à etapa Agendou da Jornada
+
+A consulta pendente de aprovação e a recusada não contam (`coalesce(approval_status, 'aprovado') = 'aprovado'`; a regra da `20261022100000`). Vale em `funil_do_periodo` (`agendamentos_criados` e o `agendou` da coorte), `serie_diaria_do_periodo` (`agendadas`), `campanhas_do_periodo` e `anuncios_do_periodo` (`agendou`), `agenda_do_periodo` (as consultas do período, `criados` e as remarcadas após a falta) e `atendimento_do_periodo` (`agente.agendamentos`, que antes contava a pendente).
+
+### 51.3 A remarcação pela IA conta uma vez
+
+- A consulta nova (`remarcacao_de` não nulo) não é agendamento novo: sai de `agendamentos_criados`, das `agendadas` da série, de `criados` da agenda e dos agendamentos pela IA.
+- A antiga trocada por uma remarcação **aprovada** (que `remarcacao_na_aprovacao` cancela como `cancelado_paciente`) sai das consultas de `agenda_do_periodo`: não é cancelamento e não conta no total. A nova conta no período em que começa. Enquanto a remarcação está pendente, a antiga continua como estava e a nova não conta (51.2).
+
+### 51.4 Custo por lead da Meta
+
+`campanhas_do_periodo.leads_de_anuncio` (o divisor do cartão) e `leads_de_anuncio_sem_campanha` passam a ser o grupo **Meta Ads** do painel por origem (`grupo_de_origem(...) = 'meta'`: origem Meta, clique, anúncio ou campanha da Meta), o mesmo número do seletor Origem. A diferença para antes é o lead com origem Meta sem nenhum id (link rastreado de anúncio). Na tela, "leads de anúncio" vira "leads do Meta Ads".
+
+### 51.5 Campanhas: comparecimentos e o que fica sem preço
+
+Cada linha de `campanhas_do_periodo` ganha `comparecimentos` (as consultas com comparecimento dos leads da linha; uma pessoa pode ter mais de uma; todo papel) e `comparecimentos_sem_preco` (dessas, as sem preço para somar no faturamento: sem preço no vínculo nem no procedimento, ou cobertas pelo convênio sem preço; só administrador, gestor e `service_role`, nulo para os outros). Uma passada por lead (`cross join lateral`) faz as contagens e o faturamento. A tabela ganha "Compareceram" (os leads que compareceram, a coorte) e, para a gestão, "Custo por consulta realizada" (investimento dividido por `comparecimentos`); o faturamento com parte sem preço leva a nota "N comparecimentos sem preço".
+
+### 51.6 Por que a conversa foi para a equipe
+
+- **`passagens_da_ia_do_periodo(p_clinic_id uuid, p_de timestamptz, p_ate timestamptz) returns jsonb`** (`stable`, `search_path` vazio, `security invoker`; `execute` para `authenticated` e `service_role`, revogado de `public` e `anon`; nula para o profissional): `{total, por_motivo: [{camada, motivo, passagens}]}`, mais passagens primeiro. Conta as linhas de `ai_decision_log` com `escalation_reason` em `[p_de, p_ate)`: uma conversa pode passar mais de uma vez. A camada sai das colunas, nesta ordem: `portao` (`gatilho_entrada`), `filtro` (`compliance_blocked`), `falha` (`motivo_da_falha`), senão `agente`. A RLS de `ai_decision_log` zera a clínica de outro.
+- **A varredura de 3 minutos:** `ia_tirar_conversa`, quando o motivo é `sem_resposta` (só `motor_manutencao` tira com ele), grava também a linha da decisão: `escalation_reason = 'falha_tecnica'`, `desfecho = 'falhou'`, `motivo_da_falha = 'prazo'`, sem job e sem texto. São valores que os CHECKs de hoje aceitam: nenhum CHECK de `ai_decision_log` muda, e os espelhos do agente (`MOTIVOS_DE_ESCALONAMENTO`, `MOTIVOS_DA_FALHA`) ficam como estão. Na tela ela aparece em "Por falha técnica". Efeito colateral esperado: ela passa a contar em "Transferidas para a equipe" e tira a conversa de "Resolvidas sem humano".
+- **Na tela:** Resultados, aba Agente de IA, bloco "Por que foi para a equipe" (barras horizontais agrupadas por onde a passagem aconteceu: "Na chegada da mensagem", "Durante a conversa", "Na conferência antes de enviar", "Por falha técnica"; o rótulo de cada motivo é o do evento "A IA passou a conversa para a equipe: ...", de `ROTULO_DO_MOTIVO_DE_ESCALONAMENTO`, que a página manda do servidor para o módulo do agente não entrar no pacote do navegador), com carregando, erro e vazio. A exportação da aba leva a mesma tabela.
+- **Custo:** `ai_decision_log` só tem índice por `clinic_id` (como em 40.3). Um `(clinic_id, created_at)` resolve se a tabela crescer.
+
+### 51.7 A trilha da IA não some com a conversa
+
+- `ai_decision_log.conversation_id` passa a aceitar nulo, com `on delete set null` (antes `cascade`); `clinic_id` continua em cascata (apagar a clínica leva as decisões).
+- **O que dependia da cascata:** `message_id` era `no action`: apagar a conversa apaga as mensagens e a decisão ficaria apontando para uma mensagem apagada, e o `delete` falharia. Passa a `on delete set null`. O rascunho barrado (`ai_rascunho_bloqueado`, o texto que a IA escreveu) saía pela cascata decisão, rascunho; continua saindo junto com a conversa pelo gatilho `apagar_rascunho_sem_conversa` (`after update of conversation_id`, quando ele vira nulo), que chama `apagar_rascunho_da_decisao_sem_conversa()` (`security definer`, `search_path` vazio, sem `execute` para ninguém).
+- A decisão de conversa apagada continua só da clínica dela; o profissional não a lê (a policy pede a conversa atribuída a ele). Em `atendimento_do_periodo`, cada uma conta sozinha em `transferidas` (`coalesce(conversation_id, id)`), nunca num grupo nulo só.
+- **Tipos:** `ai_decision_log.conversation_id` vira `string | null` em `lib/supabase/database.types.ts` (escrito à mão no formato gerado, junto das duas funções novas; conferir com o gerado depois de aplicar).
+
+### 51.8 Na aplicação
+
+- **Taxa de falta por origem** (Marketing): faltas sobre faltas mais comparecimentos de `funil_do_periodo`, que já acompanham o filtro de origem; entra no aviso do filtro e na exportação.
+- **Início, "Resolvidas pela IA":** `atendimento_do_periodo` de hoje, no fuso da clínica, sem comparação; a mesma conta de "Resolvidas sem humano" (`lerMetricaDoAgente`). Sem atividade da IA hoje, vazio na clínica com o agente e "Ainda não medido" nas outras; erro só apaga o cartão.
+- **Follow-up:** a dica do modo "Deixar a IA escrever" passa a dizer o que é verdade (o agente já atende; a régua escrita por ele ainda não existe).
+
+### 51.9 Travas, ordem, provas e rollback
+
+- **Travas:** `lock_timeout` de 3 s. Os `create or replace` só tocam o catálogo. O `alter table` de `ai_decision_log`, no fim, troca as duas chaves estrangeiras e segura `ai_decision_log`, `conversation` e `message` até o commit. Aplicar em horário calmo.
+- **Ordem:** a migration antes do código ou junto. O código lê `comparecimentos` e `comparecimentos_sem_preco` como nulos quando o banco não manda ("Não medido"), mas a aba Agente de IA chama `passagens_da_ia_do_periodo`, que só existe depois da migration (o bloco mostra o erro).
+- **Validação sem aplicar (23/11/2026):** os corpos SQL novos passaram por `explain` e rodaram na produção numa conexão só leitura (com `contato_e_lead` trocado pela expressão dela); o `alter table`, o gatilho e as duas funções novas rodaram num Postgres local com tabelas mínimas (a decisão fica sem conversa e sem mensagem, o rascunho sai, a clínica apagada leva tudo).
+- **Testes escritos e não rodados** (dependem da migration): `tests/integration/metricas-certas.test.ts` e `tests/rls/metricas-certas.test.ts`. Os testes de banco que criam lead direto (sem a ingestão) passaram a gravar a autorização da ingestão por `tests/rls/lead-de-verdade.ts` (`nascerDeMensagem`): `tests/integration/` `metricas-fase-3`, `painel-por-origem`, `anuncios-com-plataforma`, `relatorios` e `campanhas-do-periodo`, e `tests/rls/` `metricas-fase-3`, `investimento-meta`, `anuncio-do-whatsapp`, `relatorios` e `filtro-por-campanha-e-anuncio`. **O e2e de Resultados (`tests/e2e/resultados.spec.ts` e a fixture) não foi mexido:** os leads da fixture são criados direto e deixam de contar; as contagens dele precisam da autorização da ingestão na fixture.
+- **Rollback (manual):** no cabeçalho da migration.
+
+## 52. Venda pela Jornada (decisão do dono de 23/11/2026; migration `20261123110000_venda_pela_jornada.sql`, por cima da 51; **aplicada na produção em 23/11/2026**, em 271 ms, com ENSAIO OK)
+
+A marca "Esta etapa é uma venda" da Jornada (`funnel_stage_def.is_sale`) passa a gerar números em Resultados. Até aqui ela era gravada e nenhum número a lia (revisão de 17/11/2026). A marca de primeiro contato (`is_first_contact`) continua sem uso.
+
+### 52.1 A tabela `venda_da_jornada`
+
+```sql
+create table venda_da_jornada (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references clinic(id) on delete cascade,
+  contact_id uuid not null references contact(id) on delete cascade,  -- apagar o contato (LGPD) leva as vendas
+  etapa_chave text not null,          -- a chave no momento da venda; sem FK de propósito (como conversion_event.stage_chave)
+  value_cents integer check (value_cents is null or value_cents >= 0),  -- nulo: a etapa sem valor, ou sem preço
+  vendido_em timestamptz not null default now()
+);
+-- Índices: (clinic_id, vendido_em) para o período; (contact_id) para a cascata.
+-- RLS ligada. Uma policy, só de leitura: user_has_role(clinic_id, admin ou gestor),
+-- a mesma regra do faturamento. Nenhuma policy de escrita.
+-- Grants: anon nada; authenticated e service_role só SELECT. Quem grava é o
+-- gatilho (security definer) e a carga inicial da migration.
+```
+
+- **O que é uma venda:** cada **entrada** de um contato numa etapa com `is_sale`, a partir de quando a etapa está marcada. Sair e voltar conta de novo (`conversion_event` é uma por contato e etapa; aqui não). Desmarcar a etapa não apaga as vendas já registradas. A marca vale mesmo sem evento da Meta ou com a conversão pausada: só `is_sale` decide (a tela da Jornada só mostra a marca com um evento escolhido; o banco não exige).
+- **O valor:** `valor_da_conversao(clinic_id, contact_id, value_source, value_cents)` da etapa, fotografado na entrada (fixo; o preço da consulta do agendamento pela regra do faturamento; ou nulo).
+
+### 52.2 O gatilho `registrar_venda_da_jornada`
+
+`AFTER INSERT OR UPDATE OF funnel_stage ON contact`, `FOR EACH ROW`, função `registrar_venda_da_jornada()` (`plpgsql`, `security definer`, `search_path` vazio, `execute` revogado de `public`, `anon`, `authenticated` e `service_role`). Na mesma etapa (update que não muda `funnel_stage`) não faz nada; na etapa sem `is_sale` também não. O molde é `registrar_conversao_do_funil`: qualquer erro vira `warning` com a clínica e o `sqlerrm` (nunca dado de paciente) e a mudança de etapa segue.
+
+### 52.3 `vendas_do_periodo(p_clinic_id uuid, p_de timestamptz, p_ate timestamptz, p_grupo text default null) returns jsonb`
+
+`stable`, `security invoker` (RLS de `venda_da_jornada`), `search_path` vazio; `execute` para `authenticated` e `service_role`, revogado de `public` e `anon`. **Nula** para quem não é admin nem gestor da clínica pedida (a regra de `faturamento_do_periodo`; `service_role` passa). Devolve `{tem_etapa_de_venda, vendas, valor_cents, sem_valor}`: as vendas com `vendido_em` em `[p_de, p_ate)` (pelo momento da venda, não pela chegada do lead), a soma das com valor e quantas não têm valor. `p_grupo` (`meta`, `google`, `outras`, `nao_rastreada`) filtra pelo `grupo_de_origem` do contato da venda, como `funil_do_periodo`; nulo, todas. `tem_etapa_de_venda` diz se alguma etapa da clínica está marcada hoje (a tela explica como marcar).
+
+### 52.4 `campanhas_do_periodo`: as colunas de venda
+
+Mesma assinatura (`create or replace` a partir do corpo da 51; os trechos novos marcados com `[venda pela jornada]`). Cada linha ganha `vendas`, `valor_das_vendas_cents` e `vendas_sem_valor`, e o bloco ganha `tem_etapa_de_venda`, todos só para quem vê valores (nulos para os outros papéis, como o faturamento). A venda entra na campanha do **contato**, pela mesma regra do lead (anúncio em `meta_anuncio`, senão o id de campanha conhecido, senão o texto de `source_campaign`), pelo momento da venda e **sem** o filtro de origem (a tabela inteira continua sem ele). Uma campanha só com venda no período (sem lead nem gasto) vira linha para a gestão; `campanhas_sem_lead` passa a contar só a linha com gasto (`m.leads = 0 and m.cents > 0`), então a linha só com venda não entra em "Investimento sem lead casado". O faturamento e o retorno não mudam.
+
+### 52.5 Na aplicação
+
+- **Resultados, aba Comercial:** cartões "Vendas" e "Valor das vendas" logo abaixo do faturamento estimado, separados dele, só para administrador e gestor ("Sem acesso" com a dica para os outros). Acompanham o período e o filtro de origem (o aviso do filtro da aba diz isso). Estados: carregando, erro com "Tentar de novo", nenhuma etapa marcada ("Nenhuma etapa da Jornada está marcada como venda", como marcar e o atalho "Abrir a Jornada"), nenhuma venda, só vendas sem valor ("Sem valor para somar") e "Fora da soma: N vendas sem valor". A exportação da aba ganha a seção "Vendas da Jornada".
+- **Tabela Campanhas** (Visão geral e Marketing): colunas "Vendas" e "Valor das vendas" no fim, só para a gestão, com a nota "N vendas sem valor" na célula; o rodapé diz o que elas contam, ou que nenhuma etapa está marcada. A exportação leva as duas colunas.
+- **Jornada:** o aviso sob as marcas diz que a de venda conta em Resultados a partir de quando a etapa está marcada, e que a de primeiro contato ainda não muda nenhum número.
+- **Tipos:** `venda_da_jornada` e `vendas_do_periodo` escritos à mão em `lib/supabase/database.types.ts`, no formato gerado (conferir com o gerado depois de aplicar).
+
+### 52.6 Travas, ordem, provas e rollback
+
+- **Travas:** `lock_timeout` de 3 s. A tabela é nova. O `create trigger` em `contact` pega SHARE ROW EXCLUSIVE até o commit (a gravação de contato espera frações de segundo; a leitura não). A carga inicial vem **depois** do gatilho, com a trava já na mão: nenhum movimento fica de fora nem conta duas vezes. Os `create or replace` só tocam o catálogo. Horário calmo.
+- **Ordem:** depois da 51 (`20261123100000`), porque `campanhas_do_periodo` parte do corpo dela. A migration antes do código ou junto: sem ela, os cartões de venda mostram o erro (a RPC não existe) e as colunas da tabela ficam "Não medido".
+- **Carga inicial:** os contatos que já estão numa etapa com `is_sale`, com o momento `funnel_stage_changed_at`. Na produção em 23/11/2026 nenhuma das 4 clínicas tem etapa marcada nem `value_source`: zero linhas, e a tela nasce no estado "nenhuma etapa marcada".
+- **Provas (23/11/2026):** a migration rodou num Postgres 18 local com as tabelas mínimas (tipos da produção) e os papéis do Supabase: carga inicial; entrar grava; mesma etapa e outra coluna não gravam; etapa comum não grava; sair e voltar grava de novo; valor fixo, pelo preço da consulta e nulo; insert direto numa etapa de venda grava; com a função de valor quebrada e com preço negativo (o CHECK da venda estoura) a etapa muda e nada grava; `vendas_do_periodo` por janela, por grupo e sem etapa marcada; a linha de campanha só com venda, a de texto com lead e venda, `campanhas_sem_lead`; admin da A lê a A e recebe nulo da B; recepção, profissional e anon sem nada; a sessão e o `service_role` não inserem, alteram nem apagam; a cascata do contato e da clínica. Cinco sabotagens de controle foram pegas.
+- **Testes escritos e não rodados** (dependem da migration): `tests/integration/venda-pela-jornada.test.ts` e `tests/rls/venda-pela-jornada.test.ts`.
+- **Rollback (manual):** no cabeçalho da migration.
+
+## 53. A etiqueta "Pergunta para a equipe" (decisão do dono de 23/11/2026, "anota e continua"; migration `20261123120000_etiqueta_pergunta_para_a_equipe.sql`; **aplicada na produção em 23/11/2026**, em 176 ms, com ENSAIO OK; motor no `docs/03`, seção 43)
 
 - **Nenhuma tabela nem coluna nova.** Usa o catálogo `conversation_tag_def` (RLS e `clinic_id NOT NULL` desde a `20260921100000`) e a RPC `etiquetar_conversa`, que a IA chama com o service role quando anota uma pergunta para a equipe (a conversa continua na IA; a equipe tira a etiqueta quando responder).
 - **Semeadura:** toda clínica que existe ganha só a etiqueta nova (`pergunta_para_a_equipe`, "Pergunta para a equipe", tom `warning`), com `on conflict do nothing` sem alvo, como a semeadura de 21/09 (a clínica que já tem outra etiqueta com esse nome fica com a dela, e a IA não etiqueta ali). Rodar a semeadura inteira devolveria as quatro padrão a quem as excluiu, por isso não roda.
@@ -5346,3 +5456,4 @@ O dono: "Isso é pra ser configurado na aba de agente de IA de cada clínica". A
 - **Sem a migration:** a nota interna da IA sai do mesmo jeito; a etiqueta é recusada pelo validador da conversa (`23514`) e o executor registra só o código (`ia_etiqueta_da_pergunta_nao_aplicada`).
 - **Rollback:** reaplicar `semear_etiquetas_padrao` da `20260921100000` e excluir as linhas `pergunta_para_a_equipe` do catálogo (o gatilho `proteger_etiqueta_de_conversa` tira a chave das conversas).
 - **Tipos:** nenhum muda.
+

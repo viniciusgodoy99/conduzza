@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { nascerDeMensagem } from "./lead-de-verdade";
 import { adminClient, anonClient } from "./stack";
 
 // Fase 4, investimento da Meta (migrations 20261003100000 e 20261003110000),
@@ -243,6 +244,8 @@ beforeAll(async () => {
     .throwOnError();
   contatoDoAnuncio = contatos!.find((c) => c.name === "Lead do anuncio")!
     .id as string;
+  // Metricas certas (20261123100000): o lead nasce da mensagem do paciente.
+  await nascerDeMensagem(admin, [clinicaA, clinicaB]);
 });
 
 afterAll(async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { Funnel, Megaphone, UserPlus } from "lucide-react";
+import { CalendarMinus2, Funnel, Megaphone, UserPlus } from "lucide-react";
 
 import { CampanhasSecao } from "@/components/relatorios/campanhas-secao";
 import { CartaoCustoPorLead } from "@/components/relatorios/cartoes-de-valor";
@@ -43,6 +43,10 @@ import type {
 // por grupo de origem) fica junto da Origem dos leads; com uma origem
 // escolhida na tela (grupo), o funil ja vem filtrado, e saem os links e a
 // divisao por plataforma, que nao conhecem o filtro.
+// Taxa de falta (metricas certas, 23/11/2026): faltas sobre as consultas com
+// desfecho (compareceu ou faltou) do periodo, pelo inicio, do funil; com uma
+// origem escolhida, so as consultas dos contatos dela: e a taxa de falta por
+// origem.
 
 function tentarDeNovo(acao: () => void) {
   return (
@@ -105,12 +109,14 @@ export function AbaMarketing({
     atual.coorte.compareceram,
     atual.coorte.leads,
   );
+  const comDesfecho = atual.faltas + atual.comparecimentos;
+  const taxaDeFalta = percentualDe(atual.faltas, comDesfecho);
 
   return (
     <div className="grid gap-4">
       <section
         aria-label="Indicadores do período"
-        className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+        className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5"
       >
         <CartaoDeMetrica
           rotulo="Leads recebidos"
@@ -156,6 +162,22 @@ export function AbaMarketing({
             valor={formatarPercentual(paraComparecimento)}
             unidade="%"
             rodape="dos leads do período; quem chegou há pouco ainda pode comparecer"
+          />
+        )}
+        {taxaDeFalta === null ? (
+          <CartaoDeMetrica
+            rotulo="Taxa de falta"
+            icone={CalendarMinus2}
+            estado="vazio"
+            texto="Nenhuma consulta com desfecho no período"
+          />
+        ) : (
+          <CartaoDeMetrica
+            rotulo="Taxa de falta"
+            icone={CalendarMinus2}
+            valor={formatarPercentual(taxaDeFalta)}
+            unidade="%"
+            rodape={`${atual.faltas.toLocaleString("pt-BR")} ${atual.faltas === 1 ? "falta" : "faltas"} em ${comDesfecho.toLocaleString("pt-BR")} ${comDesfecho === 1 ? "consulta" : "consultas"} com desfecho`}
           />
         )}
         <CartaoCustoPorLead

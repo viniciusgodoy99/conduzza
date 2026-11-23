@@ -195,6 +195,13 @@ export function campanhasDoPeriodo(
         investimentoCents: 342_000,
         // 3,5 vezes o investimento.
         faturamentoCents: 1_197_000,
+        // 76 consultas com comparecimento: R$ 45,00 por consulta realizada.
+        comparecimentos: 76,
+        comparecimentosSemPreco: 0,
+        // Venda pela Jornada: 4 vendas, R$ 10.000,00.
+        vendas: 4,
+        valorDasVendasCents: 1_000_000,
+        vendasSemValor: 0,
       },
       {
         chave: "meta:120000000000000020",
@@ -206,6 +213,11 @@ export function campanhasDoPeriodo(
         compareceram: 10,
         investimentoCents: 60_000,
         faturamentoCents: 45_000,
+        comparecimentos: 10,
+        comparecimentosSemPreco: 0,
+        vendas: 0,
+        valorDasVendasCents: 0,
+        vendasSemValor: 0,
       },
       {
         chave: "meta:120000000000000030",
@@ -217,6 +229,11 @@ export function campanhasDoPeriodo(
         compareceram: 0,
         investimentoCents: 50_000,
         faturamentoCents: 0,
+        comparecimentos: 0,
+        comparecimentosSemPreco: 0,
+        vendas: 0,
+        valorDasVendasCents: 0,
+        vendasSemValor: 0,
       },
       {
         chave: "texto:Check-up 2026",
@@ -228,10 +245,17 @@ export function campanhasDoPeriodo(
         compareceram: 90,
         investimentoCents: null,
         faturamentoCents: 2_250_000,
+        comparecimentos: 95,
+        comparecimentosSemPreco: 0,
+        // 2 vendas, uma sem valor.
+        vendas: 2,
+        valorDasVendasCents: 50_000,
+        vendasSemValor: 1,
       },
     ],
     investimento:
       investimento === null ? null : { ...INVESTIMENTO, ...investimento },
+    temEtapaDeVenda: investimento === null ? null : true,
     ...extra,
   };
 }

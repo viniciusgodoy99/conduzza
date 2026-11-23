@@ -1,7 +1,9 @@
-import { Banknote, Wallet } from "lucide-react";
+import { Banknote, HandCoins, ShoppingBag, Wallet } from "lucide-react";
+import Link from "next/link";
 import type { ReactNode } from "react";
 
 import { CartaoDeMetrica } from "@/components/shared/cartao-de-metrica";
+import { Button } from "@/components/ui/button";
 import {
   avisoDeFusoDaConta,
   dicaDoCustoPorLead,
@@ -12,9 +14,15 @@ import {
   variacaoDoCustoPorLead,
 } from "@/lib/domain/custo-por-lead";
 import {
+  COMO_MARCAR_ETAPA_DE_VENDA,
   TEXTO_SEM_COMPARECIMENTO,
+  TEXTO_SEM_ETAPA_DE_VENDA,
   TEXTO_SEM_PRECO_PARA_SOMAR,
+  TEXTO_SEM_VALOR_PARA_SOMAR,
+  TEXTO_SEM_VENDA,
+  estadoDasVendas,
   estadoDoFaturamento,
+  textoDeVendasSemValor,
 } from "@/lib/domain/exportacao-de-resultados";
 import {
   formatarReaisCompacto,
@@ -24,6 +32,7 @@ import type {
   CampanhasDoPeriodo,
   FaturamentoDoPeriodo,
   Periodizado,
+  VendasDoPeriodo,
 } from "@/lib/queries/relatorios";
 
 // Cartoes de VALOR EM REAIS da Tela 11 (Fase 3): so admin e gestor veem
@@ -56,7 +65,7 @@ function linhasDoRodape(partes: (string | null)[]): ReactNode {
  *   primeiro dia lido e leitura parada antes do fim do periodo: "Ainda não
  *   medido", com o porque na dica;
  * - outra moeda, sem investimento, nenhum lead de anuncio: o estado escrito;
- * - valor: "R$ 18,40", rodape "R$ 3.420,00 em N leads de anúncio" e
+ * - valor: "R$ 18,40", rodape "R$ 3.420,00 em N leads do Meta Ads" e
  *   "Atualizado em", variacao so com os dois periodos medidos por inteiro
  *   (cair e bom);
  * - conta de anuncios em outro fuso (deslocamento diferente do da clinica):
@@ -106,7 +115,10 @@ export function CartaoCustoPorLead({
   );
   // null fora do periodo medido (outra moeda, Ainda não medido): so acende
   // quando ha numero para o fuso distorcer.
-  const avisoDeFuso = avisoDeFusoDaConta(campanhas.atual.investimento, timezone);
+  const avisoDeFuso = avisoDeFusoDaConta(
+    campanhas.atual.investimento,
+    timezone,
+  );
 
   switch (estado.tipo) {
     case "sem-acesso":
@@ -178,7 +190,9 @@ function foraDaSoma(atual: FaturamentoDoPeriodo): string[] {
     );
   }
   if (atual.semPreco > 0) {
-    partes.push(`${plural(atual.semPreco, "consulta", "consultas")} sem preço cadastrado`);
+    partes.push(
+      `${plural(atual.semPreco, "consulta", "consultas")} sem preço cadastrado`,
+    );
   }
   return partes;
 }
@@ -299,5 +313,153 @@ export function CartaoFaturamento({
       }
       rodape={rodape}
     />
+  );
+}
+
+export const DICA_SEM_ACESSO_AS_VENDAS =
+  "Só administrador e gestor veem as vendas.";
+
+/** O rodape do cartao Vendas: o que ele conta. */
+const RODAPE_DAS_VENDAS = "entradas numa etapa de venda da Jornada";
+
+/**
+ * Venda pela Jornada (decisao do dono de 23/11/2026): os cartoes Vendas e
+ * Valor das vendas, ao lado do faturamento e SEPARADOS dele (o faturamento
+ * continua vindo das consultas com comparecimento). Pelo momento da venda,
+ * no filtro de origem da tela. Estados (o mesmo texto do CSV,
+ * estadoDasVendas):
+ * - sem acesso (fora de admin e gestor, ou o banco recusou): "Sem acesso";
+ * - nenhuma etapa marcada: o texto, como marcar e o atalho para a Jornada;
+ * - sem venda: Vendas "0" e Valor "Nenhuma venda no período";
+ * - so vendas sem valor: "Sem valor para somar", nunca R$ 0,00;
+ * - com valor: a soma, e "Fora da soma: N vendas sem valor" quando houver.
+ */
+export function CartoesDeVendas({
+  podeVerValores,
+  vendas,
+  erro = false,
+  tentarDeNovo,
+}: {
+  podeVerValores: boolean;
+  /** undefined = carregando; null = o banco recusou (sem permissao) */
+  vendas: VendasDoPeriodo | null | undefined;
+  erro?: boolean;
+  tentarDeNovo?: ReactNode;
+}) {
+  const cascaDasVendas = { rotulo: "Vendas", icone: ShoppingBag } as const;
+  const cascaDoValor = {
+    rotulo: "Valor das vendas",
+    icone: HandCoins,
+  } as const;
+  const grade = (vendasCartao: ReactNode, valorCartao: ReactNode) => (
+    <section
+      aria-label="Vendas da Jornada"
+      className="grid gap-4 sm:grid-cols-2"
+    >
+      {vendasCartao}
+      {valorCartao}
+    </section>
+  );
+
+  const semAcesso = grade(
+    <CartaoDeMetrica
+      {...cascaDasVendas}
+      estado="sem-acesso"
+      dica={DICA_SEM_ACESSO_AS_VENDAS}
+    />,
+    <CartaoDeMetrica
+      {...cascaDoValor}
+      estado="sem-acesso"
+      dica={DICA_SEM_ACESSO_AS_VENDAS}
+    />,
+  );
+  if (!podeVerValores) {
+    return semAcesso;
+  }
+  if (erro) {
+    // Um "Tentar de novo" so: a mesma consulta alimenta os dois cartoes.
+    return grade(
+      <CartaoDeMetrica
+        {...cascaDasVendas}
+        estado="erro"
+        tentarDeNovo={tentarDeNovo}
+      />,
+      <CartaoDeMetrica {...cascaDoValor} estado="erro" />,
+    );
+  }
+  if (vendas === undefined) {
+    return grade(
+      <CartaoDeMetrica {...cascaDasVendas} estado="carregando" />,
+      <CartaoDeMetrica {...cascaDoValor} estado="carregando" />,
+    );
+  }
+  if (vendas === null) {
+    // O banco recusou mesmo a pagina achando que podia: sem acesso, nunca 0.
+    return semAcesso;
+  }
+
+  const estado = estadoDasVendas(vendas);
+  if (estado === "sem-etapa") {
+    return grade(
+      <CartaoDeMetrica
+        {...cascaDasVendas}
+        estado="vazio"
+        texto={TEXTO_SEM_ETAPA_DE_VENDA}
+        rodape={COMO_MARCAR_ETAPA_DE_VENDA}
+        acao={
+          <Button asChild variant="outline" className="h-10">
+            <Link href="/configuracoes?aba=jornada" prefetch={false}>
+              Abrir a Jornada
+            </Link>
+          </Button>
+        }
+      />,
+      <CartaoDeMetrica
+        {...cascaDoValor}
+        estado="vazio"
+        texto={TEXTO_SEM_ETAPA_DE_VENDA}
+      />,
+    );
+  }
+
+  const cartaoDasVendas = (
+    <CartaoDeMetrica
+      {...cascaDasVendas}
+      valor={vendas.vendas.toLocaleString("pt-BR")}
+      rodape={RODAPE_DAS_VENDAS}
+    />
+  );
+  if (estado === "sem-venda") {
+    return grade(
+      cartaoDasVendas,
+      <CartaoDeMetrica
+        {...cascaDoValor}
+        estado="vazio"
+        texto={TEXTO_SEM_VENDA}
+      />,
+    );
+  }
+  if (estado === "sem-valor") {
+    return grade(
+      cartaoDasVendas,
+      <CartaoDeMetrica
+        {...cascaDoValor}
+        estado="vazio"
+        texto={TEXTO_SEM_VALOR_PARA_SOMAR}
+        rodape={textoDeVendasSemValor(vendas.semValor)}
+      />,
+    );
+  }
+  return grade(
+    cartaoDasVendas,
+    <CartaoDeMetrica
+      {...cascaDoValor}
+      valor={formatarReaisCompleto(vendas.valorCents)}
+      rodape={
+        vendas.semValor > 0
+          ? `Fora da soma: ${textoDeVendasSemValor(vendas.semValor)}`
+          : `De ${plural(vendas.vendas, "venda", "vendas")}`
+      }
+    />,
   );
 }

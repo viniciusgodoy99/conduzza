@@ -934,12 +934,16 @@ function FormularioDaEtapa({
                   Conversão ativa (desmarcada, fica pausada)
                 </Label>
               </div>
-              {/* As duas marcas sao gravadas e nenhum numero as le (revisao
-                  de 17/11/2026): a tela diz isso, em vez de deixar supor. */}
+              {/* Venda pela Jornada (decisao do dono de 23/11/2026): a marca
+                  de venda conta em Resultados; a de primeiro contato ainda
+                  nao muda nenhum numero (revisao de 17/11/2026). */}
               <p className="basis-full text-[11px] text-text-secondary">
-                As marcas de venda e de primeiro contato ficam guardadas na
-                etapa e ainda não mudam nenhum número. O faturamento em
-                Resultados vem das consultas com comparecimento.
+                A marca de venda conta em Resultados (Vendas e Valor das vendas,
+                na aba Comercial) a partir de quando a etapa está marcada: cada
+                entrada de um contato nela é uma venda, com o valor da
+                conversão. O faturamento estimado continua vindo das consultas
+                com comparecimento. A marca de primeiro contato ainda não muda
+                nenhum número.
               </p>
             </div>
           ) : null}

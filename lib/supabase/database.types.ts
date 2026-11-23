@@ -153,7 +153,7 @@ export type Database = {
           compliance_rule: string | null
           config_version: number | null
           context_read: Json | null
-          conversation_id: string
+          conversation_id: string | null
           created_at: string
           desfecho: string | null
           escalation_reason: string | null
@@ -183,7 +183,7 @@ export type Database = {
           compliance_rule?: string | null
           config_version?: number | null
           context_read?: Json | null
-          conversation_id: string
+          conversation_id?: string | null
           created_at?: string
           desfecho?: string | null
           escalation_reason?: string | null
@@ -213,7 +213,7 @@ export type Database = {
           compliance_rule?: string | null
           config_version?: number | null
           context_read?: Json | null
-          conversation_id?: string
+          conversation_id?: string | null
           created_at?: string
           desfecho?: string | null
           escalation_reason?: string | null
@@ -5540,6 +5540,48 @@ export type Database = {
           },
         ]
       }
+      venda_da_jornada: {
+        Row: {
+          clinic_id: string
+          contact_id: string
+          etapa_chave: string
+          id: string
+          value_cents: number | null
+          vendido_em: string
+        }
+        Insert: {
+          clinic_id: string
+          contact_id: string
+          etapa_chave: string
+          id?: string
+          value_cents?: number | null
+          vendido_em?: string
+        }
+        Update: {
+          clinic_id?: string
+          contact_id?: string
+          etapa_chave?: string
+          id?: string
+          value_cents?: number | null
+          vendido_em?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "venda_da_jornada_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "venda_da_jornada_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contact"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       waitlist: {
         Row: {
           active: boolean
@@ -6252,6 +6294,10 @@ export type Database = {
           nome: string
           whatsapp_account_id: string
         }[]
+      }
+      contato_e_lead: {
+        Args: { p_contato: Database["public"]["Tables"]["contact"]["Row"] }
+        Returns: boolean
       }
       contato_tem_sinal_de_paciente: {
         Args: { p_clinic_id: string; p_phone_key: string }
@@ -6998,6 +7044,10 @@ export type Database = {
         Args: { p_clinic_id: string; p_ids: string[]; p_trigger_stage: string }
         Returns: undefined
       }
+      passagens_da_ia_do_periodo: {
+        Args: { p_ate: string; p_clinic_id: string; p_de: string }
+        Returns: Json
+      }
       passar_conversa_da_ia_para_equipe: {
         Args: { p_job_id: string; p_motivo: string; p_worker: string }
         Returns: Json
@@ -7561,6 +7611,15 @@ export type Database = {
       }
       user_professional_id: { Args: { p_clinic_id: string }; Returns: string }
       validar_codigo_clinica: { Args: { p_codigo: string }; Returns: Json }
+      vendas_do_periodo: {
+        Args: {
+          p_ate: string
+          p_clinic_id: string
+          p_de: string
+          p_grupo?: string
+        }
+        Returns: Json
+      }
       vender_pacote: {
         Args: {
           p_contact_id: string

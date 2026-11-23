@@ -6,6 +6,7 @@ import {
   limitesDoDia,
   somarDias,
 } from "@/lib/domain/horarios";
+import { nascerDeMensagem } from "../rls/lead-de-verdade";
 import { adminClient } from "../rls/stack";
 
 // Fase 3, metricas (migration 20261002110000) contra o banco REAL, com
@@ -108,6 +109,8 @@ async function novoContato(
     .select("id")
     .single()
     .throwOnError();
+  // Metricas certas (20261123100000): o lead nasce da mensagem do paciente.
+  await nascerDeMensagem(admin, [clinicId], [data!.id as string]);
   return data!.id as string;
 }
 

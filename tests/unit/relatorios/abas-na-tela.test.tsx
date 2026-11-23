@@ -112,7 +112,7 @@ describe("Visão geral", () => {
     const html = visaoGeral(true);
     const lido = texto(html);
     expect(lido).toContain("R$ 30,00");
-    expect(lido).toContain("R$ 4.860,00 em 162 leads de anúncio");
+    expect(lido).toContain("R$ 4.860,00 em 162 leads do Meta Ads");
     expect(lido).toContain("Atualizado em 02/10 às 06:00");
     // Custo subiu de R$ 25,00 para R$ 30,00: e ruim (menor e melhor).
     expect(lido).toContain("subiu 20,0% vs. período anterior");
@@ -135,7 +135,7 @@ describe("Visão geral", () => {
     expect(lido).toContain("Leads sem campanha: 150 de 486");
     expect(lido).toContain("Investimento atualizado em 02/10 às 06:00.");
     expect(lido).not.toContain(
-      "Investimento, custo por lead, faturamento e retorno: só administrador e gestor.",
+      "Investimento, custo por lead, custo por consulta realizada, faturamento, retorno, vendas e valor das vendas: só administrador e gestor.",
     );
   });
 
@@ -154,7 +154,7 @@ describe("Visão geral", () => {
     expect(html).not.toContain(">Investimento</th>");
     expect(html).not.toContain(">Custo por lead</th>");
     expect(texto(html)).toContain(
-      "Investimento, custo por lead, faturamento e retorno: só administrador e gestor.",
+      "Investimento, custo por lead, custo por consulta realizada, faturamento, retorno, vendas e valor das vendas: só administrador e gestor.",
     );
     expect(texto(html)).toContain("Leads sem campanha: 150 de 486");
     expect(texto(html)).not.toContain("Remarketing Botox");
@@ -214,6 +214,18 @@ describe("Comercial", () => {
         }
         faturamentoComErro={false}
         aoTentarFaturamentoDeNovo={nada}
+        vendas={
+          podeVerValores
+            ? {
+                temEtapaDeVenda: true,
+                vendas: 3,
+                valorCents: 75_000,
+                semValor: 0,
+              }
+            : null
+        }
+        vendasComErro={false}
+        aoTentarVendasDeNovo={nada}
         linhaDeBase={null}
         ehAdmin={podeVerValores}
         podeVerValores={podeVerValores}
@@ -233,6 +245,9 @@ describe("Comercial", () => {
     expect(lido).toContain("R$ 150,00 em receita associada");
     expect(lido).toContain("R$ 284.000,00");
     expect(lido).toContain("Contra a linha de base");
+    // Venda pela Jornada: separada do faturamento.
+    expect(lido).toContain("Vendas 3");
+    expect(lido).toContain("R$ 750,00");
   });
 
   it("recepção não vê receita nem faturamento em reais", () => {

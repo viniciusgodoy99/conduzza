@@ -76,8 +76,9 @@ export function textoDeLeads(leads: number): string {
 // ---------------------------------------------------------------------------
 // O aviso do filtro
 // ---------------------------------------------------------------------------
-// So acompanha o filtro o que vem de funil_do_periodo e de
-// serie_diaria_do_periodo. Os nomes abaixo sao os que aparecem na tela, na
+// So acompanha o filtro o que vem de funil_do_periodo, de
+// serie_diaria_do_periodo e, desde 23/11/2026, de vendas_do_periodo (Vendas e
+// Valor das vendas). Os nomes abaixo sao os que aparecem na tela, na
 // ordem da tela; quem mexer num bloco de Resultados confere esta lista (o
 // teste painel-por-origem cobra os nomes de cada aba).
 
@@ -107,13 +108,14 @@ const BLOCOS_POR_ABA: Record<
       "Leads recebidos",
       "Com origem identificada",
       "Lead para comparecimento",
+      "Taxa de falta",
       "Origem dos leads",
       "Origem dos leads por dia",
     ],
     continuam: ["Custo por lead", "Campanhas", "Conversões devolvidas à Meta"],
   },
   comercial: {
-    acompanham: ["Funil comercial"],
+    acompanham: ["Vendas", "Valor das vendas", "Funil comercial"],
     continuam: [
       "Consultas agendadas",
       "Comparecimentos",

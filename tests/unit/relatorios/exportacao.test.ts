@@ -257,7 +257,7 @@ describe("montarExportavelDaAba: investimento da Meta (Fase 4)", () => {
       );
       expect(indicadores).toContainEqual(["Custo por lead", "R$ 30,00"]);
       expect(indicadores).toContainEqual(["Investimento no período", "R$ 4.860,00"]);
-      expect(indicadores).toContainEqual(["Leads de anúncio", "162"]);
+      expect(indicadores).toContainEqual(["Leads do Meta Ads", "162"]);
       expect(indicadores).toContainEqual(["Investimento lido a partir de", "04/08/2026"]);
       expect(indicadores).toContainEqual(["Investimento lido até", "02/10/2026"]);
       // No fuso da clinica (America/Fortaleza): 09:00 UTC = 06:00.
@@ -291,8 +291,13 @@ describe("montarExportavelDaAba: investimento da Meta (Fase 4)", () => {
       "Não medido",
       "80",
       "66,7%",
+      "60",
+      "Não medido",
       "R$ 11.970,00",
       "Não medido",
+      // As vendas nao dependem da medida do investimento.
+      "4",
+      "R$ 10.000,00",
     ]);
     expect(
       campanhas?.flat().some((celula) => celula.startsWith("Investimento sem lead casado")),
@@ -332,22 +337,32 @@ describe("montarExportavelDaAba: investimento da Meta (Fase 4)", () => {
         "Custo por lead",
         "Agendados",
         "Conversão",
+        "Compareceram",
+        "Custo por consulta realizada",
         "Faturamento",
         "Retorno",
+        "Vendas",
+        "Valor das vendas",
       ],
       // Etapa 5 (16/11/2026): o que os leads da campanha ja renderam e
-      // quantas vezes isso paga o investimento.
-      ["Implante Dentário", "R$ 3.420,00", "120", "R$ 28,50", "80", "66,7%", "R$ 11.970,00", "3,5x"],
-      ["Campanha 120000000000000020", "R$ 600,00", "30", "R$ 20,00", "20", "66,7%", "R$ 450,00", "0,8x"],
+      // quantas vezes isso paga o investimento. Metricas certas (23/11/2026):
+      // quem compareceu e o investimento por consulta realizada.
+      // Venda pela Jornada (23/11/2026): Vendas e Valor das vendas no fim,
+      // fora do faturamento e do retorno.
+      ["Implante Dentário", "R$ 3.420,00", "120", "R$ 28,50", "80", "66,7%", "60", "R$ 45,00", "R$ 11.970,00", "3,5x", "4", "R$ 10.000,00"],
+      ["Campanha 120000000000000020", "R$ 600,00", "30", "R$ 20,00", "20", "66,7%", "10", "R$ 60,00", "R$ 450,00", "0,8x", "0", "Nenhuma venda"],
       // Sem comparecimento nao vira R$ 0,00 nem 0,0x.
-      ["Remarketing Botox", "R$ 500,00", "0", "Sem leads", "0", "sem dados", "Nenhum comparecimento", "Nenhum comparecimento"],
+      ["Remarketing Botox", "R$ 500,00", "0", "Sem leads", "0", "sem dados", "0", "Nenhum comparecimento", "Nenhum comparecimento", "Nenhum comparecimento", "0", "Nenhuma venda"],
       // Campanha fora da Meta tem faturamento, mas nao tem investimento.
-      ["Check-up 2026", "Fora da Meta", "186", "Fora da Meta", "112", "60,2%", "R$ 22.500,00", "Fora da Meta"],
+      ["Check-up 2026", "Fora da Meta", "186", "Fora da Meta", "112", "60,2%", "90", "Fora da Meta", "R$ 22.500,00", "Fora da Meta", "2", "R$ 500,00 (1 venda sem valor)"],
       ["Investimento sem lead casado: R$ 500,00 em 1 campanha"],
       ["Leads sem campanha: 150 de 486"],
-      ["Leads de anúncio sem campanha reconhecida: 12"],
+      ["Leads do Meta Ads sem campanha reconhecida: 12"],
       [
-        "Faturamento: consultas com comparecimento dos leads da campanha que chegaram no período. Retorno: faturamento dividido pelo investimento.",
+        "Faturamento: consultas com comparecimento dos leads da campanha que chegaram no período. Custo por consulta realizada: investimento dividido por essas consultas. Retorno: faturamento dividido pelo investimento.",
+      ],
+      [
+        "Vendas: entradas numa etapa da Jornada marcada como venda no período, pela campanha do contato. Valor das vendas: o valor da etapa na hora da venda. As duas ficam fora do faturamento e do retorno.",
       ],
     ]);
   });
@@ -355,13 +370,13 @@ describe("montarExportavelDaAba: investimento da Meta (Fase 4)", () => {
   it("recepção: a tabela sem as colunas em reais, com a nota e sem a campanha de 0 lead", () => {
     const linhas = secao("marketing", "Campanhas", { podeVerValores: false })?.linhas;
     expect(linhas).toEqual([
-      ["Campanha", "Leads", "Agendados", "Conversão"],
-      ["Implante Dentário", "120", "80", "66,7%"],
-      ["Campanha 120000000000000020", "30", "20", "66,7%"],
-      ["Check-up 2026", "186", "112", "60,2%"],
+      ["Campanha", "Leads", "Agendados", "Conversão", "Compareceram"],
+      ["Implante Dentário", "120", "80", "66,7%", "60"],
+      ["Campanha 120000000000000020", "30", "20", "66,7%", "10"],
+      ["Check-up 2026", "186", "112", "60,2%", "90"],
       ["Leads sem campanha: 150 de 486"],
-      ["Leads de anúncio sem campanha reconhecida: 12"],
-      ["Investimento, custo por lead, faturamento e retorno: só administrador e gestor."],
+      ["Leads do Meta Ads sem campanha reconhecida: 12"],
+      ["Investimento, custo por lead, custo por consulta realizada, faturamento, retorno, vendas e valor das vendas: só administrador e gestor."],
     ]);
   });
 
@@ -381,7 +396,7 @@ describe("montarExportavelDaAba: investimento da Meta (Fase 4)", () => {
     });
     expect(celulas.filter((celula) => celula.includes("R$"))).toEqual([]);
     expect(celulas).not.toContain("Custo por lead");
-    expect(celulas).toContain("Investimento, custo por lead, faturamento e retorno: só administrador e gestor.");
+    expect(celulas).toContain("Investimento, custo por lead, custo por consulta realizada, faturamento, retorno, vendas e valor das vendas: só administrador e gestor.");
   });
 
   it("sem leitura configurada: Ainda não medido no custo e Não medido nas células da Meta", () => {
@@ -403,8 +418,13 @@ describe("montarExportavelDaAba: investimento da Meta (Fase 4)", () => {
       "Não medido",
       "80",
       "66,7%",
+      "60",
+      "Não medido",
       "R$ 11.970,00",
       "Não medido",
+      // As vendas nao dependem da medida do investimento.
+      "4",
+      "R$ 10.000,00",
     ]);
     // Sem medida, a conferencia em reais some (nao vira R$ 0,00).
     expect(campanhas?.flat().some((celula) => celula.startsWith("Investimento sem lead casado"))).toBe(false);

@@ -392,6 +392,27 @@ Pedido do dono em 16/11/2026: um benchmark da parte de métricas do Tintim (feit
 
 **Depende do dono:** Pixel, token da API de Conversões e conta do WhatsApp Business de uma clínica para o primeiro teste; o nome do domínio curto; um celular real para o teste do código invisível; o ok de cada migration.
 
+### [x] Métricas certas `M` (decisão do dono de 23/11/2026: "métricas certas"; publicada em 23/11/2026; migration `20261123100000_metricas_certas.sql` aplicada na produção em 23/11/2026; spec 10.16; `docs/04`, seção 51)
+Dez correções nos números de Resultados e do Início:
+1. **Lead de verdade:** só o contato que nasceu de uma mensagem do paciente (a autorização `conversa` que a ingestão grava junto com o contato). Importado, paciente novo da Agenda e cadastro manual saem do funil, da série, de campanhas, do custo por lead, da Origem dos leads e da exportação (`contato_e_lead`).
+2. **Agendou igual à Jornada:** a consulta pendente de aprovação e a recusada não contam.
+3. **Remarcação pela IA uma vez:** a nova não é agendamento novo (nem nos agendamentos pela IA); a antiga não é cancelamento.
+4. **Custo por lead da Meta** dividido pelo grupo Meta Ads do painel por origem.
+5. **Por que foi para a equipe:** `passagens_da_ia_do_periodo` e o bloco de barras na aba Agente de IA; a varredura de 3 minutos grava a decisão (falha técnica por prazo, nos CHECKs de hoje).
+6. **A trilha da IA fica com a conversa apagada** (`on delete set null`; a mensagem da decisão também; o rascunho barrado continua saindo).
+7. **Taxa de falta por origem** em Marketing.
+8. **Campanhas:** Compareceram, Custo por consulta realizada e "N comparecimentos sem preço"; a exportação acompanha.
+9. **Início:** "Resolvidas pela IA" com a medida de Resultados, de hoje.
+10. **Follow-up:** a dica do modo da IA corrigida.
+Efeito na produção (conferido só com leitura em 23/11/2026): numa clínica, 42 leads dos últimos 30 dias viram 29, e os 13 que "agendaram" eram pacientes da Agenda (viram 0). Testes de unidade verdes; integração e RLS escritos e **não rodados** (dependem da migration). **Pendente:** aplicar a migration (com o ok do dono, em horário calmo); conferir as telas em claro, escuro e 768px; a fixture do e2e de Resultados cria leads direto e precisa da autorização da ingestão para as contagens dele voltarem a bater. **Fica para o dono decidir:** a lista de Leads aberta de uma linha de Origem dos leads continua com todos os contatos (pode mostrar mais que a linha); o Painel geral continua contando contatos novos. **Fora desta entrega:** preço gravado na consulta, pacotes no faturamento e o histórico de etapas.
+
+### [x] Venda pela Jornada `S` (decisão do dono de 23/11/2026: as marcas "Esta etapa é uma venda" passam a gerar números em Resultados; muda o "fora por decisão do dono" de 17/11/2026 só nas vendas pela etapa, o histórico da jornada continua fora; publicada em 23/11/2026, por cima das métricas certas; migration `20261123110000_venda_pela_jornada.sql` aplicada na produção em 23/11/2026; spec 10.17; `docs/04`, seção 52)
+- **Banco:** tabela `venda_da_jornada` (uma linha por entrada numa etapa com `is_sale`, com o valor da conversão da etapa; RLS só leitura, para administrador e gestor; ninguém da sessão grava), gatilho `registrar_venda_da_jornada` em `contact` (nunca trava a mudança de etapa), carga inicial (zero linhas hoje), `vendas_do_periodo` (com o filtro de origem) e as colunas de venda em `campanhas_do_periodo`.
+- **Tela:** cartões Vendas e Valor das vendas na aba Comercial, separados do faturamento; colunas na tabela de campanhas; exportação; o aviso da Jornada corrigido.
+- **Provas:** testes de unidade verdes; a migration rodou num Postgres local com os asserts (e cinco sabotagens pegas); integração e RLS escritos e **não rodados** (dependem da migration).
+- **Pendente:** aplicar a 51 e depois esta (com o ok do dono, em horário calmo); regenerar os tipos; rodar `npm run test:integration -- venda-pela-jornada` e `npm run test:rls -- venda-pela-jornada`; conferir a aba Comercial em claro, escuro e 768px; marcar uma etapa como venda numa clínica para ver os cartões com número.
+- **Fora desta entrega:** valor digitado por venda, histórico das mudanças de etapa, a marca de primeiro contato, pacotes no faturamento e preço guardado na consulta.
+
 ### [ ] Mensagem enviada pelo celular aparece na conversa ("Pelo WhatsApp") `M` (pedido do dono em 05/10/2026; migration `20261005120000` aplicada e código publicado em 05/10, commit `572e594`; falta o teste com celular real)
 Pedido: "eu consiga saber o que foi enviado via WhatsApp, e sempre aparecer o que foi enviado", com a referência de uma bolha enviada com o rótulo "Pelo WhatsApp" e o ícone de celular. O dono achava que faltava cadastrar um evento no webhook do uazapi.
 
@@ -1915,13 +1936,13 @@ Arquitetura no `docs/03`, seção 28; banco no `docs/04`, seção 44; LGPD no `d
 
 **Estado (06/11/2026):** publicado. Conferência da junção com os remédios e o portão: 20.285 testes, typecheck, lint e build verdes; ensaio e provas na produção no `docs/04`, seção 44. **Não rodou:** a OpenAI de verdade com o esquema novo do leitor (se recusar, toda foto e PDF vão para a equipe: falha fechada). **Limites conhecidos:** a nota interna só aparece quando a equipe abre a conversa; o agente não pede RG, CNH ou CPF (não construído); a carteirinha de dependente grava no contato da conversa, só quando o campo está vazio.
 
-### [ ] Anota e continua, a curiosidade de estética e não desistir cedo `M` (decisões do dono de 23/11/2026; construída na branch `revisao-2311-agente`, não publicada)
+### [x] Anota e continua, a curiosidade de estética e não desistir cedo `M` (decisões do dono de 23/11/2026; publicada em 23/11/2026)
 
 - **Anota e continua:** a ferramenta `anotar_para_a_equipe` grava a pergunta que o Cadastro não responde numa nota interna e aplica a etiqueta "Pergunta para a equipe"; a conversa continua com a IA, e a resposta diz que ficou anotado, sem prazo.
 - **Curiosidade de estética:** a frase fixa do dono, escolhida pelo sistema e pelo filtro inteiro, sem passar a conversa.
 - **Não desistir cedo:** as pendentes curtas não escalam pela quantidade (só pelo tamanho, ou acima de 19), a última rodada responde sem ferramenta, "um momento" reescreve, o erro do modelo não conta nas falhas seguidas e a falha passageira volta para a fila uma vez.
 
-**Antes de publicar:** aplicar a migration `20261123120000_etiqueta_pergunta_para_a_equipe.sql` (com o ok do dono; sem ela a nota sai, mas a etiqueta não) e depois publicar o código. **Não provado:** o modelo de verdade. Detalhe no `docs/03`, seção 43, e no `docs/04`, seção 51.
+**Publicada em 23/11/2026**, com a migration `20261123120000_etiqueta_pergunta_para_a_equipe.sql` aplicada antes (ok do dono). **Não provado:** o modelo de verdade. Detalhe no `docs/03`, seção 43, e no `docs/04`, seção 53.
 
 **Estado (23/11/2026):** typecheck e lint limpos; a unidade inteira (512 arquivos, 21.929 testes) verde, com 15 arquivos que só estouraram o tempo com a máquina carregada e passaram rodados de novo à parte; a bateria do prebuild verde (os 5 arquivos que estouraram o tempo, de novo à parte); `next build` verde, sem aviso novo.
 

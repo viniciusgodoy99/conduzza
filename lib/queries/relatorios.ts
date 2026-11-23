@@ -228,6 +228,28 @@ export type LinhaDeCampanhaDoPeriodo = {
    * real. null fora da gestao e quando o banco ainda nao manda o campo.
    */
   faturamentoCents: number | null;
+  /**
+   * As consultas com comparecimento dos leads desta campanha (uma pessoa
+   * pode ter mais de uma), o divisor do "Custo por consulta realizada"
+   * (migration 20261123100000). null quando o banco ainda nao manda.
+   */
+  comparecimentos: number | null;
+  /**
+   * Dessas, as sem preco para somar no faturamento. null fora da gestao e
+   * quando o banco ainda nao manda.
+   */
+  comparecimentosSemPreco: number | null;
+  /**
+   * Venda pela Jornada (migration 20261123110000): as entradas numa etapa
+   * marcada como venda no periodo (pelo momento da venda, nao pela chegada
+   * do lead), de contatos desta campanha. null fora da gestao e quando o
+   * banco ainda nao manda.
+   */
+  vendas: number | null;
+  /** A soma do valor dessas vendas, em centavos (mesmas regras de null). */
+  valorDasVendasCents: number | null;
+  /** Dessas vendas, as sem valor (a etapa sem valor, ou sem preco). */
+  vendasSemValor: number | null;
 };
 
 /** Situacao da leitura do investimento (meta_gasto_leitura.situacao). */
@@ -335,6 +357,26 @@ export type CampanhasDoPeriodo = {
   linhas: LinhaDeCampanhaDoPeriodo[];
   /** null = sem acesso a valores (fora de admin e gestor). */
   investimento: InvestimentoDoPeriodo | null;
+  /**
+   * Alguma etapa da Jornada esta marcada como venda (20261123110000). null
+   * fora da gestao e quando o banco ainda nao manda.
+   */
+  temEtapaDeVenda: boolean | null;
+};
+
+/**
+ * Venda pela Jornada (vendas_do_periodo, migration 20261123110000): cada
+ * entrada de um contato numa etapa marcada como venda, pelo momento da
+ * venda, no filtro de origem da tela. Separado do faturamento estimado.
+ */
+export type VendasDoPeriodo = {
+  /** false: nenhuma etapa da Jornada esta marcada como venda. */
+  temEtapaDeVenda: boolean;
+  vendas: number;
+  /** Soma das vendas com valor, em centavos. */
+  valorCents: number;
+  /** Vendas sem valor (fora da soma). */
+  semValor: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -413,6 +455,14 @@ export const relatoriosKeys = {
     ["relatorios", clinicId, "campanhas", diaDe, diaAte] as const,
   anuncios: (clinicId: string, diaDe: string, diaAte: string) =>
     ["relatorios", clinicId, "anuncios", diaDe, diaAte] as const,
+  passagens: (clinicId: string, diaDe: string, diaAte: string) =>
+    ["relatorios", clinicId, "passagens", diaDe, diaAte] as const,
+  vendas: (
+    clinicId: string,
+    diaDe: string,
+    diaAte: string,
+    grupo: GrupoDeOrigem | null,
+  ) => ["relatorios", clinicId, "vendas", diaDe, diaAte, grupo] as const,
   proximasAcoes: (clinicId: string) =>
     ["inicio", clinicId, "proximas-acoes"] as const,
 };
@@ -954,6 +1004,13 @@ type LinhaDeCampanhaRpc = {
   investimento_cents: number | null;
   /** ausente antes da migration 20261116160000 */
   faturamento_cents?: number | null;
+  /** ausentes antes da migration 20261123100000 */
+  comparecimentos?: number | null;
+  comparecimentos_sem_preco?: number | null;
+  /** ausentes antes da migration 20261123110000 */
+  vendas?: number | null;
+  valor_das_vendas_cents?: number | null;
+  vendas_sem_valor?: number | null;
 };
 
 type InvestimentoRpc = {
@@ -982,6 +1039,8 @@ type CampanhasRpc = {
   leads_sem_campanha: number;
   linhas: LinhaDeCampanhaRpc[];
   investimento: InvestimentoRpc | null;
+  /** ausente antes da migration 20261123110000 */
+  tem_etapa_de_venda?: boolean | null;
 };
 
 function lerInvestimento(
@@ -1011,6 +1070,11 @@ function lerInvestimento(
   };
 }
 
+/** Campo que o banco pode nao mandar: ausente ou null fica null, nunca 0. */
+function numeroOuNulo(valor: number | null | undefined): number | null {
+  return valor === null || valor === undefined ? null : Number(valor);
+}
+
 function lerCampanhas(bloco: CampanhasRpc, hoje: string): CampanhasDoPeriodo {
   return {
     leads: Number(bloco.leads),
@@ -1030,13 +1094,18 @@ function lerCampanhas(bloco: CampanhasRpc, hoje: string): CampanhasDoPeriodo {
         linha.investimento_cents === null
           ? null
           : Number(linha.investimento_cents),
-      faturamentoCents:
-        linha.faturamento_cents === null ||
-        linha.faturamento_cents === undefined
-          ? null
-          : Number(linha.faturamento_cents),
+      faturamentoCents: numeroOuNulo(linha.faturamento_cents),
+      comparecimentos: numeroOuNulo(linha.comparecimentos),
+      comparecimentosSemPreco: numeroOuNulo(linha.comparecimentos_sem_preco),
+      vendas: numeroOuNulo(linha.vendas),
+      valorDasVendasCents: numeroOuNulo(linha.valor_das_vendas_cents),
+      vendasSemValor: numeroOuNulo(linha.vendas_sem_valor),
     })),
     investimento: lerInvestimento(bloco.investimento, hoje),
+    temEtapaDeVenda:
+      typeof bloco.tem_etapa_de_venda === "boolean"
+        ? bloco.tem_etapa_de_venda
+        : null,
   };
 }
 
@@ -1181,5 +1250,132 @@ export async function fetchAnunciosDoPeriodo(
       ),
     },
     semAnuncio: lerContagem(corpo.sem_anuncio),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Por que a conversa foi para a equipe (passagens_da_ia_do_periodo, 23/11/2026)
+// ---------------------------------------------------------------------------
+
+/**
+ * Onde a passagem aconteceu, derivado no banco das colunas de
+ * ai_decision_log: o portao de entrada (gatilho_entrada), o filtro de
+ * conformidade (compliance_blocked), a falha tecnica (motivo_da_falha) e,
+ * sem nenhuma, o agente.
+ */
+export const CAMADAS_DA_PASSAGEM = [
+  "portao",
+  "agente",
+  "filtro",
+  "falha",
+] as const;
+
+export type CamadaDaPassagem = (typeof CAMADAS_DA_PASSAGEM)[number];
+
+export type PassagemPorMotivo = {
+  camada: CamadaDaPassagem;
+  /** escalation_reason (o rotulo sai do mapa dos eventos da IA). */
+  motivo: string;
+  passagens: number;
+};
+
+export type PassagensDaIaDoPeriodo = {
+  /** Linhas de ai_decision_log com motivo: uma conversa pode passar 2 vezes. */
+  total: number;
+  /** Mais passagens primeiro. */
+  porMotivo: PassagemPorMotivo[];
+};
+
+type PassagensRpc = {
+  total: number;
+  por_motivo: { camada: string; motivo: string; passagens: number }[];
+};
+
+function lerCamada(valor: string): CamadaDaPassagem {
+  return CAMADAS_DA_PASSAGEM.find((camada) => camada === valor) ?? "agente";
+}
+
+/**
+ * As passagens da IA para a equipe no periodo, por motivo e camada. So o
+ * periodo pedido (sem comparacao). Security invoker: para o profissional o
+ * banco devolve null, e aqui isso vira erro de recorte, nunca lista vazia.
+ * LANCA em erro.
+ */
+export async function fetchPassagensDaIaDoPeriodo(
+  supabase: SupabaseClient,
+  clinicId: string,
+  timezone: string,
+  diaDe: string,
+  diaAte: string,
+): Promise<PassagensDaIaDoPeriodo> {
+  const janela = janelaDoPeriodo(timezone, diaDe, diaAte);
+  const { data, error } = await supabase.rpc("passagens_da_ia_do_periodo", {
+    p_clinic_id: clinicId,
+    p_de: janela.de,
+    p_ate: janela.ate,
+  });
+  if (error) {
+    throw new Error(error.message);
+  }
+  if (data === null || data === undefined) {
+    throw new Error(
+      "Recorte indisponível para este perfil (passagens_da_ia_do_periodo).",
+    );
+  }
+  const corpo = data as PassagensRpc;
+  return {
+    total: Number(corpo.total),
+    porMotivo: corpo.por_motivo.map((linha) => ({
+      camada: lerCamada(linha.camada),
+      motivo: linha.motivo,
+      passagens: Number(linha.passagens),
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Venda pela Jornada (vendas_do_periodo, 23/11/2026)
+// ---------------------------------------------------------------------------
+
+type VendasRpc = {
+  tem_etapa_de_venda: boolean;
+  vendas: number;
+  valor_cents: number;
+  sem_valor: number;
+};
+
+/**
+ * Vendas e Valor das vendas do periodo, no filtro de origem. So chamar para
+ * admin e gestor: a funcao devolve null para qualquer outro papel (e para
+ * outra clinica), e aqui null vira null, que a tela mostra como "Sem
+ * acesso". Nunca zero. LANCA em erro.
+ */
+export async function fetchVendasDoPeriodo(
+  supabase: SupabaseClient,
+  clinicId: string,
+  timezone: string,
+  diaDe: string,
+  diaAte: string,
+  opcoes: OpcaoDeGrupo = {},
+): Promise<VendasDoPeriodo | null> {
+  const janela = janelaDoPeriodo(timezone, diaDe, diaAte);
+  const { data, error } = await supabase.rpc("vendas_do_periodo", {
+    p_clinic_id: clinicId,
+    p_de: janela.de,
+    p_ate: janela.ate,
+    ...(opcoes.grupo ? { p_grupo: opcoes.grupo } : {}),
+  });
+  if (error) {
+    throw new Error(error.message);
+  }
+  if (data === null || data === undefined) {
+    return null;
+  }
+  const corpo = data as VendasRpc;
+  return {
+    temEtapaDeVenda: corpo.tem_etapa_de_venda === true,
+    vendas: Number(corpo.vendas),
+    valorCents: Number(corpo.valor_cents),
+    semValor: Number(corpo.sem_valor),
   };
 }

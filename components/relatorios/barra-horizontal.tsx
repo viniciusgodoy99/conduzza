@@ -16,6 +16,10 @@ import { cn } from "@/lib/utils";
 // link para a lista de Leads com os mesmos leads da barra: alvo de 40px de
 // altura (a linha cresce junto, para dois alvos nunca se sobreporem) e o
 // nome acessivel dizendo o destino.
+//
+// Com `rotuloEmCima` (Por que foi para a equipe, 23/11/2026), o rotulo longo
+// ocupa a linha de cima inteiro, sem corte, e a barra e o valor ficam
+// embaixo.
 
 export function BarraHorizontal({
   rotulo,
@@ -24,6 +28,7 @@ export function BarraHorizontal({
   total,
   destaque = true,
   link,
+  rotuloEmCima = false,
 }: {
   rotulo: string;
   valor: number;
@@ -38,6 +43,8 @@ export function BarraHorizontal({
   destaque?: boolean;
   /** O rotulo vira link: o destino e o nome acessivel dele. */
   link?: { href: string; nome: string };
+  /** Rotulo longo: na linha de cima, inteiro (sem link). */
+  rotuloEmCima?: boolean;
 }) {
   const participacao =
     total !== undefined && total > 0
@@ -49,11 +56,15 @@ export function BarraHorizontal({
   return (
     <div
       className={cn(
-        "grid grid-cols-[minmax(0,10rem)_1fr_auto] items-center gap-3",
+        rotuloEmCima
+          ? "grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1"
+          : "grid grid-cols-[minmax(0,10rem)_1fr_auto] items-center gap-3",
         link ? "min-h-10" : "min-h-7",
       )}
     >
-      {link ? (
+      {rotuloEmCima ? (
+        <span className="col-span-2 text-[13px] text-foreground">{rotulo}</span>
+      ) : link ? (
         <Link
           href={link.href}
           // Um link por barra, todos para /leads: sem prefetch, a lista

@@ -9,6 +9,7 @@ import {
   fetchLinhaDeBase,
 } from "@/lib/queries/relatorios";
 import { criarNumeroDeTeste } from "../rls/numeros";
+import { nascerDeMensagem } from "../rls/lead-de-verdade";
 import { adminClient, anonClient } from "../rls/stack";
 
 // Fase 5.1/5.2 contra o banco REAL: as tres RPCs de agregados por periodo
@@ -126,6 +127,8 @@ beforeAll(async () => {
     .throwOnError();
   c1 = contatos!.find((c) => c.name === "Atual")!.id as string;
   c2 = contatos!.find((c) => c.name === "Anterior")!.id as string;
+  // Metricas certas (20261123100000): o lead nasce da mensagem do paciente.
+  await nascerDeMensagem(admin, [clinicId], [c1, c2]);
 
   const consulta = (
     contato: string,
@@ -596,7 +599,8 @@ describe("atendimento_do_periodo: o desempenho do agente", () => {
     );
     await passagem(clinicaA, anterior.id, "insatisfacao", -40 * DIA + 40_000);
 
-    // Consultas da A: a recusada e a da equipe nao contam.
+    // Consultas da A: a pendente, a recusada e a da equipe nao contam
+    // (metricas certas, 23/11/2026: Agendou igual a etapa da Jornada).
     const { data: prof } = await admin
       .from("professional")
       .insert({ clinic_id: clinicaA, name: "Dra. Agente" })
@@ -647,10 +651,11 @@ describe("atendimento_do_periodo: o desempenho do agente", () => {
     await admin
       .from("appointment")
       .insert([
-        consulta("ia", "pendente", -1 * DIA, 100),
+        consulta("ia", "aprovado", -1 * DIA, 100),
         consulta("ia", "recusado", -1 * DIA, 101),
         consulta("usuario", null, -1 * DIA, 102),
-        consulta("ia", "pendente", -40 * DIA, 103),
+        consulta("ia", "aprovado", -40 * DIA, 103),
+        consulta("ia", "pendente", -1 * DIA, 104),
       ])
       .throwOnError();
 

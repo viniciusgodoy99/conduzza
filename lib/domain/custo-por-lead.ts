@@ -35,8 +35,10 @@ export type DivisorDoCustoPorLead = (typeof DIVISORES_DO_CUSTO_POR_LEAD)[number]
 /**
  * Decisao D2 (pendente com o dono; recomendacao da critica da Fase 4):
  * investimento total da conta dividido pelos leads que chegaram por anuncio
- * no periodo (com ctwa_clid, source_ad_id ou source_campaign_id, com
- * campanha reconhecida ou nao).
+ * no periodo, com campanha reconhecida ou nao. Desde as metricas certas
+ * (decisao do dono de 23/11/2026), "leads_de_anuncio" e o grupo "Meta Ads"
+ * do painel por origem (grupo_de_origem = 'meta': origem Meta, clique,
+ * anuncio ou campanha da Meta), o mesmo numero do seletor Origem.
  * - "leads_casados": so os leads casados com uma campanha (fica alto quando
  *   ha anuncio arquivado);
  * - "leads": todos os leads, como no prototipo (mistura lead organico).
@@ -56,10 +58,10 @@ type TextosDoDivisor = {
 
 export const TEXTOS_DO_DIVISOR: Record<DivisorDoCustoPorLead, TextosDoDivisor> = {
   leads_de_anuncio: {
-    semLead: "Nenhum lead de anúncio",
-    singular: "lead de anúncio",
-    plural: "leads de anúncio",
-    rotulo: "Leads de anúncio",
+    semLead: "Nenhum lead do Meta Ads",
+    singular: "lead do Meta Ads",
+    plural: "leads do Meta Ads",
+    rotulo: "Leads do Meta Ads",
   },
   leads_casados: {
     semLead: "Nenhum lead ligado a campanha",
@@ -386,7 +388,7 @@ export function dicaDoCustoPorLead(estado: EstadoDoCustoPorLead): string | null 
 }
 
 /**
- * Rodape do numero: "R$ 3.420,00 em 186 leads de anúncio" no valor, o
+ * Rodape do numero: "R$ 3.420,00 em 186 leads do Meta Ads" no valor, o
  * investimento escrito quando nao ha lead para dividir, a moeda no estado
  * de outra moeda. null nos outros.
  */
