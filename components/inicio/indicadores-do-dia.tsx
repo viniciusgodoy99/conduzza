@@ -1,7 +1,15 @@
 import { CalendarDays, Clock, Sparkles } from "lucide-react";
 
-import { CartaoDeMetrica } from "@/components/shared/cartao-de-metrica";
+import {
+  CartaoDeMetrica,
+  type CartaoDeMetricaProps,
+} from "@/components/shared/cartao-de-metrica";
+import { lerMetricaDoAgente } from "@/lib/domain/exportacao-de-resultados";
 import type { Leitura, ResumoDoDia } from "@/lib/queries/inicio";
+import type {
+  AtendimentoDoPeriodo,
+  Periodizado,
+} from "@/lib/queries/relatorios";
 
 import {
   COMPARADO_COM_O_DIA,
@@ -12,10 +20,15 @@ import {
 
 // Os 4 cartoes do DIA do Inicio (Fase 3, decisao do dono de 02/10), na
 // ordem do prototipo: Consultas hoje, Confirmadas (o lime da grade),
-// Aguardando (o status, Clock em warning) e Resolvidas pela IA (A2, ainda
-// nao medido). A variacao A1 compara com o mesmo dia da semana passada; o
-// dia de hoje ainda esta em andamento, D-7 ja fechou (vies conhecido e
-// aceito). Erro nunca vira zero: o cartao diz que nao carregou.
+// Aguardando (o status, Clock em warning) e Resolvidas pela IA. A variacao
+// A1 compara com o mesmo dia da semana passada; o dia de hoje ainda esta em
+// andamento, D-7 ja fechou (vies conhecido e aceito). Erro nunca vira zero:
+// o cartao diz que nao carregou.
+//
+// Resolvidas pela IA (metricas certas, 23/11/2026): a medida que ja existe
+// em Resultados (atendimento_do_periodo de hoje, "Resolvidas sem humano"),
+// sem variacao. Sem atividade da IA hoje: vazio na clinica com o agente,
+// "Ainda não medido" nas outras.
 
 const DICA_DA_IA =
   "Chega com o agente de IA. Sem o agente atendendo, não existe número para mostrar.";
@@ -30,15 +43,62 @@ export function dicaDaIaNoInicio(iaNaFase: boolean): string {
   return iaNaFase ? DICA_DA_IA_NA_FASE : DICA_DA_IA;
 }
 
+type ConteudoDoCartaoDaIa = Pick<CartaoDeMetricaProps, "rodape"> &
+  (
+    | { estado: "valor"; valor: string }
+    | { estado: "vazio"; texto: string }
+    | { estado: "nao-medido"; dica: string }
+    | { estado: "erro" }
+  );
+
+/**
+ * O conteudo do cartao "Resolvidas pela IA" a partir da leitura de hoje
+ * (atendimento_do_periodo). Sem a leitura (ou sem o bloco do agente), a
+ * dica de antes; com erro, o erro (nunca zero).
+ */
+export function cartaoDaIaNoInicio(
+  atendimento: Leitura<Periodizado<AtendimentoDoPeriodo>> | undefined,
+  iaNaFase: boolean,
+): ConteudoDoCartaoDaIa {
+  if (atendimento === undefined) {
+    return { estado: "nao-medido", dica: dicaDaIaNoInicio(iaNaFase) };
+  }
+  if (!atendimento.ok) {
+    return { estado: "erro" };
+  }
+  const agente = atendimento.dados.atual.agente;
+  if (agente === null) {
+    return { estado: "nao-medido", dica: dicaDaIaNoInicio(iaNaFase) };
+  }
+  const leitura = lerMetricaDoAgente("Resolvidas sem humano", agente);
+  if (leitura.estado === "valor") {
+    return { estado: "valor", valor: leitura.valor, rodape: leitura.rodape };
+  }
+  if (leitura.estado === "vazio") {
+    return { estado: "vazio", texto: "Sem dados", rodape: leitura.rodape };
+  }
+  // Sem atividade da IA hoje.
+  return iaNaFase
+    ? {
+        estado: "vazio",
+        texto: "Sem dados",
+        rodape: "nenhuma conversa atendida pela IA hoje",
+      }
+    : { estado: "nao-medido", dica: DICA_DA_IA };
+}
+
 export function IndicadoresDoDia({
   resumo,
   timezone,
   iaNaFase = false,
+  atendimento,
 }: {
   resumo: Leitura<ResumoDoDia>;
   timezone: string;
   /** Clinica da fase controlada do agente de IA (decidido no servidor). */
   iaNaFase?: boolean;
+  /** atendimento_do_periodo de hoje; ausente = a dica de antes. */
+  atendimento?: Leitura<Periodizado<AtendimentoDoPeriodo>>;
 }) {
   return (
     <section
@@ -67,8 +127,7 @@ export function IndicadoresDoDia({
         rotulo="Resolvidas pela IA"
         icone={Sparkles}
         tom="ai"
-        estado="nao-medido"
-        dica={dicaDaIaNoInicio(iaNaFase)}
+        {...cartaoDaIaNoInicio(atendimento, iaNaFase)}
       />
     </section>
   );

@@ -153,7 +153,7 @@ export type Database = {
           compliance_rule: string | null
           config_version: number | null
           context_read: Json | null
-          conversation_id: string
+          conversation_id: string | null
           created_at: string
           desfecho: string | null
           escalation_reason: string | null
@@ -183,7 +183,7 @@ export type Database = {
           compliance_rule?: string | null
           config_version?: number | null
           context_read?: Json | null
-          conversation_id: string
+          conversation_id?: string | null
           created_at?: string
           desfecho?: string | null
           escalation_reason?: string | null
@@ -213,7 +213,7 @@ export type Database = {
           compliance_rule?: string | null
           config_version?: number | null
           context_read?: Json | null
-          conversation_id?: string
+          conversation_id?: string | null
           created_at?: string
           desfecho?: string | null
           escalation_reason?: string | null
@@ -6253,6 +6253,10 @@ export type Database = {
           whatsapp_account_id: string
         }[]
       }
+      contato_e_lead: {
+        Args: { p_contato: Database["public"]["Tables"]["contact"]["Row"] }
+        Returns: boolean
+      }
       contato_tem_sinal_de_paciente: {
         Args: { p_clinic_id: string; p_phone_key: string }
         Returns: boolean
@@ -6997,6 +7001,10 @@ export type Database = {
       ordenar_reguas_de_followup: {
         Args: { p_clinic_id: string; p_ids: string[]; p_trigger_stage: string }
         Returns: undefined
+      }
+      passagens_da_ia_do_periodo: {
+        Args: { p_ate: string; p_clinic_id: string; p_de: string }
+        Returns: Json
       }
       passar_conversa_da_ia_para_equipe: {
         Args: { p_job_id: string; p_motivo: string; p_worker: string }

@@ -26,6 +26,7 @@ import {
   montarExportavelDaAba,
   type DimensaoDaAgenda,
   type DimensaoDaOrigem,
+  type RotulosDosMotivos,
 } from "@/lib/domain/exportacao-de-resultados";
 import {
   GRUPOS_DE_ORIGEM,
@@ -48,6 +49,7 @@ import {
   fetchFunilDoPeriodo,
   fetchLinhaDeBase,
   fetchObjetivoDeConversao,
+  fetchPassagensDaIaDoPeriodo,
   fetchSerieDiariaDoPeriodo,
   relatoriosKeys,
   resolverAbaDeResultados,
@@ -86,6 +88,10 @@ import { createClient } from "@/lib/supabase/client";
 // todas as origens). So funil_do_periodo e serie_diaria_do_periodo recebem o
 // filtro; o aviso abaixo das abas diz, pelos nomes da tela, o que acompanha
 // a origem na aba aberta e o que continua com todas (avisoDoFiltroDeOrigem).
+//
+// Metricas certas (23/11/2026): a aba Agente de IA busca tambem
+// passagens_da_ia_do_periodo ("Por que foi para a equipe"), que a exportacao
+// da aba espera.
 
 /** Valor do seletor para "Todas as origens" (nunca vai para a URL). */
 const TODAS_AS_ORIGENS = "todas";
@@ -114,6 +120,7 @@ export function RelatoriosClient({
   conversoes,
   linhaDeBaseInicial,
   objetivoInicial,
+  rotulosDosMotivos,
 }: {
   clinicId: string;
   timezone: string;
@@ -145,6 +152,9 @@ export function RelatoriosClient({
   conversoes: ConversoesResumo;
   linhaDeBaseInicial: LinhaDeBase;
   objetivoInicial: ObjetivoDeConversao;
+  /** ROTULO_DO_MOTIVO_DE_ESCALONAMENTO (o servidor manda: o modulo do agente
+   *  nao entra no pacote do navegador). */
+  rotulosDosMotivos: RotulosDosMotivos;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -240,6 +250,8 @@ export function RelatoriosClient({
   // campanha, o quadro Campanhas mostra os anuncios, e a Origem dos leads, a
   // divisao por plataforma (pedido do dono).
   const precisaAnuncios = abaAtiva === "geral" || abaAtiva === "marketing";
+  // Por que foi para a equipe (23/11/2026): so na aba Agente de IA.
+  const precisaPassagens = abaAtiva === "ia";
 
   useDadosDoServidor(
     relatoriosKeys.funil(clinicId, diaDeInicial, diaAteInicial, grupoInicial),
@@ -333,6 +345,13 @@ export function RelatoriosClient({
     staleTime: 60_000,
     enabled: precisaAnuncios,
   });
+  const passagensQuery = useQuery({
+    queryKey: relatoriosKeys.passagens(clinicId, diaDe, diaAte),
+    queryFn: () =>
+      fetchPassagensDaIaDoPeriodo(supabase, clinicId, timezone, diaDe, diaAte),
+    staleTime: 60_000,
+    enabled: precisaPassagens,
+  });
   const linhaDeBaseQuery = useQuery({
     queryKey: relatoriosKeys.linhaDeBase(clinicId),
     queryFn: () => fetchLinhaDeBase(supabase, clinicId),
@@ -367,7 +386,9 @@ export function RelatoriosClient({
     (!precisaCampanhas ||
       (campanhasQuery.data !== undefined && !campanhasQuery.isError)) &&
     (!precisaAnuncios ||
-      (anunciosQuery.data !== undefined && !anunciosQuery.isError));
+      (anunciosQuery.data !== undefined && !anunciosQuery.isError)) &&
+    (!precisaPassagens ||
+      (passagensQuery.data !== undefined && !passagensQuery.isError));
 
   const montarExportavel = () =>
     montarExportavelDaAba({
@@ -384,6 +405,8 @@ export function RelatoriosClient({
       conversoes,
       campanhas: campanhasQuery.data,
       anuncios: precisaAnuncios ? anunciosQuery.data : undefined,
+      passagens: precisaPassagens ? passagensQuery.data : undefined,
+      rotulosDosMotivos,
       timezone,
       grupo,
       dimensaoOrigem,
@@ -638,6 +661,18 @@ export function RelatoriosClient({
               atendimento={atendimento}
               canalOficial={canalOficial}
               podeVerValores={podeVerValores}
+              passagens={passagensQuery.data}
+              rotulosDosMotivos={rotulosDosMotivos}
+              passagensComErro={passagensQuery.isError}
+              tentarPassagensDeNovo={
+                <Button
+                  variant="outline"
+                  className="h-10"
+                  onClick={() => void passagensQuery.refetch()}
+                >
+                  Tentar de novo
+                </Button>
+              }
             />
           ) : null}
         </>

@@ -323,6 +323,7 @@ describe("exportação: os anúncios no lugar do cabeçalho vazio de Campanhas",
         "Leads",
         "Agendados",
         "Conversão",
+        "Compareceram",
       ]);
     },
   );
@@ -334,6 +335,7 @@ describe("exportação: os anúncios no lugar do cabeçalho vazio de Campanhas",
       "Leads",
       "Agendados",
       "Conversão",
+      "Compareceram",
     ]);
     expect(linhas.flat()).not.toContain(
       TEXTOS_DOS_ANUNCIOS_SEM_CAMPANHA.semCampanha,

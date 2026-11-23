@@ -107,6 +107,7 @@ const BLOCOS_POR_ABA: Record<
       "Leads recebidos",
       "Com origem identificada",
       "Lead para comparecimento",
+      "Taxa de falta",
       "Origem dos leads",
       "Origem dos leads por dia",
     ],

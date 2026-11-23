@@ -134,9 +134,9 @@ describe("CartaoCustoPorLead", () => {
     expect(html).not.toContain("R$");
   });
 
-  it("sem lead de anúncio: Nenhum lead de anúncio, com o investimento escrito", () => {
+  it("sem lead do Meta Ads: Nenhum lead do Meta Ads, com o investimento escrito", () => {
     const html = cartao({}, { leadsDeAnuncio: 0, leadsCasados: 0 });
-    expect(texto(html)).toContain("Nenhum lead de anúncio");
+    expect(texto(html)).toContain("Nenhum lead do Meta Ads");
     expect(texto(html)).toContain("R$ 4.860,00 investidos no período");
   });
 
@@ -145,7 +145,7 @@ describe("CartaoCustoPorLead", () => {
     expect(html).toContain('data-estado="valor"');
     const lido = texto(html);
     expect(lido).toContain("R$ 30,00");
-    expect(lido).toContain("R$ 4.860,00 em 162 leads de anúncio");
+    expect(lido).toContain("R$ 4.860,00 em 162 leads do Meta Ads");
     expect(lido).toContain("Atualizado em 02/10 às 06:00");
     // R$ 25,00 para R$ 30,00: subiu, e custo subir e ruim.
     expect(html).toMatch(/data-sentido="subiu"[^>]*text-alert-text/);

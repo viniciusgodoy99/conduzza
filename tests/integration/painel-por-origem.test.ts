@@ -4,6 +4,7 @@ import {
   fetchFunilDoPeriodo,
   fetchSerieDiariaDoPeriodo,
 } from "@/lib/queries/relatorios";
+import { nascerDeMensagem } from "../rls/lead-de-verdade";
 import { adminClient } from "../rls/stack";
 
 // Painel por origem (decisao do dono de 17/11/2026) contra o banco REAL:
@@ -90,6 +91,8 @@ beforeAll(async () => {
       .select("id")
       .single()
       .throwOnError();
+    // Metricas certas (20261123100000): o lead nasce da mensagem do paciente.
+    await nascerDeMensagem(admin, [clinicId], [data!.id as string]);
     return data!.id as string;
   };
 

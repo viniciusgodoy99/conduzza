@@ -173,10 +173,11 @@ export function AbaFollowup({
 
   return (
     <div className="grid gap-4">
-      {/* Os dois modos de escrever (spec 7.3): fixa hoje, IA com o agente.
-          O modo em uso e o cartao escolhido (lime suave com borda); o da IA
-          fica visivel, apagado e com a dica, porque o agente nao existe
-          ainda (Fase 3) e nada de IA fica ativo. */}
+      {/* Os dois modos de escrever (spec 7.3): fixa hoje, IA depois. O
+          modo em uso e o cartao escolhido (lime suave com borda); o da IA
+          fica visivel, apagado e com a dica: o agente de IA ja atende no
+          WhatsApp, mas a regua escrita por ele ainda nao existe (metricas
+          certas, 23/11/2026, trocou a dica que dizia o contrario). */}
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="flex gap-3 rounded-card border border-primary-edge bg-primary-soft p-3.5">
           <span className="grid size-[34px] shrink-0 place-items-center rounded-md bg-card text-primary-text">
@@ -194,7 +195,7 @@ export function AbaFollowup({
         </div>
         <DisabledWithHint
           className="w-full"
-          hint="Chega com o agente de IA. As travas de conformidade médica vêm antes de qualquer texto escrito por máquina."
+          hint="O agente de IA ainda não escreve as mensagens da régua. Por enquanto, cada passo envia o texto que você escreveu."
         >
           <div className="flex w-full gap-3 rounded-card border border-border bg-card p-3.5 opacity-45">
             <span className="grid size-[34px] shrink-0 place-items-center rounded-md bg-surface-4 text-text-secondary">

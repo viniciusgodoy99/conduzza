@@ -9,6 +9,7 @@ import {
   fetchLinhaDeBase,
 } from "@/lib/queries/relatorios";
 import { criarNumeroDeTeste } from "../rls/numeros";
+import { nascerDeMensagem } from "../rls/lead-de-verdade";
 import { adminClient, anonClient } from "../rls/stack";
 
 // Fase 5.1/5.2 contra o banco REAL: as tres RPCs de agregados por periodo
@@ -126,6 +127,8 @@ beforeAll(async () => {
     .throwOnError();
   c1 = contatos!.find((c) => c.name === "Atual")!.id as string;
   c2 = contatos!.find((c) => c.name === "Anterior")!.id as string;
+  // Metricas certas (20261123100000): o lead nasce da mensagem do paciente.
+  await nascerDeMensagem(admin, [clinicId], [c1, c2]);
 
   const consulta = (
     contato: string,

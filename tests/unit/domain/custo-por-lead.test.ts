@@ -57,7 +57,7 @@ describe("divisor do custo por lead (decisão D2)", () => {
 
   it.each<[DivisorDoCustoPorLead, number, string]>([
     // R$ 4.860,00 / 162 = R$ 30,00
-    ["leads_de_anuncio", 3000, "R$ 4.860,00 em 162 leads de anúncio"],
+    ["leads_de_anuncio", 3000, "R$ 4.860,00 em 162 leads do Meta Ads"],
     // R$ 4.860,00 / 150 = R$ 32,40
     ["leads_casados", 3240, "R$ 4.860,00 em 150 leads ligados a campanhas"],
     // R$ 4.860,00 / 486 = R$ 10,00
@@ -69,7 +69,7 @@ describe("divisor do custo por lead (decisão D2)", () => {
   });
 
   it.each<[DivisorDoCustoPorLead, Parameters<typeof campanhasDoPeriodo>[1], string]>([
-    ["leads_de_anuncio", { leadsDeAnuncio: 0, leadsCasados: 0 }, "Nenhum lead de anúncio"],
+    ["leads_de_anuncio", { leadsDeAnuncio: 0, leadsCasados: 0 }, "Nenhum lead do Meta Ads"],
     ["leads_casados", { leadsCasados: 0 }, "Nenhum lead ligado a campanha"],
     ["leads", { leads: 0 }, "Nenhum lead no período"],
   ])("divisor %s zerado: o estado escrito, nunca divisão por zero", (divisor, extra, texto) => {
@@ -428,7 +428,7 @@ describe("estadoDoCustoPorLead e os textos do contrato", () => {
     });
     expect(semNbsp(textoDoCustoPorLead(estado))).toBe("R$ 30,00");
     expect(semNbsp(rodapeDoCustoPorLead(estado))).toBe(
-      "R$ 4.860,00 em 162 leads de anúncio",
+      "R$ 4.860,00 em 162 leads do Meta Ads",
     );
     expect(dicaDoCustoPorLead(estado)).toBeNull();
   });
@@ -438,7 +438,7 @@ describe("estadoDoCustoPorLead e os textos do contrato", () => {
       campanhasDoPeriodo({ investimentoCents: 342_000 }, { leadsDeAnuncio: 1 }),
     );
     expect(semNbsp(rodapeDoCustoPorLead(estado))).toBe(
-      "R$ 3.420,00 em 1 lead de anúncio",
+      "R$ 3.420,00 em 1 lead do Meta Ads",
     );
   });
 

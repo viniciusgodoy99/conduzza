@@ -195,6 +195,9 @@ export function campanhasDoPeriodo(
         investimentoCents: 342_000,
         // 3,5 vezes o investimento.
         faturamentoCents: 1_197_000,
+        // 76 consultas com comparecimento: R$ 45,00 por consulta realizada.
+        comparecimentos: 76,
+        comparecimentosSemPreco: 0,
       },
       {
         chave: "meta:120000000000000020",
@@ -206,6 +209,8 @@ export function campanhasDoPeriodo(
         compareceram: 10,
         investimentoCents: 60_000,
         faturamentoCents: 45_000,
+        comparecimentos: 10,
+        comparecimentosSemPreco: 0,
       },
       {
         chave: "meta:120000000000000030",
@@ -217,6 +222,8 @@ export function campanhasDoPeriodo(
         compareceram: 0,
         investimentoCents: 50_000,
         faturamentoCents: 0,
+        comparecimentos: 0,
+        comparecimentosSemPreco: 0,
       },
       {
         chave: "texto:Check-up 2026",
@@ -228,6 +235,8 @@ export function campanhasDoPeriodo(
         compareceram: 90,
         investimentoCents: null,
         faturamentoCents: 2_250_000,
+        comparecimentos: 95,
+        comparecimentosSemPreco: 0,
       },
     ],
     investimento:

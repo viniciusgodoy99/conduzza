@@ -14,7 +14,11 @@ import { Secao } from "@/components/relatorios/secao";
 import { BotaoRecarregar } from "@/components/shell/botao-recarregar";
 import { Aviso } from "@/components/shared/aviso";
 import type { EtapaDoFunil, Leitura, ResumoDoDia } from "@/lib/queries/inicio";
-import type { ProximasAcoes } from "@/lib/queries/relatorios";
+import type {
+  AtendimentoDoPeriodo,
+  Periodizado,
+  ProximasAcoes,
+} from "@/lib/queries/relatorios";
 import { cn } from "@/lib/utils";
 
 import {
@@ -46,6 +50,7 @@ export function Painel({
   proximasAcoes,
   pedidosDeAcesso = 0,
   iaNaFase = false,
+  atendimento,
 }: {
   /** Fuso da clinica: o "Ultimo disparo HH:mm" sai nele (regra 3.6). */
   timezone: string;
@@ -55,10 +60,12 @@ export function Painel({
   /** Pedidos de entrada pelo codigo aguardando liberacao (so quem gerencia
    *  a equipe recebe o numero; para os outros papeis fica 0). */
   pedidosDeAcesso?: number;
-  /** Clinica da fase controlada do agente de IA: muda so a dica da IA. */
+  /** Clinica da fase controlada do agente de IA: sem atividade, vazio. */
   iaNaFase?: boolean;
+  /** atendimento_do_periodo de hoje: o cartao Resolvidas pela IA. */
+  atendimento?: Leitura<Periodizado<AtendimentoDoPeriodo>>;
 }) {
-  const algumaFalha = !resumo.ok || !funil.ok;
+  const algumaFalha = !resumo.ok || !funil.ok || atendimento?.ok === false;
 
   return (
     <div className="grid gap-4">
@@ -76,6 +83,7 @@ export function Painel({
         resumo={resumo}
         timezone={timezone}
         iaNaFase={iaNaFase}
+        atendimento={atendimento}
       />
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">

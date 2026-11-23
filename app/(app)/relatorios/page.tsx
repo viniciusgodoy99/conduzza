@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/shared/page-header";
 import { Card } from "@/components/ui/card";
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { createT } from "@/lib/branding/labels";
+import { ROTULO_DO_MOTIVO_DE_ESCALONAMENTO } from "@/lib/domain/agente/config";
 import { lerGrupoDeOrigem } from "@/lib/domain/grupos-de-origem";
 import { diaCivil, somarDias } from "@/lib/domain/horarios";
 import { fetchConversoesDevolvidas } from "@/lib/queries/conversoes-meta";
@@ -281,6 +282,7 @@ export default async function ResultadosPage({
         conversoes={conversoes}
         linhaDeBaseInicial={linhaDeBase}
         objetivoInicial={objetivo}
+        rotulosDosMotivos={ROTULO_DO_MOTIVO_DE_ESCALONAMENTO}
       />
     </div>
   );

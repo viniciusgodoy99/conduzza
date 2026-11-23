@@ -12,9 +12,11 @@ import {
   ReplyAll,
   StickyNote,
 } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { CartaoDoAgente } from "@/components/relatorios/agente-ia-resumo";
 import { DICA_SEM_ACESSO_A_VALORES } from "@/components/relatorios/cartoes-de-valor";
+import { PassagensDaIa } from "@/components/relatorios/passagens-da-ia";
 import { Secao } from "@/components/relatorios/secao";
 import { CartaoDeMetrica } from "@/components/shared/cartao-de-metrica";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -23,9 +25,11 @@ import {
   AUTOR_ROTULO,
   METRICAS_DO_AGENTE,
   agenteComAtividade,
+  type RotulosDosMotivos,
 } from "@/lib/domain/exportacao-de-resultados";
 import type {
   AtendimentoDoPeriodo,
+  PassagensDaIaDoPeriodo,
   Periodizado,
 } from "@/lib/queries/relatorios";
 
@@ -35,6 +39,8 @@ import type {
 // - Desempenho do agente: numero real com atividade da IA no periodo; sem
 //   atividade, "Ainda não medido" com dica, nunca zero. As regras de calculo
 //   estao em lib/domain/exportacao-de-resultados.ts.
+// - Por que foi para a equipe (23/11/2026): as passagens por motivo, de
+//   passagens_da_ia_do_periodo, com carregando, erro e vazio proprios.
 // - Mensagens e quem enviou. Custo por mensagem e conceito do canal oficial
 //   (isOfficialChannel): com uazapi ou fake o cartao e a nota nem aparecem
 //   (regra 3.3), e mesmo no oficial e valor em reais, so admin e gestor.
@@ -46,10 +52,20 @@ export function AbaAgenteIa({
   atendimento,
   canalOficial,
   podeVerValores,
+  passagens,
+  rotulosDosMotivos = {},
+  passagensComErro = false,
+  tentarPassagensDeNovo,
 }: {
   atendimento: Periodizado<AtendimentoDoPeriodo>;
   canalOficial: boolean;
   podeVerValores: boolean;
+  /** passagens_da_ia_do_periodo; undefined = carregando */
+  passagens?: PassagensDaIaDoPeriodo;
+  /** Os rotulos dos motivos (ROTULO_DO_MOTIVO_DE_ESCALONAMENTO), do servidor. */
+  rotulosDosMotivos?: RotulosDosMotivos;
+  passagensComErro?: boolean;
+  tentarPassagensDeNovo?: ReactNode;
 }) {
   const atual = atendimento.atual;
   const anterior = atendimento.anterior;
@@ -139,6 +155,13 @@ export function AbaAgenteIa({
           ))}
         </div>
       </Secao>
+
+      <PassagensDaIa
+        passagens={passagens}
+        rotulos={rotulosDosMotivos}
+        erro={passagensComErro}
+        tentarDeNovo={tentarPassagensDeNovo}
+      />
 
       <Secao titulo="Mensagens no período" icone={MessageCircleMore}>
         <div

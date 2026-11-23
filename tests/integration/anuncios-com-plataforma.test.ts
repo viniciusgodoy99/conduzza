@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { nascerDeMensagem } from "../rls/lead-de-verdade";
 import { adminClient } from "../rls/stack";
 
 // Resultados (aba Marketing): o anuncio com o texto, o link e a plataforma
@@ -131,6 +132,8 @@ async function lead(
     .select("id")
     .single()
     .throwOnError();
+  // Metricas certas (20261123100000): o lead nasce da mensagem do paciente.
+  await nascerDeMensagem(admin, [clinicaA], [(data as { id: string }).id]);
   return (data as { id: string }).id;
 }
 

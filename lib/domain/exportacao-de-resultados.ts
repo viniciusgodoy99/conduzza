@@ -49,6 +49,7 @@ import type {
   AgendaDoPeriodo,
   AnunciosDoPeriodo,
   AtendimentoDoPeriodo,
+  CamadaDaPassagem,
   CampanhasDoPeriodo,
   DesempenhoDoAgente,
   FaturamentoDoPeriodo,
@@ -56,6 +57,7 @@ import type {
   LinhaDeBase,
   LinhaDeCampanhaDoPeriodo,
   ObjetivoDeConversao,
+  PassagensDaIaDoPeriodo,
   Periodizado,
   PlataformaDosLeads,
   PontoDaSerie,
@@ -393,7 +395,7 @@ export const CELULA_SEM_LEADS = "Sem leads";
 export const CELULA_NAO_MEDIDO = "Não medido";
 export const CELULA_SEM_INVESTIMENTO = "Sem investimento";
 export const NOTA_DOS_VALORES_DAS_CAMPANHAS =
-  "Investimento, custo por lead, faturamento e retorno: só administrador e gestor.";
+  "Investimento, custo por lead, custo por consulta realizada, faturamento e retorno: só administrador e gestor.";
 /**
  * O que as colunas Faturamento e Retorno contam (etapa 5 do plano de
  * 16/11/2026). E por coorte, como Agendados: os leads que chegaram no
@@ -401,7 +403,7 @@ export const NOTA_DOS_VALORES_DAS_CAMPANHAS =
  * estimado" do cartao, que soma as consultas do periodo de qualquer paciente.
  */
 export const NOTA_DO_FATURAMENTO_DAS_CAMPANHAS =
-  "Faturamento: consultas com comparecimento dos leads da campanha que chegaram no período. Retorno: faturamento dividido pelo investimento.";
+  "Faturamento: consultas com comparecimento dos leads da campanha que chegaram no período. Custo por consulta realizada: investimento dividido por essas consultas. Retorno: faturamento dividido pelo investimento.";
 
 /** Faturamento dividido pelo investimento; null sem investimento. */
 export function retornoDaCampanha(
@@ -427,6 +429,8 @@ export type CelulaDeCampanha = {
   texto: string;
   /** true = texto de estado ("Fora da Meta"), nao numero */
   estado: boolean;
+  /** Linha de baixo, em texto comum ("2 comparecimentos sem preço"). */
+  nota?: string;
 };
 
 export type LinhaDeCampanhaDaTela = {
@@ -439,6 +443,13 @@ export type LinhaDeCampanhaDaTela = {
   agendaram: number;
   /** agendaram / leads, a mesma regra da Taxa de conversao */
   conversao: string;
+  /** Leads da campanha que ja compareceram (a coorte, como Agendados). */
+  compareceram: number;
+  /**
+   * Investimento dividido pelas consultas com comparecimento dos leads da
+   * campanha; null = a coluna nao existe para este papel.
+   */
+  custoPorConsulta: CelulaDeCampanha | null;
   /** null = a coluna nao existe para este papel */
   faturamento: CelulaDeCampanha | null;
   /** faturamento / investimento ("3,2x"); null = a coluna nao existe */
@@ -459,6 +470,27 @@ function celulaDeEstado(texto: string): CelulaDeCampanha {
 
 function celulaEmReais(centavos: number): CelulaDeCampanha {
   return { texto: formatarReaisCompleto(centavos), estado: false };
+}
+
+/** "1 comparecimento sem preço", "3 comparecimentos sem preço". */
+export function textoDeComparecimentosSemPreco(quantos: number): string {
+  return `${quantos.toLocaleString("pt-BR")} ${
+    quantos === 1 ? "comparecimento sem preço" : "comparecimentos sem preço"
+  }`;
+}
+
+/**
+ * O faturamento com valor, quando PARTE das consultas nao tem preco: a nota
+ * diz quantas ficaram fora da soma (metricas certas, 23/11/2026). Sem
+ * nenhuma, ou sem o campo do banco, a celula fica como esta.
+ */
+function comNotaDeSemPreco(
+  celula: CelulaDeCampanha,
+  semPreco: number | null,
+): CelulaDeCampanha {
+  return semPreco !== null && semPreco > 0
+    ? { ...celula, nota: textoDeComparecimentosSemPreco(semPreco) }
+    : celula;
 }
 
 /**
@@ -486,10 +518,12 @@ export function montarCampanhas(
     .map((linha) => {
       let investimento: CelulaDeCampanha | null = null;
       let custoPorLead: CelulaDeCampanha | null = null;
+      let custoPorConsulta: CelulaDeCampanha | null = null;
       if (comValores) {
         if (linha.tipo === "texto") {
           investimento = celulaDeEstado(CELULA_FORA_DA_META);
           custoPorLead = celulaDeEstado(CELULA_FORA_DA_META);
+          custoPorConsulta = celulaDeEstado(CELULA_FORA_DA_META);
         } else {
           investimento = medido
             ? celulaEmReais(linha.investimentoCents ?? 0)
@@ -503,6 +537,21 @@ export function montarCampanhas(
               ? celulaDeEstado(CELULA_SEM_LEADS)
               : medido && custo !== null
                 ? celulaEmReais(custo)
+                : celulaDeEstado(CELULA_NAO_MEDIDO);
+          // Metricas certas (23/11/2026): a mesma conta do custo por lead,
+          // com as consultas com comparecimento no lugar dos leads.
+          const porConsulta =
+            linha.comparecimentos === null
+              ? null
+              : custoPorLeadCents(
+                  linha.investimentoCents ?? 0,
+                  linha.comparecimentos,
+                );
+          custoPorConsulta =
+            linha.comparecimentos === 0
+              ? celulaDeEstado(TEXTO_SEM_COMPARECIMENTO)
+              : medido && porConsulta !== null
+                ? celulaEmReais(porConsulta)
                 : celulaDeEstado(CELULA_NAO_MEDIDO);
         }
       }
@@ -521,7 +570,10 @@ export function montarCampanhas(
                 ? // Compareceu, mas so em consulta sem preco (convenio sem
                   // valor): o mesmo estado do cartao, nunca "R$ 0,00".
                   celulaDeEstado(TEXTO_SEM_PRECO_PARA_SOMAR)
-                : celulaEmReais(linha.faturamentoCents);
+                : comNotaDeSemPreco(
+                    celulaEmReais(linha.faturamentoCents),
+                    linha.comparecimentosSemPreco,
+                  );
         const vezes =
           linha.faturamentoCents === null
             ? null
@@ -551,6 +603,8 @@ export function montarCampanhas(
         custoPorLead,
         agendaram: linha.agendaram,
         conversao: percentualOuSemDados(linha.agendaram, linha.leads),
+        compareceram: linha.compareceram,
+        custoPorConsulta,
         faturamento,
         retorno,
       };
@@ -780,7 +834,7 @@ function plural(n: number, singular: string, pluralizado: string): string {
  * - "Investimento sem lead casado: R$ X em N campanhas" (so a gestao, com o
  *   periodo inteiro lido e alguma campanha nessa situacao);
  * - "Leads sem campanha: N de M" (todo papel, as contagens sao as mesmas);
- * - "Leads de anúncio sem campanha reconhecida: K" (todo papel, quando ha):
+ * - "Leads do Meta Ads sem campanha reconhecida: K" (todo papel, quando ha):
  *   entram no divisor do custo por lead, mas em nenhuma linha da Meta.
  */
 export function rodapesDasCampanhas(
@@ -810,7 +864,7 @@ export function rodapesDasCampanhas(
   }
   if (campanhas.leadsDeAnuncioSemCampanha > 0) {
     linhas.push(
-      `Leads de anúncio sem campanha reconhecida: ${campanhas.leadsDeAnuncioSemCampanha.toLocaleString(
+      `Leads do Meta Ads sem campanha reconhecida: ${campanhas.leadsDeAnuncioSemCampanha.toLocaleString(
         "pt-BR",
       )}`,
     );
@@ -985,7 +1039,9 @@ export const AUTOR_ROTULO: Record<string, string> = {
 // - primeira resposta da IA: mediana entre a 1a entrada da conversa no periodo
 //   e a 1a resposta da IA que saiu;
 // - agendamentos feitos pela IA: appointment.created_by = 'ia' criadas no
-//   periodo, menos as recusadas pela equipe;
+//   periodo, como a etapa Agendou da Jornada (sem a pendente de aprovacao e
+//   a recusada) e sem a remarcacao (a consulta ja contou ao ser marcada;
+//   metricas certas, 23/11/2026);
 // - satisfacao: regra decidida depois, sempre "Ainda não medido".
 // Sem atividade da IA no recorte (nem atendida, nem transferida, nem
 // agendamento) ou sem o bloco (migration nao aplicada), nao existe numero:
@@ -1098,6 +1154,75 @@ function linhasDoAgente(agente: DesempenhoDoAgente | null): string[][] {
 }
 
 // ---------------------------------------------------------------------------
+// Por que a conversa foi para a equipe (passagens_da_ia_do_periodo)
+// ---------------------------------------------------------------------------
+
+export const TITULO_DAS_PASSAGENS = "Por que foi para a equipe";
+
+/** Onde a passagem aconteceu, na ordem do turno. Sem travessao. */
+export const ROTULO_DA_CAMADA_DA_PASSAGEM: Record<CamadaDaPassagem, string> = {
+  portao: "Na chegada da mensagem",
+  agente: "Durante a conversa",
+  filtro: "Na conferência antes de enviar",
+  falha: "Por falha técnica",
+};
+
+const ORDEM_DAS_CAMADAS: readonly CamadaDaPassagem[] = [
+  "portao",
+  "agente",
+  "filtro",
+  "falha",
+];
+
+/**
+ * O mapa dos rotulos do evento "A IA passou a conversa para a equipe: ..."
+ * (ROTULO_DO_MOTIVO_DE_ESCALONAMENTO, lib/domain/agente/config.ts). Chega
+ * pronto do servidor: importar o config aqui levaria o modulo do agente (e
+ * o filtro de conformidade) para o pacote do navegador de Resultados.
+ */
+export type RotulosDosMotivos = Readonly<Record<string, string>>;
+
+/**
+ * O motivo como o evento "A IA passou a conversa para a equipe: ..." diz,
+ * com a primeira letra maiuscula. Motivo que o mapa nao conhece (um novo,
+ * antes de o espelho mudar) vira "Outro motivo", nunca o codigo.
+ */
+export function rotuloDoMotivoDaPassagem(
+  motivo: string,
+  rotulos: RotulosDosMotivos,
+): string {
+  const rotulo = Object.prototype.hasOwnProperty.call(rotulos, motivo)
+    ? (rotulos[motivo] ?? "outro motivo")
+    : "outro motivo";
+  return rotulo.charAt(0).toUpperCase() + rotulo.slice(1);
+}
+
+export type GrupoDasPassagens = {
+  camada: CamadaDaPassagem;
+  rotulo: string;
+  linhas: { motivo: string; rotulo: string; passagens: number }[];
+};
+
+/** As passagens por camada (na ordem do turno), cada uma com mais primeiro. */
+export function gruposDasPassagens(
+  passagens: PassagensDaIaDoPeriodo,
+  rotulos: RotulosDosMotivos,
+): GrupoDasPassagens[] {
+  return ORDEM_DAS_CAMADAS.map((camada) => ({
+    camada,
+    rotulo: ROTULO_DA_CAMADA_DA_PASSAGEM[camada],
+    linhas: passagens.porMotivo
+      .filter((linha) => linha.camada === camada && linha.passagens > 0)
+      .sort((a, b) => b.passagens - a.passagens)
+      .map((linha) => ({
+        motivo: linha.motivo,
+        rotulo: rotuloDoMotivoDaPassagem(linha.motivo, rotulos),
+        passagens: linha.passagens,
+      })),
+  })).filter((grupo) => grupo.linhas.length > 0);
+}
+
+// ---------------------------------------------------------------------------
 // Exportacao
 // ---------------------------------------------------------------------------
 
@@ -1137,6 +1262,10 @@ export type EntradaDaExportacao = {
   campanhas?: Periodizado<CampanhasDoPeriodo>;
   /** anuncios_do_periodo: so com a dimensao Anuncio ativa na aba Marketing */
   anuncios?: AnunciosDoPeriodo;
+  /** passagens_da_ia_do_periodo: a aba Agente de IA */
+  passagens?: PassagensDaIaDoPeriodo;
+  /** Os rotulos dos motivos de passagem, vindos do servidor. */
+  rotulosDosMotivos?: RotulosDosMotivos;
   /** Fuso da clinica: o "Atualizado em" do investimento sai nele */
   timezone?: string;
   /** A origem escolhida na tela; null ou ausente = todas as origens */
@@ -1226,7 +1355,10 @@ function secaoDoFunil(funil: FunilDoPeriodo): SecaoExportavel {
 }
 
 function celula(valor: CelulaDeCampanha | null): string {
-  return valor?.texto ?? "";
+  if (!valor) {
+    return "";
+  }
+  return valor.nota ? `${valor.texto} (${valor.nota})` : valor.texto;
 }
 
 /**
@@ -1251,10 +1383,12 @@ function secaoDeCampanhas(
         "Custo por lead",
         "Agendados",
         "Conversão",
+        "Compareceram",
+        "Custo por consulta realizada",
         "Faturamento",
         "Retorno",
       ]
-    : ["Campanha", "Leads", "Agendados", "Conversão"];
+    : ["Campanha", "Leads", "Agendados", "Conversão", "Compareceram"];
   return {
     titulo: "Campanhas",
     linhas: [
@@ -1280,6 +1414,8 @@ function secaoDeCampanhas(
               celula(linha.custoPorLead),
               numero(linha.agendaram),
               linha.conversao,
+              numero(linha.compareceram),
+              celula(linha.custoPorConsulta),
               celula(linha.faturamento),
               celula(linha.retorno),
             ]
@@ -1288,6 +1424,7 @@ function secaoDeCampanhas(
               numero(linha.leads),
               numero(linha.agendaram),
               linha.conversao,
+              numero(linha.compareceram),
             ],
       ),
       ...rodapesDasCampanhas(campanhas, podeVerValores).map((texto) => [texto]),
@@ -1518,6 +1655,13 @@ function montarMarketing(entrada: EntradaDaExportacao): SecaoExportavel[] {
         "Lead para comparecimento",
         percentualOuSemDados(funil.coorte.compareceram, funil.coorte.leads),
       ],
+      [
+        "Taxa de falta",
+        percentualOuSemDados(
+          funil.faltas,
+          funil.faltas + funil.comparecimentos,
+        ),
+      ],
     ];
     indicadores.push(
       ...linhasDoInvestimento(
@@ -1702,8 +1846,32 @@ function montarAgente(entrada: EntradaDaExportacao): SecaoExportavel[] {
       titulo: "Desempenho do agente de IA",
       linhas: [["Indicador", "Valor"], ...linhasDoAgente(atual.agente)],
     },
+    ...(entrada.passagens
+      ? [secaoDasPassagens(entrada.passagens, entrada.rotulosDosMotivos ?? {})]
+      : []),
     { titulo: "Mensagens no período", linhas: mensagens },
   ];
+}
+
+/** "Por que foi para a equipe", com os mesmos grupos e rotulos da tela. */
+function secaoDasPassagens(
+  passagens: PassagensDaIaDoPeriodo,
+  rotulos: RotulosDosMotivos,
+): SecaoExportavel {
+  return {
+    titulo: TITULO_DAS_PASSAGENS,
+    linhas: [
+      ["Onde", "Motivo", "Passagens", "Participação"],
+      ...gruposDasPassagens(passagens, rotulos).flatMap((grupo) =>
+        grupo.linhas.map((linha) => [
+          grupo.rotulo,
+          linha.rotulo,
+          numero(linha.passagens),
+          percentualOuSemDados(linha.passagens, passagens.total),
+        ]),
+      ),
+    ],
+  };
 }
 
 /** O retrato da aba ATIVA, em secoes, com os mesmos numeros da tela. */

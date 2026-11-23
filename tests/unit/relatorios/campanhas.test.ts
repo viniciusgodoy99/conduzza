@@ -95,9 +95,9 @@ describe("rodapesDasCampanhas", () => {
     expect(rodapesDasCampanhas(campanhasDoPeriodo(), true).map(sem)).toEqual([
       "Investimento sem lead casado: R$ 500,00 em 1 campanha",
       "Leads sem campanha: 150 de 486",
-      "Leads de anúncio sem campanha reconhecida: 12",
+      "Leads do Meta Ads sem campanha reconhecida: 12",
       // Etapa 5: o que Faturamento e Retorno contam, so para quem os ve.
-      "Faturamento: consultas com comparecimento dos leads da campanha que chegaram no período. Retorno: faturamento dividido pelo investimento.",
+      "Faturamento: consultas com comparecimento dos leads da campanha que chegaram no período. Custo por consulta realizada: investimento dividido por essas consultas. Retorno: faturamento dividido pelo investimento.",
     ]);
   });
 
@@ -197,10 +197,10 @@ describe("rodapesDasCampanhas", () => {
     const linhas = rodapesDasCampanhas(campanhasDoPeriodo(), false);
     expect(linhas).toEqual([
       "Leads sem campanha: 150 de 486",
-      "Leads de anúncio sem campanha reconhecida: 12",
+      "Leads do Meta Ads sem campanha reconhecida: 12",
     ]);
     expect(NOTA_DOS_VALORES_DAS_CAMPANHAS).toBe(
-      "Investimento, custo por lead, faturamento e retorno: só administrador e gestor.",
+      "Investimento, custo por lead, custo por consulta realizada, faturamento e retorno: só administrador e gestor.",
     );
   });
 

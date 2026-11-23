@@ -392,6 +392,20 @@ Pedido do dono em 16/11/2026: um benchmark da parte de métricas do Tintim (feit
 
 **Depende do dono:** Pixel, token da API de Conversões e conta do WhatsApp Business de uma clínica para o primeiro teste; o nome do domínio curto; um celular real para o teste do código invisível; o ok de cada migration.
 
+### [ ] Métricas certas `M` (decisão do dono de 23/11/2026: "métricas certas"; construída em 23/11/2026 na branch `revisao-2311-metricas`; migration `20261123100000_metricas_certas.sql` **não aplicada**; spec 10.16; `docs/04`, seção 51)
+Dez correções nos números de Resultados e do Início:
+1. **Lead de verdade:** só o contato que nasceu de uma mensagem do paciente (a autorização `conversa` que a ingestão grava junto com o contato). Importado, paciente novo da Agenda e cadastro manual saem do funil, da série, de campanhas, do custo por lead, da Origem dos leads e da exportação (`contato_e_lead`).
+2. **Agendou igual à Jornada:** a consulta pendente de aprovação e a recusada não contam.
+3. **Remarcação pela IA uma vez:** a nova não é agendamento novo (nem nos agendamentos pela IA); a antiga não é cancelamento.
+4. **Custo por lead da Meta** dividido pelo grupo Meta Ads do painel por origem.
+5. **Por que foi para a equipe:** `passagens_da_ia_do_periodo` e o bloco de barras na aba Agente de IA; a varredura de 3 minutos grava a decisão (falha técnica por prazo, nos CHECKs de hoje).
+6. **A trilha da IA fica com a conversa apagada** (`on delete set null`; a mensagem da decisão também; o rascunho barrado continua saindo).
+7. **Taxa de falta por origem** em Marketing.
+8. **Campanhas:** Compareceram, Custo por consulta realizada e "N comparecimentos sem preço"; a exportação acompanha.
+9. **Início:** "Resolvidas pela IA" com a medida de Resultados, de hoje.
+10. **Follow-up:** a dica do modo da IA corrigida.
+Efeito na produção (conferido só com leitura em 23/11/2026): numa clínica, 42 leads dos últimos 30 dias viram 29, e os 13 que "agendaram" eram pacientes da Agenda (viram 0). Testes de unidade verdes; integração e RLS escritos e **não rodados** (dependem da migration). **Pendente:** aplicar a migration (com o ok do dono, em horário calmo); conferir as telas em claro, escuro e 768px; a fixture do e2e de Resultados cria leads direto e precisa da autorização da ingestão para as contagens dele voltarem a bater. **Fica para o dono decidir:** a lista de Leads aberta de uma linha de Origem dos leads continua com todos os contatos (pode mostrar mais que a linha); o Painel geral continua contando contatos novos. **Fora desta entrega:** preço gravado na consulta, pacotes no faturamento e o histórico de etapas.
+
 ### [ ] Mensagem enviada pelo celular aparece na conversa ("Pelo WhatsApp") `M` (pedido do dono em 05/10/2026; migration `20261005120000` aplicada e código publicado em 05/10, commit `572e594`; falta o teste com celular real)
 Pedido: "eu consiga saber o que foi enviado via WhatsApp, e sempre aparecer o que foi enviado", com a referência de uma bolha enviada com o rótulo "Pelo WhatsApp" e o ícone de celular. O dono achava que faltava cadastrar um evento no webhook do uazapi.
 

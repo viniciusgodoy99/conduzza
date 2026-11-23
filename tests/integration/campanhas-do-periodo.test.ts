@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { nascerDeMensagem } from "../rls/lead-de-verdade";
 import { adminClient } from "../rls/stack";
 
 // Fase 4, campanhas_do_periodo (migration 20261003110000) contra o banco
@@ -103,6 +104,8 @@ async function lead(
     .select("id")
     .single()
     .throwOnError();
+  // Metricas certas (20261123100000): o lead nasce da mensagem do paciente.
+  await nascerDeMensagem(admin, [clinicId], [data!.id as string]);
   return data!.id as string;
 }
 

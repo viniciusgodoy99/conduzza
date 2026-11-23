@@ -228,6 +228,17 @@ export type LinhaDeCampanhaDoPeriodo = {
    * real. null fora da gestao e quando o banco ainda nao manda o campo.
    */
   faturamentoCents: number | null;
+  /**
+   * As consultas com comparecimento dos leads desta campanha (uma pessoa
+   * pode ter mais de uma), o divisor do "Custo por consulta realizada"
+   * (migration 20261123100000). null quando o banco ainda nao manda.
+   */
+  comparecimentos: number | null;
+  /**
+   * Dessas, as sem preco para somar no faturamento. null fora da gestao e
+   * quando o banco ainda nao manda.
+   */
+  comparecimentosSemPreco: number | null;
 };
 
 /** Situacao da leitura do investimento (meta_gasto_leitura.situacao). */
@@ -413,6 +424,8 @@ export const relatoriosKeys = {
     ["relatorios", clinicId, "campanhas", diaDe, diaAte] as const,
   anuncios: (clinicId: string, diaDe: string, diaAte: string) =>
     ["relatorios", clinicId, "anuncios", diaDe, diaAte] as const,
+  passagens: (clinicId: string, diaDe: string, diaAte: string) =>
+    ["relatorios", clinicId, "passagens", diaDe, diaAte] as const,
   proximasAcoes: (clinicId: string) =>
     ["inicio", clinicId, "proximas-acoes"] as const,
 };
@@ -954,6 +967,9 @@ type LinhaDeCampanhaRpc = {
   investimento_cents: number | null;
   /** ausente antes da migration 20261116160000 */
   faturamento_cents?: number | null;
+  /** ausentes antes da migration 20261123100000 */
+  comparecimentos?: number | null;
+  comparecimentos_sem_preco?: number | null;
 };
 
 type InvestimentoRpc = {
@@ -1011,6 +1027,11 @@ function lerInvestimento(
   };
 }
 
+/** Campo que o banco pode nao mandar: ausente ou null fica null, nunca 0. */
+function numeroOuNulo(valor: number | null | undefined): number | null {
+  return valor === null || valor === undefined ? null : Number(valor);
+}
+
 function lerCampanhas(bloco: CampanhasRpc, hoje: string): CampanhasDoPeriodo {
   return {
     leads: Number(bloco.leads),
@@ -1030,11 +1051,9 @@ function lerCampanhas(bloco: CampanhasRpc, hoje: string): CampanhasDoPeriodo {
         linha.investimento_cents === null
           ? null
           : Number(linha.investimento_cents),
-      faturamentoCents:
-        linha.faturamento_cents === null ||
-        linha.faturamento_cents === undefined
-          ? null
-          : Number(linha.faturamento_cents),
+      faturamentoCents: numeroOuNulo(linha.faturamento_cents),
+      comparecimentos: numeroOuNulo(linha.comparecimentos),
+      comparecimentosSemPreco: numeroOuNulo(linha.comparecimentos_sem_preco),
     })),
     investimento: lerInvestimento(bloco.investimento, hoje),
   };
@@ -1181,5 +1200,85 @@ export async function fetchAnunciosDoPeriodo(
       ),
     },
     semAnuncio: lerContagem(corpo.sem_anuncio),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Por que a conversa foi para a equipe (passagens_da_ia_do_periodo, 23/11/2026)
+// ---------------------------------------------------------------------------
+
+/**
+ * Onde a passagem aconteceu, derivado no banco das colunas de
+ * ai_decision_log: o portao de entrada (gatilho_entrada), o filtro de
+ * conformidade (compliance_blocked), a falha tecnica (motivo_da_falha) e,
+ * sem nenhuma, o agente.
+ */
+export const CAMADAS_DA_PASSAGEM = [
+  "portao",
+  "agente",
+  "filtro",
+  "falha",
+] as const;
+
+export type CamadaDaPassagem = (typeof CAMADAS_DA_PASSAGEM)[number];
+
+export type PassagemPorMotivo = {
+  camada: CamadaDaPassagem;
+  /** escalation_reason (o rotulo sai do mapa dos eventos da IA). */
+  motivo: string;
+  passagens: number;
+};
+
+export type PassagensDaIaDoPeriodo = {
+  /** Linhas de ai_decision_log com motivo: uma conversa pode passar 2 vezes. */
+  total: number;
+  /** Mais passagens primeiro. */
+  porMotivo: PassagemPorMotivo[];
+};
+
+type PassagensRpc = {
+  total: number;
+  por_motivo: { camada: string; motivo: string; passagens: number }[];
+};
+
+function lerCamada(valor: string): CamadaDaPassagem {
+  return CAMADAS_DA_PASSAGEM.find((camada) => camada === valor) ?? "agente";
+}
+
+/**
+ * As passagens da IA para a equipe no periodo, por motivo e camada. So o
+ * periodo pedido (sem comparacao). Security invoker: para o profissional o
+ * banco devolve null, e aqui isso vira erro de recorte, nunca lista vazia.
+ * LANCA em erro.
+ */
+export async function fetchPassagensDaIaDoPeriodo(
+  supabase: SupabaseClient,
+  clinicId: string,
+  timezone: string,
+  diaDe: string,
+  diaAte: string,
+): Promise<PassagensDaIaDoPeriodo> {
+  const janela = janelaDoPeriodo(timezone, diaDe, diaAte);
+  const { data, error } = await supabase.rpc("passagens_da_ia_do_periodo", {
+    p_clinic_id: clinicId,
+    p_de: janela.de,
+    p_ate: janela.ate,
+  });
+  if (error) {
+    throw new Error(error.message);
+  }
+  if (data === null || data === undefined) {
+    throw new Error(
+      "Recorte indisponível para este perfil (passagens_da_ia_do_periodo).",
+    );
+  }
+  const corpo = data as PassagensRpc;
+  return {
+    total: Number(corpo.total),
+    porMotivo: corpo.por_motivo.map((linha) => ({
+      camada: lerCamada(linha.camada),
+      motivo: linha.motivo,
+      passagens: Number(linha.passagens),
+    })),
   };
 }
