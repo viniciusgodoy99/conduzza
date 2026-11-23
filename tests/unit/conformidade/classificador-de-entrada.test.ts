@@ -787,8 +787,10 @@ describe("AG7: a variante do preparo no classificador", () => {
     // 09/11/2026 (portao-conversa-normal.test.ts, portao-da88be1e9fa6) e a
     // revisao de 11/11/2026: "quais exames voces fazem?", o exame de ouvido,
     // pele e coracao, o admissional e o pedido medico como exigencia
-    // (revisao-1111-recepcao.test.ts).
-    expect(versaoDoPortao()).toBe("portao-cf660cdd7872");
+    // (revisao-1111-recepcao.test.ts; portao-cf660cdd7872) e a revisao de
+    // 23/11/2026 com frases reais de paciente
+    // (frases-reais-de-paciente.test.ts).
+    expect(versaoDoPortao()).toBe("portao-722a383fc647");
   });
 });
 // [AG7 preparo] fim

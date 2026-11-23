@@ -6065,17 +6065,13 @@ export const CASOS_DE_ENTRADA: readonly CasoDeEntrada[] = [
     "to sangrando no braço depois do exame de sangue",
   ]),
   entrada("EPE-V05", "valor_fora_da_tabela", "literal", ["faz por 1.200?"]),
+  // Revisao de 23/11/2026 (decisao do dono): "qual e melhor pra mim" escala
+  // no portao como assunto clinico (era so do classificador).
+  entrada("EPE-Q01", "assunto_clinico", "parafrase", [
+    "qual é melhor pra mim, preenchimento ou bioestimulador? tenho 45 anos e bastante flacidez",
+  ]),
   // Pergunta clinica sem palavra-chave fica para o classificador (decisao
   // da revisao de precisao): o portao nao escala de proposito.
-  entrada(
-    "EPE-Q01",
-    "assunto_clinico",
-    "parafrase",
-    [
-      "qual é melhor pra mim, preenchimento ou bioestimulador? tenho 45 anos e bastante flacidez",
-    ],
-    SO_MODELO,
-  ),
   entrada(
     "EPE-Q02",
     "assunto_clinico",
