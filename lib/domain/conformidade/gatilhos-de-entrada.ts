@@ -49,12 +49,19 @@ export const LIMITE_DA_RAJADA = 2000;
 /**
  * Quantas mensagens do paciente os modelos (classificador e verificador)
  * enxergam. Mais do que isso ainda sem resposta escala como mensagem longa:
- * assim o corte das ultimas cinco nunca esconde dos modelos uma pergunta
- * clinica que ficou para tras ("da pra beber depois do botox?", "oi", "?",
- * "alo", "tem alguem?", "e ai"). O filtro de saida tambem bloqueia nesse
- * caso, como segunda trava.
+ * assim o corte nunca esconde dos modelos uma pergunta clinica que ficou para
+ * tras ("da pra beber depois do botox?", "oi", "?", "alo", "tem alguem?", "e
+ * ai"). O filtro de saida tambem bloqueia nesse caso, como segunda trava.
+ *
+ * Decisao do dono de 23/11/2026 ("nao desistir cedo"): era 5, e seis
+ * mensagens curtas ("oi", "bom dia", "queria saber", "o preco", "da limpeza
+ * de pele", "aceita unimed") passavam para a equipe. Agora os modelos leem
+ * todas as pendentes e o portao escala pelo TAMANHO (LIMITE_DA_RAJADA). Fica
+ * so o teto do historico: o executor le as 20 ultimas mensagens da conversa
+ * (MENSAGENS_NO_HISTORICO, lib/agente/laco.ts), e com 20 pendentes pode haver
+ * uma mais antiga que ninguem leu. Um teste exige este valor abaixo daquele.
  */
-export const MAXIMO_DE_MENSAGENS_NO_CONTEXTO = 5;
+export const MAXIMO_DE_MENSAGENS_NO_CONTEXTO = 19;
 /**
  * Quanto o portao le de cada texto, contado DEPOIS da normalizacao (frente
  * S1, revisao rev5 de 31/10/2026). A NFKD multiplica alguns caracteres

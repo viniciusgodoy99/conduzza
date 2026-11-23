@@ -236,12 +236,12 @@ describe("o portao nos textos ANTES da transcricao (1a)", () => {
 
   it("o audio a transcrever conta como texto vazio na contagem de mensagens", async () => {
     const { porta, preparar } = portaFalsa();
+    // 23/11/2026: so acima do teto do historico (19) a quantidade escala.
     const varias: MensagemDaConversa[] = [
-      { autor: "paciente", texto: "oi" },
-      { autor: "paciente", texto: "tudo bem?" },
-      { autor: "paciente", texto: "alo" },
-      { autor: "paciente", texto: "?" },
-      { autor: "paciente", texto: "tem alguem?" },
+      ...Array.from(
+        { length: 19 },
+        (): MensagemDaConversa => ({ autor: "paciente", texto: "oi" }),
+      ),
       audioNoLaco(),
     ];
     const { promessa } = turno(varias, { midia: porta });

@@ -66,6 +66,7 @@ import { comIntroducao } from "@/lib/domain/conformidade/preparo-aprovado";
 import { separarIntroducaoDoPreparo } from "@/lib/domain/preparo";
 // [AG7 preparo] fim
 import { acertarGasto, reservarGasto } from "./gasto";
+import { notaDaAnotacao } from "./nota-da-passagem";
 import {
   atendimentoParaEstimativa,
   custoMaximoDoTurno,
@@ -178,6 +179,12 @@ export const TEXTOS_DO_SIMULADOR = {
     "As instruções da equipe Conduzza ficaram de fora desta resposta: não passam mais nas regras de conformidade. Ajuste na aba Instruções do assistente.",
   // AG3: a nota interna que a equipe receberia na passagem.
   notaParaAEquipe: "No WhatsApp, a equipe receberia esta nota interna:",
+  // 23/11/2026 ("anota e continua"): a pergunta anotada e a etiqueta.
+  notaDaAnotacao:
+    "No WhatsApp, a equipe receberia esta nota interna, e a conversa ganharia a etiqueta Pergunta para a equipe:",
+  // 23/11/2026 ("nao desistir cedo"): a falha passageira volta para a fila.
+  falhaPassageira:
+    "No WhatsApp, o assistente tentaria responder de novo uma vez antes de passar para a equipe.",
   // [AG7 preparo] A leitura da orientacao de preparo falhou.
   naoCarregouOPreparo:
     "Não foi possível carregar a orientação de preparo. Tente de novo.",
@@ -894,6 +901,17 @@ export async function simularTurno(
       tipo: "equipe",
       texto: `${TEXTOS_DO_SIMULADOR.notaParaAEquipe} ${notaDaPassagem.replace(/\n+/g, " ")}`,
     });
+  }
+  // 23/11/2026: as perguntas anotadas para a equipe, como no WhatsApp.
+  const notaDasPerguntas = notaDaAnotacao(resultado.anotacoes ?? []);
+  if (notaDasPerguntas !== null) {
+    trilha.push({
+      tipo: "equipe",
+      texto: `${TEXTOS_DO_SIMULADOR.notaDaAnotacao} ${notaDasPerguntas.replace(/\n+/g, " ")}`,
+    });
+  }
+  if (resultado.passageira === true) {
+    trilha.push({ tipo: "outro", texto: TEXTOS_DO_SIMULADOR.falhaPassageira });
   }
 
   log.info("ia_simulador_rodou", {

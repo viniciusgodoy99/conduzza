@@ -770,11 +770,28 @@ describe("as recusas novas", () => {
 describe("as duas falhas seguidas", () => {
   it("a primeira conta; a segunda passa para a equipe e a resposta não sai", async () => {
     const conversa = new Conversa();
-    const primeira = await conversa.fala({
+    // Decisao do dono de 23/11/2026: o erro do proprio modelo (o codigo que
+    // nao existe) nao conta contra o paciente.
+    const doModelo = await conversa.fala({
       texto: "Quero o horário de sempre",
       roteiro: [
         ferramenta("reservar_horario", { horario: "h7" }),
         final("Qual dia e período você prefere para a consulta?"),
+      ],
+    });
+    expect(doModelo.tipo).toBe("resposta");
+    expect(doModelo.atendimento?.estado.falhas_seguidas).toBe(0);
+    // O dado do paciente que nao foi achado conta.
+    const primeira = await conversa.fala({
+      texto: "Meu cpf é o mesmo de sempre",
+      roteiro: [
+        ferramenta("registrar_dados_do_paciente", {
+          nome_completo: null,
+          data_nascimento: null,
+          para_o_titular: true,
+          campos_mascarados: ["cpf"],
+        }),
+        final("Pode me mandar o CPF com os 11 números?"),
       ],
     });
     expect(primeira.tipo).toBe("resposta");

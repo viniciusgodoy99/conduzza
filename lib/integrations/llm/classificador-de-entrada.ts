@@ -197,6 +197,8 @@ export const VERSAO_DA_POLITICA_DO_CLASSIFICADOR = `classificador-${createHash(
         nonce: "(codigo)",
       }),
       gatilhos: [...GATILHOS_DO_CLASSIFICADOR, "nenhum"],
+      // 23/11/2026: quantas pendentes o envelope le (era 5).
+      janela: MAXIMO_DE_MENSAGENS_NO_CONTEXTO,
     }),
     "utf8",
   )
@@ -222,6 +224,7 @@ export function versaoDaPoliticaDoClassificador(
           nonce: "(codigo)",
         }),
         gatilhos: [...GATILHOS_DO_CLASSIFICADOR, "nenhum"],
+        janela: MAXIMO_DE_MENSAGENS_NO_CONTEXTO,
       }),
       "utf8",
     )
@@ -423,6 +426,27 @@ export type DecisaoDoClassificador =
       gatilho: GatilhoDoClassificador | null;
       motivo: "gatilho" | "falha" | "incoerente" | "confianca_baixa";
     };
+
+/**
+ * Todos os gatilhos reais da classificacao, validada de novo (decisao do dono
+ * de 23/11/2026: a curiosidade geral de estetica so vale quando o
+ * classificador aponta so sintoma ou assunto clinico). Fora do formato: null.
+ */
+export function gatilhosDaClassificacao(
+  resultado: unknown,
+): GatilhoDoClassificador[] | null {
+  if (typeof resultado !== "object" || resultado === null) {
+    return null;
+  }
+  const r = resultado as Record<string, unknown>;
+  const lido =
+    r.tipo === "classificacao"
+      ? EsquemaDaClassificacao.safeParse(r.classificacao)
+      : null;
+  return lido?.success === true
+    ? GATILHOS_DO_CLASSIFICADOR.filter((g) => lido.data.gatilhos.includes(g))
+    : null;
+}
 
 /**
  * Decisao fechada a partir do que o classificador devolveu. So segue para o

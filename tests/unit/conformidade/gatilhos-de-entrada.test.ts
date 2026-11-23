@@ -93,12 +93,15 @@ describe("regras do portao", () => {
     ).toContain("mensagem_longa");
   });
 
-  it("mais de cinco mensagens sem resposta escala (os modelos so veem cinco)", () => {
-    expect(MAXIMO_DE_MENSAGENS_NO_CONTEXTO).toBe(5);
+  // Decisao do dono de 23/11/2026: so o teto do historico escala pela
+  // quantidade (era 5); abaixo dele, so o tamanho.
+  it("mais de 19 mensagens sem resposta escala (o histórico lê 20)", () => {
+    expect(MAXIMO_DE_MENSAGENS_NO_CONTEXTO).toBe(19);
     const mensagens = (n: number) =>
       Array.from({ length: n }, () => ({ tipo: "texto", texto: "oi" }));
-    expect(detectarGatilhosDeEntrada({ mensagens: mensagens(5) })).toEqual([]);
-    expect(detectarGatilhosDeEntrada({ mensagens: mensagens(6) })).toEqual([
+    expect(detectarGatilhosDeEntrada({ mensagens: mensagens(6) })).toEqual([]);
+    expect(detectarGatilhosDeEntrada({ mensagens: mensagens(19) })).toEqual([]);
+    expect(detectarGatilhosDeEntrada({ mensagens: mensagens(20) })).toEqual([
       "mensagem_longa",
     ]);
   });
@@ -528,7 +531,9 @@ describe("S1: a rede de segurança no portão", () => {
 describe("AG6b: a figurinha e a mídia a ler no portão", () => {
   it("a figurinha nao escala; o resto da midia continua escalando", () => {
     expect(
-      detectarGatilhosDeEntrada({ mensagens: [{ tipo: "figurinha", texto: null }] }),
+      detectarGatilhosDeEntrada({
+        mensagens: [{ tipo: "figurinha", texto: null }],
+      }),
     ).toEqual([]);
     expect(
       detectarGatilhosDeEntrada({
@@ -541,8 +546,13 @@ describe("AG6b: a figurinha e a mídia a ler no portão", () => {
   });
 
   it("o texto vazio do audio a transcrever conta no numero de mensagens", () => {
-    const seis = Array.from({ length: 6 }, () => ({ tipo: "texto", texto: "" }));
-    expect(detectarGatilhosDeEntrada({ mensagens: seis })).toEqual(["mensagem_longa"]);
+    const vinte = Array.from({ length: 20 }, () => ({
+      tipo: "texto",
+      texto: "",
+    }));
+    expect(detectarGatilhosDeEntrada({ mensagens: vinte })).toEqual([
+      "mensagem_longa",
+    ]);
   });
 });
 

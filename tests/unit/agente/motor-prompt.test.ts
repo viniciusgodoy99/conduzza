@@ -245,12 +245,14 @@ describe("montarInstrucoes", () => {
       "sou_assistente_virtual",
       ...cadastro,
       "buscar_procedimento",
+      "anotar_para_a_equipe",
       "escalar_humano",
     ]);
     expect(ferramentasDaChamada(desligada).map((f) => f.name)).toEqual([
       "fora_do_assunto",
       "sou_assistente_virtual",
       ...cadastro,
+      "anotar_para_a_equipe",
       "escalar_humano",
     ]);
     expect(
@@ -322,7 +324,7 @@ describe("perguntasParaOModelo e instrucoesParaOModelo", () => {
       "Nunca escolha pelo paciente.",
       "consulte de novo com o chamar_com da opção que ele confirmou.",
       "Ao dar valor ou cobertura, diga o convênio e o plano como a ferramenta trouxe.",
-      "não diga que cobre nem que não cobre: pergunte qual é o convênio ou passe para a equipe.",
+      "não diga que cobre nem que não cobre: pergunte qual é o convênio ou anote a pergunta para a equipe.",
     ]) {
       expect(TEXTO_FIXO_DO_AGENTE).toContain(trecho);
     }
@@ -421,7 +423,9 @@ describe("VERSAO_DO_PROMPT e prévia", () => {
       agoraTexto: AGORA,
     });
     expect(previa).toContain(TEXTO_FIXO_DO_AGENTE);
-    expect(previa).toContain("buscar_procedimento, escalar_humano");
+    expect(previa).toContain(
+      "buscar_procedimento, anotar_para_a_equipe, escalar_humano",
+    );
     expect(previa).toContain(VERSAO_DO_PROMPT);
   });
 });
@@ -490,9 +494,11 @@ describe("revisão de produção: nome da clínica no bloco <atendimento> (Q7)",
 });
 
 describe("revisão de produção: valor e convênio no texto fixo (Q6 e Q14)", () => {
-  it("sem_valor_cadastrado passa para a equipe sem inventar valor", () => {
+  // Decisao do dono de 23/11/2026 ("anota e continua"): o valor sem cadastro
+  // vira pergunta anotada para a equipe, e a conversa continua.
+  it("sem_valor_cadastrado anota a pergunta para a equipe sem inventar valor", () => {
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
-      'Se a ferramenta disser "sem_valor_cadastrado", o valor não está no Cadastro. Não diga nem estime valor: passe para a equipe com o motivo "agente_pediu".',
+      'Se a ferramenta disser "sem_valor_cadastrado", o valor não está no Cadastro. Não diga nem estime valor: anote a pergunta para a equipe.',
     );
   });
 
@@ -510,7 +516,7 @@ describe("revisão de produção: valor e convênio no texto fixo (Q6 e Q14)", (
       "Se o paciente não falar de convênio, consulte sem convênio, informe o valor particular e diga que pode consultar o convênio dele",
     );
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
-      "peça uma vez o nome completo do convênio e do plano. Se de novo não encontrar, passe para a equipe",
+      "peça uma vez o nome completo do convênio e do plano. Se de novo não encontrar, anote a pergunta para a equipe",
     );
   });
 
@@ -534,7 +540,7 @@ describe("revisão de produção: valor e convênio no texto fixo (Q6 e Q14)", (
 
   it("promessa de passagem em texto é proibida no texto fixo (Q5, o laço garante)", () => {
     expect(TEXTO_FIXO_DO_AGENTE).toContain(
-      "Nunca escreva que vai passar a conversa, que vai confirmar com a equipe ou que alguém vai retornar: para isso, use escalar_humano.",
+      "Nunca escreva que vai passar a conversa, que vai confirmar ou verificar com a equipe, que vai verificar e voltar, que alguém vai retornar, nem peça para a pessoa aguardar um momento: você só responde quando a pessoa manda mensagem. Para passar, use escalar_humano.",
     );
   });
 

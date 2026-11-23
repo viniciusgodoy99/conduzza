@@ -50,6 +50,7 @@ import {
 // [AG6 passagem] fim
 import {
   anotarPassagemParaAEquipe,
+  anotarPerguntasParaAEquipe,
   conferirTravaDoWhatsapp,
   confirmarPosse,
   consentimentoVigente,
@@ -245,6 +246,12 @@ import type { Job, ResultadoDeJob } from "./worker";
 //     (junta com o pendente do webhook, ou cria quando nao ha: a mensagem do
 //     interceptador e a lida que foi apagada), no maximo 2 vezes seguidas
 //     (a contagem no payload); depois disso, ou sem a fila, a falha normal.
+// 11a2. (Decisao do dono de 23/11/2026, "nao desistir cedo") A falha
+//     passageira (prazo, 429 de ritmo, 503 e conexao do classificador, do
+//     agente ou do verificador; incoerencia ou duvida do classificador; a
+//     leitura da agenda): nada saiu, o estado NAO e gravado e o job volta
+//     para a fila UMA vez (a contagem no payload), so enquanto cabe antes da
+//     varredura de 3 minutos (sem_resposta). Na segunda, passa como antes.
 // 11b. (AG3) O estado novo, ANTES de decidir e enviar
 //     (gravar_atendimento_da_ia, com a versao lida: otimista). Recusa ou
 //     erro: a resposta construida sobre o estado velho nunca sai (falha
@@ -1346,6 +1353,22 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
     );
   }
 
+  // 11a2. Decisao do dono de 23/11/2026: a falha passageira volta para a fila
+  // uma vez (nada saiu; o estado nao e gravado; a reserva ja foi acertada).
+  if (resultado.passageira === true && (await voltarParaAFila(c))) {
+    log.info("ia_erro_passageiro_na_fila", {
+      ...idsDoLog(c),
+      status: resultado.desfecho.tipo,
+      kind:
+        resultado.desfecho.tipo === "falhou"
+          ? resultado.desfecho.motivo
+          : resultado.desfecho.tipo === "bloqueou"
+            ? (resultado.desfecho.motivoDaFalha ?? undefined)
+            : undefined,
+    });
+    return { reagendar: agoraIso(c), motivo: "erro_passageiro" };
+  }
+
   // 11b. (AG3) O estado novo, antes de decidir e enviar: o turno que nao
   // devolveu estado (nunca deveria) grava o lido, como esta.
   const gravacao = await gravarAtendimentoDaIa(admin, {
@@ -1382,6 +1405,72 @@ async function executarTurno(c: Contexto): Promise<ResultadoDeJob> {
     resultado,
     latenciaMs,
   );
+}
+
+// ---------------------------------------------------------------------------
+// A falha passageira (decisao do dono de 23/11/2026, "nao desistir cedo")
+// ---------------------------------------------------------------------------
+
+/** A chave do payload de responder_com_ia com as voltas da falha passageira. */
+export const CHAVE_DO_ERRO_PASSAGEIRO = "voltas_do_erro_passageiro";
+
+/** Quantas vezes o job volta para a fila pela falha passageira. */
+export const MAXIMO_DE_VOLTAS_DO_ERRO_PASSAGEIRO = 1;
+
+/**
+ * Ate que idade do job (job_queue.created_at, a primeira mensagem da rajada:
+ * a ultima do paciente e mais nova) ele ainda volta. A varredura do motor
+ * passa a conversa 3 minutos depois da ultima mensagem (sem_resposta): com
+ * 90 s, o proximo tique (20 s) e a invocacao inteira (60 s, o maxDuration da
+ * rota) ainda cabem antes dela.
+ */
+export const IDADE_MAXIMA_PARA_VOLTAR_MS = 90_000;
+
+/**
+ * As voltas ja feitas. Sem a chave: 0. Valor que nao e inteiro de 0 em
+ * diante: o limite (falha fechada; so o executor grava a chave).
+ */
+export function voltasDoErroPassageiro(payload: Record<string, unknown>): number {
+  const valor = payload[CHAVE_DO_ERRO_PASSAGEIRO];
+  if (valor === undefined) {
+    return 0;
+  }
+  return typeof valor === "number" && Number.isInteger(valor) && valor >= 0
+    ? valor
+    : MAXIMO_DE_VOLTAS_DO_ERRO_PASSAGEIRO;
+}
+
+/**
+ * Marca a volta no payload DESTE job (com a posse: executando e locked_by) e
+ * diz se ele pode voltar para a fila. Sem a marca (erro, posse perdida), sem
+ * idade conhecida, velho demais ou no limite: false, e o turno passa como
+ * antes. Nunca lanca.
+ */
+async function voltarParaAFila(c: Contexto): Promise<boolean> {
+  const feitas = voltasDoErroPassageiro(c.job.payload);
+  const criadoEm = Date.parse(c.job.created_at ?? "");
+  if (
+    feitas >= MAXIMO_DE_VOLTAS_DO_ERRO_PASSAGEIRO ||
+    !Number.isFinite(criadoEm) ||
+    c.deps.agora() - criadoEm > IDADE_MAXIMA_PARA_VOLTAR_MS
+  ) {
+    return false;
+  }
+  try {
+    const { data, error } = await c.admin
+      .from("job_queue")
+      .update({
+        payload: { ...c.job.payload, [CHAVE_DO_ERRO_PASSAGEIRO]: feitas + 1 },
+      })
+      .eq("clinic_id", c.clinicId)
+      .eq("id", c.job.id)
+      .eq("status", "executando")
+      .eq("locked_by", c.workerId)
+      .select("id");
+    return !error && ((data ?? []) as unknown[]).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /** AG3: o passo da trilha quando o estado do atendimento nao foi lido. */
@@ -1891,6 +1980,19 @@ async function decidirEEnviar(
       conversationId: c.conversationId,
       jobId: c.job.id,
       texto: resultado.rascunhoBloqueado,
+    });
+  }
+  // 23/11/2026 ("anota e continua"): a nota interna com as perguntas anotadas
+  // e a etiqueta, antes do envio (o turno que nao respondeu nada, sem).
+  if (
+    (resultado.anotacoes ?? []).length > 0 &&
+    !(desfecho.tipo === "falhou" && desfecho.motivo === "sem_mensagem")
+  ) {
+    await anotarPerguntasParaAEquipe(c.admin, {
+      clinicId: c.clinicId,
+      conversationId: c.conversationId,
+      jobId: c.job.id,
+      perguntas: resultado.anotacoes ?? [],
     });
   }
   log.info("ia_turno_decidido", {

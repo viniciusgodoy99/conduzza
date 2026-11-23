@@ -16,6 +16,7 @@ import { ErroComCodigoDeJob } from "@/lib/jobs/erro-de-job";
 import { log } from "@/lib/log";
 
 import type { DesfechoDoTurno, PassoDoTurno } from "./laco";
+import { notaDaAnotacao } from "./nota-da-passagem";
 import type { UsoDoModelo } from "./uso";
 
 // As travas e a gravacao do turno da IA no WhatsApp (E3), pela service role
@@ -946,6 +947,8 @@ const PESO_DA_FERRAMENTA: readonly string[] = [
   "escalar_humano",
   "fora_do_assunto",
   "sou_assistente_virtual",
+  // 23/11/2026: a pergunta anotada para a equipe (a conversa continua).
+  "anotar_para_a_equipe",
   // AG4: a busca da remarcacao e a lista das consultas da pessoa.
   "buscar_horario_para_remarcar",
   "buscar_horario",
@@ -1163,6 +1166,62 @@ export async function anotarPassagemParaAEquipe(
       error_code: "excecao",
     });
     return false;
+  }
+}
+
+/**
+ * Decisao do dono de 23/11/2026: a etiqueta que a IA aplica na conversa com
+ * uma pergunta anotada para a equipe (semeada em toda clinica pela migration
+ * 20261123120000; a equipe tira quando responder).
+ */
+export const CHAVE_DA_ETIQUETA_DA_PERGUNTA = "pergunta_para_a_equipe";
+
+/**
+ * Decisao do dono de 23/11/2026 ("anota e continua"): a nota interna com as
+ * perguntas que o assistente anotou (o mesmo caminho da nota da passagem) e a
+ * etiqueta "Pergunta para a equipe", o sinal na lista do Atendimento (pela
+ * mesma RPC da tela). A conversa continua com a IA. Nunca lanca: a etiqueta
+ * que nao entra (catalogo sem ela, oito etiquetas) fica no log, so com o
+ * codigo; a pergunta nunca vai para log.
+ */
+export async function anotarPerguntasParaAEquipe(
+  admin: SupabaseClient,
+  e: {
+    clinicId: string;
+    conversationId: string;
+    jobId: string;
+    perguntas: readonly string[];
+  },
+): Promise<void> {
+  const texto = notaDaAnotacao(e.perguntas);
+  if (texto === null) {
+    return;
+  }
+  await anotarPassagemParaAEquipe(admin, {
+    clinicId: e.clinicId,
+    conversationId: e.conversationId,
+    jobId: e.jobId,
+    texto,
+  });
+  let codigo: string | null = null;
+  try {
+    const { error } = await admin.rpc("etiquetar_conversa", {
+      p_clinic_id: e.clinicId,
+      p_conversation_id: e.conversationId,
+      p_adicionar: [CHAVE_DA_ETIQUETA_DA_PERGUNTA],
+      p_remover: [],
+    });
+    codigo = error ? ((error as { code?: string }).code ?? "erro") : null;
+  } catch {
+    codigo = "excecao";
+  }
+  if (codigo !== null) {
+    log.warn("ia_etiqueta_da_pergunta_nao_aplicada", {
+      clinic_id: e.clinicId,
+      conversation_id: e.conversationId,
+      job_id: e.jobId,
+      error_code: codigo,
+    });
   }
 }
 

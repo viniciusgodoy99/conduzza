@@ -5,6 +5,7 @@ vi.mock("server-only", () => ({}));
 import { portaDaAgendaDoWhatsapp } from "@/lib/agente/agenda";
 import {
   dadosVazios,
+  ERROS_DO_MODELO,
   estadoDoAtendimentoValido,
   estadoVazio,
   falhasDepoisDoTurno,
@@ -443,14 +444,17 @@ describe("a reconferência e os fatos do estado", () => {
 
 describe("as falhas, os avanços e a nota da passagem", () => {
   it("as listas fechadas da AG4", () => {
-    for (const falha of [
+    // 23/11/2026: o erro do proprio modelo sai da lista das falhas (nao conta
+    // contra o paciente); o "sim" que nao foi claro continua.
+    expect(RESULTADOS_QUE_SAO_FALHA.has("sem_confirmacao_clara")).toBe(true);
+    for (const doModelo of [
       "sem_pergunta_de_cancelamento",
-      "sem_confirmacao_clara",
       "horario_fora_da_remarcacao",
       "sem_consulta_para_remarcar",
       "um_cancelamento_por_resposta",
     ]) {
-      expect(RESULTADOS_QUE_SAO_FALHA.has(falha), falha).toBe(true);
+      expect(RESULTADOS_QUE_SAO_FALHA.has(doModelo), doModelo).toBe(false);
+      expect(ERROS_DO_MODELO.has(doModelo), doModelo).toBe(true);
     }
     for (const avanco of ["consultas", "cancelada", "remarcado"]) {
       expect(RESULTADOS_QUE_AVANCAM.has(avanco), avanco).toBe(true);

@@ -307,12 +307,12 @@ describe("tipo do contato (item 4)", () => {
 });
 
 describe("texto fixo da onda 2", () => {
-  it("fora do assunto e 'você é um robô?' pelas ferramentas; dúvida da clínica sem resposta continua agente_pediu", () => {
+  it("fora do assunto e 'você é um robô?' pelas ferramentas; dúvida da clínica sem resposta é anotada para a equipe", () => {
     for (const trecho of [
       "chame fora_do_assunto",
       "chame sou_assistente_virtual",
-      // AG2: a base e as consultas do Cadastro.
-      'Dúvida sobre a clínica que o bloco <base_da_clinica> e as ferramentas de consulta não respondem não é fora do assunto: passe para a equipe com o motivo "agente_pediu".',
+      // AG2: a base e as consultas do Cadastro. 23/11/2026: anota e continua.
+      "Dúvida sobre a clínica que o bloco <base_da_clinica> e as ferramentas de consulta não respondem não é fora do assunto: anote a pergunta para a equipe.",
       'Se ela pedir para falar com uma pessoa, passe para a equipe com o motivo "pedido_humano".',
       "nem quem criou ou treinou você",
     ]) {

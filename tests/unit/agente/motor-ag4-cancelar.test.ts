@@ -338,7 +338,7 @@ describe("cancelar: as variações", () => {
     expect(cenario.banco.chamadasDe("cancelar_consulta_pela_ia")).toEqual([]);
   });
 
-  it("código que a lista não trouxe: codigo_invalido (falha)", async () => {
+  it("código que a lista não trouxe: codigo_invalido (erro do modelo, não conta)", async () => {
     const cenario = new CenarioDaAg4();
     consultasDoContato(cenario.banco);
     const r = await cenario.fala({
@@ -351,7 +351,8 @@ describe("cancelar: as variações", () => {
     expect(saidas(cenario.corpos[1])[0]).toEqual({
       resultado: "codigo_invalido",
     });
-    expect(r.atendimento?.estado.falhas_seguidas).toBe(1);
+    // 23/11/2026: o erro do proprio modelo nao conta contra o paciente.
+    expect(r.atendimento?.estado.falhas_seguidas).toBe(0);
     expect(cenario.estado.pedido_pendente).toBeNull();
   });
 });

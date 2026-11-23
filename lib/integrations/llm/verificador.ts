@@ -253,6 +253,8 @@ export const VERSAO_DA_POLITICA = `verificador-${createHash("sha256")
         nonce: "(codigo)",
       }),
       categorias: CATEGORIAS_DO_VERIFICADOR,
+      // 23/11/2026: quantas pendentes o envelope le (era 5).
+      janela: MAXIMO_DE_MENSAGENS_NO_CONTEXTO,
     }),
     "utf8",
   )

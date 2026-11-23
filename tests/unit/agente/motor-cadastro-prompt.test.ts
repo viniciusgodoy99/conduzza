@@ -166,6 +166,7 @@ describe("versão e ferramentas", () => {
       "buscar_profissionais",
       "consultar_minhas_consultas",
       "buscar_procedimento",
+      "anotar_para_a_equipe",
       "escalar_humano",
     ]);
     expect(
@@ -175,7 +176,7 @@ describe("versão e ferramentas", () => {
         agoraTexto: AGORA,
       }),
     ).toContain(
-      "Ferramentas desta versão: fora_do_assunto, sou_assistente_virtual, consultar_unidades, consultar_requisitos, buscar_profissionais, consultar_minhas_consultas, buscar_procedimento, escalar_humano.",
+      "Ferramentas desta versão: fora_do_assunto, sou_assistente_virtual, consultar_unidades, consultar_requisitos, buscar_profissionais, consultar_minhas_consultas, buscar_procedimento, anotar_para_a_equipe, escalar_humano.",
     );
   });
 });

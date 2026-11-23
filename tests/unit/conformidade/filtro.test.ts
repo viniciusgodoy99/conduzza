@@ -356,20 +356,32 @@ describe("falha fechada: todo verificador que falha bloqueia", () => {
     expect(decisao).toMatchObject({ aprovado: false, motivoDaFalha: "prazo" });
   });
 
-  it("mais de cinco mensagens sem resposta: bloqueia sem chamar o verificador (contexto truncado)", async () => {
+  it("seis mensagens curtas vão inteiras ao verificador (23/11/2026)", async () => {
+    const verificador = verificadorQueSempreAprova();
+    const seis = [
+      "oi",
+      "bom dia",
+      "quero marcar",
+      "consulta",
+      "com a Dra. Ana",
+      "pode ser sexta?",
+    ];
+    const decisao = await filtrarSaida({
+      rascunho: rascunhoLimpo,
+      contexto: { ...CONTEXTO_PADRAO, mensagensDoPaciente: seis },
+      verificador,
+    });
+    expect(decisao.aprovado).toBe(true);
+    expect(verificador).toHaveBeenCalledTimes(1);
+  });
+
+  it("mais mensagens sem resposta do que o histórico garante: bloqueia sem chamar o verificador (contexto truncado)", async () => {
     const verificador = verificadorQueSempreAprova();
     const decisao = await filtrarSaida({
       rascunho: rascunhoLimpo,
       contexto: {
         ...CONTEXTO_PADRAO,
-        mensagensDoPaciente: [
-          "oi",
-          "bom dia",
-          "quero marcar",
-          "consulta",
-          "com a Dra. Ana",
-          "pode ser sexta?",
-        ],
+        mensagensDoPaciente: Array.from({ length: 20 }, () => "oi"),
       },
       verificador,
     });

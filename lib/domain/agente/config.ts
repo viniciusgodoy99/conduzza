@@ -183,6 +183,9 @@ export const FERRAMENTAS_DO_AGENTE = [
   "pedir_lista_de_espera",
   "entrar_na_lista_de_espera",
   "confirmar_presenca",
+  // Decisao do dono de 23/11/2026 ("anota e continua"): a pergunta que o
+  // Cadastro nao responde vira nota para a equipe, e a conversa continua.
+  "anotar_para_a_equipe",
   "escalar_humano",
 ] as const;
 export type FerramentaDoAgente = (typeof FERRAMENTAS_DO_AGENTE)[number];
@@ -520,9 +523,10 @@ export const HABILIDADES_DO_AGENTE = [
     chave: "passar_para_equipe",
     titulo: "Passar para a equipe",
     descricao:
-      "Passa a conversa para a recepção quando não pode ou não deve responder.",
+      "Passa a conversa para a recepção quando não pode ou não deve responder. A pergunta que o Cadastro não responde fica anotada para a equipe, e o assistente continua atendendo.",
     travada: true,
-    ferramentas: ["escalar_humano"],
+    // 23/11/2026: anotar_para_a_equipe (a conversa continua com a IA).
+    ferramentas: ["anotar_para_a_equipe", "escalar_humano"],
     padrao: true,
     precisaDaAgenda: false,
     precisaDaHabilidade: null,

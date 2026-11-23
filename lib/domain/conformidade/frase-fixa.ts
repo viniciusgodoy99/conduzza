@@ -30,6 +30,18 @@ export const FRASE_FORA_DO_ASSUNTO =
   "Desculpe, por aqui eu só consigo ajudar com assuntos da clínica. Posso ajudar com alguma coisa sobre a clínica?";
 
 /**
+ * Decisao do dono de 23/11/2026: a curiosidade GERAL de estetica ("botox
+ * doi?", "e seguro?", "quanto tempo dura o preenchimento?"), sem situacao da
+ * pessoa e sem outro gatilho (ehCuriosidadeGeralDeEstetica). Quem escolhe e
+ * o sistema, nunca o modelo (o agente nem e chamado); sai como a resposta da
+ * IA, pelo filtro de saida INTEIRO como as frases acima, e a conversa
+ * continua com a IA. Texto aprovado pelo dono, palavra por palavra, sem
+ * aprovacao do responsavel tecnico. Um teste exige igualdade exata.
+ */
+export const FRASE_DA_CURIOSIDADE_DE_ESTETICA =
+  "Essa é uma dúvida que o profissional responde na avaliação, porque cada caso é visto pessoalmente. Quer marcar uma avaliação?";
+
+/**
  * A frase PADRAO de assistente virtual (P5c e P11a; no ar desde 22/10/2026).
  * Desde a decisao do dono de 09/11/2026 ("Isso é pra ser configurado na aba
  * de agente de IA de cada clinica") cada clinica pode escrever a sua na aba

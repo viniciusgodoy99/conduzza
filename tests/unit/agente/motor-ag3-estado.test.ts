@@ -365,7 +365,9 @@ describe("a pergunta Confirma", () => {
 describe("as falhas seguidas (item 9)", () => {
   it("falha soma, avanço zera, só conversa não mexe; na segunda passa", () => {
     expect(FALHAS_PARA_PASSAR).toBe(2);
-    expect(falhasDepoisDoTurno(0, ["codigo_invalido"])).toBe(1);
+    // 23/11/2026: o erro do proprio modelo nao conta (nem soma nem zera).
+    expect(falhasDepoisDoTurno(0, ["codigo_invalido"])).toBe(0);
+    expect(falhasDepoisDoTurno(0, ["cpf_invalido"])).toBe(1);
     expect(falhasDepoisDoTurno(1, ["cpf_invalido"])).toBe(2);
     // Errou e acertou no mesmo turno: avancou.
     expect(falhasDepoisDoTurno(1, ["codigo_invalido", "reservado"])).toBe(0);

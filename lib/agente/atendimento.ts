@@ -934,15 +934,13 @@ export function perguntaConfirmaAReserva(
 // ---------------------------------------------------------------------------
 
 /**
- * O que conta como FALHA de um turno (lista fechada, conservadora): a
- * ferramenta recusou o pedido do modelo ou o dado do paciente. Entrada fora
- * do formato, codigo que nao existe (procedimento, profissional, unidade,
- * horario), a segunda reserva ou marcacao na mesma resposta, marcar sem a
- * confirmacao do paciente, e o dado do paciente invalido ou que nao foi
- * achado na mensagem. Horario que deixou de estar livre, reserva vencida e
- * convenio que nao atende NAO contam: nao sao falha de ninguem.
+ * Decisao do dono de 23/11/2026 ("nao desistir cedo"): o erro do PROPRIO
+ * modelo (entrada fora do formato, codigo que nao existe, a segunda reserva,
+ * marcacao ou pedido na mesma resposta, marcar ou cancelar sem a pergunta ou
+ * a confirmacao antes, buscar fora da ordem) nao conta contra o paciente: nem
+ * soma nem zera o contador. Antes da decisao, contava como falha.
  */
-export const RESULTADOS_QUE_SAO_FALHA: ReadonlySet<string> = new Set([
+export const ERROS_DO_MODELO: ReadonlySet<string> = new Set([
   "entrada_invalida",
   "codigo_invalido",
   "procedimento_nao_encontrado",
@@ -952,6 +950,23 @@ export const RESULTADOS_QUE_SAO_FALHA: ReadonlySet<string> = new Set([
   "uma_marcacao_por_resposta",
   "uma_confirmacao_por_resposta",
   "sem_confirmacao_do_paciente",
+  "sem_pergunta_de_cancelamento",
+  "horario_fora_da_remarcacao",
+  "sem_consulta_para_remarcar",
+  "um_cancelamento_por_resposta",
+  "sem_busca_antes",
+  "sem_pergunta_de_espera",
+  "um_pedido_de_espera_por_resposta",
+]);
+
+/**
+ * O que conta como FALHA de um turno (lista fechada, conservadora): a
+ * ferramenta recusou o DADO DO PACIENTE (invalido, que nao foi achado na
+ * mensagem, ou a resposta que nao foi clara). Horario que deixou de estar
+ * livre, reserva vencida e convenio que nao atende NAO contam: nao sao falha
+ * de ninguem. O erro do modelo fica em ERROS_DO_MODELO (23/11/2026).
+ */
+export const RESULTADOS_QUE_SAO_FALHA: ReadonlySet<string> = new Set([
   "dados_invalidos",
   "nome_nao_encontrado",
   "data_nao_encontrada",
@@ -960,24 +975,13 @@ export const RESULTADOS_QUE_SAO_FALHA: ReadonlySet<string> = new Set([
   "cpf_ambiguo",
   "carteirinha_nao_encontrada",
   "carteirinha_ambigua",
-  // AG4: cancelar sem a pergunta feita antes, o "sim" que nao foi claro, o
-  // horario da remarcacao de outro procedimento, profissional ou pagamento,
-  // a busca da remarcacao sem a consulta e o segundo pedido na resposta.
-  "sem_pergunta_de_cancelamento",
+  // AG4: o "sim" que nao foi claro.
   "sem_confirmacao_clara",
-  "horario_fora_da_remarcacao",
-  "sem_consulta_para_remarcar",
-  "um_cancelamento_por_resposta",
   // Revisao da AG4 (achado 1): a resposta da pessoa que nao veio logo
   // depois da pergunta do cancelamento (o sistema pergunta de novo). Conta
   // como falha para a pergunta que nunca confere nao repetir sem fim.
   "resposta_fora_da_pergunta",
-  // AG5 (a lista de espera): pedir sem a busca de horario antes, entrar sem
-  // a pergunta feita numa mensagem anterior, o segundo pedido na mesma
-  // resposta e o "sim" que nao foi claro (a pergunta volta).
-  "sem_busca_antes",
-  "sem_pergunta_de_espera",
-  "um_pedido_de_espera_por_resposta",
+  // AG5 (a lista de espera): o "sim" que nao foi claro (a pergunta volta).
   "espera_sem_confirmacao_clara",
 ]);
 
@@ -1020,8 +1024,10 @@ export const FALHAS_QUE_O_AVANCO_NAO_APAGA: ReadonlySet<string> = new Set([
  */
 export function falhasDepoisDoTurno(
   anterior: number,
-  resultados: readonly string[],
+  todos: readonly string[],
 ): number {
+  // 23/11/2026: o erro do modelo nao conta contra o paciente (nem zera).
+  const resultados = todos.filter((r) => !ERROS_DO_MODELO.has(r));
   const avancou = resultados.some((r) => RESULTADOS_QUE_AVANCAM.has(r));
   const falhou = resultados.some((r) => RESULTADOS_QUE_SAO_FALHA.has(r));
   if (resultados.some((r) => FALHAS_QUE_O_AVANCO_NAO_APAGA.has(r))) {

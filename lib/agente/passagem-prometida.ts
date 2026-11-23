@@ -48,6 +48,17 @@
 // ("a equipe vai te responder", "e te retorna", "ela te retorna") conta, em
 // qualquer turno.
 
+// Decisao do dono de 23/11/2026 ("nao desistir cedo" e "anota e continua"):
+// a promessa agora tem dois pesos (promessaDaResposta). So a PASSAGEM
+// explicita (passar para a equipe, a equipe ou alguem falar depois) continua
+// passando na hora. O RETORNO da propria IA ("um momento, por favor", "vou
+// verificar a agenda", "ja te retorno") ganha a reescrita unica, como o
+// bloqueio de formato (lib/agente/laco.ts): a IA nao volta sozinha, entao a
+// reescrita pede a resposta agora. Com anotar_para_a_equipe no turno, "deixei
+// sua pergunta anotada para a equipe responder por aqui" e fato, sem prazo; o
+// prazo ("hoje", "em breve", "em 5 minutos") tambem reescreve. Dizer que
+// anotou sem a ferramenta e passagem (a equipe nao ficou sabendo).
+
 import type { AcaoDoTurno } from "@/lib/domain/conformidade/fatos-do-turno";
 import { normalizarBase } from "@/lib/domain/conformidade/normalizar";
 
@@ -99,7 +110,8 @@ const QUANDO_VOLTA =
 const ARQUIVO_QUE_PASSA =
   "(?:(?:o|a|os|as|seu|sua|seus|suas|esse|essa|esses|essas|este|esta)\\s+)?(?:resto|restante|demais|documentos?|arquivos?|pedidos?|carteirinhas?|fotos?|imagens?)(?:\\s+d[oa]\\s+\\w+)?\\s+";
 
-const PROMESSAS: readonly RegExp[] = [
+/** Passar a conversa para a equipe, ou a equipe falar depois: passa. */
+const PROMESSAS_DE_PASSAGEM: readonly RegExp[] = [
   // Matriz do dono de 06/11/2026: "passei seu documento para a equipe", "vou
   // encaminhar o resto do pedido para a recepcao". O arquivo fica na conversa;
   // ninguem passa nada.
@@ -158,6 +170,13 @@ const PROMESSAS: readonly RegExp[] = [
   new RegExp(
     `\\b${EQUIPE_E_APOSTO}\\s+${DEPOIS}(?:entrara em contato|retornara|respondera|atendera|ligara|informara|confirmara|explicara|esclarecera)\\b`,
   ),
+];
+
+/**
+ * A IA voltar depois (conferir, pedir para esperar): reescreve uma vez
+ * (decisao do dono de 23/11/2026). Junto de uma passagem, a passagem vence.
+ */
+const PROMESSAS_DE_RETORNO: readonly RegExp[] = [
   // A IA prometendo voltar depois: "ja te retorno", "te dou um retorno",
   // "entraremos em contato". Ela nao volta: so a equipe.
   /\b(?:te|lhe)\s+(?:retorno|retornamos|retornaremos|dou\s+(?:um\s+)?retorno|damos\s+(?:um\s+)?retorno|darei\s+(?:um\s+)?retorno|daremos\s+(?:um\s+)?retorno)\b/,
@@ -198,7 +217,21 @@ export type ContextoDaPassagem = {
    * guardado para ela. Ausente: nao tem.
    */
   arquivoFicaComAEquipe?: boolean;
+  /**
+   * Decisao do dono de 23/11/2026: anotar_para_a_equipe rodou no turno (a nota
+   * e a etiqueta para a equipe). Ausente: nao rodou.
+   */
+  anotouParaAEquipe?: boolean;
 };
+
+/** O que a resposta promete (promessaDaResposta). */
+export type PromessaDaResposta =
+  /** Passar a conversa, ou a equipe falar depois: passa na hora. */
+  | "passagem"
+  /** A IA voltar depois ou pedir para esperar: reescreve uma vez. */
+  | "retorno"
+  /** Anotou para a equipe e deu prazo para a resposta: reescreve uma vez. */
+  | "prazo_da_anotacao";
 
 /** Sem o turno: nenhuma ferramenta, nenhuma acao (o lado seguro). */
 const TURNO_SEM_FERRAMENTA: ContextoDaPassagem = {
@@ -281,15 +314,38 @@ function conferirSemVoltar(frase: string): boolean {
   return !OFERTA_DE_CONFERIR.test(casou[0]);
 }
 
+/** A pergunta da pessoa como objeto ("sua pergunta", "essa duvida"). */
+const PERGUNTA =
+  "(?:(?:a|as|sua|suas|essa|essas|esta|estas)\\s+)?(?:pergunta|perguntas|duvida|duvidas|questao|questoes)\\b";
 /**
- * A resposta promete passar a conversa para a equipe (ou que alguem vai
- * retornar)? Le o texto sem acento e sem caixa (normalizarBase). Sem o
- * contexto do turno, o lado seguro: nenhuma ferramenta e nenhuma acao.
+ * A IA dizendo que anotou (ou passou) a PERGUNTA para a equipe: "anotei",
+ * "deixei anotado", "esta anotada", "passei sua duvida".
  */
-export function prometePassagemParaAEquipe(
+const REGISTRO_DA_PERGUNTA = `(?:anotei|anotamos|deixei\\s+(?:\\w+\\s+){0,3}?anotad[oa]s?|(?:esta|estao|fica|ficou|ficam|ficaram)\\s+(?:\\w+\\s+)?anotad[oa]s?|${EU_VOU}\\s+anotar|${EU_VOU}\\s+(?:te\\s+|lhe\\s+)?${PASSAR}\\s+${PERGUNTA}|${PASSEI}\\s+${PERGUNTA}|(?:estou|to|tou|estamos)\\s+${PASSANDO}\\s+${PERGUNTA})`;
+/** "Deixei anotado para a equipe" SEM a ferramenta: ninguem ficou sabendo. */
+const ANOTACAO_SEM_A_FERRAMENTA = new RegExp(
+  `\\b${REGISTRO_DA_PERGUNTA}\\b[^.!?\\n]{0,80}?\\b${DESTINO}`,
+);
+const REGISTRO = new RegExp(`\\b${REGISTRO_DA_PERGUNTA}`, "g");
+/** "A equipe responde por aqui", "para a equipe responder", "que vai ver". */
+const A_EQUIPE_RESPONDE = new RegExp(
+  `\\b${EQUIPE_E_APOSTO},?\\s+(?:que\\s+)?${DEPOIS}(?:(?:vai|vao|ira|irao|pode|podem|podera|deve|devem)\\s+)?(?:(?:te|lhe)\\s+)?(?:responder|responde|respondera|retornar|retorna|retornara|verificar|verifica|confirmar|confirma|informar|informa|explicar|explica|esclarecer|esclarece|ver|ve|vera|olhar|olha|analisar|analisa|conferir|confere|tirar|tira)\\b`,
+  "g",
+);
+/** Prazo para a equipe responder ("hoje", "em breve", "em 5 minutos"). */
+const PRAZO =
+  /\b(?:hoje|amanha|em breve|logo|ja ja|ja (?:vai|vao|te|lhe)|daqui a pouco|rapidinho|em instantes|em seguida|o quanto antes|o mais rapido|imediatamente|mais tarde|no maximo|ate o (?:fim|final) do dia|em (?:ate )?(?:\d+|um|uma|dois|duas|tres|alguns|algumas|poucos|poucas|uns|umas) ?(?:min\w*|hora\w*|h|dia\w*|instantes)|(?:na|nesta|nessa|ate) (?:segunda|terca|quarta|quinta|sexta)|(?:no|neste|nesse|ate o) (?:sabado|domingo)|(?:essa|esta|nessa|nesta|proxima) semana)\b/;
+
+/**
+ * O que a resposta promete (decisao do dono de 23/11/2026): a passagem
+ * explicita para a equipe, o retorno da propria IA, o prazo da anotacao, ou
+ * nada. Le o texto sem acento e sem caixa (normalizarBase). Sem o contexto do
+ * turno, o lado seguro: nenhuma ferramenta, nenhuma acao e nenhuma anotacao.
+ */
+export function promessaDaResposta(
   texto: string,
   contexto: ContextoDaPassagem = TURNO_SEM_FERRAMENTA,
-): boolean {
+): PromessaDaResposta | null {
   let base = normalizarBase(texto);
   if (contexto.acoes.includes("marcou")) {
     for (const aviso of AVISOS_DA_APROVACAO) {
@@ -299,13 +355,43 @@ export function prometePassagemParaAEquipe(
   if (contexto.arquivoFicaComAEquipe === true) {
     base = base.replace(EQUIPE_CONFERE_O_ARQUIVO, " ");
     if (ELA_VOLTA_A_FALAR.test(base)) {
-      return true;
+      return "passagem";
     }
   }
-  if (PROMESSAS.some((padrao) => padrao.test(base))) {
-    return true;
+  const anotou = contexto.anotouParaAEquipe === true;
+  if (anotou) {
+    // A frase da anotacao e fato do turno, sem prazo: o prazo reescreve.
+    const daAnotacao = frasesDe(base).filter(
+      (frase) => new RegExp(REGISTRO.source).test(frase) ||
+        new RegExp(A_EQUIPE_RESPONDE.source).test(frase),
+    );
+    if (daAnotacao.some((frase) => PRAZO.test(frase))) {
+      return "prazo_da_anotacao";
+    }
+    base = base.replace(REGISTRO, " ").replace(A_EQUIPE_RESPONDE, " ");
+  }
+  if (
+    PROMESSAS_DE_PASSAGEM.some((padrao) => padrao.test(base)) ||
+    (!anotou && ANOTACAO_SEM_A_FERRAMENTA.test(base))
+  ) {
+    return "passagem";
+  }
+  if (PROMESSAS_DE_RETORNO.some((padrao) => padrao.test(base))) {
+    return "retorno";
   }
   const frases = frasesDe(base);
-  const conferir = contexto.usouFerramenta ? frases.slice(-1) : frases;
-  return conferir.some(conferirSemVoltar);
+  const conferir =
+    contexto.usouFerramenta || anotou ? frases.slice(-1) : frases;
+  return conferir.some(conferirSemVoltar) ? "retorno" : null;
+}
+
+/**
+ * A resposta promete passar a conversa para a equipe, voltar depois ou da
+ * prazo para a anotacao? (qualquer promessa de promessaDaResposta).
+ */
+export function prometePassagemParaAEquipe(
+  texto: string,
+  contexto: ContextoDaPassagem = TURNO_SEM_FERRAMENTA,
+): boolean {
+  return promessaDaResposta(texto, contexto) !== null;
 }

@@ -222,7 +222,7 @@ describe("quando a IA oferece a lista (desenho 1.1)", () => {
     });
   });
 
-  it("sem a busca antes (procedimento ou pagamento vazios): sem_busca_antes ao modelo, conta falha, nada no banco", async () => {
+  it("sem a busca antes (procedimento ou pagamento vazios): sem_busca_antes ao modelo, não conta (erro do modelo), nada no banco", async () => {
     const cenario = new CenarioDaAg5();
     const r = await cenario.fala({
       texto: "Me coloca na lista de espera.",
@@ -234,7 +234,8 @@ describe("quando a IA oferece a lista (desenho 1.1)", () => {
     expect(r.tipo).toBe("resposta");
     expect(saidas(cenario.corpos[1])[0]).toEqual({ resultado: "sem_busca_antes" });
     expect(cenario.banco.chamadasDe("pedir_lista_de_espera_pela_ia")).toEqual([]);
-    expect(cenario.estado.falhas_seguidas).toBe(1);
+    // 23/11/2026: o erro do proprio modelo nao conta contra o paciente.
+    expect(cenario.estado.falhas_seguidas).toBe(0);
   });
 
   it("entrada fora do formato (dia repetido): entrada_invalida, sem RPC", async () => {

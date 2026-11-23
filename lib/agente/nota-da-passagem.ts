@@ -34,6 +34,27 @@ export const NOTAS_DA_LEITURA = {
     "A carteirinha que a pessoa mandou não foi gravada no cadastro agora, que estava em uso: confira o arquivo nesta conversa.",
 } as const;
 
+/**
+ * Decisao do dono de 23/11/2026 ("anota e continua"): a primeira linha da nota
+ * com as perguntas que o assistente anotou para a equipe (anotar_para_a_equipe;
+ * notaDaAnotacao). Diferente da nota da passagem, ela traz a pergunta resumida
+ * pelo modelo, e a conversa continua com o assistente.
+ */
+export const CABECALHO_DA_NOTA_DA_ANOTACAO =
+  "Pergunta anotada pelo assistente para a equipe responder por aqui (a conversa continua com o assistente):";
+
+/** A nota interna das perguntas anotadas no turno (uma por linha). */
+export function notaDaAnotacao(perguntas: readonly string[]): string | null {
+  const linhas = perguntas
+    .map((pergunta) => pergunta.trim())
+    .filter((pergunta) => pergunta !== "");
+  return linhas.length === 0
+    ? null
+    : [CABECALHO_DA_NOTA_DA_ANOTACAO, ...linhas.map((p) => `- ${p}`)].join(
+        "\n",
+      );
+}
+
 /** Quem assina a nota da passagem no fio (a mesma assinatura da IA). */
 export const AUTOR_DA_NOTA_DA_PASSAGEM = "Assistente";
 
@@ -63,7 +84,9 @@ export function ehNotaDaPassagemDaIa(mensagem: {
     (mensagem.content_type === undefined ||
       mensagem.content_type === "texto") &&
     corpo !== null &&
-    (corpo === CABECALHO_DA_NOTA_DA_PASSAGEM ||
-      corpo.startsWith(`${CABECALHO_DA_NOTA_DA_PASSAGEM}\n`))
+    [CABECALHO_DA_NOTA_DA_PASSAGEM, CABECALHO_DA_NOTA_DA_ANOTACAO].some(
+      (cabecalho) =>
+        corpo === cabecalho || corpo.startsWith(`${cabecalho}\n`),
+    )
   );
 }
