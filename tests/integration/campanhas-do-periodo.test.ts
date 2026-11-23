@@ -610,6 +610,8 @@ describe("campanhas_do_periodo com a linha da consulta por id", () => {
         },
       ])
       .throwOnError();
+    // Metricas certas (20261123100000): o lead nasce da mensagem do paciente.
+    await nascerDeMensagem(admin, [clinica]);
   });
 
   afterAll(async () => {

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { nascerDeMensagem } from "./lead-de-verdade";
+import { criarNumeroDeTeste } from "./numeros";
 import { adminClient, anonClient } from "./stack";
 
 // Metricas certas (migration 20261123100000): o isolamento das funcoes
@@ -91,7 +92,11 @@ async function montarClinica(clinicId: string, telefone: string) {
     .throwOnError();
   const { data: conversa } = await admin
     .from("conversation")
-    .insert({ clinic_id: clinicId, contact_id: contato!.id })
+    .insert({
+      clinic_id: clinicId,
+      contact_id: contato!.id,
+      whatsapp_account_id: (await criarNumeroDeTeste(admin, clinicId)).id,
+    })
     .select("id")
     .single()
     .throwOnError();

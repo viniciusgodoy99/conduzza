@@ -1,6 +1,9 @@
+import { randomUUID } from "node:crypto";
+
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { nascerDeMensagem } from "../rls/lead-de-verdade";
+import { criarNumeroDeTeste } from "../rls/numeros";
 import { adminClient } from "../rls/stack";
 
 // Metricas certas (decisao do dono de 23/11/2026) contra o banco REAL:
@@ -220,7 +223,11 @@ beforeAll(async () => {
   // motivo (nao conta) e uma fora do periodo.
   const { data: conversa } = await admin
     .from("conversation")
-    .insert({ clinic_id: clinicId, contact_id: l1 })
+    .insert({
+      clinic_id: clinicId,
+      contact_id: l1,
+      whatsapp_account_id: (await criarNumeroDeTeste(admin, clinicId)).id,
+    })
     .select("id")
     .single()
     .throwOnError();
@@ -292,6 +299,8 @@ beforeAll(async () => {
     .insert({
       clinic_id: clinicId,
       decision_id: decisoes.filtro,
+      conversation_id: conversaId,
+      job_id: randomUUID(),
       texto: "rascunho barrado de teste",
     })
     .throwOnError();
@@ -450,7 +459,11 @@ describe("a trilha da IA não some com a conversa", () => {
       .throwOnError();
     const { data: conversa } = await admin
       .from("conversation")
-      .insert({ clinic_id: outra!.id, contact_id: contato!.id })
+      .insert({
+        clinic_id: outra!.id,
+        contact_id: contato!.id,
+        whatsapp_account_id: (await criarNumeroDeTeste(admin, outra!.id)).id,
+      })
       .select("id")
       .single()
       .throwOnError();

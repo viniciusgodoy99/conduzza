@@ -40,7 +40,6 @@ const JANELA = {
 let clinicId = "";
 let clinicaSemVenda = "";
 let profissional = "";
-let procedimento = "";
 const contatos: Record<"X" | "Y" | "Z" | "W", string> = {
   X: "",
   Y: "",
@@ -103,13 +102,28 @@ async function contato(
   return data!.id as string;
 }
 
+let consultas = 0;
+
 async function consulta(contatoId: string, precoCents: number): Promise<void> {
+  consultas += 1;
+  // Um procedimento por consulta: o vinculo (profissional, procedimento,
+  // plano) e unico (service_link_vinculo_unico).
+  const { data: proc } = await admin
+    .from("procedure")
+    .insert({
+      clinic_id: clinicId,
+      name: `Venda ${consultas}`,
+      default_duration_min: 30,
+    })
+    .select("id")
+    .single()
+    .throwOnError();
   const { data: vinculo } = await admin
     .from("service_link")
     .insert({
       clinic_id: clinicId,
       professional_id: profissional,
-      procedure_id: procedimento,
+      procedure_id: proc!.id,
       insurance_id: null,
       price_cents: precoCents,
       duration_min: 30,
@@ -117,7 +131,8 @@ async function consulta(contatoId: string, precoCents: number): Promise<void> {
     .select("id")
     .single()
     .throwOnError();
-  const inicio = new Date(Date.now() + 86_400_000 + Math.random() * 3_600_000);
+  // Uma hora por consulta: o mesmo profissional nao tem dois horarios juntos.
+  const inicio = new Date(Date.now() + 86_400_000 + consultas * 3_600_000);
   await admin
     .from("appointment")
     .insert({
@@ -175,18 +190,6 @@ beforeAll(async () => {
     .single()
     .throwOnError();
   profissional = prof!.id as string;
-  const { data: proc } = await admin
-    .from("procedure")
-    .insert({
-      clinic_id: clinicId,
-      name: "Avaliação",
-      default_duration_min: 30,
-    })
-    .select("id")
-    .single()
-    .throwOnError();
-  procedimento = proc!.id as string;
-
   await admin
     .from("meta_anuncio")
     .insert({
@@ -195,6 +198,8 @@ beforeAll(async () => {
       ad_account_id: "act_7654321",
       campaign_id: CAMPANHA,
       campaign_name: "Implante Novembro",
+      // Os CHECKs de meta_anuncio: a linha da entrega tem o ultimo dia.
+      ultimo_dia_com_entrega: "2026-11-01",
     })
     .throwOnError();
 

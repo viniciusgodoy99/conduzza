@@ -599,7 +599,8 @@ describe("atendimento_do_periodo: o desempenho do agente", () => {
     );
     await passagem(clinicaA, anterior.id, "insatisfacao", -40 * DIA + 40_000);
 
-    // Consultas da A: a recusada e a da equipe nao contam.
+    // Consultas da A: a pendente, a recusada e a da equipe nao contam
+    // (metricas certas, 23/11/2026: Agendou igual a etapa da Jornada).
     const { data: prof } = await admin
       .from("professional")
       .insert({ clinic_id: clinicaA, name: "Dra. Agente" })
@@ -650,10 +651,11 @@ describe("atendimento_do_periodo: o desempenho do agente", () => {
     await admin
       .from("appointment")
       .insert([
-        consulta("ia", "pendente", -1 * DIA, 100),
+        consulta("ia", "aprovado", -1 * DIA, 100),
         consulta("ia", "recusado", -1 * DIA, 101),
         consulta("usuario", null, -1 * DIA, 102),
-        consulta("ia", "pendente", -40 * DIA, 103),
+        consulta("ia", "aprovado", -40 * DIA, 103),
+        consulta("ia", "pendente", -1 * DIA, 104),
       ])
       .throwOnError();
 
