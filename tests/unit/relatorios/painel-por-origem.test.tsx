@@ -558,11 +558,11 @@ describe("o aviso do filtro, aba por aba", () => {
     expect(avisoDoFiltroDeOrigem("marketing", "google")).toEqual(porCanal);
   });
 
-  it("Comercial: só o Funil comercial acompanha", () => {
+  it("Comercial: Vendas, Valor das vendas e o Funil comercial acompanham", () => {
     const aviso = avisoDoFiltroDeOrigem("comercial", "outras");
     expect(aviso.titulo).toBe("Origem escolhida: Outras origens");
     expect(aviso.texto).toBe(
-      "Acompanham a origem: Funil comercial. Continuam com todas as origens: Consultas agendadas, Comparecimentos, Faltas, Cancelamentos, Consultas recuperadas, Faturamento estimado, Confirmação de consulta e Detalhe da agenda.",
+      "Acompanham a origem: Vendas, Valor das vendas e Funil comercial. Continuam com todas as origens: Consultas agendadas, Comparecimentos, Faltas, Cancelamentos, Consultas recuperadas, Faturamento estimado, Confirmação de consulta e Detalhe da agenda.",
     );
     expect(aviso.notaDaTela).toBeNull();
   });

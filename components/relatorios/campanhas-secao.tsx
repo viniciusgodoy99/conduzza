@@ -92,7 +92,7 @@ const COLUNAS_SEM_VALORES: ColumnDef<LinhaDeCampanhaDaTela, unknown>[] = [
 
 // Ordem do prototipo (screens-inteligencia.jsx): Campanha, Investimento,
 // Leads, Custo por lead, Agendados, Conversao; depois Compareceram, Custo por
-// consulta realizada, Faturamento e Retorno.
+// consulta realizada, Faturamento, Retorno, Vendas e Valor das vendas.
 const COLUNAS_COM_VALORES: ColumnDef<LinhaDeCampanhaDaTela, unknown>[] = [
   COLUNA_CAMPANHA,
   {
@@ -132,6 +132,19 @@ const COLUNAS_COM_VALORES: ColumnDef<LinhaDeCampanhaDaTela, unknown>[] = [
     header: "Retorno",
     meta: { align: "right" },
     cell: ({ row }) => <CelulaDeValor valor={row.original.retorno} />,
+  },
+  // Venda pela Jornada (23/11/2026): fora do faturamento e do retorno.
+  {
+    id: "vendas",
+    header: "Vendas",
+    meta: { align: "right" },
+    cell: ({ row }) => <CelulaDeValor valor={row.original.vendas} />,
+  },
+  {
+    id: "valorDasVendas",
+    header: "Valor das vendas",
+    meta: { align: "right" },
+    cell: ({ row }) => <CelulaDeValor valor={row.original.valorDasVendas} />,
   },
 ];
 

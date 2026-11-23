@@ -1,7 +1,10 @@
 "use client";
 
 import { CartoesDaAgenda } from "@/components/relatorios/cartoes-da-agenda";
-import { CartaoFaturamento } from "@/components/relatorios/cartoes-de-valor";
+import {
+  CartaoFaturamento,
+  CartoesDeVendas,
+} from "@/components/relatorios/cartoes-de-valor";
 import { ConfirmacaoCompleta } from "@/components/relatorios/confirmacao-completa";
 import { DetalheDaAgenda } from "@/components/relatorios/detalhe-da-agenda";
 import { FunilComercial } from "@/components/relatorios/funil-comercial";
@@ -16,6 +19,7 @@ import type {
   LinhaDeBase,
   Periodizado,
   PivoDaRegua,
+  VendasDoPeriodo,
 } from "@/lib/queries/relatorios";
 
 // Aba Comercial (Fase 3, recebe Agendamentos e Confirmacao): o movimento da
@@ -23,6 +27,8 @@ import type {
 // do Inicio), o faturamento estimado detalhado (so admin e gestor), o funil
 // de coorte, a Confirmacao completa com a linha de base e o pivo da regua
 // (brief Tela 11) e o detalhe por profissional, procedimento ou situacao.
+// Venda pela Jornada (23/11/2026): Vendas e Valor das vendas logo abaixo do
+// faturamento, separados dele, no filtro de origem da tela.
 
 function TextoDasRecuperadas({
   recuperadas,
@@ -73,6 +79,9 @@ export function AbaComercial({
   faturamento,
   faturamentoComErro,
   aoTentarFaturamentoDeNovo,
+  vendas,
+  vendasComErro,
+  aoTentarVendasDeNovo,
   linhaDeBase,
   ehAdmin,
   podeVerValores,
@@ -88,6 +97,10 @@ export function AbaComercial({
   faturamento: Periodizado<FaturamentoDoPeriodo> | null | undefined;
   faturamentoComErro: boolean;
   aoTentarFaturamentoDeNovo: () => void;
+  /** vendas_do_periodo: undefined = carregando; null = sem permissao */
+  vendas: VendasDoPeriodo | null | undefined;
+  vendasComErro: boolean;
+  aoTentarVendasDeNovo: () => void;
   linhaDeBase: LinhaDeBase;
   ehAdmin: boolean;
   podeVerValores: boolean;
@@ -142,6 +155,21 @@ export function AbaComercial({
           }
         />
       </div>
+
+      <CartoesDeVendas
+        podeVerValores={podeVerValores}
+        vendas={vendas}
+        erro={vendasComErro}
+        tentarDeNovo={
+          <Button
+            variant="outline"
+            className="h-10"
+            onClick={aoTentarVendasDeNovo}
+          >
+            Tentar de novo
+          </Button>
+        }
+      />
 
       <FunilComercial coorte={funil.atual.coorte} />
 

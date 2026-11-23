@@ -5540,6 +5540,48 @@ export type Database = {
           },
         ]
       }
+      venda_da_jornada: {
+        Row: {
+          clinic_id: string
+          contact_id: string
+          etapa_chave: string
+          id: string
+          value_cents: number | null
+          vendido_em: string
+        }
+        Insert: {
+          clinic_id: string
+          contact_id: string
+          etapa_chave: string
+          id?: string
+          value_cents?: number | null
+          vendido_em?: string
+        }
+        Update: {
+          clinic_id?: string
+          contact_id?: string
+          etapa_chave?: string
+          id?: string
+          value_cents?: number | null
+          vendido_em?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "venda_da_jornada_clinic_id_fkey"
+            columns: ["clinic_id"]
+            isOneToOne: false
+            referencedRelation: "clinic"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "venda_da_jornada_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contact"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       waitlist: {
         Row: {
           active: boolean
@@ -7569,6 +7611,15 @@ export type Database = {
       }
       user_professional_id: { Args: { p_clinic_id: string }; Returns: string }
       validar_codigo_clinica: { Args: { p_codigo: string }; Returns: Json }
+      vendas_do_periodo: {
+        Args: {
+          p_ate: string
+          p_clinic_id: string
+          p_de: string
+          p_grupo?: string
+        }
+        Returns: Json
+      }
       vender_pacote: {
         Args: {
           p_contact_id: string

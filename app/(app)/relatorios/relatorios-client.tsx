@@ -51,6 +51,7 @@ import {
   fetchObjetivoDeConversao,
   fetchPassagensDaIaDoPeriodo,
   fetchSerieDiariaDoPeriodo,
+  fetchVendasDoPeriodo,
   relatoriosKeys,
   resolverAbaDeResultados,
   type AbaDeResultados,
@@ -92,6 +93,9 @@ import { createClient } from "@/lib/supabase/client";
 // Metricas certas (23/11/2026): a aba Agente de IA busca tambem
 // passagens_da_ia_do_periodo ("Por que foi para a equipe"), que a exportacao
 // da aba espera.
+//
+// Venda pela Jornada (23/11/2026): a aba Comercial busca vendas_do_periodo
+// (so admin e gestor), que acompanha a origem e que a exportacao espera.
 
 /** Valor do seletor para "Todas as origens" (nunca vai para a URL). */
 const TODAS_AS_ORIGENS = "todas";
@@ -252,6 +256,8 @@ export function RelatoriosClient({
   const precisaAnuncios = abaAtiva === "geral" || abaAtiva === "marketing";
   // Por que foi para a equipe (23/11/2026): so na aba Agente de IA.
   const precisaPassagens = abaAtiva === "ia";
+  // Venda pela Jornada (23/11/2026): so na Comercial e so para a gestao.
+  const precisaVendas = podeVerValores && abaAtiva === "comercial";
 
   useDadosDoServidor(
     relatoriosKeys.funil(clinicId, diaDeInicial, diaAteInicial, grupoInicial),
@@ -352,6 +358,15 @@ export function RelatoriosClient({
     staleTime: 60_000,
     enabled: precisaPassagens,
   });
+  const vendasQuery = useQuery({
+    queryKey: relatoriosKeys.vendas(clinicId, diaDe, diaAte, grupo),
+    queryFn: () =>
+      fetchVendasDoPeriodo(supabase, clinicId, timezone, diaDe, diaAte, {
+        grupo,
+      }),
+    staleTime: 60_000,
+    enabled: precisaVendas,
+  });
   const linhaDeBaseQuery = useQuery({
     queryKey: relatoriosKeys.linhaDeBase(clinicId),
     queryFn: () => fetchLinhaDeBase(supabase, clinicId),
@@ -388,7 +403,9 @@ export function RelatoriosClient({
     (!precisaAnuncios ||
       (anunciosQuery.data !== undefined && !anunciosQuery.isError)) &&
     (!precisaPassagens ||
-      (passagensQuery.data !== undefined && !passagensQuery.isError));
+      (passagensQuery.data !== undefined && !passagensQuery.isError)) &&
+    (!precisaVendas ||
+      (vendasQuery.data !== undefined && !vendasQuery.isError));
 
   const montarExportavel = () =>
     montarExportavelDaAba({
@@ -406,6 +423,7 @@ export function RelatoriosClient({
       campanhas: campanhasQuery.data,
       anuncios: precisaAnuncios ? anunciosQuery.data : undefined,
       passagens: precisaPassagens ? passagensQuery.data : undefined,
+      vendas: precisaVendas ? vendasQuery.data : undefined,
       rotulosDosMotivos,
       timezone,
       grupo,
@@ -643,6 +661,9 @@ export function RelatoriosClient({
               faturamento={podeVerValores ? faturamentoQuery.data : null}
               faturamentoComErro={podeVerValores && faturamentoQuery.isError}
               aoTentarFaturamentoDeNovo={() => void faturamentoQuery.refetch()}
+              vendas={podeVerValores ? vendasQuery.data : null}
+              vendasComErro={podeVerValores && vendasQuery.isError}
+              aoTentarVendasDeNovo={() => void vendasQuery.refetch()}
               linhaDeBase={linhaDeBaseQuery.data ?? null}
               ehAdmin={ehAdmin}
               podeVerValores={podeVerValores}

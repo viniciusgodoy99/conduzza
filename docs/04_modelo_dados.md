@@ -5394,3 +5394,56 @@ Cada linha de `campanhas_do_periodo` ganha `comparecimentos` (as consultas com c
 - **Validação sem aplicar (23/11/2026):** os corpos SQL novos passaram por `explain` e rodaram na produção numa conexão só leitura (com `contato_e_lead` trocado pela expressão dela); o `alter table`, o gatilho e as duas funções novas rodaram num Postgres local com tabelas mínimas (a decisão fica sem conversa e sem mensagem, o rascunho sai, a clínica apagada leva tudo).
 - **Testes escritos e não rodados** (dependem da migration): `tests/integration/metricas-certas.test.ts` e `tests/rls/metricas-certas.test.ts`. Os testes de banco que criam lead direto (sem a ingestão) passaram a gravar a autorização da ingestão por `tests/rls/lead-de-verdade.ts` (`nascerDeMensagem`): `tests/integration/` `metricas-fase-3`, `painel-por-origem`, `anuncios-com-plataforma`, `relatorios` e `campanhas-do-periodo`, e `tests/rls/` `metricas-fase-3`, `investimento-meta`, `anuncio-do-whatsapp`, `relatorios` e `filtro-por-campanha-e-anuncio`. **O e2e de Resultados (`tests/e2e/resultados.spec.ts` e a fixture) não foi mexido:** os leads da fixture são criados direto e deixam de contar; as contagens dele precisam da autorização da ingestão na fixture.
 - **Rollback (manual):** no cabeçalho da migration.
+
+## 52. Venda pela Jornada (decisão do dono de 23/11/2026; migration `20261123110000_venda_pela_jornada.sql`, escrita na branch `revisao-2311-metricas`, por cima da 51; **NÃO aplicada**)
+
+A marca "Esta etapa é uma venda" da Jornada (`funnel_stage_def.is_sale`) passa a gerar números em Resultados. Até aqui ela era gravada e nenhum número a lia (revisão de 17/11/2026). A marca de primeiro contato (`is_first_contact`) continua sem uso.
+
+### 52.1 A tabela `venda_da_jornada`
+
+```sql
+create table venda_da_jornada (
+  id uuid primary key default gen_random_uuid(),
+  clinic_id uuid not null references clinic(id) on delete cascade,
+  contact_id uuid not null references contact(id) on delete cascade,  -- apagar o contato (LGPD) leva as vendas
+  etapa_chave text not null,          -- a chave no momento da venda; sem FK de propósito (como conversion_event.stage_chave)
+  value_cents integer check (value_cents is null or value_cents >= 0),  -- nulo: a etapa sem valor, ou sem preço
+  vendido_em timestamptz not null default now()
+);
+-- Índices: (clinic_id, vendido_em) para o período; (contact_id) para a cascata.
+-- RLS ligada. Uma policy, só de leitura: user_has_role(clinic_id, admin ou gestor),
+-- a mesma regra do faturamento. Nenhuma policy de escrita.
+-- Grants: anon nada; authenticated e service_role só SELECT. Quem grava é o
+-- gatilho (security definer) e a carga inicial da migration.
+```
+
+- **O que é uma venda:** cada **entrada** de um contato numa etapa com `is_sale`, a partir de quando a etapa está marcada. Sair e voltar conta de novo (`conversion_event` é uma por contato e etapa; aqui não). Desmarcar a etapa não apaga as vendas já registradas. A marca vale mesmo sem evento da Meta ou com a conversão pausada: só `is_sale` decide (a tela da Jornada só mostra a marca com um evento escolhido; o banco não exige).
+- **O valor:** `valor_da_conversao(clinic_id, contact_id, value_source, value_cents)` da etapa, fotografado na entrada (fixo; o preço da consulta do agendamento pela regra do faturamento; ou nulo).
+
+### 52.2 O gatilho `registrar_venda_da_jornada`
+
+`AFTER INSERT OR UPDATE OF funnel_stage ON contact`, `FOR EACH ROW`, função `registrar_venda_da_jornada()` (`plpgsql`, `security definer`, `search_path` vazio, `execute` revogado de `public`, `anon`, `authenticated` e `service_role`). Na mesma etapa (update que não muda `funnel_stage`) não faz nada; na etapa sem `is_sale` também não. O molde é `registrar_conversao_do_funil`: qualquer erro vira `warning` com a clínica e o `sqlerrm` (nunca dado de paciente) e a mudança de etapa segue.
+
+### 52.3 `vendas_do_periodo(p_clinic_id uuid, p_de timestamptz, p_ate timestamptz, p_grupo text default null) returns jsonb`
+
+`stable`, `security invoker` (RLS de `venda_da_jornada`), `search_path` vazio; `execute` para `authenticated` e `service_role`, revogado de `public` e `anon`. **Nula** para quem não é admin nem gestor da clínica pedida (a regra de `faturamento_do_periodo`; `service_role` passa). Devolve `{tem_etapa_de_venda, vendas, valor_cents, sem_valor}`: as vendas com `vendido_em` em `[p_de, p_ate)` (pelo momento da venda, não pela chegada do lead), a soma das com valor e quantas não têm valor. `p_grupo` (`meta`, `google`, `outras`, `nao_rastreada`) filtra pelo `grupo_de_origem` do contato da venda, como `funil_do_periodo`; nulo, todas. `tem_etapa_de_venda` diz se alguma etapa da clínica está marcada hoje (a tela explica como marcar).
+
+### 52.4 `campanhas_do_periodo`: as colunas de venda
+
+Mesma assinatura (`create or replace` a partir do corpo da 51; os trechos novos marcados com `[venda pela jornada]`). Cada linha ganha `vendas`, `valor_das_vendas_cents` e `vendas_sem_valor`, e o bloco ganha `tem_etapa_de_venda`, todos só para quem vê valores (nulos para os outros papéis, como o faturamento). A venda entra na campanha do **contato**, pela mesma regra do lead (anúncio em `meta_anuncio`, senão o id de campanha conhecido, senão o texto de `source_campaign`), pelo momento da venda e **sem** o filtro de origem (a tabela inteira continua sem ele). Uma campanha só com venda no período (sem lead nem gasto) vira linha para a gestão; `campanhas_sem_lead` passa a contar só a linha com gasto (`m.leads = 0 and m.cents > 0`), então a linha só com venda não entra em "Investimento sem lead casado". O faturamento e o retorno não mudam.
+
+### 52.5 Na aplicação
+
+- **Resultados, aba Comercial:** cartões "Vendas" e "Valor das vendas" logo abaixo do faturamento estimado, separados dele, só para administrador e gestor ("Sem acesso" com a dica para os outros). Acompanham o período e o filtro de origem (o aviso do filtro da aba diz isso). Estados: carregando, erro com "Tentar de novo", nenhuma etapa marcada ("Nenhuma etapa da Jornada está marcada como venda", como marcar e o atalho "Abrir a Jornada"), nenhuma venda, só vendas sem valor ("Sem valor para somar") e "Fora da soma: N vendas sem valor". A exportação da aba ganha a seção "Vendas da Jornada".
+- **Tabela Campanhas** (Visão geral e Marketing): colunas "Vendas" e "Valor das vendas" no fim, só para a gestão, com a nota "N vendas sem valor" na célula; o rodapé diz o que elas contam, ou que nenhuma etapa está marcada. A exportação leva as duas colunas.
+- **Jornada:** o aviso sob as marcas diz que a de venda conta em Resultados a partir de quando a etapa está marcada, e que a de primeiro contato ainda não muda nenhum número.
+- **Tipos:** `venda_da_jornada` e `vendas_do_periodo` escritos à mão em `lib/supabase/database.types.ts`, no formato gerado (conferir com o gerado depois de aplicar).
+
+### 52.6 Travas, ordem, provas e rollback
+
+- **Travas:** `lock_timeout` de 3 s. A tabela é nova. O `create trigger` em `contact` pega SHARE ROW EXCLUSIVE até o commit (a gravação de contato espera frações de segundo; a leitura não). A carga inicial vem **depois** do gatilho, com a trava já na mão: nenhum movimento fica de fora nem conta duas vezes. Os `create or replace` só tocam o catálogo. Horário calmo.
+- **Ordem:** depois da 51 (`20261123100000`), porque `campanhas_do_periodo` parte do corpo dela. A migration antes do código ou junto: sem ela, os cartões de venda mostram o erro (a RPC não existe) e as colunas da tabela ficam "Não medido".
+- **Carga inicial:** os contatos que já estão numa etapa com `is_sale`, com o momento `funnel_stage_changed_at`. Na produção em 23/11/2026 nenhuma das 4 clínicas tem etapa marcada nem `value_source`: zero linhas, e a tela nasce no estado "nenhuma etapa marcada".
+- **Provas (23/11/2026):** a migration rodou num Postgres 18 local com as tabelas mínimas (tipos da produção) e os papéis do Supabase: carga inicial; entrar grava; mesma etapa e outra coluna não gravam; etapa comum não grava; sair e voltar grava de novo; valor fixo, pelo preço da consulta e nulo; insert direto numa etapa de venda grava; com a função de valor quebrada e com preço negativo (o CHECK da venda estoura) a etapa muda e nada grava; `vendas_do_periodo` por janela, por grupo e sem etapa marcada; a linha de campanha só com venda, a de texto com lead e venda, `campanhas_sem_lead`; admin da A lê a A e recebe nulo da B; recepção, profissional e anon sem nada; a sessão e o `service_role` não inserem, alteram nem apagam; a cascata do contato e da clínica. Cinco sabotagens de controle foram pegas.
+- **Testes escritos e não rodados** (dependem da migration): `tests/integration/venda-pela-jornada.test.ts` e `tests/rls/venda-pela-jornada.test.ts`.
+- **Rollback (manual):** no cabeçalho da migration.

@@ -61,6 +61,7 @@ import type {
   Periodizado,
   PlataformaDosLeads,
   PontoDaSerie,
+  VendasDoPeriodo,
 } from "@/lib/queries/relatorios";
 
 // Regras PURAS da Tela 11 (Resultados), sem React e sem I/O: as linhas das
@@ -100,6 +101,42 @@ export function estadoDoFaturamento(
     return "sem-preco";
   }
   return "com-valor";
+}
+
+// ---------------------------------------------------------------------------
+// Venda pela Jornada (23/11/2026): os mesmos textos no cartao e no CSV
+// ---------------------------------------------------------------------------
+// Cada entrada de um contato numa etapa marcada como venda, pelo momento da
+// venda. Separado do faturamento estimado: nao soma nele nem no retorno.
+
+export const TEXTO_SEM_ETAPA_DE_VENDA =
+  "Nenhuma etapa da Jornada está marcada como venda";
+export const COMO_MARCAR_ETAPA_DE_VENDA =
+  "Para contar, abra a etapa em Configurações, Jornada, escolha o evento que a Meta recebe e marque “Esta etapa é uma venda”. Conta a partir de quando a etapa estiver marcada.";
+export const TEXTO_SEM_VENDA = "Nenhuma venda no período";
+export const TEXTO_SEM_VALOR_PARA_SOMAR = "Sem valor para somar";
+/** A celula da campanha sem venda no periodo. */
+export const CELULA_SEM_VENDA = "Nenhuma venda";
+
+/** "1 venda sem valor", "3 vendas sem valor". */
+export function textoDeVendasSemValor(quantos: number): string {
+  return `${quantos.toLocaleString("pt-BR")} ${
+    quantos === 1 ? "venda sem valor" : "vendas sem valor"
+  }`;
+}
+
+/**
+ * Nenhuma etapa marcada (e nenhuma venda guardada de quando havia): a tela
+ * explica como marcar. Sem venda, ou so com vendas sem valor, "R$ 0,00"
+ * seria um numero falso: o cartao e o CSV escrevem o estado.
+ */
+export function estadoDasVendas(
+  vendas: VendasDoPeriodo,
+): "sem-etapa" | "sem-venda" | "sem-valor" | "com-valor" {
+  if (vendas.vendas === 0) {
+    return vendas.temEtapaDeVenda ? "sem-venda" : "sem-etapa";
+  }
+  return vendas.semValor >= vendas.vendas ? "sem-valor" : "com-valor";
 }
 
 // ---------------------------------------------------------------------------
@@ -395,7 +432,7 @@ export const CELULA_SEM_LEADS = "Sem leads";
 export const CELULA_NAO_MEDIDO = "Não medido";
 export const CELULA_SEM_INVESTIMENTO = "Sem investimento";
 export const NOTA_DOS_VALORES_DAS_CAMPANHAS =
-  "Investimento, custo por lead, custo por consulta realizada, faturamento e retorno: só administrador e gestor.";
+  "Investimento, custo por lead, custo por consulta realizada, faturamento, retorno, vendas e valor das vendas: só administrador e gestor.";
 /**
  * O que as colunas Faturamento e Retorno contam (etapa 5 do plano de
  * 16/11/2026). E por coorte, como Agendados: os leads que chegaram no
@@ -404,6 +441,14 @@ export const NOTA_DOS_VALORES_DAS_CAMPANHAS =
  */
 export const NOTA_DO_FATURAMENTO_DAS_CAMPANHAS =
   "Faturamento: consultas com comparecimento dos leads da campanha que chegaram no período. Custo por consulta realizada: investimento dividido por essas consultas. Retorno: faturamento dividido pelo investimento.";
+/**
+ * O que Vendas e Valor das vendas contam (venda pela Jornada, 23/11/2026):
+ * pelo momento da venda, nao pela chegada do lead, e fora do faturamento.
+ */
+export const NOTA_DAS_VENDAS_DAS_CAMPANHAS =
+  "Vendas: entradas numa etapa da Jornada marcada como venda no período, pela campanha do contato. Valor das vendas: o valor da etapa na hora da venda. As duas ficam fora do faturamento e do retorno.";
+/** Nenhuma etapa marcada: as colunas ficam em zero e a tabela diz por que. */
+export const NOTA_SEM_ETAPA_DE_VENDA_NAS_CAMPANHAS = `${TEXTO_SEM_ETAPA_DE_VENDA}: Vendas e Valor das vendas ficam em zero. ${COMO_MARCAR_ETAPA_DE_VENDA}`;
 
 /** Faturamento dividido pelo investimento; null sem investimento. */
 export function retornoDaCampanha(
@@ -454,6 +499,10 @@ export type LinhaDeCampanhaDaTela = {
   faturamento: CelulaDeCampanha | null;
   /** faturamento / investimento ("3,2x"); null = a coluna nao existe */
   retorno: CelulaDeCampanha | null;
+  /** Venda pela Jornada; null = a coluna nao existe para este papel */
+  vendas: CelulaDeCampanha | null;
+  /** null = a coluna nao existe para este papel */
+  valorDasVendas: CelulaDeCampanha | null;
 };
 
 /** As colunas Investimento e Custo por lead existem para este retrato? */
@@ -595,6 +644,36 @@ export function montarCampanhas(
           retorno = { texto: textoDoRetorno(vezes), estado: false };
         }
       }
+      // Venda pela Jornada (23/11/2026): pelo momento da venda, na campanha
+      // do contato; sem o campo do banco, "Não medido".
+      let vendas: CelulaDeCampanha | null = null;
+      let valorDasVendas: CelulaDeCampanha | null = null;
+      if (comValores) {
+        if (linha.vendas === null || linha.valorDasVendasCents === null) {
+          vendas = celulaDeEstado(CELULA_NAO_MEDIDO);
+          valorDasVendas = celulaDeEstado(CELULA_NAO_MEDIDO);
+        } else {
+          vendas = {
+            texto: linha.vendas.toLocaleString("pt-BR"),
+            estado: false,
+          };
+          const semValor = linha.vendasSemValor ?? 0;
+          valorDasVendas =
+            linha.vendas === 0
+              ? celulaDeEstado(CELULA_SEM_VENDA)
+              : semValor >= linha.vendas
+                ? {
+                    ...celulaDeEstado(TEXTO_SEM_VALOR_PARA_SOMAR),
+                    nota: textoDeVendasSemValor(semValor),
+                  }
+                : semValor > 0
+                  ? {
+                      ...celulaEmReais(linha.valorDasVendasCents),
+                      nota: textoDeVendasSemValor(semValor),
+                    }
+                  : celulaEmReais(linha.valorDasVendasCents);
+        }
+      }
       return {
         chave: linha.chave,
         rotulo: rotuloDaLinhaDeCampanha(linha),
@@ -607,6 +686,8 @@ export function montarCampanhas(
         custoPorConsulta,
         faturamento,
         retorno,
+        vendas,
+        valorDasVendas,
       };
     });
 }
@@ -876,6 +957,11 @@ export function rodapesDasCampanhas(
     campanhas.linhas.length > 0
   ) {
     linhas.push(NOTA_DO_FATURAMENTO_DAS_CAMPANHAS);
+    linhas.push(
+      campanhas.temEtapaDeVenda === false
+        ? NOTA_SEM_ETAPA_DE_VENDA_NAS_CAMPANHAS
+        : NOTA_DAS_VENDAS_DAS_CAMPANHAS,
+    );
   }
   return linhas;
 }
@@ -1255,6 +1341,8 @@ export type EntradaDaExportacao = {
   serie?: PontoDaSerie[];
   /** null = o banco recusou (sem permissao); nunca vira zero */
   faturamento?: Periodizado<FaturamentoDoPeriodo> | null;
+  /** vendas_do_periodo (aba Comercial); null = sem acesso */
+  vendas?: VendasDoPeriodo | null;
   linhaDeBase?: LinhaDeBase;
   objetivo?: ObjetivoDeConversao;
   conversoes?: ConversoesResumo;
@@ -1387,6 +1475,8 @@ function secaoDeCampanhas(
         "Custo por consulta realizada",
         "Faturamento",
         "Retorno",
+        "Vendas",
+        "Valor das vendas",
       ]
     : ["Campanha", "Leads", "Agendados", "Conversão", "Compareceram"];
   return {
@@ -1418,6 +1508,8 @@ function secaoDeCampanhas(
               celula(linha.custoPorConsulta),
               celula(linha.faturamento),
               celula(linha.retorno),
+              celula(linha.vendas),
+              celula(linha.valorDasVendas),
             ]
           : [
               linha.rotulo,
@@ -1510,6 +1602,32 @@ function linhasDoFaturamento(
     ],
     ["Comparecimentos de convênio sem valor", numero(atual.cobertas)],
     ["Comparecimentos sem preço cadastrado", numero(atual.semPreco)],
+  ];
+}
+
+/** Os cartoes Vendas e Valor das vendas, com os mesmos textos. */
+function linhasDasVendas(
+  podeVerValores: boolean,
+  vendas: VendasDoPeriodo | null | undefined,
+): string[][] {
+  if (!podeVerValores || !vendas) {
+    return [];
+  }
+  const estado = estadoDasVendas(vendas);
+  if (estado === "sem-etapa") {
+    return [["Vendas", TEXTO_SEM_ETAPA_DE_VENDA]];
+  }
+  return [
+    ["Vendas", numero(vendas.vendas)],
+    [
+      "Valor das vendas",
+      estado === "sem-venda"
+        ? TEXTO_SEM_VENDA
+        : estado === "sem-valor"
+          ? TEXTO_SEM_VALOR_PARA_SOMAR
+          : formatarReaisCompleto(vendas.valorCents),
+    ],
+    ["Vendas sem valor", numero(vendas.semValor)],
   ];
 }
 
@@ -1764,6 +1882,13 @@ function montarComercial(entrada: EntradaDaExportacao): SecaoExportavel[] {
     secoes.push({
       titulo: "Faturamento estimado",
       linhas: [["Indicador", "Valor"], ...faturamento],
+    });
+  }
+  const vendas = linhasDasVendas(entrada.podeVerValores, entrada.vendas);
+  if (vendas.length > 0) {
+    secoes.push({
+      titulo: "Vendas da Jornada",
+      linhas: [["Indicador", "Valor"], ...vendas],
     });
   }
   const funil = entrada.funil?.atual;

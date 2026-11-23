@@ -429,7 +429,7 @@ test("admin vê o custo por lead e as colunas de investimento com o gasto lido",
     );
     await expect(campanhas).toContainText(/Leads sem campanha: \d+ de \d+/);
     await expect(campanhas).not.toContainText(
-      "Investimento, custo por lead, custo por consulta realizada, faturamento e retorno: só administrador e gestor.",
+      "Investimento, custo por lead, custo por consulta realizada, faturamento, retorno, vendas e valor das vendas: só administrador e gestor.",
     );
 
     // Marketing: o mesmo cartao e a mesma tabela.
@@ -509,7 +509,7 @@ test("recepção não vê nenhum R$ em Resultados nem no CSV, com o investimento
       campanhas.getByRole("columnheader", { name: "Custo por lead", exact: true }),
     ).toHaveCount(0);
     await expect(campanhas).toContainText(
-      "Investimento, custo por lead, custo por consulta realizada, faturamento e retorno: só administrador e gestor.",
+      "Investimento, custo por lead, custo por consulta realizada, faturamento, retorno, vendas e valor das vendas: só administrador e gestor.",
     );
     await expect(page.locator("main")).not.toContainText("R$");
 

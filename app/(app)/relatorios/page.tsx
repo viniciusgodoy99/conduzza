@@ -43,7 +43,9 @@ import { VisaoDoProfissional } from "./visao-do-profissional";
 //
 // Painel por origem (decisao do dono de 17/11/2026): ?origem= escolhe um dos
 // quatro grupos (meta, google, outras, nao_rastreada). Valor fora da lista e
-// "todas as origens". So o funil e a serie diaria acompanham o filtro.
+// "todas as origens". O funil, a serie diaria e as vendas da Jornada
+// (vendas_do_periodo, buscada pelo cliente na aba Comercial) acompanham o
+// filtro.
 
 const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
 

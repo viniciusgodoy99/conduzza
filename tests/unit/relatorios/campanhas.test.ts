@@ -98,6 +98,8 @@ describe("rodapesDasCampanhas", () => {
       "Leads do Meta Ads sem campanha reconhecida: 12",
       // Etapa 5: o que Faturamento e Retorno contam, so para quem os ve.
       "Faturamento: consultas com comparecimento dos leads da campanha que chegaram no período. Custo por consulta realizada: investimento dividido por essas consultas. Retorno: faturamento dividido pelo investimento.",
+      // Venda pela Jornada (23/11/2026): o que Vendas e Valor das vendas contam.
+      "Vendas: entradas numa etapa da Jornada marcada como venda no período, pela campanha do contato. Valor das vendas: o valor da etapa na hora da venda. As duas ficam fora do faturamento e do retorno.",
     ]);
   });
 
@@ -200,7 +202,7 @@ describe("rodapesDasCampanhas", () => {
       "Leads do Meta Ads sem campanha reconhecida: 12",
     ]);
     expect(NOTA_DOS_VALORES_DAS_CAMPANHAS).toBe(
-      "Investimento, custo por lead, custo por consulta realizada, faturamento e retorno: só administrador e gestor.",
+      "Investimento, custo por lead, custo por consulta realizada, faturamento, retorno, vendas e valor das vendas: só administrador e gestor.",
     );
   });
 

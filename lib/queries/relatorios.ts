@@ -239,6 +239,17 @@ export type LinhaDeCampanhaDoPeriodo = {
    * quando o banco ainda nao manda.
    */
   comparecimentosSemPreco: number | null;
+  /**
+   * Venda pela Jornada (migration 20261123110000): as entradas numa etapa
+   * marcada como venda no periodo (pelo momento da venda, nao pela chegada
+   * do lead), de contatos desta campanha. null fora da gestao e quando o
+   * banco ainda nao manda.
+   */
+  vendas: number | null;
+  /** A soma do valor dessas vendas, em centavos (mesmas regras de null). */
+  valorDasVendasCents: number | null;
+  /** Dessas vendas, as sem valor (a etapa sem valor, ou sem preco). */
+  vendasSemValor: number | null;
 };
 
 /** Situacao da leitura do investimento (meta_gasto_leitura.situacao). */
@@ -346,6 +357,26 @@ export type CampanhasDoPeriodo = {
   linhas: LinhaDeCampanhaDoPeriodo[];
   /** null = sem acesso a valores (fora de admin e gestor). */
   investimento: InvestimentoDoPeriodo | null;
+  /**
+   * Alguma etapa da Jornada esta marcada como venda (20261123110000). null
+   * fora da gestao e quando o banco ainda nao manda.
+   */
+  temEtapaDeVenda: boolean | null;
+};
+
+/**
+ * Venda pela Jornada (vendas_do_periodo, migration 20261123110000): cada
+ * entrada de um contato numa etapa marcada como venda, pelo momento da
+ * venda, no filtro de origem da tela. Separado do faturamento estimado.
+ */
+export type VendasDoPeriodo = {
+  /** false: nenhuma etapa da Jornada esta marcada como venda. */
+  temEtapaDeVenda: boolean;
+  vendas: number;
+  /** Soma das vendas com valor, em centavos. */
+  valorCents: number;
+  /** Vendas sem valor (fora da soma). */
+  semValor: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -426,6 +457,12 @@ export const relatoriosKeys = {
     ["relatorios", clinicId, "anuncios", diaDe, diaAte] as const,
   passagens: (clinicId: string, diaDe: string, diaAte: string) =>
     ["relatorios", clinicId, "passagens", diaDe, diaAte] as const,
+  vendas: (
+    clinicId: string,
+    diaDe: string,
+    diaAte: string,
+    grupo: GrupoDeOrigem | null,
+  ) => ["relatorios", clinicId, "vendas", diaDe, diaAte, grupo] as const,
   proximasAcoes: (clinicId: string) =>
     ["inicio", clinicId, "proximas-acoes"] as const,
 };
@@ -970,6 +1007,10 @@ type LinhaDeCampanhaRpc = {
   /** ausentes antes da migration 20261123100000 */
   comparecimentos?: number | null;
   comparecimentos_sem_preco?: number | null;
+  /** ausentes antes da migration 20261123110000 */
+  vendas?: number | null;
+  valor_das_vendas_cents?: number | null;
+  vendas_sem_valor?: number | null;
 };
 
 type InvestimentoRpc = {
@@ -998,6 +1039,8 @@ type CampanhasRpc = {
   leads_sem_campanha: number;
   linhas: LinhaDeCampanhaRpc[];
   investimento: InvestimentoRpc | null;
+  /** ausente antes da migration 20261123110000 */
+  tem_etapa_de_venda?: boolean | null;
 };
 
 function lerInvestimento(
@@ -1054,8 +1097,15 @@ function lerCampanhas(bloco: CampanhasRpc, hoje: string): CampanhasDoPeriodo {
       faturamentoCents: numeroOuNulo(linha.faturamento_cents),
       comparecimentos: numeroOuNulo(linha.comparecimentos),
       comparecimentosSemPreco: numeroOuNulo(linha.comparecimentos_sem_preco),
+      vendas: numeroOuNulo(linha.vendas),
+      valorDasVendasCents: numeroOuNulo(linha.valor_das_vendas_cents),
+      vendasSemValor: numeroOuNulo(linha.vendas_sem_valor),
     })),
     investimento: lerInvestimento(bloco.investimento, hoje),
+    temEtapaDeVenda:
+      typeof bloco.tem_etapa_de_venda === "boolean"
+        ? bloco.tem_etapa_de_venda
+        : null,
   };
 }
 
@@ -1280,5 +1330,52 @@ export async function fetchPassagensDaIaDoPeriodo(
       motivo: linha.motivo,
       passagens: Number(linha.passagens),
     })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Venda pela Jornada (vendas_do_periodo, 23/11/2026)
+// ---------------------------------------------------------------------------
+
+type VendasRpc = {
+  tem_etapa_de_venda: boolean;
+  vendas: number;
+  valor_cents: number;
+  sem_valor: number;
+};
+
+/**
+ * Vendas e Valor das vendas do periodo, no filtro de origem. So chamar para
+ * admin e gestor: a funcao devolve null para qualquer outro papel (e para
+ * outra clinica), e aqui null vira null, que a tela mostra como "Sem
+ * acesso". Nunca zero. LANCA em erro.
+ */
+export async function fetchVendasDoPeriodo(
+  supabase: SupabaseClient,
+  clinicId: string,
+  timezone: string,
+  diaDe: string,
+  diaAte: string,
+  opcoes: OpcaoDeGrupo = {},
+): Promise<VendasDoPeriodo | null> {
+  const janela = janelaDoPeriodo(timezone, diaDe, diaAte);
+  const { data, error } = await supabase.rpc("vendas_do_periodo", {
+    p_clinic_id: clinicId,
+    p_de: janela.de,
+    p_ate: janela.ate,
+    ...(opcoes.grupo ? { p_grupo: opcoes.grupo } : {}),
+  });
+  if (error) {
+    throw new Error(error.message);
+  }
+  if (data === null || data === undefined) {
+    return null;
+  }
+  const corpo = data as VendasRpc;
+  return {
+    temEtapaDeVenda: corpo.tem_etapa_de_venda === true,
+    vendas: Number(corpo.vendas),
+    valorCents: Number(corpo.valor_cents),
+    semValor: Number(corpo.sem_valor),
   };
 }

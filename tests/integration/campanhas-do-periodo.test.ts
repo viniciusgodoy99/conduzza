@@ -308,7 +308,10 @@ describe("campanhas_do_periodo", () => {
     expect(atual.leads_casados).toBe(5);
     expect(atual.leads_de_anuncio_sem_campanha).toBe(2);
     expect(atual.leads_sem_campanha).toBe(3);
-    expect(atual.linhas).toEqual([
+    // toMatchObject: as mesmas linhas, na mesma ordem, sem travar nos campos
+    // que vieram depois (comparecimentos, 20261123100000; vendas,
+    // 20261123110000).
+    expect(atual.linhas).toMatchObject([
       {
         chave: "meta:8001",
         tipo: "meta",
@@ -626,7 +629,10 @@ describe("campanhas_do_periodo com a linha da consulta por id", () => {
     expect(atual.leads_casados).toBe(2);
     expect(atual.leads_de_anuncio_sem_campanha).toBe(0);
     expect(atual.leads_sem_campanha).toBe(0);
-    expect(atual.linhas).toEqual([
+    // toMatchObject: as mesmas linhas, na mesma ordem, sem travar nos campos
+    // que vieram depois (comparecimentos, 20261123100000; vendas,
+    // 20261123110000).
+    expect(atual.linhas).toMatchObject([
       {
         chave: "meta:9600",
         tipo: "meta",
