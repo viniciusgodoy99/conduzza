@@ -1915,6 +1915,16 @@ Arquitetura no `docs/03`, seção 28; banco no `docs/04`, seção 44; LGPD no `d
 
 **Estado (06/11/2026):** publicado. Conferência da junção com os remédios e o portão: 20.285 testes, typecheck, lint e build verdes; ensaio e provas na produção no `docs/04`, seção 44. **Não rodou:** a OpenAI de verdade com o esquema novo do leitor (se recusar, toda foto e PDF vão para a equipe: falha fechada). **Limites conhecidos:** a nota interna só aparece quando a equipe abre a conversa; o agente não pede RG, CNH ou CPF (não construído); a carteirinha de dependente grava no contato da conversa, só quando o campo está vazio.
 
+### [ ] Anota e continua, a curiosidade de estética e não desistir cedo `M` (decisões do dono de 23/11/2026; construída na branch `revisao-2311-agente`, não publicada)
+
+- **Anota e continua:** a ferramenta `anotar_para_a_equipe` grava a pergunta que o Cadastro não responde numa nota interna e aplica a etiqueta "Pergunta para a equipe"; a conversa continua com a IA, e a resposta diz que ficou anotado, sem prazo.
+- **Curiosidade de estética:** a frase fixa do dono, escolhida pelo sistema e pelo filtro inteiro, sem passar a conversa.
+- **Não desistir cedo:** as pendentes curtas não escalam pela quantidade (só pelo tamanho, ou acima de 19), a última rodada responde sem ferramenta, "um momento" reescreve, o erro do modelo não conta nas falhas seguidas e a falha passageira volta para a fila uma vez.
+
+**Antes de publicar:** aplicar a migration `20261123120000_etiqueta_pergunta_para_a_equipe.sql` (com o ok do dono; sem ela a nota sai, mas a etiqueta não) e depois publicar o código. **Não provado:** o modelo de verdade. Detalhe no `docs/03`, seção 43, e no `docs/04`, seção 51.
+
+**Estado (23/11/2026):** typecheck e lint limpos; a unidade inteira (512 arquivos, 21.929 testes) verde, com 15 arquivos que só estouraram o tempo com a máquina carregada e passaram rodados de novo à parte; a bateria do prebuild verde (os 5 arquivos que estouraram o tempo, de novo à parte); `next build` verde, sem aviso novo.
+
 ### [x] A revisão com o motor de verdade `M` (pedido do dono de 11/11/2026; publicada, sem migration)
 
 O turno de verdade, com o Cadastro da teste123 e um roteiro sem OpenAI, achou três falsos alarmes, todos corrigidos:

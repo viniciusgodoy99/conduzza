@@ -282,6 +282,7 @@ describe("o laço com as ferramentas de agenda", () => {
         "registrar_dados_do_paciente",
         "agendar",
         "confirmar_presenca",
+        "anotar_para_a_equipe",
         "escalar_humano",
       ],
     );
@@ -547,6 +548,7 @@ describe("rodadas, liberação e falha fechada", () => {
         "buscar_profissionais",
         "consultar_minhas_consultas",
         "buscar_procedimento",
+        "anotar_para_a_equipe",
         "escalar_humano",
       ],
     );

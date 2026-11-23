@@ -1374,6 +1374,13 @@ export const PADROES_DE_SAIDA: readonly PadraoDeSaida[] = [
   ),
   p(
     "promessa_resultado",
+    "imperfeicao_some",
+    // 23/11/2026: "Com o botox, as rugas somem em uma semana." Fora da
+    // condicao e da negacao ("se as rugas somem, so a avaliacao diz").
+    "(?<!\\b(?:se|nao|nem|quando)\\b[^.!?,]{0,25})\\b(?:rugas?|ruguinhas?|manchas?|linhas de expressao|marcas de expressao|olheiras?|celulites?|flacidez|gordurinhas?|papadas?|acnes?|espinhas?|cravos?|vincos?|estrias?|pes de galinha|cicatriz(?:es)?|melasmas?)\\b(?: (?!(?:nao|nem)\\b)\\w+){0,3}? (?:somem|some|sumira|sumirao|vao sumir|vai sumir|desaparecem|desaparece|desaparecera|desaparecerao|vao desaparecer|vai desaparecer|vao embora|vai embora)\\b",
+  ),
+  p(
+    "promessa_resultado",
     "cura",
     "\\b(?:cura|curar|curamos|curou|cure|curam|curado|curada)\\b|\\btratamento definitivo",
   ),
@@ -1638,7 +1645,21 @@ const TEMPO_DE_CORTESIA = "\\d+ ?(?:h|hs|horas?|min|minutos) de ";
  * Ate 20/10/2026 (politica de 05/10/2026), "sua vaga esta garantida" e
  * "garanto o horario" tambem saiam: o controle B134 virou o caso AG-S13.
  */
+/**
+ * Nome proprio (revisao de producao de 19/10/2026, Q4, decisao do dono):
+ * "Maria do Socorro", "Maria das Dores", "Maria dos Remedios" e "Maria
+ * Dolores" sao nomes, nao sintoma nem remedio. Na entrada e, desde
+ * 23/11/2026, na saida ("Oi, Maria das Dores!" era barrada como triagem).
+ */
+const NOME_COMPOSTO_COM_MARIA: Neutralizacao = {
+  nome: "nome_composto_com_maria",
+  fonte:
+    "\\bmaria (?:do (?:perpetuo )?socorro|das dores|dos remedios|de (?:socorro|dores|remedios)|dolores)\\b",
+  troca: "maria",
+};
+
 export const NEUTRALIZACOES_DE_SAIDA: readonly Neutralizacao[] = [
+  NOME_COMPOSTO_COM_MARIA,
   {
     // "Pra garantir sua vaga", "quer garantir o horario?", "nao consigo
     // garantir o mesmo horario". "Consigo garantir" e "vou garantir" nao.
@@ -2901,7 +2922,7 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
     // corpo ("o rosto dela caiu", "minha boca caiu", "minha mae caiu", "a
     // pressao dela caiu"). O "caiu" solto fica de fora de proposito: "o pix
     // caiu?", "a ligacao caiu" e "caiu na caixa postal" sao recepcao.
-    "\\b(?:dor\\b|dores\\b|dorzinha|dorzona|doi\\b|doendo|doeu|doer\\b|dolorid|febr|sangr|inchad|inchac|inchou|incha\\b|inchando|desinch|inx[ao]|reac(?:ao|oes)\\b|falta de ar|sem ar\\b|nao consigo respirar|dificuldade (?:de|para|pra) respirar|tontura|tont[oa]\\b|desmai|vomit|enjo|nausea|diarreia|manch|coceira|cocando|coca\\b|cocar|alergi|alergic|infecc|infeccion|infectad|inflama|pus\\b(?<!\\b(?:eu|ja|que|nao|so|tambem) pus)(?! (?:meu|minha|meus|minhas|errad\\w*|o nome|a data|o cpf|o email|o telefone|o endereco)\\b)|caroco|nodulo|bolinha|bolha|empol|passando mal|mal estar|me sentindo mal|estou mal|to mal|machuc|ferid|queimad|queimou|queimando|ardencia|ardend|arde\\b|ardeu|ardor|vermelh|roxo|roxa|hematoma|sangue|edema|formigament|dormencia|dormente|paralisi|paralisad|paralisou|paralisand|visao turva|vista embacada|convuls|pressao alta|pressao baixa|taquicardia|palpitac|coracao acelerado|quebrei(?! (?:o |a |os |as |meu |minha |meus |minhas |um |uma )?(?:celular|telefone|oculos|carro|tela|computador|notebook|chip|cartao|galho|copo|prato|unha|unhas)\\b)|fratur|torci\\b|torcao|luxac|cortei(?! (?:o |a |os |as |meu |minha |meus |minhas )?(?:cabelo|cabelos|franja|unha|unhas|barba|cartao|plano|internet|gasto|gastos|doce|doces|acucar)\\b)|(?<!\\b(?:ligacao|chamada|audio|video|internet|sinal|conexao|mensagem|luz|energia|wifi|zap|whatsapp|net)(?: \\w+)? )cortou(?! (?:aqui|ai|a ligacao|a chamada|o audio|o video|o sinal|a internet|a net|o zap)\\b)|picada|mordida|irritac|descamand|descascand|secrecao|catarro|tosse|gripad|resfriad|garganta|colica|corrimento|enxaqueca|crise|panico|suicid|me matar|me matando|quero morrer|tirar minha vida|socorro|urgente|emergencia|grave\\b(?! (?:um |uma |o |a |esse |essa |pra mim |para mim |por favor )?(?:audio|video|mensagem|recado))|piorou|piorando|(?<!\\b(?:achei|acho|achamos|que) )estranh[oa](?! (?:isso|isto|que|esse|essa|este|esta|o valor|o preco|a mensagem|o link|o site|o horario|nao)\\b)|tort[oa]\\b|caid[oa]\\b|assimetric|deformad|endurecid|aperto no peito|peito (?:\\w+ )?(?:doendo|apertad|queimando|ardendo|chiando)|respir|entort|latej|pontada|fisgada|repux|zonz|tontei|puxando pro lado|aguinha|roxinh|carocinh|calombo)|\\bcostas? (?:ta|tao|esta|estao) me matando" +
+    "\\b(?:dor\\b|dores\\b|dorzinha|dorzona|doi\\b|doendo|doeu|doer\\b|dolorid|febr|sangr|inchad|inchac|inchou|incha\\b|inchando|desinch|inx[ao]|reac(?:ao|oes)\\b|falta de ar|sem ar\\b|nao consigo respirar|dificuldade (?:de|para|pra) respirar|tontura|tont[oa]\\b|desmai|vomit|enjo|nausea|diarreia|manch|coceira|cocando|coca\\b|cocar|alergi|alergic|infecc|infeccion|infectad|inflama|pus\\b(?<!\\b(?:eu|ja|que|nao|so|tambem) pus)(?! (?:meu|minha|meus|minhas|errad\\w*|o nome|a data|o cpf|o email|o telefone|o endereco)\\b)|caroco|nodulo|bolinha|bolha|empol|passando mal|mal estar|me sentindo mal|estou mal|to mal|machuc|ferid|queimad|queimou|queimando|ardencia|ardend|arde\\b|ardeu|ardor|vermelh|roxo|roxa|hematoma|sangue|edema|formigament|dormencia|dormente|paralisi|paralisad|paralisou|paralisand|visao turva|vista embacada|convuls|pressao alta|pressao baixa|taquicardia|palpitac|coracao acelerado|quebrei(?! (?:o |a |os |as |meu |minha |meus |minhas |um |uma )?(?:celular|telefone|oculos|carro|tela|computador|notebook|chip|cartao|galho|copo|prato|unha|unhas)\\b)|fratur|torci\\b|torcao|luxac|cortei(?! (?:o |a |os |as |meu |minha |meus |minhas )?(?:cabelo|cabelos|franja|unha|unhas|barba|cartao|plano|internet|gasto|gastos|doce|doces|acucar)\\b)|(?<!\\b(?:ligacao|chamada|audio|video|internet|sinal|conexao|mensagem|luz|energia|wifi|zap|whatsapp|net)(?: \\w+)? )cortou(?! (?:aqui|ai|a ligacao|a chamada|o audio|o video|o sinal|a internet|a net|o zap)\\b)|picada|mordida|irritac|descamand|descascand|secrecao|catarro|tosse|gripad|resfriad|garganta|colica|corrimento|enxaqueca|crise|panico|suicid|me matar|me matando|quero morrer|tirar minha vida|socorro|urgente|emergencia|grave\\b(?! (?:um |uma |o |a |esse |essa |pra mim |para mim |por favor )?(?:audio|video|mensagem|recado))|piorou|piorando|(?<!\\b(?:achei|acho|achamos|que) )estranh[oa](?! (?:isso|isto|que|esse|essa|este|esta|o valor|o preco|a mensagem|o link|o site|o horario|nao)\\b)|tort[oa]\\b|caid[oa]\\b|assimetric|deformad|endurecid|aperto no peito|peito (?:\\w+ )?(?:doendo|apertad|queimando|ardendo|chiando)|respir|entort|latej|pontada|fisgada|repux|zonz|tontei|puxando pro lado|aguinha|roxinh|carocinh|calombo|queimac|gastura|passamento|inguas?\\b|zumbid|zuada (?:n[oa]s? |no meu |na minha )?(?:ouvidos?|cabeca)\\b|agonia (?:n[oa]s? |no meu |na minha )(?:peito|coracao|estomago|barriga|garganta|cabeca|corpo)\\b|(?:sentindo|sinto|senti) (?:uma |um |muita )?agonia\\b)|\\bcostas? (?:ta|tao|esta|estao) me matando" +
       "|\\b(?:rosto|face|boca|labio|labios|olho|olhos|palpebra|palpebras|sobrancelha|sobrancelhas|bochecha|bochechas|queixo|braco|bracos|perna|pernas|mao|maos|lado do corpo|metade do corpo|lado do rosto|metade do rosto|pressao|glicose|glicemia)\\b(?: \\w+){0,2}? (?:caiu|cairam)\\b" +
       "|\\b(?:caiu|cairam)\\b(?: \\w+){0,3}? (?:rosto|face|boca|labio|labios|olho|olhos|palpebra|palpebras|sobrancelha|sobrancelhas|bochecha|bochechas|queixo)\\b" +
       "|\\b(?:ela|ele|minha mae|meu pai|minha filha|meu filho|minha avo|meu avo|minha vo|meu vo|meu marido|minha esposa|minha mulher|a paciente|o paciente|a crianca|o bebe|a bebe)\\b(?: \\w+)? caiu\\b",
@@ -2945,7 +2966,7 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
   e(
     "assunto_clinico",
     "assunto_clinico",
-    "\\b(?:remedi|medicament|medicac|tomar\\b|tomo\\b|tomei\\b|tomando|pomad|creme|gestante|gravida|gravidez|gestacao|engravid|amament|lactante|resultado|garant|efeito colateral|efeitos colaterais|contraindic|contra-indic|risco|perigos|faz mal|fazer mal|e seguro|cuidados|pos-operatorio|pos operatorio|pos-procedimento|pos procedimento|recuperacao|anestesi|cirurgia|operei|operad[oa]\\b|exame|laudo|receita|prescri|dose|dosagem|\\d+ ?mg\\b|diabet|hipertens|pressao|cardiac|marca-?passo|doenca|o que pode ser|e normal|e grave|devo me preocupar|tem problema|dar problema|da problema|resguardo|pos-parto|pos parto|antes do procedimento|depois do procedimento|vacina|hormoni|anticoncep|menstru|herpes|lupus|autoimun|cancer|quimioterapia|radioterapia|antibiot|anti-?inflamat|antinflamat|analges|corticoi|anticoagul)",
+    "\\b(?:remedi|medicament|medicac|tomar\\b|tomo\\b|tomei\\b|tomando|pomad|creme|gestante|gravida|gravidez|gestacao|engravid|amament|lactante|resultado|garant|efeito colateral|efeitos colaterais|contraindic|contra-indic|risco|perigos|faz mal|fazer mal|e seguro|cuidados|pos-operatorio|pos operatorio|pos-procedimento|pos procedimento|recuperacao|anestesi|cirurgia|operei|operad[oa]\\b|exame|laudo|receita|prescri|dose|dosagem|\\d+ ?mg\\b|diabet|hipertens|pressao|cardiac|marca-?passo|doenca|o que pode ser|e normal|e grave|devo me preocupar|tem problema|dar problema|da problema|resguardo|pos-parto|pos parto|antes do procedimento|depois do procedimento|vacina|hormoni|anticoncep|menstru|herpes|lupus|autoimun|cancer|quimioterapia|radioterapia|antibiot|anti-?inflamat|antinflamat|analges|corticoi|anticoagul|qual (?:e |seria |sera )?(?:o |a )?(?:melhor|mais indicad[oa]) (?:pra|para) mim\\b(?![^.?!]{0,30}\\b(?:manha|tarde|noite|horarios?|dias?|data|segunda|terca|quarta|quinta|sexta|sabado|unidade|pix|cartao|dinheiro)\\b)|qual (?:o |a )?(?:procedimento|tratamento) (?:e |seria |sera )?(?:o |a )?(?:melhor|mais indicad[oa]))",
   ),
   // A segunda parte pede o verbo colado ("posso ir na praia", "libera
   // piscina", "pode tomar uma cervejinha"): "pode ser depois da academia?"
@@ -3063,7 +3084,7 @@ export const PADROES_DE_ENTRADA: readonly PadraoDeEntrada[] = [
   e(
     "insatisfacao",
     "insatisfacao",
-    "\\b(?:pessim|horrivel|horroros|ridicul|absurd|procon|reclame ?aqui|reclamac|reclamar|(?:meu|minha|nosso|nossa) advogad|(?:chamar|chamo|acionar|aciono|contratar|contrato|procurar|procuro|consultar|consulto|falar com|ligar (?:pro|para o|pra)|mandar (?:pro|para o|pra)) (?:o |a |um |uma |meu |minha )?advogad|processar|processo judicial|entrar na justica|(?:entro|entrarei|vou|vamos|irei|ir|recorrer|recorro|acionar|aciono|procurar|procuro|levar|levo|botar|colocar|buscar|busco)\\b (?:\\w+ ){0,2}?(?:na|a|pela) justica|justica (?:contra|com voces)|juizado|denunci|(?:vou|irei|vamos|levar|levo|reclamar|reclamo) (?:\\w+ ){0,3}?(?:no|ao|pro|para o) (?:crm|cfm)\\b|vigilancia sanitaria|anvisa|nunca mais|palhacada|(?<!\\b(?:tenho|tive|tem|ter|to com|tou com|estou com|fico com|fiquei com|morro de|morrendo de|sinto|senti|da|me da|me deu) )vergonha|descaso|desrespeit|falta de respeito|irritad|indignad|decepcion|insatisfeit|chatead|lixo|porcaria|enganad|golpe|fraude|mentira|mentiros|roubo|ladr|estorno|exijo\\b|devolv(?:er|am|e) (?:meu|o) dinheiro|dinheiro de volta|cancelar tudo|porra|merda|caralho|puta\\b|foda|pqp\\b|vtnc\\b|fdp\\b|desgrac|inferno|cansad[oa] de esperar|(?<!\\b(?:tempo|quanto|o) )(?:que|q) demora\\b|quanta demora|muita demora|demora demais|demorando demais|ninguem (?:me )?responde|sem resposta|nao respondem|terrivel|lamentavel)",
+    "\\b(?:pessim|horrivel|horroros|ridicul|absurd|procon|reclame ?aqui|reclamac|reclamar|(?:meu|minha|nosso|nossa) advogad|(?:chamar|chamo|acionar|aciono|contratar|contrato|procurar|procuro|consultar|consulto|falar com|ligar (?:pro|para o|pra)|mandar (?:pro|para o|pra)) (?:o |a |um |uma |meu |minha )?advogad|processar|processo judicial|entrar na justica|(?:entro|entrarei|vou|vamos|irei|ir|recorrer|recorro|acionar|aciono|procurar|procuro|levar|levo|botar|colocar|buscar|busco)\\b (?:\\w+ ){0,2}?(?:na|a|pela) justica|justica (?:contra|com voces)|juizado|denunci|(?:vou|irei|vamos|levar|levo|reclamar|reclamo) (?:\\w+ ){0,3}?(?:no|ao|pro|para o) (?:crm|cfm)\\b|vigilancia sanitaria|anvisa|nunca mais|palhacada|(?<!\\b(?:tenho|tive|tem|ter|to com|tou com|estou com|fico com|fiquei com|morro de|morrendo de|sinto|senti|da|me da|me deu) )vergonha|descaso|desrespeit|falta de respeito|irritad|indignad|decepcion|insatisfeit|chatead|lixo|porcaria|enganad|golpe|fraude|mentira|mentiros|roubo|ladr|estorno|exijo\\b|devolv(?:er|am|e) (?:meu|o) dinheiro|dinheiro de volta|cancelar tudo|porra|merda|caralho|puta\\b|foda|pqp\\b|vtnc\\b|fdp\\b|desgrac|inferno|cansad[oa] de esperar|(?<!\\b(?:tempo|quanto|o) )(?:que|q) demora\\b|quanta demora|muita demora|demora demais|demorando demais|ninguem (?:me )?responde|sem resposta|nao respondem|terrivel|lamentavel|incompetent|nao (?:fez|faz|teve) (?:nenhum )?efeito|(?:quero|exijo|tem que|tenho direito (?:de|a)) (?:\\w+ ){0,2}?refaz\\w*(?: \\w+){0,3}? (?:de graca|sem custo|sem pagar))",
   ),
   // "Reembolso" sozinho saiu em 05/10/2026 ("qual o cnpj? preciso pro
   // reembolso" e convenio). Fica o reembolso cobrado da clinica.
@@ -3200,9 +3221,81 @@ export const NEUTRALIZACOES_DE_ENTRADA: readonly Neutralizacao[] = [
     // paciente ("posso levar minha filha junto?", "minha filha vai me
     // levar", "minha filha me indicou"). O paciente menor continua
     // escalando pela idade e pelos outros jeitos de dizer.
+    // 23/11/2026: tambem com a idade e no fim da pergunta ("posso levar meu
+    // filho de 5 anos comigo?", "posso levar meu bebe?") e a crianca que
+    // espera na sala ("minha filha de 8 anos pode ficar na sala de
+    // espera?"). "Posso levar meu filho pra consultar?", "vou levar meu
+    // filho comigo" e "minha filha de 8 anos pode fazer?" continuam.
     nome: "parente_que_acompanha",
-    fonte: "\\b(?:posso|pode|podemos|da pra|tem problema|tem como|e permitido)(?: eu)? (?:levar|trazer)(?: o| a)? (?:meu|minha|meus|minhas) (?:filho|filha|neto|neta|bebe|menino|menina|sobrinho|sobrinha|enteado|enteada)s? (?:junto|comigo)\\b|\\b(?:meu|minha|meus|minhas) (?:filho|filha|neto|neta)s?(?= (?:que )?(?:vai me levar|me leva|me levou|vai me acompanhar|me acompanha|me indicou|indicou|marcou pra mim|marcou para mim|me trouxe|vai me trazer)\\b)",
+    fonte: "\\b(?:posso|pode|podemos|da pra|tem problema|tem como|e permitido)(?: eu)? (?:levar|trazer)(?: o| a)? (?:meu|minha|meus|minhas) (?:filho|filha|neto|neta|bebe|menino|menina|sobrinho|sobrinha|enteado|enteada)s?(?: de \\d{1,2} (?:anos?|aninhos|meses))?(?: (?:junto|comigo)\\b|(?=\\s*[?.!,]|\\s*$))|\\b(?:meu|minha|meus|minhas) (?:filho|filha|neto|neta|bebe|menino|menina|sobrinho|sobrinha|enteado|enteada)s?(?: de \\d{1,2} (?:anos?|aninhos|meses))? (?:pode|podem|poderia|vai|consegue) (?:ficar|esperar|aguardar|me esperar|me aguardar) (?:\\w+ ){0,2}?(?:na|no) (?:sala de espera|recepcao|sala)\\b|\\b(?:meu|minha|meus|minhas) (?:filho|filha|neto|neta)s?(?= (?:que )?(?:vai me levar|me leva|me levou|vai me acompanhar|me acompanha|me indicou|indicou|marcou pra mim|marcou para mim|me trouxe|vai me trazer)\\b)",
     troca: "acompanhante",
+  },
+  {
+    // 23/11/2026: "minha filha" e "meu filho" como vocativo, depois do
+    // cumprimento e antes da pergunta ("oi minha filha quanto ta a
+    // consulta?", "bom dia meu filho, tem horario?") ou com "me diga" ("minha
+    // filha me diga uma coisa"). Sem cumprimento nem pontuacao e ambiguo e
+    // escala; com "ela", "ele" ou idade por perto, o filho e o paciente.
+    nome: "filho_como_vocativo",
+    fonte:
+      "(?<=\\b(?:oi|ola|alo|opa|bom dia|boa tarde|boa noite|obrigad[oa])\\b,? )(?:minha filha|meu filho)\\b(?=\\s*[,.!?]|\\s*$| (?:quanto|qual|quais|onde|como|quando|que horas|tem (?:horario|vaga|como)|e o seguinte|eh o seguinte|me (?:diga|diz|fala|tira|informa|informe|explica)|tudo (?:bem|bom)|voces|vcs|voce|vc|por favor)\\b)|\\b(?:minha filha|meu filho)(?=,? me (?:diga|diz uma coisa|fala uma coisa|tira uma duvida)\\b)",
+    troca: "querida",
+    semPorPerto: {
+      fonte: "\\b(?:ela|ele|dela|dele|anos|aninhos|meses|pediatr\\w*)\\b",
+      janela: 80,
+    },
+  },
+  {
+    // 23/11/2026: o risco cirurgico como exame pre-operatorio ("tem
+    // cardiologista pra fazer risco cirurgico?"). "Qual o risco cirurgico?"
+    // e "preciso fazer risco cirurgico?" continuam.
+    nome: "risco_cirurgico_como_exame",
+    fonte:
+      "(?<=\\b(?:fazer|faz|fazem|faco|realizam|realiza|marcar|agendar|marca|agenda|consulta|avaliacao) (?:(?:o|um|uma|de|do|da|pra|para|pro) ){0,2})risco cirurgico\\b",
+    troca: "avaliacao",
+    semPorPerto: {
+      fonte:
+        "\\b(?:preciso|precisa|precisaria|devo|tenho que|tem que|alterad\\w*|deu|deram|resultado|perigos\\w*|alto|alta)\\b",
+      janela: 40,
+    },
+  },
+  {
+    // 23/11/2026: "tem problema" do atraso ("vou chegar uns 15 min
+    // atrasada, tem problema?"). Com remedio, vacina ou exame por perto
+    // continua ("a menstruacao ta atrasada, tem problema?").
+    nome: "atraso_tem_problema",
+    fonte:
+      "(?<=\\b(?:atrasad[oa]s?|atrasar|me atrasar)(?: (?:uns|umas|um|uma|\\d+|pouco|pouquinho|minutinhos?|min|minutos?|meia|hora))*,? )tem (?:algum )?problema\\b",
+    troca: "pode ser",
+    semPorPerto: {
+      fonte:
+        "\\b(?:menstru\\w*|vacina\\w*|remedi\\w*|pilulas?|anticoncep\\w*|dose|injec\\w*|exames?|resultado|jejum)\\b",
+      janela: 80,
+    },
+  },
+  {
+    // 23/11/2026: o teste de gravidez e a vacina como servico ("vcs fazem
+    // teste de gravidez?", "tem vacina da gripe?"). Com "deu", "posso",
+    // "tomei" e afins por perto continua ("fiz teste de gravidez e deu
+    // positivo", "tomei a vacina da gripe").
+    nome: "teste_ou_vacina_como_servico",
+    fonte:
+      "(?<=\\b(?:fazem|faz|fazer|tem|teria|aplicam|aplica|aplicar|vendem|vende|quanto custa|quanto e|quanto fica|quanto ta|quanto sai|valor d[ao]|preco d[ao]) (?:o |a |um |uma |os |as )?)(?:testes? de gravidez|beta ?hcg|vacinas?(?: (?:da|de|contra|pra|para) (?:gripe|influenza|covid|hpv|hepatite(?: [ab])?|dengue))?)\\b",
+    troca: "servico",
+    semPorPerto: {
+      fonte:
+        "\\b(?:deu|deram|posso|pode|podia|tomei|tomou|tomar|tomo|tomando|fiz|fez|positiv\\w*|negativ\\w*|atras\\w*|gravida|gestante|amament\\w*|reac\\w*|efeito\\w*|depois|apos|antes)\\b",
+      janela: 60,
+    },
+  },
+  {
+    // 23/11/2026: falar com a doutora para marcar ("quero falar com a Dra.
+    // Ana, marcar com ela") e pedido de agenda. "Quero falar com a dra ana"
+    // sozinho continua pedido de pessoa.
+    nome: "falar_com_a_doutora_para_marcar",
+    fonte:
+      "\\b(?:quero|queria|gostaria de|preciso) (?:falar|conversar) com (?:a |o )?(?:dra|dr|doutora|doutor|medica|medico)\\.?(?: [a-z]+)?,? (?:(?:pra|para|quero|queria|e|so) )?(?:marcar|agendar|uma consulta|consulta|um horario|horario)\\b",
+    troca: "quero marcar",
   },
   {
     // "Exame de sangue" e nome de exame, nao sangramento.
@@ -3233,23 +3326,18 @@ export const NEUTRALIZACOES_DE_ENTRADA: readonly Neutralizacao[] = [
     fonte: `(?<=\\b(?:pegar|buscar|retirar|receber|retiro|pego|busco|recebo|mandar|manda|mandam|enviar|envia|enviam|entregar|entrega|entregam|imprimir|segunda via d[oe]) ${DONO_DO_DOCUMENTO})${EXAME_COMO_DOCUMENTO}\\b`,
     troca: "documento",
   },
-  {
-    // Nome proprio (revisao de producao de 19/10/2026, Q4, decisao do dono):
-    // "Maria do Socorro", "Maria das Dores", "Maria dos Remedios" e "Maria
-    // Dolores" sao nomes, nao sintoma nem remedio.
-    nome: "nome_composto_com_maria",
-    fonte:
-      "\\bmaria (?:do (?:perpetuo )?socorro|das dores|dos remedios|de (?:socorro|dores|remedios)|dolores)\\b",
-    troca: "maria",
-  },
+  NOME_COMPOSTO_COM_MARIA,
   {
     // A pessoa se apresentando (Q4): "aqui e a Socorro", "sou a Dores", "me
     // chamo Dolores", "meu nome e Remedios", "aqui e a dona Socorro". Fora
     // da apresentacao, a palavra continua escalando: "Socorro" sozinho e
     // "socorro, me ajuda" (pedido de socorro), "estou com dores".
+    // 23/11/2026: tambem "e a Socorro" depois do cumprimento ou de "menina"
+    // ("oi, e a Socorro", "boa tarde menina e a Socorro"); "socorro que
+    // fila" continua.
     nome: "nome_ao_se_apresentar",
     fonte:
-      "(?<=\\b(?:aqui e|aqui eh|quem fala e|sou|me chamo|meu nome e|meu nome eh|pode me chamar de) (?:(?:a|o|dona|seu|sra|sr)\\.? ){0,2})(?:socorro|dores|dolores|remedios)\\b",
+      "(?<=\\b(?:(?:aqui e|aqui eh|quem fala e|sou|me chamo|meu nome e|meu nome eh|pode me chamar de) (?:(?:a|o|dona|seu|sra|sr)\\.? ){0,2}|(?:oi|ola|alo|opa|bom dia|boa tarde|boa noite|menina|moca),? (?:(?:menina|moca|querida),? )?(?:e|eh) (?:(?:a|o|dona|seu|sra|sr)\\.? ){1,2}))(?:socorro|dores|dolores|remedios)\\b",
     troca: "fulana",
   },
   {
@@ -3323,8 +3411,10 @@ const SERVICO_NA_RECEPCAO = "(?:fazem|faz|realizam|realiza|tem)";
  */
 const ORACOES_DA_RECEPCAO: readonly string[] = [
     // Cumprimento e emenda.
-    "oi|ola|opa|alo|bom dia|boa tarde|boa noite|tudo bem|tudo bom|td bem|por favor|por gentileza|pf|pfv|pfvr|obrigad[oa]|ok|sim|certo|uma duvida|tenho uma duvida|e|tambem|entao|ah",
-    "(?:queria|quero|gostaria de|preciso|pode me|poderia me|podem me|me) (?:saber|dizer|informar|falar|diz|diga|fala|informa)(?: se)?",
+    // 23/11/2026: o vocativo ("bom dia minha filha", "menina"), "e o
+    // seguinte" e o "ou" do audio; o menor continua lido pelos padroes.
+    "oi|ola|opa|alo|bom dia|boa tarde|boa noite|tudo bem|tudo bom|td bem|por favor|por gentileza|pf|pfv|pfvr|obrigad[oa]|ok|sim|certo|uma duvida|tenho uma duvida|e|tambem|entao|ah|ou|e o seguinte|eh o seguinte|minha filha|meu filho|menina",
+    "(?:eu )?(?:queria|quero|gostaria de|preciso|pode me|poderia me|podem me|me) (?:saber|dizer|informar|falar|diz|diga|fala|informa)(?: se)?",
     // O nome, com ate duas palavras. Qualquer outra coisa na frase ("me chamo
     // Ana e to com dor") nao cabe, e cada palavra continua lida pelos padroes.
     "(?:me chamo|meu nome e|meu nome eh) [a-z]+(?: [a-z]+)?",
@@ -3342,7 +3432,19 @@ const ORACOES_DA_RECEPCAO: readonly string[] = [
     `(?:quais|que)(?: sao)? § (?:que )?(?:${CLINICA_NA_RECEPCAO} )?(?:fazem|faz|realizam|realiza|tem|oferecem|oferece)(?: ai| aqui)?`,
     // Agenda.
     "(?:(?:quero|queria|gostaria de|preciso|vou|pode|poderia|podem|consigo|da pra|da para|tem como|como faco (?:pra|para)) )?(?:marcar|agendar|remarcar|reagendar|desmarcar|cancelar|marca|agenda|remarca|reagenda|desmarca|cancela|marque|agende|remarque|reagende|desmarque|cancele) (?:meus? )?§(?: ¤)*",
-    "(?:quero|queria|gostaria de) fazer §(?: ¤)*",
+    "(?:quero|queria|gostaria de|tem como|da pra|da para) fazer §(?: ¤)*",
+    // 23/11/2026: a logistica do exame ("o exame de sangue precisa marcar ou
+    // e por ordem de chegada?", "a consulta de retorno precisa levar os
+    // exames?", "a dra pediu pra eu voltar com os exames, marca o retorno",
+    // "meu exame ta marcado pra sexta"). "Meus exames deram alterado"
+    // continua fora.
+    "(?:§(?: ¤)* )?(?:precisa|preciso|tem que|e preciso) (?:marcar|agendar)(?: hora| horario)?(?: antes)?",
+    "(?:e |eh )?(?:por )?ordem de chegada",
+    "(?:(?:(?:na|no|pra|para|pro) )?(?:a |o )?(?:consulta|retorno)(?: de retorno)? )?(?:precisa|preciso|tenho que|tem que|devo) (?:levar|trazer) §(?: (?:na|no|pra|para|pro) (?:a |o )?(?:consulta|retorno)(?: de retorno)?)?",
+    `(?:(?:o|a|meu|minha) )?${MEDICO_DO_PEDIDO} (?:me )?(?:pediu|mandou|falou|disse) (?:pra|para) (?:eu )?(?:voltar|retornar|vir) com §`,
+    "(?:(?:quero|queria|gostaria de|preciso|pode|poderia|podem|da pra|tem como) )?(?:marcar|agendar|marca|agenda|marque|agende) (?:o |a |meu |minha )?(?:retorno|consulta)(?: de retorno)?(?: (?:pra|para) mim)?(?: ¤)*",
+    "(?:o |meu )?§ (?:ta|esta|ja ta|ja esta|foi) (?:marcado|agendado)(?: ¤)*",
+    "(?:se )?(?:so )?(?:a )?carteirinha(?: d[oa] (?:plano|convenio))?(?: (?:resolve|basta|serve))?",
     "tem (?:horarios?|vagas?)(?: (?:pra|para|pro|pros)(?: fazer)? §)?(?: ¤)*",
     // Convenio.
     `${PLANO_NA_RECEPCAO} (?:cobre|cobrem|autoriza|autorizam|paga|pagam)(?: §)?`,
@@ -3353,7 +3455,7 @@ const ORACOES_DA_RECEPCAO: readonly string[] = [
     `(?:(?:o|a|meu|minha) )?${MEDICO_DO_PEDIDO} (?:me )?(?:pediu|passou|solicitou) §`,
     // 11/11/2026: se o exame exige o pedido do medico (pergunta
     // administrativa; "preciso fazer o exame?" continua fora).
-    `(?:preciso|precisa|precisaria|e preciso|tem que ter|tenho que ter|exige|pede)(?: de)?(?: (?:um|o))? ${PEDIDO_MEDICO}(?: (?:pra|para)(?: fazer)? §(?: ¤)*)?`,
+    `(?:preciso|precisa|precisaria|e preciso|tem que ter|tenho que ter|exige|pede)(?: de| levar| trazer)?(?: (?:um|o))? ${PEDIDO_MEDICO}(?: (?:pra|para)(?: fazer)? §(?: ¤)*)?`,
     `(?:pra|para)(?: fazer)? §(?: ¤)* (?:precisa|exige|pede|tem que ter)(?: de)?(?: (?:um|o))? ${PEDIDO_MEDICO}`,
 ];
 

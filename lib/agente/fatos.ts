@@ -73,7 +73,10 @@ import type {
   HorarioDoFato,
   HorarioLivreDoTurno,
 } from "@/lib/domain/conformidade/fatos-do-turno";
-import { FRASE_FORA_DO_ASSUNTO } from "@/lib/domain/conformidade/frase-fixa";
+import {
+  FRASE_DA_CURIOSIDADE_DE_ESTETICA,
+  FRASE_FORA_DO_ASSUNTO,
+} from "@/lib/domain/conformidade/frase-fixa";
 
 import { fusoDaAgenda } from "./ferramentas/buscar-horario";
 import {
@@ -345,6 +348,8 @@ export function montarFatosDoTurno(entrada: {
     // A resposta ao "robô?", quando nao e a frase da clinica (10/11/2026).
     respostaDoRobo === fraseDaClinica ? null : respostaDoRobo,
     FRASE_FORA_DO_ASSUNTO,
+    // 23/11/2026: a frase da curiosidade geral de estetica (do sistema).
+    FRASE_DA_CURIOSIDADE_DE_ESTETICA,
     // [AG7 preparo] A F2, quando o turno a colou.
     entrada.fraseDoPreparo,
     // O aviso do resto do pedido, quando o turno o colou.

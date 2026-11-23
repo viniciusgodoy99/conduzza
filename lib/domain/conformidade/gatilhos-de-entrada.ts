@@ -49,12 +49,19 @@ export const LIMITE_DA_RAJADA = 2000;
 /**
  * Quantas mensagens do paciente os modelos (classificador e verificador)
  * enxergam. Mais do que isso ainda sem resposta escala como mensagem longa:
- * assim o corte das ultimas cinco nunca esconde dos modelos uma pergunta
- * clinica que ficou para tras ("da pra beber depois do botox?", "oi", "?",
- * "alo", "tem alguem?", "e ai"). O filtro de saida tambem bloqueia nesse
- * caso, como segunda trava.
+ * assim o corte nunca esconde dos modelos uma pergunta clinica que ficou para
+ * tras ("da pra beber depois do botox?", "oi", "?", "alo", "tem alguem?", "e
+ * ai"). O filtro de saida tambem bloqueia nesse caso, como segunda trava.
+ *
+ * Decisao do dono de 23/11/2026 ("nao desistir cedo"): era 5, e seis
+ * mensagens curtas ("oi", "bom dia", "queria saber", "o preco", "da limpeza
+ * de pele", "aceita unimed") passavam para a equipe. Agora os modelos leem
+ * todas as pendentes e o portao escala pelo TAMANHO (LIMITE_DA_RAJADA). Fica
+ * so o teto do historico: o executor le as 20 ultimas mensagens da conversa
+ * (MENSAGENS_NO_HISTORICO, lib/agente/laco.ts), e com 20 pendentes pode haver
+ * uma mais antiga que ninguem leu. Um teste exige este valor abaixo daquele.
  */
-export const MAXIMO_DE_MENSAGENS_NO_CONTEXTO = 5;
+export const MAXIMO_DE_MENSAGENS_NO_CONTEXTO = 19;
 /**
  * Quanto o portao le de cada texto, contado DEPOIS da normalizacao (frente
  * S1, revisao rev5 de 31/10/2026). A NFKD multiplica alguns caracteres
@@ -714,4 +721,45 @@ export function gatilhosDosTextos(
     mensagens: textos.map((texto) => ({ tipo: "texto", texto })),
     comPreparo: opcoes.comPreparo === true,
   });
+}
+
+// ---------------------------------------------------------------------------
+// 23/11/2026: a curiosidade geral de estetica (so o detector; a frente
+// seguinte decide a rota). Hoje o portao escala "botox doi?" e "fica roxo
+// depois?" como sintoma e "e seguro?" e "quanto tempo pra ver o resultado?"
+// como assunto clinico; "quanto tempo dura o preenchimento?" e "precisa de
+// repouso depois?" passam por ele e ficam com o classificador.
+// ---------------------------------------------------------------------------
+
+/** Pergunta curta: texto maior costuma trazer o contexto da pessoa. */
+const LIMITE_DA_CURIOSIDADE = 200;
+/** Sensacao, duracao, seguranca, recuperacao e tempo de resultado. */
+const ASSUNTO_DA_CURIOSIDADE =
+  /\b(?:doi|doem|doer|dolorido|incomoda|arde|(?:fica|ficam|deixa|costuma ficar)(?: \w+)? (?:roxo|roxa|roxos|roxas|inchad[oa]s?|vermelh[oa]s?|marcad[oa]s?|com marcas?|com hematomas?)|quanto tempo (?:dura|duram|demora|leva)|dura quanto(?: tempo)?|qual a duracao|e seguro|e perigoso|tem (?:algum )?risco|faz mal|repouso|recuperacao|afastamento|(?:quanto tempo|quando|em quanto tempo) (?:\w+ ){0,2}?(?:o |os )?resultados?|resultados? (?:aparece|aparecem|demora|demoram|sai))\b/g;
+/** A situacao da pessoa, o sintoma de agora e o pedido de indicacao. */
+const SITUACAO_DA_PESSOA =
+  /\b(?:tenho|tive|tomo|tomei|tomando|(?:to|tou|estou|esta|ta|tava|estava) (?:com|sentindo|gravida|amamentando)|fiz|fez|fiquei|ficou|ficaram|doeu|doendo|inchou|apareceu|gravida|gestante|amament\w*|lactante|alergi\w*|alergic\w*|doenca|remedi\w*|medicament\w*|cirurgia|operei|idade|anos|se eu|posso|pra mim|para mim|meu caso|indica|indicad[oa]|recomenda\w*|melhor)\b/;
+
+/**
+ * A duvida GERAL sobre sensacao, duracao, seguranca, recuperacao ou tempo de
+ * resultado de um procedimento ("botox doi?", "e seguro?", "quanto tempo dura
+ * o preenchimento?"). Falso com situacao da pessoa (remedio, gravidez,
+ * alergia, idade, "posso fazer se..."), sintoma de agora, urgencia, pedido de
+ * indicacao ("qual e melhor pra mim") ou qualquer outro gatilho do portao no
+ * que sobra da pergunta. PURO.
+ */
+export function ehCuriosidadeGeralDeEstetica(
+  textos: readonly string[],
+): boolean {
+  const texto = normalizarBase(textos.join(" "));
+  const resto = texto.replace(ASSUNTO_DA_CURIOSIDADE, " ");
+  if (
+    texto.length > LIMITE_DA_CURIOSIDADE ||
+    resto === texto ||
+    SITUACAO_DA_PESSOA.test(texto) ||
+    detectarUrgencia(textos) !== null
+  ) {
+    return false;
+  }
+  return gatilhosDosTextos([resto]).length === 0;
 }

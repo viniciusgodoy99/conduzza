@@ -188,13 +188,20 @@ describe("chamada", () => {
     expect(envelope).not.toMatch(/\n\[2\]/);
   });
 
-  it("envelope leva no maximo as cinco ultimas mensagens", () => {
-    const envelope = montarEnvelopeDeEntrada({
+  // Decisao do dono de 23/11/2026: o envelope leva ate 19 pendentes (era 5).
+  it("envelope leva no maximo as 19 ultimas mensagens", () => {
+    const seis = montarEnvelopeDeEntrada({
       mensagens: ["m1", "m2", "m3", "m4", "m5", "m6"],
       nonce: "abc",
     });
-    expect(envelope).not.toContain("m1");
-    expect(envelope).toContain("m6");
+    expect(seis).toContain("[1] m1");
+    expect(seis).toContain("[6] m6");
+    const vinte = montarEnvelopeDeEntrada({
+      mensagens: Array.from({ length: 20 }, (_, i) => `x${i + 1}y`),
+      nonce: "abc",
+    });
+    expect(vinte).not.toContain("x1y");
+    expect(vinte).toContain("[19] x20y");
   });
 });
 
@@ -689,8 +696,10 @@ describe("AG7: a variante do preparo no classificador", () => {
     );
     // Decisao de 06/11/2026 (o pedido de recepcao sobre o exame). Era
     // classificador-03718b05f3a2 (a da AG6b na branch), que a AG7 nao mudou.
+    // Decisao do dono de 23/11/2026: o envelope le ate 19 pendentes (era 5),
+    // e a versao leva a janela (era classificador-bb61a48527c8).
     expect(VERSAO_DA_POLITICA_DO_CLASSIFICADOR).toBe(
-      "classificador-bb61a48527c8",
+      "classificador-16527128cfb4",
     );
     expect(versaoDaPoliticaDoClassificador()).toBe(
       VERSAO_DA_POLITICA_DO_CLASSIFICADOR,
@@ -787,8 +796,11 @@ describe("AG7: a variante do preparo no classificador", () => {
     // 09/11/2026 (portao-conversa-normal.test.ts, portao-da88be1e9fa6) e a
     // revisao de 11/11/2026: "quais exames voces fazem?", o exame de ouvido,
     // pele e coracao, o admissional e o pedido medico como exigencia
-    // (revisao-1111-recepcao.test.ts).
-    expect(versaoDoPortao()).toBe("portao-cf660cdd7872");
+    // (revisao-1111-recepcao.test.ts; portao-cf660cdd7872) e a revisao de
+    // 23/11/2026 com frases reais de paciente
+    // (frases-reais-de-paciente.test.ts), e a de 23/11/2026 que escala so
+    // pelo tamanho (era portao-722a383fc647).
+    expect(versaoDoPortao()).toBe("portao-e036887da58a");
   });
 });
 // [AG7 preparo] fim

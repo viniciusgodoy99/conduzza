@@ -344,15 +344,22 @@ describe("chamada ao SDK", () => {
     }
   });
 
-  it("envelope leva no maximo as cinco ultimas mensagens", () => {
-    const envelope = montarEnvelope({
+  // Decisao do dono de 23/11/2026: o envelope leva ate 19 pendentes (era 5).
+  it("envelope leva no maximo as 19 ultimas mensagens", () => {
+    const sete = montarEnvelope({
       rascunho: RASCUNHO,
       mensagensDoPaciente: ["m1", "m2", "m3", "m4", "m5", "m6", "m7"],
       nonce: "abc",
     });
-    expect(envelope).not.toContain("m1");
-    expect(envelope).not.toContain("m2");
-    expect(envelope).toContain("m7");
+    expect(sete).toContain("[1] m1");
+    expect(sete).toContain("[7] m7");
+    const vinte = montarEnvelope({
+      rascunho: RASCUNHO,
+      mensagensDoPaciente: Array.from({ length: 20 }, (_, i) => `x${i + 1}y`),
+      nonce: "abc",
+    });
+    expect(vinte).not.toContain("x1y");
+    expect(vinte).toContain("[19] x20y");
   });
 
   it("a politica diz que o conteudo e dado e que na duvida reprova", () => {

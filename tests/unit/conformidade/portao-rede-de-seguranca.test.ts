@@ -1088,7 +1088,16 @@ describe("S1: a rede na junção das mensagens do turno", () => {
   });
 
   it("acima da rajada ou do número de mensagens, o portão já escala", () => {
-    const muitas = ["quero", "morrer", "a", "b", "c", "d"];
+    // 23/11/2026: seis mensagens curtas nao escalam mais pela quantidade, e a
+    // juncao delas continua lida pela rede.
+    expect(semUrgencia(["quero", "morrer", "a", "b", "c", "d"])).toEqual([
+      "sintoma",
+    ]);
+    const muitas = [
+      "quero",
+      "morrer",
+      ...Array.from({ length: MAXIMO_DE_MENSAGENS_NO_CONTEXTO }, () => "a"),
+    ];
     expect(muitas.length).toBeGreaterThan(MAXIMO_DE_MENSAGENS_NO_CONTEXTO);
     expect(semUrgencia(muitas)).toContain("mensagem_longa");
     const longa = ["quero", `morrer ${"x".repeat(LIMITE_DA_RAJADA)}`];

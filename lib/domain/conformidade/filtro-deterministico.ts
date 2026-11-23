@@ -49,7 +49,11 @@ import {
   trechosDeEnderecoDasFerramentas,
   type FatosDoTurno,
 } from "@/lib/domain/conformidade/fatos-do-turno";
-import { gatilhosDosTextos } from "@/lib/domain/conformidade/gatilhos-de-entrada";
+import { FRASE_DA_CURIOSIDADE_DE_ESTETICA } from "@/lib/domain/conformidade/frase-fixa";
+import {
+  ehCuriosidadeGeralDeEstetica,
+  gatilhosDosTextos,
+} from "@/lib/domain/conformidade/gatilhos-de-entrada";
 import { temDadoPessoal } from "@/lib/domain/conformidade/minimizar";
 import {
   compactarComInicios,
@@ -767,12 +771,42 @@ export const FONTES_DAS_REGRAS_EM_CODIGO: readonly string[] = [
   // Decisao do dono de 06/11/2026: a introducao antes do bloco exato.
   `introducao do preparo: em ${REGRA_DA_RESPOSTA_AO_PREPARO}, sem ${FONTE_DO_ANUNCIO_DA_INTRODUCAO}; barrada por ${LIMITE_DA_INTRODUCAO_DO_PREPARO} caracteres ou por ${FONTE_DO_QUE_A_INTRODUCAO_NAO_DIZ}`,
   CNPJ_COM_MASCARA.source,
+  // Decisao do dono de 23/11/2026: a curiosidade geral de estetica.
+  `contexto: sem a regra de contexto quando, com os fatos, o rascunho e so a frase da curiosidade de estetica (${FRASE_DA_CURIOSIDADE_DE_ESTETICA}) com os textos colados e as mensagens do paciente sao a curiosidade geral (ehCuriosidadeGeralDeEstetica)`,
   ...NEUTRALIZACOES_DE_SAIDA.map(({ nome, fonte, troca }) =>
     [nome, fonte, troca].join(" "),
   ),
   ...FONTES_DA_NORMALIZACAO,
   ...FONTES_DOS_FATOS,
 ];
+
+/**
+ * Decisao do dono de 23/11/2026: o rascunho e so a frase da curiosidade geral
+ * de estetica, sozinha ou com os textos colados do turno (saudacao, aviso), e
+ * as mensagens do paciente sao essa curiosidade (ehCuriosidadeGeralDeEstetica).
+ * Sem os fatos (texto estatico, retomada do envio): nao.
+ */
+function respondeACuriosidadeDeEstetica(
+  rascunho: string,
+  contexto: ContextoDasRegras,
+): boolean {
+  if (contexto.fatos === undefined) {
+    return false;
+  }
+  const colados = contexto.fatos.textosColados;
+  const partes = rascunho
+    .split(/\n{2,}/)
+    .map((parte) => parte.trim())
+    .filter((parte) => parte !== "");
+  return (
+    partes.includes(FRASE_DA_CURIOSIDADE_DE_ESTETICA) &&
+    partes.every(
+      (parte) =>
+        parte === FRASE_DA_CURIOSIDADE_DE_ESTETICA || colados.includes(parte),
+    ) &&
+    ehCuriosidadeGeralDeEstetica(contexto.mensagensDoPaciente)
+  );
+}
 
 export function temContatoPorExtenso(base: string): boolean {
   for (const m of base.matchAll(SEQUENCIA_DE_DIGITOS)) {
@@ -1084,13 +1118,18 @@ export function avaliarRegras(
   }
   // [AG7 preparo] fim
 
-  // Contexto: o paciente falou de saude.
-  for (const gatilho of gatilhosDosTextos(contexto.mensagensDoPaciente, {
-    comPreparo: contexto.comPreparo === true,
-  })) {
-    const categoria = CONTEXTO_CLINICO.get(gatilho);
-    if (categoria) {
-      achados.push({ categoria, regra: `contexto:${gatilho}` });
+  // Contexto: o paciente falou de saude. Decisao do dono de 23/11/2026: menos
+  // quando o rascunho e so a frase da curiosidade geral de estetica (com os
+  // textos colados) em resposta a essa pergunta: ela e a resposta desenhada
+  // para ela, escolhida pelo sistema.
+  if (!respondeACuriosidadeDeEstetica(rascunho, contexto)) {
+    for (const gatilho of gatilhosDosTextos(contexto.mensagensDoPaciente, {
+      comPreparo: contexto.comPreparo === true,
+    })) {
+      const categoria = CONTEXTO_CLINICO.get(gatilho);
+      if (categoria) {
+        achados.push({ categoria, regra: `contexto:${gatilho}` });
+      }
     }
   }
 

@@ -1793,3 +1793,164 @@ describe("onda 2: a decisão do fora do assunto", () => {
     expect(enviarResposta).not.toHaveBeenCalled();
   });
 });
+
+// Decisoes do dono de 23/11/2026 no executor: a falha passageira volta para a
+// fila UMA vez (a contagem no payload) e a pergunta anotada vira a nota
+// interna e a etiqueta, com a conversa ainda na IA.
+describe("23/11/2026: a falha passageira volta para a fila uma vez", () => {
+  function comOJobEmExecucao(payload: Record<string, unknown>) {
+    banco.linhas("job_queue").push({
+      id: JOB,
+      clinic_id: CLINICA,
+      kind: "responder_com_ia",
+      status: "executando",
+      locked_by: EXECUTOR,
+      payload,
+    });
+  }
+
+  it("429 do agente: volta sem decisão, passagem, frase nem estado; na segunda, passa como antes", async () => {
+    const payload = { conversation_id: CONVERSA, ultima_mensagem_id: "m1" };
+    comOJobEmExecucao(payload);
+    turno.mockResolvedValue({
+      ...frase({ tipo: "falhou", motivo: "limite" }),
+      passageira: true,
+    });
+    const primeira = await rodar({}, job({ payload }));
+    expect(primeira).toMatchObject({ motivo: "erro_passageiro" });
+    expect("reagendar" in primeira).toBe(true);
+    expect(decisoes()).toEqual([]);
+    expect(passagens).toEqual([]);
+    expect(enviarFrase).not.toHaveBeenCalled();
+    expect(turnoGravado()).toMatchObject({ estado: "reservado" });
+    const marcado = banco.linhas("job_queue")[0]!.payload as Record<
+      string,
+      unknown
+    >;
+    expect(marcado).toMatchObject({ voltas_do_erro_passageiro: 1 });
+
+    // A segunda vez (o mesmo job, com a contagem): passa, como antes.
+    expect(await rodar({}, job({ payload: marcado }))).toEqual({ ok: true });
+    expect(decisoes()[0]).toMatchObject({
+      desfecho: "falhou",
+      escalation_reason: "falha_tecnica",
+      motivo_da_falha: "limite",
+    });
+    expect(passagens).toEqual(["falha_tecnica"]);
+    expect(enviarFrase).toHaveBeenCalledTimes(1);
+    expect(turno).toHaveBeenCalledTimes(2);
+  });
+
+  it("verificador fora do ar: nada sai, o job volta uma vez", async () => {
+    const payload = { conversation_id: CONVERSA, ultima_mensagem_id: "m1" };
+    comOJobEmExecucao(payload);
+    turno.mockResolvedValue({
+      ...frase(
+        {
+          tipo: "bloqueou",
+          categoria: "falha_verificador",
+          camada: "falha",
+          motivoDaFalha: "sobrecarga",
+        },
+        RASCUNHO_BARRADO,
+      ),
+      passageira: true,
+    });
+    expect(await rodar({}, job({ payload }))).toMatchObject({
+      motivo: "erro_passageiro",
+    });
+    expect(enviarResposta).not.toHaveBeenCalled();
+    expect(enviarFrase).not.toHaveBeenCalled();
+    expect(banco.linhas("ai_rascunho_bloqueado")).toEqual([]);
+  });
+
+  it("o job velho demais para caber antes da varredura de 3 minutos: passa na hora", async () => {
+    const payload = { conversation_id: CONVERSA, ultima_mensagem_id: "m1" };
+    comOJobEmExecucao(payload);
+    turno.mockResolvedValue({
+      ...frase({ tipo: "falhou", motivo: "timeout" }),
+      passageira: true,
+    });
+    // 100 s antes de AGORA (a janela abriu antes dele).
+    expect(
+      await rodar({}, job({ payload, created_at: "2026-10-13T14:58:20.000Z" })),
+    ).toEqual({ ok: true });
+    expect(passagens).toEqual(["falha_tecnica"]);
+  });
+
+  it("sem conseguir marcar a contagem (sem a posse do job): passa como antes", async () => {
+    turno.mockResolvedValue({
+      ...frase({ tipo: "falhou", motivo: "conexao" }),
+      passageira: true,
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(passagens).toEqual(["falha_tecnica"]);
+  });
+
+  it("a falha que não é passageira (cota) passa na hora, sem voltar", async () => {
+    comOJobEmExecucao({ conversation_id: CONVERSA });
+    turno.mockResolvedValue(frase({ tipo: "falhou", motivo: "cota" }));
+    expect(await rodar()).toEqual({ ok: true });
+    expect(passagens).toEqual(["falha_tecnica"]);
+    expect(banco.linhas("job_queue")[0]!.payload).toEqual({
+      conversation_id: CONVERSA,
+    });
+  });
+});
+
+describe("23/11/2026: a pergunta anotada para a equipe", () => {
+  it("respondeu com anotação: a nota interna e a etiqueta antes do envio; a conversa segue na IA", async () => {
+    const etiquetas: Record<string, unknown>[] = [];
+    banco.rpc("etiquetar_conversa", (args) => {
+      etiquetas.push(args);
+      return { data: ["pergunta_para_a_equipe"], error: null };
+    });
+    turno.mockResolvedValue({
+      ...respondeu(),
+      anotacoes: ["Quanto custa a drenagem?"],
+      ferramentasUsadas: ["anotar_para_a_equipe"],
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    const nota = banco
+      .linhas("message")
+      .find((m) => m.is_internal_note === true);
+    expect(nota).toMatchObject({
+      author: "sistema",
+      direction: "saida",
+      is_internal_note: true,
+    });
+    expect(String(nota?.body)).toContain("- Quanto custa a drenagem?");
+    expect(etiquetas).toEqual([
+      {
+        p_clinic_id: CLINICA,
+        p_conversation_id: CONVERSA,
+        p_adicionar: ["pergunta_para_a_equipe"],
+        p_remover: [],
+      },
+    ]);
+    expect(decisoes()[0]).toMatchObject({
+      desfecho: "respondeu",
+      tool_used: "anotar_para_a_equipe",
+    });
+    expect(passagens).toEqual([]);
+    expect(conversa().status).toBe("ia_atendendo");
+    expect(enviarResposta).toHaveBeenCalledTimes(1);
+    // A pergunta nunca vai para o log.
+    expect(logs.join("")).not.toContain("drenagem");
+  });
+
+  it("a etiqueta que não entra (catálogo sem ela): só o código no log, a resposta sai", async () => {
+    banco.rpc("etiquetar_conversa", () => ({
+      data: null,
+      error: { code: "23514" },
+    }));
+    turno.mockResolvedValue({
+      ...respondeu(),
+      anotacoes: ["Tem estacionamento coberto?"],
+    });
+    expect(await rodar()).toEqual({ ok: true });
+    expect(logs.join("")).toContain("ia_etiqueta_da_pergunta_nao_aplicada");
+    expect(logs.join("")).not.toContain("estacionamento");
+    expect(enviarResposta).toHaveBeenCalledTimes(1);
+  });
+});

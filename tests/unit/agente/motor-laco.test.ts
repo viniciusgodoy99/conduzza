@@ -365,6 +365,7 @@ describe("executarTurnoDoAgente: resposta", () => {
     expect((corpo.tools as { name: string }[]).map((t) => t.name)).toEqual([
       ...FRASES_FIXAS,
       "buscar_procedimento",
+      "anotar_para_a_equipe",
       "escalar_humano",
     ]);
     expect(
@@ -682,7 +683,7 @@ describe("executarTurnoDoAgente: falha fechada do modelo", () => {
     );
     expect(
       (chamadas[0]?.corpo.tools as { name: string }[]).map((t) => t.name),
-    ).toEqual([...FRASES_FIXAS, "escalar_humano"]);
+    ).toEqual([...FRASES_FIXAS, "anotar_para_a_equipe", "escalar_humano"]);
     expect(r.desfecho).toEqual({
       tipo: "falhou",
       motivo: "ferramenta_invalida",

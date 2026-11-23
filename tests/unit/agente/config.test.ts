@@ -283,6 +283,7 @@ describe("habilidades", () => {
     });
     expect(porChave.passar_para_equipe?.travada).toBe(true);
     expect(porChave.passar_para_equipe?.ferramentas).toEqual([
+      "anotar_para_a_equipe",
       "escalar_humano",
     ]);
     // [AG7 preparo] início
@@ -451,6 +452,7 @@ describe("habilidades", () => {
       "buscar_profissionais",
       "consultar_minhas_consultas",
       "buscar_procedimento",
+      "anotar_para_a_equipe",
       "escalar_humano",
     ]);
     expect(
@@ -466,6 +468,7 @@ describe("habilidades", () => {
       "consultar_requisitos",
       "buscar_profissionais",
       "consultar_minhas_consultas",
+      "anotar_para_a_equipe",
       "escalar_humano",
     ]);
     expect(
@@ -493,6 +496,7 @@ describe("habilidades", () => {
       "registrar_dados_do_paciente",
       "agendar",
       "confirmar_presenca",
+      "anotar_para_a_equipe",
       "escalar_humano",
     ]);
     for (const agenda of [
@@ -513,6 +517,7 @@ describe("habilidades", () => {
         "consultar_minhas_consultas",
         "buscar_procedimento",
         "confirmar_presenca",
+        "anotar_para_a_equipe",
         "escalar_humano",
       ]);
     }
@@ -2506,6 +2511,7 @@ describe("AG4: prazos para cancelar e remarcar", () => {
       "pedir_cancelamento",
       "cancelar_consulta",
       "buscar_horario_para_remarcar",
+      "anotar_para_a_equipe",
       "escalar_humano",
     ]);
     // So remarcar (com agendar): a lista vem uma vez, sem as de cancelar.
@@ -2763,7 +2769,8 @@ describe("AG5: a lista de espera pela IA (D-36, recomendação)", () => {
       agenda,
       { cancelarHoras: 24, remarcarHoras: 24 },
     );
-    expect(todas).toHaveLength(19);
+    // 23/11/2026: mais anotar_para_a_equipe.
+    expect(todas).toHaveLength(20);
     const i = todas.indexOf("pedir_lista_de_espera");
     expect(todas.slice(i, i + 2)).toEqual([
       "pedir_lista_de_espera",

@@ -411,7 +411,8 @@ describe("remarcar: o que fica com a equipe e as recusas", () => {
       resultado: "horario_fora_da_remarcacao",
     });
     expect(cenario.banco.chamadasDe("reservar_horario_da_ia")).toEqual([]);
-    expect(cenario.estado.falhas_seguidas).toBe(1);
+    // 23/11/2026: o erro do proprio modelo nao conta contra o paciente.
+    expect(cenario.estado.falhas_seguidas).toBe(0);
   });
 
   it("buscar_horario (marcar consulta nova) no meio da remarcação tira o pedido de remarcar", async () => {
@@ -513,7 +514,7 @@ describe("remarcar: o que fica com a equipe e as recusas", () => {
     }
   });
 
-  it("busca sem a consulta e sem foco: sem_consulta_para_remarcar (falha)", async () => {
+  it("busca sem a consulta e sem foco: sem_consulta_para_remarcar (erro do modelo, não conta)", async () => {
     const cenario = new CenarioDaAg4();
     consultasDoContato(cenario.banco);
     await cenario.fala({
@@ -529,7 +530,7 @@ describe("remarcar: o que fica com a equipe e as recusas", () => {
     expect(saidas(cenario.corpos[1])[0]).toEqual({
       resultado: "sem_consulta_para_remarcar",
     });
-    expect(cenario.estado.falhas_seguidas).toBe(1);
+    expect(cenario.estado.falhas_seguidas).toBe(0);
     expect(cenario.estado.pedido_pendente).toBeNull();
     // A consulta C2 nem foi tocada.
     expect(

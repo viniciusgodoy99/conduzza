@@ -153,11 +153,13 @@ import {
   situacaoPessoalNoPedidoDoPreparo,
 } from "@/lib/domain/conformidade/filtro-deterministico";
 import {
+  FRASE_DA_CURIOSIDADE_DE_ESTETICA,
   FRASE_DE_ESCALONAMENTO,
   FRASE_FORA_DO_ASSUNTO,
 } from "@/lib/domain/conformidade/frase-fixa";
 import {
   detectarGatilhosDeEntrada,
+  ehCuriosidadeGeralDeEstetica,
   LIMITE_DE_MENSAGEM,
   pedidoDeConsultaParaOutraPessoa,
   type MensagemDeEntrada,
@@ -180,6 +182,7 @@ import {
 } from "@/lib/domain/conformidade/veredicto";
 import {
   decidirPeloClassificador,
+  gatilhosDaClassificacao,
   type ClassificadorDeEntrada,
 } from "@/lib/integrations/llm/classificador-de-entrada";
 // [AG7 preparo] início
@@ -226,6 +229,13 @@ import {
 import { log } from "@/lib/log";
 
 import { FALHAS_PARA_PASSAR } from "./atendimento";
+import {
+  MAXIMO_DE_ANOTACOES_POR_TURNO,
+  NOME_DA_ANOTACAO,
+  PASSO_DA_ANOTACAO,
+  perguntaDaAnotacao,
+  SAIDAS_DA_ANOTACAO,
+} from "./ferramentas/anotar-para-a-equipe";
 import {
   criarAgendaDoTurno,
   type AgendaDoTurno,
@@ -277,7 +287,7 @@ import {
   trechosDoNome,
   type TrechoDoTexto,
 } from "./marca-do-nome";
-import { prometePassagemParaAEquipe } from "./passagem-prometida";
+import { promessaDaResposta } from "./passagem-prometida";
 import {
   agoraNaClinica,
   FORMATO_DA_RESPOSTA,
@@ -652,7 +662,36 @@ type Comum = {
    */
   versaoDoClassificador?: string;
   // [AG7 preparo] fim
+  /**
+   * Decisao do dono de 23/11/2026 ("anota e continua"): as perguntas que o
+   * modelo anotou para a equipe (anotar_para_a_equipe), ja resumidas e
+   * minimizadas. O executor do WhatsApp grava a nota interna e a etiqueta;
+   * o simulador mostra. Texto do paciente em potencial: nunca vai para log,
+   * trilha nem ai_decision_log. Ausente: nenhuma.
+   */
+  anotacoes?: string[];
+  /**
+   * Decisao do dono de 23/11/2026 ("nao desistir cedo"): a falha foi
+   * passageira (prazo, 429 de ritmo, 503 e conexao do classificador, do
+   * agente ou do verificador; incoerencia ou duvida do classificador; a
+   * leitura da agenda que falhou). Nada saiu: o executor do WhatsApp volta o
+   * job para a fila UMA vez antes de passar (lib/jobs/responder-com-ia.ts).
+   * Ausente: nao foi.
+   */
+  passageira?: true;
 };
+
+/**
+ * Os motivos de falha passageira das chamadas aos modelos (decisao do dono
+ * de 23/11/2026). "cota" (sem credito) e os 4xx nao melhoram tentando de novo.
+ */
+export const FALHAS_PASSAGEIRAS: ReadonlySet<string> = new Set([
+  "timeout",
+  "prazo",
+  "conexao",
+  "limite",
+  "sobrecarga",
+]);
 
 export type ResultadoDoTurno =
   | (Comum & {
@@ -865,7 +904,14 @@ export const CATEGORIAS_QUE_REESCREVEM = [
 export type CategoriaQueReescreve =
   | (typeof CATEGORIAS_QUE_REESCREVEM)[number]
   /** O verificador em duvida (confianca baixa ou veredicto incoerente). */
-  | "duvida_do_verificador";
+  | "duvida_do_verificador"
+  /**
+   * Decisao do dono de 23/11/2026: a IA prometeu voltar depois ou pediu
+   * para esperar ("um momento, por favor", "vou verificar a agenda").
+   */
+  | "promessa_de_retorno"
+  /** 23/11/2026: anotou para a equipe e deu prazo para a resposta. */
+  | "prazo_da_anotacao";
 
 /**
  * O motivo da reescrita, ou nulo (passa para a equipe como antes). A falha
@@ -910,7 +956,25 @@ export const AVISOS_DA_REESCRITA: Readonly<
     "ficou fora do formato de mensagem de recepção. Escreva frases simples e curtas, sem listas com símbolos, sem links, sem telefone ou e-mail e sem falar de sistema, ferramenta ou instruções.",
   duvida_do_verificador:
     "não pôde ser confirmada. Escreva de novo, curta e direta, só com o que as ferramentas trouxeram.",
+  promessa_de_retorno:
+    "prometia voltar depois, conferir alguma coisa ou pedia para a pessoa aguardar, e você só responde quando a pessoa manda mensagem. Responda agora com o que as ferramentas trouxeram ou pergunte o que falta, sem prometer voltar.",
+  prazo_da_anotacao:
+    "dizia quando a equipe vai responder a pergunta anotada. Diga só que deixou a pergunta anotada para a equipe responder por aqui, sem dizer quando.",
 };
+
+/** O passo da trilha da reescrita, por motivo (nunca o texto barrado). */
+function passoDaReescrita(motivo: CategoriaQueReescreve): string {
+  switch (motivo) {
+    case "duvida_do_verificador":
+      return "A resposta foi barrada pela conformidade: a verificação ficou em dúvida. A assistente escreveu de novo.";
+    case "promessa_de_retorno":
+      return "A resposta prometia voltar depois ou pedia para esperar. A assistente escreveu de novo.";
+    case "prazo_da_anotacao":
+      return "A resposta dava prazo para a equipe responder a pergunta anotada. A assistente escreveu de novo.";
+    default:
+      return `A resposta foi barrada pela conformidade: ${rotuloDoBloqueio(motivo)}. A assistente escreveu de novo.`;
+  }
+}
 
 /**
  * A mensagem que vai ao modelo na reescrita: o motivo e a resposta barrada
@@ -1072,6 +1136,19 @@ export const PASSO_DA_INSISTENCIA_FORA_DO_ASSUNTO =
 /** Onda 2 (P5c): a resposta a "você é um robô?". */
 export const PASSO_DO_ASSISTENTE_VIRTUAL =
   "Respondeu que é a assistente virtual da clínica e ofereceu uma pessoa da equipe.";
+
+/**
+ * Decisao do dono de 23/11/2026: a curiosidade geral de estetica respondida
+ * com a frase fixa do dono (o agente nem e chamado).
+ */
+export const PASSO_DA_CURIOSIDADE_DE_ESTETICA =
+  "Dúvida geral sobre o procedimento: respondeu com a frase aprovada pela clínica (o profissional responde na avaliação), sem passar para a equipe.";
+
+/** Os gatilhos que a curiosidade geral de estetica explica (23/11/2026). */
+const GATILHOS_DA_CURIOSIDADE: ReadonlySet<GatilhoDeEntrada> = new Set([
+  "sintoma",
+  "assunto_clinico",
+]);
 
 /** AG3 (item 9): a segunda falha seguida do atendimento. */
 export const PASSO_DAS_FALHAS_SEGUIDAS =
@@ -2249,9 +2326,14 @@ async function turnoDoAgente(
   };
   // [AG6b mídia] fim
 
+  // 23/11/2026: as perguntas anotadas para a equipe neste turno.
+  const anotacoes: string[] = [];
+  const comAsAnotacoes = () =>
+    anotacoes.length > 0 ? { anotacoes: [...anotacoes] } : {};
   const fraseFixa = (
     desfecho: DesfechoDoTurno,
     rascunhoBloqueado: string | null = null,
+    passageira = false,
   ): ResultadoDoTurno => ({
     tipo: "frase_fixa",
     resposta: FRASE_DE_ESCALONAMENTO,
@@ -2269,6 +2351,8 @@ async function turnoDoAgente(
       : {}),
     // [AG7 preparo]
     versaoDoClassificador,
+    ...comAsAnotacoes(),
+    ...(passageira ? { passageira: true as const } : {}),
   });
   const escalar = (
     motivo: MotivoDeEscalonamento,
@@ -2279,12 +2363,12 @@ async function turnoDoAgente(
     trilha.push({ tipo: "equipe", texto: `Passou para a equipe: ${texto}` });
     return fraseFixa({ tipo: "escalou", motivo, gatilho, origem });
   };
-  const falhar = (motivo: FalhaDoAgente) => {
+  const falhar = (motivo: FalhaDoAgente, passageira = false) => {
     trilha.push({
       tipo: "equipe",
       texto: `Passou para a equipe: ${textoDaFalha(motivo)}`,
     });
-    return fraseFixa({ tipo: "falhou", motivo });
+    return fraseFixa({ tipo: "falhou", motivo }, null, passageira);
   };
 
   // [AG6b mídia] início
@@ -2856,6 +2940,21 @@ async function turnoDoAgente(
     // rede): a mascara do nome so existe para a OpenAI e nao pode esconder
     // um gatilho. Os passos 3, 4 e 6 continuam so com o texto mascarado.
     // [AG6b mídia] início
+    // Decisao do dono de 23/11/2026: o gatilho do portao (sintoma ou assunto
+    // clinico) que a curiosidade geral de estetica explica fica para o
+    // classificador confirmar (passo 3). Nulo: nao ha.
+    let gatilhoDaCuriosidade: GatilhoDeEntrada | null = null;
+    /** So texto (ou audio transcrito) nas pendentes: nenhum arquivo a ler. */
+    const soTextoNasPendentes = () =>
+      pendentesDoTurno().every(
+        (m) => m.midia === undefined || m.midia.midia === "audio",
+      );
+    /** Os textos das pendentes como o portao le (o original, sem mascara). */
+    const textosDoPortao = () =>
+      pendentesDoTurno()
+        .map(entradaDoPortao)
+        .filter((e) => e.tipo === "texto")
+        .map((e) => e.texto ?? "");
     // AG6b (desenho 5.1): o portao roda nas pendentes do TURNO, com a midia
     // pela situacao dela (entradaDoPortao): no 1a, o audio a transcrever e
     // um texto vazio (conta na rajada e no numero de mensagens, nunca como
@@ -2884,7 +2983,16 @@ async function turnoDoAgente(
         return passarPorUrgencia();
       }
       // [AG6 urgência] fim
-      if (gatilho !== undefined) {
+      // 23/11/2026: so sintoma e assunto clinico, e a pergunta e a curiosidade
+      // geral de estetica: o classificador confirma antes (passo 3).
+      gatilhoDaCuriosidade =
+        gatilho !== undefined &&
+        gatilhos.every((g) => GATILHOS_DA_CURIOSIDADE.has(g)) &&
+        soTextoNasPendentes() &&
+        ehCuriosidadeGeralDeEstetica(textosDoPortao())
+          ? gatilho
+          : null;
+      if (gatilho !== undefined && gatilhoDaCuriosidade === null) {
         trilha.push({
           tipo: "outro",
           texto: PASSO_DA_CONFERENCIA_DA_ENTRADA,
@@ -3055,7 +3163,33 @@ async function turnoDoAgente(
       tipo: "outro",
       texto: "A mensagem foi conferida antes de chegar ao assistente.",
     });
-    if (decisao.escalar) {
+    // Decisao do dono de 23/11/2026: a curiosidade geral de estetica ("botox
+    // doi?", "e seguro?") recebe a frase fixa do dono, e a conversa continua.
+    // So quando os UNICOS gatilhos (portao e classificador) sao sintoma ou
+    // assunto clinico, o detector diz que e a pergunta geral, sem situacao da
+    // pessoa, e ha so texto. O classificador que nao confirma (outro
+    // gatilho, falha, incoerencia) devolve a decisao ao portao, como antes.
+    const doClassificador = gatilhosDaClassificacao(classificacao);
+    const classificadorConfirma =
+      !decisao.escalar ||
+      (decisao.gatilho !== null &&
+        doClassificador !== null &&
+        doClassificador.every((g) => GATILHOS_DA_CURIOSIDADE.has(g)));
+    const curiosidade =
+      classificadorConfirma &&
+      (gatilhoDaCuriosidade !== null ||
+        (decisao.escalar &&
+          soTextoNasPendentes() &&
+          ehCuriosidadeGeralDeEstetica(textosDoPortao())));
+    if (gatilhoDaCuriosidade !== null && !curiosidade) {
+      return escalar(
+        MOTIVO_DO_GATILHO[gatilhoDaCuriosidade],
+        "portao",
+        gatilhoDaCuriosidade,
+        textoDoGatilho(gatilhoDaCuriosidade),
+      );
+    }
+    if (decisao.escalar && !curiosidade) {
       if (decisao.gatilho !== null) {
         return escalar(
           MOTIVO_DO_GATILHO[decisao.gatilho],
@@ -3064,16 +3198,20 @@ async function turnoDoAgente(
           textoDoGatilho(decisao.gatilho),
         );
       }
+      // 23/11/2026: a incoerencia, a duvida e a falha passageira do
+      // classificador voltam para a fila uma vez (passageira).
       if (
         decisao.motivo === "incoerente" ||
         decisao.motivo === "confianca_baixa"
       ) {
-        return falhar(decisao.motivo);
+        return falhar(decisao.motivo, true);
       }
       // Falha do classificador (ou "gatilho" sem gatilho, que nao deveria
       // existir): o motivo que ele devolveu, se for um conhecido.
       const motivo = (classificacao as { motivo?: unknown }).motivo;
-      return falhar(ehMotivoDaFalha(motivo) ? motivo : "desconhecida");
+      return ehMotivoDaFalha(motivo)
+        ? falhar(motivo, FALHAS_PASSAGEIRAS.has(motivo))
+        : falhar("desconhecida");
     }
 
     // [AG6b mídia] início
@@ -3103,8 +3241,9 @@ async function turnoDoAgente(
     if (comEstado) {
       await agendaDoTurno.preparar();
     }
-    // Sobe para MAXIMO_DE_RODADAS_COM_AGENDA quando o turno usa a agenda.
-    let maximoDeRodadas = MAXIMO_DE_RODADAS;
+    // Sobe para MAXIMO_DE_RODADAS_COM_AGENDA quando o turno usa a agenda. Na
+    // curiosidade de estetica, nenhuma: o sistema responde (23/11/2026).
+    let maximoDeRodadas = curiosidade ? 0 : MAXIMO_DE_RODADAS;
     const fixos = parametrosFixosDoAgente(modelo);
     // A mesma linha da hora vai ao modelo e aos fatos do turno.
     const agoraTexto = agoraNaClinica(entrada.agoraMs, entrada.fuso);
@@ -3330,7 +3469,7 @@ async function turnoDoAgente(
       }
       const restante = prazoEm - agora() - RESERVA_DO_FILTRO_MS;
       if (restante < 1_000) {
-        return falhar("prazo");
+        return falhar("prazo", true);
       }
       const prazoDaChamada = Math.min(PRAZO_DA_RODADA_MS, restante);
 
@@ -3343,7 +3482,9 @@ async function turnoDoAgente(
         instructions: instrucoes,
         input: historico,
         tools: ferramentas,
-        tool_choice: "auto",
+        // Decisao do dono de 23/11/2026: a ultima rodada pede a resposta, sem
+        // ferramenta, em vez de esgotar (rodadas_esgotadas).
+        tool_choice: rodada >= maximoDeRodadas ? "none" : "auto",
         parallel_tool_calls: false,
         max_output_tokens: MAX_TOKENS_DO_AGENTE,
         text: { format: FORMATO_DA_RESPOSTA },
@@ -3353,7 +3494,7 @@ async function turnoDoAgente(
 
       const chamada = await chamarOAgente(corpo, prazoDaChamada);
       if (!chamada.ok) {
-        return falhar(chamada.motivo);
+        return falhar(chamada.motivo, FALHAS_PASSAGEIRAS.has(chamada.motivo));
       }
       const lida = chamada.lida;
 
@@ -3423,6 +3564,30 @@ async function turnoDoAgente(
           typeof chamada.call_id !== "string"
         ) {
           return falhar("ferramenta_invalida");
+        }
+        // 23/11/2026 ("anota e continua"): a pergunta que o Cadastro nao
+        // responde vira nota para a equipe; o modelo segue atendendo.
+        if (nome === NOME_DA_ANOTACAO) {
+          const pergunta = perguntaDaAnotacao(argumentosDe(chamada));
+          ferramentasUsadas.push(NOME_DA_ANOTACAO);
+          let saida: string = SAIDAS_DA_ANOTACAO.entradaInvalida;
+          if (pergunta !== null) {
+            if (anotacoes.length >= MAXIMO_DE_ANOTACOES_POR_TURNO) {
+              saida = SAIDAS_DA_ANOTACAO.limite;
+            } else {
+              if (anotacoes.length === 0) {
+                trilha.push({ tipo: "equipe", texto: PASSO_DA_ANOTACAO });
+              }
+              anotacoes.push(pergunta);
+              saida = SAIDAS_DA_ANOTACAO.anotado;
+            }
+          }
+          historico.push({
+            type: "function_call_output",
+            call_id: chamada.call_id,
+            output: saida,
+          });
+          continue;
         }
         // [AG7 preparo] início
         // AG7: enviar_preparo so vale SOZINHA no turno (cada job manda uma
@@ -3594,7 +3759,8 @@ async function turnoDoAgente(
             kind: nome,
             clinic_id: entrada.clinicId,
           });
-          return falhar("desconhecida");
+          // 23/11/2026: a leitura da agenda que falhou volta para a fila uma vez.
+          return falhar("desconhecida", true);
         }
         if (efeito.tipo === "frase") {
           // AG4: a frase fixa encerra o turno (o resto da rodada nao roda).
@@ -3824,6 +3990,8 @@ async function turnoDoAgente(
         ? fraseDoAssistente
         : null;
     let rascunho: string;
+    // 23/11/2026: a promessa de voltar (ou o prazo da anotacao) que reescreve.
+    let motivoDaPromessa: CategoriaQueReescreve | null = null;
     // Revisao 2 da AG2: as respostas da base que o modelo disse ter usado,
     // para o resumo dos fatos que vai ao verificador.
     const respostasDaBase: string[] = [];
@@ -3845,8 +4013,10 @@ async function turnoDoAgente(
      */
     const montarRascunhoDaMensagem = (
       mensagemFinal: RespostaFinal,
+      podeReescrever: boolean,
     ):
       | { tipo: "rascunho"; rascunho: string }
+      | { tipo: "reescrever"; motivo: CategoriaQueReescreve }
       | { tipo: "resultado"; resultado: ResultadoDoTurno } => {
 
       // Q5 (revisao de producao de 19/10/2026): a resposta que promete
@@ -3855,19 +4025,29 @@ async function turnoDoAgente(
       // avisado); sai a frase fixa, e a conversa vai para a equipe como em
       // toda passagem. Revisao da AG2: com o que o turno fez (o aviso da
       // aprovacao depois de marcar e informacao; "vou conferir a agenda"
-      // sem ferramenta e promessa).
-      if (
-        prometePassagemParaAEquipe(mensagemFinal.mensagem, {
-          usouFerramenta: ferramentasDoTurno.length > 0,
-          acoes: ferramentasDoTurno.flatMap(({ fatos }) =>
-            fatos?.acao === undefined ? [] : [fatos.acao],
-          ),
-          arquivoFicaComAEquipe: fatosDosArquivos().some(
-            (fato) =>
-              fato.tipo === "resto_do_pedido" || fato.tipo === "documento",
-          ),
-        })
-      ) {
+      // sem ferramenta e promessa). Decisao do dono de 23/11/2026: so a
+      // passagem explicita passa na hora; o retorno da IA ("um momento",
+      // "vou verificar a agenda") e o prazo da anotacao ganham a reescrita
+      // unica, e passam como antes se voltarem.
+      const promessa = promessaDaResposta(mensagemFinal.mensagem, {
+        usouFerramenta: ferramentasDoTurno.length > 0,
+        acoes: ferramentasDoTurno.flatMap(({ fatos }) =>
+          fatos?.acao === undefined ? [] : [fatos.acao],
+        ),
+        arquivoFicaComAEquipe: fatosDosArquivos().some(
+          (fato) =>
+            fato.tipo === "resto_do_pedido" || fato.tipo === "documento",
+        ),
+        anotouParaAEquipe: anotacoes.length > 0,
+      });
+      if (promessa !== null && promessa !== "passagem" && podeReescrever) {
+        return {
+          tipo: "reescrever",
+          motivo:
+            promessa === "retorno" ? "promessa_de_retorno" : "prazo_da_anotacao",
+        };
+      }
+      if (promessa !== null) {
         trilha.push({ tipo: "outro", texto: PASSO_DA_PASSAGEM_EM_TEXTO });
         return {
           tipo: "resultado",
@@ -4000,15 +4180,32 @@ async function turnoDoAgente(
         encerra: false,
         aviso: ehForaDoAssunto ? aviso : null,
       });
+    } else if (curiosidade) {
+      // 23/11/2026: a frase do dono, escolhida pelo sistema, com a saudacao e
+      // o aviso colados como nas outras frases fixas, pelo filtro inteiro.
+      trilha.push({ tipo: "outro", texto: PASSO_DA_CURIOSIDADE_DE_ESTETICA });
+      rascunho = comporResposta({
+        mensagem: FRASE_DA_CURIOSIDADE_DE_ESTETICA,
+        saudacao: entrada.config.saudacao,
+        encerramento: null,
+        primeiraResposta,
+        encerra: false,
+        aviso,
+      });
     } else {
       if (final === null) {
         return falhar("rodadas_esgotadas");
       }
-      const montado = montarRascunhoDaMensagem(final);
+      const montado = montarRascunhoDaMensagem(final, true);
       if (montado.tipo === "resultado") {
         return montado.resultado;
       }
-      rascunho = montado.rascunho;
+      if (montado.tipo === "reescrever") {
+        motivoDaPromessa = montado.motivo;
+        rascunho = "";
+      } else {
+        rascunho = montado.rascunho;
+      }
     }
 
     // 6. Filtro de saida, com os fatos do turno (AG2). Montar os fatos que
@@ -4032,42 +4229,48 @@ async function turnoDoAgente(
       return falhar("desconhecida");
     };
     let fatos: FatosDoTurno;
-    try {
-      fatos = fatosDoRascunho(rascunho);
-    } catch {
-      return fatosFalharam();
+    // 23/11/2026: a promessa de voltar nem vai ao filtro (reescreve antes).
+    if (motivoDaPromessa === null) {
+      try {
+        fatos = fatosDoRascunho(rascunho);
+      } catch {
+        return fatosFalharam();
+      }
+      filtro = await passarNoFiltro(rascunho, fatos, false);
     }
-    filtro = await passarNoFiltro(rascunho, fatos, false);
 
     // 7. A reescrita (decisao do dono de 11/11/2026): so a mensagem que o
-    // modelo escreveu (nunca a frase fixa da agenda ou do "robô?"), barrada
-    // por formato, fato, preco ou duvida do verificador, e com tempo. Uma
-    // chamada, sem ferramenta (os resultados delas ja estao no historico),
-    // com o aviso fixo do motivo; o filtro inteiro roda de novo. A falha da
-    // chamada deixa o bloqueio de antes (a conversa passa, como sempre).
+    // modelo escreveu (nunca a frase fixa da agenda, do "robô?" ou da
+    // curiosidade de estetica), barrada por formato, fato, preco ou duvida do
+    // verificador, e com tempo. Uma chamada, sem ferramenta (os resultados
+    // delas ja estao no historico), com o aviso fixo do motivo; o filtro
+    // inteiro roda de novo. A falha da chamada deixa o bloqueio de antes (a
+    // conversa passa, como sempre). Decisao do dono de 23/11/2026: a promessa
+    // de voltar e o prazo da anotacao tambem reescrevem; sem a reescrita,
+    // passam como antes.
     const motivoDaPrimeira =
-      final !== null && fraseDaAgenda === null && fraseEscolhida === null
+      motivoDaPromessa ??
+      (filtro !== null &&
+      final !== null &&
+      fraseDaAgenda === null &&
+      fraseEscolhida === null &&
+      !curiosidade
         ? motivoDaReescrita(filtro)
-        : null;
+        : null);
     if (
       motivoDaPrimeira !== null &&
       final !== null &&
-      !filtro.aprovado &&
       prazoEm - agora() - RESERVA_DO_FILTRO_MS >= PRAZO_MINIMO_DA_REESCRITA_MS
     ) {
       trilha.push({
         tipo: "bloqueio",
-        texto: `A resposta foi barrada pela conformidade: ${
-          motivoDaPrimeira === "duvida_do_verificador"
-            ? "a verificação ficou em dúvida"
-            : rotuloDoBloqueio(motivoDaPrimeira)
-        }. A assistente escreveu de novo.`,
+        texto: passoDaReescrita(motivoDaPrimeira),
       });
       log.info("ia_agente_reescreveu", {
         kind: "agente",
         clinic_id: entrada.clinicId,
         error_code: motivoDaPrimeira,
-        camada: filtro.camada,
+        camada: filtro !== null && !filtro.aprovado ? filtro.camada : "regra",
       });
       const chamada = await chamarOAgente(
         {
@@ -4100,18 +4303,32 @@ async function turnoDoAgente(
           ? lerRespostaFinal(textoDaMensagemFinal(chamada.lida.itens))
           : null;
       if (reescrita !== null) {
-        const montado = montarRascunhoDaMensagem(reescrita);
+        const montado = montarRascunhoDaMensagem(reescrita, false);
         if (montado.tipo === "resultado") {
           return montado.resultado;
         }
-        rascunho = montado.rascunho;
-        try {
-          fatos = fatosDoRascunho(rascunho);
-        } catch {
-          return fatosFalharam();
+        if (montado.tipo === "rascunho") {
+          rascunho = montado.rascunho;
+          motivoDaPromessa = null;
+          try {
+            fatos = fatosDoRascunho(rascunho);
+          } catch {
+            return fatosFalharam();
+          }
+          filtro = await passarNoFiltro(rascunho, fatos, false);
         }
-        filtro = await passarNoFiltro(rascunho, fatos, false);
       }
+    }
+    if (motivoDaPromessa !== null || filtro === null) {
+      // A promessa sem reescrita (sem tempo ou a chamada falhou): passa, como
+      // antes de 23/11/2026.
+      trilha.push({ tipo: "outro", texto: PASSO_DA_PASSAGEM_EM_TEXTO });
+      return escalar(
+        "agente_pediu",
+        "texto_do_agente",
+        null,
+        ROTULO_DO_MOTIVO_DE_ESCALONAMENTO.agente_pediu,
+      );
     }
     if (!filtro.aprovado) {
       trilha.push({
@@ -4130,6 +4347,11 @@ async function turnoDoAgente(
           motivoDaFalha: filtro.motivoDaFalha,
         },
         rascunho,
+        // 23/11/2026: o verificador fora do ar nunca deixa o texto sair; o
+        // job volta para a fila uma vez antes de passar.
+        filtro.camada === "falha" &&
+          filtro.motivoDaFalha !== null &&
+          FALHAS_PASSAGEIRAS.has(filtro.motivoDaFalha),
       );
     }
     trilha.push({
@@ -4149,6 +4371,7 @@ async function turnoDoAgente(
       rascunhoBloqueado: null,
       // [AG7 preparo]
       versaoDoClassificador,
+      ...comAsAnotacoes(),
     };
   } catch {
     // Rede de seguranca: excecao inesperada vira frase fixa. Nunca olha a

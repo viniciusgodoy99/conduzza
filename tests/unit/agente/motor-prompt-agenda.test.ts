@@ -366,6 +366,7 @@ describe("ferramentas e versão", () => {
       "registrar_dados_do_paciente",
       "agendar",
       "confirmar_presenca",
+      "anotar_para_a_equipe",
       "escalar_humano",
     ]);
     expect(
@@ -378,11 +379,17 @@ describe("ferramentas e versão", () => {
       ...frases,
       "buscar_procedimento",
       "confirmar_presenca",
+      "anotar_para_a_equipe",
       "escalar_humano",
     ]);
     expect(
       ferramentasDaChamada(configPadraoDoAgente()).map((f) => f.name),
-    ).toEqual([...frases, "buscar_procedimento", "escalar_humano"]);
+    ).toEqual([
+      ...frases,
+      "buscar_procedimento",
+      "anotar_para_a_equipe",
+      "escalar_humano",
+    ]);
   });
 
   it("a versão cobre as ferramentas e as frases novas", () => {
@@ -409,6 +416,7 @@ describe("ferramentas e versão", () => {
       "pedir_lista_de_espera",
       "entrar_na_lista_de_espera",
       "confirmar_presenca",
+      "anotar_para_a_equipe",
       "escalar_humano",
     ]);
     expect(
@@ -427,7 +435,7 @@ describe("ferramentas e versão", () => {
         agoraTexto: AGORA,
       }),
     ).toContain(
-      "Ferramentas desta versão: fora_do_assunto, sou_assistente_virtual, consultar_unidades, consultar_requisitos, buscar_profissionais, consultar_minhas_consultas, buscar_procedimento, consultar_cadastro_do_contato, buscar_horario, reservar_horario, registrar_dados_do_paciente, agendar, confirmar_presenca, escalar_humano.",
+      "Ferramentas desta versão: fora_do_assunto, sou_assistente_virtual, consultar_unidades, consultar_requisitos, buscar_profissionais, consultar_minhas_consultas, buscar_procedimento, consultar_cadastro_do_contato, buscar_horario, reservar_horario, registrar_dados_do_paciente, agendar, confirmar_presenca, anotar_para_a_equipe, escalar_humano.",
     );
   });
 });

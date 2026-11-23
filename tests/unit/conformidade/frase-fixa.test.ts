@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { fatosVazios } from "@/lib/domain/conformidade/fatos-do-turno";
 import { avaliarRegras } from "@/lib/domain/conformidade/filtro-deterministico";
 import {
+  FRASE_DA_CURIOSIDADE_DE_ESTETICA,
   FRASE_DE_ESCALONAMENTO,
   FRASE_DO_ASSISTENTE_VIRTUAL,
   FRASE_FORA_DO_ASSUNTO,
@@ -77,5 +79,87 @@ describe("frases fixas da resposta da IA (onda 2)", () => {
     expect(FRASE_FORA_DO_ASSUNTO).not.toBe(FRASE_DE_ESCALONAMENTO);
     expect(FRASE_DO_ASSISTENTE_VIRTUAL).not.toBe(FRASE_DE_ESCALONAMENTO);
     expect(FRASE_DO_ASSISTENTE_VIRTUAL).not.toBe(FRASE_FORA_DO_ASSUNTO);
+  });
+});
+
+// Decisao do dono de 23/11/2026: a frase da curiosidade geral de estetica.
+// Texto do dono, palavra por palavra (sem aprovacao do RT); quem escolhe e o
+// sistema, e ela sai pelo filtro inteiro como as frases da onda 2.
+describe("frase da curiosidade geral de estética (23/11/2026)", () => {
+  it("é exatamente o texto aprovado pelo dono, byte a byte", () => {
+    expect(FRASE_DA_CURIOSIDADE_DE_ESTETICA).toBe(
+      "Essa é uma dúvida que o profissional responde na avaliação, porque cada caso é visto pessoalmente. Quer marcar uma avaliação?",
+    );
+    expect(Buffer.from(FRASE_DA_CURIOSIDADE_DE_ESTETICA, "utf8").toString("hex")).toBe(
+      Buffer.from(
+        "Essa \u00e9 uma d\u00favida que o profissional responde na avalia\u00e7\u00e3o, porque cada caso \u00e9 visto pessoalmente. Quer marcar uma avalia\u00e7\u00e3o?",
+        "utf8",
+      ).toString("hex"),
+    );
+  });
+
+  it("passa nas regras do filtro, sem travessão, sem nada do sistema e sem prometer passagem", () => {
+    const resultado = avaliarRegras(FRASE_DA_CURIOSIDADE_DE_ESTETICA, {
+      precosDoTurno: [],
+      nomesDoCatalogo: [],
+      mensagensDoPaciente: [],
+    });
+    expect(resultado.achados).toEqual([]);
+    expect(FRASE_DA_CURIOSIDADE_DE_ESTETICA).not.toMatch(/[\u2013\u2014]/);
+    expect(FRASE_DA_CURIOSIDADE_DE_ESTETICA.toLowerCase()).not.toMatch(
+      /openai|gpt|modelo|ferramenta|instru|sistema|prompt|robo|\bia\b/,
+    );
+    expect(prometePassagemParaAEquipe(FRASE_DA_CURIOSIDADE_DE_ESTETICA)).toBe(
+      false,
+    );
+    expect(FRASE_DA_CURIOSIDADE_DE_ESTETICA).not.toBe(FRASE_DE_ESCALONAMENTO);
+  });
+});
+
+// A regra de contexto do filtro (o paciente falou de saude) nao barra a frase
+// quando ela e a resposta a curiosidade geral, com os fatos do turno; barra
+// qualquer outro texto, e a frase depois de outra pergunta clinica.
+describe("a regra de contexto e a frase da curiosidade (23/11/2026)", () => {
+  const AVISO = FRASE_DO_ASSISTENTE_VIRTUAL;
+  const fatos = {
+    ...fatosVazios(2026),
+    textosColados: [AVISO, FRASE_DA_CURIOSIDADE_DE_ESTETICA],
+  };
+  const contexto = (mensagensDoPaciente: string[]) => ({
+    precosDoTurno: [],
+    nomesDoCatalogo: [],
+    mensagensDoPaciente,
+    fatos,
+  });
+
+  it("a frase (com o aviso colado) depois de 'botox dói?' passa nas regras", () => {
+    expect(
+      avaliarRegras(
+        `${AVISO}\n\n${FRASE_DA_CURIOSIDADE_DE_ESTETICA}`,
+        contexto(["botox dói?"]),
+      ).achados,
+    ).toEqual([]);
+  });
+
+  it("outro texto depois de 'botox dói?' continua barrado pelo contexto", () => {
+    expect(
+      avaliarRegras("Dói um pouco, mas é rápido.", contexto(["botox dói?"]))
+        .achados.map((a) => a.regra),
+    ).toContain("contexto:sintoma");
+    expect(
+      avaliarRegras(
+        `${FRASE_DA_CURIOSIDADE_DE_ESTETICA}\n\nDói um pouco.`,
+        contexto(["botox dói?"]),
+      ).achados.map((a) => a.regra),
+    ).toContain("contexto:sintoma");
+  });
+
+  it("a frase depois de uma pergunta com a situação da pessoa continua barrada", () => {
+    expect(
+      avaliarRegras(
+        FRASE_DA_CURIOSIDADE_DE_ESTETICA,
+        contexto(["fiz botox ontem e ta doendo"]),
+      ).achados.length,
+    ).toBeGreaterThan(0);
   });
 });

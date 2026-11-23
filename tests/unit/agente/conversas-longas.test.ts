@@ -1025,7 +1025,8 @@ describe("3. sem horário bom: a lista de espera e depois a marcação do mesmo 
     );
     expect(saidasDoTurno(t7)[0]).toEqual({ resultado: "sem_pergunta_de_espera" });
     expect(c.cenario.fila).toEqual([]);
-    expect(t7.estado.falhas_seguidas).toBe(1);
+    // 23/11/2026: o erro do proprio modelo nao conta contra o paciente.
+    expect(t7.estado.falhas_seguidas).toBe(0);
 
     await modeloResponde(c, "Obrigada", TCHAU);
     expect(c.consultas).toHaveLength(1);
@@ -2154,9 +2155,10 @@ describe("8. o preparo aprovado depois de marcar", () => {
     });
     expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
     expect(c.consultas).toEqual([]);
+    // 23/11/2026: agendar sem a confirmacao e erro do modelo: nao conta.
     expect(t5.estado).toMatchObject({
       etapa: "aguardando_confirmacao",
-      falhas_seguidas: 1,
+      falhas_seguidas: 0,
     });
 
     const t6 = await c.fala({
@@ -2381,7 +2383,8 @@ describe("9. o 'sim' solto não confirma nada", () => {
     });
     expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toHaveLength(chamadas);
     expect(c.consultas).toEqual([]);
-    expect(t9.estado.falhas_seguidas).toBe(1);
+    // 23/11/2026: agendar sem a pergunta e erro do modelo: nao conta.
+    expect(t9.estado.falhas_seguidas).toBe(0);
   });
 
   it("cancelamento: campanha no meio, a pergunta vencida, outro assunto e a citação de outra mensagem: nada cancela até o 'sim' logo depois da pergunta", async () => {
@@ -2449,7 +2452,8 @@ describe("9. o 'sim' solto não confirma nada", () => {
       resultado: "sem_pergunta_de_cancelamento",
     });
     intacta();
-    expect(t5.estado.falhas_seguidas).toBe(1);
+    // 23/11/2026: cancelar sem a pergunta e erro do modelo: nao conta.
+    expect(t5.estado.falhas_seguidas).toBe(0);
 
     const t6 = await sistemaResponde(
       c,
@@ -2525,7 +2529,10 @@ describe("9. o 'sim' solto não confirma nada", () => {
     expect(consulta.status).toBe("agendado");
   });
 
-  it("o 'sim' sem pergunta nenhuma, duas vezes seguidas: passa para a equipe, sem o texto do modelo", async () => {
+  // Decisao do dono de 23/11/2026: agendar e cancelar sem a pergunta sao erro
+  // do proprio modelo e nao contam contra o paciente. Nada marca nem cancela,
+  // e o atendimento segue (antes, a segunda passava para a equipe).
+  it("o 'sim' sem pergunta nenhuma, duas vezes seguidas: nada marca nem cancela, e o atendimento segue", async () => {
     const c = clinicaComDuasUnidades();
     await conversaEmAndamento(c);
     const t7 = await modeloResponde(
@@ -2534,18 +2541,18 @@ describe("9. o 'sim' solto não confirma nada", () => {
       "Claro. Sobre o que é o seu sim?",
       [ferramenta("agendar", {})],
     );
-    expect(t7.estado.falhas_seguidas).toBe(1);
+    expect(t7.estado.falhas_seguidas).toBe(0);
 
-    const doModelo = "Pronto, está tudo certo.";
-    const t8 = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("cancelar_consulta", {}), final(doModelo)],
-    });
-    passou(t8, { desfecho: "escalou", motivo: "falhas_seguidas" });
-    expect(c.recebidasPeloPaciente.join("\n")).not.toContain(doModelo);
+    const t8 = await modeloResponde(
+      c,
+      "Sim",
+      "Sobre o que é o seu sim? Posso ajudar a marcar ou a cancelar.",
+      [ferramenta("cancelar_consulta", {})],
+    );
+    expect(t8.estado.falhas_seguidas).toBe(0);
+    expect(oQueDecidiu(t8)).toMatchObject({ desfecho: "respondeu" });
     expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
     expect(c.cenario.banco.chamadasDe("cancelar_consulta_pela_ia")).toEqual([]);
-    await nadaMaisSai(c, ["Sim", "Sim!"]);
     expect(c.consultas).toEqual([]);
   });
 
@@ -2568,18 +2575,21 @@ describe("9. o 'sim' solto não confirma nada", () => {
     expect(t6.estado.etapa).not.toBe("aguardando_confirmacao");
     expect(t6.estado.falhas_seguidas).toBe(1);
 
-    // O "sim" agora responde a T-E1, e o modelo chama agendar: nao marca, e a
-    // segunda falha seguida passa para a equipe.
-    const t7 = await c.fala({
-      texto: "Sim",
-      roteiro: [ferramenta("agendar", {}), final(CONFIRMA_LIMPEZA)],
-    });
-    passou(t7, { desfecho: "escalou", motivo: "falhas_seguidas" });
+    // O "sim" agora responde a T-E1, e o modelo chama agendar: nao marca (o
+    // erro do modelo nao conta, e o atendimento segue).
+    const t7 = await modeloResponde(
+      c,
+      "Sim",
+      "Quer marcar a limpeza ou entrar na lista de espera?",
+      [ferramenta("agendar", {})],
+    );
+    expect(oQueDecidiu(t7)).toMatchObject({ desfecho: "respondeu" });
+    expect(t7.estado.falhas_seguidas).toBe(1);
     expect(c.cenario.banco.chamadasDe("agendar_pela_ia")).toEqual([]);
-
-    await nadaMaisSai(c, ["Sim", "Sim"]);
     expect(c.consultas).toEqual([]);
     expect(c.cenario.fila).toEqual([]);
+    await modeloResponde(c, "Obrigada", TCHAU);
+    expect(c.consultas).toEqual([]);
   });
 
   it.each([
@@ -3007,12 +3017,15 @@ describe("10. dois assuntos numa fala só e a rajada", () => {
     ).toBe("Obrigada");
   });
 
-  it("mais de cinco mensagens sem resposta: nenhum modelo lê, e a conversa passa para a equipe", async () => {
+  // Decisao do dono de 23/11/2026: so acima do teto do historico (19 sem
+  // resposta) a quantidade escala; abaixo, so o tamanho.
+  it("mais de 19 mensagens sem resposta: nenhum modelo lê, e a conversa passa para a equipe", async () => {
     const c = clinicaComDuasUnidades();
     await conversaEmAndamento(c);
+    const curtas = ["oi", "tem alguém aí", "?", "alô", "oi?"];
     passou(
       await c.rajada(
-        ["oi", "tem alguém aí", "?", "alô", "oi?", "preciso de ajuda"],
+        Array.from({ length: 20 }, (_, i) => curtas[i % curtas.length]!),
         {},
       ),
       { desfecho: "escalou", motivo: "agente_pediu", gatilho: "mensagem_longa" },

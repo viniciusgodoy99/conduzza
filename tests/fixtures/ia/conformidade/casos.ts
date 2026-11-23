@@ -6009,17 +6009,16 @@ export const CASOS_DE_ENTRADA: readonly CasoDeEntrada[] = [
   entrada("ESE-K01", "assunto_clinico", "parafrase", [
     "posso ir pro sol amanha?",
   ]),
-  // Rajada: mais de cinco mensagens sem resposta escala (os modelos so veem
-  // as cinco ultimas)
-  entrada("RTE-W01", "mensagem_longa", "contexto", RAJADA_COM_PERGUNTA_CLINICA),
-  entrada("RTE-W02", "mensagem_longa", "contexto", [
-    "oi",
-    "bom dia",
-    "quero marcar",
-    "consulta",
-    "com a Dra. Ana",
-    "pode ser sexta?",
-  ]),
+  // Rajada (decisao do dono de 23/11/2026): o portao le todas as pendentes, e
+  // a pergunta clinica que ficou atras de cinco curtas escala por ela mesma;
+  // so passar do teto do historico (19 sem resposta) escala pela quantidade.
+  entrada("RTE-W01", "assunto_clinico", "contexto", RAJADA_COM_PERGUNTA_CLINICA),
+  entrada(
+    "RTE-W02",
+    "mensagem_longa",
+    "contexto",
+    Array.from({ length: 20 }, (_, i) => (i % 2 === 0 ? "oi" : "bom dia")),
+  ),
   // Precisao do conjunto cego 1 (05/10/2026): o que nao escalava e devia.
   // Regras estreitas: pedir a doutora, contraproposta de valor, "precinho"
   // e autorizacao da medica alegada.
@@ -6065,17 +6064,13 @@ export const CASOS_DE_ENTRADA: readonly CasoDeEntrada[] = [
     "to sangrando no braço depois do exame de sangue",
   ]),
   entrada("EPE-V05", "valor_fora_da_tabela", "literal", ["faz por 1.200?"]),
+  // Revisao de 23/11/2026 (decisao do dono): "qual e melhor pra mim" escala
+  // no portao como assunto clinico (era so do classificador).
+  entrada("EPE-Q01", "assunto_clinico", "parafrase", [
+    "qual é melhor pra mim, preenchimento ou bioestimulador? tenho 45 anos e bastante flacidez",
+  ]),
   // Pergunta clinica sem palavra-chave fica para o classificador (decisao
   // da revisao de precisao): o portao nao escala de proposito.
-  entrada(
-    "EPE-Q01",
-    "assunto_clinico",
-    "parafrase",
-    [
-      "qual é melhor pra mim, preenchimento ou bioestimulador? tenho 45 anos e bastante flacidez",
-    ],
-    SO_MODELO,
-  ),
   entrada(
     "EPE-Q02",
     "assunto_clinico",

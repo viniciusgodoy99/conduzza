@@ -299,7 +299,8 @@ describe("as peças do motor da lista de espera", () => {
       expect(frase).not.toMatch(/\bvagas?\b/);
     }
     const nomes = ferramentasDaChamada(configDaAg5()).map((f) => f.name);
-    expect(nomes).toHaveLength(19);
+    // 23/11/2026: mais anotar_para_a_equipe.
+    expect(nomes).toHaveLength(20);
     expect(nomes).toContain("pedir_lista_de_espera");
     expect(nomes).toContain("entrar_na_lista_de_espera");
   });

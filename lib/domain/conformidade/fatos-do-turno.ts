@@ -3281,11 +3281,12 @@ const PADROES_DE_ACAO: readonly PadraoDeAcao[] = [
     "\\b(?:voce|vc|a senhora|o senhor)\\s+(?:ja\\s+)?tem\\s+(?:um\\s+)?horario\\s+(?:marcad|agendad)o\\b",
   ),
   // "Fica marcado para terca", fora da condicao ("assim que voce
-  // confirmar, fica marcado" descreve o fluxo).
+  // confirmar, fica marcado" e, desde 23/11/2026, "com seus dados, a
+  // consulta fica marcada" descrevem o fluxo).
   padraoDeAcao(
     "consulta_existente",
     null,
-    "(?<!\\b(?:se|assim que|quando|depois que|apos|caso|logo que)\\b[^.!?]{0,40})\\b(?:fica|ficara|vai ficar)\\s+(?:tudo\\s+|ja\\s+)?(?:marcad|agendad)[oa]s?\\b",
+    "(?<!\\b(?:se|assim que|quando|depois que|apos|caso|logo que|com (?:os )?(?:seus )?dados)\\b[^.!?]{0,40})\\b(?:fica|ficara|vai ficar)\\s+(?:tudo\\s+|ja\\s+)?(?:marcad|agendad)[oa]s?\\b",
   ),
   // Revisao 2 da AG2: "Sua consulta ficou para quinta", "seu horario esta
   // para amanha", "prontinho, sua consulta ficou para amanha as 8h".
@@ -4438,6 +4439,14 @@ const NEGACAO_DO_CONVENIO =
  * a resposta de antes).
  */
 const CONDICAO_ANTES = /\bse\b(?:\s+[^\s,;:.!?]+){0,4}\s*$/;
+/**
+ * 23/11/2026: o convenio que a ferramenta nao achou ("Nao encontrei esse
+ * convenio no nosso cadastro", "Nao encontrei a Hapvida entre os convenios
+ * que atendemos") e o que o prompt manda dizer, nao afirma nem nega. Ate a
+ * virgula e sem "mas" ("nao achei a Hapvida, mas atendemos Unimed" continua).
+ */
+const NAO_ENCONTRADO_ANTES =
+  /\bnao\s+(?:encontrei|achei|localizei|encontramos|achamos|localizamos)\b(?:(?!\b(?:mas|porem|so que|entretanto|contudo|todavia)\b|\be\s+(?:\S+\s+)?(?:atend|aceit|trabalh|cobr|temos|somos))[^,;:.!?])*$/;
 const SEM_COBERTURA =
   /\b(?:sem cobertura|fora da (?:cobertura|rede)|nao (?:faz|fazem) parte da (?:rede|cobertura))\b/;
 
@@ -5000,7 +5009,7 @@ function regraDaCobertura(
       mencoes: readonly string[][],
       desconhecidas: readonly string[],
     ) => {
-      if (CONDICAO_ANTES.test(antes)) {
+      if (CONDICAO_ANTES.test(antes) || NAO_ENCONTRADO_ANTES.test(antes)) {
         return;
       }
       if (NEGACAO_DO_CONVENIO.test(antes)) {
@@ -5226,6 +5235,7 @@ function convenioCitadoSemFato(
     const antes = frase.slice(0, mencao.inicio);
     if (
       CONDICAO_ANTES.test(antes) ||
+      NAO_ENCONTRADO_ANTES.test(antes) ||
       SABER_ANTES.test(antes) ||
       PEDIDO_ANTES.test(antes) ||
       COMPLEMENTO_ANTES.test(antes) ||
