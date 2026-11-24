@@ -4,6 +4,7 @@ import { ChevronDown } from "lucide-react";
 import { Accordion as AccordionPrimitive } from "radix-ui";
 import { useRef, useState, type ReactNode } from "react";
 
+import { ConversoesPorEtapa } from "@/components/configuracoes/conversoes-por-etapa";
 import { ErroDaAba } from "@/components/configuracoes/erro-da-aba";
 import {
   GoogleAdsTab,
@@ -24,6 +25,7 @@ import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import { Card, CardAction, CardHeader } from "@/components/ui/card";
 import { PASSO_DO_RASTREIO_STATUS } from "@/lib/design/status";
+import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import { ONDE_ENCONTRAR } from "@/lib/domain/onde-encontrar";
 import {
   passosAbertosDeInicio,
@@ -42,7 +44,7 @@ import {
 
 export const TEXTOS_DO_RASTREIO_DA_ABA = {
   descricao:
-    "Tudo o que liga os anúncios aos leads da clínica fica aqui: a conta da Meta, o rastreio do site e os links rastreados. Siga os passos na ordem. Em cada um está para que serve e onde encontrar o que ele pede.",
+    "Tudo o que liga os anúncios aos leads da clínica fica aqui: a conta da Meta, o que cada etapa envia, o rastreio do site e os links rastreados. Siga os passos na ordem. Em cada um está para que serve e onde encontrar o que ele pede.",
   titulo: "Passo a passo",
   abrir: "Abrir",
 } as const;
@@ -81,6 +83,7 @@ export function AnunciosERastreioTab({
   meta,
   google,
   origens,
+  jornada,
   podeGerenciar,
   dica,
   passoDoEndereco,
@@ -92,6 +95,8 @@ export function AnunciosERastreioTab({
   google: DadosDoRastreio | null;
   /** nulo: a leitura das origens falhou (o passo mostra "Tentar de novo") */
   origens: DadosDasOrigens | null;
+  /** nulo: a leitura da jornada falhou (o passo das conversoes mostra o erro) */
+  jornada: EtapaDaJornada[] | null;
   podeGerenciar: boolean;
   dica: string;
   /** ?passo= do endereco, para o link direto a um passo */
@@ -127,6 +132,10 @@ export function AnunciosERastreioTab({
       : null,
     site: google ? { ligado: google.linha?.ativo ?? false } : null,
     origens: origens ? origens.regras.length : null,
+    conversoes: jornada
+      ? jornada.filter((etapa) => etapa.meta_event_name && etapa.conversao_ativa)
+          .length
+      : null,
   });
   const prontos = prontosDoRastreio(passos);
   const primeiroQueFalta = passos.find((passo) => passo.situacao === "falta");
@@ -163,6 +172,13 @@ export function AnunciosERastreioTab({
   const conteudo: Record<ChaveDoPasso, ReactNode> = {
     conta: meta ? cartoes.conta : erroDaMeta,
     token: meta ? cartoes.token : erroDaMeta,
+    conversoes: (
+      <ConversoesPorEtapa
+        jornada={jornada}
+        podeGerenciar={podeGerenciar}
+        dica={dica}
+      />
+    ),
     envio: meta ? cartoes.envio : erroDaMeta,
     investimento: meta ? (
       <>

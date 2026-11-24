@@ -6,6 +6,9 @@
 export const CHAVES_DOS_PASSOS = [
   "conta",
   "token",
+  // Conversoes por etapa (pedido do dono em 24/11/2026): o evento de cada
+  // etapa saiu da aba Jornada e veio para ca, antes do envio que o usa.
+  "conversoes",
   "envio",
   "investimento",
   "site",
@@ -48,6 +51,8 @@ export type EstadoDoRastreio = {
   site: { ligado: boolean } | null;
   /** quantas origens cadastradas; nulo: a leitura falhou */
   origens: number | null;
+  /** quantas etapas mandam conversao (evento escolhido e ativa); nulo: a leitura da jornada falhou */
+  conversoes: number | null;
 };
 
 const TEXTOS: Record<ChaveDoPasso, { titulo: string; paraQueServe: string }> = {
@@ -60,6 +65,11 @@ const TEXTOS: Record<ChaveDoPasso, { titulo: string; paraQueServe: string }> = {
     titulo: "Token das conversões",
     paraQueServe:
       "É a chave que a Meta pede para aceitar as conversões que a clínica devolve.",
+  },
+  conversoes: {
+    titulo: "Conversões por etapa",
+    paraQueServe:
+      "Escolhe o que a Meta recebe quando um contato chega em cada etapa, como Agendamento (Schedule) ou Compra (Purchase).",
   },
   envio: {
     titulo: "Envio das conversões",
@@ -97,7 +107,7 @@ function falta(detalhe: string): Situacao {
 }
 
 function situacaoDoPasso(chave: ChaveDoPasso, estado: EstadoDoRastreio): Situacao {
-  const { meta, site, origens } = estado;
+  const { meta, site, origens, conversoes } = estado;
   switch (chave) {
     // "Pronto" so quando o passo funciona de verdade (revisao de 17/11/2026):
     // a tela verde com conversao descartada e pior que um "falta".
@@ -110,19 +120,33 @@ function situacaoDoPasso(chave: ChaveDoPasso, estado: EstadoDoRastreio): Situaca
     case "token":
       if (!meta) return INDISPONIVEL;
       return meta.temToken ? PRONTO : falta("Falta colar o token.");
+    case "conversoes":
+      if (conversoes === null) return INDISPONIVEL;
+      return conversoes > 0
+        ? {
+            situacao: "pronto",
+            rotulo: conversoes === 1 ? "1 etapa" : `${conversoes} etapas`,
+            detalhe: null,
+          }
+        : falta("Nenhuma etapa manda conversão.");
     case "envio":
       if (!meta) return INDISPONIVEL;
       if (meta.envioLigado) {
-        return { situacao: "pronto", rotulo: "Ligado", detalhe: null };
+        // Ligado sem etapa nenhuma nao manda nada: nunca "pronto" (24/11/2026).
+        return conversoes === 0
+          ? falta("Está ligado, mas nenhuma etapa manda conversão (passo 3).")
+          : { situacao: "pronto", rotulo: "Ligado", detalhe: null };
       }
       return {
         situacao: "desligado",
         rotulo: null,
         detalhe: !(meta.temPixel && meta.temToken)
           ? "Precisa do Pixel e do token."
-          : meta.temModo
-            ? "Pronto para ligar."
-            : "Falta escolher como enviar os dados.",
+          : !meta.temModo
+            ? "Falta escolher como enviar os dados."
+            : conversoes === 0
+              ? "Antes, escolha as etapas no passo 3."
+              : "Pronto para ligar.",
       };
     case "investimento":
       if (!meta) return INDISPONIVEL;
@@ -159,7 +183,7 @@ export function passosDoRastreio(estado: EstadoDoRastreio): PassoDoRastreio[] {
   }));
 }
 
-/** "3 de 6 prontos": conta o que esta pronto ou ligado. */
+/** "3 de 7 prontos": conta o que esta pronto ou ligado. */
 export function prontosDoRastreio(passos: PassoDoRastreio[]): number {
   return passos.filter((passo) => passo.situacao === "pronto").length;
 }
@@ -170,9 +194,12 @@ export function ehChaveDoPasso(valor: string | null | undefined): valor is Chave
 
 /** As abas antigas, que viraram passos: os links guardados continuam valendo. */
 const PASSOS_DA_ABA_ANTIGA: Record<string, readonly ChaveDoPasso[]> = {
-  meta: ["conta", "token", "envio", "investimento"],
+  meta: ["conta", "token", "conversoes", "envio", "investimento"],
   google: ["site"],
   origem: ["origens"],
+  // A aba "Conversoes" antiga foi absorvida pela Jornada em 09/09/2026; em
+  // 24/11/2026 a conversao veio para este passo.
+  conversoes: ["conversoes"],
 };
 
 export function ehAbaAntigaDoRastreio(aba: string | null | undefined): boolean {

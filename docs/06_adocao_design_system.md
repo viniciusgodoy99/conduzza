@@ -1524,6 +1524,8 @@ A C50 é da onda 2 e a C51 fica para a onda 4, construídas ao mesmo tempo em c�
 
 ### C53. Aba Anúncios e rastreio em Configurações (decisão do dono em 17/11/2026)
 
+> **24/11/2026 (pedido do dono):** a aba ganhou o passo 3, "Conversões por etapa" (`components/configuracoes/conversoes-por-etapa.tsx`), e passou a "N de 7 prontos". Linhas afundadas (`bg-surface-4`, como as etapas da Jornada), com rótulo visível em cada campo, `Aviso` info para o recomendado e `SelectGroup` com `SelectLabel` para separar os mais usados dos outros eventos. Nenhum token, ícone ou cor novos (ListChecks no botão do recomendado, para não confundir com o Sparkles da IA, e Undo2 no Desfazer). A aba "Jornada e conversões" virou "Jornada" (esqueleto `w-20`).
+
 - **Pedido:** um lugar só para o que substitui o Tintim, mais bem explicado, com o link de onde pegar cada dado. Desenho escolhido pelo dono: "passo a passo que abre".
 - **Decisão:** as abas `meta` (C42), `google` (C43) e `origem` (C52) viram a aba `rastreio`, "Anúncios e rastreio", a última das 7. O topo repete o desenho do "Primeiros passos" do Início (5.2): cartão com o título, "N de 6 prontos" e uma linha por passo (ladrilho neutro com o número, título, chip, texto e botão). Embaixo, cada passo é uma barra de cartão que abre (Accordion do Radix, vários abertos, sem animação de altura para a sombra e o anel de foco dos cartões não serem cortados).
 - **Status:** mapa novo `PASSO_DO_RASTREIO_STATUS`, só com ícones que já têm dono e no mesmo sentido: CircleCheck sucesso, Hourglass atenção (o passo pendente do checklist), CirclePause neutro e OctagonAlert erro.

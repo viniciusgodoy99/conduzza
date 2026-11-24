@@ -119,6 +119,7 @@ vi.mock("@/lib/auth/active-clinic", () => ({
 }));
 
 const {
+  salvarConversoesDasEtapasAction,
   salvarEtapaDaJornadaAction,
   excluirEtapaDaJornadaAction,
   excluirEtiquetaDeConversaAction,
@@ -136,11 +137,8 @@ function entrada(campos: Record<string, unknown> = {}) {
     descricao: null,
     termos_chave: ["seja bem-vinda"],
     termos_de_quem: "clinica",
-    conversao: {
-      meta_event_name: null,
-      conversao_ativa: true,
+    venda: {
       is_sale: false,
-      is_first_contact: false,
       value_source: null,
       value_cents: null,
     },
@@ -156,6 +154,112 @@ beforeEach(() => {
   registro.rpcs = [];
   registro.jornada = null;
   registro.erroDaLeitura = null;
+});
+
+describe("Jornada x conversões (24/11/2026): cada tela grava só o que é dela", () => {
+  it("a Jornada nunca grava o evento da Meta, a pausa nem o primeiro contato", async () => {
+    const resultado = await salvarEtapaDaJornadaAction(entrada());
+    expect(resultado).toEqual({ ok: true });
+    const gravado = registro.updates[0]!;
+    for (const coluna of [
+      "meta_event_name",
+      "conversao_ativa",
+      "is_first_contact",
+    ]) {
+      expect(gravado).not.toHaveProperty(coluna);
+    }
+  });
+
+  it("desmarcar a venda não apaga o valor que a conversão usa", async () => {
+    await salvarEtapaDaJornadaAction(
+      entrada({ venda: { is_sale: false, value_source: "fixo", value_cents: 9000 } }),
+    );
+    expect(registro.updates[0]).toMatchObject({ is_sale: false });
+    expect(registro.updates[0]).not.toHaveProperty("value_source");
+    expect(registro.updates[0]).not.toHaveProperty("value_cents");
+  });
+
+  it("venda marcada grava o valor; fixo sem reais é recusado antes do banco", async () => {
+    await salvarEtapaDaJornadaAction(
+      entrada({ venda: { is_sale: true, value_source: "fixo", value_cents: 25000 } }),
+    );
+    expect(registro.updates[0]).toMatchObject({
+      is_sale: true,
+      value_source: "fixo",
+      value_cents: 25000,
+    });
+
+    registro.updates = [];
+    const recusa = await salvarEtapaDaJornadaAction(
+      entrada({ venda: { is_sale: true, value_source: "fixo", value_cents: null } }),
+    );
+    expect(recusa).toEqual({
+      ok: false,
+      error: "Informe o valor em reais para usar valor fixo.",
+    });
+    expect(registro.updates).toHaveLength(0);
+  });
+
+  it("as conversões gravam evento, ativa e valor por etapa, com trilha de cada uma", async () => {
+    const resultado = await salvarConversoesDasEtapasAction({
+      etapas: [
+        {
+          chave: "compareceu",
+          meta_event_name: "Purchase",
+          value_source: "service_link",
+          value_cents: 123,
+        },
+        {
+          chave: "novo",
+          meta_event_name: "Lead",
+          value_source: null,
+          value_cents: null,
+        },
+      ],
+    });
+    expect(resultado).toEqual({ ok: true });
+    expect(registro.updates).toEqual([
+      {
+        meta_event_name: "Purchase",
+        conversao_ativa: true,
+        value_source: "service_link",
+        // preco da consulta nao guarda centavos
+        value_cents: null,
+      },
+      {
+        meta_event_name: "Lead",
+        conversao_ativa: true,
+        value_source: null,
+        value_cents: null,
+      },
+    ]);
+    const trilha = registro.inserts.filter((i) => i.tabela === "audit_log");
+    expect(trilha.map((i) => i.valores.action)).toEqual([
+      "editou_conversao_da_etapa",
+      "editou_conversao_da_etapa",
+    ]);
+  });
+
+  it("não enviar tira só o evento e deixa o valor, que a venda também usa", async () => {
+    await salvarConversoesDasEtapasAction({
+      etapas: [
+        { chave: "agendou", meta_event_name: null, value_source: "fixo", value_cents: 100 },
+      ],
+    });
+    expect(registro.updates).toEqual([{ meta_event_name: null }]);
+  });
+
+  it("recusa antes do banco: lista vazia, chave estranha e valor fixo sem reais", async () => {
+    for (const entradaRuim of [
+      { etapas: [] },
+      { etapas: [{ chave: "Nao Pode", meta_event_name: "Lead", value_source: null, value_cents: null }] },
+      { etapas: [{ chave: "novo", meta_event_name: "Lead", value_source: "fixo", value_cents: null }] },
+    ]) {
+      const resultado = await salvarConversoesDasEtapasAction(entradaRuim);
+      expect(resultado.ok).toBe(false);
+    }
+    expect(registro.updates).toHaveLength(0);
+  });
 });
 
 describe("salvarEtapaDaJornadaAction: quem escreve e descrição", () => {

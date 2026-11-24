@@ -100,7 +100,7 @@ export function ConversoesMetaSecao({
           compact
           icon={Forward}
           title="Nenhuma conversão registrada ainda"
-          description="Escolha em qual etapa da jornada a clínica registra conversão na aba Jornada e conversões, em Configurações. O envio para a Meta é ligado na aba Anúncios e rastreio, também em Configurações."
+          description="Escolha o que cada etapa envia no passo Conversões por etapa e ligue o envio no passo seguinte, os dois em Configurações, Anúncios e rastreio."
         />
       ) : (
         <>

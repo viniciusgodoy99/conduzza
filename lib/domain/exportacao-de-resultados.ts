@@ -112,7 +112,7 @@ export function estadoDoFaturamento(
 export const TEXTO_SEM_ETAPA_DE_VENDA =
   "Nenhuma etapa da Jornada está marcada como venda";
 export const COMO_MARCAR_ETAPA_DE_VENDA =
-  "Para contar, abra a etapa em Configurações, Jornada, escolha o evento que a Meta recebe e marque “Esta etapa é uma venda”. Conta a partir de quando a etapa estiver marcada.";
+  "Para contar, abra a etapa em Configurações, Jornada, e marque “Esta etapa é uma venda”. Conta a partir de quando a etapa estiver marcada.";
 export const TEXTO_SEM_VENDA = "Nenhuma venda no período";
 export const TEXTO_SEM_VALOR_PARA_SOMAR = "Sem valor para somar";
 /** A celula da campanha sem venda no periodo. */

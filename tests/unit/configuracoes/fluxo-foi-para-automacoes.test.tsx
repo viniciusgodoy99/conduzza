@@ -130,7 +130,7 @@ describe("a fileira de Configurações sem Automações de fluxo", () => {
     expect(rotulos).not.toContain("Automações de fluxo");
     expect(rotulos.some((rotulo) => rotulo.includes("fluxo"))).toBe(false);
     expect(rotulos.indexOf("Etiquetas de conversa")).toBe(
-      rotulos.indexOf("Jornada e conversões") + 1,
+      rotulos.indexOf("Jornada") + 1,
     );
   });
 

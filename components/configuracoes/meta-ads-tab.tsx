@@ -1,7 +1,6 @@
 "use client";
 
 import { Check, Megaphone } from "lucide-react";
-import Link from "next/link";
 import { useState, useTransition, type ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -310,8 +309,8 @@ export function useCartoesDaMeta({
         </CardHeader>
         <CardContent className="grid gap-4">
           <p className="text-[13px] text-text-secondary">
-            Com eles preenchidos, a clínica devolve as conversões da aba Jornada
-            para os anúncios.
+            Com eles preenchidos, a clínica devolve aos anúncios as conversões
+            das etapas escolhidas no passo 3, Conversões por etapa.
           </p>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid content-start gap-1.5">
@@ -518,21 +517,9 @@ export function useCartoesDaMeta({
 
           <p className="text-xs text-text-secondary">
             Enquanto o envio está desligado, a clínica já registra as conversões
-            das etapas da Jornada. Ao ligar, os registros dos últimos{" "}
+            das etapas escolhidas no passo 3. Ao ligar, os registros dos últimos{" "}
             <span className="cz-num">7</span> dias são enviados (a Meta não
             aceita mais antigos) e o painel de Resultados mostra cada situação.
-          </p>
-          <p className="text-xs text-text-secondary">
-            Quais etapas viram conversão, e com qual evento, a clínica escolhe
-            em{" "}
-            <Link
-              href="/configuracoes?aba=jornada"
-              prefetch={false}
-              className="font-semibold text-primary-text underline underline-offset-2"
-            >
-              Jornada e conversões
-            </Link>
-            .
           </p>
         </CardContent>
       </Card>

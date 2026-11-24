@@ -789,10 +789,12 @@ describe("os cartões da Meta (passos 1 a 4 de Anúncios e rastreio)", () => {
     }
   });
 
-  it("o passo do envio salva a escolha de como os dados saem e leva à Jornada", () => {
+  it("o passo do envio salva a escolha de como os dados saem e aponta o passo das etapas", () => {
     const html = aba();
     expect(html).toContain("Salvar escolha");
-    expect(html).toContain('href="/configuracoes?aba=jornada"');
+    // Desde 24/11/2026 o evento de cada etapa e o passo 3 da mesma aba.
+    expect(html.replace(/\s+/g, " ")).toContain("das etapas escolhidas no passo 3");
+    expect(html).not.toContain('href="/configuracoes?aba=jornada"');
   });
 
   it("nenhum travessão no texto da aba, em nenhum estado", () => {

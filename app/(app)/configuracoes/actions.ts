@@ -948,18 +948,23 @@ const NOMES_DE_ICONES = Object.keys(ICONES_DE_ETAPA) as [string, ...string[]];
 const TERMO_CURTO_DEMAIS =
   "Cada termo precisa de pelo menos 2 caracteres, sem contar acentos, marcas de emoji e caracteres invisíveis.";
 
-const conversaoDaEtapaSchema = z
-  .object({
-    meta_event_name: z.string().trim().min(1).max(100).nullable(),
-    conversao_ativa: z.boolean(),
-    is_sale: z.boolean(),
-    is_first_contact: z.boolean(),
-    value_source: z.enum(["service_link", "fixo"]).nullable(),
-    value_cents: z.number().int().min(0).max(100_000_000).nullable(),
-  })
+// O valor da etapa (fixo ou o preco da consulta) e um so: vale para a venda
+// (Jornada) e para a conversao que vai aos anuncios (Anuncios e rastreio).
+const valorDaEtapaSchema = {
+  value_source: z.enum(["service_link", "fixo"]).nullable(),
+  value_cents: z.number().int().min(0).max(100_000_000).nullable(),
+};
+const VALOR_FIXO_SEM_REAIS = "Informe o valor em reais para usar valor fixo.";
+
+// Desde 24/11/2026 (pedido do dono) a Jornada grava so a venda; o evento da
+// Meta mora no passo "Conversoes por etapa" de Anuncios e rastreio. O valor so
+// vai quando a etapa e venda: desmarcar a venda nao apaga o valor que a
+// conversao usa.
+const vendaDaEtapaSchema = z
+  .object({ is_sale: z.boolean(), ...valorDaEtapaSchema })
   .refine(
     (dados) => dados.value_source !== "fixo" || dados.value_cents !== null,
-    { message: "Informe o valor em reais para usar valor fixo." },
+    { message: VALOR_FIXO_SEM_REAIS },
   );
 
 const etapaDaJornadaSchema = z.object({
@@ -1005,7 +1010,7 @@ const etapaDaJornadaSchema = z.object({
     .refine((texto) => texto === null || texto.length <= LIMITE_DA_DESCRICAO, {
       message: `A descrição da etapa cabe em até ${LIMITE_DA_DESCRICAO} caracteres.`,
     }),
-  conversao: conversaoDaEtapaSchema,
+  venda: vendaDaEtapaSchema,
 });
 
 /** Nome vira chave: sem acento, minusculo, underscore. "Comprou pacote" -> comprou_pacote */
@@ -1041,17 +1046,14 @@ export async function salvarEtapaDaJornadaAction(
   const dados = parsed.data;
   const supabase = await createClient();
 
-  const conversao = {
-    meta_event_name: dados.conversao.meta_event_name,
-    conversao_ativa: dados.conversao.conversao_ativa,
-    is_sale: dados.conversao.is_sale,
-    is_first_contact: dados.conversao.is_first_contact,
-    value_source: dados.conversao.value_source,
-    value_cents:
-      dados.conversao.value_source === "fixo"
-        ? dados.conversao.value_cents
-        : null,
-  };
+  const conversao = dados.venda.is_sale
+    ? {
+        is_sale: true,
+        value_source: dados.venda.value_source,
+        value_cents:
+          dados.venda.value_source === "fixo" ? dados.venda.value_cents : null,
+      }
+    : { is_sale: false };
 
   if (dados.chave) {
     const { data: linhas, error } = await supabase
@@ -1143,6 +1145,88 @@ export async function salvarEtapaDaJornadaAction(
 
   revalidatePath("/configuracoes");
   revalidatePath("/leads");
+  return { ok: true };
+}
+
+const conversoesDasEtapasSchema = z.object({
+  etapas: z
+    .array(
+      z
+        .object({
+          chave: z.string().trim().regex(/^[a-z0-9_]{1,40}$/),
+          // nulo = a etapa nao manda nada
+          meta_event_name: z.string().trim().min(1).max(100).nullable(),
+          ...valorDaEtapaSchema,
+        })
+        .refine(
+          (dados) =>
+            dados.meta_event_name === null ||
+            dados.value_source !== "fixo" ||
+            dados.value_cents !== null,
+          { message: VALOR_FIXO_SEM_REAIS },
+        ),
+    )
+    .min(1)
+    .max(60),
+});
+
+/**
+ * O passo "Conversoes por etapa" de Anuncios e rastreio (pedido do dono em
+ * 24/11/2026): grava o evento e o valor de varias etapas de uma vez. Escolher
+ * um evento liga a conversao (conversao_ativa); "Nao enviar" tira o evento e
+ * deixa o valor, que a venda da Jornada tambem usa. Cada etapa e um UPDATE
+ * proprio: uma recusa para no meio e diz qual etapa, e as de antes ficam.
+ */
+export async function salvarConversoesDasEtapasAction(
+  entrada: unknown,
+): Promise<TeamActionResult> {
+  const guard = await requireGestorOuAdmin();
+  if ("error" in guard) {
+    return { ok: false, error: guard.error };
+  }
+  const parsed = conversoesDasEtapasSchema.safeParse(entrada);
+  if (!parsed.success) {
+    const amigavel = parsed.error.issues.find(
+      (issue) => issue.code === "custom",
+    );
+    return { ok: false, error: amigavel?.message ?? "Dados inválidos." };
+  }
+  const supabase = await createClient();
+
+  for (const etapa of parsed.data.etapas) {
+    const valores = etapa.meta_event_name
+      ? {
+          meta_event_name: etapa.meta_event_name,
+          conversao_ativa: true,
+          value_source: etapa.value_source,
+          value_cents:
+            etapa.value_source === "fixo" ? etapa.value_cents : null,
+        }
+      : { meta_event_name: null };
+    const { data: linhas, error } = await supabase
+      .from("funnel_stage_def")
+      .update(valores)
+      .eq("clinic_id", guard.clinicId)
+      .eq("chave", etapa.chave)
+      .select("id, nome");
+    if (error || !linhas || linhas.length === 0) {
+      return {
+        ok: false,
+        error:
+          traduzirRecusaDaJornada(error?.message) ??
+          "Não foi possível salvar as conversões. Confira e tente de novo.",
+      };
+    }
+    await supabase.from("audit_log").insert({
+      clinic_id: guard.clinicId,
+      user_id: guard.context.userId,
+      action: "editou_conversao_da_etapa",
+      entity: "funnel_stage_def",
+      entity_id: linhas[0]!.id,
+    });
+  }
+
+  revalidatePath("/configuracoes");
   return { ok: true };
 }
 

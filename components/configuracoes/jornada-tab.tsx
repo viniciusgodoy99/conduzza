@@ -11,6 +11,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -67,17 +68,16 @@ import {
   type TermosDeQuem,
   type TrocaDeOrdem,
 } from "@/lib/domain/jornada";
-import {
-  EVENTOS_META_PADRAO,
-  ehEventoPadrao,
-  rotuloDoEvento,
-} from "@/lib/domain/meta-conversao";
+import { rotuloDoEvento } from "@/lib/domain/meta-conversao";
 import { centavosParaReais, reaisParaCentavos } from "@/lib/utils/moeda";
 
 // A tela da JORNADA (fase 3 da jornada configuravel): as etapas do funil da
 // clinica, no modelo da Jornada de Compra do Tintim. Cada etapa edita nome,
-// aparencia, termos-chave e a conversao da Meta NO MESMO formulario, porque
-// era assim que o dono usava no Tintim e foi assim que ele pediu.
+// aparencia, termos-chave e a venda. O evento da Meta morava aqui ate
+// 24/11/2026, quando o dono pediu a conversao por etapa dentro de Anuncios e
+// rastreio (passo "Conversoes por etapa"); aqui fica so a leitura dele, com o
+// link para la. A marca "primeiro contato" saiu da tela no mesmo dia: nao
+// mudava numero nenhum (a coluna continua no banco, intocada).
 //
 // Papel de sistema (entrada, aguardando, em_contato, agendou, compareceu,
 // perdido) aparece com cadeado e explicacao: renomeia e reordena, nunca
@@ -97,8 +97,8 @@ import { centavosParaReais, reaisParaCentavos } from "@/lib/utils/moeda";
 // lugar.
 //
 // Desenho do design system (docs/06 secao 5.12): cada etapa e uma linha
-// afundada; a aberta vira cartao com o formulario. As marcas da conversao
-// sao Checkbox, porque so valem quando se clica em Salvar (C31).
+// afundada; a aberta vira cartao com o formulario. A marca de venda e
+// Checkbox, porque so vale quando se clica em Salvar (C31).
 //
 // 02/10/2026 (pedido do dono): cada etapa ganha "Quem escreve o termo"
 // (paciente, clinica ou qualquer um) e uma descricao curta, que o Kanban
@@ -152,8 +152,8 @@ const PAPEL_EXPLICADO: Record<PapelDeEtapa, string> = {
   perdido: "Etapa de sistema: marcar como perdido exige o motivo.",
 };
 
-const EVENTO_PERSONALIZADO = "__personalizado__";
-const SEM_EVENTO = "__sem_evento__";
+/** O passo da conversao por etapa (Anuncios e rastreio), desde 24/11/2026. */
+const LINK_DAS_CONVERSOES = "/configuracoes?aba=rastreio&passo=conversoes";
 
 // Sentinela do estado "criando etapa". Os dois pontos nao existem no alfabeto
 // de chave (^[a-z0-9_]+$), entao NENHUMA etapa real pode colidir com ele. A
@@ -174,13 +174,9 @@ type Rascunho = {
   termos: string[];
   termosDeQuem: TermosDeQuem;
   termoNovo: string;
-  evento: string;
-  eventoPersonalizado: string;
   ehVenda: boolean;
-  primeiroContato: boolean;
   modoDeValor: "sem" | "fixo" | "service_link";
   valorReais: string;
-  conversaoAtiva: boolean;
 };
 
 function rascunhoDaEtapa(etapa: EtapaDaJornada | null): Rascunho {
@@ -193,16 +189,11 @@ function rascunhoDaEtapa(etapa: EtapaDaJornada | null): Rascunho {
       termos: [],
       termosDeQuem: "paciente",
       termoNovo: "",
-      evento: SEM_EVENTO,
-      eventoPersonalizado: "",
       ehVenda: false,
-      primeiroContato: false,
       modoDeValor: "sem",
       valorReais: "",
-      conversaoAtiva: true,
     };
   }
-  const evento = etapa.meta_event_name;
   return {
     nome: etapa.nome,
     tom: etapa.tom,
@@ -217,17 +208,9 @@ function rascunhoDaEtapa(etapa: EtapaDaJornada | null): Rascunho {
       ? etapa.termos_de_quem
       : "paciente",
     termoNovo: "",
-    evento: !evento
-      ? SEM_EVENTO
-      : ehEventoPadrao(evento)
-        ? evento
-        : EVENTO_PERSONALIZADO,
-    eventoPersonalizado: evento && !ehEventoPadrao(evento) ? evento : "",
     ehVenda: etapa.is_sale,
-    primeiroContato: etapa.is_first_contact,
     modoDeValor: etapa.value_source ?? "sem",
     valorReais: centavosParaReais(etapa.value_cents),
-    conversaoAtiva: etapa.conversao_ativa,
   };
 }
 
@@ -263,12 +246,6 @@ export function JornadaTab({
       setErro("Dê um nome à etapa, com pelo menos 2 letras.");
       return;
     }
-    const evento =
-      rascunho.evento === SEM_EVENTO
-        ? null
-        : rascunho.evento === EVENTO_PERSONALIZADO
-          ? rascunho.eventoPersonalizado.trim() || null
-          : rascunho.evento;
     const descricao = normalizarDescricaoDaEtapa(rascunho.descricao);
     if (descricao && descricao.length > LIMITE_DA_DESCRICAO) {
       setErro(
@@ -276,15 +253,11 @@ export function JornadaTab({
       );
       return;
     }
-    if (rascunho.evento === EVENTO_PERSONALIZADO && !evento) {
-      setErro("Digite o nome do evento personalizado, ou escolha um da lista.");
-      return;
-    }
     const centavos =
       rascunho.modoDeValor === "fixo"
         ? reaisParaCentavos(rascunho.valorReais)
         : null;
-    if (evento && rascunho.modoDeValor === "fixo" && centavos === null) {
+    if (rascunho.ehVenda && rascunho.modoDeValor === "fixo" && centavos === null) {
       setErro("Informe o valor em reais, por exemplo 250,00.");
       return;
     }
@@ -308,16 +281,11 @@ export function JornadaTab({
         descricao,
         termos_chave: termos,
         termos_de_quem: rascunho.termosDeQuem,
-        conversao: {
-          meta_event_name: evento,
-          conversao_ativa: rascunho.conversaoAtiva,
-          is_sale: evento ? rascunho.ehVenda : false,
-          is_first_contact: evento ? rascunho.primeiroContato : false,
+        venda: {
+          is_sale: rascunho.ehVenda,
           value_source:
-            evento && rascunho.modoDeValor !== "sem"
-              ? rascunho.modoDeValor
-              : null,
-          value_cents: evento ? centavos : null,
+            rascunho.modoDeValor !== "sem" ? rascunho.modoDeValor : null,
+          value_cents: centavos,
         },
       });
       if (!resultado.ok) {
@@ -568,7 +536,6 @@ function FormularioDaEtapa({
   aoExcluir: (() => void) | null;
 }) {
   const id = etapa?.chave ?? "criando";
-  const temEvento = rascunho.evento !== SEM_EVENTO;
 
   const adicionarTermo = () => {
     const termo = rascunho.termoNovo.trim();
@@ -801,152 +768,86 @@ function FormularioDaEtapa({
         </div>
       )}
 
-      {/* Perda nunca e conversao: o check perdido_sem_conversao no banco
-          recusa, entao a tela nem oferece. */}
+      {/* A etapa de perda nao e venda nem conversao (o check
+          perdido_sem_conversao recusa o evento): a tela nem oferece. */}
       {etapa?.papel === "perdido" ? null : (
         <div className="grid gap-3 rounded-xl bg-surface-4 p-3.5">
-          <p className="text-[13px] font-bold text-text-strong">
-            Conversão para os anúncios
-          </p>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-1.5">
-              <Label htmlFor={`evento-${id}`}>Evento que a Meta recebe</Label>
+          <p className="text-[13px] font-bold text-text-strong">Venda</p>
+          <div className="flex min-h-10 items-center gap-2.5">
+            <Checkbox
+              id={`venda-${id}`}
+              checked={rascunho.ehVenda}
+              onCheckedChange={(valor) =>
+                setRascunho((atual) => ({
+                  ...atual,
+                  ehVenda: valor === true,
+                }))
+              }
+            />
+            <Label htmlFor={`venda-${id}`}>Esta etapa é uma venda</Label>
+          </div>
+          {rascunho.ehVenda ? (
+            <div className="grid gap-1.5 sm:max-w-sm">
+              <Label htmlFor={`valor-${id}`}>Valor da venda</Label>
               <Select
-                value={rascunho.evento}
+                value={rascunho.modoDeValor}
                 onValueChange={(valor) =>
-                  setRascunho((atual) => ({ ...atual, evento: valor }))
+                  setRascunho((atual) => ({
+                    ...atual,
+                    modoDeValor: valor as Rascunho["modoDeValor"],
+                  }))
                 }
               >
-                <SelectTrigger id={`evento-${id}`} className="min-h-10">
+                <SelectTrigger id={`valor-${id}`} className="min-h-10">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={SEM_EVENTO}>Sem evento</SelectItem>
-                  {EVENTOS_META_PADRAO.map((evento) => (
-                    <SelectItem key={evento.nome} value={evento.nome}>
-                      {evento.rotulo}
-                    </SelectItem>
-                  ))}
-                  <SelectItem value={EVENTO_PERSONALIZADO}>
-                    Personalizado (digitar o nome)
-                  </SelectItem>
+                  <SelectItem value="sem">Sem valor</SelectItem>
+                  <SelectItem value="service_link">Preço da consulta</SelectItem>
+                  <SelectItem value="fixo">Valor fixo</SelectItem>
                 </SelectContent>
               </Select>
-              {rascunho.evento === EVENTO_PERSONALIZADO ? (
+              {rascunho.modoDeValor === "fixo" ? (
                 <Input
-                  value={rascunho.eventoPersonalizado}
+                  value={rascunho.valorReais}
                   onChange={(evento) =>
                     setRascunho((atual) => ({
                       ...atual,
-                      eventoPersonalizado: evento.target.value,
+                      valorReais: evento.target.value,
                     }))
                   }
-                  placeholder="NomeDoEventoNaMeta"
-                  aria-label="Nome do evento personalizado"
-                  className="h-10 font-mono"
-                  maxLength={100}
+                  inputMode="decimal"
+                  placeholder="250,00"
+                  aria-label="Valor em reais"
+                  className="h-10 cz-num"
                 />
               ) : null}
             </div>
-
-            {temEvento ? (
-              <div className="grid gap-1.5">
-                <Label htmlFor={`valor-${id}`}>Valor da conversão</Label>
-                <Select
-                  value={rascunho.modoDeValor}
-                  onValueChange={(valor) =>
-                    setRascunho((atual) => ({
-                      ...atual,
-                      modoDeValor: valor as Rascunho["modoDeValor"],
-                    }))
-                  }
-                >
-                  <SelectTrigger id={`valor-${id}`} className="min-h-10">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="sem">Sem valor</SelectItem>
-                    <SelectItem value="fixo">Valor fixo</SelectItem>
-                    <SelectItem value="service_link">
-                      Preço da consulta do agendamento
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-                {rascunho.modoDeValor === "fixo" ? (
-                  <Input
-                    value={rascunho.valorReais}
-                    onChange={(evento) =>
-                      setRascunho((atual) => ({
-                        ...atual,
-                        valorReais: evento.target.value,
-                      }))
-                    }
-                    inputMode="decimal"
-                    placeholder="250,00"
-                    aria-label="Valor em reais"
-                    className="cz-num"
-                  />
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-
-          {temEvento ? (
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-              <div className="flex min-h-10 items-center gap-2.5">
-                <Checkbox
-                  id={`venda-${id}`}
-                  checked={rascunho.ehVenda}
-                  onCheckedChange={(valor) =>
-                    setRascunho((atual) => ({
-                      ...atual,
-                      ehVenda: valor === true,
-                    }))
-                  }
-                />
-                <Label htmlFor={`venda-${id}`}>Esta etapa é uma venda</Label>
-              </div>
-              <div className="flex min-h-10 items-center gap-2.5">
-                <Checkbox
-                  id={`primeiro-${id}`}
-                  checked={rascunho.primeiroContato}
-                  onCheckedChange={(valor) =>
-                    setRascunho((atual) => ({
-                      ...atual,
-                      primeiroContato: valor === true,
-                    }))
-                  }
-                />
-                <Label htmlFor={`primeiro-${id}`}>É o primeiro contato</Label>
-              </div>
-              <div className="flex min-h-10 items-center gap-2.5">
-                <Checkbox
-                  id={`conversao-ativa-${id}`}
-                  checked={rascunho.conversaoAtiva}
-                  onCheckedChange={(valor) =>
-                    setRascunho((atual) => ({
-                      ...atual,
-                      conversaoAtiva: valor === true,
-                    }))
-                  }
-                />
-                <Label htmlFor={`conversao-ativa-${id}`}>
-                  Conversão ativa (desmarcada, fica pausada)
-                </Label>
-              </div>
-              {/* Venda pela Jornada (decisao do dono de 23/11/2026): a marca
-                  de venda conta em Resultados; a de primeiro contato ainda
-                  nao muda nenhum numero (revisao de 17/11/2026). */}
-              <p className="basis-full text-[11px] text-text-secondary">
-                A marca de venda conta em Resultados (Vendas e Valor das vendas,
-                na aba Comercial) a partir de quando a etapa está marcada: cada
-                entrada de um contato nela é uma venda, com o valor da
-                conversão. O faturamento estimado continua vindo das consultas
-                com comparecimento. A marca de primeiro contato ainda não muda
-                nenhum número.
-              </p>
-            </div>
           ) : null}
+          {/* Venda pela Jornada (decisao do dono de 23/11/2026). */}
+          <p className="text-[11px] text-text-secondary">
+            A marca de venda conta em Resultados (Vendas e Valor das vendas, na
+            aba Comercial) a partir de quando a etapa está marcada: cada entrada
+            de um contato nela é uma venda, com este valor. O faturamento
+            estimado continua vindo das consultas com comparecimento. O mesmo
+            valor vai junto com a conversão para os anúncios.
+          </p>
+          <p className="text-xs text-text-secondary">
+            <span className="font-semibold text-text-strong">Anúncios:</span>{" "}
+            {!etapa
+              ? "depois de criar a etapa, escolha o que ela envia em"
+              : etapa.meta_event_name
+                ? `esta etapa envia ${rotuloDoEvento(etapa.meta_event_name)}${etapa.conversao_ativa ? "" : " (pausada)"}. Para mudar, abra`
+                : "esta etapa não envia nada. Para escolher, abra"}{" "}
+            <Link
+              href={LINK_DAS_CONVERSOES}
+              prefetch={false}
+              className="font-semibold text-primary-text underline underline-offset-2"
+            >
+              Anúncios e rastreio, Conversões por etapa
+            </Link>
+            .
+          </p>
         </div>
       )}
 

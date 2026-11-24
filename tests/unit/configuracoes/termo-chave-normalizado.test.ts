@@ -73,11 +73,8 @@ function entrada(termos: string[]) {
     descricao: null,
     termos_chave: termos,
     termos_de_quem: "qualquer",
-    conversao: {
-      meta_event_name: null,
-      conversao_ativa: true,
+    venda: {
       is_sale: false,
-      is_first_contact: false,
       value_source: null,
       value_cents: null,
     },

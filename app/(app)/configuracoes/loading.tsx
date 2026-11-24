@@ -18,7 +18,7 @@ const ABAS = [
   "w-40", // Equipe e permissões
   "w-16", // Clínica
   "w-20", // WhatsApp
-  "w-40", // Jornada e conversões
+  "w-20", // Jornada
   "w-40", // Etiquetas de conversa
   "w-36", // Mensagens padrão
   "w-40", // Anúncios e rastreio

@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  EVENTOS_MAIS_USADOS,
   EVENTOS_META_PADRAO,
+  OUTROS_EVENTOS,
   ehEventoPadrao,
+  recomendadoParaAJornada,
   rotuloDoEvento,
+  textoDoRecomendado,
 } from "@/lib/domain/meta-conversao";
 import { centavosParaReais, reaisParaCentavos } from "@/lib/utils/moeda";
 
@@ -28,10 +32,24 @@ describe("catálogo de eventos da Meta", () => {
     expect(ehEventoPadrao("QualquerCoisa")).toBe(false);
   });
 
-  it("todo evento padrão tem rótulo em linguagem de recepção", () => {
+  it("todo rótulo é português com o nome da Meta entre parênteses (pedido do dono em 24/11/2026)", () => {
     for (const evento of EVENTOS_META_PADRAO) {
-      expect(evento.rotulo.length).toBeGreaterThan(3);
+      expect(evento.rotulo.endsWith(` (${evento.nome})`)).toBe(true);
+      expect(evento.rotulo.length).toBeGreaterThan(evento.nome.length + 4);
+      expect(evento.rotulo).not.toMatch(/[—–]/);
     }
+    expect(rotuloDoEvento("Schedule")).toBe("Agendamento (Schedule)");
+    expect(rotuloDoEvento("Lead")).toBe("Novo interessado (Lead)");
+  });
+
+  it("os mais usados em clínica têm o quando usar; os outros vão no fim, sem perder nenhum", () => {
+    expect(EVENTOS_MAIS_USADOS.map((evento) => evento.nome)).toEqual([
+      "Lead",
+      "Contact",
+      "Schedule",
+      "Purchase",
+    ]);
+    expect(EVENTOS_MAIS_USADOS.length + OUTROS_EVENTOS.length).toBe(17);
   });
 
   it("evento personalizado exibe o próprio nome", () => {
@@ -61,5 +79,39 @@ describe("conversão de dinheiro do formulário", () => {
     expect(reaisParaCentavos("abc")).toBeNull();
     expect(reaisParaCentavos("-10")).toBeNull();
     expect(centavosParaReais(null)).toBe("");
+  });
+});
+
+describe("recomendado para começar", () => {
+  const JORNADA = [
+    { chave: "novo", nome: "Novo", papel: "entrada" },
+    { chave: "em_contato", nome: "Contato inicial", papel: "em_contato" },
+    { chave: "agendou", nome: "Agendou", papel: "agendou" },
+    { chave: "compareceu", nome: "Consulta feita", papel: "compareceu" },
+    { chave: "perdido", nome: "Perdido", papel: "perdido" },
+  ];
+
+  it("Novo = Lead, Agendou = Schedule e Compareceu = Purchase com o preço da consulta, pelo papel", () => {
+    expect(recomendadoParaAJornada(JORNADA, () => true)).toEqual([
+      { chave: "novo", evento: "Lead", valor: "sem" },
+      { chave: "agendou", evento: "Schedule", valor: "sem" },
+      { chave: "compareceu", evento: "Purchase", valor: "service_link" },
+    ]);
+  });
+
+  it("nunca troca a escolha da clínica: só preenche a etapa que ainda não envia nada", () => {
+    expect(
+      recomendadoParaAJornada(JORNADA, (chave) => chave !== "agendou").map(
+        (item) => item.chave,
+      ),
+    ).toEqual(["novo", "compareceu"]);
+    expect(recomendadoParaAJornada(JORNADA, () => false)).toEqual([]);
+  });
+
+  it("o texto usa os nomes que a clínica deu", () => {
+    expect(textoDoRecomendado(JORNADA)).toBe(
+      "Novo interessado (Lead) em Novo, Agendamento (Schedule) em Agendou e Compra (Purchase) em Consulta feita, com o preço da consulta.",
+    );
+    expect(textoDoRecomendado([])).toBe("");
   });
 });

@@ -465,7 +465,7 @@ describe("leitura das RPCs", () => {
 });
 
 describe("Jornada", () => {
-  it("o aviso diz que a venda conta em Resultados e o primeiro contato ainda não", () => {
+  it("o aviso diz que a venda conta em Resultados; a marca sem efeito saiu da tela", () => {
     const fonte = readFileSync(
       "components/configuracoes/jornada-tab.tsx",
       "utf-8",
@@ -473,9 +473,9 @@ describe("Jornada", () => {
     expect(fonte).toContain(
       "A marca de venda conta em Resultados (Vendas e Valor das vendas, na aba Comercial) a partir de quando a etapa está marcada",
     );
-    expect(fonte).toContain(
-      "A marca de primeiro contato ainda não muda nenhum número.",
-    );
-    expect(fonte).not.toContain("ainda não mudam nenhum número");
+    // 24/11/2026: "É o primeiro contato" nao mudava numero nenhum e saiu.
+    expect(fonte).not.toContain("É o primeiro contato");
+    // A venda nao depende mais de escolher o evento da Meta.
+    expect(COMO_MARCAR_ETAPA_DE_VENDA).not.toContain("evento");
   });
 });

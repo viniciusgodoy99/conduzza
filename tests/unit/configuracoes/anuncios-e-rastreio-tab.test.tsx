@@ -13,6 +13,7 @@ vi.mock("@/lib/actions/investimento-meta", () => ({
 vi.mock("@/app/(app)/configuracoes/actions", () => ({
   alternarEnvioMetaAction: vi.fn(),
   salvarContaMetaAction: vi.fn(),
+  salvarConversoesDasEtapasAction: vi.fn(),
   salvarTokenMetaAction: vi.fn(),
 }));
 vi.mock("@/app/(app)/configuracoes/rastreio-do-site-actions", () => ({
@@ -41,6 +42,7 @@ import {
 import type { DadosDoRastreio } from "@/components/configuracoes/google-ads-tab";
 import type { DadosDasOrigens } from "@/components/configuracoes/origem-dos-leads-tab";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import type { EtapaDaJornada } from "@/lib/domain/jornada";
 
 // A aba "Anuncios e rastreio" (decisao do dono de 17/11/2026): a lista dos
 // passos com a situacao de cada um e as secoes que abrem.
@@ -71,6 +73,41 @@ const GOOGLE: DadosDoRastreio = {
   agoraMs: META.agoraMs,
 };
 
+function etapa(
+  chave: string,
+  nome: string,
+  papel: EtapaDaJornada["papel"],
+  campos: Partial<EtapaDaJornada> = {},
+): EtapaDaJornada {
+  return {
+    id: `id-${chave}`,
+    chave,
+    nome,
+    posicao: 10,
+    tom: "neutral",
+    icone: "circle",
+    papel,
+    descricao: null,
+    termos_chave: [],
+    termos_de_quem: "paciente",
+    meta_event_name: null,
+    conversao_ativa: true,
+    is_sale: false,
+    is_first_contact: false,
+    value_source: null,
+    value_cents: null,
+    ...campos,
+  };
+}
+
+/** Clinica nova: nenhuma etapa manda conversao (o retrato da producao em 24/11/2026). */
+const JORNADA: EtapaDaJornada[] = [
+  etapa("novo", "Novo", "entrada"),
+  etapa("agendou", "Agendou", "agendou"),
+  etapa("compareceu", "Compareceu", "compareceu"),
+  etapa("perdido", "Perdido", "perdido"),
+];
+
 const ORIGENS: DadosDasOrigens = {
   regras: [],
   numeros: [],
@@ -90,6 +127,7 @@ function aba(
         meta={META}
         google={GOOGLE}
         origens={ORIGENS}
+        jornada={JORNADA}
         podeGerenciar
         dica="Somente administradores e gestores alteram as configurações"
         {...props}
@@ -109,14 +147,15 @@ function abertos(html: string): string[] {
 }
 
 describe("AnunciosERastreioTab", () => {
-  it("lista os seis passos, numerados, com a situação em chip e o botão de abrir", () => {
+  it("lista os sete passos, numerados, com a situação em chip e o botão de abrir", () => {
     const html = aba();
     const visivel = texto(html);
     expect(visivel).toContain("Passo a passo");
-    expect(visivel).toContain("1 de 6 prontos");
+    expect(visivel).toContain("1 de 7 prontos");
     for (const titulo of [
       "Conta da Meta",
       "Token das conversões",
+      "Conversões por etapa",
       "Envio das conversões",
       "Investimento nos anúncios",
       "Rastreio do site",
@@ -124,7 +163,7 @@ describe("AnunciosERastreioTab", () => {
     ]) {
       expect(visivel).toContain(titulo);
     }
-    expect(html.match(/aria-label="Abrir o passo \d, /g)).toHaveLength(6);
+    expect(html.match(/aria-label="Abrir o passo \d, /g)).toHaveLength(7);
     // As tres camadas do status: o rotulo escrito, alem do icone e da cor.
     expect(visivel).toContain("Pronto");
     expect(visivel).toContain("Falta fazer");
@@ -158,7 +197,13 @@ describe("AnunciosERastreioTab", () => {
   it("?passo= abre o passo pedido; o link antigo de aba abre os passos dela", () => {
     expect(abertos(aba({ passoDoEndereco: "site" }))).toEqual(["site"]);
     const daMeta = aba({ abaDoEndereco: "meta" });
-    expect(abertos(daMeta)).toEqual(["conta", "token", "envio", "investimento"]);
+    expect(abertos(daMeta)).toEqual([
+      "conta",
+      "token",
+      "conversoes",
+      "envio",
+      "investimento",
+    ]);
     expect(daMeta).toContain('id="meta-pixel"');
     expect(daMeta).toContain("Token de leitura de anúncios");
     expect(abertos(aba({ abaDoEndereco: "origem" }))).toEqual(["origens"]);
@@ -171,6 +216,39 @@ describe("AnunciosERastreioTab", () => {
     expect(visivel).toContain("Não foi possível carregar a conta de anúncios");
     expect(visivel).toContain("Rastreio do site");
     expect(html).not.toContain('id="meta-pixel"');
+  });
+
+  it("conversões por etapa: o passo mostra as etapas, menos Perdido, e o recomendado com os nomes da clínica", () => {
+    const html = aba({ passoDoEndereco: "conversoes" });
+    expect(abertos(html)).toEqual(["conversoes"]);
+    const visivel = texto(html);
+    expect(visivel).toContain("Nenhuma etapa manda conversão.");
+    expect(visivel).toContain(
+      "Novo interessado (Lead) em Novo, Agendamento (Schedule) em Agendou e Compra (Purchase) em Compareceu, com o preço da consulta.",
+    );
+    expect(html).toContain('id="conversao-novo-evento"');
+    expect(html).toContain('id="conversao-compareceu-evento"');
+    expect(html).not.toContain('id="conversao-perdido-evento"');
+  });
+
+  it("com uma etapa enviando e o envio ligado, os dois passos ficam prontos; sem etapa, o envio ligado falta", () => {
+    const ligado = { ...META, conta: { ...META.conta!, envio_ativado: true, modo_user_data: "clique" as const } };
+    const comCompra = aba({
+      meta: ligado,
+      jornada: [
+        ...JORNADA.slice(0, 2),
+        etapa("compareceu", "Compareceu", "compareceu", {
+          meta_event_name: "Purchase",
+          value_source: "service_link",
+        }),
+      ],
+    });
+    expect(texto(comCompra)).toContain("1 etapa");
+    expect(texto(comCompra)).not.toContain("nenhuma etapa manda conversão (passo 3)");
+    const semEtapa = aba({ meta: ligado });
+    expect(texto(semEtapa)).toContain(
+      "Está ligado, mas nenhuma etapa manda conversão (passo 3).",
+    );
   });
 
   it("o passo do site traz onde colar os parâmetros na Meta e como ligar a codificação no Google", () => {
@@ -187,7 +265,8 @@ describe("AnunciosERastreioTab", () => {
       aba({ abaDoEndereco: "meta" }),
       aba({ passoDoEndereco: "site", podeGerenciar: false }),
       aba({ passoDoEndereco: "origens" }),
-      aba({ meta: null, google: null, origens: null }),
+      aba({ passoDoEndereco: "conversoes", podeGerenciar: false }),
+      aba({ meta: null, google: null, origens: null, jornada: null }),
     ]) {
       expect(html).not.toMatch(/[–—]/);
       expect(html).not.toMatch(/(?:text|bg|border)-\[#/);

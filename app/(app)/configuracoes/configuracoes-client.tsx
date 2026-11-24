@@ -80,7 +80,9 @@ const ABAS = [
   ["equipe", "Equipe e permissões"],
   ["clinica", "Clínica"],
   ["whatsapp", "WhatsApp"],
-  ["jornada", "Jornada e conversões"],
+  // "Jornada e conversoes" ate 24/11/2026, quando o evento de cada etapa foi
+  // para o passo "Conversoes por etapa" de Anuncios e rastreio (pedido do dono).
+  ["jornada", "Jornada"],
   ["etiquetas", "Etiquetas de conversa"],
   ["mensagens", "Mensagens padrão"],
   // Anuncios e rastreio (decisao do dono de 17/11/2026): um lugar so para o
@@ -252,11 +254,9 @@ export function ConfiguracoesClient({
   // para a Tela 6).
   const abaAtiva: AbaKey = abas.some(([key]) => key === abaInicial)
     ? (abaInicial as AbaKey)
-    : abaInicial === "conversoes" // link antigo, antes de a jornada absorver
-      ? "jornada"
-      : ehAbaAntigaDoRastreio(abaInicial) // meta, google e origem (17/11/2026)
-        ? "rastreio"
-        : "equipe";
+    : ehAbaAntigaDoRastreio(abaInicial) // meta, google, origem e conversoes
+      ? "rastreio"
+      : "equipe";
 
   const trocarAba = (aba: string) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -417,8 +417,9 @@ export function ConfiguracoesClient({
       <TabsContent value="jornada" className="grid gap-4">
         <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
           As etapas que um contato percorre, do primeiro oi até a consulta.
-          Renomeie, reordene, crie etapas próprias e defina em qual delas a
-          clínica registra uma conversão para os anúncios.
+          Renomeie, reordene, crie etapas próprias e marque qual delas é uma
+          venda. O que cada etapa envia para os anúncios fica em Anúncios e
+          rastreio, no passo Conversões por etapa.
         </p>
         {jornada ? (
           <JornadaTab
@@ -473,6 +474,7 @@ export function ConfiguracoesClient({
           meta={meta}
           google={google}
           origens={origens ?? null}
+          jornada={jornada}
           podeGerenciar={podeGerenciar}
           dica={dica}
           passoDoEndereco={passoInicial}
