@@ -99,9 +99,15 @@ describe("montarEventoCapi", () => {
     expect(noSite.ok && noSite.evento.action_source).toBe("system_generated");
   });
 
-  it("evento que a Meta não aceita no WhatsApp é descartado com o código, nunca enviado errado", () => {
+  it("evento que a Meta não aceita no WhatsApp nunca sai nesse formato: vai pelo telefone ou é descartado", () => {
     for (const eventName of ["Contact", "CompleteRegistration", "MeuEventoProprio"]) {
-      expect(montarEventoCapi({ ...BASE, eventName })).toEqual({
+      const porTelefone = montarEventoCapi({ ...BASE, eventName });
+      expect(porTelefone.ok && porTelefone.evento).toMatchObject({
+        event_name: eventName,
+        action_source: "system_generated",
+      });
+      expect(porTelefone.ok && porTelefone.evento.user_data.ctwa_clid).toBeUndefined();
+      expect(montarEventoCapi({ ...BASE, eventName, modo: "ctwa_apenas" })).toEqual({
         ok: false,
         descarte: "evento_fora_do_whatsapp",
       });

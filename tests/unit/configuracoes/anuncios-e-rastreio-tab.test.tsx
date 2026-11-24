@@ -183,15 +183,21 @@ describe("AnunciosERastreioTab", () => {
     );
   });
 
-  it("conta sem o WhatsApp Business: o passo 1 falta e é ele que nasce aberto", () => {
-    const html = aba({
+  it("conta sem o WhatsApp Business continua pronta; sem o Pixel, o passo 1 falta e nasce aberto", () => {
+    const semWaba = aba({
       meta: {
         ...META,
         conta: { ...META.conta!, whatsapp_business_account_id: null },
       },
     });
-    expect(abertos(html)).toEqual(["conta"]);
-    expect(texto(html)).toContain("Falta a conta do WhatsApp Business.");
+    // Opcional desde 24/11/2026: o numero no aplicativo nao tem a conta.
+    expect(abertos(semWaba)).toEqual(["token"]);
+    expect(texto(semWaba)).toContain("Opcional. Só existe para quem usa a API oficial");
+    const semPixel = aba({
+      meta: { ...META, conta: { ...META.conta!, pixel_id: null } },
+    });
+    expect(abertos(semPixel)).toEqual(["conta"]);
+    expect(texto(semPixel)).toContain("Falta o Pixel.");
   });
 
   it("?passo= abre o passo pedido; o link antigo de aba abre os passos dela", () => {

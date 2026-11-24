@@ -116,13 +116,11 @@ export function montarEventoCapi(entrada: EntradaDoEvento): EventoMontado {
         }
       : {};
 
-  if (entrada.ctwaClid && entrada.wabaId) {
-    // No WhatsApp a Meta aceita so a lista dela (Lead vira LeadSubmitted,
-    // Schedule vira QualifiedLead); o resto nao sai por aqui.
-    const nomeNoWhatsapp = eventoNoWhatsapp(entrada.eventName);
-    if (!nomeNoWhatsapp) {
-      return { ok: false, descarte: "evento_fora_do_whatsapp" };
-    }
+  // No WhatsApp a Meta aceita so a lista dela (Lead vira LeadSubmitted,
+  // Schedule vira QualifiedLead). Evento fora dela cai no formato generico,
+  // como o lead sem a conta do WhatsApp Business: pelo telefone, se houver.
+  const nomeNoWhatsapp = eventoNoWhatsapp(entrada.eventName);
+  if (entrada.ctwaClid && entrada.wabaId && nomeNoWhatsapp) {
     return {
       ok: true,
       evento: {
@@ -142,6 +140,9 @@ export function montarEventoCapi(entrada: EntradaDoEvento): EventoMontado {
 
   const fbc = entrada.fbc ?? undefined;
   if (!ph && !fbc) {
+    if (entrada.ctwaClid && entrada.wabaId) {
+      return { ok: false, descarte: "evento_fora_do_whatsapp" };
+    }
     if (entrada.modo === "ctwa_apenas") {
       return {
         ok: false,

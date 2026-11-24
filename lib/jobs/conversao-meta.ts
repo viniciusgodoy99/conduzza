@@ -165,17 +165,16 @@ export async function executarEnvioDeConversao(
     : null;
 
   // A regra do send_unmatched vale pelo clique RESOLVIDO (ctwa ou fbc), nao
-  // pelo snapshot. O ctwa so identifica com a conta do WhatsApp Business:
-  // sem ela o evento sairia so com o telefone, que e justamente o envio "sem
-  // identificador" que a clinica deixou desligado (revisao de 17/11/2026).
-  const ctwaSemWaba =
-    Boolean(ctwaClid) && !conta.whatsapp_business_account_id;
-  if (!fbc && !conta.send_unmatched && (!ctwaClid || ctwaSemWaba)) {
-    return descartar(
-      admin,
-      evento.id,
-      ctwaSemWaba ? "sem_waba_id" : "sem_identificador",
-    );
+  // pelo snapshot: "sem identificador" e o contato que NAO veio de anuncio.
+  // Revisao de 24/11/2026: o lead do anuncio que abre o WhatsApp sem a conta
+  // do WhatsApp Business (o numero no aplicativo, conectado por QR Code, nao
+  // tem uma) VEIO do anuncio; no modo telefone ele sai pelo telefone
+  // protegido, o caminho que o Tintim usa, e no modo so identificador o
+  // payload descarta com sem_waba_id. Antes (17/11/2026) ele exigia o envio
+  // sem identificador ligado, e toda conversao das clinicas no uazapi era
+  // descartada.
+  if (!fbc && !ctwaClid && !conta.send_unmatched) {
+    return descartar(admin, evento.id, "sem_identificador");
   }
 
   const montado = montarEventoCapi({

@@ -41,6 +41,8 @@ export type EstadoDoRastreio = {
     temToken: boolean;
     /** Como os dados saem ja foi escolhido (sem isso o envio nao liga). */
     temModo: boolean;
+    /** O modo escolhido e "so o identificador do anuncio" (sem telefone). */
+    soIdentificador: boolean;
     envioLigado: boolean;
     temContaDeAnuncios: boolean;
     temTokenDeLeitura: boolean;
@@ -95,6 +97,9 @@ const TEXTOS: Record<ChaveDoPasso, { titulo: string; paraQueServe: string }> = {
 
 type Situacao = Pick<PassoDoRastreio, "situacao" | "rotulo" | "detalhe">;
 
+export const SO_IDENTIFICADOR_SEM_WABA =
+  "Sem a conta do WhatsApp Business, os leads do anúncio do WhatsApp só saem com o telefone protegido: escolha esse jeito.";
+
 const PRONTO: Situacao = { situacao: "pronto", rotulo: null, detalhe: null };
 const INDISPONIVEL: Situacao = {
   situacao: "indisponivel",
@@ -111,12 +116,13 @@ function situacaoDoPasso(chave: ChaveDoPasso, estado: EstadoDoRastreio): Situaca
   switch (chave) {
     // "Pronto" so quando o passo funciona de verdade (revisao de 17/11/2026):
     // a tela verde com conversao descartada e pior que um "falta".
+    // A conta do WhatsApp Business so existe na API oficial (revisao de
+    // 24/11/2026): o numero no aplicativo, conectado por QR Code, nao tem, e
+    // a conversao do anuncio do WhatsApp vai pelo telefone. Por isso ela nao
+    // e mais exigida aqui; o passo do envio avisa quando a falta dela pesa.
     case "conta":
       if (!meta) return INDISPONIVEL;
-      if (!meta.temPixel) return falta("Falta o Pixel.");
-      return meta.temWaba
-        ? PRONTO
-        : falta("Falta a conta do WhatsApp Business.");
+      return meta.temPixel ? PRONTO : falta("Falta o Pixel.");
     case "token":
       if (!meta) return INDISPONIVEL;
       return meta.temToken ? PRONTO : falta("Falta colar o token.");
@@ -133,8 +139,13 @@ function situacaoDoPasso(chave: ChaveDoPasso, estado: EstadoDoRastreio): Situaca
       if (!meta) return INDISPONIVEL;
       if (meta.envioLigado) {
         // Ligado sem etapa nenhuma nao manda nada: nunca "pronto" (24/11/2026).
-        return conversoes === 0
-          ? falta("Está ligado, mas nenhuma etapa manda conversão (passo 3).")
+        if (conversoes === 0) {
+          return falta("Está ligado, mas nenhuma etapa manda conversão (passo 3).");
+        }
+        // So o identificador e sem a conta do WhatsApp Business: o lead do
+        // anuncio do WhatsApp nao tem como sair.
+        return meta.soIdentificador && !meta.temWaba
+          ? falta(SO_IDENTIFICADOR_SEM_WABA)
           : { situacao: "pronto", rotulo: "Ligado", detalhe: null };
       }
       return {
@@ -146,7 +157,9 @@ function situacaoDoPasso(chave: ChaveDoPasso, estado: EstadoDoRastreio): Situaca
             ? "Falta escolher como enviar os dados."
             : conversoes === 0
               ? "Antes, escolha as etapas no passo 3."
-              : "Pronto para ligar.",
+              : meta.soIdentificador && !meta.temWaba
+                ? SO_IDENTIFICADOR_SEM_WABA
+                : "Pronto para ligar.",
       };
     case "investimento":
       if (!meta) return INDISPONIVEL;

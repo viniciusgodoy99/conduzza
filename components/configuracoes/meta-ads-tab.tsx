@@ -357,8 +357,10 @@ export function useCartoesDaMeta({
                 disabled={!podeGerenciar}
               />
               <p className="text-[11px] text-text-secondary">
-                Necessária para casar a conversão com o clique do anúncio de
-                WhatsApp.
+                Opcional. Só existe para quem usa a API oficial do WhatsApp, e
+                aí liga a conversão direto ao clique do anúncio. Sem ela (o
+                número no aplicativo ou conectado por QR Code), a conversão do
+                anúncio do WhatsApp vai com o telefone protegido.
               </p>
               <OndeEncontroDoCampo ajuda={ONDE_ENCONTRAR.waba} />
             </div>
@@ -393,8 +395,10 @@ export function useCartoesDaMeta({
                 Enviar também conversões sem identificador do anúncio
               </Label>
               <span className="text-[11px] text-text-secondary">
-                Vale só quando o envio com telefone protegido estiver liberado.
-                Salve a conta para guardar esta escolha.
+                Para quem não veio de anúncio nenhum (indicação, busca, o
+                número salvo). Vale só com o telefone protegido. Quem veio do
+                anúncio do WhatsApp já sai sem esta marca. Salve a conta para
+                guardar esta escolha.
               </span>
             </div>
           </div>

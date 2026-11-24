@@ -124,6 +124,7 @@ export function AnunciosERastreioTab({
           temWaba: Boolean(meta.conta?.whatsapp_business_account_id),
           temToken: meta.temToken,
           temModo: Boolean(meta.conta?.modo_user_data),
+          soIdentificador: meta.conta?.modo_user_data === "ctwa_apenas",
           envioLigado: meta.conta?.envio_ativado ?? false,
           temContaDeAnuncios: Boolean(meta.conta?.ad_account_id),
           temTokenDeLeitura: meta.temTokenDeLeitura,

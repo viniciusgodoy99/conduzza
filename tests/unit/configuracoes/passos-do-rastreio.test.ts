@@ -5,6 +5,7 @@ import {
   passosAbertosDeInicio,
   passosDoRastreio,
   prontosDoRastreio,
+  SO_IDENTIFICADOR_SEM_WABA,
   type ChaveDoPasso,
   type EstadoDoRastreio,
 } from "@/lib/domain/passos-do-rastreio";
@@ -15,6 +16,7 @@ const VAZIO: EstadoDoRastreio = {
     temWaba: false,
     temToken: false,
     temModo: false,
+    soIdentificador: false,
     envioLigado: false,
     temContaDeAnuncios: false,
     temTokenDeLeitura: false,
@@ -31,6 +33,7 @@ const TUDO: EstadoDoRastreio = {
     temWaba: true,
     temToken: true,
     temModo: true,
+    soIdentificador: false,
     envioLigado: true,
     temContaDeAnuncios: true,
     temTokenDeLeitura: true,
@@ -125,13 +128,31 @@ describe("passosDoRastreio", () => {
     expect(passo({ ...TUDO, conversoes: null }, "envio").situacao).toBe("pronto");
   });
 
-  it("pronto só quando funciona: conta sem WhatsApp Business e investimento sem conta ou com problema faltam", () => {
-    // Sem a conta do WhatsApp Business, a conversão do anúncio que abre o
-    // WhatsApp é descartada (sem_waba_id): o passo não pode ficar verde.
-    const semWaba = passo({ ...TUDO, meta: { ...TUDO.meta!, temWaba: false } }, "conta");
-    expect(semWaba.situacao).toBe("falta");
-    expect(semWaba.detalhe).toBe("Falta a conta do WhatsApp Business.");
+  it("sem a conta do WhatsApp Business a conta fica pronta; só o identificador sem ela, o envio falta (24/11/2026)", () => {
+    // O numero no aplicativo (uazapi) nao tem a conta: a conversao vai pelo
+    // telefone protegido, entao ela nao e exigida no passo 1.
+    const semWaba = { ...TUDO.meta!, temWaba: false };
+    expect(passo({ ...TUDO, meta: semWaba }, "conta").situacao).toBe("pronto");
+    expect(passo({ ...TUDO, meta: semWaba }, "envio").situacao).toBe("pronto");
+    expect(passo({ ...TUDO, meta: { ...TUDO.meta!, temPixel: false } }, "conta").detalhe).toBe(
+      "Falta o Pixel.",
+    );
+    // Mas so com o identificador do anuncio, sem a conta, o lead do anuncio
+    // do WhatsApp nao tem como sair.
+    const soId = { ...semWaba, soIdentificador: true };
+    const ligado = passo({ ...TUDO, meta: soId }, "envio");
+    expect(ligado.situacao).toBe("falta");
+    expect(ligado.detalhe).toBe(SO_IDENTIFICADOR_SEM_WABA);
+    const desligado = passo({ ...TUDO, meta: { ...soId, envioLigado: false } }, "envio");
+    expect(desligado.situacao).toBe("desligado");
+    expect(desligado.detalhe).toBe(SO_IDENTIFICADOR_SEM_WABA);
+    // Com a conta, so o identificador funciona.
+    expect(
+      passo({ ...TUDO, meta: { ...TUDO.meta!, soIdentificador: true } }, "envio").situacao,
+    ).toBe("pronto");
+  });
 
+  it("pronto só quando funciona: investimento sem conta ou com problema falta", () => {
     const semConta = passo(
       { ...TUDO, meta: { ...TUDO.meta!, temContaDeAnuncios: false } },
       "investimento",

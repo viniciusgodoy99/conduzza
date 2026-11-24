@@ -216,6 +216,6 @@ export function avisoDoWhatsapp(
   return {
     tom: "alerta",
     texto:
-      "A Meta não aceita este evento no anúncio que abre o WhatsApp: os leads desse anúncio não contam nesta etapa. Prefira um dos mais usados em clínica.",
+      "A Meta não aceita este evento no anúncio que abre o WhatsApp: os leads desse anúncio só contam nesta etapa pelo telefone protegido (passo 4). Prefira um dos mais usados em clínica.",
   };
 }
