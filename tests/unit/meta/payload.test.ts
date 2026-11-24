@@ -60,14 +60,52 @@ describe("montarEventoCapi", () => {
     expect(JSON.stringify(r.evento)).not.toContain("5585999990000");
   });
 
-  it("sem valor não há custom_data (valor zero é valor, nulo não)", () => {
-    const semValor = montarEventoCapi({ ...BASE, valueCents: null });
+  it("sem valor não há custom_data (valor zero é valor, nulo não), menos na compra", () => {
+    const semValor = montarEventoCapi({
+      ...BASE,
+      eventName: "Lead",
+      valueCents: null,
+    });
     expect(semValor.ok && semValor.evento.custom_data).toBeUndefined();
-    const comZero = montarEventoCapi({ ...BASE, valueCents: 0 });
+    const comZero = montarEventoCapi({ ...BASE, eventName: "Lead", valueCents: 0 });
     expect(comZero.ok && comZero.evento.custom_data).toEqual({
       value: 0,
       currency: "BRL",
     });
+  });
+
+  it("compra sem preço vai com valor 0 e a moeda, nos dois formatos (a Meta exige)", () => {
+    for (const ctwaClid of ["clid-abc", null]) {
+      const r = montarEventoCapi({ ...BASE, ctwaClid, valueCents: null });
+      expect(r.ok && r.evento.event_name).toBe("Purchase");
+      expect(r.ok && r.evento.custom_data).toEqual({ value: 0, currency: "BRL" });
+    }
+  });
+
+  it("no anúncio do WhatsApp, Lead vira LeadSubmitted e Schedule vira QualifiedLead (24/11/2026)", () => {
+    const lead = montarEventoCapi({ ...BASE, eventName: "Lead", valueCents: null });
+    expect(lead.ok && lead.evento.event_name).toBe("LeadSubmitted");
+    expect(lead.ok && lead.evento.action_source).toBe("business_messaging");
+    const agendou = montarEventoCapi({ ...BASE, eventName: "Schedule", valueCents: null });
+    expect(agendou.ok && agendou.evento.event_name).toBe("QualifiedLead");
+    // Fora do WhatsApp o nome escolhido sai como esta.
+    const noSite = montarEventoCapi({
+      ...BASE,
+      ctwaClid: null,
+      eventName: "Schedule",
+      valueCents: null,
+    });
+    expect(noSite.ok && noSite.evento.event_name).toBe("Schedule");
+    expect(noSite.ok && noSite.evento.action_source).toBe("system_generated");
+  });
+
+  it("evento que a Meta não aceita no WhatsApp é descartado com o código, nunca enviado errado", () => {
+    for (const eventName of ["Contact", "CompleteRegistration", "MeuEventoProprio"]) {
+      expect(montarEventoCapi({ ...BASE, eventName })).toEqual({
+        ok: false,
+        descarte: "evento_fora_do_whatsapp",
+      });
+    }
   });
 
   it("sem o par ctwa+waba, modo telefone cai no evento genérico com ph", () => {

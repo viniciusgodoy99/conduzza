@@ -87,7 +87,7 @@ describe("ConversoesPorEtapa", () => {
       "a Meta recebe esse evento e aprende quem são as pessoas que agendam e comparecem",
     );
     expect(visivel).toContain(
-      "Recomendado para começar: Novo interessado (Lead) em Novo, Agendamento (Schedule) em Agendou e Compra (Purchase) em Compareceu, com o preço da consulta.",
+      "Recomendado para começar: Novo interessado (Lead) em Novo, Agendamento (Schedule) em Agendou e Compra (Purchase) em Compareceu, com o preço da consulta. No anúncio que abre o WhatsApp, Lead vai como LeadSubmitted e Schedule como QualifiedLead",
     );
     expect(visivel).toContain("Usar o recomendado");
     expect(visivel).toContain("passo 4");
@@ -112,6 +112,24 @@ describe("ConversoesPorEtapa", () => {
       etapa("compareceu", "Compareceu", "compareceu", { meta_event_name: "Purchase" }),
     ]);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>(?:(?!<\/button>)[\s\S])*Usar o recomendado/);
+  });
+
+  it("embaixo do evento diz como ele vai no anúncio do WhatsApp, e alerta o que a Meta não aceita lá", () => {
+    const html = tela([
+      etapa("novo", "Novo", "entrada", { meta_event_name: "Lead" }),
+      etapa("em_contato", "Em contato", "em_contato", { meta_event_name: "Contact" }),
+      etapa("compareceu", "Compareceu", "compareceu", { meta_event_name: "Purchase" }),
+    ]);
+    const visivel = texto(html);
+    expect(visivel).toContain("vai como LeadSubmitted");
+    expect(visivel).toContain(
+      "A Meta não aceita este evento no anúncio que abre o WhatsApp",
+    );
+    expect(html).toContain(
+      'aria-describedby="conversao-novo-quando conversao-novo-whatsapp"',
+    );
+    // Compra tem o mesmo nome la: sem nota.
+    expect(html).not.toContain('id="conversao-compareceu-whatsapp"');
   });
 
   it("conversão pausada aparece pausada, em três camadas", () => {

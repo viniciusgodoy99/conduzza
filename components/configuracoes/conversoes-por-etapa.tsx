@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ListChecks, Undo2 } from "lucide-react";
+import { Check, CircleAlert, ListChecks, Undo2 } from "lucide-react";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -35,6 +35,7 @@ import {
   EVENTOS_MAIS_USADOS,
   EVENTOS_META_PADRAO,
   OUTROS_EVENTOS,
+  avisoDoWhatsapp,
   ehEventoPadrao,
   recomendadoParaAJornada,
   textoDoRecomendado,
@@ -54,6 +55,8 @@ export const TEXTOS_DAS_CONVERSOES = {
   descricao:
     "Quando um contato chega numa etapa com evento, a Meta recebe esse evento e aprende quem são as pessoas que agendam e comparecem, para mostrar os anúncios a gente parecida.",
   recomendado: "Recomendado para começar:",
+  recomendadoNoWhatsapp:
+    "No anúncio que abre o WhatsApp, Lead vai como LeadSubmitted e Schedule como QualifiedLead, os nomes que a Meta aceita lá.",
   usarRecomendado: "Usar o recomendado",
   recomendadoJaFeito: "As etapas do recomendado já têm evento escolhido.",
   naoEnviar: "Não enviar nada",
@@ -246,7 +249,7 @@ export function ConversoesPorEtapa({
             <span className="font-semibold">
               {TEXTOS_DAS_CONVERSOES.recomendado}
             </span>{" "}
-            {recomendado}
+            {recomendado} {TEXTOS_DAS_CONVERSOES.recomendadoNoWhatsapp}
           </Aviso>
         ) : null}
 
@@ -258,6 +261,14 @@ export function ConversoesPorEtapa({
             const quandoUsar = EVENTOS_META_PADRAO.find(
               (evento) => evento.nome === linha.evento,
             )?.quandoUsar;
+            const eventoEscolhido = eventoDaLinha(linha);
+            const noWhatsapp = eventoEscolhido
+              ? avisoDoWhatsapp(eventoEscolhido)
+              : null;
+            const descricoes = [
+              quandoUsar ? `${id}-quando` : null,
+              noWhatsapp ? `${id}-whatsapp` : null,
+            ].filter(Boolean);
             const pausada =
               Boolean(etapa.meta_event_name) &&
               !etapa.conversao_ativa &&
@@ -286,7 +297,9 @@ export function ConversoesPorEtapa({
                     <SelectTrigger
                       id={`${id}-evento`}
                       className="min-h-10 w-full"
-                      aria-describedby={quandoUsar ? `${id}-quando` : undefined}
+                      aria-describedby={
+                        descricoes.length > 0 ? descricoes.join(" ") : undefined
+                      }
                     >
                       <SelectValue />
                     </SelectTrigger>
@@ -318,6 +331,24 @@ export function ConversoesPorEtapa({
                   {quandoUsar ? (
                     <p id={`${id}-quando`} className="text-xs text-text-secondary">
                       {quandoUsar}
+                    </p>
+                  ) : null}
+                  {noWhatsapp ? (
+                    <p
+                      id={`${id}-whatsapp`}
+                      className={
+                        noWhatsapp.tom === "alerta"
+                          ? "flex gap-1.5 text-xs font-medium text-warning-text"
+                          : "text-xs text-text-secondary"
+                      }
+                    >
+                      {noWhatsapp.tom === "alerta" ? (
+                        <CircleAlert
+                          aria-hidden
+                          className="mt-px size-3.5 shrink-0"
+                        />
+                      ) : null}
+                      {noWhatsapp.texto}
                     </p>
                   ) : null}
                   {linha.evento === PERSONALIZADO ? (

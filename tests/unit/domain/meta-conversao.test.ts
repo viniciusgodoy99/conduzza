@@ -6,6 +6,8 @@ import {
   OUTROS_EVENTOS,
   ehEventoPadrao,
   recomendadoParaAJornada,
+  avisoDoWhatsapp,
+  eventoNoWhatsapp,
   rotuloDoEvento,
   textoDoRecomendado,
 } from "@/lib/domain/meta-conversao";
@@ -45,10 +47,13 @@ describe("catálogo de eventos da Meta", () => {
   it("os mais usados em clínica têm o quando usar; os outros vão no fim, sem perder nenhum", () => {
     expect(EVENTOS_MAIS_USADOS.map((evento) => evento.nome)).toEqual([
       "Lead",
-      "Contact",
       "Schedule",
       "Purchase",
     ]);
+    // Todos os mais usados valem tambem no anuncio que abre o WhatsApp.
+    for (const evento of EVENTOS_MAIS_USADOS) {
+      expect(eventoNoWhatsapp(evento.nome)).not.toBeNull();
+    }
     expect(EVENTOS_MAIS_USADOS.length + OUTROS_EVENTOS.length).toBe(17);
   });
 
@@ -113,5 +118,33 @@ describe("recomendado para começar", () => {
       "Novo interessado (Lead) em Novo, Agendamento (Schedule) em Agendou e Compra (Purchase) em Consulta feita, com o preço da consulta.",
     );
     expect(textoDoRecomendado([])).toBe("");
+  });
+});
+
+describe("o anúncio que abre o WhatsApp (doc da Meta lida em 24/11/2026)", () => {
+  it("o recomendado inteiro vale lá: Lead e Schedule com o nome de lá, Purchase igual", () => {
+    expect(eventoNoWhatsapp("Lead")).toBe("LeadSubmitted");
+    expect(eventoNoWhatsapp("Schedule")).toBe("QualifiedLead");
+    expect(eventoNoWhatsapp("Purchase")).toBe("Purchase");
+    expect(eventoNoWhatsapp("ViewContent")).toBe("ViewContent");
+  });
+
+  it("o que a Meta não aceita lá dá null e a tela avisa em alerta", () => {
+    for (const nome of ["Contact", "Search", "Donate", "MeuEventoProprio"]) {
+      expect(eventoNoWhatsapp(nome)).toBeNull();
+      expect(avisoDoWhatsapp(nome)?.tom).toBe("alerta");
+    }
+  });
+
+  it("a tela diz o nome de lá quando muda, e não diz nada quando é igual", () => {
+    expect(avisoDoWhatsapp("Lead")).toEqual({
+      tom: "nota",
+      texto:
+        "No anúncio que abre o WhatsApp, vai como LeadSubmitted, o nome que a Meta aceita lá.",
+    });
+    expect(avisoDoWhatsapp("Purchase")).toBeNull();
+    for (const nome of ["Lead", "Schedule", "Contact"]) {
+      expect(avisoDoWhatsapp(nome)!.texto).not.toMatch(/[—–]/);
+    }
   });
 });

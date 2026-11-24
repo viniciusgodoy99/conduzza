@@ -32,6 +32,10 @@ export const ONDE_ENCONTRAR = {
       "Abra o Gerenciador de Eventos da Meta.",
       "Em Fontes de dados, escolha o conjunto de dados (o Pixel) da clínica.",
       "Na aba Configurações, copie a identificação do conjunto de dados.",
+      // Doc "Conversions API for Business Messaging" (lida em 24/11/2026): o
+      // evento do anuncio que abre o WhatsApp vai para o conjunto de dados
+      // ligado a conta do WhatsApp Business.
+      "Se os anúncios abrem o WhatsApp, use o conjunto de dados ligado à conta do WhatsApp Business da clínica: é nele que a Meta aceita as conversões desses anúncios.",
     ],
     link: GERENCIADOR_DE_EVENTOS,
     ajuda: {

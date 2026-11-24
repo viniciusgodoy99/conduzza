@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { eventoNoWhatsapp } from "@/lib/domain/meta-conversao";
+
 // Montagem PURA do evento da Conversions API (zero I/O), testavel sem rede.
 // Quem envia e capi.ts; quem decide SE envia e o job (conversao-meta.ts).
 //
@@ -71,7 +73,14 @@ export type EntradaDoEvento = {
 export type EventoMontado =
   | { ok: true; evento: EventoCapi }
   /** Codigo curto de maquina; o job grava em conversion_event.erro. */
-  | { ok: false; descarte: "sem_ctwa_clid" | "sem_waba_id" | "sem_identificador" };
+  | {
+      ok: false;
+      descarte:
+        | "sem_ctwa_clid"
+        | "sem_waba_id"
+        | "sem_identificador"
+        | "evento_fora_do_whatsapp";
+    };
 
 /**
  * Decide o formato e monta o evento.
@@ -95,21 +104,30 @@ export function montarEventoCapi(entrada: EntradaDoEvento): EventoMontado {
     event_time: entrada.eventTimeUnix,
     event_id: entrada.eventId,
   };
-  const customData =
-    entrada.valueCents !== null
+  // Purchase exige valor e moeda na Meta: sem o preco, vai 0 (como o Q5),
+  // em vez de o evento ser recusado (revisao de 24/11/2026).
+  const customData = (eventName: string) =>
+    entrada.valueCents !== null || eventName === "Purchase"
       ? {
           custom_data: {
-            value: entrada.valueCents / 100,
+            value: (entrada.valueCents ?? 0) / 100,
             currency: entrada.currency,
           },
         }
       : {};
 
   if (entrada.ctwaClid && entrada.wabaId) {
+    // No WhatsApp a Meta aceita so a lista dela (Lead vira LeadSubmitted,
+    // Schedule vira QualifiedLead); o resto nao sai por aqui.
+    const nomeNoWhatsapp = eventoNoWhatsapp(entrada.eventName);
+    if (!nomeNoWhatsapp) {
+      return { ok: false, descarte: "evento_fora_do_whatsapp" };
+    }
     return {
       ok: true,
       evento: {
         ...base,
+        event_name: nomeNoWhatsapp,
         action_source: "business_messaging",
         messaging_channel: "whatsapp",
         user_data: {
@@ -117,7 +135,7 @@ export function montarEventoCapi(entrada: EntradaDoEvento): EventoMontado {
           ctwa_clid: entrada.ctwaClid,
           ...(ph ? { ph } : {}),
         },
-        ...customData,
+        ...customData(nomeNoWhatsapp),
       },
     };
   }
@@ -138,7 +156,7 @@ export function montarEventoCapi(entrada: EntradaDoEvento): EventoMontado {
       ...base,
       action_source: "system_generated",
       user_data: { ...(ph ? { ph } : {}), ...(fbc ? { fbc } : {}) },
-      ...customData,
+      ...customData(entrada.eventName),
     },
   };
 }

@@ -28,11 +28,9 @@ export const EVENTOS_META_PADRAO: readonly EventoMeta[] = [
     rotulo: "Novo interessado (Lead)",
     quandoUsar: "Chegou um contato novo.",
   },
-  {
-    nome: "Contact",
-    rotulo: "Contato (Contact)",
-    quandoUsar: "A pessoa conversou com a clínica.",
-  },
+  // Contact saiu dos mais usados em 24/11/2026: a Meta nao o aceita no
+  // anuncio que abre o WhatsApp (EVENTOS_DO_WHATSAPP, abaixo).
+  { nome: "Contact", rotulo: "Contato (Contact)" },
   {
     nome: "Schedule",
     rotulo: "Agendamento (Schedule)",
@@ -70,7 +68,10 @@ export const EVENTOS_META_PADRAO: readonly EventoMeta[] = [
   { nome: "Donate", rotulo: "Doação (Donate)" },
 ] as const;
 
-/** Os que a clinica mais usa (com "quando usar"); o resto vai em "Outros". */
+/**
+ * Os que a clinica mais usa (com "quando usar"); o resto vai em "Outros". Os
+ * tres valem tambem no anuncio que abre o WhatsApp (eventoNoWhatsapp).
+ */
 export const EVENTOS_MAIS_USADOS = EVENTOS_META_PADRAO.filter(
   (evento) => evento.quandoUsar,
 );
@@ -152,4 +153,69 @@ export function textoDoRecomendado(
   }
   const ultima = partes.pop()!;
   return `${partes.length > 0 ? `${partes.join(", ")} e ` : ""}${ultima}.`;
+}
+
+// ---------------------------------------------------------------------------
+// O anuncio que abre o WhatsApp (revisao de 24/11/2026)
+// ---------------------------------------------------------------------------
+//
+// O evento do lead que veio do anuncio clique-para-WhatsApp sai no formato
+// "business_messaging", e nele a Meta aceita so estes eventos (doc oficial
+// "Conversions API for Business Messaging: Onboarding Guide", lida em
+// 24/11/2026). Lead e Schedule, que a clinica mais escolhe, nao estao na lista:
+// viram os equivalentes de la. O resto que nao esta na lista nao sai por esse
+// caminho (o job descarta com "evento_fora_do_whatsapp") e a tela avisa.
+export const EVENTOS_DO_WHATSAPP: readonly string[] = [
+  "Purchase",
+  "LeadSubmitted",
+  "QualifiedLead",
+  "InitiateCheckout",
+  "AddToCart",
+  "ViewContent",
+  "OrderCreated",
+  "OrderShipped",
+  "OrderDelivered",
+  "OrderCanceled",
+  "OrderReturned",
+  "CartAbandoned",
+  "RatingProvided",
+  "ReviewProvided",
+];
+
+const NOME_NO_WHATSAPP: Record<string, string> = {
+  Lead: "LeadSubmitted",
+  // Agendou e o lead que se qualificou: o mais perto de Schedule que a Meta
+  // aceita no WhatsApp.
+  Schedule: "QualifiedLead",
+};
+
+/** O nome que o evento leva no anuncio que abre o WhatsApp; null: a Meta nao aceita la. */
+export function eventoNoWhatsapp(nome: string): string | null {
+  const traduzido = NOME_NO_WHATSAPP[nome] ?? nome;
+  return EVENTOS_DO_WHATSAPP.includes(traduzido) ? traduzido : null;
+}
+
+/**
+ * O que a tela diz sobre o evento escolhido no anuncio que abre o WhatsApp:
+ * nada quando o nome e o mesmo, uma nota quando muda e um alerta quando a
+ * Meta nao aceita.
+ */
+export function avisoDoWhatsapp(
+  nome: string,
+): { tom: "nota" | "alerta"; texto: string } | null {
+  const noWhatsapp = eventoNoWhatsapp(nome);
+  if (noWhatsapp === nome) {
+    return null;
+  }
+  if (noWhatsapp) {
+    return {
+      tom: "nota",
+      texto: `No anúncio que abre o WhatsApp, vai como ${noWhatsapp}, o nome que a Meta aceita lá.`,
+    };
+  }
+  return {
+    tom: "alerta",
+    texto:
+      "A Meta não aceita este evento no anúncio que abre o WhatsApp: os leads desse anúncio não contam nesta etapa. Prefira um dos mais usados em clínica.",
+  };
 }
