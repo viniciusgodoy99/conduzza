@@ -36,7 +36,7 @@ export default function CarregandoRelatorios() {
         className="grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5"
       />
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-        <div className="grid overflow-hidden rounded-card border border-border bg-card shadow-sm">
+        <div className="grid overflow-hidden rounded-card border border-border bg-card">
           <div className="flex min-h-[52px] items-center border-b border-border px-4">
             <Skeleton className="h-4 w-48" />
           </div>
@@ -44,7 +44,7 @@ export default function CarregandoRelatorios() {
             <Skeleton className="h-[200px] w-full" />
           </div>
         </div>
-        <div className="grid overflow-hidden rounded-card border border-border bg-card shadow-sm">
+        <div className="grid overflow-hidden rounded-card border border-border bg-card">
           <div className="flex min-h-[52px] items-center border-b border-border px-4">
             <Skeleton className="h-4 w-32" />
           </div>
@@ -55,7 +55,7 @@ export default function CarregandoRelatorios() {
           </div>
         </div>
       </div>
-      <div className="grid overflow-hidden rounded-card border border-border bg-card shadow-sm">
+      <div className="grid overflow-hidden rounded-card border border-border bg-card">
         <div className="flex min-h-[52px] items-center border-b border-border px-4">
           <Skeleton className="h-4 w-40" />
         </div>

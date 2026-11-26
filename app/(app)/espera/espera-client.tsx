@@ -186,8 +186,7 @@ export function EsperaClient({
             </Button>
           }
         >
-          Não foi possível atualizar a lista agora. A tela mostra a última
-          versão carregada.
+          Não foi possível atualizar a lista.
         </Aviso>
       ) : null}
 

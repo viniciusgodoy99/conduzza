@@ -54,10 +54,10 @@ function aba(props: Partial<React.ComponentProps<typeof MensagensPadraoTab>>) {
 }
 
 describe("aba Mensagens padrão", () => {
-  it("vazio explica o que é e como usar", () => {
+  it("vazio: a frase curta e a ação, sem parágrafo", () => {
     const html = aba({ mensagens: [] });
     expect(html).toContain("Nenhuma mensagem padrão ainda");
-    expect(html).toContain("digite / na resposta ao paciente");
+    expect(html).not.toContain("digite / na resposta ao paciente");
     expect(html).toContain("Nova mensagem");
   });
 

@@ -17,7 +17,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -77,14 +76,9 @@ export function InterruptorGeral({
   return (
     <Card role="region" aria-labelledby={`${ids}-titulo`}>
       <CardHeader>
-        <div className="grid min-w-0 gap-[3px]">
-          <CardTitle id={`${ids}-titulo`}>
-            {TEXTOS_DO_PAINEL.interruptorTitulo}
-          </CardTitle>
-          <CardDescription>
-            {TEXTOS_DO_PAINEL.interruptorDescricao}
-          </CardDescription>
-        </div>
+        <CardTitle id={`${ids}-titulo`}>
+          {TEXTOS_DO_PAINEL.interruptorTitulo}
+        </CardTitle>
         {ligado === null ? null : (
           <CardAction>
             <StatusChip

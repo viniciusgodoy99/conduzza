@@ -25,8 +25,7 @@ import {
 
 export const TEXTOS_DO_HORARIO = {
   legenda: "Horário de funcionamento",
-  ajuda:
-    "Os dias e horários em que a unidade abre, no fuso da clínica. Almoço: crie duas faixas no mesmo dia. Dia fechado fica desmarcado.",
+  ajuda: "Almoço: duas faixas no mesmo dia.",
   fechado: "Fechado",
   aberto: "Aberto",
   adicionarFaixa: "Adicionar faixa",

@@ -192,8 +192,7 @@ export function AgendaActionsMenu({
               id={idSemDado}
               className="px-[9px] pb-1.5 text-xs whitespace-normal text-text-secondary"
             >
-              A agenda deste dia não carregou. Tente de novo antes de imprimir
-              ou exportar.
+              A agenda deste dia não carregou.
             </p>
           ) : null}
           <DropdownMenuItem onSelect={() => setHistoricoAberto(true)}>
@@ -207,10 +206,7 @@ export function AgendaActionsMenu({
         <SheetContent className="cz-scroll overflow-y-auto">
           <SheetHeader>
             <SheetTitle>Histórico de alterações</SheetTitle>
-            <SheetDescription>
-              Mudanças de situação e remarcações das consultas de{" "}
-              <span className="cz-num">{dataFormatada}</span>.
-            </SheetDescription>
+            <SheetDescription className="cz-num">{dataFormatada}</SheetDescription>
           </SheetHeader>
           <div className="grid gap-3 px-5 pb-6">
             {historicoQuery.isPending ? (

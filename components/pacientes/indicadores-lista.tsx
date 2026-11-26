@@ -165,7 +165,7 @@ export function IndicadoresDaLista({
           rotulo={rotulos.retorno}
           icone={icones.retorno}
           estado="nao-medido"
-          dica={`Mede quantas ${consultas} atendidas tiveram outra marcada em até 90 dias. A conta só fecha 90 dias depois do atendimento, por isso ainda não há número.`}
+          dica={`Mede quantas ${consultas} atendidas tiveram outra marcada em até 90 dias. Só fecha 90 dias depois.`}
           rodape={
             retorno.primeiraMedidaEm === null
               ? undefined
@@ -185,7 +185,7 @@ export function IndicadoresDaLista({
           rotulo={rotulos.semConsulta}
           icone={icones.semConsulta}
           estado="nao-medido"
-          dica="Conta quem foi atendido há mais de 6 meses e não tem nada marcado. Com menos de 6 meses de atendimentos no sistema, o zero não diria nada."
+          dica="Precisa de 6 meses de atendimentos no sistema."
           rodape={
             semConsulta6m.contaDesde === null
               ? undefined

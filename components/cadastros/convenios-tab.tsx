@@ -173,7 +173,6 @@ export function ConveniosTab({
         <VazioDaAba
           icon={IdCard}
           titulo="Nenhum convênio cadastrado"
-          descricao="Cadastre os convênios que a clínica atende para a recepcionista informar cobertura e preço."
           acao={{
             rotulo: "Cadastrar o primeiro convênio",
             onClick: () => abrir(),

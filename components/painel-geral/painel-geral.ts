@@ -600,31 +600,24 @@ export function semUsoDeIa(
 /**
  * O que o ultimo acesso mede (decisao do dono de 26/10/2026, "Pela ultima
  * atividade"): o maior entre o ultimo login e a renovacao da sessao, que o
- * sistema faz enquanto a pessoa usa. A tela diz isso na descricao do
- * painel e na equipe do detalhe. Os limites (folga de ate cerca de 1 hora;
+ * sistema faz enquanto a pessoa usa. A tela diz isso na dica do "Último
+ * acesso", na lista e na equipe do detalhe. Os limites (folga de ate cerca de 1 hora;
  * quem clica em Sair volta ao login) ficam no docs/04, secao 27.
  */
 const ULTIMO_ACESSO_E_ATIVIDADE =
-  "O último acesso é a última atividade da pessoa no sistema: quem continua conectado e usando aparece em dia, sem precisar entrar de novo.";
+  "É a última atividade da pessoa no sistema, mesmo sem entrar de novo.";
 
 export const TEXTOS_DO_PAINEL = {
   titulo: "Painel geral",
-  eyebrow: "Equipe Conduzza",
-  descricao: `Como cada clínica usa o sistema: quem da equipe usou por último, quantas pessoas tem, o WhatsApp e o agente de IA. De paciente, só contagens. ${ULTIMO_ACESSO_E_ATIVIDADE}`,
   ultimoAcessoEAtividade: ULTIMO_ACESSO_E_ATIVIDADE,
   soEquipeConduzza: "Somente a equipe Conduzza usa o painel geral.",
   sessaoExpirada: "Sessão expirada. Entre de novo.",
   dadosInvalidos: "Dados inválidos. Recarregue a página e tente de novo.",
   semResposta: "O servidor não respondeu. Confira a conexão e tente de novo.",
   erroAoCarregar: "Não foi possível carregar o painel",
-  erroAoCarregarDescricao:
-    "Confira a conexão e tente de novo. Nada foi alterado em nenhuma clínica.",
+  erroAoCarregarDescricao: "Nada foi alterado em nenhuma clínica.",
   vazio: "Nenhuma clínica cadastrada ainda",
-  vazioDescricao:
-    "As clínicas aparecem aqui assim que alguém se cadastra ou a equipe Conduzza cria uma.",
   vazioPorFiltro: "Nenhuma clínica com esses filtros",
-  vazioPorFiltroDescricao:
-    "Ajuste a busca ou os filtros, ou limpe para ver todas as clínicas.",
   clinicaNaoEncontrada:
     "Esta clínica não está no painel. Ela pode ter sido removida. Recarregue a página.",
   // Acompanhamento de cliente (26/10/2026): o uso e o ultimo acesso
@@ -632,8 +625,8 @@ export const TEXTOS_DO_PAINEL = {
   ninguemEntrou: "Ninguém entrou ainda",
   nuncaEntrou: "Nunca entrou",
   semNomeNoPerfil: "Sem nome no perfil",
-  rodapeDoEmUso: "Alguém da equipe usou o sistema nos últimos 30 dias",
-  rodapeDoSemUso: "Ninguém da equipe usou o sistema nos últimos 30 dias",
+  rodapeDoEmUso: "Últimos 30 dias",
+  rodapeDoSemUso: "Últimos 30 dias",
   rodapeDasSuspensas: "Também contadas em Em uso ou Sem uso",
   rodapeDoAgenteLiberado: "Em Teste ou em Produção",
   // O agente na linha da lista: liberar (Teste) e retirar (Desligado)
@@ -658,8 +651,6 @@ export const TEXTOS_DO_PAINEL = {
   equipeLista: "Equipe",
   equipeVazia: "Ninguém na equipe desta clínica.",
   equipeConduzzaMarca: "Equipe Conduzza",
-  equipeConduzzaExplicacao:
-    "Quem é da equipe Conduzza aparece marcado. Com acesso ativo, conta no uso e nas contagens da clínica como qualquer pessoa da equipe.",
   // O marcador do ultimo acesso quando foi a equipe Conduzza (na lista e no
   // detalhe) e a linha da coluna Equipe.
   daEquipeConduzza: "equipe Conduzza",
@@ -668,8 +659,6 @@ export const TEXTOS_DO_PAINEL = {
       ? "Inclui 1 da equipe Conduzza"
       : `Inclui ${quantas.toLocaleString("pt-BR")} da equipe Conduzza`,
   implementadoresTitulo: "Implementadores",
-  implementadoresDescricao:
-    "Assistentes técnicos que configuram a clínica, marcados pelo administrador dela. Veem e fazem tudo o que o administrador faz, menos mexer em administradores e exportar os leads.",
   nenhumImplementador: "Nenhum implementador nesta clínica.",
   equipeSemLeitura:
     "Não foi possível carregar a equipe desta clínica. Recarregue a página.",
@@ -697,8 +686,6 @@ export const TEXTOS_DO_PAINEL = {
   naoSuspendeu: "Não foi possível suspender a conta. Tente de novo.",
   naoReativou: "Não foi possível reativar a conta. Tente de novo.",
   // Agente
-  descricaoDoAgente:
-    "Desligado: o agente não atende nesta clínica. Teste: conversa só com os telefones da equipe cadastrados abaixo, pelos números ligados. Produção: atende os contatos do público escolhido, pelos números ligados, depois de cumpridos os requisitos.",
   // Antes da migration da producao (o banco ainda nao tem os requisitos).
   dicaDaProducao:
     "A produção ainda não está liberada. Antes dela vêm: a conversão só depois da aprovação, a escolha entre leads, pacientes ou os dois, a rodada paga de conferência do CFM, o contrato com a OpenAI e o aviso de assistente virtual para o paciente.",
@@ -753,10 +740,8 @@ export const TEXTOS_DO_PAINEL = {
   // Interruptor geral (onda 2, P8: saiu da aba da clinica e mora no topo
   // da lista do painel; o mesmo comportamento de antes).
   interruptorTitulo: "Interruptor geral",
-  interruptorDescricao:
-    "Liga e desliga o agente em todas as clínicas de uma vez.",
   interruptorEfeito:
-    "Desligado, nenhuma clínica tem o agente respondendo, e as conversas dele voltam para a equipe sem nenhuma mensagem ao paciente.",
+    "Desligado, o agente para em todas as clínicas e as conversas dele voltam para a equipe, sem mensagem ao paciente.",
   interruptorLigarTitulo: "Ligar o interruptor geral?",
   interruptorLigarTexto:
     "O agente passa a responder em todas as clínicas que estão com ele ligado, cada uma no modo escolhido por ela.",
@@ -768,9 +753,7 @@ export const TEXTOS_DO_PAINEL = {
     "Não foi possível conferir o interruptor geral agora. Recarregue a página.",
   // Teto
   tetoExplicacao:
-    "Ao chegar no teto, o agente para de responder até o gasto mais antigo completar 24 horas. O simulador conta junto.",
-  respostasExplicacao:
-    "O máximo de respostas do agente numa mesma conversa em uma hora.",
+    "No teto, o agente para até o gasto mais antigo completar 24 horas. O simulador conta.",
   tetoSemLinha:
     "O teto nasce quando o agente é ligado em Teste pela primeira vez nesta clínica.",
   tetoInvalido: "Informe o teto em dólares, de 0,01 a 1.000, por exemplo 5,00.",
@@ -797,8 +780,6 @@ export const TEXTOS_DO_PAINEL = {
     "O agente só começa neste número depois que a equipe da clínica assumir e resolver a conversa aberta no Atendimento.",
   // Requisitos da producao (onda 2, item 11; contrato secoes 3.3 e 5.4)
   requisitosTitulo: "Para liberar a produção",
-  requisitosDescricao:
-    "A produção só liga com todos cumpridos. Os do banco se conferem sozinhos; os da equipe Conduzza se registram aqui, com a evidência.",
   requisitosIndisponiveis:
     "A produção ainda não chegou ao banco. Quando chegar, a lista dos requisitos aparece aqui.",
   requisitosSemLeitura:
@@ -809,8 +790,7 @@ export const TEXTOS_DO_PAINEL = {
   revogar: "Revogar",
   revogando: "Revogando...",
   evidencia: "Evidência",
-  evidenciaApoio:
-    "O que prova e onde está guardado. De 3 a 500 caracteres. Fica registrado junto com o seu usuário e a data.",
+  evidenciaApoio: "O que prova e onde está guardado. De 3 a 500 caracteres.",
   evidenciaInvalida: "Escreva a evidência com 3 a 500 caracteres.",
   valeParaTodas: "Vale para todas as clínicas.",
   valeSoParaEsta: "Vale só para esta clínica.",
@@ -837,7 +817,7 @@ export const TEXTOS_DO_PAINEL = {
     "A versão do filtro ou do modelo mudou depois da rodada registrada. Confira e registre de novo, se for o caso. A produção não trava sozinha por isso.",
   // Segunda leva (26/10/2026): gasto de IA por clinica, saude e sinais,
   // implantacao, tendencia, notas, historico, exportar e ordenar.
-  rodapeDoGastoDoMes: "Todas as clínicas, no mês corrente de cada uma.",
+  rodapeDoGastoDoMes: "No mês corrente de cada clínica.",
   semUsoDeIa: "Sem uso de IA",
   tetoPorDia: (teto: string) => `Teto de ${teto} por dia`,
   saudeTitulo: "Saúde da clínica",
@@ -846,19 +826,15 @@ export const TEXTOS_DO_PAINEL = {
   nenhumSinal: "Nenhum sinal de alerta.",
   sinaisDeAlerta: "Sinais de alerta",
   faixaDeSaude: "Saúde das clínicas",
-  faixaDeSaudeApoio: "Escolha uma saúde para filtrar a lista.",
   implantacaoTitulo: "Implantação",
-  implantacaoDescricao:
-    "Os passos para a clínica usar o sistema por inteiro. A equipe conta quem tem acesso ativo, a equipe Conduzza inclusive.",
   semBase: "Sem base",
   estavel: "Estável",
   // Notas internas da equipe Conduzza (escolha (6) do dono)
   notasTitulo: "Notas da equipe Conduzza",
-  notasDescricao:
-    "Só a equipe Conduzza vê estas notas. A equipe da clínica não vê.",
+  notasDescricao: "A equipe da clínica não vê estas notas.",
   naoEscrevaDadoDePaciente: "Não escreva dado de paciente aqui.",
   naoEscrevaDadoDePacienteApoio:
-    "Nada de nome, telefone ou assunto de saúde de paciente. Escreva só o que a equipe Conduzza precisa saber da conta.",
+    "Nada de nome, telefone ou assunto de saúde de paciente.",
   novaNota: "Nova nota",
   regraDaNota:
     "De 1 a 2.000 caracteres. Fica registrada com o seu nome e a data.",
@@ -870,8 +846,6 @@ export const TEXTOS_DO_PAINEL = {
   notaInvalida: "Escreva a nota com 1 a 2.000 caracteres.",
   naoSalvouANota: "Não foi possível salvar a nota. Tente de novo.",
   nenhumaNota: "Nenhuma nota ainda.",
-  nenhumaNotaApoio:
-    "Escreva o que a equipe Conduzza combinou com a clínica, para quem atender depois.",
   notasSemLeitura:
     "Não foi possível carregar as notas desta clínica. Recarregue a página.",
   notasTemMais: "Mostrando as 100 notas mais recentes.",
@@ -879,7 +853,7 @@ export const TEXTOS_DO_PAINEL = {
   excluindoNota: "Excluindo...",
   excluirNotaTitulo: "Excluir esta nota?",
   excluirNotaEfeito:
-    "A nota sai da lista desta clínica para toda a equipe Conduzza. A exclusão fica no histórico da conta.",
+    "A nota sai para toda a equipe Conduzza. A exclusão fica no histórico da conta.",
   notaExcluida: "Nota excluída.",
   naoExcluiuANota: "Não foi possível excluir a nota. Tente de novo.",
   soQuemEscreveuExclui: "Só quem escreveu a nota pode excluir.",
@@ -888,8 +862,6 @@ export const TEXTOS_DO_PAINEL = {
   ultimaNotaEm: (data: string) => `Última nota em ${data}`,
   // Historico da conta (escolha (6) do dono)
   historicoTitulo: "Histórico da conta",
-  historicoDescricao:
-    "O que a equipe Conduzza mudou nesta clínica, do mais novo para o mais antigo.",
   historicoVazio: "Nada registrado ainda.",
   historicoSemLeitura:
     "Não foi possível carregar o histórico desta clínica. Recarregue a página.",

@@ -176,7 +176,7 @@ export function SecaoDeAtividades({
           ) : null}
           {mostrarConcluidas && concluidas.length > 0 ? (
             <div className="grid gap-1 pt-1">
-              <h3 className="cz-eyebrow text-text-secondary">
+              <h3 className="text-xs font-semibold text-text-secondary">
                 Concluídas recentemente
               </h3>
               <ul className="grid" aria-label="Atividades concluídas">

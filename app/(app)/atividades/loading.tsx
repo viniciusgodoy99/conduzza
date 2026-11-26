@@ -38,7 +38,7 @@ export default function CarregandoAtividades() {
       {[3, 2].map((linhas, grupo) => (
         <div key={grupo} className="grid gap-2">
           <Skeleton className="h-4 w-24" />
-          <div className="overflow-hidden rounded-card border border-border bg-card shadow-sm">
+          <div className="overflow-hidden rounded-card border border-border bg-card">
             {Array.from({ length: linhas }).map((_, indice) => (
               <LinhaEsqueleto key={indice} />
             ))}

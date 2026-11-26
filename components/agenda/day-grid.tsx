@@ -9,7 +9,7 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { useQueryClient } from "@tanstack/react-query";
-import { Sparkles } from "lucide-react";
+import { Bot } from "lucide-react";
 import { useId, useMemo, useState, useSyncExternalStore } from "react";
 
 import {
@@ -847,7 +847,7 @@ export function HoldOverlay({
       style={{ top, height }}
     >
       <span className="inline-flex min-w-0 items-center gap-1 text-[11px] font-semibold text-ai-text">
-        <Sparkles className="size-3 shrink-0" aria-hidden />
+        <Bot className="size-3 shrink-0" aria-hidden />
         <span className="truncate">{`Reservado pela IA, ${restanteMin} min`}</span>
       </span>
     </div>

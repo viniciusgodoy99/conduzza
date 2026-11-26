@@ -114,7 +114,7 @@ export function AppointmentBlock({
         ref={setNodeRef}
         {...listeners}
         {...atributosDeArrasto}
-        className="absolute z-[3] flex overflow-hidden rounded-md text-left transition-shadow duration-(--dur-fast) outline-none hover:shadow-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus focus-visible:outline-solid"
+        className="absolute z-[3] flex overflow-hidden rounded-md text-left outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus focus-visible:outline-solid"
         style={{
           top: top + 1,
           height: Math.max(height - 2, 20),

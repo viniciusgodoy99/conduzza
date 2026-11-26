@@ -121,8 +121,8 @@ function FormularioDoParaQuem({
         <DialogTitle>Para quem é {regua.name}</DialogTitle>
         <DialogDescription>
           {geral
-            ? `Régua geral de ${regua.etapa_nome}: vale para quem não tem as etiquetas das outras réguas da etapa, e continua geral.`
-            : `Os leads de ${regua.etapa_nome} com estas etiquetas recebem esta régua. Trocar as etiquetas vale a partir da próxima mensagem de cada lead.`}
+            ? `Régua geral de ${regua.etapa_nome}: vale para quem não tem as etiquetas das outras réguas.`
+            : "Trocar as etiquetas vale a partir da próxima mensagem de cada lead."}
         </DialogDescription>
       </DialogHeader>
 

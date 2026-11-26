@@ -46,7 +46,7 @@ export function IndicadoresPaciente({
           rotulo={`Taxa de comparecimento${sufixo}`}
           icone={Percent}
           estado="nao-medido"
-          dica="A taxa aparece depois da primeira consulta atendida ou com falta."
+          dica="Aparece depois da primeira consulta atendida ou falta."
         />
       ) : (
         <CartaoDeMetrica

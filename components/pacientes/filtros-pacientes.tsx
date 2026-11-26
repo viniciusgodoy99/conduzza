@@ -43,7 +43,7 @@ function SelectFiltro({
       onValueChange={(v) => onChange(v === TODOS ? "" : v)}
     >
       <SelectTrigger
-        className="h-10 w-auto max-w-[200px] min-w-[128px] text-[13px] shadow-xs"
+        className="h-10 w-auto max-w-[200px] min-w-[128px] text-[13px]"
         aria-label={placeholder}
       >
         <SelectValue placeholder={placeholder} />

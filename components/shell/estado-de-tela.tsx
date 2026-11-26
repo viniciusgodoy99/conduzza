@@ -10,13 +10,13 @@ import { cn } from "@/lib/utils";
 
 type Tom = "neutro" | "aviso" | "alerta" | "destaque";
 
-// Ladrilho e cor do icone por tom. So o de erro pinta o ladrilho; os
-// demais ficam no afundado e a cor vai no icone.
-const LADRILHO: Record<Tom, string> = {
-  neutro: "bg-surface-4 text-text-secondary",
-  aviso: "bg-surface-4 text-warning-text",
-  alerta: "bg-alert-bg text-alert-text",
-  destaque: "bg-surface-4 text-primary-text",
+// Cor do icone por tom. Icone solto, sem o ladrilho colorido (visual plano
+// de 26/11/2026).
+const ICONE: Record<Tom, string> = {
+  neutro: "text-text-secondary",
+  aviso: "text-warning-text",
+  alerta: "text-alert-text",
+  destaque: "text-primary-text",
 };
 
 export function EstadoDeTela({
@@ -45,25 +45,15 @@ export function EstadoDeTela({
     <div
       className={cn(
         "grid w-full max-w-md justify-items-center gap-3 text-center",
-        emCartao && "rounded-card border border-border bg-card p-8 shadow-sm",
+        emCartao && "rounded-card border border-border bg-card p-8",
         className,
       )}
     >
-      <span
-        aria-hidden
-        className={cn(
-          "grid size-[52px] place-items-center rounded-card",
-          LADRILHO[tom],
-        )}
-      >
-        <Icone className="size-6" />
-      </span>
+      <Icone aria-hidden className={cn("size-6", ICONE[tom])} />
       <h1
         className={cn(
-          "font-bold",
-          emCartao
-            ? "text-[19px] leading-[1.25] tracking-[-0.015em]"
-            : "text-base leading-[1.3] tracking-[-0.01em]",
+          "font-semibold",
+          emCartao ? "text-lg leading-[1.25]" : "text-base leading-[1.3]",
         )}
       >
         {titulo}

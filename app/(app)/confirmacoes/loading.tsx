@@ -34,7 +34,7 @@ export default function CarregandoConfirmacoes() {
         className="grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5"
       />
 
-      <div className="overflow-hidden rounded-card border border-border bg-card shadow-sm">
+      <div className="overflow-hidden rounded-card border border-border bg-card">
         <div className="border-b border-border px-3.5 py-3">
           <Skeleton className="h-10 w-[420px] max-w-full rounded-lg" />
         </div>

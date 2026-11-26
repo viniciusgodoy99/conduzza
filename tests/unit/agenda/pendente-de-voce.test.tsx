@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { CalendarCog, Sparkles } from "lucide-react";
+import { Bot, CalendarCog, Sparkles } from "lucide-react";
 import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -207,15 +207,15 @@ describe("chip em 3 camadas", () => {
     expect(texto(html)).not.toContain("Encaixe da IA");
   });
 
-  it("Encaixe da IA continua com o Sparkles; os dois com forma distinta", () => {
+  it("Encaixe da IA com o Bot; os dois com forma distinta", () => {
     expect(CHIP_ENCAIXE_IA).toEqual({
       label: "Encaixe da IA",
       tone: "ai",
-      icon: Sparkles,
+      icon: Bot,
     });
     expect(CHIP_MARCADA_PELA_IA.icon).not.toBe(CHIP_ENCAIXE_IA.icon);
     const html = cartao(render([ENCAIXE]), "Outra Pessoa");
-    expect(html).toContain("lucide-sparkles");
+    expect(html).toContain("lucide-bot");
     expect(texto(html)).toContain("Encaixe da IA");
   });
 });
@@ -323,13 +323,10 @@ describe("cartão", () => {
     expect(texto(html)).toMatch(/Ver dados informados .*Aprovar .*Recusar/);
   });
 
-  it("vazio: diz que a IA deixa aqui a consulta marcada, a remarcação e o encaixe", () => {
+  it("vazio: uma frase curta, sem explicar a tela", () => {
     const visivel = texto(render([]));
     expect(visivel).toContain("Nada pendente de você");
-    // AG4: a remarcacao pedida pela IA tambem espera aqui.
-    expect(visivel).toContain(
-      "Quando a IA marcar ou remarcar uma consulta, ou sugerir um encaixe, aparece aqui para a equipe aprovar.",
-    );
+    expect(visivel).not.toContain("Quando a IA marcar");
     // A legenda dos 10 status continua embaixo.
     expect(visivel).toContain("Legenda de situações");
   });

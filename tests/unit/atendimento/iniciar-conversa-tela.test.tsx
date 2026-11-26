@@ -219,7 +219,7 @@ describe("diálogo Iniciar conversa", () => {
     const frase = texto(html);
     expect(frase).toContain("Iniciar conversa");
     expect(frase).toContain(
-      "A primeira mensagem sai pelo WhatsApp da clínica, e a conversa fica com você no Atendimento.",
+      "A conversa fica com você.",
     );
     expect(frase).toContain("Para Maria Lima ((85) 99999-0001)");
     expect(frase).not.toMatch(/[\u2013\u2014]/);
@@ -326,7 +326,7 @@ describe("diálogo Iniciar conversa", () => {
       'checked=""',
     );
     expect(texto(html)).toContain(
-      "Reconecte em Configurações para enviar por este número.",
+      "Reconecte em Configurações.",
     );
     expect(desabilitado(botaoCom(html, "Enviar"))).toBe(false);
   });
@@ -342,7 +342,7 @@ describe("diálogo Iniciar conversa", () => {
       },
     });
     expect(texto(html)).toContain(
-      "Nenhum número está conectado agora. Reconecte em Configurações, aba WhatsApp, para iniciar a conversa.",
+      "Nenhum número conectado. Reconecte em Configurações, aba WhatsApp.",
     );
     expect(desabilitado(botaoCom(html, "Enviar"))).toBe(true);
   });

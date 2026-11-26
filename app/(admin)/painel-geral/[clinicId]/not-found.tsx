@@ -14,12 +14,7 @@ export default function ClinicaNaoEncontradaNoPainel() {
       <EstadoDeTela
         icone={SearchX}
         titulo="Clínica não encontrada no painel"
-        descricao={
-          <p>
-            A clínica pode ter sido removida, ou o link está incompleto. As
-            clínicas de teste automático não aparecem no painel.
-          </p>
-        }
+        descricao={<p>Ela pode ter sido removida ou o link está incompleto.</p>}
       >
         <Button asChild variant="outline">
           <Link href="/painel-geral">

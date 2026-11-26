@@ -190,19 +190,12 @@ export function OpcoesDeEtapa({
           </button>
         );
       })}
+      {/* Mover pode mandar mensagem ao paciente (regua ou automacao de
+          fluxo, inclusive em massa): o aviso fica, numa linha so. */}
       <p className="border-t border-border px-[9px] pt-2 pb-1 text-[11px] leading-[1.4] text-text-secondary">
         {reguas === null
-          ? "Não foi possível conferir as réguas de follow-up. Antes de mover, a tela pede confirmação."
-          : reguaPorEtapa.size > 0
-            ? "Etapa com Régua manda mensagens automáticas para quem tem autorização."
-            : "Nenhuma etapa tem régua de follow-up ligada."}
-      </p>
-      {/* Automacoes de fluxo (02/10/2026): o gatilho "entrou na etapa"
-          vale para todo movimento, inclusive o em massa. */}
-      <p className="px-[9px] pb-1 text-[11px] leading-[1.4] text-text-secondary">
-        {etapaAtual === undefined
-          ? "Mover também pode disparar as automações de fluxo da etapa de destino, para cada lead."
-          : "Mover também pode disparar as automações de fluxo da etapa de destino."}
+          ? "Não foi possível conferir as réguas. A tela confirma antes de mover."
+          : "Mover pode disparar as automações da etapa de destino."}
       </p>
     </div>
   );
@@ -335,7 +328,7 @@ export function DialogoMoverParaEtapa({
           // Varias reguas (ou so com etiqueta): cada lead recebe a que vale
           // para as etiquetas dele, que o banco escolhe.
           <p className="text-[13px] leading-[1.5] text-foreground">
-            <span className="cz-num font-bold text-text-strong">
+            <span className="font-bold text-text-strong cz-num">
               {quem.recebem}
             </span>{" "}
             {quem.recebem === 1
@@ -353,7 +346,7 @@ export function DialogoMoverParaEtapa({
         ) : (
           <p className="text-[13px] leading-[1.5] text-foreground">
             {confirmacao?.regua ? "" : "Se tiver, "}
-            <span className="cz-num font-bold text-text-strong">
+            <span className="font-bold text-text-strong cz-num">
               {quem.recebem}
             </span>{" "}
             {quem.recebem === 1

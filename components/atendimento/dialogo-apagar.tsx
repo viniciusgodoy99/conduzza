@@ -108,8 +108,8 @@ export function DialogoApagar({
           </DialogTitle>
           <DialogDescription>
             {ampliando
-              ? "Esta mensagem já saiu da conversa da clínica, mas continua no celular do paciente."
-              : "O conteúdo sai da conversa e fica guardado no registro da clínica, com a hora e o nome de quem apagou."}
+              ? "Ela continua no celular do paciente."
+              : "O registro da clínica guarda quem apagou e quando."}
           </DialogDescription>
         </DialogHeader>
 
@@ -131,8 +131,7 @@ export function DialogoApagar({
                 Apagar para todos
               </span>
               <span className="text-[11.5px] leading-snug text-text-secondary">
-                Some daqui e do WhatsApp do paciente. Ele vê que uma mensagem
-                foi apagada.
+                Some daqui e do WhatsApp do paciente.
               </span>
             </span>
             {pendente && escolhido === "todos" ? (
@@ -176,8 +175,8 @@ export function DialogoApagar({
                 </span>
                 <span className="text-[11.5px] leading-snug text-text-secondary">
                   {message.is_internal_note
-                    ? "Some da conversa da clínica. A nota nunca foi para o paciente."
-                    : "Some da conversa da clínica. O paciente continua vendo no celular dele."}
+                    ? "Some da conversa da clínica."
+                    : "O paciente continua vendo no celular."}
                 </span>
               </span>
               {pendente && escolhido === "local" ? (

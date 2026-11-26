@@ -77,10 +77,8 @@ export function profissionaisParaRemarcar(
  */
 export const TEXTOS_DO_AVISO_AO_PACIENTE = {
   rotulo: "Avisar o paciente pelo WhatsApp",
-  marcada:
-    "Sai uma mensagem automática com o novo dia e horário, só se o paciente autorizou receber mensagens.",
-  desmarcada:
-    "Nenhuma mensagem sai. Avise o paciente por telefone ou pela conversa.",
+  marcada: "Sai uma mensagem com o novo horário, se o paciente autorizou.",
+  desmarcada: "Nenhuma mensagem sai.",
 } as const;
 
 export function ChaveAvisarPaciente({
@@ -134,8 +132,8 @@ export function NotaDaConfirmacao({
   return (
     <p className="text-xs text-text-secondary">
       {STATUS_COM_PACIENTE_NA_CLINICA.includes(consulta.status)
-        ? `Em outro dia, a situação volta para ${rotulo} e a confirmação é pedida de novo, porque o paciente não estará na clínica no novo horário.`
-        : `A situação volta para ${rotulo}, porque a confirmação de antes valia para o horário antigo.`}
+        ? `Em outro dia, a situação volta para ${rotulo} e a confirmação é pedida de novo.`
+        : `A situação volta para ${rotulo}.`}
     </p>
   );
 }

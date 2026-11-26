@@ -3,6 +3,7 @@
 import { Lock } from "lucide-react";
 import { useId } from "react";
 
+import { Ajuda } from "@/components/agente/ajuda";
 import { Switch } from "@/components/ui/switch";
 import {
   Tooltip,
@@ -22,11 +23,12 @@ import { cn } from "@/lib/utils";
 
 export function ChaveTravada({
   rotulo,
-  descricao,
+  ajuda,
   className,
 }: {
   rotulo: string;
-  descricao?: string;
+  /** O que a chave faz, no "?" ao lado do rotulo (nada escrito embaixo). */
+  ajuda?: string;
   className?: string;
 }) {
   const idRotulo = useId();
@@ -38,13 +40,11 @@ export function ChaveTravada({
         className,
       )}
     >
-      <span className="grid min-w-0 gap-0.5">
+      <span className="flex min-w-0 items-center gap-1">
         <span id={idRotulo} className="text-[13.5px] font-semibold">
           {rotulo}
         </span>
-        {descricao ? (
-          <span className="text-xs text-text-secondary">{descricao}</span>
-        ) : null}
+        {ajuda ? <Ajuda rotulo={rotulo} texto={ajuda} /> : null}
       </span>
       <span className="flex shrink-0 items-center gap-2">
         <Lock aria-hidden className="size-3.5" />

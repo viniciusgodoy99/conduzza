@@ -42,30 +42,14 @@ import { cn } from "@/lib/utils";
 /** Qual regua e: decide os textos de apoio (achado 54). */
 export type TipoDaReguaDosControles = "confirmacao" | "pos_falta" | "followup";
 
-// Prova de trabalho por tipo: o aviso do topo da tela e a faixa global do
-// shell (WhatsApp desconectado ou envio parado); onde ver o motivo de cada
-// mensagem que nao saiu depende da regua (so a confirmacao tem a lista do
-// dia com o motivo por consulta).
-const PROVA_DE_TRABALHO: Record<
-  TipoDaReguaDosControles,
-  { semEnvio: string; motivo: string }
-> = {
-  confirmacao: {
-    semEnvio:
-      "Nenhuma mensagem enviada nas últimas 24 horas. Se havia consultas para confirmar no período, veja se há aviso no topo da tela (WhatsApp desconectado ou envio parado).",
-    motivo: "O motivo de cada uma aparece na lista do dia, em Confirmações.",
-  },
-  pos_falta: {
-    semEnvio:
-      "Nenhuma mensagem enviada nas últimas 24 horas. Se alguém faltou no período, veja se há aviso no topo da tela (WhatsApp desconectado ou envio parado).",
-    motivo:
-      "Os motivos aparecem nos números dos últimos 30 dias da régua, em Automações.",
-  },
-  followup: {
-    semEnvio:
-      "Nenhuma mensagem enviada nas últimas 24 horas. Se havia leads parados nesta etapa no período, veja se há aviso no topo da tela (WhatsApp desconectado ou envio parado).",
-    motivo: "Os motivos aparecem nos números dos últimos 30 dias da régua.",
-  },
+// Onde ver o motivo de cada mensagem que nao saiu depende da regua (so a
+// confirmacao tem a lista do dia com o motivo por consulta).
+const SEM_ENVIO = "Nenhuma mensagem enviada nas últimas 24 horas.";
+
+const MOTIVO_DO_QUE_NAO_SAIU: Record<TipoDaReguaDosControles, string> = {
+  confirmacao: "O motivo de cada uma aparece na lista do dia.",
+  pos_falta: "Os motivos aparecem nos números da régua, em Automações.",
+  followup: "Os motivos aparecem nos números da régua.",
 };
 
 const DIAS = [
@@ -205,7 +189,7 @@ export function ControlesDaRegua({
 
   const idInicio = `regua-inicio-${regua.id}`;
   const idFim = `regua-fim-${regua.id}`;
-  const prova = PROVA_DE_TRABALHO[tipo];
+  const motivoDoQueNaoSaiu = MOTIVO_DO_QUE_NAO_SAIU[tipo];
 
   const botaoSalvar = (
     <Button
@@ -258,7 +242,7 @@ export function ControlesDaRegua({
               nas últimas 24 horas.
             </>
           ) : (
-            prova.semEnvio
+            SEM_ENVIO
           )}
           {regua.pulados_24h > 0 ? (
             <>
@@ -268,7 +252,7 @@ export function ControlesDaRegua({
               </span>{" "}
               {regua.pulados_24h === 1 ? "não saiu" : "não saíram"} (sem
               autorização, fora do horário ou WhatsApp fora do ar).{" "}
-              {prova.motivo}
+              {motivoDoQueNaoSaiu}
             </>
           ) : null}
         </p>
@@ -279,8 +263,7 @@ export function ControlesDaRegua({
         <div className="grid gap-1">
           <h3 className="text-sm font-bold">Horário de envio</h3>
           <p className="text-xs text-text-secondary">
-            As mensagens só saem dentro desta faixa, no fuso da clínica. Um
-            toque que vence fora dela espera a próxima abertura.
+            Fora desta faixa, a mensagem espera a próxima abertura.
           </p>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:max-w-[360px]">
@@ -369,8 +352,7 @@ export function ControlesDaRegua({
               {ehAdministrador
                 ? "Registre a taxa de falta atual da clínica em Resultados, aba Comercial."
                 : "Peça a quem administra a clínica para registrar a taxa de falta em Resultados."}{" "}
-              É ela que prova o resultado depois: sem o número de antes, não
-              existe comparação e o ganho da régua fica sem evidência.
+              Sem o número de antes, não há comparação.
             </p>
             {ehAdministrador ? (
               <Link

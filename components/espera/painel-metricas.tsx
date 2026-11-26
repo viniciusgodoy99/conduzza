@@ -162,7 +162,6 @@ export function PainelMetricas({
         compact
         tom="erro"
         title="Não foi possível carregar o desempenho"
-        description="Confira a conexão e tente de novo. A lista continua funcionando."
       >
         <Button
           variant="outline"
@@ -204,7 +203,6 @@ export function PainelMetricas({
         compact
         icon={CalendarCheck2}
         title="Nenhuma vaga na reoferta neste mês"
-        description="Quando uma consulta é cancelada e o horário vai para a lista, o desempenho aparece aqui."
       />
     );
   } else {
@@ -311,7 +309,7 @@ export function PainelMetricas({
     <section
       aria-labelledby="titulo-do-desempenho"
       aria-busy={metricas === undefined && !falhou ? true : undefined}
-      className="flex min-w-0 flex-col rounded-card border border-border bg-card shadow-sm"
+      className="flex min-w-0 flex-col rounded-card border border-border bg-card"
     >
       <Cabecalho mes={mes} />
       {corpo}

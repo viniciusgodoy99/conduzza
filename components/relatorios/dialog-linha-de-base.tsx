@@ -84,9 +84,7 @@ export function DialogLinhaDeBase({
         <DialogHeader>
           <DialogTitle>Registrar a linha de base</DialogTitle>
           <DialogDescription>
-            A taxa de faltas da clínica ANTES das mensagens automáticas, medida
-            no período indicado. É contra esse número que o relatório prova o
-            resultado.
+            Taxa de faltas antes das mensagens automáticas.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">

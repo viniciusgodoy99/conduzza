@@ -97,7 +97,6 @@ export default async function EsperaPage({
     <div className="flex flex-col gap-3.5 p-6">
       <PageHeader
         title="Lista de espera"
-        description="Quem espera por um horário e a reoferta automática quando uma vaga abre."
       />
       <AvisoCelular />
       <EsperaClient

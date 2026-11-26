@@ -244,7 +244,7 @@ describe("AG7: a bolha do preparo", () => {
 
   it("a linha de autor da IA: o brilho, Assistente e o selo IA, uma vez só", () => {
     expect(linha).toContain("data-preparo");
-    expect(linha).toMatch(/lucide-sparkles/);
+    expect(linha).toMatch(/lucide-bot/);
     expect(linha).toMatch(/bg-ai-bg[^>]*>\s*IA\s*</);
     expect(linha.match(/Assistente/g)).toHaveLength(1);
     expect(linha.match(/>IA</g)).toHaveLength(1);
@@ -370,7 +370,7 @@ describe("AG7: o que não é o preparo continua como hoje", () => {
     expect(autorDaBolha(nota, NOMES, ENVIOS)).toBe(AUTOR_DA_AUTOMACAO);
     const html = bolha(nota);
     expect(classesDaBolha(html)).toContain("bg-warning-bg");
-    expect(linhaDeAutor(html)).not.toMatch(/lucide-sparkles/);
+    expect(linhaDeAutor(html)).not.toMatch(/lucide-bot/);
     expect(html).not.toContain("data-preparo");
     expect(html).not.toContain(LINHA_DO_PREPARO_APROVADO);
   });

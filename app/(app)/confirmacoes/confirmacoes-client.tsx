@@ -455,7 +455,6 @@ export function ConfirmacoesClient({
               <EmptyState
                 tom="erro"
                 title="Não foi possível carregar as consultas deste dia"
-                description="Confira a conexão e tente de novo. Nada foi alterado."
                 action={{
                   label: "Tentar de novo",
                   variant: "outline",
@@ -506,7 +505,6 @@ export function ConfirmacoesClient({
                   <EmptyState
                     icon={CalendarCheck}
                     title="Nenhuma consulta neste dia"
-                    description="Escolha outro dia ou marque a primeira consulta na Agenda."
                     action={{
                       label: "Abrir a Agenda",
                       href: "/agenda",
@@ -544,7 +542,6 @@ export function ConfirmacoesClient({
                       compact
                       icon={ListFilter}
                       title="Nenhuma consulta nesta situação"
-                      description="Neste dia, nenhuma consulta está na situação escolhida."
                       onClearFilters={() => setFiltro("todas")}
                     />
                   }
@@ -560,7 +557,6 @@ export function ConfirmacoesClient({
               <EmptyState
                 tom="erro"
                 title="Não foi possível carregar as faltas de hoje"
-                description="Confira a conexão e tente de novo. Nada foi alterado."
                 action={{
                   label: "Tentar de novo",
                   variant: "outline",
@@ -575,7 +571,6 @@ export function ConfirmacoesClient({
               <EmptyState
                 icon={CalendarX}
                 title="Ninguém faltou hoje"
-                description="A falta é sempre registrada por alguém da clínica, na Agenda. Quando isso acontecer, o paciente aparece aqui."
               />
             </Card>
           ) : (

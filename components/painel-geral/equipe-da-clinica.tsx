@@ -1,4 +1,3 @@
-import { Users } from "lucide-react";
 import { useId } from "react";
 
 import {
@@ -9,6 +8,7 @@ import {
   SITUACAO_DO_MEMBRO_STATUS,
   TEXTOS_DO_PAINEL,
 } from "@/components/painel-geral/painel-geral";
+import { DicaDeAjuda } from "@/components/shared/dica-de-ajuda";
 import { StatusChip } from "@/components/shared/status-chip";
 import {
   Card,
@@ -40,7 +40,7 @@ import type {
 // como qualquer pessoa da equipe (o desenho: "dos membros ATIVOS"), e a
 // descricao diz quantas das ativas sao dela. O ultimo acesso de cada pessoa
 // e a ultima atividade dela (o login ou a renovacao da sessao, decisao do
-// dono de 26/10/2026). Ordem do banco: situacao, papel e nome. E dado da
+// dono de 26/10/2026), dito na dica do cabecalho da coluna. Ordem do banco: situacao, papel e nome. E dado da
 // EQUIPE da clinica, nunca de paciente. Server Component.
 
 export function textoDaEquipe(
@@ -85,32 +85,19 @@ export function EquipeDaClinica({
 }) {
   const id = useId();
   const agora = new Date(agoraMs);
-  const temEquipeConduzza = [...equipe.equipe, ...equipe.implementadores].some(
-    (pessoa) => pessoa.equipeConduzza,
-  );
   return (
     <Card role="region" aria-labelledby={`${id}-titulo`}>
       <CardHeader>
-        <div className="flex min-w-0 items-center gap-3">
-          <span
-            aria-hidden
-            className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-3"
-          >
-            <Users className="size-5 text-text-strong" />
-          </span>
-          <div className="grid min-w-0 gap-[3px]">
-            <CardTitle id={`${id}-titulo`}>
-              {TEXTOS_DO_PAINEL.equipeTitulo}
-            </CardTitle>
-            <CardDescription>
-              {textoDaEquipe(
-                membrosAtivos,
-                membrosPendentes,
-                membrosEquipeConduzza,
-              )}
-            </CardDescription>
-          </div>
-        </div>
+        <CardTitle id={`${id}-titulo`}>
+          {TEXTOS_DO_PAINEL.equipeTitulo}
+        </CardTitle>
+        <CardDescription>
+          {textoDaEquipe(
+            membrosAtivos,
+            membrosPendentes,
+            membrosEquipeConduzza,
+          )}
+        </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-6">
         <section aria-labelledby={`${id}-equipe`} className="grid gap-2">
@@ -130,14 +117,6 @@ export function EquipeDaClinica({
               agora={agora}
             />
           )}
-          <p className="text-[12px] text-text-secondary">
-            {TEXTOS_DO_PAINEL.ultimoAcessoEAtividade}
-          </p>
-          {temEquipeConduzza ? (
-            <p className="text-[12px] text-text-secondary">
-              {TEXTOS_DO_PAINEL.equipeConduzzaExplicacao}
-            </p>
-          ) : null}
         </section>
         <section
           aria-labelledby={`${id}-implementadores`}
@@ -148,9 +127,6 @@ export function EquipeDaClinica({
             className="cz-eyebrow text-text-secondary"
           >
             {TEXTOS_DO_PAINEL.implementadoresTitulo}
-          </p>
-          <p className="text-[12px] text-text-secondary">
-            {TEXTOS_DO_PAINEL.implementadoresDescricao}
           </p>
           {equipe.implementadores.length === 0 ? (
             <p className="text-[13px] text-text-secondary">
@@ -199,7 +175,10 @@ function TabelaDePessoas({
           <TableHead scope="col">Pessoa</TableHead>
           {comPapel ? <TableHead scope="col">Papel</TableHead> : null}
           <TableHead scope="col">Situação</TableHead>
-          <TableHead scope="col">Último acesso</TableHead>
+          <TableHead scope="col">
+            Último acesso
+            <DicaDeAjuda rotulo="Sobre Último acesso" texto={TEXTOS_DO_PAINEL.ultimoAcessoEAtividade} />
+          </TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>

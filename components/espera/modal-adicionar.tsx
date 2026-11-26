@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -263,13 +262,9 @@ export function ModalAdicionar({
 
   return (
     <Dialog open={aberto} onOpenChange={(v) => (!v ? onFechar() : null)}>
-      <DialogContent className="sm:max-w-[640px]">
+      <DialogContent className="sm:max-w-[640px]" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>Adicionar à lista de espera</DialogTitle>
-          <DialogDescription>
-            Quando um horário compatível vagar, a oferta sai sozinha para a
-            fila, na ordem de prioridade.
-          </DialogDescription>
         </DialogHeader>
         <div className="grid gap-5">
           <div className="grid gap-1.5">
@@ -387,7 +382,7 @@ export function ModalAdicionar({
               ))}
             </div>
             <p className="text-[11px] text-text-secondary">
-              Nada marcado significa qualquer horário.
+              Nada marcado: qualquer horário.
             </p>
           </fieldset>
 
@@ -410,7 +405,7 @@ export function ModalAdicionar({
               ))}
             </div>
             <p className="text-[11px] text-text-secondary">
-              Nada marcado significa qualquer dia.
+              Nada marcado: qualquer dia.
             </p>
           </fieldset>
         </div>
@@ -607,11 +602,11 @@ function AutorizacaoDoContato({
       </span>
       <Aviso
         tom="warning"
-        titulo="A oferta automática de horário não vai para este paciente"
+        titulo="A oferta pelo WhatsApp não vai para este paciente"
       >
         {revogado
-          ? "Ele pediu para não receber mensagens. Pode entrar na fila, mas a oferta pelo WhatsApp não sai para ele. Só registre de novo se ele autorizou outra vez."
-          : "Ele pode entrar na fila, mas sem autorização para receber mensagens a oferta pelo WhatsApp não sai para ele. Se ele autorizou, registre aqui."}
+          ? "Ele pediu para não receber mensagens. Só registre de novo se autorizou outra vez."
+          : "Ele entra na fila, mas está sem autorização para receber mensagens."}
       </Aviso>
       {registrando ? (
         <div className="grid gap-3 rounded-xl bg-surface-4 p-3.5">
@@ -630,7 +625,7 @@ function AutorizacaoDoContato({
               onChange={(e) => setEvidencia(e.target.value)}
             />
             <p className="text-[11px] text-text-secondary">
-              Obrigatória: quando e como a autorização foi dada.
+              Obrigatória: quando e como autorizou.
             </p>
           </div>
           {erro ? (

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Megaphone } from "lucide-react";
+import { Check } from "lucide-react";
 import { useState, useTransition, type ReactNode } from "react";
 import { toast } from "sonner";
 
@@ -23,7 +23,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -289,29 +288,9 @@ export function useCartoesDaMeta({
       {erroDe("conta")}
       <Card>
         <CardHeader>
-          <div className="flex min-w-0 items-center gap-3">
-            {/* Ladrilho da Meta: decorativo, a cor nao diz estado. */}
-            <span
-              aria-hidden
-              className="grid size-10 shrink-0 place-items-center rounded-md bg-meta/10"
-            >
-              <Megaphone className="size-5 text-meta" />
-            </span>
-            <div className="grid min-w-0 gap-[3px]">
-              <CardTitle>Conta de anúncios</CardTitle>
-              <CardDescription>
-                Usada para ler o investimento nos anúncios e para devolver as
-                conversões. Embaixo de cada campo está onde achar o número na
-                Meta.
-              </CardDescription>
-            </div>
-          </div>
+          <CardTitle>Conta de anúncios</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4">
-          <p className="text-[13px] text-text-secondary">
-            Com eles preenchidos, a clínica devolve aos anúncios as conversões
-            das etapas escolhidas no passo 3, Conversões por etapa.
-          </p>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid content-start gap-1.5">
               <Label htmlFor="meta-pixel">Pixel (conjunto de dados)</Label>
@@ -338,14 +317,14 @@ export function useCartoesDaMeta({
                 disabled={!podeGerenciar}
               />
               <p id="meta-conta-ajuda" className="text-[11px] text-text-secondary">
-                Só os números, com ou sem act_ na frente. Também vale colar o
-                link do Gerenciador de Anúncios.
+                Só os números, com ou sem act_ na frente. Ou o link do
+                Gerenciador
               </p>
               <OndeEncontroDoCampo ajuda={ONDE_ENCONTRAR.contaDeAnuncios} />
             </div>
             <div className="grid content-start gap-1.5">
               <Label htmlFor="meta-waba">
-                Conta do WhatsApp Business (WABA)
+                Conta do WhatsApp Business (WABA, opcional)
               </Label>
               <Input
                 id="meta-waba"
@@ -357,10 +336,7 @@ export function useCartoesDaMeta({
                 disabled={!podeGerenciar}
               />
               <p className="text-[11px] text-text-secondary">
-                Opcional. Só existe para quem usa a API oficial do WhatsApp, e
-                aí liga a conversão direto ao clique do anúncio. Sem ela (o
-                número no aplicativo ou conectado por QR Code), a conversão do
-                anúncio do WhatsApp vai com o telefone protegido.
+                Só na API oficial. Sem ela, vai o telefone protegido
               </p>
               <OndeEncontroDoCampo ajuda={ONDE_ENCONTRAR.waba} />
             </div>
@@ -375,9 +351,7 @@ export function useCartoesDaMeta({
                 disabled={!podeGerenciar}
               />
               <p className="text-[11px] text-text-secondary">
-                Com o código preenchido, os eventos aparecem na aba de teste do
-                Gerenciador de Eventos, sem sujar o dado real. Apague depois de
-                validar.
+                Só para testar. Apague depois de validar
               </p>
               <OndeEncontroDoCampo ajuda={ONDE_ENCONTRAR.codigoDeTeste} />
             </div>
@@ -395,10 +369,7 @@ export function useCartoesDaMeta({
                 Enviar também conversões sem identificador do anúncio
               </Label>
               <span className="text-[11px] text-text-secondary">
-                Para quem não veio de anúncio nenhum (indicação, busca, o
-                número salvo). Vale só com o telefone protegido. Quem veio do
-                anúncio do WhatsApp já sai sem esta marca. Salve a conta para
-                guardar esta escolha.
+                Quem não veio de anúncio. Só com o telefone protegido
               </span>
             </div>
           </div>
@@ -440,18 +411,15 @@ export function useCartoesDaMeta({
           </CardAction>
         </CardHeader>
         <CardContent className="grid gap-3">
-          <p className="text-[13px] text-text-secondary">
-            {temToken
-              ? "Cole um novo para substituir; por segurança, o valor atual nunca é mostrado."
-              : "Gere o token na Meta, pelo caminho abaixo, e cole aqui. Depois de salvo, ele não aparece de novo, por segurança."}
-          </p>
           <OndeEncontro ajuda={ONDE_ENCONTRAR.tokenDeConversoes} />
           <div className="flex flex-wrap gap-2">
             <Input
               type="password"
               value={token}
               onChange={(evento) => setToken(evento.target.value)}
-              placeholder="Cole o token aqui"
+              placeholder={
+                temToken ? "Cole um novo token para substituir" : "Cole o token aqui"
+              }
               aria-label="Token da API de conversões"
               className="min-w-0 flex-1 font-mono"
               disabled={!podeGerenciar}
@@ -520,10 +488,8 @@ export function useCartoesDaMeta({
           </div>
 
           <p className="text-xs text-text-secondary">
-            Enquanto o envio está desligado, a clínica já registra as conversões
-            das etapas escolhidas no passo 3. Ao ligar, os registros dos últimos{" "}
-            <span className="cz-num">7</span> dias são enviados (a Meta não
-            aceita mais antigos) e o painel de Resultados mostra cada situação.
+            Envia as conversões das etapas escolhidas no passo 3. Ao ligar, saem
+            também as dos últimos <span className="cz-num">7</span> dias.
           </p>
         </CardContent>
       </Card>

@@ -192,7 +192,8 @@ describe("AnunciosERastreioTab", () => {
     });
     // Opcional desde 24/11/2026: o numero no aplicativo nao tem a conta.
     expect(abertos(semWaba)).toEqual(["token"]);
-    expect(texto(semWaba)).toContain("Opcional. Só existe para quem usa a API oficial");
+    expect(texto(semWaba)).toContain("WABA, opcional");
+    expect(texto(semWaba)).toContain("Só na API oficial");
     const semPixel = aba({
       meta: { ...META, conta: { ...META.conta!, pixel_id: null } },
     });

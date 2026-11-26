@@ -62,7 +62,7 @@ function texto(html: string): string {
 describe("tabela dos papéis", () => {
   const html = renderToStaticMarkup(<PainelPapeis />);
 
-  it("a coluna Implementador logo depois de Administrador, com a frase", () => {
+  it("a coluna Implementador logo depois de Administrador, com o que ele não faz no rodapé", () => {
     const cabecalhos = [...html.matchAll(/<th[^>]*>(.*?)<\/th>/g)].map(
       (casamento) => texto(casamento[1] ?? "").trim(),
     );
@@ -75,8 +75,10 @@ describe("tabela dos papéis", () => {
       "Profissional",
       "Somente leitura",
     ]);
+    // 26/11/2026: a frase de cada papel saiu; o que a matriz nao diz (o que
+    // o Implementador nao faz) fica no rodape.
     expect(texto(html)).toContain(
-      "Vê e faz tudo o que o administrador faz, menos mexer em administradores e exportar os leads.",
+      "Implementador: vê e faz tudo o que o administrador faz, menos mexer em administradores e exportar os leads.",
     );
   });
 

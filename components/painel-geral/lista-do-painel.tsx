@@ -55,6 +55,7 @@ import {
 import { useParametrosDaLista } from "@/components/painel-geral/parametros-da-lista";
 import { SaudeNaLinha } from "@/components/painel-geral/sinais-da-clinica";
 import { TendenciaNaLinha } from "@/components/painel-geral/tendencia";
+import { DicaDeAjuda } from "@/components/shared/dica-de-ajuda";
 import { EmptyState } from "@/components/shared/empty-state";
 import { SegmentedControl } from "@/components/shared/segmented-control";
 import { StatusChip } from "@/components/shared/status-chip";
@@ -144,7 +145,7 @@ export function ListaDoPainel({
   return (
     <section
       aria-label="Clínicas"
-      className="flex min-h-0 flex-col overflow-hidden rounded-card border border-border bg-card shadow-sm"
+      className="flex min-h-0 flex-col overflow-hidden rounded-card border border-border bg-card"
     >
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border p-3">
         <div className="relative w-full sm:w-[280px]">
@@ -243,17 +244,12 @@ export function ListaDoPainel({
       ) : null}
 
       {clinicas.length === 0 ? (
-        <EmptyState
-          icon={Building2}
-          title={TEXTOS_DO_PAINEL.vazio}
-          description={TEXTOS_DO_PAINEL.vazioDescricao}
-        />
+        <EmptyState icon={Building2} title={TEXTOS_DO_PAINEL.vazio} />
       ) : visiveis.length === 0 ? (
         <EmptyState
           compact
           icon={SearchX}
           title={TEXTOS_DO_PAINEL.vazioPorFiltro}
-          description={TEXTOS_DO_PAINEL.vazioPorFiltroDescricao}
           onClearFilters={limpar}
         />
       ) : (
@@ -303,11 +299,14 @@ function CabecalhoQueOrdena({
   rotulo,
   ordem,
   aoOrdenar,
+  ajuda,
 }: {
   coluna: ColunaDaOrdem;
   rotulo: string;
   ordem: OrdemDaLista;
   aoOrdenar: (coluna: ColunaDaOrdem) => void;
+  /** O que o numero da coluna mede, na dica do icone de ajuda. */
+  ajuda?: string;
 }) {
   const ativa = ordem.coluna === coluna;
   const Seta = ativa
@@ -334,6 +333,9 @@ function CabecalhoQueOrdena({
         {rotulo}
         <Seta aria-hidden className="size-3.5 shrink-0" />
       </button>
+      {ajuda ? (
+        <DicaDeAjuda rotulo={`Sobre ${rotulo}`} texto={ajuda} />
+      ) : null}
     </TableHead>
   );
 }
@@ -349,12 +351,13 @@ function TabelaDoPainel({
   ordem: OrdemDaLista;
   aoOrdenar: (coluna: ColunaDaOrdem) => void;
 }) {
-  const ordenavel = (coluna: ColunaDaOrdem, rotulo: string) => (
+  const ordenavel = (coluna: ColunaDaOrdem, rotulo: string, ajuda?: string) => (
     <CabecalhoQueOrdena
       coluna={coluna}
       rotulo={rotulo}
       ordem={ordem}
       aoOrdenar={aoOrdenar}
+      ajuda={ajuda}
     />
   );
   return (
@@ -363,7 +366,11 @@ function TabelaDoPainel({
         <TableRow>
           <TableHead scope="col">Clínica</TableHead>
           {ordenavel("saude", "Saúde")}
-          {ordenavel("ultimo_acesso", "Último acesso")}
+          {ordenavel(
+            "ultimo_acesso",
+            "Último acesso",
+            TEXTOS_DO_PAINEL.ultimoAcessoEAtividade,
+          )}
           <TableHead scope="col">Equipe</TableHead>
           <TableHead scope="col">WhatsApp</TableHead>
           <TableHead scope="col">Agente de IA</TableHead>

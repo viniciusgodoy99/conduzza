@@ -94,7 +94,7 @@ export function EtiquetasDaConversa({
         </div>
       ) : (
         <p className="text-[12.5px] text-text-secondary">
-          Nenhuma etiqueta nesta conversa.
+          Nenhuma etiqueta.
         </p>
       )}
 
@@ -105,7 +105,7 @@ export function EtiquetasDaConversa({
             {catalogo.length === 0 ? (
               <div className="grid gap-1.5 p-2">
                 <p className="text-xs text-text-secondary">
-                  Esta clínica ainda não tem etiquetas.
+                  Nenhuma etiqueta criada.
                 </p>
                 {ehChefia ? (
                   <Link
@@ -116,8 +116,7 @@ export function EtiquetasDaConversa({
                   </Link>
                 ) : (
                   <p className="text-xs text-text-secondary">
-                    Peça a um administrador para criar as etiquetas em
-                    Configurações.
+                    Só o administrador cria etiquetas.
                   </p>
                 )}
               </div>

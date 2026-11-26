@@ -642,20 +642,16 @@ describe("formatos", () => {
   });
 
   it("o painel diz que o último acesso é a última atividade, não só o login (decisão do dono de 26/10/2026)", () => {
-    expect(TEXTOS_DO_PAINEL.descricao).toContain(
-      TEXTOS_DO_PAINEL.ultimoAcessoEAtividade,
-    );
+    // Desde 26/11/2026 a frase mora na dica do "Último acesso" (lista e
+    // equipe do detalhe), nao mais no subtitulo do painel.
     expect(TEXTOS_DO_PAINEL.ultimoAcessoEAtividade).toContain(
       "última atividade",
     );
-    expect(TEXTOS_DO_PAINEL.rodapeDoEmUso).toBe(
-      "Alguém da equipe usou o sistema nos últimos 30 dias",
-    );
-    expect(TEXTOS_DO_PAINEL.rodapeDoSemUso).toContain("usou o sistema");
+    expect(TEXTOS_DO_PAINEL.rodapeDoEmUso).toBe("Últimos 30 dias");
+    expect(TEXTOS_DO_PAINEL.rodapeDoSemUso).toBe("Últimos 30 dias");
     // Nenhum texto do uso fala em login (a regra de antes) nem tem
     // travessao.
     for (const texto of [
-      TEXTOS_DO_PAINEL.descricao,
       TEXTOS_DO_PAINEL.ultimoAcessoEAtividade,
       TEXTOS_DO_PAINEL.rodapeDoEmUso,
       TEXTOS_DO_PAINEL.rodapeDoSemUso,

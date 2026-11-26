@@ -15,18 +15,14 @@ export default function CarregandoAutomacoes() {
       className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
       aria-hidden
     >
-      <div className="grid gap-1.5">
-        <Skeleton className="h-2.5 w-24" />
-        <Skeleton className="h-7 w-40" />
-        <Skeleton className="h-3.5 w-96 max-w-full" />
-      </div>
+      <Skeleton className="h-7 w-40" />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {[0, 1, 2, 3, 4].map((cartao) => (
           <div
             key={cartao}
-            className="flex min-h-[88px] gap-3 rounded-card border border-border bg-card p-3.5 shadow-sm"
+            className="flex min-h-[88px] gap-3 rounded-card border border-border bg-card p-3.5"
           >
-            <Skeleton className="size-[34px] shrink-0 rounded-md" />
+            <Skeleton className="size-4 shrink-0 rounded-sm" />
             <div className="grid flex-1 content-start gap-2">
               <Skeleton className="h-3.5 w-28" />
               <Skeleton className="h-5 w-20 rounded-full" />
@@ -35,7 +31,7 @@ export default function CarregandoAutomacoes() {
           </div>
         ))}
       </div>
-      <div className="grid gap-4 rounded-card border border-border bg-card p-4 shadow-sm">
+      <div className="grid gap-4 rounded-card border border-border bg-card p-4">
         <div className="flex items-center justify-between rounded-xl bg-surface-4 px-3.5 py-3">
           <Skeleton className="h-6 w-32 rounded-full bg-surface-5" />
           <Skeleton className="h-[22px] w-10 rounded-full bg-surface-5" />
@@ -50,7 +46,7 @@ export default function CarregandoAutomacoes() {
           ))}
         </div>
       </div>
-      <div className="grid gap-4 rounded-card border border-border bg-card p-4 shadow-sm">
+      <div className="grid gap-4 rounded-card border border-border bg-card p-4">
         <Skeleton className="h-4 w-44" />
         <div className="flex items-center gap-2">
           <Skeleton className="h-3.5 w-16" />

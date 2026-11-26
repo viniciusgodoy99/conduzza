@@ -18,7 +18,6 @@ import {
 import { OndeEncontro } from "@/components/configuracoes/onde-encontro";
 import {
   OrigemDosLeadsTab,
-  TEXTOS_DA_ORIGEM,
   type DadosDasOrigens,
 } from "@/components/configuracoes/origem-dos-leads-tab";
 import { StatusChip } from "@/components/shared/status-chip";
@@ -38,13 +37,12 @@ import {
 // Aba "Anuncios e rastreio" de Configuracoes (decisao do dono de 17/11/2026,
 // desenho "passo a passo que abre"): um lugar so para o que substitui o
 // Tintim. No topo, a lista dos passos com a situacao de cada um; embaixo,
-// cada passo abre com a explicacao, o "onde encontro" e os campos. As abas
+// cada passo abre com o "onde encontro" e os campos (a explicacao de cada
+// passo saiu em 26/11/2026: tela que mostra e nao explica). As abas
 // antigas (Anuncios da Meta, Anuncios do Google e Origem dos leads) viraram
 // os passos, com os mesmos cartoes.
 
 export const TEXTOS_DO_RASTREIO_DA_ABA = {
-  descricao:
-    "Tudo o que liga os anúncios aos leads da clínica fica aqui: a conta da Meta, o que cada etapa envia, o rastreio do site e os links rastreados. Siga os passos na ordem. Em cada um está para que serve e onde encontrar o que ele pede.",
   titulo: "Passo a passo",
   abrir: "Abrir",
 } as const;
@@ -62,7 +60,7 @@ function Numero({ valor }: { valor: number }) {
   return (
     <span
       aria-hidden
-      className="cz-num grid size-10 shrink-0 place-items-center rounded-xl bg-surface-4 text-[15px] font-bold text-foreground"
+      className="w-5 shrink-0 text-center cz-num text-[13px] font-semibold text-text-secondary"
     >
       {valor}
     </span>
@@ -214,25 +212,16 @@ export function AnunciosERastreioTab({
       <ErroDaAba titulo="Não foi possível carregar o rastreio do site" />
     ),
     origens: (
-      <>
-        <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
-          {TEXTOS_DA_ORIGEM.descricaoDaAba}
-        </p>
-        <OrigemDosLeadsTab
-          dados={origens}
-          podeGerenciar={podeGerenciar}
-          dica={dica}
-        />
-      </>
+      <OrigemDosLeadsTab
+        dados={origens}
+        podeGerenciar={podeGerenciar}
+        dica={dica}
+      />
     ),
   };
 
   return (
     <div className="grid gap-4">
-      <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
-        {TEXTOS_DO_RASTREIO_DA_ABA.descricao}
-      </p>
-
       <Card>
         <CardHeader>
           <h2 className="text-base leading-[1.3] font-bold tracking-[-0.01em]">
@@ -249,20 +238,21 @@ export function AnunciosERastreioTab({
           {passos.map((passo) => (
             <li
               key={passo.chave}
-              className="flex flex-wrap items-center gap-4 px-4 py-3.5"
+              className="flex flex-wrap items-center gap-3 px-4 py-2.5"
             >
               <Numero valor={passo.numero} />
-              <div className="grid min-w-0 flex-1 basis-56 gap-1">
+              <div className="grid min-w-0 flex-1 basis-56 gap-0.5">
                 <span className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-semibold text-text-strong">
                     {passo.titulo}
                   </span>
                   <ChipDoPasso passo={passo} />
                 </span>
-                <span className="text-[12.5px] text-text-secondary">
-                  {passo.paraQueServe}
-                  {passo.detalhe ? ` ${passo.detalhe}` : ""}
-                </span>
+                {passo.detalhe ? (
+                  <span className="text-[12.5px] text-text-secondary">
+                    {passo.detalhe}
+                  </span>
+                ) : null}
               </div>
               <Button
                 variant={passo === primeiroQueFalta ? "solid" : "outline"}
@@ -295,7 +285,7 @@ export function AnunciosERastreioTab({
                   ref={(elemento) => {
                     gatilhos.current[passo.chave] = elemento;
                   }}
-                  className="group/passo flex min-h-14 w-full scroll-mt-4 flex-wrap items-center gap-3 rounded-card border border-border bg-card px-4 py-2 text-left shadow-sm outline-none cz-transition hover:border-border-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
+                  className="group/passo flex min-h-12 w-full scroll-mt-4 flex-wrap items-center gap-3 rounded-card border border-border bg-card px-4 py-2 text-left outline-none cz-transition hover:border-border-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
                 >
                   <Numero valor={passo.numero} />
                   <span className="sr-only">Passo {passo.numero}:</span>
@@ -318,12 +308,6 @@ export function AnunciosERastreioTab({
               forceMount
               className="grid gap-4 pb-2 data-[state=closed]:hidden"
             >
-              <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
-                <span className="font-semibold text-text-strong">
-                  Para que serve:{" "}
-                </span>
-                {passo.paraQueServe}
-              </p>
               {conteudo[passo.chave]}
             </AccordionPrimitive.Content>
           </AccordionPrimitive.Item>

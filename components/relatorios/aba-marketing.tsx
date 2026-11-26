@@ -161,7 +161,7 @@ export function AbaMarketing({
             icone={Funnel}
             valor={formatarPercentual(paraComparecimento)}
             unidade="%"
-            rodape="dos leads do período; quem chegou há pouco ainda pode comparecer"
+            rodape="dos leads do período"
           />
         )}
         {taxaDeFalta === null ? (

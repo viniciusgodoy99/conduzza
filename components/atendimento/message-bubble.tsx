@@ -14,7 +14,7 @@ import {
   Lock,
   OctagonAlert,
   SendHorizonal,
-  Sparkles,
+  Bot,
   Trash2,
   UsersRound,
   Video,
@@ -969,7 +969,7 @@ export function MessageBubble({
             interna sao a camada de texto da autoria, nunca so a cor. */}
         {fromIa && !apagada ? (
           <span className="flex items-center gap-1 px-1 text-[11px] font-semibold text-text-secondary">
-            <Sparkles aria-hidden className="size-3 text-ai-text" />
+            <Bot aria-hidden className="size-3 text-ai-text" />
             {authorName ?? "Assistente"}
             <span className="inline-flex h-4 items-center rounded-full bg-ai-bg px-1.5 text-[10px] font-bold text-ai-text">
               IA
@@ -984,7 +984,7 @@ export function MessageBubble({
             data-preparo
             className="flex items-center gap-1 px-1 text-[11px] font-semibold text-text-secondary"
           >
-            <Sparkles aria-hidden className="size-3 text-ai-text" />
+            <Bot aria-hidden className="size-3 text-ai-text" />
             {authorName ?? "Assistente"}
             <span className="inline-flex h-4 items-center rounded-full bg-ai-bg px-1.5 text-[10px] font-bold text-ai-text">
               IA
@@ -997,7 +997,7 @@ export function MessageBubble({
             data-nota-da-ia
             className="flex flex-wrap items-center gap-x-1 px-1 text-[11px] font-semibold text-text-secondary"
           >
-            <Sparkles aria-hidden className="size-3 text-ai-text" />
+            <Bot aria-hidden className="size-3 text-ai-text" />
             {authorName ?? AUTOR_DA_NOTA_DA_PASSAGEM}
             <span className="inline-flex h-4 items-center rounded-full bg-ai-bg px-1.5 text-[10px] font-bold text-ai-text">
               IA

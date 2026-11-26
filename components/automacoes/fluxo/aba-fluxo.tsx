@@ -17,11 +17,11 @@ import {
   excluirAutomacaoDeFluxoAction,
   usoDasAutomacoesDeFluxoAction,
 } from "@/app/(app)/automacoes/fluxo-actions";
+import { Ajuda } from "@/components/agente/ajuda";
 import { DialogoDeExclusao } from "@/components/automacoes/dialogo-de-exclusao";
 import { DialogoDaAutomacao } from "@/components/automacoes/fluxo/dialogo-da-automacao";
 import { DialogoParaLigar } from "@/components/automacoes/fluxo/dialogo-para-ligar";
 import { HistoricoDasAutomacoes } from "@/components/automacoes/fluxo/historico-das-automacoes";
-import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { StatusChip } from "@/components/shared/status-chip";
@@ -29,8 +29,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardAction,
-  CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -42,7 +40,6 @@ import {
   descreverAcoes,
   descreverCondicoes,
   descreverGatilho,
-  MAXIMO_DE_ACOES,
   quandoNaClinica,
   resolvedorDeNomes,
   textoDoUso,
@@ -96,6 +93,12 @@ export type DadosDaAbaDeFluxo = {
 };
 
 type Dialogo = { regra: AutomacaoDeFluxo | null };
+
+/** Como rodam e o que nunca fazem: na dica do titulo, so quando a pessoa pede. */
+const AJUDA = [
+  "Rodam sozinhas, em até 1 minuto depois do que aconteceu, e cada uma roda uma vez por entrada do lead na etapa.",
+  ...AVISOS_FIXOS,
+].join(" ");
 
 export function AbaFluxo({
   automacoes,
@@ -235,14 +238,10 @@ export function AbaFluxo({
     <>
       <Card>
         <CardHeader>
-          <CardTitle>Automações de fluxo da clínica</CardTitle>
-          <CardDescription>
-            Quando o lead fica parado, deixa de responder, entra numa etapa ou
-            manda mensagem, a automação faz até {MAXIMO_DE_ACOES} coisas por
-            ele: move de etapa, coloca etiqueta, cria uma atividade ou deixa uma
-            nota interna. Com condições, só para quem tem (ou não tem) as
-            etiquetas escolhidas.
-          </CardDescription>
+          <div className="flex items-center gap-1">
+            <CardTitle>Automações de fluxo da clínica</CardTitle>
+            <Ajuda rotulo="Como as automações de fluxo funcionam" texto={AJUDA} />
+          </div>
           <CardAction>{comDica(botaoNova)}</CardAction>
         </CardHeader>
 
@@ -250,11 +249,6 @@ export function AbaFluxo({
           <EmptyState
             icon={Workflow}
             title="Nenhuma automação de fluxo ainda"
-            // Desde a onda 3 (21/10/2026), em Aguardando resposta e o lead
-            // que espera a equipe (a IA passou a conversa): o exemplo antigo,
-            // "sem responder em Aguardando resposta vai para Perdido",
-            // perderia justamente quem espera a clinica.
-            description="Por exemplo: quem entrou em Aguardando resposta ganha uma atividade de responder, ou quem ficou 3 dias sem responder em Em contato vai para Perdido."
           >
             {comDica(
               <Button
@@ -348,37 +342,15 @@ export function AbaFluxo({
         )}
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Como as automações de fluxo funcionam</CardTitle>
-          <CardDescription>
-            Rodam sozinhas, em até 1 minuto depois do que aconteceu, e cada uma
-            roda uma vez por entrada do lead na etapa.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3">
-          <ul className="grid list-disc gap-1.5 pl-5 text-[13px] text-foreground marker:text-text-secondary">
-            {AVISOS_FIXOS.map((aviso) => (
-              <li key={aviso}>{aviso}</li>
-            ))}
-          </ul>
-          {/* O follow-up e outra aba desta mesma tela: o link so troca a
-              aba (?aba=followup), como os cartoes do topo. */}
-          <Aviso
-            tom="info"
-            icone={MessageSquareText}
-            acao={
-              <Button asChild variant="outline" size="sm">
-                <Link href="/automacoes?aba=followup">Abrir o follow-up</Link>
-              </Button>
-            }
-          >
-            A mensagem para o paciente ao entrar na etapa fica no Follow-up de
-            leads, nesta mesma tela, com horário de envio e autorização para
-            receber mensagens.
-          </Aviso>
-        </CardContent>
-      </Card>
+      {/* O follow-up e outra aba desta mesma tela: o link so troca a aba
+          (?aba=followup), como os cartoes do topo. */}
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-text-secondary">
+        <MessageSquareText aria-hidden className="size-4 shrink-0" />
+        Mensagem para o paciente ao entrar na etapa fica no Follow-up de leads.
+        <Button asChild variant="outline" size="sm">
+          <Link href="/automacoes?aba=followup">Abrir o follow-up</Link>
+        </Button>
+      </p>
 
       <HistoricoDasAutomacoes
         automacoes={automacoes}

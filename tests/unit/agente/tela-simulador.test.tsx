@@ -97,13 +97,12 @@ describe("simulador", () => {
 // onda 2: o seletor nao existia, e a simulacao nunca mandava o tipo do
 // contato que o executor manda no WhatsApp.
 describe("Testar como", () => {
-  it("o seletor aparece com o rótulo, a ajuda e começa sem escolha", () => {
+  it("o seletor aparece com o rótulo e começa sem escolha, sem frase de ajuda embaixo", () => {
     const html = render();
     expect(html).toContain('for="agente-simulador-testar-como"');
     expect(texto(html)).toContain("Testar como");
-    expect(texto(html)).toContain(
-      "O assistente responde como responderia a um lead ou a um paciente da clínica no WhatsApp.",
-    );
+    // Pedido do dono de 26/11/2026: o rotulo e as opcoes ja dizem o que e.
+    expect(texto(html)).not.toContain("O assistente responde como responderia");
     expect(texto(html)).toContain("Sem escolha");
   });
 

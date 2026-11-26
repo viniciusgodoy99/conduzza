@@ -361,9 +361,6 @@ describe("aba Automações de fluxo: só administrador e gestor", () => {
       );
       // A grade cabe os cinco cartoes na tela larga.
       expect(html).toContain("xl:grid-cols-5");
-      expect(html).toContain(
-        "As mensagens que saem sozinhas e as regras que andam com o lead.",
-      );
     },
   );
 
@@ -383,10 +380,8 @@ describe("aba Automações de fluxo: só administrador e gestor", () => {
     expect(banco.fetchEtiquetasDeConversa).not.toHaveBeenCalled();
     // Nem as etiquetas em uso nos leads (so para quem edita um filtro).
     expect(banco.fetchEtiquetasParaFiltro).not.toHaveBeenCalled();
-    // O cabecalho nao promete o que ela nao ve.
-    expect(html).toContain(
-      "As mensagens que saem sozinhas: o que dizem, quando saem e para quem.",
-    );
+    // O cabecalho nao promete o que ela nao ve (26/11/2026: sem subtitulo).
+    expect(html).not.toContain("regras que andam com o lead");
     // O resto de Automacoes continua como era: visivel, so leitura (o botao
     // de criar fica desabilitado, dentro da dica).
     expect(html).toMatch(

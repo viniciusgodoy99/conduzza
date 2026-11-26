@@ -56,7 +56,7 @@ export const TEXTOS_DO_DEVOLVER = {
   dicaQuandoPode: "A IA volta a responder esta conversa",
   confirmarTitulo: "Devolver para a IA?",
   confirmarTexto:
-    "A IA volta a responder esta conversa a partir da próxima mensagem do contato. O que foi conversado antes não vai para a IA.",
+    "A IA responde a partir da próxima mensagem do contato, sem ler o que foi conversado antes.",
   devolver: "Devolver",
   devolvendo: "Devolvendo...",
   cancelar: "Cancelar",

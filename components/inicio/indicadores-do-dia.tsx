@@ -1,4 +1,4 @@
-import { CalendarDays, Clock, Sparkles } from "lucide-react";
+import { CalendarDays, Clock, Bot } from "lucide-react";
 
 import {
   CartaoDeMetrica,
@@ -125,7 +125,7 @@ export function IndicadoresDoDia({
       )}
       <CartaoDeMetrica
         rotulo="Resolvidas pela IA"
-        icone={Sparkles}
+        icone={Bot}
         tom="ai"
         {...cartaoDaIaNoInicio(atendimento, iaNaFase)}
       />

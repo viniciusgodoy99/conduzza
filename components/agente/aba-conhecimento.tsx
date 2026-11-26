@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import type { z } from "zod";
 
+import { Ajuda } from "@/components/agente/ajuda";
 import {
   trocaDeEditorPedeConfirmacao,
   useAvisarNaoSalvo,
@@ -38,7 +39,6 @@ import {
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -165,9 +165,12 @@ export function AbaConhecimento({
     <Card role="region" aria-labelledby="agente-conhecimento-titulo">
       <CardHeader>
         <div className="grid min-w-0 gap-[3px]">
-          <CardTitle id="agente-conhecimento-titulo">
-            {T.conhecimentoTitulo}
-          </CardTitle>
+          <div className="flex min-w-0 items-center gap-1">
+            <CardTitle id="agente-conhecimento-titulo">
+              {T.conhecimentoTitulo}
+            </CardTitle>
+            <Ajuda rotulo={T.conhecimentoTitulo} texto={T.conhecimentoAviso} />
+          </div>
           {contagem ? (
             <CardDescription>
               <span className="cz-num">{contagem.ativas}</span> de{" "}
@@ -179,17 +182,14 @@ export function AbaConhecimento({
         <CardAction>{comDica(botaoNova)}</CardAction>
       </CardHeader>
 
-      <CardContent className="grid gap-3">
-        <Aviso tom="info" role="note">
-          {T.conhecimentoAviso}
-        </Aviso>
-        {contagem?.passouDoTeto ? (
+      {contagem?.passouDoTeto ? (
+        <CardContent className="grid gap-3">
           <Aviso tom="warning" role="note">
             Com mais de {LIMITES_DO_AGENTE.itensDaBase} perguntas ativas não dá
             para publicar. Desative as que a recepção menos usa.
           </Aviso>
-        ) : null}
-      </CardContent>
+        </CardContent>
+      ) : null}
 
       {base === null ? (
         <EmptyState
@@ -206,7 +206,13 @@ export function AbaConhecimento({
           description={T.conhecimentoVazioDescricao}
         />
       ) : (
-        <ul className="divide-y divide-border border-t border-border">
+        <ul
+          className={
+            contagem?.passouDoTeto
+              ? "divide-y divide-border border-t border-border"
+              : "divide-y divide-border"
+          }
+        >
           {base.map((item) => {
             const aberta = editando === item.id;
             const botaoEditar = (
@@ -504,12 +510,9 @@ function FormularioDoItem({
                   className="mt-px"
                 />
               </FormControl>
-              <div className="grid gap-1">
-                <FormLabel className="text-[13.5px] leading-[1.3]">
-                  {T.ativa}
-                </FormLabel>
-                <FormDescription>{T.ativaDescricao}</FormDescription>
-              </div>
+              <FormLabel className="text-[13.5px] leading-[1.3]">
+                {T.ativa}
+              </FormLabel>
             </FormItem>
           )}
         />

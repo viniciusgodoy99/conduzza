@@ -384,9 +384,11 @@ describe("lista do painel", () => {
     expect(colunas.every((indice) => indice > -1)).toBe(true);
     expect([...colunas].sort((a, b) => a - b)).toEqual(colunas);
     // Seis ordenam (botao de 40px); sem clique, o ultimo acesso mais recente
-    // primeiro.
+    // primeiro. O setimo botao e a dica do "Último acesso" (a ultima
+    // atividade, decisao do dono de 26/10/2026).
     expect(cabecalho.match(/aria-sort=/g)).toHaveLength(6);
-    expect(cabecalho.match(/<button/g)).toHaveLength(6);
+    expect(cabecalho.match(/<button/g)).toHaveLength(7);
+    expect(cabecalho).toContain('aria-label="Sobre Último acesso"');
     expect(cabecalho).toContain('aria-sort="descending"');
     expect(cabecalho.match(/aria-sort="none"/g)).toHaveLength(5);
     const ultimoAcesso = cabecalho.slice(
@@ -1095,9 +1097,12 @@ describe("equipe da clínica no detalhe (26/10/2026; P18-5)", () => {
       escapado("2 membros ativos e 1 pedido de entrada esperando liberação."),
     );
     const daEquipe = lista(saida, "Equipe");
-    for (const coluna of ["Pessoa", "Papel", "Situação", "Último acesso"]) {
+    for (const coluna of ["Pessoa", "Papel", "Situação"]) {
       expect(daEquipe).toContain(`>${escapado(coluna)}</th>`);
     }
+    // O ultimo acesso leva a dica do que ele mede (a ultima atividade).
+    expect(daEquipe).toContain(">Último acesso<button");
+    expect(daEquipe).toContain('aria-label="Sobre Último acesso"');
     expect(daEquipe).toContain("Ana Souza");
     expect(daEquipe).toContain('href="mailto:ana@aurora.com.br"');
     expect(daEquipe).toContain("min-h-10");
@@ -1121,20 +1126,12 @@ describe("equipe da clínica no detalhe (26/10/2026; P18-5)", () => {
     expect(lista(saida, "Equipe")).toContain(
       escapado(TEXTOS_DO_PAINEL.equipeConduzzaMarca),
     );
-    expect(saida).toContain(
-      escapado(TEXTOS_DO_PAINEL.equipeConduzzaExplicacao),
-    );
-    expect(TEXTOS_DO_PAINEL.equipeConduzzaExplicacao).toContain("conta no uso");
+    // A contagem diz quantas das ativas sao da equipe Conduzza.
     expect(saida).toContain(
       escapado("2 membros ativos (1 da equipe Conduzza) e 1 pedido"),
     );
-    expect(saida).toContain(escapado(TEXTOS_DO_PAINEL.ultimoAcessoEAtividade));
-    const semConduzza = equipe({
-      equipe: { ...EQUIPE, equipe: [pessoa()] },
-    });
-    expect(semConduzza).not.toContain(
-      escapado(TEXTOS_DO_PAINEL.equipeConduzzaExplicacao),
-    );
+    // A ultima atividade mora na dica do cabecalho "Último acesso".
+    expect(saida).toContain('aria-label="Sobre Último acesso"');
   });
 
   it("os Implementadores numa lista separada, sem a coluna Papel, e fora da lista da equipe", () => {
@@ -1147,9 +1144,6 @@ describe("equipe da clínica no detalhe (26/10/2026; P18-5)", () => {
     expect(implementadores).toContain(">Ontem<");
     expect(lista(saida, "Equipe")).not.toContain(
       escapado("Técnico da Implantação"),
-    );
-    expect(saida).toContain(
-      escapado(TEXTOS_DO_PAINEL.implementadoresDescricao),
     );
   });
 

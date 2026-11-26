@@ -34,7 +34,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -442,11 +441,6 @@ export function InvestimentoMetaCard({
     <Card role="region" aria-labelledby={tituloId}>
       <CardHeader>
         <CardTitle id={tituloId}>Investimento nos anúncios</CardTitle>
-        <CardDescription>
-          Quanto a clínica investiu nos anúncios, para o custo por lead em
-          Resultados. A leitura usa a conta de anúncios do passo 1 e
-          roda sozinha todo dia de manhã.
-        </CardDescription>
         <CardAction>
           <StatusChip size="sm" definition={LEITURA_META_STATUS[estado]} />
         </CardAction>
@@ -485,12 +479,8 @@ export function InvestimentoMetaCard({
             {comDica(botaoSalvar, dicaDoSalvar)}
           </div>
           <p id={ajudaId} className="text-[11px] text-text-secondary">
-            Pode ser o mesmo token da API de conversões, se ele tiver a
-            permissão ads_read e acesso à conta de anúncios. O recomendado é um
-            token de usuário do sistema, só com ads_read e sem validade: no
-            Gerenciador de Negócios, em Usuários do sistema, dê acesso à conta
-            de anúncios e gere o token (é preciso um aplicativo da Meta no
-            Gerenciador). Por segurança, o token salvo nunca é mostrado.
+            Pode ser o mesmo token da API de conversões, com ads_read e sem
+            validade
           </p>
         </div>
 

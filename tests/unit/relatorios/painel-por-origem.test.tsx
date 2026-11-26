@@ -468,7 +468,7 @@ describe("Origem dos leads por dia", () => {
     const lido = texto(html);
     expect(lido).toContain("Google Ads 1 lead");
     expect(lido).not.toContain("Meta Ads");
-    expect(lido).toContain("Só Google Ads, por dia, no fuso da clínica");
+    expect(lido).toContain("Só Google Ads");
   });
 
   it("vazio: nenhum lead no período, escrito, sem eixo", () => {
@@ -493,9 +493,6 @@ describe("Origem dos leads por dia", () => {
     const html = bloco({ serie: SERIE_SEM_GRUPO });
     const lido = texto(html);
     expect(lido).toContain("Ainda não disponível");
-    expect(lido).toContain(
-      "A divisão dos leads por origem, dia a dia, ainda não está disponível.",
-    );
     expect(html).not.toContain("<polyline");
     expect(html).not.toContain('data-estado="vazio"');
     expect(lido).not.toContain("0 leads");

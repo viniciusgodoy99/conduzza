@@ -17,7 +17,6 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -156,13 +155,13 @@ export function ModalImportacao({
         }
       }}
     >
-      <DialogContent className="sm:max-w-[640px]" showCloseButton={!ocupado}>
+      <DialogContent
+        className="sm:max-w-[640px]"
+        aria-describedby={undefined}
+        showCloseButton={!ocupado}
+      >
         <DialogHeader>
           <DialogTitle>Importar contatos</DialogTitle>
-          <DialogDescription>
-            Traga os contatos de uma planilha CSV com a autorização de cada um
-            registrada.
-          </DialogDescription>
         </DialogHeader>
 
         <ol
@@ -177,7 +176,7 @@ export function ModalImportacao({
             >
               <span
                 className={cn(
-                  "flex size-6 shrink-0 items-center justify-center rounded-full cz-num text-xs font-bold",
+                  "flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-bold cz-num",
                   indice < passo && "bg-success-bg text-success-text",
                   indice === passo && "bg-primary text-primary-foreground",
                   indice > passo && "border border-input text-text-secondary",
@@ -223,15 +222,9 @@ export function ModalImportacao({
               onClick={() => inputArquivo.current?.click()}
               className="flex flex-col items-center justify-center gap-2.5 rounded-card border border-dashed border-input bg-surface-subtle px-6 py-8 text-center outline-none cz-transition hover:bg-surface-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
             >
-              <span className="grid size-[52px] place-items-center rounded-card bg-primary-soft">
-                <FileUp className="size-6 text-primary-text" aria-hidden />
-              </span>
+              <FileUp className="size-6 text-text-secondary" aria-hidden />
               <span className="text-sm font-bold text-text-strong">
                 Escolher arquivo CSV
-              </span>
-              <span className="max-w-[44ch] text-[13px] text-text-secondary">
-                Exporte a planilha de contatos como CSV e escolha o arquivo
-                aqui.
               </span>
             </button>
             {csv && nomeArquivo ? (
@@ -251,18 +244,14 @@ export function ModalImportacao({
                     {csv.linhas.length - 1 === 1
                       ? "linha de contato"
                       : "linhas de contato"}
-                    , colunas separadas por{" "}
-                    {csv.delimitador === ";" ? "ponto e vírgula" : "vírgula"}. A
-                    primeira linha é o cabeçalho.
+                    , sem o cabeçalho
                   </p>
                 </div>
               </div>
             ) : null}
             {csv && recodificado ? (
               <Aviso tom="info" role="note">
-                O arquivo não estava em UTF-8 e foi lido como planilha do Excel
-                em português. Confira se os acentos dos nomes aparecem certos na
-                prévia.
+                O arquivo não estava em UTF-8. Confira os acentos na prévia.
               </Aviso>
             ) : null}
             {erroArquivo ? (

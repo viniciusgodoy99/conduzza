@@ -138,10 +138,7 @@ export function DialogoNovaRegua({
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle>Nova régua de follow-up</DialogTitle>
-          <DialogDescription>
-            Escolha a etapa e para quem é. A régua nasce desligada, para você
-            conferir as mensagens antes de ligar.
-          </DialogDescription>
+          <DialogDescription>A régua nasce desligada.</DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4">
@@ -182,7 +179,7 @@ export function DialogoNovaRegua({
             <p className="text-xs text-text-secondary">
               {escolhida?.temGeral
                 ? `${escolhida.nome} já tem a régua geral: escolha as etiquetas de quem recebe esta.`
-                : "Sem etiqueta, é a régua geral da etapa: vale para quem não tem as etiquetas das outras réguas. Com etiqueta, só para quem tem."}
+                : "Sem etiqueta, vale para quem não tem as etiquetas das outras réguas."}
             </p>
             <EtiquetasDaRegua
               etiquetas={etiquetas}
@@ -201,9 +198,7 @@ export function DialogoNovaRegua({
 
           {etiquetas.length > 0 ? (
             <p className="text-xs text-text-secondary">
-              As mensagens e o horário vêm copiados da régua geral da etapa,
-              quando ela existe. A etiqueta vale no lead e na conversa, pelo
-              nome.
+              A etiqueta vale no lead e na conversa, pelo nome.
             </p>
           ) : null}
 

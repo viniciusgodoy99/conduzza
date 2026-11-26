@@ -423,10 +423,13 @@ describe("Conhecimento", () => {
     );
   }
 
-  it("a caixa informativa do brief vem no topo, com o texto exato", () => {
-    expect(texto(renderBase([]))).toContain(
+  it("o texto do brief fica no ? do título, exato (pedido do dono de 26/11/2026)", () => {
+    const html = renderBase([]);
+    expect(html).toContain('aria-label="Ajuda: Perguntas e respostas"');
+    expect(texto(html)).toContain(
       "Preços, profissionais, procedimentos e convênios vêm automaticamente do Cadastro. Não repita aqui.",
     );
+    expect(html).not.toContain('data-tom="info"');
   });
 
   it("lista com o estado em 3 camadas (Ativa e Desativada)", () => {

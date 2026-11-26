@@ -77,10 +77,9 @@ export function DialogConfig({
     <Dialog open={aberto} onOpenChange={(v) => (!v ? onFechar() : null)}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Como a reoferta funciona</DialogTitle>
+          <DialogTitle>Configurar reoferta</DialogTitle>
           <DialogDescription>
-            Quando um horário vaga, a oferta sai para as primeiras pessoas da
-            fila e o primeiro que responder fica com ele.
+            Quem responder primeiro fica com o horário.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -137,10 +136,6 @@ export function DialogConfig({
             </p>
           </div>
         </div>
-        <p className="text-[13px] text-text-secondary">
-          Ninguém respondeu no prazo, a oferta passa para as próximas pessoas da
-          fila sozinha.
-        </p>
         <DialogFooter>
           <Button variant="ghost" disabled={pendente} onClick={onFechar}>
             Cancelar

@@ -94,30 +94,12 @@ const ROTULO_DA_SITUACAO: Record<FiltroDeSituacao, string> = {
   concluidas: "Concluídas (30 dias)",
 };
 
-const VAZIO_DA_SITUACAO: Record<
-  FiltroDeSituacao,
-  { titulo: string; descricao: string }
-> = {
-  pendentes: {
-    titulo: "Nenhuma atividade pendente",
-    descricao: "Tudo em dia por aqui.",
-  },
-  atrasadas: {
-    titulo: "Nada atrasado",
-    descricao: "Nenhuma atividade passou do prazo.",
-  },
-  hoje: {
-    titulo: "Nada para hoje",
-    descricao: "Nenhuma atividade vence hoje.",
-  },
-  proximas: {
-    titulo: "Nada para os próximos dias",
-    descricao: "Nenhuma atividade marcada para depois de hoje.",
-  },
-  concluidas: {
-    titulo: "Nenhuma atividade concluída",
-    descricao: "Nada foi concluído nos últimos 30 dias.",
-  },
+const VAZIO_DA_SITUACAO: Record<FiltroDeSituacao, string> = {
+  pendentes: "Nenhuma atividade pendente",
+  atrasadas: "Nada atrasado",
+  hoje: "Nada para hoje",
+  proximas: "Nada para os próximos dias",
+  concluidas: "Nada concluído nos últimos 30 dias",
 };
 
 type ParametroDaUrl = "quem" | "filtro" | "resp" | "busca" | "contato";
@@ -323,9 +305,8 @@ export function AtividadesClient({
     });
   };
 
-  const descricao = !listaQuery.data ? (
-    "Os lembretes da equipe sobre leads e pacientes."
-  ) : pendencias.atrasadas === 0 && pendencias.hoje === 0 ? (
+  const semPendencia = pendencias.atrasadas === 0 && pendencias.hoje === 0;
+  const descricao = !listaQuery.data ? undefined : semPendencia ? (
     filtros.quem === "minhas" ? (
       "Nada seu atrasado nem para hoje."
     ) : (
@@ -514,11 +495,7 @@ export function AtividadesClient({
         )
       ) : semNadaNaClinica ? (
         <Card>
-          <EmptyState
-            icon={ListChecks}
-            title="Nenhuma atividade ainda"
-            description="Crie pelo lead, pela conversa ou pela ficha do paciente, ou aqui mesmo. Ela aparece nesta lista com o prazo."
-          >
+          <EmptyState icon={ListChecks} title="Nenhuma atividade ainda">
             {botaoNova}
           </EmptyState>
         </Card>
@@ -529,14 +506,12 @@ export function AtividadesClient({
             title={
               filtros.quem === "minhas" && filtrosNoPadrao
                 ? "Nenhuma atividade sua pendente"
-                : vazioDoFiltro.titulo
+                : vazioDoFiltro
             }
             description={
-              filtros.quem === "minhas" && filtrosNoPadrao
-                ? "As atividades da equipe aparecem em Todas."
-                : busca.trim()
-                  ? "Nada com essa busca neste filtro."
-                  : vazioDoFiltro.descricao
+              !(filtros.quem === "minhas" && filtrosNoPadrao) && busca.trim()
+                ? "Nada com essa busca neste filtro."
+                : undefined
             }
             onClearFilters={filtrosNoPadrao ? undefined : limparFiltros}
           >
@@ -564,7 +539,7 @@ export function AtividadesClient({
                 className="flex items-baseline gap-2 text-[13px] font-bold text-text-strong"
               >
                 {grupo.rotulo}
-                <span className="cz-num text-xs font-medium text-text-secondary">
+                <span className="text-xs font-medium text-text-secondary cz-num">
                   {grupo.itens.length}
                 </span>
               </h2>

@@ -74,9 +74,7 @@ export function Painel({
           tom="alert"
           titulo="Alguns números não carregaram"
           acao={<BotaoRecarregar rotulo="Tentar de novo" variant="outline" />}
-        >
-          O que falhou está marcado abaixo. O resto da tela está certo.
-        </Aviso>
+        />
       ) : null}
 
       <IndicadoresDoDia

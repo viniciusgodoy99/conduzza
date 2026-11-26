@@ -46,10 +46,9 @@ import type { EstadoDoAgente } from "@/lib/queries/painel-geral";
 // clinica). Com dialogo, vale o estado de quando ele abriu (a pessoa
 // decidiu olhando para ele).
 
-/** O texto de cada confirmacao (titulo, apoio e botao). */
+/** O texto de cada confirmacao (titulo e botao); os efeitos sao o apoio. */
 type TextosDaConfirmacao = {
   titulo: string;
-  descricao: string;
   botao: string;
   placeholder: string;
 };
@@ -62,35 +61,30 @@ export function textosDaConfirmacao(
     case "producao":
       return {
         titulo: `Ligar a produção do agente na ${nome}?`,
-        descricao: "Confira o que acontece ao ligar.",
         botao: "Ligar a produção",
         placeholder: "Ex.: requisitos conferidos com o dono, clínica pronta",
       };
     case "volta":
       return {
         titulo: `Voltar o agente da ${nome} para Teste?`,
-        descricao: "Confira o que acontece ao voltar para Teste.",
         botao: "Voltar para Teste",
         placeholder: "Ex.: clínica pediu para voltar aos testes",
       };
     case "liberar":
       return {
-        titulo: `Liberar o agente de IA na ${nome}?`,
-        descricao: "Ele começa em Teste. Confira o que acontece ao liberar.",
+        titulo: `Liberar o agente de IA na ${nome}, em Teste?`,
         botao: TEXTOS_DO_PAINEL.liberarAgente,
         placeholder: "Ex.: clínica entrou na fase de testes",
       };
     case "retirar":
       return {
         titulo: `Retirar o agente de IA da ${nome}?`,
-        descricao: "Confira o que acontece ao retirar.",
         botao: TEXTOS_DO_PAINEL.retirarAgente,
         placeholder: "Ex.: clínica pediu para parar o agente",
       };
     case "teste":
       return {
         titulo: `Ligar o agente em teste na ${nome}?`,
-        descricao: "Confira o que acontece ao ligar.",
         botao: "Ligar em teste",
         placeholder: "Ex.: clínica entrou na fase de testes",
       };
@@ -340,19 +334,24 @@ export function DialogoDoAgente({
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle>{textos.titulo}</DialogTitle>
-          <DialogDescription>{textos.descricao}</DialogDescription>
         </DialogHeader>
-        <ul className="grid list-disc gap-1.5 pl-5 text-[13px] text-foreground">
-          {efeitos.map((efeito) => (
-            <li key={efeito}>{efeito}</li>
-          ))}
-          {teto !== null ? (
-            <li>
-              O teto de gasto desta clínica é de{" "}
-              <span className="cz-num">{dolares(teto)}</span> a cada 24 horas.
-            </li>
-          ) : null}
-        </ul>
+        {/* Os efeitos sao a descricao do dialogo (o leitor de tela le). */}
+        <DialogDescription
+          asChild
+          className="grid list-disc gap-1.5 pl-5 text-foreground"
+        >
+          <ul>
+            {efeitos.map((efeito) => (
+              <li key={efeito}>{efeito}</li>
+            ))}
+            {teto !== null ? (
+              <li>
+                O teto de gasto desta clínica é de{" "}
+                <span className="cz-num">{dolares(teto)}</span> a cada 24 horas.
+              </li>
+            ) : null}
+          </ul>
+        </DialogDescription>
         <div className="grid gap-1.5">
           <Label htmlFor={`${ids}-motivo`}>
             {obrigatorio ? "Motivo (obrigatório)" : "Motivo (opcional)"}

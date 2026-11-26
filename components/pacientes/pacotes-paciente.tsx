@@ -139,7 +139,7 @@ function CampoMotivo({
         placeholder={placeholder}
       />
       <p className="text-[11px] text-text-tertiary">
-        Fica registrado junto com o seu usuário e a data.
+        Fica registrado com o seu usuário e a data.
       </p>
     </div>
   );
@@ -526,21 +526,19 @@ export function PacotesPaciente({
             <DialogTitle>Vender pacote</DialogTitle>
             <DialogDescription>
               {emAndamento
-                ? "O saldo entra com as sessões já usadas de cada procedimento, e a validade conta a partir da data de início, no fuso da clínica."
-                : "O saldo de cada procedimento entra na hora e a validade conta a partir de hoje, no fuso da clínica."}
+                ? "A validade conta a partir da data de início."
+                : "A validade conta a partir de hoje."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">
             {pacotesDoCatalogo.length === 0 ? (
               pacotesCadastrados > 0 ? (
                 <p className="text-[13px] text-text-secondary">
-                  Nenhum pacote à venda. Os pacotes cadastrados estão
-                  desativados; reative um em Cadastros para poder vender.
+                  Nenhum pacote à venda. Reative um em Cadastros.
                 </p>
               ) : (
                 <p className="text-[13px] text-text-secondary">
-                  Nenhum pacote cadastrado. Crie os pacotes em Cadastros para
-                  poder vender.
+                  Nenhum pacote cadastrado. Crie em Cadastros.
                 </p>
               )
             ) : (
@@ -634,7 +632,7 @@ export function PacotesPaciente({
             <DialogTitle>Ajustar saldo</DialogTitle>
             <DialogDescription>
               {ajustando
-                ? `${ajustando.package_name ?? "Pacote"}: corrija as sessões usadas de cada procedimento ou a validade do pacote.`
+                ? (ajustando.package_name ?? "Pacote")
                 : null}
             </DialogDescription>
           </DialogHeader>
@@ -744,7 +742,7 @@ export function PacotesPaciente({
             <DialogTitle>Cancelar venda</DialogTitle>
             <DialogDescription>
               {cancelando
-                ? `A venda de ${cancelando.package_name ?? "Pacote"} sai da ficha, com o saldo de todos os procedimentos, e deixa de ser descontada nas consultas. Use só para venda registrada por engano.`
+                ? `A venda de ${cancelando.package_name ?? "Pacote"} sai da ficha com todo o saldo. Use só para venda registrada por engano.`
                 : null}
             </DialogDescription>
           </DialogHeader>

@@ -45,7 +45,7 @@ export const TEXTOS_DOS_NUMEROS_DO_LINK = {
   escolher: "Escolher números",
   titulo: "Números do link",
   explicacao:
-    "Sem nenhum marcado, o link usa o número principal da clínica. Com mais de um, o link distribui as pessoas pelo peso: peso 2 recebe o dobro de peso 1. Quem já tocou no link volta sempre para o mesmo número, e número desconectado fica de fora até voltar.",
+    "Sem nenhum marcado, vale o número principal. Com mais de um, o peso divide as pessoas: peso 2 recebe o dobro de peso 1.",
   semNumeros:
     "Conecte um número de WhatsApp na aba WhatsApp para escolher os números do link.",
   salvar: "Salvar números",

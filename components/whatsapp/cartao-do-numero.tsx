@@ -197,7 +197,7 @@ export function CartaoDoNumero({
     <article
       aria-labelledby={idDoNome}
       aria-busy={ocupado || undefined}
-      className="flex h-full flex-col gap-3 rounded-card border border-border bg-card p-4 shadow-sm"
+      className="flex h-full flex-col gap-3 rounded-card border border-border bg-card p-4"
     >
       <div className="flex items-start gap-3">
         <IdentidadeDoWhatsapp />

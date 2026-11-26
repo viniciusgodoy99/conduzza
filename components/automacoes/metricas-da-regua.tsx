@@ -150,13 +150,12 @@ export function MetricasDaRegua({
           ))}
         </p>
       ) : null}
-      <p className="text-[11.5px] text-text-secondary">
-        {data.aproximado
-          ? "Régua com muito volume: Enviadas e Na fila são totais do período; Entregues, Descadastros e os motivos vêm dos 1000 toques mais recentes. "
-          : ""}
-        Respostas e agendamentos gerados pela régua chegam junto com a
-        atribuição de resposta; número sem origem confiável não aparece aqui.
-      </p>
+      {data.aproximado ? (
+        <p className="text-[11.5px] text-text-secondary">
+          Entregues, Descadastros e os motivos contam os{" "}
+          <span className="cz-num">1000</span> toques mais recentes.
+        </p>
+      ) : null}
     </div>
   );
 }

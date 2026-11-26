@@ -62,7 +62,7 @@ const FRASES_42501_DO_BANCO: ReadonlySet<string> = new Set([
 export const TEXTOS_DO_PREPARO = {
   titulo: "Orientação de preparo",
   ajuda:
-    "Enviada ao paciente pela régua de confirmação e pelo assistente exatamente como o responsável técnico aprovou. Só o texto aprovado sai.",
+    "Só o texto aprovado pelo responsável técnico vai ao paciente, palavra por palavra.",
   procedimentoNovo:
     "Salve o procedimento antes de escrever a orientação de preparo.",
   carregando: "Carregando a orientação de preparo...",

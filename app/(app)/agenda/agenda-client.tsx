@@ -377,7 +377,7 @@ export function AgendaClient({
           <EmptyState
             icon={UserRoundX}
             title="Seu cadastro de profissional ainda não foi vinculado"
-            description="Peça ao administrador para vincular seu usuário ao seu cadastro de profissional para ver sua agenda."
+            description="Peça ao administrador para vincular."
           />
         </Card>
       </div>
@@ -405,13 +405,12 @@ export function AgendaClient({
       />
 
       <div className="flex min-h-0 flex-1 gap-4">
-        <div className="relative cz-scroll min-w-0 flex-1 overflow-auto rounded-card border border-border bg-card shadow-sm">
+        <div className="relative cz-scroll min-w-0 flex-1 overflow-auto rounded-card border border-border bg-card">
           {semProfissionaisAtivos && profissionaisVisiveis.length === 0 ? (
             <div className="grid h-full place-items-center">
               <EmptyState
                 icon={CalendarX2}
                 title="Cadastre os profissionais para abrir a agenda"
-                description="A agenda mostra uma coluna por profissional. Comece pelo cadastro."
                 action={{
                   label: "Ir para Cadastros",
                   href: "/cadastros?aba=profissionais",
@@ -424,7 +423,6 @@ export function AgendaClient({
               <EmptyState
                 icon={CalendarX2}
                 title="Nenhum profissional com esses filtros"
-                description="Ajuste os filtros ou limpe tudo para ver a agenda completa."
                 onClearFilters={
                   temFiltro
                     ? () =>
@@ -442,7 +440,6 @@ export function AgendaClient({
                 <EmptyState
                   tom="erro"
                   title="Não foi possível carregar a agenda deste dia"
-                  description="Confira a conexão e tente de novo. Sem esta leitura, a tela não sabe quais horários estão livres."
                 >
                   <Button
                     variant="outline"

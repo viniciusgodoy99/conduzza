@@ -41,7 +41,6 @@ export function ConsultasPorDia({ resumo }: { resumo: Leitura<ResumoDoDia> }) {
           compact
           icon={CalendarDays}
           title="Nenhuma consulta nos últimos 7 dias"
-          description="As consultas marcadas na Agenda aparecem aqui, uma linha por dia."
         />
       </Secao>
     );

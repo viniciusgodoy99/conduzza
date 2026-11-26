@@ -48,12 +48,8 @@ describe("escolha Importar como", () => {
     );
     const frase = texto(html);
     expect(frase).toContain("Importar como");
-    expect(frase).toContain(
-      "Entram no funil como leads. Quem já está na clínica continua como está.",
-    );
-    expect(frase).toContain(
-      "Entram direto em Pacientes, sem consulta marcada. Quem já é lead passa a paciente, sem mudar de etapa.",
-    );
+    expect(frase).toContain("Entram no funil. Quem já existe fica como está.");
+    expect(frase).toContain("Quem já é lead vira paciente, na mesma etapa.");
     expect(radio(html, "leads")).toContain('checked=""');
     expect(radio(html, "pacientes")).not.toContain('checked=""');
     expect(html).toContain('role="radiogroup"');

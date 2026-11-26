@@ -69,13 +69,9 @@ import { cn } from "@/lib/utils";
 // sao so texto, como em Cadastros e no Agente (CirclePause e do status).
 
 export const TEXTOS_DA_ORIGEM = {
-  descricaoDaAba:
-    "Quando o lead chega por um link da clínica (a bio do Instagram, o perfil no Google, um QR code, um parceiro), o sistema reconhece a origem pela mensagem pronta do link, por um código no link ou por uma palavra-chave na primeira mensagem. Anúncio da Meta e clique no site já chegam com a origem sozinhos.",
   titulo: "Origens cadastradas",
   nova: "Nova origem",
   vazioTitulo: "Nenhuma origem cadastrada",
-  vazioDescricao:
-    "Cadastre o link da bio, do perfil no Google ou de um parceiro para o lead chegar com a origem certa.",
   erroTitulo: "Não foi possível carregar as origens",
   erroDescricao: "Tente de novo. Se continuar, fale com o suporte.",
   tentarDeNovo: "Tentar de novo",
@@ -83,10 +79,8 @@ export const TEXTOS_DA_ORIGEM = {
   desativada: "Desativada",
   confirmarExclusao: "A origem dos leads que já chegaram não muda.",
   testeTitulo: "Testar uma mensagem",
-  testeDescricao:
-    "Cole a primeira mensagem de um lead para ver qual origem ele ganharia. Nada é gravado.",
   testeRegra:
-    "Vale para a primeira mensagem de um contato novo. O código do link vale sempre, mesmo para quem já é contato.",
+    "Vale para contato novo. O código do link vale sempre, mesmo para quem já é contato.",
   desativadaSemCopiar:
     "Ative a origem antes de copiar o link: desativada, ela não reconhece ninguém.",
 } as const;
@@ -249,8 +243,7 @@ function ListaDeOrigens({
         </CardTitle>
         <CardDescription>
           {ativas === 1 ? "1 ativa" : `${ativas} ativas`}, de até{" "}
-          {LIMITE_DE_ORIGENS_ATIVAS} por clínica. A ordem é a de cadastro: no
-          empate, vale a origem cadastrada primeiro.
+          {LIMITE_DE_ORIGENS_ATIVAS} por clínica.
         </CardDescription>
         <CardAction>{comDica(motivoDaNova, botaoNova)}</CardAction>
       </CardHeader>
@@ -259,7 +252,6 @@ function ListaDeOrigens({
         <EmptyState
           icon={Signpost}
           title={TEXTOS_DA_ORIGEM.vazioTitulo}
-          description={TEXTOS_DA_ORIGEM.vazioDescricao}
         >
           {comDica(motivoDaNova, botaoNova)}
         </EmptyState>
@@ -425,9 +417,8 @@ function ListaDeOrigens({
               Excluir {excluindo?.nome ?? "esta origem"}?
             </DialogTitle>
             <DialogDescription>
-              {TEXTOS_DA_ORIGEM.confirmarExclusao} Quem chegar pelo link depois
-              disso fica sem esta origem. Para parar só por um tempo, desative
-              em vez de excluir.
+              {TEXTOS_DA_ORIGEM.confirmarExclusao} Para parar por um tempo,
+              desative.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -480,7 +471,6 @@ export function TesteDeMensagem({
     <Card>
       <CardHeader>
         <CardTitle>{TEXTOS_DA_ORIGEM.testeTitulo}</CardTitle>
-        <CardDescription>{TEXTOS_DA_ORIGEM.testeDescricao}</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">
         <div className="grid gap-1.5">

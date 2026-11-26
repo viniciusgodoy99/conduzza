@@ -23,8 +23,8 @@ export default function CarregandoPainelGeral() {
             key={i}
             className={
               i === 0 || i === 5
-                ? "col-span-2 grid content-start gap-2.5 rounded-card border border-border bg-card p-4 shadow-sm lg:col-span-1"
-                : "grid content-start gap-2.5 rounded-card border border-border bg-card p-4 shadow-sm"
+                ? "col-span-2 grid content-start gap-2.5 rounded-card border border-border bg-card p-4 lg:col-span-1"
+                : "grid content-start gap-2.5 rounded-card border border-border bg-card p-4"
             }
           >
             <Skeleton className="h-2.5 w-3/5" />
@@ -34,7 +34,7 @@ export default function CarregandoPainelGeral() {
         ))}
       </div>
       <div
-        className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-card border border-border bg-card p-3 shadow-sm"
+        className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-card border border-border bg-card p-3"
         aria-hidden
       >
         <div className="grid gap-1.5">
@@ -48,7 +48,7 @@ export default function CarregandoPainelGeral() {
         </div>
       </div>
       <div
-        className="grid content-start gap-2.5 rounded-card border border-border bg-card p-4 shadow-sm"
+        className="grid content-start gap-2.5 rounded-card border border-border bg-card p-4"
         aria-hidden
       >
         <Skeleton className="h-4 w-36" />
@@ -56,7 +56,7 @@ export default function CarregandoPainelGeral() {
         <Skeleton className="h-10 w-56" />
       </div>
       <div
-        className="overflow-hidden rounded-card border border-border bg-card shadow-sm"
+        className="overflow-hidden rounded-card border border-border bg-card"
         aria-hidden
       >
         <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">

@@ -84,7 +84,6 @@ export function DetalheDaAgenda({
         columns={COLUNAS}
         data={montarDetalheDaAgenda(agenda, dimensao)}
         emptyTitle="Sem consultas no período"
-        emptyDescription="Os detalhes aparecem quando houver consultas com início no período escolhido."
       />
     </Secao>
   );

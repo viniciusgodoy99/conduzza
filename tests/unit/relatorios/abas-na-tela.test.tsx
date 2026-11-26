@@ -382,9 +382,6 @@ describe("Marketing e Agente de IA", () => {
   it("os anúncios com erro: fica o vazio de antes (Nenhum lead com campanha no período)", () => {
     const lido = marketingSemCampanha(false, { anunciosComErro: true });
     expect(lido).toContain("Nenhum lead com campanha no período");
-    expect(lido).toContain(
-      "Os leads deste período chegaram sem campanha reconhecida. A contagem está logo abaixo.",
-    );
     expect(lido).toContain("Leads sem campanha: 486 de 486");
   });
 

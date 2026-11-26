@@ -11,7 +11,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardAction,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -32,10 +31,7 @@ import {
 } from "@/lib/domain/automacoes-de-fluxo";
 import type { EtiquetaDeConversa } from "@/lib/domain/etiquetas-de-conversa";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
-import {
-  automacoesDeFluxoKeys,
-  LIMITE_DO_HISTORICO,
-} from "@/lib/queries/automacoes-de-fluxo";
+import { automacoesDeFluxoKeys } from "@/lib/queries/automacoes-de-fluxo";
 
 import { EXECUCAO_STATUS } from "./status-da-execucao";
 
@@ -98,10 +94,6 @@ export function HistoricoDasAutomacoes({
     <Card>
       <CardHeader>
         <CardTitle>Histórico</CardTitle>
-        <CardDescription>
-          As últimas {LIMITE_DO_HISTORICO} vezes que uma automação rodou: o que
-          fez, com qual lead e quando. Sem o conteúdo das mensagens.
-        </CardDescription>
         <CardAction>
           <Button
             variant="ghost"
@@ -173,11 +165,6 @@ export function HistoricoDasAutomacoes({
           compact
           icon={History}
           title="Nenhuma execução ainda"
-          description={
-            automacaoId
-              ? "Esta automação ainda não rodou. Quando rodar, aparece aqui o que ela fez, com qual lead e quando."
-              : "Quando uma automação ligada rodar, aparece aqui o que ela fez, com qual lead e quando."
-          }
         />
       ) : (
         <ul className="divide-y divide-border border-t border-border">
@@ -214,7 +201,7 @@ export function HistoricoDasAutomacoes({
                   {frase.acoes.length > 0 ? (
                     <ul
                       aria-label="O que cada ação fez"
-                      className="grid gap-1 border-l-2 border-border pl-2.5"
+                      className="grid gap-1 pl-5"
                     >
                       {frase.acoes.map((linha) => {
                         const situacao = EXECUCAO_STATUS[linha.status];

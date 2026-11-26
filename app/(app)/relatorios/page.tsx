@@ -6,7 +6,6 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { PageHeader } from "@/components/shared/page-header";
 import { Card } from "@/components/ui/card";
 import { getSessionContext } from "@/lib/auth/active-clinic";
-import { createT } from "@/lib/branding/labels";
 import { ROTULO_DO_MOTIVO_DE_ESCALONAMENTO } from "@/lib/domain/agente/config";
 import { lerGrupoDeOrigem } from "@/lib/domain/grupos-de-origem";
 import { diaCivil, somarDias } from "@/lib/domain/horarios";
@@ -101,8 +100,6 @@ export default async function ResultadosPage({
     redirect("/inicio");
   }
 
-  const t = createT(active.labels);
-
   // Periodo padrao: ultimos 30 dias civis no fuso da clinica, incluindo hoje.
   const diaAtePadrao = diaCivil(active.timezone, new Date());
   const diaDePadrao = somarDias(diaAtePadrao, -29);
@@ -129,15 +126,12 @@ export default async function ResultadosPage({
       return (
         <div className={CONTEINER}>
           <AvisoCelular />
-          <PageHeader
-            title="Resultados"
-            description="Os resultados dos seus atendimentos."
-          />
+          <PageHeader title="Resultados" />
           <Card>
             <EmptyState
               icon={TrendingUp}
               title="Seu perfil ainda não está ligado à agenda"
-              description="Peça para a administração vincular o seu usuário a um profissional da agenda. Depois disso, os seus resultados aparecem aqui."
+              description="Peça para a administração vincular você a um profissional da agenda."
             />
           </Card>
         </div>
@@ -155,11 +149,7 @@ export default async function ResultadosPage({
     return (
       <div className={CONTEINER}>
         <AvisoCelular />
-        <PageHeader
-          eyebrow="Últimos 30 dias"
-          title="Resultados"
-          description="Os resultados dos seus atendimentos."
-        />
+        <PageHeader eyebrow="Últimos 30 dias" title="Resultados" />
         <VisaoDoProfissional agenda={agendaPropria} />
       </div>
     );
@@ -260,7 +250,6 @@ export default async function ResultadosPage({
           recortePadrao ? "Últimos 30 dias" : rotuloDoRecorte(diaDe, diaAte)
         }
         title="Resultados"
-        description={`De qual canal vem o ${t("paciente")}, quanto agenda e quanto comparece.`}
       />
       <RelatoriosClient
         clinicId={active.clinicId}

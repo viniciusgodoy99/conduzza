@@ -51,11 +51,7 @@ export default async function PainelGeralPage() {
 
   return (
     <div className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-4 md:p-6">
-      <PageHeader
-        eyebrow={TEXTOS_DO_PAINEL.eyebrow}
-        title={TEXTOS_DO_PAINEL.titulo}
-        description={TEXTOS_DO_PAINEL.descricao}
-      />
+      <PageHeader title={TEXTOS_DO_PAINEL.titulo} />
       <AvisoCelular />
       {painel ? (
         <>

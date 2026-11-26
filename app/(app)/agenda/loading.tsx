@@ -27,7 +27,7 @@ export default function CarregandoAgenda() {
       </div>
 
       <div className="flex min-h-0 flex-1 gap-4">
-        <div className="flex min-w-0 flex-1 overflow-hidden rounded-card border border-border bg-card shadow-sm">
+        <div className="flex min-w-0 flex-1 overflow-hidden rounded-card border border-border bg-card">
           <div className="w-[62px] shrink-0 border-r border-border bg-card">
             <div className="h-[62px] border-b border-border-strong bg-surface-subtle" />
             <div className="grid gap-[84px] px-2.5 pt-1">
@@ -57,7 +57,7 @@ export default function CarregandoAgenda() {
           ))}
         </div>
 
-        <div className="hidden w-[264px] shrink-0 flex-col overflow-hidden rounded-card border border-border bg-card shadow-sm xl:flex">
+        <div className="hidden w-[264px] shrink-0 flex-col overflow-hidden rounded-card border border-border bg-card xl:flex">
           <div className="flex h-12 items-center border-b border-border px-4">
             <Skeleton className="h-4 w-32" />
           </div>

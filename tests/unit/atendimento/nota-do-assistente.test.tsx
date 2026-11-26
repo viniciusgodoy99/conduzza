@@ -136,7 +136,7 @@ describe("D-20: a bolha da nota da passagem", () => {
 
   it("a linha de autoria da IA: o brilho, Assistente e o selo IA", () => {
     expect(linha).toContain("data-nota-da-ia");
-    expect(linha).toMatch(/lucide-sparkles/);
+    expect(linha).toMatch(/lucide-bot/);
     expect(linha).toContain("Assistente");
     expect(linha).toMatch(/bg-ai-bg[^>]*>\s*IA\s*</);
     expect(html).not.toContain("Automação");
@@ -164,6 +164,6 @@ describe("D-20: a bolha da nota da passagem", () => {
     const linhaDaAutomacao = outra.slice(0, outra.indexOf("data-bolha"));
     expect(linhaDaAutomacao).toContain("Automação");
     expect(linhaDaAutomacao).not.toContain("data-nota-da-ia");
-    expect(linhaDaAutomacao).not.toMatch(/lucide-sparkles/);
+    expect(linhaDaAutomacao).not.toMatch(/lucide-bot/);
   });
 });

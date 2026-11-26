@@ -74,7 +74,7 @@ function SelectFiltro({
       disabled={dicaDeIndisponivel !== null}
     >
       <SelectTrigger
-        className="h-10 w-auto max-w-[200px] min-w-[128px] text-[13px] shadow-xs"
+        className="h-10 w-auto max-w-[200px] min-w-[128px] text-[13px]"
         aria-label={placeholder}
       >
         <SelectValue placeholder={placeholder} />
@@ -187,7 +187,7 @@ export function FiltrosLeads({
           value={valores.de}
           onChange={(e) => aoMudar("de", e.target.value)}
           max={ULTIMO_DIA_DO_CAMPO}
-          className="h-10 w-[150px] cz-num shadow-xs"
+          className="h-10 w-[150px] cz-num"
           aria-label="Entrou a partir de"
         />
         <span className="text-xs text-text-secondary">até</span>
@@ -196,7 +196,7 @@ export function FiltrosLeads({
           value={valores.ate}
           onChange={(e) => aoMudar("ate", e.target.value)}
           max={ULTIMO_DIA_DO_CAMPO}
-          className="h-10 w-[150px] cz-num shadow-xs"
+          className="h-10 w-[150px] cz-num"
           aria-label="Entrou até"
         />
       </div>

@@ -24,7 +24,6 @@ import { formatarDuracao } from "@/lib/domain/duracao";
 import {
   AUTOR_ROTULO,
   METRICAS_DO_AGENTE,
-  agenteComAtividade,
   type RotulosDosMotivos,
 } from "@/lib/domain/exportacao-de-resultados";
 import type {
@@ -45,8 +44,7 @@ import type {
 //   (isOfficialChannel): com uazapi ou fake o cartao e a nota nem aparecem
 //   (regra 3.3), e mesmo no oficial e valor em reais, so admin e gestor.
 
-const DICA_DO_CUSTO =
-  "O custo por mensagem do canal oficial chega com a tabela de preços da Meta, nunca por estimativa.";
+const DICA_DO_CUSTO = "Aparece com a tabela de preços da Meta.";
 
 export function AbaAgenteIa({
   atendimento,
@@ -100,7 +98,7 @@ export function AbaAgenteIa({
           icone={MessageSquareReply}
           valor={resposta.respondidas.toLocaleString("pt-BR")}
           unidade={`de ${resposta.conversas.toLocaleString("pt-BR")}`}
-          rodape="primeira mensagem no período, já respondida pela equipe"
+          rodape="respondidas pela equipe"
         />
         {resposta.medianaSegundos === null ? (
           <CartaoDeMetrica
@@ -114,7 +112,6 @@ export function AbaAgenteIa({
             rotulo="Primeira resposta (mediana)"
             icone={Reply}
             valor={formatarDuracao(resposta.medianaSegundos)}
-            rodape="metade das conversas respondidas levou esse tempo ou menos"
           />
         )}
         {resposta.p90Segundos === null ? (
@@ -129,7 +126,6 @@ export function AbaAgenteIa({
             rotulo="Primeira resposta (90% em até)"
             icone={ReplyAll}
             valor={formatarDuracao(resposta.p90Segundos)}
-            rodape="9 em cada 10 conversas respondidas levaram esse tempo ou menos"
           />
         )}
       </section>
@@ -138,12 +134,6 @@ export function AbaAgenteIa({
         titulo="Desempenho da recepcionista de IA"
         icone={BotMessageSquare}
       >
-        {agenteComAtividade(atual.agente) ? null : (
-          <p className="max-w-prose text-[13px] text-text-secondary">
-            Estes números chegam com o agente de IA. Enquanto ele não atende,
-            não existe número para mostrar, e número inventado não entra aqui.
-          </p>
-        )}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {METRICAS_DO_AGENTE.map((rotulo) => (
             <CartaoDoAgente
@@ -209,7 +199,6 @@ export function AbaAgenteIa({
             rotulo="Notas internas"
             icone={StickyNote}
             valor={atual.mensagens.notasInternas.toLocaleString("pt-BR")}
-            rodape="não saem para o paciente nem contam como envio"
           />
           {canalOficial ? (
             podeVerValores ? (

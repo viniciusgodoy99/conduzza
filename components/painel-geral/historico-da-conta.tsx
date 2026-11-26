@@ -1,4 +1,3 @@
-import { History } from "lucide-react";
 import { useId } from "react";
 
 import {
@@ -8,13 +7,7 @@ import {
   TEXTOS_DO_PAINEL,
 } from "@/components/painel-geral/painel-geral";
 import { Aviso } from "@/components/shared/aviso";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { HistoricoDaConta as Historico } from "@/lib/queries/painel-geral";
 
 // O historico da conta no detalhe do Painel geral (segunda leva,
@@ -45,22 +38,9 @@ export function HistoricoDaConta({
   return (
     <Card role="region" aria-labelledby={`${id}-titulo`}>
       <CardHeader>
-        <div className="flex min-w-0 items-center gap-3">
-          <span
-            aria-hidden
-            className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-3"
-          >
-            <History className="size-5 text-text-strong" />
-          </span>
-          <div className="grid min-w-0 gap-[3px]">
-            <CardTitle id={`${id}-titulo`}>
-              {TEXTOS_DO_PAINEL.historicoTitulo}
-            </CardTitle>
-            <CardDescription>
-              {TEXTOS_DO_PAINEL.historicoDescricao}
-            </CardDescription>
-          </div>
-        </div>
+        <CardTitle id={`${id}-titulo`}>
+          {TEXTOS_DO_PAINEL.historicoTitulo}
+        </CardTitle>
       </CardHeader>
       <CardContent>
         {eventos === "erro" ? (

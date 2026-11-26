@@ -95,10 +95,8 @@ export const TEXTOS_DAS_PARADAS = {
   botao: "Resolver conversas paradas",
   titulo: "Resolver as conversas paradas?",
   descricao:
-    "As conversas abertas com a equipe que estão sem nenhuma mensagem há mais tempo do que o escolhido passam para Resolvida. Se o paciente escrever de novo, ele volta a aparecer no Atendimento.",
+    "Passam para Resolvida. Se o paciente escrever de novo, a conversa volta.",
   rotuloDoGrupo: "Paradas há quanto tempo",
-  porQue:
-    "Com o assistente atendendo os contatos, a conversa que já está aberta com a equipe continua com a equipe. Resolvendo as antigas, a próxima mensagem desses pacientes já pode ser atendida pelo assistente.",
   escolhaAntes: "Escolha há quanto tempo a conversa está parada.",
   contando: "Contando as conversas...",
   semPermissao:

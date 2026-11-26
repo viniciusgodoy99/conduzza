@@ -8,6 +8,7 @@ import {
   excluirReguaAction,
   ordenarReguasDeFollowupAction,
 } from "@/app/(app)/automacoes/actions";
+import { Ajuda } from "@/components/agente/ajuda";
 import {
   DialogoDeExclusao,
   PERDAS_DO_HISTORICO,
@@ -179,46 +180,37 @@ export function AbaFollowup({
           WhatsApp, mas a regua escrita por ele ainda nao existe (metricas
           certas, 23/11/2026, trocou a dica que dizia o contrario). */}
       <div className="grid gap-3 sm:grid-cols-2">
-        <div className="flex gap-3 rounded-card border border-primary-edge bg-primary-soft p-3.5">
-          <span className="grid size-[34px] shrink-0 place-items-center rounded-md bg-card text-primary-text">
-            <PenLine className="size-[17px]" aria-hidden />
+        <div className="flex min-h-10 items-center gap-2.5 rounded-card border border-primary-edge bg-primary-soft px-3.5 py-2.5">
+          <PenLine className="size-4 shrink-0 text-primary-text" aria-hidden />
+          <span className="text-[13.5px] font-bold text-text-strong">
+            Mensagem fixa
           </span>
-          <div className="grid gap-0.5">
-            <span className="flex items-center gap-1.5 text-[13.5px] font-bold text-text-strong">
-              <Check className="size-3.5 text-primary-text" aria-hidden />
-              Mensagem fixa
-            </span>
-            <span className="text-xs text-foreground">
-              Você escreve o texto de cada passo. É o modo em uso.
-            </span>
-          </div>
+          <span className="ml-auto flex items-center gap-1 text-xs font-semibold text-primary-text">
+            <Check className="size-3.5" aria-hidden />
+            Em uso
+          </span>
         </div>
         <DisabledWithHint
           className="w-full"
           hint="O agente de IA ainda não escreve as mensagens da régua. Por enquanto, cada passo envia o texto que você escreveu."
         >
-          <div className="flex w-full gap-3 rounded-card border border-border bg-card p-3.5 opacity-45">
-            <span className="grid size-[34px] shrink-0 place-items-center rounded-md bg-surface-4 text-text-secondary">
-              <WandSparkles className="size-[17px]" aria-hidden />
+          <div className="flex min-h-10 w-full items-center gap-2.5 rounded-card border border-border bg-card px-3.5 py-2.5 opacity-45">
+            <WandSparkles
+              className="size-4 shrink-0 text-text-secondary"
+              aria-hidden
+            />
+            <span className="text-[13.5px] font-bold text-text-strong">
+              Deixar a IA escrever
             </span>
-            <div className="grid gap-0.5">
-              <span className="text-[13.5px] font-bold text-text-strong">
-                Deixar a IA escrever
-              </span>
-              <span className="text-xs text-text-secondary">
-                A IA escreve dentro das regras da clínica.
-              </span>
-            </div>
           </div>
         </DisabledWithHint>
       </div>
 
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <p className="max-w-[62ch] text-[13px] text-text-secondary">
-          A régua acompanha o lead enquanto ele está na etapa. Ela para sozinha
-          quando ele responde, agenda ou muda de etapa. Uma etapa pode ter
-          réguas por etiqueta e uma geral: cada lead recebe uma só.
-        </p>
+      <div className="flex flex-wrap items-center justify-end gap-1">
+        <Ajuda
+          rotulo="Follow-up"
+          texto="A régua sai para o lead que ficou na etapa sem responder pelo tempo configurado. Ela para quando ele responde, agenda ou muda de etapa. Cada lead recebe uma régua só."
+        />
         {podeEditar && etapas.length > 0 ? (
           botaoNova
         ) : (
@@ -240,7 +232,6 @@ export function AbaFollowup({
             compact
             icon={Repeat}
             title="Nenhuma régua de follow-up ainda"
-            description="Crie uma para a etapa onde os leads mais esfriam, como quem pediu preço e sumiu."
           />
         </Card>
       ) : (
@@ -258,7 +249,7 @@ export function AbaFollowup({
               aria-labelledby={idDoTitulo}
               className="grid gap-3"
             >
-              <div className="grid gap-1">
+              <div className="flex items-center gap-1">
                 <h2
                   id={idDoTitulo}
                   className="text-base leading-[1.3] font-bold tracking-[-0.01em]"
@@ -266,11 +257,14 @@ export function AbaFollowup({
                   {grupo.nome}
                 </h2>
                 {temComEtiqueta ? (
-                  <p className="max-w-[72ch] text-[13px] text-text-secondary">
-                    {grupo.geral?.active
-                      ? REGRA_DA_PRECEDENCIA
-                      : REGRA_DA_ORDEM}
-                  </p>
+                  <Ajuda
+                    rotulo={`Ordem das réguas de ${grupo.nome}`}
+                    texto={
+                      grupo.geral?.active
+                        ? REGRA_DA_PRECEDENCIA
+                        : REGRA_DA_ORDEM
+                    }
+                  />
                 ) : null}
               </div>
               {/* A etapa sem geral ligada deixa sem regua quem nao tem as

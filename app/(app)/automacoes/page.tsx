@@ -14,7 +14,6 @@ import {
 } from "@/lib/domain/automacoes-de-fluxo";
 import { etapaRecebeFollowup } from "@/lib/domain/jornada";
 import { canEdit, permissionHint } from "@/lib/domain/permissions";
-import { NAV_GROUPS } from "@/lib/navigation";
 import {
   fetchEtiquetasParaFiltro,
   fetchFollowups,
@@ -137,13 +136,7 @@ export default async function AutomacoesPage({
   return (
     <div className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
       <PageHeader
-        eyebrow={NAV_GROUPS.inteligencia ?? undefined}
         title="Automações"
-        description={
-          comFluxo
-            ? "As mensagens que saem sozinhas e as regras que andam com o lead."
-            : "As mensagens que saem sozinhas: o que dizem, quando saem e para quem."
-        }
       />
       {/* Tela pensada para computador (brief secao 6): no celular, o aviso. */}
       <AvisoCelular />

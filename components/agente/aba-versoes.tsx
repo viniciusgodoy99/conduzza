@@ -15,7 +15,6 @@ import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
 import {
   Card,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -137,10 +136,7 @@ export function AbaVersoes({
   return (
     <Card role="region" aria-labelledby="agente-versoes-titulo">
       <CardHeader>
-        <div className="grid min-w-0 gap-[3px]">
-          <CardTitle id="agente-versoes-titulo">{T.versoesTitulo}</CardTitle>
-          <CardDescription>{T.versoesDescricao}</CardDescription>
-        </div>
+        <CardTitle id="agente-versoes-titulo">{T.versoesTitulo}</CardTitle>
       </CardHeader>
 
       <ul className="divide-y divide-border border-t border-border">

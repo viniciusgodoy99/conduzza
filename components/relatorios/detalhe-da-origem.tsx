@@ -207,7 +207,6 @@ export function DetalheDaOrigem({
           data={linhas ?? []}
           isLoading={linhas === null}
           emptyTitle="Sem leads no período"
-          emptyDescription="Os detalhes aparecem quando os primeiros contatos chegarem no período escolhido."
         />
       )}
     </Secao>

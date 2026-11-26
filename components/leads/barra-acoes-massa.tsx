@@ -98,7 +98,7 @@ const SEM_OPCOES: readonly OpcaoDeEtiqueta[] = [];
 const DICA_JA_SAO_PACIENTES = "Os contatos selecionados já são pacientes.";
 
 const DICA_DISPARAR_REGUA =
-  "As réguas de follow-up começam sozinhas quando o lead entra na etapa. Use Mudar etapa para colocar os selecionados numa etapa com régua.";
+  "A régua começa sozinha quando o lead entra na etapa. Use Mudar etapa.";
 
 // Popover de acao protegida: com permissao abre o popover; sem permissao o
 // botao fica visivel e desabilitado com a dica, sem popover nenhum.

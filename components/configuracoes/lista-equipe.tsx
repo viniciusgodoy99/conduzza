@@ -474,7 +474,6 @@ export function ListaEquipe({
         compact
         icon={Users}
         title="Ninguém na equipe ainda"
-        description="Convide a recepção por e-mail ou passe o código da clínica."
       />
     );
   }
@@ -678,9 +677,8 @@ export function ListaEquipe({
               Tirar o acesso de {confirmar?.nome ?? "esta pessoa"}?
             </DialogTitle>
             <DialogDescription>
-              A pessoa perde o acesso à clínica na hora, inclusive às conversas
-              de paciente. Nada é apagado: o histórico dela continua aqui e você
-              pode devolver o acesso quando quiser.
+              Perde o acesso na hora, inclusive às conversas de paciente. Nada é
+              apagado e o acesso pode voltar depois.
             </DialogDescription>
           </DialogHeader>
           <AgendadasDaPessoa

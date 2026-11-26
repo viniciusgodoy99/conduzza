@@ -51,7 +51,7 @@ export function ColunasCarregando({
             {Array.from({ length: 3 }).map((_, cartao) => (
               <div
                 key={cartao}
-                className="grid gap-2 rounded-xl border border-border bg-card p-[11px] shadow-xs"
+                className="grid gap-2 rounded-xl border border-border bg-card p-[11px]"
               >
                 <Skeleton className="h-3.5 w-4/5" />
                 <Skeleton className="h-3 w-3/5" />

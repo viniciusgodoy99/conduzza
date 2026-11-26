@@ -718,9 +718,10 @@ describe("segunda leva do detalhe (pedido do dono de 26/10/2026)", () => {
     return saida.slice(inicio, fim === -1 ? undefined : fim);
   }
 
-  it("a saúde com a regra escrita; cada sinal em 3 camadas com o que o banco contou, no fuso da clínica", () => {
+  it("a saúde com a regra na dica; cada sinal em 3 camadas com o que o banco contou, no fuso da clínica", () => {
     const saudavel = regiao(detalhe(), TEXTOS_DO_PAINEL.saudeTitulo);
-    expect(saudavel).toContain(escapado(TEXTOS_DO_PAINEL.saudeRegra));
+    // A regra mora na dica do icone de ajuda, ao lado do titulo.
+    expect(saudavel).toContain('aria-label="Como a saúde é calculada"');
     expect(saudavel).toContain("lucide-circle-check");
     expect(saudavel).toContain(">Saudável<");
     expect(saudavel).toContain(escapado(TEXTOS_DO_PAINEL.nenhumSinal));

@@ -150,7 +150,7 @@ describe("Cobrar dentro de Aguardando", () => {
   it("secundário (outline), com o rótulo pela quantidade", () => {
     const aguardando = cartao(html(), "Aguardando");
     expect(aguardando).toContain("Cobrar todas as 9");
-    expect(aguardando).toContain("border-border-strong");
+    expect(aguardando).toContain('data-variant="outline"');
     expect(aguardando).not.toContain("bg-primary");
     expect(aguardando).not.toContain('disabled=""');
     expect(cartao(html({ cobraveis: 1 }), "Aguardando")).toContain(

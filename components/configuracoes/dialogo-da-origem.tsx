@@ -68,26 +68,23 @@ import {
 export const TEXTOS_DO_DIALOGO = {
   tituloNova: "Nova origem",
   tituloEditar: "Editar origem",
-  descricao:
-    "Como o sistema reconhece quem chega por este link e qual origem o lead ganha.",
-  ajudaDaCampanha:
-    "Aparece em Resultados, em Campanhas, como campanha fora da Meta.",
+  descricao: "Como o lead deste link é reconhecido e qual origem ganha.",
+  ajudaDaCampanha: "Aparece em Resultados, Campanhas",
   rotuloDaMensagem: "Mensagem pronta do link",
-  ajudaDaMensagem:
-    "Copie exatamente o texto que aparece escrito no WhatsApp quando a pessoa toca no link. Se o link é de outra ferramenta, use o texto que ela deixa pronto.",
+  ajudaDaMensagem: "O texto exato que o link deixa escrito no WhatsApp",
   rotuloDasPalavras: "Palavras-chave (opcional)",
   avisoDasPalavras:
-    "A palavra-chave vale para qualquer primeira mensagem que a tenha, e a origem gravada não muda depois. Evite palavras comuns como consulta ou agendar.",
+    "Evite palavras comuns, como consulta ou agendar: a origem gravada não muda depois.",
   rotuloDoCodigo: "Pôr um código no link",
   ajudaDoCodigo:
-    "O texto do link ganha um código como [#K7Q2MX] no fim. Ele reconhece também quem já é contato, e quem apagar o código ainda é reconhecido pela mensagem.",
+    "Um código como [#K7Q2MX] no fim do texto. Reconhece também quem já é contato",
   mensagemMudouSemCodigo:
-    "Com a mensagem nova, o link antigo deixa de ser reconhecido. Troque o link onde ele já estiver publicado.",
+    "O link antigo deixa de ser reconhecido. Troque onde ele já estiver publicado.",
   // O link rastreado so existe com mensagem pronta: sem ela, o link e o QR
   // Code ja publicados passam a dar "Link indisponível" (revisao de
   // 17/11/2026).
   mensagemApagada:
-    "Sem a mensagem pronta, o link rastreado e o QR Code desta origem param de funcionar. Quem já tem o link ou o QR Code impresso vai ver Link indisponível.",
+    "Sem a mensagem pronta, o link rastreado e o QR Code desta origem param de funcionar.",
   salvarAntesDeCopiar: "Salve a origem antes de copiar o link.",
   salvarMudancaAntesDeCopiar: "Salve a mudança antes de copiar o link novo.",
 } as const;
@@ -466,8 +463,7 @@ export function FormularioDaOrigem({
                 </ul>
               ) : null}
               <p className="text-[12px] text-text-secondary">
-                {palavras.length} de {LIMITE_DE_PALAVRAS_CHAVE}. Separe por
-                vírgula ou aperte Enter.
+                {palavras.length} de {LIMITE_DE_PALAVRAS_CHAVE}
               </p>
               <Aviso tom="warning" role="note">
                 {TEXTOS_DO_DIALOGO.avisoDasPalavras}
@@ -485,10 +481,10 @@ export function FormularioDaOrigem({
                 <span className="cz-num font-semibold text-text-strong">
                   #{regra.codigo}
                 </span>{" "}
-                (não muda, para o link publicado continuar valendo).
+                (fixo)
               </>
             ) : (
-              "Esta origem não tem código no link. O código só se escolhe ao criar."
+              "Sem código no link"
             )}
           </p>
         ) : (
@@ -536,7 +532,7 @@ export function FormularioDaOrigem({
           />
           {regra === null && form.watch("com_codigo") ? (
             <p className="text-[12px] text-text-secondary">
-              O código entra no fim do link depois de salvar.
+              O código entra depois de salvar
             </p>
           ) : null}
         </div>

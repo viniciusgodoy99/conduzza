@@ -273,7 +273,7 @@ describe("os cartoes do agente", () => {
     },
   );
 
-  it("a aba: o paragrafo so aparece sem atividade", () => {
+  it("a aba: sem atividade, Ainda não medido; com atividade, os numeros", () => {
     const paragrafo = "Estes números chegam com o agente de IA";
     const aba = (agente: DesempenhoDoAgente | null) =>
       texto(
@@ -285,8 +285,10 @@ describe("os cartoes do agente", () => {
           />,
         ),
       );
-    expect(aba(null)).toContain(paragrafo);
-    expect(aba(SEM_ATIVIDADE)).toContain(paragrafo);
+    // Sem paragrafo explicando: o "Ainda não medido" com a dica ja diz.
+    expect(aba(null)).not.toContain(paragrafo);
+    expect(aba(null).match(/Ainda não medido/g)).toHaveLength(6);
+    expect(aba(SEM_ATIVIDADE).match(/Ainda não medido/g)).toHaveLength(6);
     const comNumeros = aba(AGENTE);
     expect(comNumeros).not.toContain(paragrafo);
     expect(comNumeros).toContain("12 de 21 conversas atendidas pela IA");

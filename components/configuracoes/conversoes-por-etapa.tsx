@@ -13,7 +13,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -52,18 +51,14 @@ import { centavosParaReais, reaisParaCentavos } from "@/lib/utils/moeda";
 
 export const TEXTOS_DAS_CONVERSOES = {
   titulo: "O que cada etapa envia",
-  descricao:
-    "Quando um contato chega numa etapa com evento, a Meta recebe esse evento e aprende quem são as pessoas que agendam e comparecem, para mostrar os anúncios a gente parecida.",
   recomendado: "Recomendado para começar:",
-  recomendadoNoWhatsapp:
-    "No anúncio que abre o WhatsApp, Lead vai como LeadSubmitted e Schedule como QualifiedLead, os nomes que a Meta aceita lá.",
   usarRecomendado: "Usar o recomendado",
   recomendadoJaFeito: "As etapas do recomendado já têm evento escolhido.",
   naoEnviar: "Não enviar nada",
   rotuloDoEvento: "O que a Meta recebe",
   rotuloDoValor: "Valor enviado",
   rodape:
-    "Cada contato conta uma vez por etapa. A conversão vai para a Meta quando o envio estiver ligado (passo 4) e também entra no arquivo do Google Ads, em Resultados. O valor é o mesmo da venda, quando a etapa está marcada como venda na Jornada. Perdido nunca vira conversão.",
+    "Cada contato conta uma vez por etapa e sai para a Meta com o envio ligado (passo 4). Perdido nunca vira conversão.",
 } as const;
 
 const NAO_ENVIAR = "__nao_enviar__";
@@ -225,10 +220,7 @@ export function ConversoesPorEtapa({
   return (
     <Card>
       <CardHeader>
-        <div className="grid gap-[3px]">
-          <CardTitle>{TEXTOS_DAS_CONVERSOES.titulo}</CardTitle>
-          <CardDescription>{TEXTOS_DAS_CONVERSOES.descricao}</CardDescription>
-        </div>
+        <CardTitle>{TEXTOS_DAS_CONVERSOES.titulo}</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-4">
         {recomendado ? (
@@ -249,11 +241,11 @@ export function ConversoesPorEtapa({
             <span className="font-semibold">
               {TEXTOS_DAS_CONVERSOES.recomendado}
             </span>{" "}
-            {recomendado} {TEXTOS_DAS_CONVERSOES.recomendadoNoWhatsapp}
+            {recomendado}
           </Aviso>
         ) : null}
 
-        <ul className="grid gap-2">
+        <ul className="divide-y divide-border">
           {etapas.map((etapa) => {
             const linha = linhaDe(etapa);
             const id = `conversao-${etapa.chave}`;
@@ -276,7 +268,7 @@ export function ConversoesPorEtapa({
             return (
               <li
                 key={etapa.chave}
-                className="grid gap-3 rounded-md bg-surface-4 px-3 py-3 md:grid-cols-[minmax(0,12rem)_minmax(0,1fr)_minmax(0,15rem)] md:items-start"
+                className="grid gap-3 py-3 first:pt-0 md:grid-cols-[minmax(0,12rem)_minmax(0,1fr)_minmax(0,15rem)] md:items-start"
               >
                 <div className="flex min-h-10 flex-wrap items-center gap-2 md:mt-[22px]">
                   <StatusChip definition={definicaoDaEtapa(etapa)} />

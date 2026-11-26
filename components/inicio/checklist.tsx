@@ -24,8 +24,8 @@ import type { StatusDefinition } from "@/lib/design/status";
 //
 // Desenho do design system Conduzza (docs/06 secao 5.2) e correcoes dos
 // achados 112 e 126 da revisao de liberacao:
-// - o ladrilho do passo e SEMPRE neutro; o estado vai no chip, com icone de
-//   forma propria (CircleCheck feito, Hourglass pendente, CircleMinus
+// - o icone do passo e SEMPRE neutro e sem ladrilho; o estado vai no chip,
+//   com icone de forma propria (CircleCheck feito, Hourglass pendente, CircleMinus
 //   dispensado), rotulo e cor. Antes o mesmo icone do passo mudava de cor;
 // - quem nao configura a clinica ve a acao desabilitada com a dica do papel,
 //   nunca escondida (regra do brief);
@@ -39,8 +39,8 @@ export type PassoDoChecklist = {
   chave: ChaveDoPasso;
   concluido: boolean;
   titulo: string;
-  /** Texto ou trechos (numeros em cz-num); elemento React cruza a fronteira */
-  descricao: React.ReactNode;
+  /** Dado curto do passo (numeros em cz-num); sem dado, nada abaixo do titulo */
+  descricao?: React.ReactNode;
   acao?: {
     rotulo: string;
     href: string;
@@ -199,12 +199,10 @@ export function Checklist({
               key={passo.chave}
               className="flex flex-wrap items-center gap-4 px-4 py-3.5"
             >
-              <span
+              <Icone
                 aria-hidden
-                className="grid size-10 shrink-0 place-items-center rounded-xl bg-surface-4 text-foreground"
-              >
-                <Icone className="size-[18px]" />
-              </span>
+                className="size-4 shrink-0 text-text-secondary"
+              />
               <div className="grid min-w-0 flex-1 gap-1">
                 <span className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-semibold text-text-strong">
@@ -212,11 +210,11 @@ export function Checklist({
                   </span>
                   <StatusChip definition={estado} size="sm" />
                 </span>
-                <span className="text-[12.5px] text-text-secondary">
-                  {dispensado
-                    ? "Você indicou que atende sem equipe. A escolha vale só neste navegador."
-                    : passo.descricao}
-                </span>
+                {dispensado || passo.descricao ? (
+                  <span className="text-[12.5px] text-text-secondary">
+                    {dispensado ? "Vale só neste navegador" : passo.descricao}
+                  </span>
+                ) : null}
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {passo.dispensavel && !passo.concluido ? (

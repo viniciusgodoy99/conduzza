@@ -24,11 +24,11 @@ function Card({
       data-size={size}
       data-tone={tone}
       className={cn(
-        "group/card flex flex-col overflow-hidden rounded-card border border-border bg-card text-sm text-card-foreground shadow-sm",
+        "group/card flex flex-col overflow-hidden rounded-card border border-border bg-card text-sm text-card-foreground",
         tone === "sunken" && "border-transparent bg-surface-4 shadow-none",
         tone === "accent" && "border-primary-edge/25 bg-primary-soft",
         interactive &&
-          "cursor-pointer transition-[box-shadow,translate] duration-(--dur-base) ease-standard hover:-translate-y-px hover:shadow-md motion-reduce:hover:translate-y-0",
+          "cursor-pointer transition-colors duration-(--dur-fast) ease-standard hover:border-border-heavy",
         className,
       )}
       {...props}

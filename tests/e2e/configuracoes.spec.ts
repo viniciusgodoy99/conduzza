@@ -82,9 +82,6 @@ test("abrir a URL da aba de WhatsApp já cai na aba certa", async ({ page }) => 
   await expect(
     page.getByRole("tab", { name: "WhatsApp", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(
-    page.getByText("Cada número é um WhatsApp separado.", { exact: false }),
-  ).toBeVisible();
   const principal = cartaoDoNumero(page, NUMERO_PRINCIPAL);
   await expect(principal.getByText("Conectado", { exact: true })).toBeVisible();
   await expect(principal.getByText("Principal", { exact: true })).toBeVisible();
@@ -128,7 +125,7 @@ test("o link antigo da aba Agente de IA leva à tela Agente de IA", async ({
   await expect(page.getByText("Assistente de IA nesta clínica")).toHaveCount(0);
   await expect(page.getByText("Interruptor geral")).toHaveCount(0);
   await expect(
-    page.getByText("ficam agora na tela Agente de IA, aba WhatsApp"),
+    page.getByText("Números e telefones do assistente de IA ficam em Agente de IA"),
   ).toHaveCount(0);
 });
 

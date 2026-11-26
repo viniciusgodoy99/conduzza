@@ -20,7 +20,6 @@ import {
   Dialog,
   DialogClose,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -103,7 +102,7 @@ export function DialogoDeAtividade(props: DialogoDeAtividadeProps) {
         }
       }}
     >
-      <DialogContent className="sm:max-w-[520px]">
+      <DialogContent className="sm:max-w-[520px]" aria-describedby={undefined}>
         {/* O conteudo desmonta ao fechar: o formulario recomeca limpo. */}
         {props.aberto ? <ConteudoDoDialogo {...props} /> : null}
       </DialogContent>
@@ -130,15 +129,11 @@ function ConteudoDoDialogo({
   const equipe = equipeDada ?? equipeQuery.data;
 
   const titulo = editando ? "Editar atividade" : "Nova atividade";
-  const descricao = editando
-    ? "Mude o que fazer, o prazo ou quem cuida dela."
-    : "Um lembrete do que fazer com este contato, e para quando.";
 
   return (
     <>
       <DialogHeader>
         <DialogTitle>{titulo}</DialogTitle>
-        <DialogDescription>{descricao}</DialogDescription>
       </DialogHeader>
       {equipe ? (
         <FormularioDeAtividade

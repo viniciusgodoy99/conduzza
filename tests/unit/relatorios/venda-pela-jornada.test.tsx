@@ -470,8 +470,9 @@ describe("Jornada", () => {
       "components/configuracoes/jornada-tab.tsx",
       "utf-8",
     ).replace(/\s+/g, " ");
+    // Desde 26/11/2026 o aviso e a dica (icone de ajuda) da marca de venda.
     expect(fonte).toContain(
-      "A marca de venda conta em Resultados (Vendas e Valor das vendas, na aba Comercial) a partir de quando a etapa está marcada",
+      "A marca de venda conta em Resultados a partir de quando a etapa está marcada",
     );
     // 24/11/2026: "É o primeiro contato" nao mudava numero nenhum e saiu.
     expect(fonte).not.toContain("É o primeiro contato");

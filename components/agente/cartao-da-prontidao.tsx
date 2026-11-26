@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -31,8 +30,6 @@ import {
 
 export const TEXTOS_DA_PRONTIDAO = {
   titulo: "Prontidão do cadastro",
-  descricao:
-    "O que o assistente precisa encontrar no Cadastro para atender e marcar consultas. Confere de novo a cada vez que a página abre.",
   pronto: "Cadastro pronto para o agente.",
   erro: "Não foi possível conferir o cadastro.",
   erroDescricao: "Recarregue a página. Se continuar, fale com o suporte.",
@@ -55,7 +52,7 @@ function LinhaDaPendencia({ pendencia }: { pendencia: PendenciaDoCadastro }) {
   const informativo = pendencia.tipo === "informativo";
   const Icone = informativo ? Info : CircleAlert;
   return (
-    <li className="flex flex-wrap items-start gap-x-3 gap-y-2 rounded-xl bg-surface-subtle px-3.5 py-3">
+    <li className="flex flex-wrap items-start gap-x-3 gap-y-2 py-3">
       <span className="flex min-w-0 flex-1 basis-64 items-start gap-2.5">
         <Icone
           aria-hidden
@@ -103,12 +100,9 @@ export function CartaoDaProntidao({
     <Card role="region" aria-labelledby="agente-prontidao-titulo">
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-2">
-          <div className="grid min-w-0 gap-[3px]">
-            <CardTitle id="agente-prontidao-titulo">
-              {TEXTOS_DA_PRONTIDAO.titulo}
-            </CardTitle>
-            <CardDescription>{TEXTOS_DA_PRONTIDAO.descricao}</CardDescription>
-          </div>
+          <CardTitle id="agente-prontidao-titulo">
+            {TEXTOS_DA_PRONTIDAO.titulo}
+          </CardTitle>
           {status ? <StatusChip definition={status} /> : null}
         </div>
       </CardHeader>
@@ -124,7 +118,10 @@ export function CartaoDaProntidao({
           </p>
         ) : null}
         {todas.length > 0 ? (
-          <ul className="grid gap-2" aria-label={TEXTOS_DA_PRONTIDAO.titulo}>
+          <ul
+            className="divide-y divide-border"
+            aria-label={TEXTOS_DA_PRONTIDAO.titulo}
+          >
             {[...pendencias, ...informativos].map((pendencia) => (
               <LinhaDaPendencia key={pendencia.chave} pendencia={pendencia} />
             ))}

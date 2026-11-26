@@ -106,21 +106,20 @@ describe("Dados para marcar consulta: o cartão", () => {
     const html = cartao();
     const visivel = texto(html);
     expect(visivel).toContain("Dados para marcar consulta");
-    expect(visivel).toContain(TEXTOS_DO_AGENTE.dadosDescricao);
+    expect(visivel).toContain(TEXTOS_DO_AGENTE.dadosLegenda);
     for (const rotulo of ["Nome completo", "Data de nascimento", "CPF"]) {
       expect(visivel).toContain(rotulo);
     }
     expect(caixas(html)).toHaveLength(3);
-    // A frase do cadastro (D-7) e a da carteirinha ficam sempre visiveis.
-    // Revisao final da AG3 (achado 8): a regra real, o nome do WhatsApp
-    // tambem troca; nada de "so onde ele esta vazio".
+    // A frase do cadastro (D-7) fica no "?" do titulo (pedido do dono de
+    // 26/11/2026), com o texto escondido para o leitor de tela; a da
+    // carteirinha, escrita. Revisao final da AG3 (achado 8): a regra real, o
+    // nome do WhatsApp tambem troca; nada de "so onde ele esta vazio".
+    expect(html).toContain('aria-label="Ajuda: Dados para marcar consulta"');
     expect(visivel).toContain(
       "Quando a equipe aprova a consulta na Agenda, os dados informados entram no cadastro do paciente assim: o nome, se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento e CPF, se estiverem vazios; a carteirinha, se estiver vazia e a consulta for pelo convênio, com o convênio do cadastro vazio (ele entra junto) ou o mesmo. Fora disso, o cadastro não muda.",
     );
     expect(visivel).not.toContain("só onde ele está vazio");
-    expect(visivel).toContain(
-      "Antes de marcar a consulta, o assistente pede ao paciente os dados escolhidos aqui.",
-    );
     expect(visivel).toContain(TEXTOS_DO_AGENTE.dadosCarteirinha);
   });
 
@@ -267,7 +266,6 @@ describe("Dados para marcar consulta: cópia", () => {
   it("sem travessão e sem jargão", () => {
     const T = TEXTOS_DO_AGENTE;
     const amostras: [string, string][] = [
-      ["dadosDescricao", T.dadosDescricao],
       ["dadosLegenda", T.dadosLegenda],
       ["dadosNoCadastro", T.dadosNoCadastro],
       ["dadosCarteirinha", T.dadosCarteirinha],

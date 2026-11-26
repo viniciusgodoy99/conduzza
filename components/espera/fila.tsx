@@ -20,7 +20,7 @@ import {
   GripVertical,
   ListOrdered,
   MessageSquareText,
-  Sparkles,
+  Bot,
   UserRoundMinus,
 } from "lucide-react";
 import Link from "next/link";
@@ -39,7 +39,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardAction,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -80,8 +79,8 @@ const SO_LARGA = "hidden @min-[880px]/fila:block";
 
 // AG5 (a IA coloca o paciente na lista de espera; desenho, secao 6):
 // - a entrada que a IA criou pela conversa leva o selo "Pela IA" em 3
-//   camadas (Sparkles, tom ai e o rotulo), o mesmo sentido do selo da IA no
-//   Atendimento ("IA atendendo"): o Sparkles e sempre do tom ai. Fica ao lado
+//   camadas (Bot, tom ai e o rotulo), o mesmo sentido do selo da IA no
+//   Atendimento ("IA atendendo"): o Bot e sempre do tom ai. Fica ao lado
 //   de "entrou em"; o leitor de tela le a frase inteira;
 // - o pagamento declarado ("Particular" ou "Unimed, Plano Ouro") entra na
 //   linha da preferencia. A entrada da recepcao nao declara: nada aparece;
@@ -94,7 +93,7 @@ const SO_LARGA = "hidden @min-[880px]/fila:block";
 export const ORIGEM_PELA_IA: StatusDefinition = {
   label: "Pela IA",
   tone: "ai",
-  icon: Sparkles,
+  icon: Bot,
 };
 
 /** O que o leitor de tela le no lugar do selo. */
@@ -262,11 +261,6 @@ export function FilaDeEspera({
         <CardTitle>
           <h2>Fila de espera</h2>
         </CardTitle>
-        {grupos.length > 0 && podeEditar ? (
-          <CardDescription>
-            Arraste pela alça ou use as setas para mudar a ordem.
-          </CardDescription>
-        ) : null}
         {grupos.length > 0 ? (
           <CardAction className="text-[12.5px] text-text-secondary">
             <span className="cz-num">{total}</span>{" "}
@@ -279,7 +273,6 @@ export function FilaDeEspera({
         <EmptyState
           icon={ListOrdered}
           title="Ninguém na lista de espera"
-          description="A fila aparece quando o primeiro paciente entrar na espera. Dá para adicionar por aqui, pela ficha do paciente, pela conversa ou pelo assistente."
         />
       ) : (
         <div

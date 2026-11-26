@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -44,12 +43,9 @@ export function VerAnuncio({
           Ver anúncio
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="break-words">{anuncio.titulo}</DialogTitle>
-          <DialogDescription>
-            O texto do anúncio como veio na mensagem do lead.
-          </DialogDescription>
         </DialogHeader>
         {anuncio.descricao ? (
           <p className="max-h-80 overflow-y-auto text-[14px] break-words whitespace-pre-line text-text-strong">

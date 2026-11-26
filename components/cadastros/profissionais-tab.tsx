@@ -41,7 +41,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  AJUDA_CONVENIOS_QUE_ATENDE,
   conveniosQueAtendeNaAbertura,
   fraseDeQuemDeixaDeFazer,
   frasesDoResumoDosConvenios,
@@ -122,12 +121,11 @@ function textoDoNumero(numero: number | null | undefined): string {
 
 export const TEXTOS_DA_IDADE_E_GRADE = {
   idade: "Idade atendida",
-  idadeAjuda:
-    "Deixe em branco o lado que não tem limite. Vale para o paciente da consulta.",
+  idadeAjuda: "Em branco: sem limite.",
   idadeDe: "De (anos)",
   idadeAte: "Até (anos)",
   grade: "Grade de horários",
-  gradeAjuda: "O intervalo entre os horários de início das consultas.",
+  gradeAjuda: "Intervalo entre os inícios das consultas.",
 } as const;
 
 /**
@@ -479,9 +477,8 @@ export function AvisoDePlantao({
     <div ref={alvo} tabIndex={-1} className="rounded-xl">
       <Aviso tom="warning" icone={Sunrise} role="alert">
         <p>
-          Uma faixa termina no dia seguinte (plantão noturno): a agenda vai
-          abrir horários depois da meia-noite. Se o fim ficou antes do início
-          por engano, corrija a faixa.
+          Uma faixa termina no dia seguinte (plantão noturno). Se foi engano,
+          corrija a faixa.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           <Button disabled={salvando} onClick={aoConfirmar}>
@@ -495,6 +492,9 @@ export function AvisoDePlantao({
     </div>
   );
 }
+
+/** Ajuda curta de "Convenios que atende" (o resto a lista mostra) */
+const AJUDA_DOS_CONVENIOS = "O Particular vale sempre.";
 
 /** Vazio de quem so le: nada a cadastrar daqui, so o fato */
 const VAZIO_DOS_CONVENIOS_NA_LEITURA =
@@ -1046,7 +1046,6 @@ export function ProfissionaisTab({
         <VazioDaAba
           icon={BriefcaseMedical}
           titulo="Nenhum profissional cadastrado"
-          descricao="Cadastre quem atende na clínica para montar a agenda e liberar o agendamento pela IA."
           acao={{
             rotulo: "Cadastrar o primeiro profissional",
             onClick: () => abrir(),
@@ -1160,7 +1159,7 @@ export function ProfissionaisTab({
                   <ListaDeConvenios
                     legenda={ROTULO_CONVENIOS_QUE_ATENDE}
                     legendaOculta
-                    ajuda={AJUDA_CONVENIOS_QUE_ATENDE}
+                    ajuda={AJUDA_DOS_CONVENIOS}
                     opcoes={opcoesDeConvenio}
                     marcados={conveniosMarcados}
                     aoMudar={() => undefined}
@@ -1329,7 +1328,7 @@ export function ProfissionaisTab({
           <div className="grid">
             <ListaDeConvenios
               legenda={ROTULO_CONVENIOS_QUE_ATENDE}
-              ajuda={AJUDA_CONVENIOS_QUE_ATENDE}
+              ajuda={AJUDA_DOS_CONVENIOS}
               opcoes={opcoesDeConvenio}
               marcados={conveniosMarcados}
               aoMudar={marcarConvenio}
@@ -1417,7 +1416,7 @@ export function ProfissionaisTab({
             rotulo="Profissional ativo"
             descricao={
               form.id && !form.active
-                ? "Desativado, o profissional sai da Agenda e da oferta de horários. Consultas já marcadas não são desmarcadas."
+                ? "Sai da Agenda. Consultas já marcadas continuam."
                 : undefined
             }
             marcado={form.active}
@@ -1434,7 +1433,7 @@ export function ProfissionaisTab({
                 Jornada semanal
               </p>
               <p className="text-xs text-text-secondary">
-                Almoço: crie duas faixas no mesmo dia (manhã e tarde).
+                Almoço: duas faixas no mesmo dia.
               </p>
             </div>
             <div className="grid gap-1.5 sm:max-w-[280px]">
@@ -1473,8 +1472,7 @@ export function ProfissionaisTab({
             </div>
             {faixas.length === 0 ? (
               <p className="text-[13px] text-text-secondary">
-                Sem jornada cadastrada. Sem faixas, a agenda não abre horários
-                para este profissional.
+                Sem jornada: a agenda não abre horários.
               </p>
             ) : (
               <div className="grid gap-2">

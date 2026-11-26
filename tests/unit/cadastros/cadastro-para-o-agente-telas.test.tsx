@@ -164,7 +164,6 @@ describe("aba Unidades", () => {
   it("vazio: o texto novo e a acao, e o modal com os campos estruturados", () => {
     const html = renderToStaticMarkup(<UnidadesTab {...props()} />);
     expect(html).toContain(TEXTOS_DA_UNIDADE.vazioTitulo);
-    expect(html).toContain(TEXTOS_DA_UNIDADE.vazioDescricao);
     for (const rotulo of [
       "Rua ou avenida",
       "Número",

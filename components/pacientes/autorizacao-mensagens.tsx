@@ -189,32 +189,35 @@ export function AutorizacaoMensagens({
               </span>
             </LinhaDaFicha>
             <p className="text-[13px] text-text-secondary">
-              A clínica não envia nada para este paciente, nem confirmação de
-              consulta. Isso só volta se ele autorizar de novo e alguém
-              registrar aqui.
+              Nada é enviado, nem confirmação. Só volta com nova autorização
+              registrada.
             </p>
           </>
         ) : null}
         {situacao === "sem_autorizacao" ? (
           <p className="text-[13px] text-text-secondary">
-            Sem autorização, a clínica não envia mensagem para este paciente.
+            Nenhuma mensagem é enviada sem autorização.
           </p>
         ) : null}
       </div>
 
       <Dialog open={registrarAberto} onOpenChange={setRegistrarAberto}>
-        <DialogContent>
+        <DialogContent
+          // Sem descricao, o modal nao aponta para uma que nao existe.
+          {...(exigeEvidencia ? {} : { "aria-describedby": undefined })}
+        >
           <DialogHeader>
             <DialogTitle>
               {exigeEvidencia
                 ? "Registrar nova autorização"
                 : "Registrar autorização"}
             </DialogTitle>
-            <DialogDescription>
-              {exigeEvidencia
-                ? "Este paciente pediu para não receber mensagens. Só registre se ele autorizou de novo, e descreva como."
-                : "Registre como o paciente autorizou a clínica a mandar mensagem no WhatsApp."}
-            </DialogDescription>
+            {exigeEvidencia ? (
+              <DialogDescription>
+                Ele pediu para não receber mensagens. Só registre se autorizou
+                de novo.
+              </DialogDescription>
+            ) : null}
           </DialogHeader>
           <div className="grid gap-4">
             <div className="grid gap-2">
@@ -276,9 +279,8 @@ export function AutorizacaoMensagens({
           <DialogHeader>
             <DialogTitle>Descadastrar das mensagens</DialogTitle>
             <DialogDescription>
-              O paciente para de receber tudo, inclusive confirmação de consulta
-              e lembrete. Isso só volta se ele autorizar de novo e alguém
-              registrar aqui, com a evidência de como foi.
+              Ele para de receber tudo, inclusive confirmação e lembrete. Só
+              volta com nova autorização registrada.
             </DialogDescription>
           </DialogHeader>
           {erro ? (

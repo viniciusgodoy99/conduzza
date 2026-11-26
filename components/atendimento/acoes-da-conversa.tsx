@@ -231,9 +231,7 @@ export function AcoesDaConversa({
         if (resultado.conversaAbertaId) {
           // Reabrir esbarrou na conversa que o paciente ja abriu de novo: a
           // tela vai ate ela, em vez de so recusar.
-          toast.info("Este paciente já tem uma conversa aberta.", {
-            description: "Ela está aberta agora na tela.",
-          });
+          toast.info("Este paciente já tem uma conversa aberta.");
           atualizar();
           aoIrParaConversa(resultado.conversaAbertaId);
           return;
@@ -325,7 +323,7 @@ export function AcoesDaConversa({
           </>
         ) : candidatos.length === 0 ? (
           <p className="px-[9px] py-2.5 text-[13px] text-text-secondary">
-            Ninguém mais da equipe pode receber esta conversa agora.
+            Ninguém disponível para receber.
           </p>
         ) : (
           candidatos.map((membro) => (

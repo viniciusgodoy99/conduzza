@@ -18,8 +18,7 @@ import { Switch } from "@/components/ui/switch";
 
 export const TEXTOS_DO_AVISO_DA_META = {
   rotulo: "Avisar a Meta no clique",
-  explicacao:
-    "Quem toca no link passa por uma página que avisa o Pixel da clínica e segue para o WhatsApp, em até 1,5 segundo. Use em link de anúncio.",
+  explicacao: "Para link de anúncio",
   semMeta:
     "Para usar, cadastre o Pixel e ligue o envio de conversões nos passos 1 e 3 desta aba.",
   ligado: "A Meta passa a ser avisada a cada clique deste link.",

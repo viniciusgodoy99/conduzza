@@ -41,7 +41,7 @@ import { dataNoFusoDaClinica, telefoneFormatado } from "./numeros";
 // e local porque o onboarding roda fora do shell e a dica de acao
 // desabilitada precisa dele.
 //
-// Desenho do design system (docs/06 secao 5.12): cartao unico com o ladrilho
+// Desenho do design system (docs/06 secao 5.12): cartao unico com o icone
 // do WhatsApp (decorativo), a situacao da conexao em StatusChip (icone,
 // rotulo e cor, de WHATSAPP_CONNECTION_STATUS) e os avisos no Banner do DS.
 //
@@ -53,7 +53,7 @@ const DICA_PADRAO = "Somente administradores e gestores conectam o WhatsApp";
 // sistema as recebe como resposta da clinica: a conversa de quem escreveu
 // fora do horario sai da fila "Aguardando você" um segundo depois.
 const ORIENTACAO_BUSINESS =
-  "Se o número usa o WhatsApp Business, desligue a mensagem de saudação e a mensagem de ausência no aplicativo. O sistema já atende os pacientes, e essas respostas automáticas tiram as conversas da fila Aguardando você.";
+  "No WhatsApp Business, desligue a saudação e a mensagem de ausência: elas tiram as conversas da fila Aguardando você.";
 
 /**
  * A consulta de status nao sabe do aviso da conexao (ele nasce so no clique
@@ -76,16 +76,11 @@ function telefoneParaExibir(bruto: string): string {
   return telefoneFormatado(bruto) ?? bruto;
 }
 
-// Ladrilho de identidade do canal. A cor do WhatsApp e decorativa: o estado
-// da conexao e dito pelo StatusChip, nunca por ela.
+// Icone de identidade do canal, sem ladrilho. A cor do WhatsApp e
+// decorativa: o estado da conexao e dito pelo StatusChip, nunca por ela.
 export function IdentidadeDoWhatsapp() {
   return (
-    <span
-      aria-hidden
-      className="grid size-10 shrink-0 place-items-center rounded-md bg-whatsapp/12"
-    >
-      <MessageCircle className="size-5 text-whatsapp" />
-    </span>
+    <MessageCircle aria-hidden className="size-5 shrink-0 text-whatsapp" />
   );
 }
 
@@ -460,10 +455,7 @@ export function ConnectClient({
               <div className="grid min-w-0 gap-[3px]">
                 <CardTitle>Conectar o número da clínica</CardTitle>
                 <CardDescription>
-                  O WhatsApp da clínica é pareado com a plataforma, como no
-                  WhatsApp Web: clique em conectar e leia o QR code no celular
-                  em Aparelhos conectados. Recomendamos um número WhatsApp
-                  Business dedicado da clínica.
+                  Leia o QR code no celular, em Aparelhos conectados.
                 </CardDescription>
               </div>
             </div>

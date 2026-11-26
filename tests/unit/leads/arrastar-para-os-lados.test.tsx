@@ -376,7 +376,7 @@ describe("faixa das setas", () => {
     expect(desabilitada(seta(html, "Ver próximas etapas"))).toBe(false);
   });
 
-  it("setas de 40px que controlam o quadro, com a dica ao lado", () => {
+  it("setas de 40px que controlam o quadro, sem texto de instrução", () => {
     const html = faixa({ rolagem: 0 });
     for (const rotulo of ["Ver etapas anteriores", "Ver próximas etapas"]) {
       const botao = seta(html, rotulo);
@@ -385,7 +385,7 @@ describe("faixa das setas", () => {
     }
     expect(html).toContain("lucide-chevron-left");
     expect(html).toContain("lucide-chevron-right");
-    expect(html).toContain("Arraste o quadro para os lados ou use as setas.");
+    expect(html).not.toContain("Arraste o quadro");
     // Presa no topo ao rolar a pagina, com fundo opaco por cima dos cartoes.
     expect(html).toMatch(/class="sticky top-0 z-10 [^"]*bg-background/);
   });

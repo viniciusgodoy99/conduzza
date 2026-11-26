@@ -94,35 +94,27 @@ const TEXTOS: Record<
   ModoDoFormulario,
   {
     titulo: (nome: string) => string;
-    descricao: string;
     enviar: string;
     enviando: string;
   }
 > = {
   adicionar: {
     titulo: () => "Adicionar número",
-    descricao:
-      "Cada número é um WhatsApp separado. Depois de criar, leia o QR code no celular para conectar.",
     enviar: "Criar e conectar",
     enviando: "Criando...",
   },
   renomear: {
     titulo: (nome) => `Renomear ${nome}`,
-    descricao:
-      "O nome é só para a equipe: aparece no cartão do número e nas conversas.",
     enviar: "Salvar",
     enviando: "Salvando...",
   },
   unidade: {
     titulo: (nome) => `Unidade de ${nome}`,
-    descricao: "A unidade ajuda a equipe a saber de onde é este número.",
     enviar: "Salvar",
     enviando: "Salvando...",
   },
   cor: {
     titulo: (nome) => `Cor de ${nome}`,
-    descricao:
-      "A cor marca as conversas deste número no Atendimento, sempre junto com o nome.",
     enviar: "Salvar",
     enviando: "Salvando...",
   },
@@ -189,7 +181,6 @@ function FormularioDoNumero({
       >
         <DialogHeader>
           <DialogTitle>{textos.titulo(numero?.nome ?? "")}</DialogTitle>
-          <DialogDescription>{textos.descricao}</DialogDescription>
         </DialogHeader>
 
         {mostraNome ? (
@@ -291,7 +282,7 @@ function FormularioDoNumero({
                 </div>
                 {usadaPor.length > 0 ? (
                   <p className="text-xs text-text-secondary">
-                    {`Esta cor já é de ${usadaPor.join(", ")}. Dá para usar, mas uma cor diferente evita confundir as conversas.`}
+                    {`Esta cor já é de ${usadaPor.join(", ")}.`}
                   </p>
                 ) : null}
               </FormItem>
@@ -347,7 +338,7 @@ export function DialogoDoFormulario({
 }) {
   return (
     <Dialog open={aberto} onOpenChange={aoFecharQuando(aoFechar)}>
-      <DialogContent>
+      <DialogContent aria-describedby={undefined}>
         <FormularioDoNumero
           modo={modo}
           numero={numero}
@@ -474,8 +465,7 @@ export function DialogoDeConexao({
                 <span className="truncate">{`Conectar ${numero.nome}`}</span>
               </DialogTitle>
               <DialogDescription>
-                O número é pareado com a plataforma, como no WhatsApp Web: leia
-                o QR code no celular em Aparelhos conectados.
+                Leia o QR code no celular, em Aparelhos conectados.
               </DialogDescription>
             </DialogHeader>
             <ConnectClient

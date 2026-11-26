@@ -77,12 +77,7 @@ export function OrigemDosLeadsPorDia({
     );
   } else if (serie.some((ponto) => ponto.porGrupo === null)) {
     corpo = (
-      <EmptyState
-        compact
-        icon={ChartSpline}
-        title="Ainda não disponível"
-        description="A divisão dos leads por origem, dia a dia, ainda não está disponível."
-      />
+      <EmptyState compact icon={ChartSpline} title="Ainda não disponível" />
     );
   } else {
     const { rotulos, rotulosFalados } = rotulosDosDias(serie, timezone);
@@ -116,11 +111,7 @@ export function OrigemDosLeadsPorDia({
     <Secao
       titulo="Origem dos leads por dia"
       icone={ChartSpline}
-      meta={
-        grupo
-          ? `Só ${ROTULO_DO_GRUPO_DE_ORIGEM[grupo]}, por dia, no fuso da clínica`
-          : "Por dia, no fuso da clínica"
-      }
+      meta={grupo ? `Só ${ROTULO_DO_GRUPO_DE_ORIGEM[grupo]}` : undefined}
       className={className}
     >
       {corpo}

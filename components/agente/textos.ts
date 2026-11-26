@@ -246,9 +246,7 @@ export const FALAS_ENVIADAS_PELO_SIMULADOR = 20;
 export const LIMITE_DA_MENSAGEM_DO_SIMULADOR = 1000;
 
 export const TEXTOS_DO_AGENTE = {
-  eyebrow: "Inteligência",
   titulo: "Agente de IA",
-  descricao: "Como a recepcionista de IA se comporta.",
   erroAoCarregar: "Não foi possível carregar o assistente de IA",
   erroAoCarregarDescricao:
     "Recarregue a página. Se continuar, fale com o suporte.",
@@ -272,32 +270,25 @@ export const TEXTOS_DO_AGENTE = {
     `Em ${abas}. A publicação leva só o que está salvo: volte à aba e salve, ou descarte o que foi digitado.`,
   descartarNaoSalvas: "Descartar o que não foi salvo",
   nadaParaPublicar: "Não há alteração para publicar.",
-  semRascunho:
-    "Salve a persona, as habilidades, o horário, os limites para marcar consulta ou uma pergunta. Depois, publique.",
+  semRascunho: "Salve alguma alteração antes de publicar.",
   baseSemLeitura:
     "As perguntas do Conhecimento não carregaram. Recarregue a página antes de publicar.",
   conferirAntes: "Corrija antes de publicar",
   // Persona
   personaTitulo: "Persona",
-  personaDescricao: "Como o assistente se apresenta e fala com o paciente.",
   nome: "Nome do assistente",
-  nomeDica: "O paciente vê este nome quando o assistente se apresenta.",
   tom: "Tom de voz",
   emoji: "Usar emoji",
   emojiDescricao:
     "No máximo um emoji discreto por mensagem. Emoji de remédio, injeção ou bebida nunca sai.",
   saudacao: "Saudação",
-  saudacaoDica: "Entra no começo da primeira resposta de cada conversa.",
   // Decisao do dono de 09/11/2026: a frase de assistente virtual de cada
   // clinica (em branco, vale a padrao, que aparece como exemplo no campo).
   fraseDoAssistente: "Frase de assistente virtual",
   fraseDoAssistenteDica:
-    "Entra antes da primeira resposta de cada conversa. Se disser que é a assistente virtual, também responde quem pergunta se está falando com um robô. Em branco, vale a frase padrão, que aparece no campo.",
+    "Também responde quem pergunta se está falando com um robô. Em branco, vale a frase padrão.",
   encerramento: "Encerramento",
-  encerramentoDica: "Entra no fim da resposta que fecha a conversa.",
   comoOPacienteVe: "Como o paciente vê",
-  previaExplicacao:
-    "Depois da frase de assistente virtual vem o exemplo do tom: a resposta de verdade depende da pergunta do paciente.",
   personaSalva: "Persona salva no rascunho.",
   // Habilidades
   habilidadesTitulo: "Habilidades",
@@ -306,8 +297,6 @@ export const TEXTOS_DO_AGENTE = {
   // fica pendente da aprovacao da equipe, D-10). AG5 (27/10/2026, D-11 e
   // D-36): tambem coloca na lista de espera; o encaixe continua com a equipe
   // (o pedido passa para ela).
-  habilidadesDescricao:
-    "O que o assistente pode fazer na conversa. Encaixe continua com a equipe.",
   // Decisao do dono de 20/10/2026 (E4), revista na onda 2 (item 10, depois
   // da migration da conversao na aprovacao): a consulta da IA so transforma
   // o contato em paciente quando a equipe APROVA, e so entao o telefone da
@@ -318,12 +307,12 @@ export const TEXTOS_DO_AGENTE = {
   // de quem ja e paciente (HABILIDADES_SO_COM_TELEFONE_DA_CONDUZZA). Nota,
   // nao status.
   habilidadeNaFaseDeTeste:
-    "Nesta fase de teste, só com telefone da equipe cadastrado pela equipe Conduzza: depois que a equipe aprova a consulta, o contato vira paciente e um telefone comum deixa de acionar o assistente.",
+    "Nesta fase de teste, só com telefone da equipe cadastrado pela equipe Conduzza.",
   // AG5 (desenho, secao 6; nota proposta, pendente do dono): o SIM a oferta
   // da lista de espera marca a consulta na hora (D-45, sem a aprovacao da
   // D-2), e o contato vira paciente ja ali. Nota, nao status.
   listaDeEsperaNaFaseDeTeste:
-    "Nesta fase de teste, o SIM à oferta da lista de espera marca a consulta na hora: o contato vira paciente, e um telefone comum deixa de acionar o assistente.",
+    "Nesta fase de teste, o SIM à oferta marca a consulta na hora e o contato vira paciente.",
   // [AG7 preparo] início
   // AG7 (desenho, secao 5.4; nota proposta, pendente do dono): quem pede o
   // preparo costuma ter consulta, e quem ja e paciente so aciona o
@@ -340,8 +329,7 @@ export const TEXTOS_DO_AGENTE = {
   conhecimentoAviso:
     "Preços, profissionais, procedimentos e convênios vêm automaticamente do Cadastro. Não repita aqui.",
   conhecimentoVazio: "Nenhuma pergunta ainda",
-  conhecimentoVazioDescricao:
-    "Escreva as dúvidas que a recepção mais responde, como endereço, estacionamento, formas de pagamento e política de cancelamento.",
+  conhecimentoVazioDescricao: "Comece pelas dúvidas que a recepção mais responde.",
   novaPergunta: "Nova pergunta",
   pergunta: "Pergunta",
   resposta: "Resposta",
@@ -349,8 +337,6 @@ export const TEXTOS_DO_AGENTE = {
   respostaPlaceholder:
     "Ex.: Sim, temos estacionamento de cortesia para pacientes na entrada da clínica.",
   ativa: "Ativa: o assistente usa esta resposta",
-  ativaDescricao:
-    "Desmarcada, fica guardada aqui e o assistente deixa de usar.",
   perguntaCriada: "Pergunta incluída no rascunho.",
   perguntaSalva: "Pergunta salva no rascunho.",
   perguntaAtivada: "Pergunta ativada no rascunho.",
@@ -363,12 +349,9 @@ export const TEXTOS_DO_AGENTE = {
   descartarEAbrir: "Descartar e abrir",
   // Regras e limites
   horarioTitulo: "Horário de operação",
-  horarioDescricao:
-    "Quando o assistente responde. A grade vale no fuso da clínica.",
   minutos: "Minutos sem resposta da equipe",
   expediente: "Expediente da clínica",
-  expedienteDescricao:
-    "Vale no modo Só fora do expediente: dentro destes horários, quem responde é a equipe.",
+  expedienteDescricao: "Vale no modo Só fora do expediente.",
   aberto: "Aberto",
   fechado: "Fechado",
   inicio: "Início",
@@ -380,22 +363,21 @@ export const TEXTOS_DO_AGENTE = {
   // de 06/11/2026: com os dois, ela ja vale, sem ninguem ligar).
   agendaTitulo: "Limites para marcar consulta",
   agendaDescricao:
-    "A habilidade Agendar consulta já vem ligada e só passa a valer com os dois preenchidos. A consulta que o assistente marca fica pendente até a equipe aprovar na Agenda.",
+    "A consulta que o assistente marca fica pendente até a equipe aprovar na Agenda.",
   antecedencia: "Antecedência mínima para marcar (horas)",
   antecedenciaDica: (minimo: number, maximo: number) =>
-    `De ${minimo} a ${maximo} horas. O assistente só oferece horário que começa depois desse tempo.`,
+    `De ${minimo} a ${maximo} horas.`,
   horizonte: "Até quantos dias à frente",
   horizonteDica: (minimo: number, maximo: number) =>
-    `De ${minimo} a ${maximo} dias. O assistente não oferece horário além disso.`,
-  agendaIncompleta:
-    "Com um dos campos vazio, a habilidade Agendar consulta não vale: o assistente não marca consulta.",
+    `De ${minimo} a ${maximo} dias.`,
+  agendaIncompleta: "Com um campo vazio, o assistente não marca consulta.",
   salvarAgenda: "Salvar limites",
   agendaSalva: "Limites para marcar consulta salvos no rascunho.",
   // Quem o assistente atende (onda 2, item 4; decisao P4a do dono). O
   // titulo e os rotulos das opcoes vem de lib/domain/agente/config.ts
   // (ROTULO_DO_CAMPO_PUBLICO e ROTULO_DO_PUBLICO).
   publicoDescricao:
-    "Salvo no rascunho, vale ao publicar. O assistente confere o público quando a conversa começa: quem vira paciente no meio da conversa continua com ele.",
+    "O assistente confere o público quando a conversa começa: quem vira paciente no meio da conversa continua com ele.",
   // Texto do contrato da onda 2 (secao 5.3).
   publicoNaoEscolhido:
     "No teste, o assistente atende os telefones da equipe, sejam leads ou pacientes. Antes da produção, escolha.",
@@ -406,15 +388,13 @@ export const TEXTOS_DO_AGENTE = {
   // Dados para marcar consulta (AG3, D-6 e D-7; textos propostos). O titulo
   // e os rotulos das caixas vem de lib/domain/agente/config.ts
   // (ROTULO_DOS_DADOS_EXIGIDOS e DADOS_EXIGIDOS).
-  dadosDescricao:
-    "Salvo no rascunho, vale ao publicar. Antes de marcar a consulta, o assistente pede ao paciente os dados escolhidos aqui.",
   dadosLegenda: "Dados que o assistente pede antes de marcar",
   // Revisao final da AG3 (achado 8): a regra real do gatilho
   // (aplicar_dados_na_aprovacao), a mesma do "Ver dados informados".
   dadosNoCadastro:
     "Quando a equipe aprova a consulta na Agenda, os dados informados entram no cadastro do paciente assim: o nome, se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento e CPF, se estiverem vazios; a carteirinha, se estiver vazia e a consulta for pelo convênio, com o convênio do cadastro vazio (ele entra junto) ou o mesmo. Fora disso, o cadastro não muda.",
   dadosCarteirinha:
-    "A carteirinha não entra aqui: o assistente pede quando o convênio ou o procedimento exige, conforme o Cadastro.",
+    "A carteirinha o assistente pede só quando o convênio ou o procedimento exige.",
   dadosNenhum:
     "Com nenhuma caixa marcada, o assistente marca a consulta sem pedir esses dados.",
   salvarDados: "Salvar dados",
@@ -424,10 +404,8 @@ export const TEXTOS_DO_AGENTE = {
   // lib/domain/agente/config.ts (ROTULO_DOS_PRAZOS); o erro do campo e o
   // ERRO_DO_PRAZO do Zod da configuracao. A clinica preenche; ninguem
   // inventa valor: os campos nascem vazios.
-  prazosDescricao:
-    "Salvo no rascunho, vale ao publicar. Cancelar consulta e Remarcar consulta só ligam com o prazo de cada uma preenchido.",
-  prazoDica: (minimo: number, maximo: number, ajuda: string) =>
-    `De ${minimo} a ${maximo} horas. ${ajuda}`,
+  prazoDica: (minimo: number, maximo: number) =>
+    `De ${minimo} a ${maximo} horas.`,
   prazosVazios:
     "Com os dois campos vazios, Cancelar consulta e Remarcar consulta ficam desligadas.",
   prazoDeCancelarVazio:
@@ -441,22 +419,15 @@ export const TEXTOS_DO_AGENTE = {
     "Nestes casos a conversa sempre vai para a equipe, e o paciente recebe uma frase fixa, nunca escrita pelo assistente. Não podem ser desligados.",
   // Instrucoes (so super admin)
   instrucoesTitulo: "Instruções do assistente",
-  instrucoesDescricao:
-    "Texto livre da equipe Conduzza para esta clínica. Só o super admin vê e edita.",
   instrucoesAviso:
     "As travas do CFM valem sempre, conferidas em cada resposta antes do envio: não precisa escrevê-las aqui. O texto passa pela mesma conferência ao salvar e ao publicar.",
   instrucoesSalvas: "Instruções salvas no rascunho.",
   previaTitulo: "Prévia do prompt",
-  previaDescricao:
-    "O texto que o assistente recebe com a configuração do rascunho, sem a conversa. Somente leitura.",
   previaIndisponivel: "A prévia não carregou. Recarregue a página.",
   // Versoes
   versoesTitulo: "Versões publicadas",
-  versoesDescricao:
-    "Cada publicação vira uma versão. Restaurar traz a configuração e as perguntas daquela versão para o rascunho; nada muda para o paciente até publicar.",
   versoesVazio: "Nenhuma versão publicada ainda",
-  versoesVazioDescricao:
-    "Quando você publicar, cada versão aparece aqui com a data, quem publicou e o que mudou.",
+  versoesVazioDescricao: "Cada publicação aparece aqui.",
   versoesErro: "Não foi possível carregar as versões",
   restaurar: "Restaurar",
   // O restaurar desativa (nao apaga) as perguntas fora da versao e traz
@@ -479,14 +450,11 @@ export const TEXTOS_DO_AGENTE = {
   cenario: "Cenário",
   cenarioPlaceholder: "Escolha um cenário",
   testarComo: "Testar como",
-  testarComoAjuda:
-    "O assistente responde como responderia a um lead ou a um paciente da clínica no WhatsApp.",
   mensagemDoPaciente: "Mensagem do paciente",
   mensagemPlaceholder: "Escreva como se fosse o paciente.",
   enviar: "Enviar",
   reiniciar: "Reiniciar",
-  conversaVazia:
-    "Escolha um cenário ou escreva uma mensagem para ver como o assistente responde.",
+  conversaVazia: "Escolha um cenário ou escreva uma mensagem.",
   escrevendo: "O assistente está escrevendo...",
   porQue: "Por que a IA respondeu isso",
   // Reserva: o servidor ja manda este passo quando nada foi consultado.
@@ -526,8 +494,6 @@ export const TEXTOS_DO_AGENTE = {
 // ROTULO_DA_PASSAGEM da configuracao.
 export const TEXTOS_DA_PASSAGEM = {
   titulo: "Para quem vai a conversa",
-  descricao:
-    "Salvo no rascunho, vale ao publicar. Conta quando o assistente passa a conversa para a equipe com a frase de sempre.",
   opcoes: {
     fila: {
       rotulo: "Para a fila (Sem atendente)",
@@ -562,7 +528,7 @@ export const TEXTOS_DA_PASSAGEM = {
 // (URGENCIA_DA_CONVERSA, lib/design/status.ts).
 export const TEXTOS_DA_URGENCIA = {
   titulo: "Urgência",
-  descricao: "Sempre ligada: não pode ser desligada.",
+  descricao: "Sempre ligada.",
   texto:
     "Quando a pessoa descreve algo que pode ser uma emergência, a conversa passa para a equipe marcada como Urgente, no topo do Atendimento.",
   marca: "A marca sai quando alguém assume, transfere ou resolve a conversa.",

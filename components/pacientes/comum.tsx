@@ -157,7 +157,7 @@ export function BlocoFicha({
   return (
     <section
       className={cn(
-        "flex min-w-0 flex-col overflow-hidden rounded-card border border-border bg-card shadow-sm",
+        "flex min-w-0 flex-col overflow-hidden rounded-card border border-border bg-card",
         className,
       )}
     >

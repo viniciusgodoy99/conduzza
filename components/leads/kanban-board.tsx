@@ -100,9 +100,6 @@ export function FaixaDeRolagem({
           <ChevronRight aria-hidden />
         </Button>
       </div>
-      <p className="text-xs text-text-secondary">
-        Arraste o quadro para os lados ou use as setas.
-      </p>
     </div>
   );
 }

@@ -829,8 +829,8 @@ export function InboxClient({
       toast.warning("Esta conversa não está mais disponível para você.", {
         id: `conversa-indisponivel-${id}`,
         description: comEnvio
-          ? "Ela pode ter sido passada para outra pessoa. A mensagem não foi enviada."
-          : "Ela pode ter sido passada para outra pessoa.",
+          ? "A mensagem não foi enviada."
+          : undefined,
       });
     },
     [queryClient, clinicId],
@@ -1161,11 +1161,10 @@ export function InboxClient({
   ) {
     return (
       <div className="grid h-full place-items-center p-4 md:p-6">
-        <div className="w-full max-w-md rounded-card border border-border bg-card shadow-sm">
+        <div className="w-full max-w-md rounded-card border border-border bg-card">
           <EmptyState
             icon={Plug}
             title="Conecte o WhatsApp da clínica"
-            description="O Atendimento começa quando o número da clínica estiver conectado."
             action={{
               label: "Conectar WhatsApp",
               href: "/configuracoes?aba=whatsapp",
@@ -1197,11 +1196,9 @@ export function InboxClient({
           <div className="shrink-0 border-b border-border p-3">
             <Aviso
               tom="warning"
-              titulo="Não foi possível abrir a conversa do link."
+              titulo="Conversa do link indisponível."
               aoDispensar={() => setAvisoDoLink(false)}
-            >
-              Ela não existe mais ou não está disponível para o seu perfil.
-            </Aviso>
+            />
           </div>
         ) : null}
         {/* A lista ocupa o que sobra: o rodape das conversas paradas (onda
@@ -1302,8 +1299,8 @@ export function InboxClient({
               if (planoDaCitada !== modo && texto.trim().length > 0) {
                 toast.warning(
                   modo === "nota"
-                    ? "Você está escrevendo uma nota interna. Salve ou apague a nota antes de citar uma mensagem do paciente."
-                    : "Você está escrevendo uma resposta ao paciente. Envie ou apague o texto antes de citar uma nota interna.",
+                    ? "Salve ou apague a nota antes de citar uma mensagem do paciente."
+                    : "Envie ou apague a resposta antes de citar uma nota interna.",
                 );
                 return;
               }
@@ -1442,13 +1439,11 @@ export function InboxClient({
               <EmptyState
                 icon={MessagesSquare}
                 title="Escolha uma conversa"
-                description="Selecione um atendimento na lista para ver as mensagens."
               />
             ) : (
               <EmptyState
                 icon={MessagesSquare}
                 title="Nenhuma conversa aberta"
-                description="Quando houver uma conversa na lista, as mensagens aparecem aqui."
               />
             )}
           </div>
@@ -1459,13 +1454,7 @@ export function InboxClient({
         aria-label="Dados do contato"
         className="hidden w-context-panel shrink-0 border-l border-border bg-card @min-[1100px]/inbox:block"
       >
-        {selected ? (
-          <ContextPanel {...propsDoPainel(selected)} />
-        ) : (
-          <p className="p-4 text-[12.5px] text-text-secondary">
-            Os dados do contato aparecem aqui.
-          </p>
-        )}
+        {selected ? <ContextPanel {...propsDoPainel(selected)} /> : null}
       </aside>
 
       <DialogoApagar

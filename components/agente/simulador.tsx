@@ -8,12 +8,13 @@ import {
   RotateCcw,
   Send,
   ShieldBan,
-  Sparkles,
+  Bot,
   UsersRound,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState, useTransition } from "react";
 
+import { Ajuda } from "@/components/agente/ajuda";
 import {
   CENARIOS_DO_SIMULADOR,
   contatoDoTestarComo,
@@ -51,7 +52,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -143,7 +143,7 @@ const ICONE_DO_PASSO: Record<PassoDaTrilha["tipo"], LucideIcon> = {
   cadastro: FolderCog,
   equipe: UsersRound,
   bloqueio: ShieldBan,
-  outro: Sparkles,
+  outro: Bot,
 };
 
 /** O ShieldBan e do bloqueio, sempre em alert (C18); o resto, neutro. */
@@ -316,7 +316,7 @@ export function Fala({
     <div className="grid justify-items-end gap-1">
       <div className="flex max-w-[85%] min-w-0 flex-col items-end gap-[3px]">
         <span className="flex items-center gap-1 px-1 text-[11px] font-semibold text-text-secondary">
-          <Sparkles aria-hidden className="size-3 text-ai-text" />
+          <Bot aria-hidden className="size-3 text-ai-text" />
           {nomeDoAssistente}
           <span className="inline-flex h-4 items-center rounded-full bg-ai-bg px-1.5 text-[10px] font-bold text-ai-text">
             IA
@@ -501,10 +501,12 @@ export function Simulador({
     >
       <CardHeader>
         <div className="grid min-w-0 gap-[3px]">
-          <CardTitle id="agente-simulador-titulo">
-            {T.simuladorTitulo}
-          </CardTitle>
-          <CardDescription>{T.simuladorDescricao}</CardDescription>
+          <div className="flex min-w-0 items-center gap-1">
+            <CardTitle id="agente-simulador-titulo">
+              {T.simuladorTitulo}
+            </CardTitle>
+            <Ajuda rotulo={T.simuladorTitulo} texto={T.simuladorDescricao} />
+          </div>
           {/* [AG6b mídia] início: nota, nao status (so texto, sem cor). */}
           {notaDaMidia ? (
             <p data-nota-da-midia className="text-[12.5px] text-text-secondary">
@@ -570,11 +572,7 @@ export function Simulador({
             }}
             disabled={bloqueado || encerrada || pendente}
           >
-            <SelectTrigger
-              id="agente-simulador-testar-como"
-              className="w-full"
-              aria-describedby="agente-simulador-testar-como-ajuda"
-            >
+            <SelectTrigger id="agente-simulador-testar-como" className="w-full">
               {/* O rotulo escolhido ja no primeiro desenho (sem esperar a
                   lista abrir). */}
               <SelectValue>
@@ -592,12 +590,6 @@ export function Simulador({
               ))}
             </SelectContent>
           </Select>
-          <p
-            id="agente-simulador-testar-como-ajuda"
-            className="text-[12px] text-text-secondary"
-          >
-            {T.testarComoAjuda}
-          </p>
         </div>
 
         <div
@@ -623,7 +615,7 @@ export function Simulador({
           )}
           {pendente ? (
             <p className="flex items-center justify-end gap-1.5 text-[12.5px] text-text-secondary">
-              <Sparkles aria-hidden className="size-3.5 text-ai-text" />
+              <Bot aria-hidden className="size-3.5 text-ai-text" />
               {T.escrevendo}
             </p>
           ) : null}

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, NotebookPen, Trash2 } from "lucide-react";
+import { Check, Trash2 } from "lucide-react";
 import { useId, useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -139,20 +139,10 @@ export function NotasDaClinica({
   return (
     <Card role="region" aria-labelledby={`${ids}-titulo`}>
       <CardHeader>
-        <div className="flex min-w-0 items-center gap-3">
-          <span
-            aria-hidden
-            className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-3"
-          >
-            <NotebookPen className="size-5 text-text-strong" />
-          </span>
-          <div className="grid min-w-0 gap-[3px]">
-            <CardTitle id={`${ids}-titulo`}>
-              {TEXTOS_DO_PAINEL.notasTitulo}
-            </CardTitle>
-            <CardDescription>{TEXTOS_DO_PAINEL.notasDescricao}</CardDescription>
-          </div>
-        </div>
+        <CardTitle id={`${ids}-titulo`}>
+          {TEXTOS_DO_PAINEL.notasTitulo}
+        </CardTitle>
+        <CardDescription>{TEXTOS_DO_PAINEL.notasDescricao}</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
         <form onSubmit={salvar} className="grid gap-2" noValidate>
@@ -217,14 +207,9 @@ export function NotasDaClinica({
             {TEXTOS_DO_PAINEL.notasSemLeitura}
           </Aviso>
         ) : notas.length === 0 ? (
-          <div className="grid gap-0.5 rounded-lg bg-surface-2 px-3.5 py-3">
-            <p className="text-[13px] font-semibold text-text-strong">
-              {TEXTOS_DO_PAINEL.nenhumaNota}
-            </p>
-            <p className="text-[12px] text-text-secondary">
-              {TEXTOS_DO_PAINEL.nenhumaNotaApoio}
-            </p>
-          </div>
+          <p className="text-[13px] text-text-secondary">
+            {TEXTOS_DO_PAINEL.nenhumaNota}
+          </p>
         ) : (
           <ol aria-label={TEXTOS_DO_PAINEL.notasTitulo} className="grid gap-2">
             {notas.map((nota) => (

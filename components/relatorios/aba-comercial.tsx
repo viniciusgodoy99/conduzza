@@ -38,19 +38,14 @@ function TextoDasRecuperadas({
   podeVerValores: boolean;
 }) {
   if (recuperadas.total === 0) {
-    return (
-      <>
-        Quando um cancelamento for preenchido pela lista de espera, o horário
-        recuperado conta aqui.
-      </>
-    );
+    return <>Vagas preenchidas pela lista de espera.</>;
   }
   // A receita so chega para admin e gestor (o banco devolve null para os
   // outros papeis): null e "sem acesso", e a frase simplesmente nao a cita.
   const comReceita = podeVerValores && recuperadas.receitaCents !== null;
   return (
     <>
-      Horários que ficariam vagos e foram preenchidos pela lista de espera
+      Vagas preenchidas pela lista de espera
       {comReceita ? (
         <>
           , com{" "}

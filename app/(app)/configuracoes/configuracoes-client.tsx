@@ -32,7 +32,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -98,7 +97,7 @@ type AbaKey = (typeof ABAS)[number][0];
 /** Onde o assistente de IA mora desde a onda 2 (item 8). */
 export const AVISO_DO_ASSISTENTE = {
   texto:
-    "Os números e os telefones da equipe do assistente de IA ficam agora na tela Agente de IA, aba WhatsApp.",
+    "Números e telefones do assistente de IA ficam em Agente de IA.",
   acao: "Abrir Agente de IA",
   link: "/agente?aba=whatsapp",
 } as const;
@@ -335,11 +334,6 @@ export function ConfiguracoesClient({
             <Card>
               <CardHeader>
                 <CardTitle>Usuários e permissões</CardTitle>
-                <CardDescription>
-                  Quem tem acesso a esta clínica e com qual papel. O papel
-                  decide o que cada pessoa vê e altera; tirar o acesso não apaga
-                  nada, e você devolve quando quiser.
-                </CardDescription>
               </CardHeader>
               <ListaEquipe
                 membros={equipe.membros}
@@ -357,12 +351,6 @@ export function ConfiguracoesClient({
         <Card>
           <CardHeader>
             <CardTitle>Convidar por e-mail</CardTitle>
-            <CardDescription>
-              O acesso já nasce liberado, com o papel escolhido. Quem ainda não
-              tem conta recebe o convite por e-mail; quem já usa o Conduzza em
-              outra clínica entra com a senha que já tem e encontra esta em
-              Trocar de clínica.
-            </CardDescription>
           </CardHeader>
           <CardContent>
             <InviteForm
@@ -396,11 +384,6 @@ export function ConfiguracoesClient({
       </TabsContent>
 
       <TabsContent value="whatsapp" className="grid gap-4">
-        <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
-          Cada número é um WhatsApp separado. O paciente que escreve para um
-          número é atendido por ele, e a conversa mostra por qual número está
-          falando.
-        </p>
         {comAgenteDeIa ? <AvisoDoAssistente /> : null}
         {whatsapp ? (
           <ListaDeNumeros
@@ -415,12 +398,6 @@ export function ConfiguracoesClient({
       </TabsContent>
 
       <TabsContent value="jornada" className="grid gap-4">
-        <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
-          As etapas que um contato percorre, do primeiro oi até a consulta.
-          Renomeie, reordene, crie etapas próprias e marque qual delas é uma
-          venda. O que cada etapa envia para os anúncios fica em Anúncios e
-          rastreio, no passo Conversões por etapa.
-        </p>
         {jornada ? (
           <JornadaTab
             jornada={jornada}
@@ -433,11 +410,6 @@ export function ConfiguracoesClient({
       </TabsContent>
 
       <TabsContent value="etiquetas" className="grid gap-4">
-        <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
-          As etiquetas que a equipe usa para marcar o estado de uma conversa no
-          Atendimento, como orçamento enviado ou aguardando convênio. Quem
-          atende aplica e remove; criar e apagar é da administração.
-        </p>
         {etiquetas ? (
           <EtiquetasTab
             etiquetas={etiquetas.lista}
@@ -451,12 +423,6 @@ export function ConfiguracoesClient({
       </TabsContent>
 
       <TabsContent value="mensagens" className="grid gap-4">
-        <p className="max-w-[72ch] text-[13.5px] text-text-secondary">
-          Textos prontos que a equipe usa no Atendimento: na resposta ao
-          paciente, digite / e escolha um. O texto entra no campo com o nome do
-          contato, para revisar antes de enviar; nada sai sozinho. Criar e
-          editar é da administração.
-        </p>
         {mensagens ? (
           <MensagensPadraoTab
             mensagens={mensagens.lista}

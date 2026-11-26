@@ -518,17 +518,17 @@ describe("a lista das etapas", () => {
     expect(atual?.[0]).toContain("lucide-check");
     expect(html.match(/aria-current/g)).toHaveLength(1);
     expect(texto(html)).toContain(
-      "Mover também pode disparar as automações de fluxo da etapa de destino.",
+      "Mover pode disparar as automações da etapa de destino.",
     );
     expect(html).not.toMatch(/[\u2013\u2014]/);
   });
 
-  it("na barra em massa: nenhuma marcada e a nota fala de cada lead", () => {
+  it("na barra em massa: nenhuma marcada e a mesma nota", () => {
     const html = opcoes();
     expect(html).not.toContain("aria-current");
     expect(html).not.toContain("lucide-check");
     expect(texto(html)).toContain(
-      "Mover também pode disparar as automações de fluxo da etapa de destino, para cada lead.",
+      "Mover pode disparar as automações da etapa de destino.",
     );
   });
 
@@ -681,9 +681,7 @@ describe("lista de Leads: etiquetas na linha", () => {
     expect(props.alvo).toBe("lead");
     expect(props.opcoes).toEqual(OPCOES);
     expect(props.etiquetasDosSelecionados).toEqual(["Cliente", "LEAD"]);
-    expect(texto(html)).toContain(
-      "Etiquetas deste lead (toque no X para remover)",
-    );
+    expect(texto(html)).toContain("Etiquetas deste lead");
     const oferecidas = [
       ...html.matchAll(/aria-label="Adicionar etiqueta ([^"]+)"/g),
     ].map((casamento) => casamento[1]);
@@ -913,7 +911,7 @@ describe("as regras num lead só: os diálogos da linha e da gaveta", () => {
   it("Perdido abre o motivo da perda deste lead, sem gravar nada", () => {
     const html = escolhendo(lead(), PERDIDO);
     expect(texto(html)).toContain("Motivo da perda");
-    expect(texto(html)).toContain("Escolha por que este lead não seguiu.");
+    expect(texto(html)).toContain("Marcar como perdido");
     expect(texto(html)).not.toContain("Mover");
     expect(acoes.mudarEtapaAction).not.toHaveBeenCalled();
   });

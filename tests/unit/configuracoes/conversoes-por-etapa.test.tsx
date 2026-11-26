@@ -81,13 +81,12 @@ describe("ConversoesPorEtapa", () => {
     expect(html).not.toContain('id="conversao-novo-valor"');
   });
 
-  it("explica para que serve e oferece o recomendado com os nomes da clínica", () => {
+  it("oferece o recomendado com os nomes da clínica, sem o parágrafo de explicação", () => {
     const visivel = texto(tela());
+    // 26/11/2026: a descricao do cartao saiu (tela que mostra e nao explica).
+    expect(visivel).not.toContain("aprende quem são as pessoas");
     expect(visivel).toContain(
-      "a Meta recebe esse evento e aprende quem são as pessoas que agendam e comparecem",
-    );
-    expect(visivel).toContain(
-      "Recomendado para começar: Novo interessado (Lead) em Novo, Agendamento (Schedule) em Agendou e Compra (Purchase) em Compareceu, com o preço da consulta. No anúncio que abre o WhatsApp, Lead vai como LeadSubmitted e Schedule como QualifiedLead",
+      "Recomendado para começar: Novo interessado (Lead) em Novo, Agendamento (Schedule) em Agendou e Compra (Purchase) em Compareceu, com o preço da consulta.",
     );
     expect(visivel).toContain("Usar o recomendado");
     expect(visivel).toContain("passo 4");

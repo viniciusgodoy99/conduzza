@@ -30,25 +30,22 @@ import {
 const COPY = {
   confirmacao: {
     aba: "Confirmação",
-    descricao:
-      "Mensagens automáticas antes da consulta, com os botões Confirmar, Remarcar e Cancelar.",
+    descricao: "Antes da consulta.",
     ligar: "Ligar a régua de confirmação",
     ligada: "Régua ligada",
     desligada: "Régua desligada",
-    descricaoDosPassos:
-      "Os campos entre chaves são preenchidos com os dados da consulta na hora do envio.",
-    vazio: "Esta clínica ainda não tem a régua de confirmação configurada.",
+    descricaoDosPassos: null,
+    vazio: "Régua de confirmação não configurada.",
   },
   pos_falta: {
     aba: "Depois da falta",
-    descricao:
-      "Mensagens depois de uma falta, para trazer o paciente de volta à agenda.",
+    descricao: "Depois de uma falta.",
     ligar: "Ligar a régua de recuperação depois da falta",
     ligada: "Recuperação ligada",
     desligada: "Recuperação desligada",
     // A falta so se marca na Agenda (achado 64): a Tela 2 nao tem esse botao.
-    descricaoDosPassos: "Saem só para quem foi marcado como falta na Agenda.",
-    vazio: "Esta clínica ainda não tem a régua de recuperação configurada.",
+    descricaoDosPassos: "Só para quem teve a falta marcada na Agenda.",
+    vazio: "Régua de recuperação não configurada.",
   },
 } as const;
 
@@ -153,9 +150,11 @@ export function PainelRegua({
                     <ArrowUpRight className="size-3.5" aria-hidden />
                   </Link>
                 </div>
-                <p className="text-xs text-text-secondary">
-                  {copy.descricaoDosPassos}
-                </p>
+                {copy.descricaoDosPassos ? (
+                  <p className="text-xs text-text-secondary">
+                    {copy.descricaoDosPassos}
+                  </p>
+                ) : null}
               </div>
               {regua.passos.map((passo) => (
                 <article

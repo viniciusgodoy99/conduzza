@@ -184,17 +184,13 @@ function aba(props: Partial<React.ComponentProps<typeof AbaFluxo>>) {
 }
 
 describe("aba Automações de fluxo", () => {
-  it("vazio explica com exemplo e oferece criar", () => {
+  it("vazio: a frase curta e o criar", () => {
     const html = aba({ automacoes: [] });
     expect(html).toContain("Nenhuma automação de fluxo ainda");
     expect(html).toContain("Criar a primeira");
     expect(html).toContain("Nova automação");
     // Onda 3 (21/10/2026): em Aguardando resposta e o lead que espera a
-    // equipe, e a automacao dispara tambem na entrada pela IA (decisao D4).
-    // O exemplo nao sugere mais perder quem espera a clinica.
-    expect(html).toContain(
-      "Por exemplo: quem entrou em Aguardando resposta ganha uma atividade de responder, ou quem ficou 3 dias sem responder em Em contato vai para Perdido.",
-    );
+    // equipe; nada na tela sugere perder quem espera a clinica.
     expect(html).not.toContain(
       "sem responder em Aguardando resposta vai para Perdido",
     );
@@ -228,7 +224,7 @@ describe("aba Automações de fluxo", () => {
     expect(html.match(/Se: /g)).toHaveLength(1);
   });
 
-  it("avisos fixos e o atalho para o follow-up", () => {
+  it("avisos fixos na dica do título e o atalho para o follow-up", () => {
     const html = aba({});
     expect(html).toContain("paciente nunca é movido por automação");
     expect(html).toContain("Agendou e Compareceu não são destino");
@@ -239,8 +235,10 @@ describe("aba Automações de fluxo", () => {
     );
     // O follow-up e outra aba desta mesma tela: o atalho so troca a aba.
     expect(html).toContain(
-      "A mensagem para o paciente ao entrar na etapa fica no Follow-up de leads, nesta mesma tela",
+      "Mensagem para o paciente ao entrar na etapa fica no Follow-up de leads.",
     );
+    // Os avisos ficam na dica do titulo (26/11/2026), lidos pelo leitor de tela.
+    expect(html).toContain('aria-label="Ajuda: Como as automações de fluxo funcionam"');
     expect(html).toContain('href="/automacoes?aba=followup"');
     expect(html).toContain("Abrir o follow-up");
     expect(html).not.toContain("/configuracoes");

@@ -414,16 +414,15 @@ describe("o formulário da origem", () => {
     expect(visivel).toContain("Canal");
     expect(visivel).toContain("Origem (opcional)");
     expect(visivel).toContain("Detalhe (opcional)");
-    expect(visivel).toContain(
-      "Aparece em Resultados, em Campanhas, como campanha fora da Meta.",
-    );
+    expect(visivel).toContain("Aparece em Resultados, Campanhas");
     expect(visivel).toContain("Mensagem pronta do link");
     expect(visivel).toContain(
-      "Copie exatamente o texto que aparece escrito no WhatsApp quando a pessoa toca no link.",
+      "O texto exato que o link deixa escrito no WhatsApp",
     );
     expect(visivel).toContain("Palavras-chave (opcional)");
+    // O aviso da palavra-chave fica (evita origem errada para sempre).
     expect(visivel).toContain(
-      "A palavra-chave vale para qualquer primeira mensagem que a tenha, e a origem gravada não muda depois. Evite palavras comuns como consulta ou agendar.",
+      "Evite palavras comuns, como consulta ou agendar: a origem gravada não muda depois.",
     );
     expect(visivel).toContain("Pôr um código no link");
     expect(html).toMatch(/role="checkbox"[^>]*aria-checked="true"/);
@@ -499,9 +498,7 @@ describe("a aba na tela de Configurações", () => {
     expect(texto(selecionada).trim()).toBe("Anúncios e rastreio");
     // O passo a passo conta as origens no chip do passo 6.
     expect(texto(html)).toContain("2 origens");
-    expect(html).toContain(
-      "Quando o lead chega por um link da clínica (a bio do Instagram, o perfil no Google, um QR code, um parceiro)",
-    );
+    expect(texto(html)).toContain("Origens cadastradas");
   });
 
   it("a falha da aba não derruba a tela", () => {

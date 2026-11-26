@@ -373,10 +373,7 @@ function CartaoDoHorario({
   return (
     <Card role="region" aria-labelledby="agente-horario-titulo">
       <CardHeader>
-        <div className="grid min-w-0 gap-[3px]">
-          <CardTitle id="agente-horario-titulo">{T.horarioTitulo}</CardTitle>
-          <CardDescription>{T.horarioDescricao}</CardDescription>
-        </div>
+        <CardTitle id="agente-horario-titulo">{T.horarioTitulo}</CardTitle>
       </CardHeader>
       <CardContent>
         <Form {...form}>
@@ -453,8 +450,7 @@ function CartaoDoHorario({
                       </FormControl>
                       <FormDescription>
                         De {MINUTOS_SEM_RESPOSTA.minimo} a{" "}
-                        {MINUTOS_SEM_RESPOSTA.maximo} minutos. Conversa que a
-                        equipe assumiu nunca volta para o assistente.
+                        {MINUTOS_SEM_RESPOSTA.maximo} minutos.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>

@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 // no meio da tela.
 function BlocoEsqueleto({ children }: { children: React.ReactNode }) {
   return (
-    <div className="overflow-hidden rounded-card border border-border bg-card shadow-sm">
+    <div className="overflow-hidden rounded-card border border-border bg-card">
       <div className="flex min-h-[52px] items-center border-b border-border px-4">
         <Skeleton className="h-4 w-28" />
       </div>

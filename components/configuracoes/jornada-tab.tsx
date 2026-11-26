@@ -20,6 +20,7 @@ import {
   reordenarEtapaDaJornadaAction,
   salvarEtapaDaJornadaAction,
 } from "@/app/(app)/configuracoes/actions";
+import { DicaDeAjuda } from "@/components/shared/dica-de-ajuda";
 import { Aviso } from "@/components/shared/aviso";
 import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
@@ -28,8 +29,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardAction,
-  CardContent,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -61,7 +60,6 @@ import {
   etapaDeSistema,
   normalizarDescricaoDaEtapa,
   resumoDosTermos,
-  rodapeDaJornada,
   trocaDeOrdemPermitida,
   type EtapaDaJornada,
   type PapelDeEtapa,
@@ -80,9 +78,10 @@ import { centavosParaReais, reaisParaCentavos } from "@/lib/utils/moeda";
 // mudava numero nenhum (a coluna continua no banco, intocada).
 //
 // Papel de sistema (entrada, aguardando, em_contato, agendou, compareceu,
-// perdido) aparece com cadeado e explicacao: renomeia e reordena, nunca
-// exclui. Quem garante isso e gatilho no banco; a tela so evita oferecer o
-// que vai ser recusado. Aguardando resposta e Em contato viraram etapas de
+// perdido) aparece com o chip de cadeado, e a explicacao fica na dica dele
+// (26/11/2026: tela que mostra e nao explica; o rodape com a mesma regra
+// saiu): renomeia e reordena, nunca exclui. Quem garante isso e gatilho no
+// banco; a tela so evita oferecer o que vai ser recusado. Aguardando resposta e Em contato viraram etapas de
 // sistema na onda 3 (21/10/2026, migration 20261023100000); antes dela as
 // duas chegam sem papel e a tela as trata como livres (sem cadeado, com
 // Excluir), menos na ordem: Em contato ja nao passa de Novo nem de Agendou
@@ -139,18 +138,27 @@ const TONS: { valor: StatusTone; rotulo: string }[] = [
   { valor: "alert", rotulo: "Vermelho (alerta)" },
 ];
 
-// Um texto por papel: o Record fechado faz o typecheck cobrar o texto de
-// todo papel novo.
+// A dica do chip "Sistema", uma por papel: o Record fechado faz o typecheck
+// cobrar o texto de todo papel novo.
 const PAPEL_EXPLICADO: Record<PapelDeEtapa, string> = {
-  entrada: "Etapa de sistema: todo contato novo nasce aqui.",
-  aguardando:
-    "Etapa de sistema: quando a IA passa a conversa de um lead novo para a equipe, o lead vem para cá.",
+  entrada: "Etapa do sistema: todo contato novo entra aqui",
+  aguardando: "Etapa do sistema: lead novo que a IA passou para a equipe",
   em_contato:
-    "Etapa de sistema: quando a equipe assume, inicia, passa para um colega ou reabre a conversa de um lead novo ou que aguarda resposta, o lead vem para cá.",
-  agendou: "Etapa de sistema: criar um agendamento move o contato para cá.",
-  compareceu: "Etapa de sistema: comparecer à consulta move o contato para cá.",
-  perdido: "Etapa de sistema: marcar como perdido exige o motivo.",
+    "Etapa do sistema: lead que a equipe assumiu, iniciou, passou ou reabriu",
+  agendou: "Etapa do sistema: o contato vem para cá ao agendar",
+  compareceu: "Etapa do sistema: o contato vem para cá ao comparecer",
+  perdido: "Etapa do sistema: marcar como perdido pede o motivo",
 };
+
+/** Sem papel conhecido (cache velho), a dica generica. */
+const DICA_DE_SISTEMA = "Etapa do sistema";
+
+/**
+ * A dica da marca de venda (Venda pela Jornada, decisao do dono de
+ * 23/11/2026): conta em Resultados a partir de quando a etapa esta marcada.
+ */
+const AJUDA_DA_VENDA =
+  "A marca de venda conta em Resultados a partir de quando a etapa está marcada: cada entrada de um contato nela é uma venda, com este valor";
 
 /** O passo da conversao por etapa (Anuncios e rastreio), desde 24/11/2026. */
 const LINK_DAS_CONVERSOES = "/configuracoes?aba=rastreio&passo=conversoes";
@@ -345,22 +353,17 @@ export function JornadaTab({
           )}
         </CardAction>
       </CardHeader>
-      <CardContent className="grid gap-2">
+      <div className="divide-y divide-border">
         {jornada.length === 0 && editando !== CRIANDO ? (
-          <EmptyState
-            compact
-            icon={Route}
-            title="Nenhuma etapa na jornada"
-            description="Crie a primeira etapa para acompanhar o caminho do contato até a consulta."
-          />
+          <EmptyState compact icon={Route} title="Nenhuma etapa na jornada" />
         ) : null}
 
         {jornada.map((etapa, indice) => {
           const aberta = editando === etapa.chave;
-          // Papel fora do catalogo (cache velho) fica sem frase, nunca quebra.
+          // Papel fora do catalogo (cache velho) fica com a dica generica.
           const explicacao = etapa.papel
-            ? (PAPEL_EXPLICADO[etapa.papel] ?? null)
-            : null;
+            ? (PAPEL_EXPLICADO[etapa.papel] ?? DICA_DE_SISTEMA)
+            : DICA_DE_SISTEMA;
           const conversao = chipDaConversao(etapa);
           // Uma seta por direcao. Sem permissao, as duas vao juntas na dica
           // de permissao (abaixo); com permissao, a seta que trocaria duas
@@ -410,9 +413,7 @@ export function JornadaTab({
             <article
               key={etapa.chave}
               className={
-                aberta
-                  ? "grid gap-3 rounded-xl border border-border bg-card p-4 shadow-xs"
-                  : "grid gap-1.5 rounded-md bg-surface-4 px-3 py-2"
+                aberta ? "grid gap-3 px-4 py-3" : "grid gap-1 px-4 py-2"
               }
             >
               <div className="flex flex-wrap items-center gap-2">
@@ -424,7 +425,9 @@ export function JornadaTab({
                 </span>
                 <StatusChip definition={definicaoDaEtapa(etapa)} />
                 {etapaDeSistema(etapa) ? (
-                  <StatusChip size="sm" definition={ETAPA_DE_SISTEMA} />
+                  <DicaDeAjuda texto={explicacao}>
+                    <StatusChip size="sm" definition={ETAPA_DE_SISTEMA} />
+                  </DicaDeAjuda>
                 ) : null}
                 <StatusChip
                   size="sm"
@@ -458,15 +461,8 @@ export function JornadaTab({
                 </div>
               </div>
 
-              {explicacao ? (
-                <p className="pl-7 text-xs text-text-secondary">{explicacao}</p>
-              ) : null}
-
               {etapa.descricao && !aberta ? (
                 <p className="pl-7 text-xs break-words text-text-secondary">
-                  <span className="font-semibold text-text-strong">
-                    No Kanban:
-                  </span>{" "}
                   {etapa.descricao}
                 </p>
               ) : null}
@@ -490,7 +486,7 @@ export function JornadaTab({
         })}
 
         {editando === CRIANDO ? (
-          <article className="grid gap-3 rounded-xl border border-border bg-card p-4 shadow-xs">
+          <article className="grid gap-3 px-4 py-3">
             <p className="text-sm font-bold text-text-strong">Nova etapa</p>
             <FormularioDaEtapa
               etapa={null}
@@ -504,14 +500,7 @@ export function JornadaTab({
             />
           </article>
         ) : null}
-      </CardContent>
-      <CardFooter>
-        {/* Com os nomes da clinica: quais sao as etapas de sistema e o que e
-            fixo nelas (rodapeDaJornada, testado em unidade). */}
-        <p className="text-xs text-text-secondary">
-          {rodapeDaJornada(jornada)}
-        </p>
-      </CardFooter>
+      </div>
     </Card>
   );
 }
@@ -632,7 +621,7 @@ function FormularioDaEtapa({
       <div className="grid gap-1.5">
         <div className="flex flex-wrap items-baseline justify-between gap-x-3">
           <Label htmlFor={`descricao-${id}`}>
-            Descrição (aparece no Kanban)
+            Descrição no Kanban (opcional)
           </Label>
           <span
             id={`descricao-contador-${id}`}
@@ -653,27 +642,26 @@ function FormularioDaEtapa({
           maxLength={LIMITE_DA_DESCRICAO}
           rows={2}
           placeholder="Por exemplo: pediu o valor e ainda não marcou a consulta"
-          aria-describedby={`descricao-ajuda-${id} descricao-contador-${id}`}
+          aria-describedby={`descricao-contador-${id}`}
           className="min-h-10"
         />
-        <p id={`descricao-ajuda-${id}`} className="text-xs text-text-secondary">
-          Opcional. Aparece abaixo do nome da coluna, em até duas linhas, e o
-          texto inteiro fica na dica.
-        </p>
       </div>
 
       {/* A etapa de perda nao recebe termo: palavra solta nao perde ninguem
           (a decisao pura em lib/domain/jornada.ts ignora termos dela). */}
       {etapa?.papel === "perdido" ? null : (
         <div className="grid gap-1.5">
-          <Label htmlFor={`termo-${id}`}>
-            Termos que movem o contato para cá
-          </Label>
-          <p className="text-xs text-text-secondary">
-            {ajudaDosTermos(rascunho.termosDeQuem)}
-          </p>
+          <div className="flex items-center gap-1.5">
+            <Label htmlFor={`termo-${id}`}>
+              Termos que movem o contato para cá
+            </Label>
+            <DicaDeAjuda texto={ajudaDosTermos(rascunho.termosDeQuem)} />
+          </div>
           <div className="grid gap-1.5 pt-1 sm:max-w-sm">
-            <Label htmlFor={`quem-${id}`}>Quem escreve o termo</Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor={`quem-${id}`}>Quem escreve o termo</Label>
+              <DicaDeAjuda texto={AJUDA_QUEM_ESCREVE} />
+            </div>
             <Select
               value={rascunho.termosDeQuem}
               onValueChange={(valor) =>
@@ -683,11 +671,7 @@ function FormularioDaEtapa({
                 }))
               }
             >
-              <SelectTrigger
-                id={`quem-${id}`}
-                className="min-h-10"
-                aria-describedby={`quem-ajuda-${id}`}
-              >
+              <SelectTrigger id={`quem-${id}`} className="min-h-10">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -698,9 +682,6 @@ function FormularioDaEtapa({
                 ))}
               </SelectContent>
             </Select>
-            <p id={`quem-ajuda-${id}`} className="text-xs text-text-secondary">
-              {AJUDA_QUEM_ESCREVE}
-            </p>
           </div>
           {rascunho.termos.length > 0 ? (
             <div className="flex flex-wrap gap-2.5">
@@ -731,8 +712,7 @@ function FormularioDaEtapa({
           ) : null}
           {rascunho.termos.length >= MAXIMO_DE_TERMOS ? (
             <p className="text-xs text-text-secondary">
-              Esta etapa chegou ao máximo de {MAXIMO_DE_TERMOS} termos. Remova
-              um para adicionar outro.
+              Máximo de {MAXIMO_DE_TERMOS} termos
             </p>
           ) : (
             <div className="flex gap-2">
@@ -751,7 +731,7 @@ function FormularioDaEtapa({
                     adicionarTermo();
                   }
                 }}
-                placeholder="Digite e aperte Enter para adicionar"
+                placeholder="Novo termo"
                 maxLength={40}
                 className="h-10 max-w-xs"
               />
@@ -771,8 +751,7 @@ function FormularioDaEtapa({
       {/* A etapa de perda nao e venda nem conversao (o check
           perdido_sem_conversao recusa o evento): a tela nem oferece. */}
       {etapa?.papel === "perdido" ? null : (
-        <div className="grid gap-3 rounded-xl bg-surface-4 p-3.5">
-          <p className="text-[13px] font-bold text-text-strong">Venda</p>
+        <div className="grid gap-3 border-t border-border pt-4">
           <div className="flex min-h-10 items-center gap-2.5">
             <Checkbox
               id={`venda-${id}`}
@@ -785,6 +764,8 @@ function FormularioDaEtapa({
               }
             />
             <Label htmlFor={`venda-${id}`}>Esta etapa é uma venda</Label>
+            {/* Venda pela Jornada (decisao do dono de 23/11/2026). */}
+            <DicaDeAjuda texto={AJUDA_DA_VENDA} />
           </div>
           {rascunho.ehVenda ? (
             <div className="grid gap-1.5 sm:max-w-sm">
@@ -824,29 +805,15 @@ function FormularioDaEtapa({
               ) : null}
             </div>
           ) : null}
-          {/* Venda pela Jornada (decisao do dono de 23/11/2026). */}
-          <p className="text-[11px] text-text-secondary">
-            A marca de venda conta em Resultados (Vendas e Valor das vendas, na
-            aba Comercial) a partir de quando a etapa está marcada: cada entrada
-            de um contato nela é uma venda, com este valor. O faturamento
-            estimado continua vindo das consultas com comparecimento. O mesmo
-            valor vai junto com a conversão para os anúncios.
-          </p>
           <p className="text-xs text-text-secondary">
-            <span className="font-semibold text-text-strong">Anúncios:</span>{" "}
-            {!etapa
-              ? "depois de criar a etapa, escolha o que ela envia em"
-              : etapa.meta_event_name
-                ? `esta etapa envia ${rotuloDoEvento(etapa.meta_event_name)}${etapa.conversao_ativa ? "" : " (pausada)"}. Para mudar, abra`
-                : "esta etapa não envia nada. Para escolher, abra"}{" "}
+            Conversão nos anúncios:{" "}
             <Link
               href={LINK_DAS_CONVERSOES}
               prefetch={false}
               className="font-semibold text-primary-text underline underline-offset-2"
             >
-              Anúncios e rastreio, Conversões por etapa
+              Conversões por etapa
             </Link>
-            .
           </p>
         </div>
       )}

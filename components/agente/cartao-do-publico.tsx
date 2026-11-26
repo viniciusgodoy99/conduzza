@@ -7,6 +7,7 @@ import {
   useAvisarNaoSalvo,
   type AvisarNaoSalvo,
 } from "@/components/agente/nao-salvo";
+import { Ajuda } from "@/components/agente/ajuda";
 import { TEXTOS_DO_AGENTE as T } from "@/components/agente/textos";
 import type { RetornoDaAcao } from "@/components/agente/tipos";
 import { Aviso } from "@/components/shared/aviso";
@@ -15,7 +16,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -105,11 +105,11 @@ export function CartaoDoPublico({
   return (
     <Card role="region" aria-labelledby="agente-publico-titulo">
       <CardHeader>
-        <div className="grid min-w-0 gap-[3px]">
+        <div className="flex min-w-0 items-center gap-1">
           <CardTitle id="agente-publico-titulo">
             {ROTULO_DO_CAMPO_PUBLICO}
           </CardTitle>
-          <CardDescription>{T.publicoDescricao}</CardDescription>
+          <Ajuda rotulo={ROTULO_DO_CAMPO_PUBLICO} texto={T.publicoDescricao} />
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">

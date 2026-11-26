@@ -479,14 +479,12 @@ function ConteudoDoDialogo({
           ) : null}
           {pedido.tipo === "agendar" && pedido.comAnexo ? (
             <Aviso tom="info" role="note">
-              Só o texto é agendado. O arquivo anexado continua aqui para enviar
-              agora.
+              Só o texto é agendado, sem o anexo.
             </Aviso>
           ) : null}
           {quaseSaindo ? (
             <Aviso tom="warning" role="note">
-              Esta mensagem sai em instantes. Se ela começar a sair antes de
-              você salvar, a mudança não vale.
+              Sai em instantes. Se sair antes de salvar, a mudança não vale.
             </Aviso>
           ) : null}
 

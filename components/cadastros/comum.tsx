@@ -389,14 +389,12 @@ export function useFocoDeVoltaAoSalvar(
 export function VazioDaAba({
   icon,
   titulo,
-  descricao,
   acao,
   podeEditar,
   dica,
 }: {
   icon: LucideIcon;
   titulo: string;
-  descricao: string;
   acao?: {
     rotulo: string;
     onClick: () => void;
@@ -407,7 +405,7 @@ export function VazioDaAba({
 }) {
   return (
     <Card>
-      <EmptyState icon={icon} title={titulo} description={descricao}>
+      <EmptyState icon={icon} title={titulo}>
         {acao ? (
           <BotaoProtegido
             podeEditar={podeEditar}
@@ -570,8 +568,7 @@ export function AvisoDeConsultas({
                 A primeira é em <span className="cz-num">{quando}</span>.{" "}
               </>
             ) : null}
-            Esta ação não desmarca nada: as consultas continuam valendo e os
-            lembretes continuam saindo para os pacientes.
+            Esta ação não desmarca nada e os lembretes continuam saindo.
           </p>
         ) : null}
         <div className="mt-3 flex flex-wrap items-center gap-2">

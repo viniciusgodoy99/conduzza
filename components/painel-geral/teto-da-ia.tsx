@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Wallet } from "lucide-react";
+import { Check } from "lucide-react";
 import { useId, useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -128,18 +128,8 @@ export function TetoDaIa({
   return (
     <Card role="region" aria-labelledby={`${ids}-titulo`}>
       <CardHeader>
-        <div className="flex min-w-0 items-center gap-3">
-          <span
-            aria-hidden
-            className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-3"
-          >
-            <Wallet className="size-5 text-text-strong" />
-          </span>
-          <div className="grid min-w-0 gap-[3px]">
-            <CardTitle id={`${ids}-titulo`}>Teto de gasto</CardTitle>
-            <CardDescription>{TEXTOS_DO_PAINEL.tetoExplicacao}</CardDescription>
-          </div>
-        </div>
+        <CardTitle id={`${ids}-titulo`}>Teto de gasto</CardTitle>
+        <CardDescription>{TEXTOS_DO_PAINEL.tetoExplicacao}</CardDescription>
       </CardHeader>
       <CardContent>
         <form noValidate onSubmit={salvar} className="grid gap-4">
@@ -189,19 +179,19 @@ export function TetoDaIa({
                 setErros((atuais) => ({ ...atuais, respostas: undefined }));
               }}
               aria-invalid={erros.respostas ? true : undefined}
-              aria-describedby={`${ids}-respostas-apoio`}
+              aria-describedby={
+                erros.respostas ? `${ids}-respostas-erro` : undefined
+              }
               disabled={desabilitado || pendente}
             />
-            <p
-              id={`${ids}-respostas-apoio`}
-              className={
-                erros.respostas
-                  ? "text-[12px] text-alert-text"
-                  : "text-[12px] text-text-secondary"
-              }
-            >
-              {erros.respostas ?? TEXTOS_DO_PAINEL.respostasExplicacao}
-            </p>
+            {erros.respostas ? (
+              <p
+                id={`${ids}-respostas-erro`}
+                className="text-[12px] text-alert-text"
+              >
+                {erros.respostas}
+              </p>
+            ) : null}
           </div>
           <div aria-live="polite" aria-atomic="true">
             {erros.geral ? (

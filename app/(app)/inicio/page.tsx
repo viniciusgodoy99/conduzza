@@ -193,8 +193,8 @@ export default async function InicioPage() {
           <Card>
             <EmptyState
               icon={TrendingUp}
-              title="Seu usuário ainda não está ligado a um profissional da agenda"
-              description="Peça para a administração vincular, e os seus resultados aparecem aqui."
+              title="Seu usuário não está ligado a um profissional da agenda"
+              description="Peça o vínculo à administração."
             />
           </Card>
         )}
@@ -303,19 +303,16 @@ export default async function InicioPage() {
       chave: "whatsapp",
       concluido: conectado,
       titulo: "Conectar o WhatsApp da clínica",
-      // Com um numero, o texto de sempre. Com varios, quantos estao
-      // conectados: a faixa do topo ja nomeia o que caiu.
-      descricao: !conectado ? (
-        "Sem isso, nenhuma mensagem de paciente chega até aqui."
-      ) : statusDosNumeros.length <= 1 ? (
-        "O número está conectado e recebendo mensagens."
-      ) : (
-        <>
-          <span className="cz-num">{numerosConectados}</span> de{" "}
-          <span className="cz-num">{statusDosNumeros.length}</span> números
-          conectados e recebendo mensagens.
-        </>
-      ),
+      // Com varios numeros, quantos estao conectados: a faixa do topo ja
+      // nomeia o que caiu. Com um, o chip de estado basta.
+      descricao:
+        conectado && statusDosNumeros.length > 1 ? (
+          <>
+            <span className="cz-num">{numerosConectados}</span> de{" "}
+            <span className="cz-num">{statusDosNumeros.length}</span> números
+            conectados
+          </>
+        ) : undefined,
       acao: conectado
         ? undefined
         : {
@@ -331,18 +328,15 @@ export default async function InicioPage() {
       descricao:
         totalEquipe > 1 ? (
           <>
-            <span className="cz-num">{totalEquipe}</span> pessoas com acesso à
-            clínica.
+            <span className="cz-num">{totalEquipe}</span> pessoas com acesso
           </>
         ) : pedidosDeAcesso > 0 ? (
           <>
             <span className="cz-num">{pedidosDeAcesso}</span>{" "}
             {pedidosDeAcesso === 1 ? "pessoa aguardando" : "pessoas aguardando"}{" "}
-            liberação de acesso.
+            liberação de acesso
           </>
-        ) : (
-          "Convide a recepção por e-mail ou passe o código da clínica."
-        ),
+        ) : undefined,
       acao: {
         rotulo: "Gerenciar equipe",
         href: "/configuracoes?aba=equipe",
@@ -360,11 +354,9 @@ export default async function InicioPage() {
         totalConversas > 0 ? (
           <>
             <span className="cz-num">{totalConversas}</span> conversa
-            {totalConversas > 1 ? "s" : ""} no atendimento.
+            {totalConversas > 1 ? "s" : ""} no atendimento
           </>
-        ) : (
-          "Quando um paciente escrever, a conversa aparece no Atendimento na hora."
-        ),
+        ) : undefined,
       acao: { rotulo: "Abrir Atendimento", href: "/atendimento" },
     },
   ];

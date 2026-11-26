@@ -239,10 +239,10 @@ export function ConversationCard({
       // [AG6 urgência] A dica do chip "Urgente" (escondida, so a descricao).
       aria-describedby={urgente ? idDaDica : undefined}
       className={cn(
-        "grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2.5 border-b border-l-2 border-b-border px-3.5 py-[11px] text-left cz-transition focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid",
+        "grid w-full grid-cols-[auto_minmax(0,1fr)] gap-2.5 border-b border-b-border px-3.5 py-[11px] text-left cz-transition focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid",
         selected
-          ? "border-l-primary-edge bg-primary-soft"
-          : "border-l-transparent bg-card hover:bg-surface-subtle",
+          ? "bg-primary-soft"
+          : "bg-card hover:bg-surface-subtle",
       )}
     >
       <ContactAvatar

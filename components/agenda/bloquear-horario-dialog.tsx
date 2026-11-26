@@ -212,8 +212,7 @@ export function BloquearHorarioDialog({
         <DialogHeader>
           <DialogTitle>{titulo}</DialogTitle>
           <DialogDescription>
-            O período aparece hachurado na agenda e os horários somem da oferta.
-            Consultas já marcadas nele não são desmarcadas.
+            Consultas já marcadas no período não são desmarcadas.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
@@ -257,7 +256,6 @@ export function BloquearHorarioDialog({
           <CampoDeMarcar
             id="bloqueio-dia-inteiro"
             rotulo="Dia inteiro"
-            descricao="Bloqueia de 00:00 do primeiro dia até o fim do último."
             marcado={form.diaInteiro}
             aoMudar={(marcado) => setForm({ ...form, diaInteiro: marcado })}
           />
@@ -355,7 +353,6 @@ export function BloquearHorarioDialog({
           <CampoDeMarcar
             id="bloqueio-encaixe"
             rotulo="Impedir encaixe neste período"
-            descricao="Desmarcado, a recepção ainda consegue marcar um encaixe em cima do bloqueio."
             marcado={form.impedirEncaixe}
             aoMudar={(marcado) => setForm({ ...form, impedirEncaixe: marcado })}
           />
@@ -444,8 +441,7 @@ function AvisoDeConsultasNoPeriodo({
             A primeira é em <span className="cz-num">{quando}</span>.{" "}
           </>
         ) : null}
-        O bloqueio não desmarca nada: as consultas continuam valendo e os
-        lembretes continuam saindo para os pacientes.
+        Elas continuam valendo e os lembretes continuam saindo.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {aoIrParaODia ? (

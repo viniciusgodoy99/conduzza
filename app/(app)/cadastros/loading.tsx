@@ -12,11 +12,7 @@ export default function CarregandoCadastros() {
       className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
       aria-hidden
     >
-      <div className="grid gap-2">
-        <Skeleton className="h-2.5 w-24" />
-        <Skeleton className="h-7 w-40" />
-        <Skeleton className="h-4 w-96 max-w-full" />
-      </div>
+      <Skeleton className="h-7 w-40" />
       <div className="flex gap-1 overflow-hidden border-b border-border">
         {ABAS_DE_CADASTROS.map(([chave]) => (
           <div key={chave} className="flex h-10 shrink-0 items-center px-3">

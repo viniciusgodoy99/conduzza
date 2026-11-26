@@ -181,12 +181,13 @@ function botaoSalvar(html: string): string {
 // ---------------------------------------------------------------------------
 
 describe("cartão Para quem vai a conversa", () => {
-  it("título, descrição, as duas opções e a ajuda do desenho", () => {
+  it("título, as duas opções e a ajuda do desenho (no ?, sem descrição)", () => {
     const html = passagem();
     const lido = texto(html);
     expect(html).toContain('aria-labelledby="agente-passagem-titulo"');
     expect(lido).toContain("Para quem vai a conversa");
-    expect(lido).toContain(TEXTOS_DA_PASSAGEM.descricao);
+    expect(lido).not.toContain("Salvo no rascunho, vale ao publicar.");
+    expect(html).toContain('aria-label="Ajuda: Para quem vai a conversa"');
     expect(lido).toContain("Para a fila (Sem atendente)");
     expect(lido).toContain("Para o responsável do lead, quando houver");
     expect(lido).toContain(TEXTOS_DA_PASSAGEM.ajuda);
@@ -196,9 +197,6 @@ describe("cartão Para quem vai a conversa", () => {
   });
 
   it("os textos acompanham a atribuição depois da frase de sempre (revisão da AG6a)", () => {
-    expect(TEXTOS_DA_PASSAGEM.descricao).toBe(
-      "Salvo no rascunho, vale ao publicar. Conta quando o assistente passa a conversa para a equipe com a frase de sempre.",
-    );
     expect(TEXTOS_DA_PASSAGEM.opcoes.responsavel_do_lead.descricao).toBe(
       "Logo depois da frase de sempre, a conversa passa para o responsável, em atendimento, em Minhas, com um aviso na tela.",
     );
@@ -212,12 +210,7 @@ describe("cartão Para quem vai a conversa", () => {
     expect(
       TEXTOS_DA_PASSAGEM.opcoes.responsavel_do_lead.descricao,
     ).not.toContain("já fica");
-    expect(TEXTOS_DA_PASSAGEM.descricao).not.toContain("o contato recebe");
-    expect(TEXTOS_DA_PASSAGEM.descricao).not.toContain("frase fixa");
-    // Revisao curta: sem o "vale ao publicar. Vale quando" repetido.
-    expect(TEXTOS_DA_PASSAGEM.descricao.match(/\bvale\b/gi)).toHaveLength(1);
     const lido = texto(passagem());
-    expect(lido).toContain(TEXTOS_DA_PASSAGEM.descricao);
     expect(lido).toContain(
       TEXTOS_DA_PASSAGEM.opcoes.responsavel_do_lead.descricao,
     );
@@ -288,10 +281,11 @@ describe("cartão Para quem vai a conversa", () => {
     const html = passagem();
     const grupo = /<div role="radiogroup"[^>]*>/.exec(html)?.[0] ?? "";
     expect(grupo).toContain('aria-describedby="agente-passagem-ajuda"');
+    // O texto escondido da ajuda (o "?" do titulo) leva o id.
     expect(html).toMatch(
-      /<p id="agente-passagem-ajuda"[^>]*>[^<]*Se alguém assumir antes/,
+      /<span id="agente-passagem-ajuda" class="sr-only">[^<]*Se alguém assumir antes/,
     );
-    // So um paragrafo com o id na tela.
+    // So um texto com o id na tela.
     expect(html.match(/id="agente-passagem-ajuda"/g)).toHaveLength(1);
     // Travado (recepcao), a ajuda continua ligada ao grupo.
     const travado = passagem({ podeEditar: false, dica: DICA_RECEPCAO });
@@ -337,11 +331,8 @@ describe("cartão Para quem vai a conversa", () => {
     expect(texto(html)).toContain("Para o responsável do lead, quando houver");
   });
 
-  it("o ladrilho é decorativo (UserRoundCheck, escondido do leitor de tela)", () => {
-    const html = passagem();
-    expect(html).toMatch(
-      /<span aria-hidden="true"[^>]*><svg[^>]*lucide-user-round-check/,
-    );
+  it("sem ladrilho no cabeçalho (pedido do dono de 26/11/2026)", () => {
+    expect(passagem()).not.toContain("lucide-user-round-check");
   });
 
   it("o não salvo do cartão conta como o do público (mesma aba, descartar remonta os dois)", () => {
@@ -367,20 +358,20 @@ describe("cartão Urgência", () => {
     expect(lido).toContain(
       "Quando a pessoa descreve algo que pode ser uma emergência, a conversa passa para a equipe marcada como Urgente, no topo do Atendimento.",
     );
+    // A marca fica no "?" do titulo, com o texto escondido.
     expect(lido).toContain(TEXTOS_DA_URGENCIA.marca);
+    expect(html).toContain('aria-label="Ajuda: Urgência"');
     expect(html).toContain("lucide-bell-ring");
     expect(lido).toContain("Urgente");
-    // Nada para ligar nem salvar: sem botao, sem chave, sem campo.
-    expect(html).not.toContain("<button");
+    // Nada para ligar nem salvar: so o botao da ajuda, sem chave, sem campo.
+    expect(html.match(/<button/g)).toHaveLength(1);
     expect(html).not.toContain('role="switch"');
     expect(html).not.toContain("<input");
   });
 
-  it("o ladrilho é decorativo (LifeBuoy, escondido do leitor de tela)", () => {
+  it("sem ladrilho no cabeçalho (pedido do dono de 26/11/2026)", () => {
     const html = renderToStaticMarkup(<CartaoDaUrgencia />);
-    expect(html).toMatch(
-      /<span aria-hidden="true"[^>]*><svg[^>]*lucide-life-buoy/,
-    );
+    expect(html).not.toContain("lucide-life-buoy");
   });
 });
 

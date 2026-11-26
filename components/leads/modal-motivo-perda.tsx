@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -121,32 +120,29 @@ export function ModalMotivoPerda({
     >
       <DialogContent
         className="sm:max-w-[420px]"
+        aria-describedby={undefined}
         showCloseButton={!salvando}
         onCloseAutoFocus={aoDevolverFoco}
       >
         <DialogHeader>
-          <DialogTitle>Motivo da perda</DialogTitle>
-          <DialogDescription>
+          <DialogTitle>
+            Motivo da perda
             {alvo.length > 1 ? (
               <>
-                Escolha por que estes{" "}
-                <span className="cz-num">{alvo.length}</span> leads não
-                seguiram.
+                {" "}
+                de <span className="cz-num">{alvo.length}</span> leads
               </>
-            ) : (
-              "Escolha por que este lead não seguiu."
-            )}
-          </DialogDescription>
+            ) : null}
+          </DialogTitle>
         </DialogHeader>
         <div role="radiogroup" aria-label="Motivo da perda" className="grid">
           {LOST_REASONS.map((opcao) => (
             <label
               key={opcao.codigo}
               className={cn(
-                "flex min-h-10 cursor-pointer items-center gap-2.5 rounded-lg border-l-2 px-2.5 cz-transition hover:bg-surface-3",
-                motivo === opcao.codigo
-                  ? "border-l-primary-edge bg-primary-soft hover:bg-primary-soft"
-                  : "border-l-transparent",
+                "flex min-h-10 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 cz-transition hover:bg-surface-3",
+                motivo === opcao.codigo &&
+                  "bg-primary-soft hover:bg-primary-soft",
               )}
             >
               <input

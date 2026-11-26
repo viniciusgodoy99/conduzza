@@ -800,10 +800,7 @@ export function AgendamentoModal({
                   />
                 }
               >
-                Ainda não foi definido quem faz cada procedimento, por qual
-                convênio e por qual preço. Defina quem faz cada procedimento em
-                Cadastros &gt; Procedimentos: sem isso a agenda não oferece
-                procedimento.
+                Nenhum procedimento tem quem faz definido.
               </Aviso>
             ) : null}
             <ErroDeCampo mensagem={erros.procedimento} />
@@ -920,9 +917,8 @@ export function AgendamentoModal({
                         />
                       }
                     >
-                      {vinculo?.profissional.name} ainda não tem jornada
-                      cadastrada. Sem ela, a agenda não abre horários. Para
-                      marcar mesmo assim, use o encaixe.
+                      {vinculo?.profissional.name} não tem jornada cadastrada.
+                      Use o encaixe para marcar.
                     </Aviso>
                   ) : semJornadaNoDia ? (
                     <p className="text-sm text-text-secondary">
@@ -969,9 +965,7 @@ export function AgendamentoModal({
                   Enviar confirmação automática
                 </Label>
                 <p className="text-xs text-text-secondary">
-                  Com a régua de confirmação ligada, as mensagens desta consulta
-                  saem nos horários configurados, só para quem autorizou receber
-                  mensagens no WhatsApp. Desligar aqui pula só esta consulta.
+                  Só sai para quem autorizou receber mensagens.
                 </p>
               </div>
               <Switch
@@ -1222,10 +1216,6 @@ function HoraDoEncaixe({
           <StatusChip definition={ENCAIXE} />
         </span>
       </div>
-      <p className="text-xs text-text-secondary">
-        O encaixe pode ficar em cima de outra consulta ou fora da jornada. Só
-        não passa por bloqueio sem encaixe nem por sala ou equipamento ocupado.
-      </p>
       {carregando ? (
         <Skeleton className="h-11 w-full" aria-label="Conferindo o horário" />
       ) : null}
@@ -1238,8 +1228,7 @@ function HoraDoEncaixe({
       {conferencia?.recursoOcupado ? (
         <Aviso tom="alert" role="alert">
           {nomeDoRecurso ? `O recurso ${nomeDoRecurso}` : "O recurso"} está
-          ocupado neste horário. Encaixe não resolve conflito de sala ou
-          equipamento.
+          ocupado neste horário.
         </Aviso>
       ) : null}
       {atencoes.length > 0 ? (
@@ -1326,9 +1315,7 @@ function AutorizacaoDoPaciente({
       </span>
       <p className="text-[13px] text-foreground">
         A confirmação automática não vai sair para este paciente.
-        {revogado
-          ? " Ele pediu para não receber mensagens: só registre de novo se ele autorizou outra vez."
-          : " Se ele autorizou receber mensagens, registre aqui."}
+        {revogado ? " Só registre de novo se ele autorizou outra vez." : null}
       </p>
       <div className="flex flex-wrap gap-2">
         {podeRegistrar ? (
@@ -1637,7 +1624,7 @@ function BuscaPaciente({
     return (
       <div className="grid gap-1.5">
         <Label>Paciente</Label>
-        <div className="flex min-h-10 items-center justify-between gap-2 rounded-lg border border-border-strong bg-card pl-3 shadow-xs">
+        <div className="flex min-h-10 items-center justify-between gap-2 rounded-lg border border-border-strong bg-card pl-3">
           <span className="min-w-0 truncate text-sm font-semibold text-text-strong">
             {paciente.name}
             <span className="ml-2 cz-num text-xs font-normal text-text-secondary">
@@ -1691,7 +1678,7 @@ function BuscaPaciente({
       </div>
 
       {termo.trim().length >= 2 && !criando ? (
-        <div className="overflow-hidden rounded-xl border border-border-strong bg-card shadow-xs">
+        <div className="overflow-hidden rounded-xl border border-border-strong bg-card">
           {buscando ? (
             <div className="grid gap-1.5 p-2">
               <Skeleton className="h-9 w-full" />

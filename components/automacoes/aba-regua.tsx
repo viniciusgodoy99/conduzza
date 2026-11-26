@@ -39,7 +39,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
 } from "@/components/ui/card";
 import {
@@ -90,33 +89,22 @@ const EXCLUSAO_DO_PASSO: Record<
 function Bloco({
   aninhada,
   titulo,
-  descricao,
   acao,
   children,
 }: {
   aninhada: boolean;
   titulo?: string;
-  descricao?: string;
   acao?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const cabecalho = titulo ? (
-    <div className="grid gap-0.5">
-      {aninhada ? (
-        <h3 className="text-sm font-bold">{titulo}</h3>
-      ) : (
-        <h2 className="text-base leading-[1.3] font-bold tracking-[-0.01em]">
-          {titulo}
-        </h2>
-      )}
-      {descricao ? (
-        aninhada ? (
-          <p className="text-xs text-text-secondary">{descricao}</p>
-        ) : (
-          <CardDescription>{descricao}</CardDescription>
-        )
-      ) : null}
-    </div>
+    aninhada ? (
+      <h3 className="text-sm font-bold">{titulo}</h3>
+    ) : (
+      <h2 className="text-base leading-[1.3] font-bold tracking-[-0.01em]">
+        {titulo}
+      </h2>
+    )
   ) : null;
 
   if (aninhada) {
@@ -371,8 +359,7 @@ export function AbaRegua({
 
       <Bloco
         aninhada={aninhada}
-        titulo="As mensagens da régua"
-        descricao="Toque num ponto da linha para editar a mensagem daquele momento."
+        titulo="Mensagens"
         acao={botaoAdicionar}
       >
         {passoSelecionado ? (
@@ -474,8 +461,7 @@ export function AbaRegua({
           <EmptyState
             compact
             icon={MessagesSquare}
-            title="Esta régua ainda não tem mensagens"
-            description="Toque em Adicionar mensagem para criar a primeira."
+            title="Nenhuma mensagem ainda"
           />
         )}
       </Bloco>

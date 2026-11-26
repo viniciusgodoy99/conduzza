@@ -271,9 +271,7 @@ export function BlocoDeOrigem({
       ) : null}
       {!origem && !deAnuncio && !campanhaNasLinhas ? (
         <p className="text-[12.5px] text-text-secondary">
-          Origem ainda não identificada. Ela é capturada sozinha quando o
-          contato chega por anúncio de clique para WhatsApp, link com código,
-          mensagem pronta do link ou palavra-chave.
+          Origem não identificada.
         </p>
       ) : null}
     </Secao>
@@ -351,18 +349,14 @@ function BlocoDeAutorizacao({
               <span className="cz-num">
                 {dataNaClinica(consent.revoked_at, timezone)}
               </span>
-              . A clínica não consegue responder, nem se ele escrever. Se ele
-              autorizou de novo, registre a nova autorização na ficha.
+              . A clínica não pode enviar mensagens.
             </p>
             <span className="mt-1">{abrirFicha}</span>
           </>
         ) : null}
         {chave === "sem_autorizacao" ? (
           <>
-            <p>
-              A clínica não consegue enviar mensagens a este contato. Registre a
-              autorização na ficha.
-            </p>
+            <p>A clínica não pode enviar mensagens.</p>
             <span className="mt-1">{abrirFicha}</span>
           </>
         ) : null}
@@ -612,7 +606,7 @@ export function ContextPanel({
             <Button asChild variant="outline" className={LINK_EM_BLOCO}>
               <Link href={`/pacientes/${contact.id}`}>
                 <History aria-hidden />
-                Abrir a ficha com a linha do tempo
+                Abrir a ficha
               </Link>
             </Button>
             <Button asChild variant="outline" className={LINK_EM_BLOCO}>
@@ -625,8 +619,7 @@ export function ContextPanel({
         ) : (
           <p className="flex items-start gap-2 text-[12.5px] text-text-secondary">
             <CalendarClock aria-hidden className="mt-px size-4 shrink-0" />
-            Quando este lead agendar, a consulta aparece na Agenda e a ficha
-            completa nasce em Pacientes.
+            Nenhum agendamento.
           </p>
         )}
       </Secao>

@@ -264,7 +264,6 @@ export function EtiquetasTab({
         <EmptyState
           icon={Tag}
           title="Nenhuma etiqueta ainda"
-          description="As etiquetas marcam o estado de uma conversa (por exemplo: orçamento enviado, aguardando convênio) e servem de filtro no Atendimento."
         />
       ) : (
         <ul className="divide-y divide-border">

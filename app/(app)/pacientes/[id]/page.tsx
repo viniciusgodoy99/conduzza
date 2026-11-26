@@ -182,8 +182,7 @@ export default async function FichaPacientePage({
       <AvisoCelular />
       {soDaSuaAgenda ? (
         <Aviso tom="info" role="note">
-          Você vê só as consultas da sua agenda. Os números, os sinais e a linha
-          do tempo desta ficha contam só elas.
+          Você vê só as consultas da sua agenda.
         </Aviso>
       ) : null}
       <IndicadoresPaciente

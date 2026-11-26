@@ -81,7 +81,7 @@ function Bolha({
   anexo?: AnexoDaPreview | null;
 }) {
   return (
-    <div className="w-full max-w-[320px] justify-self-start overflow-hidden rounded-bubble rounded-bl-[6px] border border-border bg-card text-[13.5px] leading-[1.5] text-foreground shadow-xs">
+    <div className="w-full max-w-[320px] justify-self-start overflow-hidden rounded-bubble rounded-bl-[6px] border border-border bg-card text-[13.5px] leading-[1.5] text-foreground">
       <div className="px-3 pt-[9px] pb-[7px]">
         {anexo ? (
           <div className="mb-2">

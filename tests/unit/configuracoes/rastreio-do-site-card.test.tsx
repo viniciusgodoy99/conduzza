@@ -642,7 +642,7 @@ describe("cartão Rastreio do site", () => {
   it("o aviso do desligado conta que a linha no site continua pondo o código na mensagem", () => {
     // O script nao sabe se o rastreio esta ligado: so o registro para.
     expect(TEXTOS_DO_RASTREIO.desligadoComLinha).toBe(
-      "Com o rastreio desligado, nenhum clique é registrado, mas a linha que está no site continua acrescentando o código à mensagem de quem vem de anúncio do Google. Para parar de vez, tire a linha do site.",
+      "Desligado, nenhum clique é registrado, mas a linha no site continua pondo o código na mensagem. Para parar de vez, tire a linha do site.",
     );
   });
 

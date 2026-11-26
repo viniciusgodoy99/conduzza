@@ -1,6 +1,6 @@
 "use client";
 
-import { Building2, OctagonPause, Play } from "lucide-react";
+import { OctagonPause, Play } from "lucide-react";
 import { useId, useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -23,7 +23,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -125,20 +124,7 @@ export function ContaDaClinica({
   return (
     <Card role="region" aria-labelledby={`${ids}-titulo`}>
       <CardHeader>
-        <div className="flex min-w-0 items-center gap-3">
-          <span
-            aria-hidden
-            className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-3"
-          >
-            <Building2 className="size-5 text-text-strong" />
-          </span>
-          <div className="grid min-w-0 gap-[3px]">
-            <CardTitle id={`${ids}-titulo`}>Conta da clínica</CardTitle>
-            <CardDescription>
-              Suspender mantém todos os dados. Reativar volta tudo como estava.
-            </CardDescription>
-          </div>
-        </div>
+        <CardTitle id={`${ids}-titulo`}>Conta da clínica</CardTitle>
         <CardAction>
           <StatusChip
             definition={
@@ -157,11 +143,7 @@ export function ContaDaClinica({
           >
             <span className="break-words">Motivo: {suspensao.motivo}</span>
           </Aviso>
-        ) : (
-          <p className="text-[13px] text-text-secondary">
-            A equipe da clínica entra e usa o sistema normalmente.
-          </p>
-        )}
+        ) : null}
         <div>
           {suspensa ? (
             <Button onClick={() => fechar(true)}>
@@ -187,20 +169,21 @@ export function ContaDaClinica({
                 ? `Reativar a conta da ${nome}?`
                 : `Suspender a conta da ${nome}?`}
             </DialogTitle>
-            <DialogDescription>
-              {suspensa
-                ? "Confira o que acontece ao reativar."
-                : "Confira o que acontece ao suspender."}
-            </DialogDescription>
           </DialogHeader>
-          <ul className="grid list-disc gap-1.5 pl-5 text-[13px] text-foreground">
-            {(suspensa
-              ? TEXTOS_DO_PAINEL.efeitoDaReativacao
-              : TEXTOS_DO_PAINEL.efeitoDaSuspensao
-            ).map((efeito) => (
-              <li key={efeito}>{efeito}</li>
-            ))}
-          </ul>
+          {/* Os efeitos sao a descricao do dialogo (o leitor de tela le). */}
+          <DialogDescription
+            asChild
+            className="grid list-disc gap-1.5 pl-5 text-foreground"
+          >
+            <ul>
+              {(suspensa
+                ? TEXTOS_DO_PAINEL.efeitoDaReativacao
+                : TEXTOS_DO_PAINEL.efeitoDaSuspensao
+              ).map((efeito) => (
+                <li key={efeito}>{efeito}</li>
+              ))}
+            </ul>
+          </DialogDescription>
           <div className="grid gap-1.5">
             <Label htmlFor={`${ids}-motivo`}>Motivo (obrigatório)</Label>
             <Textarea

@@ -305,7 +305,6 @@ export function CampanhasSecao({
           data={linhas}
           isLoading={esperandoAnuncios}
           emptyTitle={vazio.titulo}
-          emptyDescription={vazio.descricao}
         />
       )}
       {rodapes.length > 0 ? (

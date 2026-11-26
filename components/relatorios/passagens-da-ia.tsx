@@ -2,6 +2,7 @@ import { UsersRound } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { BarraHorizontal } from "@/components/relatorios/barra-horizontal";
+import { DicaDeAjuda } from "@/components/shared/dica-de-ajuda";
 import { Secao } from "@/components/relatorios/secao";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -66,11 +67,10 @@ export function PassagensDaIa({
           compact
           icon={UsersRound}
           title="Nenhuma conversa foi para a equipe no período"
-          description="Quando a IA passar uma conversa para a equipe, o motivo aparece aqui."
         />
       );
     } else {
-      meta = `${plural(passagens.total, "passagem", "passagens")} no período. Uma conversa pode passar mais de uma vez.`;
+      meta = `${plural(passagens.total, "passagem", "passagens")} no período`;
       const maximo = Math.max(
         ...grupos.flatMap((grupo) => grupo.linhas.map((l) => l.passagens)),
       );
@@ -94,7 +94,16 @@ export function PassagensDaIa({
     }
   }
   return (
-    <Secao titulo={TITULO_DAS_PASSAGENS} icone={UsersRound} meta={meta}>
+    <Secao
+      titulo={TITULO_DAS_PASSAGENS}
+      icone={UsersRound}
+      meta={meta}
+      acao={
+        meta ? (
+          <DicaDeAjuda rotulo="Como as passagens são contadas" texto="Uma conversa pode passar mais de uma vez." />
+        ) : undefined
+      }
+    >
       {corpo}
     </Secao>
   );

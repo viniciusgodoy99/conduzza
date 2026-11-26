@@ -1,4 +1,3 @@
-import { Coins } from "lucide-react";
 import { useId } from "react";
 
 import {
@@ -8,13 +7,13 @@ import {
   GASTO_STATUS,
   textoDasChamadas,
 } from "@/components/painel-geral/painel-geral";
+import { DicaDeAjuda } from "@/components/shared/dica-de-ajuda";
 import { BarraDeProgresso } from "@/components/shared/barra-de-progresso";
 import { StatusChip } from "@/components/shared/status-chip";
 import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -83,19 +82,9 @@ export function GastoDaIa({
   return (
     <Card role="region" aria-labelledby={`${id}-titulo`}>
       <CardHeader>
-        <div className="flex min-w-0 items-center gap-3">
-          <span
-            aria-hidden
-            className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-3"
-          >
-            <Coins className="size-5 text-text-strong" />
-          </span>
-          <div className="grid min-w-0 gap-[3px]">
-            <CardTitle id={`${id}-titulo`}>Gasto de IA</CardTitle>
-            <CardDescription>
-              Em dólares, com o simulador. O teto vale para as últimas 24 horas.
-            </CardDescription>
-          </div>
+        <div className="flex items-center gap-1">
+          <CardTitle id={`${id}-titulo`}>Gasto de IA</CardTitle>
+          <DicaDeAjuda rotulo="Como o gasto é contado" texto="Em dólares, com o simulador. O teto vale para as últimas 24 horas." />
         </div>
         {estado === "perto" || estado === "atingido" ? (
           <CardAction>

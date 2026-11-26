@@ -6,7 +6,6 @@ import {
   CircleCheck,
   CirclePause,
   Copy,
-  Globe,
   Hourglass,
   OctagonAlert,
   Plus,
@@ -32,7 +31,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -179,7 +177,7 @@ export const TEXTOS_DO_RASTREIO = {
   enderecoDeTeste:
     "Este endereço é de teste. Não cole esta linha no site de uma clínica de verdade.",
   desligadoComLinha:
-    "Com o rastreio desligado, nenhum clique é registrado, mas a linha que está no site continua acrescentando o código à mensagem de quem vem de anúncio do Google. Para parar de vez, tire a linha do site.",
+    "Desligado, nenhum clique é registrado, mas a linha no site continua pondo o código na mensagem. Para parar de vez, tire a linha do site.",
   semCliqueComAChaveAtual:
     "Nenhum clique chegou com a chave atual. Se o site ainda tem a linha anterior, troque pela linha acima.",
   semCliquesRecentes:
@@ -412,12 +410,9 @@ export function dicasDoRastreio(entrada: {
 
 export const TEXTOS_DAS_FRASES = {
   titulo: "Mensagem do botão sem texto pronto",
-  quandoUsa:
-    "Quando o botão do WhatsApp do site não traz texto pronto, a conversa já abre com uma destas frases e o código no fim. Botão com texto pronto continua com o texto dele.",
-  semColarDeNovo:
-    "Não precisa colar a linha de novo no site. Se o site não conseguir buscar as frases a tempo, vale a frase padrão.",
-  desligado:
-    "Com o rastreio desligado, o site usa a frase padrão. As frases abaixo passam a valer quando o rastreio estiver ligado.",
+  quandoUsa: "Para o botão do site que não traz texto pronto.",
+  semColarDeNovo: "Não precisa colar a linha de novo no site.",
+  desligado: "Com o rastreio desligado, vale a frase padrão.",
   sorteio: "Com mais de uma frase, o sistema sorteia uma a cada clique.",
   semAcesso: "As frases aparecem para administradores e gestores.",
   limite: `São no máximo ${LIMITE_DE_FRASES} frases. Remova uma para adicionar outra.`,
@@ -758,23 +753,7 @@ export function RastreioDoSiteCard({
   return (
     <Card role="region" aria-labelledby={tituloId}>
       <CardHeader>
-        <div className="flex min-w-0 items-center gap-3">
-          {/* Ladrilho decorativo: a cor nao diz estado. */}
-          <span
-            aria-hidden
-            className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-3"
-          >
-            <Globe className="size-5 text-text-strong" />
-          </span>
-          <div className="grid min-w-0 gap-[3px]">
-            <CardTitle id={tituloId}>Rastreio do site</CardTitle>
-            <CardDescription>
-              Quando o anúncio do Google leva ao site da clínica, a linha abaixo
-              marca o clique no botão do WhatsApp. O lead chega com a origem
-              Tráfego pago, Google e o número da campanha, sem cadastro manual.
-            </CardDescription>
-          </div>
-        </div>
+        <CardTitle id={tituloId}>Rastreio do site</CardTitle>
         <CardAction>
           <StatusChip size="sm" definition={RASTREIO_DO_SITE_STATUS[estado]} />
         </CardAction>
@@ -941,8 +920,7 @@ export function RastreioDoSiteCard({
             </Aviso>
           )}
           <p className="text-[12px] text-text-secondary">
-            Só totais. Quem clicou aparece no lead, quando a pessoa envia a
-            mensagem com o código.
+            Só totais. Quem clicou aparece no lead.
           </p>
         </section>
 
@@ -1004,14 +982,10 @@ export function RastreioDoSiteCard({
                   ao site e a visita com UTM tambem ganham origem. */}
               <div className="grid gap-2">
                 <span>
-                  Se a clínica também anuncia no Facebook e no Instagram
-                  levando ao site, cole os parâmetros abaixo no anúncio, em
-                  Parâmetros de URL. Eles dizem qual anúncio e qual campanha
-                  trouxeram a visita. Sem eles, quem vem do Facebook ou do
-                  Instagram entra como Redes sociais, não como anúncio.
-                  Anúncio que abre o WhatsApp direto não precisa: a origem já
-                  vem sozinha. Visita que chega com UTM (link da bio, e-mail)
-                  também ganha a origem.
+                  Anúncio do Facebook ou do Instagram que leva ao site: cole os
+                  parâmetros abaixo em Parâmetros de URL. Sem eles, a visita
+                  entra como Redes sociais. Anúncio que abre o WhatsApp direto
+                  não precisa.
                 </span>
                 <span className="flex flex-wrap items-center gap-2">
                   <code className="rounded-lg border border-border bg-surface-2 px-3 py-2 font-mono text-[12.5px] break-all text-text-strong select-all">
@@ -1045,11 +1019,6 @@ export function RastreioDoSiteCard({
               situação.
             </li>
           </ol>
-          <p className="text-[12px] text-text-secondary">
-            Se a pessoa apagar o código antes de enviar, o lead chega sem
-            origem, e a recepção pode preencher depois. O rastreio nunca grava
-            uma origem errada.
-          </p>
         </section>
       </CardContent>
     </Card>
@@ -1408,7 +1377,7 @@ export function FrasesDoBotao({
               previas.map((previa, indice) => (
                 <p
                   key={`${indice}-${previa}`}
-                  className="w-full max-w-[420px] justify-self-start rounded-bubble rounded-bl-[6px] border border-border bg-card px-3 py-2 text-[13.5px] leading-[1.5] break-words text-foreground shadow-xs"
+                  className="w-full max-w-[420px] justify-self-start rounded-bubble rounded-bl-[6px] border border-border bg-card px-3 py-2 text-[13.5px] leading-[1.5] break-words text-foreground"
                 >
                   {previa}
                 </p>

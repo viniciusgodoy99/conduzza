@@ -85,10 +85,6 @@ export function PassoMapeamento({
 }) {
   return (
     <div className="grid gap-4">
-      <p className="text-sm text-text-secondary">
-        Diga de qual coluna da planilha vem cada informação. Só o telefone é
-        obrigatório.
-      </p>
       {CAMPOS.map(({ campo, rotulo, obrigatorio }) => {
         const indice = mapeamento[campo];
         const exemplo = indice === null ? "" : (amostra[indice] ?? "").trim();

@@ -3,7 +3,7 @@ import {
   CircleCheck,
   Info,
   OctagonAlert,
-  Sparkles,
+  Bot,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -49,7 +49,7 @@ const TONS: Record<
     fio: "border-neutral",
     icone: null,
   },
-  ia: { caixa: "bg-ai-bg text-ai-text", fio: "border-ai", icone: Sparkles },
+  ia: { caixa: "bg-ai-bg text-ai-text", fio: "border-ai", icone: Bot },
 };
 
 type AvisoProps = {

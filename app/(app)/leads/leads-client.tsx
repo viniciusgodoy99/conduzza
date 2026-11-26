@@ -495,10 +495,7 @@ export function LeadsClient({
 
   return (
     <div className="flex flex-col gap-3.5 p-6">
-      <PageHeader
-        title="Leads"
-        description="Todos os contatos no funil da clínica, do primeiro contato ao comparecimento"
-      >
+      <PageHeader title="Leads">
         {/* Some por CSS, nao por estado: o estado de tela estreita so fica
             pronto DEPOIS da montagem, e trocar o DOM naquele instante
             derrubava o foco de quem navega por teclado. */}
@@ -580,11 +577,11 @@ export function LeadsClient({
       {cortado ? (
         <Aviso tom="info" role="note">
           Mostrando{" "}
-          <span className="cz-num font-bold">
+          <span className="font-bold cz-num">
             {numero.format(leads.length)}
           </span>{" "}
           de{" "}
-          <span className="cz-num font-bold">{numero.format(total ?? 0)}</span>{" "}
+          <span className="font-bold cz-num">{numero.format(total ?? 0)}</span>{" "}
           leads, os de contato mais recente. Use os filtros para achar alguém
           entre eles.
         </Aviso>
@@ -603,8 +600,7 @@ export function LeadsClient({
             </Button>
           }
         >
-          Não foi possível atualizar os leads. Os dados exibidos podem estar
-          desatualizados.
+          Não foi possível atualizar os leads. A lista pode estar desatualizada.
         </Aviso>
       ) : null}
 
@@ -613,7 +609,7 @@ export function LeadsClient({
           <EmptyState
             tom="erro"
             title="Não foi possível carregar os leads"
-            description="A lista não chegou do servidor. Confira a internet e tente de novo."
+            description="Confira a internet e tente de novo."
             action={{
               label: "Tentar de novo",
               onClick: () => void leadsQuery.refetch(),
@@ -635,7 +631,7 @@ export function LeadsClient({
           <EmptyState
             tom="erro"
             title="Não foi possível filtrar por campanha"
-            description="As campanhas da clínica não carregaram. Tente de novo ou limpe os filtros."
+            description="As campanhas não carregaram."
             action={{
               label: "Tentar de novo",
               onClick: () => void mapaQuery.refetch(),
@@ -646,11 +642,7 @@ export function LeadsClient({
         </Card>
       ) : vazioInicial ? (
         <Card>
-          <EmptyState
-            icon={UsersRound}
-            title="Nenhum lead ainda"
-            description="Os leads chegam sozinhos pelas conversas do WhatsApp. Você também pode criar um lead ou trazer sua base numa planilha."
-          >
+          <EmptyState icon={UsersRound} title="Nenhum lead ainda">
             <BotaoProtegido
               podeEditar={podeEditar}
               dica={dica}
@@ -675,7 +667,6 @@ export function LeadsClient({
             compact
             icon={SearchX}
             title="Nenhum lead com esses filtros"
-            description="Ajuste os filtros ou limpe para ver todos os leads."
             onClearFilters={limparFiltros}
           />
         </Card>

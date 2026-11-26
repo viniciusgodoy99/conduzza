@@ -772,8 +772,10 @@ describe("os cartões da Meta (passos 1 a 4 de Anúncios e rastreio)", () => {
 
   it("cada campo diz onde encontrar o dado, com o link que abre a Meta em outra aba", () => {
     const html = aba();
-    // Pixel, conta de anuncios, conta do WhatsApp e codigo de teste.
-    expect(html.match(/Onde encontro: /g)).toHaveLength(4);
+    // Pixel, conta de anuncios, conta do WhatsApp, codigo de teste e o token
+    // (desde 26/11/2026 cada um recolhido num "Onde encontro" que abre).
+    expect(html.match(/<details data-slot="onde-encontro"/g)).toHaveLength(5);
+    expect(html.match(/<summary[^>]*>.*?Onde encontro<\/summary>/g)).toHaveLength(5);
     // O token tem o passo a passo inteiro e o botao do Gerenciador de Eventos.
     expect(html).toContain("Gerar token de acesso");
     expect(html).toContain(

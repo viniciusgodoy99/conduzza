@@ -185,10 +185,8 @@ export function ListaDeRespostas({
               }}
               onClick={() => aoEscolher(indice)}
               className={cn(
-                "grid min-h-10 cursor-pointer gap-0.5 border-l-[3px] px-3 py-1.5 cz-transition",
-                selecionada
-                  ? "border-primary-edge bg-primary-soft"
-                  : "border-transparent hover:bg-surface-3",
+                "grid min-h-10 cursor-pointer gap-0.5 px-3 py-1.5 cz-transition",
+                selecionada ? "bg-primary-soft" : "hover:bg-surface-3",
               )}
             >
               <span className="flex min-w-0 items-baseline gap-2">

@@ -13,7 +13,7 @@ export function ErroDoPainel({
   titulo?: string;
 }) {
   return (
-    <div className="rounded-card border border-border bg-card shadow-sm">
+    <div className="rounded-card border border-border bg-card">
       <EmptyState
         tom="erro"
         title={titulo}

@@ -499,7 +499,7 @@ describe("o miolo do diálogo", () => {
     expect(texto(html)).toContain(
       "O paciente não informou dados nesta conversa.",
     );
-    expect(texto(html)).not.toContain(T.aoAprovar);
+    expect(texto(html)).not.toContain(T.aoAprovarCurto);
   });
 
   it("revisão final da AG3: vazio na consulta já tratada diz que os dados não estão mais guardados", () => {
@@ -545,17 +545,22 @@ describe("o miolo do diálogo", () => {
     }
   });
 
-  it("pendente: a frase do que a aprovação faz com os dados, pela regra real", () => {
+  it("pendente: uma linha curta e a regra real na dica do ícone de ajuda", () => {
     // Revisao curta das correcoes (achado 13): com a condicao do convenio
-    // na carteirinha, e dizendo que fora da regra o cadastro nao muda.
-    expect(texto(corpo({ tipo: "pronto", dados: DADOS }))).toContain(
+    // na carteirinha, e dizendo que fora da regra o cadastro nao muda. A
+    // regra inteira e o nome acessivel do botao de ajuda (e a dica).
+    const html = corpo({ tipo: "pronto", dados: DADOS });
+    expect(texto(html)).toContain(T.aoAprovarCurto);
+    expect(T.aoAprovar).toBe(
       "Ao aprovar a consulta, estes dados entram no cadastro do paciente assim: o nome, se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento e CPF, se estiverem vazios; a carteirinha, se estiver vazia e a consulta for pelo convênio, com o convênio do cadastro vazio (ele entra junto) ou o mesmo. Fora disso, o cadastro não muda.",
     );
+    expect(html).toContain(`aria-label="${T.aoAprovar}"`);
+    expect(html).toContain("lucide-circle-question-mark");
     expect(T.aoAprovar).not.toContain("carteirinha, só se estiverem vazios");
     // Ja tratada, ja aplicada ou para outra pessoa: a frase nao vale.
     expect(
       texto(corpo({ tipo: "pronto", dados: DADOS }, "aprovada")),
-    ).not.toContain(T.aoAprovar);
+    ).not.toContain(T.aoAprovarCurto);
     expect(
       texto(
         corpo({
@@ -567,7 +572,7 @@ describe("o miolo do diálogo", () => {
           },
         }),
       ),
-    ).not.toContain(T.aoAprovar);
+    ).not.toContain(T.aoAprovarCurto);
     expect(
       texto(
         corpo({
@@ -582,7 +587,7 @@ describe("o miolo do diálogo", () => {
           },
         }),
       ),
-    ).not.toContain(T.aoAprovar);
+    ).not.toContain(T.aoAprovarCurto);
   });
 
   it("o que não foi informado diz que não foi, e para outra pessoa diz", () => {
@@ -607,19 +612,18 @@ describe("o miolo do diálogo", () => {
   });
 
   it("aplicado: quando, por quem e a regra real do cadastro", () => {
-    const visivel = texto(
-      corpo(
-        {
-          tipo: "pronto",
-          dados: {
-            ...DADOS,
-            aplicadoEm: "2026-10-22T12:00:00.000Z",
-            aplicadoPor: { nome: "Vinicius" },
-          },
+    const html = corpo(
+      {
+        tipo: "pronto",
+        dados: {
+          ...DADOS,
+          aplicadoEm: "2026-10-22T12:00:00.000Z",
+          aplicadoPor: { nome: "Vinicius" },
         },
-        "aprovada",
-      ),
+      },
+      "aprovada",
     );
+    const visivel = texto(html);
     // Revisao curta das correcoes (achado 13): o banco marca a aprovacao
     // mesmo sem nenhum campo aplicado; a tela diz "Conferido", nunca
     // "Aplicado", e a regra inteira (a condicao do convenio na carteirinha
@@ -628,8 +632,9 @@ describe("o miolo do diálogo", () => {
       "No cadastro Conferido na aprovação por Vinicius, em 22/10/2026 às 09:00.",
     );
     expect(visivel).not.toMatch(/Aplicado em/);
-    expect(visivel).toContain(
-      "Na aprovação, os dados entram no cadastro assim: o nome, se o cadastro estava sem nome ou com o nome que veio do WhatsApp; nascimento e CPF, se estavam vazios; a carteirinha, se estava vazia e a consulta é pelo convênio, com o convênio do cadastro vazio (ele entra junto) ou o mesmo. Fora disso, o cadastro não muda.",
+    // A regra inteira fica na dica do icone de ajuda (nome acessivel).
+    expect(html).toContain(
+      'aria-label="Na aprovação, os dados entram no cadastro assim: o nome, se o cadastro estava sem nome ou com o nome que veio do WhatsApp; nascimento e CPF, se estavam vazios; a carteirinha, se estava vazia e a consulta é pelo convênio, com o convênio do cadastro vazio (ele entra junto) ou o mesmo. Fora disso, o cadastro não muda."',
     );
     expect(visivel).not.toContain("só onde ele está vazio");
     expect(visivel).not.toContain("Só entrou o que estava vazio");

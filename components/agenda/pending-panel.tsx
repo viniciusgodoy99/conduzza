@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { CalendarCog, CalendarFold, Loader2, Sparkles } from "lucide-react";
+import { CalendarCog, CalendarFold, Loader2, Bot } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -51,7 +51,7 @@ import {
 //
 // Duas pendencias, cada uma com o seu chip em 3 camadas, os dois no tom da
 // IA (lime suave, reservado a IA) e com icones de forma distinta:
-// - "Encaixe da IA" (Sparkles): o encaixe sugerido pela IA, como sempre;
+// - "Encaixe da IA" (Bot): o encaixe sugerido pela IA, como sempre;
 // - "Marcada pela IA" (CalendarCog, E4 de 20/10/2026, decisao D12 do dono):
 //   a consulta que a IA marcou pelo WhatsApp (created_by 'ia', sem encaixe).
 //   CalendarCog nao tinha dono em nenhuma tela nem mapa (tabela de icones
@@ -96,7 +96,7 @@ import {
 export const CHIP_ENCAIXE_IA: StatusDefinition = {
   label: "Encaixe da IA",
   tone: "ai",
-  icon: Sparkles,
+  icon: Bot,
 };
 
 export const CHIP_MARCADA_PELA_IA: StatusDefinition = {
@@ -129,10 +129,8 @@ export function chipDaPendencia(
 export const TEXTOS_DO_PAINEL = {
   titulo: "Pendente de você",
   vazioTitulo: "Nada pendente de você",
-  vazioTexto:
-    "Quando a IA marcar ou remarcar uma consulta, ou sugerir um encaixe, aparece aqui para a equipe aprovar.",
   carregando: "Carregando o que está pendente de você",
-  erro: "Não foi possível carregar o que está pendente de você. Confira a conexão e tente de novo.",
+  erro: "Não foi possível carregar as pendências.",
   tentarDeNovo: "Tentar de novo",
   semProcedimento: "Procedimento não informado",
   particular: "Particular",
@@ -343,7 +341,7 @@ export function PendingPanel({
   return (
     <aside
       aria-label={TEXTOS_DO_PAINEL.titulo}
-      className="hidden w-[264px] shrink-0 flex-col overflow-hidden rounded-card border border-border bg-card shadow-sm xl:flex"
+      className="hidden w-[264px] shrink-0 flex-col overflow-hidden rounded-card border border-border bg-card xl:flex"
     >
       <div className="flex h-12 shrink-0 items-center border-b border-border px-4">
         <h2 className="text-base font-bold tracking-[-0.01em]">
@@ -383,17 +381,12 @@ export function PendingPanel({
             <Skeleton className="h-36 w-full rounded-xl" />
           </div>
         ) : pendencias.length === 0 ? (
-          // Vazio compacto no tom da IA (ladrilho lime suave com o Sparkles):
-          // quem deixa pendencia aqui e a IA.
+          // Vazio compacto com o Bot no tom da IA: quem deixa pendencia aqui
+          // e a IA.
           <div className="flex flex-col items-center justify-center gap-2 px-2 py-7 text-center">
-            <span className="grid size-[38px] shrink-0 place-items-center rounded-card bg-ai-bg">
-              <Sparkles className="size-[18px] text-ai-text" aria-hidden />
-            </span>
-            <p className="text-sm font-bold tracking-[-0.01em] text-text-strong">
+            <Bot className="size-5 text-ai-text" aria-hidden />
+            <p className="text-sm font-semibold text-text-secondary">
               {TEXTOS_DO_PAINEL.vazioTitulo}
-            </p>
-            <p className="text-[13px] text-text-secondary">
-              {TEXTOS_DO_PAINEL.vazioTexto}
             </p>
           </div>
         ) : (

@@ -519,9 +519,6 @@ export function ListaConfirmacoes({
         <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>
             <DialogTitle>Como a confirmação chegou?</DialogTitle>
-            <DialogDescription>
-              O canal fica registrado junto com a confirmação.
-            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
             {CANAIS.map((canal) => (
@@ -560,17 +557,15 @@ export function ListaConfirmacoes({
                   <span className="cz-num">
                     {horaLocal(aManter.starts_at, timezone)}
                   </span>
-                  , pediu para remarcar pelo WhatsApp. Use quando já combinou
-                  com o paciente que ele fica com este horário.
+                  , pediu para remarcar pelo WhatsApp.
                 </>
               ) : null}
             </DialogDescription>
           </DialogHeader>
           <p className="text-[13px] text-foreground">
-            O pedido de remarcação sai da lista. A consulta continua no mesmo
-            horário e na mesma situação
+            O pedido sai da lista
             {manterPendente
-              ? ", e a confirmação automática volta a valer para ela."
+              ? " e a confirmação automática volta a valer."
               : "."}
           </p>
           <DialogFooter>

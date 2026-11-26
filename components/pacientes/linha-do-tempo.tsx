@@ -58,7 +58,6 @@ export function LinhaDoTempo({
           <EmptyState
             icon={History}
             title="Nenhuma consulta deste paciente na sua agenda"
-            description="Você vê só as consultas da sua agenda. As marcadas com outros profissionais não aparecem aqui."
           >
             {agendar}
           </EmptyState>
@@ -66,7 +65,6 @@ export function LinhaDoTempo({
           <EmptyState
             icon={History}
             title="Nenhuma consulta ainda"
-            description="Assim que a primeira consulta for marcada, ela aparece aqui com profissional, procedimento e situação."
           >
             {agendar}
           </EmptyState>

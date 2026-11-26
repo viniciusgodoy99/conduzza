@@ -37,19 +37,14 @@ export function FaixaDeSaude({
   return (
     <section
       aria-labelledby={`${id}-titulo`}
-      className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-card border border-border bg-card p-3 shadow-sm"
+      className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-card border border-border bg-card p-3"
     >
-      <div className="grid gap-0.5">
-        <p
-          id={`${id}-titulo`}
-          className="text-[13.5px] font-bold text-text-strong"
-        >
-          {TEXTOS_DO_PAINEL.faixaDeSaude}
-        </p>
-        <p className="text-[12px] text-text-secondary">
-          {TEXTOS_DO_PAINEL.faixaDeSaudeApoio}
-        </p>
-      </div>
+      <p
+        id={`${id}-titulo`}
+        className="text-[13.5px] font-bold text-text-strong"
+      >
+        {TEXTOS_DO_PAINEL.faixaDeSaude}
+      </p>
       <div
         role="group"
         aria-labelledby={`${id}-titulo`}
@@ -72,7 +67,7 @@ export function FaixaDeSaude({
                 // Ligada nao depende so da cor: o anel de tinta em volta,
                 // alem do aria-pressed.
                 ligada
-                  ? "shadow-xs ring-2 ring-text-strong"
+                  ? "ring-2 ring-text-strong"
                   : "hover:border-border-strong",
               )}
               style={{ color: tom.text, backgroundColor: tom.bg }}

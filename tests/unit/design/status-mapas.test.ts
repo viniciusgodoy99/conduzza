@@ -89,7 +89,7 @@ describe("mapas novos de estado", () => {
       for (const definicao of Object.values(mapa)) {
         expect(definicao.icon).not.toBeNull();
         expect(definicao.label.length).toBeGreaterThan(2);
-        expect(definicao.tone.length).toBeGreaterThan(2);
+        expect(definicao.tone.length).toBeGreaterThan(1);
       }
     },
   );

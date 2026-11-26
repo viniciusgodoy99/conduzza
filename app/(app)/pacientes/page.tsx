@@ -57,7 +57,6 @@ export default async function PacientesPage() {
     <div className="flex flex-col gap-3.5 p-6">
       <PageHeader
         title={titulo}
-        description={`A lista traz quem já teve pelo menos uma ${t("consulta")}. Quem ainda não agendou fica em Leads.`}
       />
       <AvisoCelular />
       <PacientesClient

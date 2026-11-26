@@ -1,5 +1,6 @@
 "use client";
 
+import { Ajuda } from "@/components/agente/ajuda";
 import { ChaveTravada } from "@/components/agente/chave-travada";
 import {
   // [AG6b mídia] início
@@ -15,7 +16,6 @@ import { DisabledWithHint } from "@/components/shared/permission-hint";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -38,7 +38,7 @@ import type { PreparoDaHabilidade } from "@/lib/domain/preparo";
 // [AG7 preparo] fim
 
 // Aba Habilidades da Tela 6: a lista FECHADA (lib/domain/agente), cada uma
-// com titulo, uma linha de descricao e a chave. As travadas (Responder
+// com titulo, a descricao no "?" do titulo (a do preparo, escrita) e a chave. As travadas (Responder
 // duvidas e Passar para a equipe) aparecem ligadas com cadeado (C24). A
 // chave livre grava no RASCUNHO na hora do toque (por isso Switch, e nao
 // Checkbox, C31): o paciente so sente depois de publicar, e o rodape conta a
@@ -223,12 +223,9 @@ export function AbaHabilidades({
   return (
     <Card role="region" aria-labelledby="agente-habilidades-titulo">
       <CardHeader>
-        <div className="grid min-w-0 gap-[3px]">
-          <CardTitle id="agente-habilidades-titulo">
-            {T.habilidadesTitulo}
-          </CardTitle>
-          <CardDescription>{T.habilidadesDescricao}</CardDescription>
-        </div>
+        <CardTitle id="agente-habilidades-titulo">
+          {T.habilidadesTitulo}
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <ul className="divide-y divide-border">
@@ -243,7 +240,7 @@ export function AbaHabilidades({
                 <li key={habilidade.chave} className="py-2.5">
                   <ChaveTravada
                     rotulo={habilidade.titulo}
-                    descricao={habilidade.descricao}
+                    ajuda={habilidade.descricao}
                   />
                 </li>
               );
@@ -305,12 +302,25 @@ export function AbaHabilidades({
                 className="flex min-h-10 items-center justify-between gap-3 py-2.5"
               >
                 <span className="grid min-w-0 gap-0.5">
-                  <span id={idRotulo} className="text-[13.5px] font-semibold">
-                    {habilidade.titulo}
+                  {/* O que a habilidade faz fica no "?" (pedido do dono de
+                      26/11/2026); a do preparo continua escrita, porque diz
+                      que sai so o texto aprovado pelo responsavel tecnico. */}
+                  <span className="flex min-w-0 items-center gap-1">
+                    <span id={idRotulo} className="text-[13.5px] font-semibold">
+                      {habilidade.titulo}
+                    </span>
+                    {habilidade.chave === HABILIDADE_ENVIAR_PREPARO ? null : (
+                      <Ajuda
+                        rotulo={habilidade.titulo}
+                        texto={habilidade.descricao}
+                      />
+                    )}
                   </span>
-                  <span className="text-xs text-text-secondary">
-                    {habilidade.descricao}
-                  </span>
+                  {habilidade.chave === HABILIDADE_ENVIAR_PREPARO ? (
+                    <span className="text-xs text-text-secondary">
+                      {habilidade.descricao}
+                    </span>
+                  ) : null}
                   {nota ? (
                     <span id={idDaNota} className="text-xs text-text-secondary">
                       {nota}

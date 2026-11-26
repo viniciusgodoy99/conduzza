@@ -42,12 +42,7 @@ export default function ErroDaAreaDaEquipe({
         icone={OctagonAlert}
         tom="alerta"
         titulo="Esta tela não carregou"
-        descricao={
-          <p>
-            Alguma coisa falhou ao buscar os dados do painel. Nada foi alterado:
-            é só esta tela que não abriu.
-          </p>
-        }
+        descricao={<p>Nada foi alterado.</p>}
       >
         <Button
           variant="outline"

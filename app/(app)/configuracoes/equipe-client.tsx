@@ -22,7 +22,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -146,8 +145,7 @@ export function PendentesList({
         titulo={titulo}
         className="rounded-none"
       >
-        Entraram com o código da clínica. Enquanto não forem liberadas, não veem
-        nenhuma conversa de paciente.
+        Sem acesso a conversas de paciente até serem liberadas.
       </Aviso>
       <ul className="divide-y divide-border">
         {pendentes.map((pessoa) => {
@@ -303,9 +301,7 @@ export function PendentesList({
               Recusar o pedido de {recusando?.nome ?? "esta pessoa"}?
             </DialogTitle>
             <DialogDescription>
-              O pedido some da lista e a pessoa continua sem acesso à clínica.
-              Se for engano, convide por e-mail: com a conta que ela já tem, o
-              acesso entra na hora.
+              A pessoa continua sem acesso. Se for engano, convide por e-mail.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -424,10 +420,6 @@ export function CodigoAcesso({
     <Card>
       <CardHeader>
         <CardTitle>Código da clínica</CardTitle>
-        <CardDescription>
-          Quem tem este código pode pedir entrada na clínica pelo cadastro. O
-          acesso só abre depois que alguém da administração liberar.
-        </CardDescription>
         <CardAction>
           <Label htmlFor="allow-code" className="text-[13px]">
             Aceitar entrada por código
@@ -471,8 +463,7 @@ export function CodigoAcesso({
           )}
         </div>
         <p className="text-xs text-text-secondary">
-          Gerar um código novo invalida o anterior na hora. Se o código vazar,
-          use isso.
+          Gerar novo invalida o anterior na hora
         </p>
         {erro ? (
           <Aviso tom="alert" role="alert">

@@ -142,13 +142,9 @@ describe("o Urgente da AG6a", () => {
 });
 
 describe("os ladrilhos decorativos da AG6a", () => {
-  it("LifeBuoy e UserRoundCheck só nos dois cartões novos da Tela 6", () => {
-    expect(quemImporta("LifeBuoy")).toEqual([
-      "components/agente/cartao-da-urgencia.tsx",
-    ]);
-    expect(quemImporta("UserRoundCheck")).toEqual([
-      "components/agente/cartao-da-passagem.tsx",
-    ]);
+  it("saíram dos cartões da Tela 6 (pedido do dono de 26/11/2026)", () => {
+    expect(quemImporta("LifeBuoy")).toEqual([]);
+    expect(quemImporta("UserRoundCheck")).toEqual([]);
   });
 
   it("nunca viram status: nenhum mapa os usa", () => {
@@ -157,18 +153,5 @@ describe("os ladrilhos decorativos da AG6a", () => {
     );
     expect(icones.has(LifeBuoy)).toBe(false);
     expect(icones.has(UserRoundCheck)).toBe(false);
-  });
-
-  it("o ladrilho é neutro (a cor do texto forte, nunca de família de status)", () => {
-    const codigo = readFileSync(
-      path.join(RAIZ, "components/agente/cartao-da-passagem.tsx"),
-      "utf8",
-    );
-    const ladrilho =
-      /export function LadrilhoDoCartao[\s\S]*?\n\}/.exec(codigo)?.[0] ?? "";
-    expect(ladrilho).toContain("aria-hidden");
-    expect(ladrilho).toContain("bg-surface-3");
-    expect(ladrilho).toContain("text-text-strong");
-    expect(ladrilho).not.toMatch(/(alert|warning|success|info|ai)-(text|bg)/);
   });
 });

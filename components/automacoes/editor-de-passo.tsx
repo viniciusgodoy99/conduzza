@@ -261,9 +261,8 @@ export function EditorDePasso({
           />
         </div>
         <div className="grid gap-1.5">
-          <span className="text-xs text-text-secondary">
-            Toque num campo para inserir no texto. No envio, ele vira o dado da
-            consulta ou do paciente.
+          <span className="text-xs font-semibold text-foreground">
+            Inserir campo
           </span>
           <div className="flex flex-wrap gap-x-1.5 gap-y-2.5">
             {placeholders.map((campo) => (
@@ -272,7 +271,7 @@ export function EditorDePasso({
                 type="button"
                 disabled={!podeEditar || pendente}
                 onClick={() => inserirCampo(campo)}
-                className="hit-40 h-[30px] rounded-sm border border-border-strong bg-card px-2 cz-num text-[11.5px] text-foreground shadow-xs cz-transition hover:bg-surface-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid disabled:cursor-not-allowed disabled:opacity-45"
+                className="hit-40 h-[30px] rounded-sm border border-border-strong bg-card px-2 cz-num text-[11.5px] text-foreground cz-transition hover:bg-surface-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid disabled:cursor-not-allowed disabled:opacity-45"
               >
                 {`{{${campo}}}`}
               </button>
@@ -441,8 +440,7 @@ export function EditorDePasso({
         ) : null}
         {/* [AG7 preparo] fim */}
         <p className="text-[11.5px] text-text-secondary">
-          Amostra com dados fictícios. No envio real, os campos são preenchidos
-          com os dados da consulta e do paciente.
+          Amostra com dados fictícios.
           {/* [AG7 preparo] */}
           {comPreparo ? ` ${NOTA_DO_PREPARO_NA_PREVIA}` : null}
         </p>

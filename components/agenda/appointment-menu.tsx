@@ -991,9 +991,6 @@ export function AppointmentMenu({
         <DialogContent className="sm:max-w-[420px]">
           <DialogHeader>
             <DialogTitle>Como a confirmação chegou?</DialogTitle>
-            <DialogDescription>
-              O canal fica registrado junto com a confirmação.
-            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
             {CANAIS.map((canal) => (
@@ -1240,11 +1237,12 @@ function RemarcarDialog({
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-xs text-text-secondary">
-              {profissionaisPossiveis.length === 0
-                ? "Nenhum profissional ativo atende este procedimento por este convênio. Defina quem faz este procedimento em Cadastros > Procedimentos ou cancele a consulta."
-                : "Aparecem só os profissionais ativos que atendem este procedimento por este convênio."}
-            </p>
+            {profissionaisPossiveis.length === 0 ? (
+              <p className="text-xs text-text-secondary">
+                Nenhum profissional ativo atende este procedimento por este
+                convênio.
+              </p>
+            ) : null}
           </div>
 
           <ChaveAvisarPaciente
@@ -1462,10 +1460,7 @@ function CancelarDialog({
         </DialogHeader>
 
         <div className="grid gap-3">
-          <p className="text-sm">
-            Cancelar não tem volta. Para atender o paciente de novo, marque uma
-            nova consulta.
-          </p>
+          <p className="text-sm">Cancelar não tem volta.</p>
 
           {podeIrParaALista && esperaQuery.isPending ? (
             <Skeleton
@@ -1478,8 +1473,8 @@ function CancelarDialog({
             <div className="grid gap-2 rounded-xl border border-border px-3.5 py-2.5">
               <p className="text-sm text-text-secondary">
                 {esperaQuery.isError
-                  ? "Não foi possível conferir a lista de espera. Se houver pacientes nela, este horário pode ser oferecido a eles pelo WhatsApp."
-                  : `Há ${espera?.ativos === 1 ? "1 paciente" : `${espera?.ativos ?? 0} pacientes`} na lista de espera. Com a opção marcada, este horário é oferecido pelo WhatsApp a quem combina com ele.`}
+                  ? "Não foi possível conferir a lista de espera."
+                  : `Há ${espera?.ativos === 1 ? "1 paciente" : `${espera?.ativos ?? 0} pacientes`} na lista de espera.`}
               </p>
               <div className="flex min-h-10 items-center gap-3">
                 <Checkbox

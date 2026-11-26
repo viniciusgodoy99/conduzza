@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -122,10 +121,6 @@ export function ClinicaTab({
     <Card>
       <CardHeader>
         <CardTitle>Dados da clínica</CardTitle>
-        <CardDescription>
-          Como a clínica aparece para a equipe e para os pacientes, e em que
-          horário ela funciona.
-        </CardDescription>
       </CardHeader>
       <Form {...form}>
         <form
@@ -147,11 +142,7 @@ export function ClinicaTab({
                       disabled={!podeEditar}
                     />
                   </FormControl>
-                  <FormDescription>
-                    É o nome que o paciente lê nas mensagens automáticas
-                    (confirmação, lista de espera e as demais) e o que aparece
-                    no topo do sistema.
-                  </FormDescription>
+                  <FormDescription>Aparece nas mensagens ao paciente</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -185,8 +176,7 @@ export function ClinicaTab({
                     </SelectContent>
                   </Select>
                   <FormDescription>
-                    Define a hora das mensagens automáticas, a linha de agora da
-                    Agenda e o que conta como hoje e amanhã.
+                    Vale para a Agenda e as mensagens automáticas
                   </FormDescription>
                   <FormMessage />
                 </FormItem>
@@ -194,10 +184,9 @@ export function ClinicaTab({
             />
 
             {mudouFuso ? (
-              <Aviso tom="warning" titulo="Antes de mudar o fuso">
-                As consultas já marcadas continuam no mesmo instante e passam a
-                aparecer no horário do fuso novo. Se o fuso estava errado,
-                confira na Agenda os horários marcados até hoje.
+              <Aviso tom="warning">
+                As consultas já marcadas passam a aparecer no horário do fuso
+                novo. Confira a Agenda depois de salvar.
               </Aviso>
             ) : null}
 

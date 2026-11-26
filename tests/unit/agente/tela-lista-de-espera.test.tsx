@@ -224,7 +224,7 @@ describe("a habilidade Lista de espera", () => {
 describe("a nota da fase de teste", () => {
   it("a Lista de espera leva a nota própria: o SIM à oferta marca a consulta na hora", () => {
     expect(TEXTOS_DO_AGENTE.listaDeEsperaNaFaseDeTeste).toBe(
-      "Nesta fase de teste, o SIM à oferta da lista de espera marca a consulta na hora: o contato vira paciente, e um telefone comum deixa de acionar o assistente.",
+      "Nesta fase de teste, o SIM à oferta marca a consulta na hora e o contato vira paciente.",
     );
     const html = habilidades();
     expect(html).toContain(
@@ -286,11 +286,11 @@ describe("a nota da fase de teste", () => {
 });
 
 describe("o cabeçalho das habilidades", () => {
-  it("só o encaixe continua com a equipe", () => {
-    expect(TEXTOS_DO_AGENTE.habilidadesDescricao).toBe(
-      "O que o assistente pode fazer na conversa. Encaixe continua com a equipe.",
-    );
+  it("só o título, sem descrição (pedido do dono de 26/11/2026)", () => {
     expect(texto(habilidades())).not.toContain("Lista de espera e encaixe");
+    expect(texto(habilidades())).not.toContain(
+      "O que o assistente pode fazer na conversa",
+    );
   });
 });
 
@@ -379,7 +379,6 @@ describe("cópia", () => {
     const lista = HABILIDADES_DO_AGENTE.find((h) => h.chave === LISTA);
     const amostras: [string, string][] = [
       ["listaDeEsperaNaFaseDeTeste", T.listaDeEsperaNaFaseDeTeste],
-      ["habilidadesDescricao", T.habilidadesDescricao],
       ["simuladorDescricao", T.simuladorDescricao],
       ["dica", DICA_DA_LISTA_DE_ESPERA_INCOMPLETA],
       ["titulo", lista?.titulo ?? ""],

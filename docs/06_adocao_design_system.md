@@ -1,6 +1,8 @@
 
 # Especificação única de adoção do Conduzza Design System
 
+> **Parcialmente substituída em 26/11/2026 (decisão do dono, "visual plano").** Valem daqui só o logo, as cores da marca (lime e ink), o menu lateral ink e as regras de acessibilidade. Fonte (agora a do sistema), fundo (branco), sombras (só no que flutua), raios (8px no cartão, 6px no controle), rótulo em caixa alta, ladrilho de ícone e o ícone de brilho da IA saíram. O texto de interface segue a regra nova do CLAUDE.md, seção 5: a tela mostra e não explica.
+
 Raiz do app: `/Users/viniciusrodrigues/Documents/github/conduzza`. Fonte visual: `Conduzza Design System/` (readme, `tokens/*`, `components/*`, `ui_kits/conduzza-chat/*`). Esta especificação consolida as 8 partes mapeadas (fundações, componentes, shell e Início, Atendimento, Leads e Pacientes, Agenda/Confirmações/Espera, Automações/Cadastros/Configurações, telas futuras e marca). Onde as partes discordavam, a decisão está registrada na seção 4.1 com o motivo. Nada aqui muda lógica, query, Server Action, texto de interface preso em e2e, role ou nome acessível, salvo onde está dito explicitamente.
 
 Regra de leitura: o design system (DS) manda na APARÊNCIA. O brief `docs/02_brief_telas_claude_design.md` e o `CLAUDE.md` mandam em COMPORTAMENTO, CONTEÚDO e ACESSIBILIDADE. Toda divergência entre os dois está na lista de conflitos (C1 a C37, mais as decisões posteriores do dono a partir de C38: C38 Cadastros, C39 Métricas, C40 telas do CRM, C41 Convênio pelo médico, C42 Investimento da Meta, C43 Anúncios do Google, C44 aba Agente de IA, C45 Mensagem agendada, C46 Tiques de entrega, C47 Tela 6 do Agente de IA), com um padrão provisório para o implementador seguir enquanto o dono não decide.

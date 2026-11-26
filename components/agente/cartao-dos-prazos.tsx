@@ -12,6 +12,7 @@ import {
   useAvisarNaoSalvo,
   type AvisarNaoSalvo,
 } from "@/components/agente/nao-salvo";
+import { Ajuda } from "@/components/agente/ajuda";
 import { TEXTOS_DO_AGENTE as T } from "@/components/agente/textos";
 import type { RetornoDaAcao } from "@/components/agente/tipos";
 import { Aviso } from "@/components/shared/aviso";
@@ -20,7 +21,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -163,11 +163,7 @@ export function CartaoDosPrazos({
             />
           </FormControl>
           <FormDescription>
-            {T.prazoDica(
-              PRAZO_DA_IA.minimo,
-              PRAZO_DA_IA.maximo,
-              ROTULO_DOS_PRAZOS.ajuda,
-            )}
+            {T.prazoDica(PRAZO_DA_IA.minimo, PRAZO_DA_IA.maximo)}
           </FormDescription>
           <FormMessage />
         </FormItem>
@@ -178,11 +174,14 @@ export function CartaoDosPrazos({
   return (
     <Card role="region" aria-labelledby="agente-prazos-titulo">
       <CardHeader>
-        <div className="grid min-w-0 gap-[3px]">
+        <div className="flex min-w-0 items-center gap-1">
           <CardTitle id="agente-prazos-titulo">
             {ROTULO_DOS_PRAZOS.titulo}
           </CardTitle>
-          <CardDescription>{T.prazosDescricao}</CardDescription>
+          <Ajuda
+            rotulo={ROTULO_DOS_PRAZOS.titulo}
+            texto={ROTULO_DOS_PRAZOS.ajuda}
+          />
         </div>
       </CardHeader>
       <CardContent>

@@ -307,7 +307,7 @@ export function PassoPrevia({
                     <TableCell className="font-semibold text-text-strong">
                       {linha.name ?? ""}
                     </TableCell>
-                    <TableCell className="cz-num whitespace-nowrap">
+                    <TableCell className="whitespace-nowrap cz-num">
                       {formatarTelefone(linha.phone_e164)}
                     </TableCell>
                     <TableCell className="text-text-secondary">
@@ -334,15 +334,12 @@ export function PassoPrevia({
           ) : null}
           {recodificado ? (
             <Aviso tom="info" role="note">
-              O arquivo não estava em UTF-8 e foi lido como planilha do Excel em
-              português. Confira se os acentos dos nomes acima estão certos
-              antes de importar.
+              O arquivo não estava em UTF-8. Confira os acentos antes de
+              importar.
             </Aviso>
           ) : null}
           <Aviso tom="info" role="note" titulo="Sem follow-up automático">
-            Os contatos importados não recebem as réguas de follow-up só por
-            terem entrado pela planilha. A régua de uma etapa começa para eles
-            quando alguém mudar a etapa do contato.
+            A régua só começa quando alguém mudar a etapa do contato.
           </Aviso>
           {aoMudarImportarComo ? (
             <EscolhaImportarComo
@@ -412,7 +409,7 @@ export function ResumoDaImportacao({
       : 0;
   return (
     <div className="grid gap-3">
-      <div className="grid gap-3 rounded-card border border-border bg-card p-4 shadow-sm">
+      <div className="grid gap-3 rounded-card border border-border bg-card p-4">
         <p className="flex items-center gap-2 text-base font-bold text-text-strong">
           <CircleCheck
             className="size-[18px] shrink-0 text-success-text"
@@ -423,27 +420,27 @@ export function ResumoDaImportacao({
         <dl className="grid gap-1.5 text-[13px]">
           <div className="flex items-center justify-between gap-4">
             <dt className="text-text-secondary">Contatos novos</dt>
-            <dd className="cz-num font-semibold text-text-strong">
+            <dd className="font-semibold text-text-strong cz-num">
               {numero.format(totais.importados)}
             </dd>
           </div>
           <div className="flex items-center justify-between gap-4">
             <dt className="text-text-secondary">Contatos atualizados</dt>
-            <dd className="cz-num font-semibold text-text-strong">
+            <dd className="font-semibold text-text-strong cz-num">
               {numero.format(totais.atualizados)}
             </dd>
           </div>
           {importarComo === "pacientes" ? (
             <div className="flex items-center justify-between gap-4">
               <dt className="text-text-secondary">Viraram pacientes</dt>
-              <dd className="cz-num font-semibold text-text-strong">
+              <dd className="font-semibold text-text-strong cz-num">
                 {numero.format(viraramPacientes)}
               </dd>
             </div>
           ) : null}
           <div className="flex items-center justify-between gap-4">
             <dt className="text-text-secondary">Linhas inválidas</dt>
-            <dd className="cz-num font-semibold text-text-strong">
+            <dd className="font-semibold text-text-strong cz-num">
               {numero.format(invalidas)}
             </dd>
           </div>
@@ -485,9 +482,8 @@ export function ResumoDaImportacao({
                 : "pessoas pediram para não receber mensagens"
             }`}
           >
-            Os dados entraram, mas elas continuam sem autorização e nenhum envio
-            automático as alcança. Para voltar a enviar, abra a ficha e registre
-            como a pessoa autorizou de novo.
+            Os dados entraram, mas sem autorização: nenhum envio automático as
+            alcança.
           </Aviso>
         ) : null}
       </div>

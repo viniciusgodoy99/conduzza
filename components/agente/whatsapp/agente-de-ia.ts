@@ -781,6 +781,10 @@ export const TEXTOS_DA_IA = {
       "O motor do assistente não está rodando. Siga o diagnóstico rápido do motor-ia em supabase/operacao/motor-por-cron.md.",
   } satisfies Partial<Record<MotivoDaParada, string>>,
   faltaParaAEquipe: "Ligue ao menos um número e um telefone da equipe antes.",
+  // O "?" do titulo do cartao do assistente (pedido do dono de 26/11/2026):
+  // o que cada opcao do seletor faz, no lugar dos tres quadros explicando.
+  ajudaDosModos:
+    "Só simulador: responde só no simulador, sem WhatsApp. Conversar com a equipe: responde pelos números ligados, só para os telefones da equipe abaixo. Atendendo os contatos: responde a quem escrever, no público de Regras e limites; só a equipe Conduzza liga, pelo Painel geral.",
   descricaoDosNumeros:
     "O assistente responde só pelos números ligados aqui, e só para os telefones da equipe.",
   descricaoDosNumerosEmProducao:

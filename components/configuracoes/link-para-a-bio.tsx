@@ -110,7 +110,7 @@ export function LinkParaABio({
 
   return (
     <div
-      className={cn("grid gap-2 rounded-xl bg-surface-4 p-3", className)}
+      className={cn("grid gap-2 border-t border-border pt-2.5", className)}
       role="group"
       aria-labelledby={`${id}-titulo`}
     >

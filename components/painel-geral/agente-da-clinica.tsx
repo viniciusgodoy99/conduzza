@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, CircleQuestionMark } from "lucide-react";
+import { CircleQuestionMark } from "lucide-react";
 import { useId } from "react";
 
 import {
@@ -31,7 +31,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -187,20 +186,7 @@ export function AgenteDaClinica({
   return (
     <Card role="region" aria-labelledby={`${ids}-titulo`}>
       <CardHeader>
-        <div className="flex min-w-0 items-center gap-3">
-          <span
-            aria-hidden
-            className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-3"
-          >
-            <Bot className="size-5 text-text-strong" />
-          </span>
-          <div className="grid min-w-0 gap-[3px]">
-            <CardTitle id={`${ids}-titulo`}>Agente de IA</CardTitle>
-            <CardDescription>
-              {TEXTOS_DO_PAINEL.descricaoDoAgente}
-            </CardDescription>
-          </div>
-        </div>
+        <CardTitle id={`${ids}-titulo`}>Agente de IA</CardTitle>
         <CardAction>
           <StatusChip definition={AGENTE_DA_CLINICA_STATUS[estado]} />
         </CardAction>
@@ -262,9 +248,7 @@ export function AgenteDaClinica({
         erro={erro}
         pendente={pendente}
         onFechar={fechar}
-        onConfirmar={() =>
-          confirmar((novo) => textoDoAgenteMudou(nome, novo))
-        }
+        onConfirmar={() => confirmar((novo) => textoDoAgenteMudou(nome, novo))}
       />
     </Card>
   );

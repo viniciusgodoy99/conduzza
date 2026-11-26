@@ -101,7 +101,6 @@ export function SerieLeadsAgendadas({
     <Secao
       titulo="Leads x consultas agendadas"
       icone={ChartLine}
-      meta="Por dia, no fuso da clínica"
       className={className}
     >
       {corpo}

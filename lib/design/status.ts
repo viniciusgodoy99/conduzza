@@ -40,7 +40,6 @@ import {
   ShieldCheck,
   ShieldOff,
   ShieldX,
-  Sparkles,
   Square,
   SquareX,
   Stethoscope,
@@ -148,7 +147,7 @@ export type ConversationStatus =
 
 export const CONVERSATION_STATUS: Record<ConversationStatus, StatusDefinition> =
   {
-    ia_atendendo: { label: "IA atendendo", tone: "ai", icon: Sparkles },
+    ia_atendendo: { label: "IA atendendo", tone: "ai", icon: Bot },
     aguardando_humano: {
       label: "Aguardando você",
       tone: "warning",
@@ -428,7 +427,7 @@ export const ACCESS_LEVEL_STATUS: Record<Access, StatusDefinition> = {
 export type IaAgendaStatus = "sim" | "nao";
 
 export const IA_AGENDA_STATUS: Record<IaAgendaStatus, StatusDefinition> = {
-  sim: { label: "IA agenda", tone: "success", icon: Bot },
+  sim: { label: "IA agenda", tone: "ai", icon: Bot },
   nao: { label: "Só recepção", tone: "neutral", icon: ConciergeBell },
 };
 

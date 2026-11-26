@@ -129,15 +129,6 @@ export function ListaFaltas({
           })}
         </ul>
       </div>
-      {/* O caminho REAL de ativação. Este rodapé mandava para a tela de
-          Automações, que é um placeholder: a recepção ia lá, via "módulo em
-          construção" e concluía que o recurso não existia, quando o
-          interruptor estava a um clique daqui. */}
-      <p className="border-t border-border bg-surface-subtle px-3.5 py-3 text-xs text-text-secondary">
-        O contato automático depois da falta é a régua de recuperação. Ligue no
-        botão <strong>Mensagens automáticas</strong>, aba{" "}
-        <strong>Depois da falta</strong>.
-      </p>
     </Card>
   );
 }

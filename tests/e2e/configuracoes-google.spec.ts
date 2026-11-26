@@ -321,7 +321,7 @@ test("sem linha: Desligado, ações presas com a dica; ligar cria a linha com a 
     await expect(chave).toHaveAttribute("aria-checked", "false");
     await expect(cartao).toContainText("Desligado");
     await expect(cartao).toContainText(
-      "Com o rastreio desligado, nenhum clique é registrado, mas a linha que está no site continua acrescentando o código",
+      "Desligado, nenhum clique é registrado, mas a linha no site continua pondo o código",
     );
     await expect(cartao).toContainText(
       "Para parar de vez, tire a linha do site.",
@@ -740,7 +740,7 @@ const AVISO_DO_SORTEIO =
 const FRASES_SALVAS =
   "Frases salvas. O site passa a usar as frases novas, sem colar a linha de novo.";
 const AVISO_DO_DESLIGADO =
-  "Com o rastreio desligado, o site usa a frase padrão.";
+  "Com o rastreio desligado, vale a frase padrão.";
 
 async function gravarFrases(frases: string[]): Promise<void> {
   await adminClient()
@@ -821,7 +821,7 @@ test("frases: o padrão de fábrica, editar e adicionar, salvar aparado, e o sit
     const bloco = blocoDasFrases(cartao);
     await expect(bloco).toBeVisible();
     await expect(bloco).toContainText(
-      "Quando o botão do WhatsApp do site não traz texto pronto",
+      "Para o botão do site que não traz texto pronto",
     );
 
     // Padrao: uma frase, nada para salvar, a unica frase nao sai.

@@ -1,10 +1,11 @@
 "use client";
 
-import { Info, RefreshCw, Reply, Save } from "lucide-react";
+import { RefreshCw, Save } from "lucide-react";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { definirNumeroDasAutomaticasAction } from "@/app/(app)/automacoes/actions";
+import { Ajuda } from "@/components/agente/ajuda";
 import {
   situacaoDoNumero,
   telefoneDoNumero,
@@ -20,7 +21,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
 } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -62,17 +62,18 @@ const TITULO = "Número das mensagens automáticas";
 const ULTIMO_USADO = "ultimo_usado";
 const ROTULO_ULTIMO_USADO = "Último número usado pelo paciente (recomendado)";
 
+const AJUDA =
+  "No último número usado, quem nunca conversou com a clínica recebe pelo número principal. Se o número escolhido estiver desconectado, as mensagens esperam a reconexão. Elas nunca saem por outro número sozinhas. A resposta a quem respondeu uma mensagem sai pelo número em que o paciente respondeu.";
+
 function Cabecalho() {
   return (
     <CardHeader>
-      <h2 className="text-base leading-[1.3] font-bold tracking-[-0.01em]">
-        {TITULO}
-      </h2>
-      <CardDescription>
-        Escolha por qual número sai cada tipo de mensagem automática. No último
-        número usado, quem nunca conversou com a clínica recebe pelo número
-        principal.
-      </CardDescription>
+      <div className="flex items-center gap-1">
+        <h2 className="text-base leading-[1.3] font-bold tracking-[-0.01em]">
+          {TITULO}
+        </h2>
+        <Ajuda rotulo={TITULO} texto={AJUDA} />
+      </div>
     </CardHeader>
   );
 }
@@ -260,25 +261,12 @@ function EscolhaPorTipo({
 
         {esperando.map(({ numero }) => (
           <Aviso key={numero.id} tom="warning">
-            O número &quot;{numero.nome}&quot; não está conectado. Enquanto ele
-            não reconectar, as mensagens que saem sempre por ele ficam
-            esperando. Reconecte em Configurações, aba WhatsApp.
+            O número &quot;{numero.nome}&quot; não está conectado: as mensagens
+            dele ficam esperando. Reconecte em Configurações, aba WhatsApp.
           </Aviso>
         ))}
 
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="grid max-w-[62ch] gap-1.5 text-[12.5px] text-text-secondary">
-            <p className="flex items-start gap-2">
-              <Info aria-hidden className="mt-px size-4 shrink-0" />
-              Se o número escolhido estiver desconectado, as mensagens esperam a
-              reconexão. Elas nunca saem por outro número sozinhas.
-            </p>
-            <p className="flex items-start gap-2">
-              <Reply aria-hidden className="mt-px size-4 shrink-0" />A resposta
-              a quem respondeu uma mensagem sai pelo número em que o paciente
-              respondeu.
-            </p>
-          </div>
+        <div className="flex flex-wrap items-center justify-end gap-3">
           <div className="flex flex-wrap items-center gap-3">
             {podeEditar && mudaram.length > 0 && !pendente ? (
               <span className="text-xs text-text-secondary">

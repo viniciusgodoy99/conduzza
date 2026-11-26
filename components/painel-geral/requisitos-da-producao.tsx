@@ -1,6 +1,6 @@
 "use client";
 
-import { BadgeX, ClipboardCheck, Plus } from "lucide-react";
+import { BadgeX, Plus } from "lucide-react";
 import { useId, useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -27,13 +27,7 @@ import {
 import { Aviso } from "@/components/shared/aviso";
 import { StatusChip } from "@/components/shared/status-chip";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -186,22 +180,9 @@ export function RequisitosDaProducaoCartao({
   return (
     <Card role="region" aria-labelledby={`${ids}-titulo`}>
       <CardHeader>
-        <div className="flex min-w-0 items-center gap-3">
-          <span
-            aria-hidden
-            className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-3"
-          >
-            <ClipboardCheck className="size-5 text-text-strong" />
-          </span>
-          <div className="grid min-w-0 gap-[3px]">
-            <CardTitle id={`${ids}-titulo`}>
-              {TEXTOS_DO_PAINEL.requisitosTitulo}
-            </CardTitle>
-            <CardDescription>
-              {TEXTOS_DO_PAINEL.requisitosDescricao}
-            </CardDescription>
-          </div>
-        </div>
+        <CardTitle id={`${ids}-titulo`}>
+          {TEXTOS_DO_PAINEL.requisitosTitulo}
+        </CardTitle>
       </CardHeader>
       <CardContent className="grid gap-3">
         {requisitos === "erro" ? (

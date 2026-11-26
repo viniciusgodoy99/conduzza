@@ -338,18 +338,14 @@ describe("popover Etiquetar lead", () => {
     const aoRemover = vi.fn();
     const campos = { etiquetasDosSelecionados: ["LEAD", "lead"], aoRemover };
     const html = painel(campos);
-    expect(texto(html)).toContain(
-      "Etiquetas do lead nos selecionados (toque no X para remover)",
-    );
+    expect(texto(html)).toContain("Etiquetas do lead nos selecionados");
     clicar(PainelEtiquetarLead(propsDoPainel(campos)), "Remover etiqueta lead");
     expect(aoRemover).toHaveBeenCalledWith("lead");
   });
 
   it("vazio: a clínica ainda não tem etiquetas", () => {
     const html = painel({ opcoes: [] });
-    expect(texto(html)).toContain(
-      "A clínica ainda não tem etiquetas. Escreva uma acima para criar a primeira.",
-    );
+    expect(texto(html)).toContain("A clínica ainda não tem etiquetas.");
     expect(oferecidas(html)).toEqual([]);
   });
 

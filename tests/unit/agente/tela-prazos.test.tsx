@@ -171,10 +171,8 @@ describe("Habilidades: Cancelar consulta e Remarcar consulta", () => {
     );
     expect(chaveDa(html, "cancelar")).toContain('aria-checked="false"');
     expect(chaveDa(html, "remarcar")).toContain('aria-checked="false"');
-    // AG5: a lista de espera saiu da frase (a IA coloca na lista).
-    expect(visivel).toContain(
-      "O que o assistente pode fazer na conversa. Encaixe continua com a equipe.",
-    );
+    // Pedido do dono de 26/11/2026: a aba nao tem mais descricao.
+    expect(visivel).not.toContain("O que o assistente pode fazer na conversa");
   });
 
   it("sem os prazos: as duas desabilitadas com a dica escrita (ligada à chave) e no cursor", () => {
@@ -285,18 +283,22 @@ describe("Regras e limites: o cartão Prazos para cancelar e remarcar", () => {
     const html = cartao();
     const visivel = texto(html);
     expect(visivel).toContain("Prazos para cancelar e remarcar");
-    expect(visivel).toContain(TEXTOS_DO_AGENTE.prazosDescricao);
+    // A ajuda dos prazos fica no "?" do titulo, uma vez so.
+    expect(html).toContain(
+      'aria-label="Ajuda: Prazos para cancelar e remarcar"',
+    );
     expect(visivel).toContain(
       "Cancelar pelo assistente até (horas antes da consulta)",
     );
     expect(visivel).toContain(
       "Remarcar pelo assistente até (horas antes da consulta)",
     );
+    expect(visivel.split("De 0 a 720 horas.")).toHaveLength(3);
     expect(
       visivel.split(
-        "De 0 a 720 horas. Com menos tempo do que isso, o assistente passa o pedido para a equipe.",
+        "Com menos tempo do que isso, o assistente passa o pedido para a equipe.",
       ),
-    ).toHaveLength(3);
+    ).toHaveLength(2);
     const campos = html.match(/<input[^>]*type="number"[^>]*>/g) ?? [];
     expect(campos).toHaveLength(2);
     const [cancelar, remarcar] = campos;
@@ -541,14 +543,12 @@ describe("cópia", () => {
   it("sem travessão e sem jargão", () => {
     const T = TEXTOS_DO_AGENTE;
     const amostras: [string, string][] = [
-      ["prazosDescricao", T.prazosDescricao],
-      ["prazoDica", T.prazoDica(0, 720, "x")],
+      ["prazoDica", T.prazoDica(0, 720)],
       ["prazosVazios", T.prazosVazios],
       ["prazoDeCancelarVazio", T.prazoDeCancelarVazio],
       ["prazoDeRemarcarVazio", T.prazoDeRemarcarVazio],
       ["salvarPrazos", T.salvarPrazos],
       ["prazosSalvos", T.prazosSalvos],
-      ["habilidadesDescricao", T.habilidadesDescricao],
       ["simuladorDescricao", T.simuladorDescricao],
       ["restaurarDescricao", T.restaurarDescricao],
       ["cartao", texto(cartao())],

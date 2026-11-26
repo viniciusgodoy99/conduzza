@@ -63,15 +63,13 @@ export function LeadCard({
       data-cartao-do-lead=""
       onClick={() => onAbrir(lead)}
       className={cn(
-        "grid w-full gap-2 rounded-xl border border-border bg-card p-[11px] text-left shadow-xs transition-[box-shadow,translate] duration-(--dur-fast) outline-none hover:-translate-y-px hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid motion-reduce:hover:translate-y-0",
+        "grid w-full gap-2 rounded-xl border border-border bg-card p-[11px] text-left transition-colors duration-(--dur-fast) outline-none hover:border-border-heavy focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid",
         podeEditar ? "cursor-grab" : "cursor-default",
         isDragging && "cursor-grabbing shadow-pop",
       )}
       style={
         transform
           ? {
-              // O arrasto anda por transform; o translate de 1px do hover e
-              // outra propriedade e so soma, sem brigar com ele.
               transform: `translate(${transform.x}px, ${transform.y}px)`,
               zIndex: 30,
             }
@@ -84,7 +82,7 @@ export function LeadCard({
           {lead.name ?? <span className="cz-num">{telefone}</span>}
         </span>
         {lead.name ? (
-          <span className="truncate cz-num text-xs text-text-secondary">
+          <span className="truncate text-xs text-text-secondary cz-num">
             {telefone}
           </span>
         ) : null}

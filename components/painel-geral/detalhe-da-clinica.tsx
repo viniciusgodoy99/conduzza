@@ -280,7 +280,6 @@ export function DetalheDaClinica({
             rotulo="Números conectados"
             icone={Smartphone}
             valor={textoDosNumeros(clinica)}
-            rodape="Sem os removidos"
           />
         )}
         <CartaoDeMetrica
@@ -317,7 +316,6 @@ export function DetalheDaClinica({
               clinica.fuso,
               new Date(agoraMs),
             )}
-            rodape="No fuso da clínica"
           />
         ) : (
           <CartaoDeMetrica

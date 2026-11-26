@@ -71,9 +71,7 @@ export function DialogoDeAutorizacao({
         <DialogHeader>
           <DialogTitle>Registrar autorização</DialogTitle>
           <DialogDescription>
-            Registre como {nome} autorizou a clínica a mandar mensagem no
-            WhatsApp. Com a autorização registrada, as próximas mensagens
-            automáticas podem sair para este paciente.
+            Como {nome} autorizou receber mensagens no WhatsApp.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">

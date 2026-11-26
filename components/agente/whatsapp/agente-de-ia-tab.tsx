@@ -2,7 +2,6 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
-  Bot,
   CircleQuestionMark,
   MessageSquareText,
   Pause,
@@ -28,6 +27,7 @@ import {
   excluirTelefoneDaIaAction,
   type ResultadoDaIa,
 } from "@/app/(app)/agente/whatsapp-actions";
+import { Ajuda } from "@/components/agente/ajuda";
 import {
   avisosAoLigar,
   conversasAbertasDoTelefone,
@@ -305,18 +305,6 @@ function comDica(controle: React.ReactNode, dica: string | null) {
   );
 }
 
-/** Ladrilho decorativo do cabecalho: a cor nao diz estado. */
-function Ladrilho({ icone: Icone }: { icone: typeof Bot }) {
-  return (
-    <span
-      aria-hidden
-      className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-3"
-    >
-      <Icone className="size-5 text-text-strong" />
-    </span>
-  );
-}
-
 /** Ativos primeiro; dentro de cada grupo, pelo nome. */
 export function telefonesNaOrdem(
   telefones: readonly TelefoneDaIa[],
@@ -533,18 +521,14 @@ function AbaWhatsappCarregada({
 
       <Card role="region" aria-labelledby={`${ids}-assistente`}>
         <CardHeader>
-          <div className="flex min-w-0 items-center gap-3">
-            <Ladrilho icone={Bot} />
-            <div className="grid min-w-0 gap-[3px]">
-              <CardTitle id={`${ids}-assistente`}>
-                Assistente de IA nesta clínica
-              </CardTitle>
-              <CardDescription>
-                Ligue só no simulador para testar sem WhatsApp, ou deixe o
-                assistente conversar com os telefones da equipe pelos números
-                ligados.
-              </CardDescription>
-            </div>
+          <div className="flex min-w-0 items-center gap-1">
+            <CardTitle id={`${ids}-assistente`}>
+              Assistente de IA nesta clínica
+            </CardTitle>
+            <Ajuda
+              rotulo="Assistente de IA nesta clínica"
+              texto={TEXTOS_DA_IA.ajudaDosModos}
+            />
           </div>
           <CardAction>
             <StatusChip definition={IA_NA_CLINICA_STATUS[estado]} />
@@ -599,55 +583,22 @@ function AbaWhatsappCarregada({
               simulador). A pausa e o lado seguro e sai na hora; retomar
               pede confirmacao. */}
           {whatsappLigado(escolha) || pausada ? (
-            <div className="grid gap-2 rounded-lg border border-border px-3.5 py-3">
-              <div className="flex min-h-10 flex-wrap items-center gap-3">
-                {comDica(botaoDaPausa, dicas.pausa)}
-              </div>
-              <p className="text-[12px] text-text-secondary">
-                {TEXTOS_DA_IA.pausaExplicacao}
-              </p>
+            <div className="flex min-h-10 flex-wrap items-center gap-1">
+              {comDica(botaoDaPausa, dicas.pausa)}
+              <Ajuda
+                rotulo={pausada ? TEXTOS_DA_IA.retomar : TEXTOS_DA_IA.pausar}
+                texto={TEXTOS_DA_IA.pausaExplicacao}
+              />
             </div>
           ) : null}
 
-          <dl className="grid gap-2 text-[13px] sm:grid-cols-2 xl:grid-cols-3">
-            <div className="grid content-start gap-0.5 rounded-lg bg-surface-2 px-3.5 py-3">
-              <dt className="font-semibold text-text-strong">Só simulador</dt>
-              <dd className="text-text-secondary">
-                O assistente responde só no simulador, dentro do sistema.
-                Ninguém recebe mensagem dele pelo WhatsApp.
-              </dd>
-            </div>
-            <div className="grid content-start gap-0.5 rounded-lg bg-surface-2 px-3.5 py-3">
-              <dt className="font-semibold text-text-strong">
-                Conversar com a equipe
-              </dt>
-              <dd className="text-text-secondary">
-                O assistente responde pelo WhatsApp dos números ligados, só para
-                os telefones da equipe abaixo. Os pacientes continuam com a
-                equipe.
-              </dd>
-            </div>
-            <div className="grid content-start gap-0.5 rounded-lg bg-surface-2 px-3.5 py-3">
-              <dt className="font-semibold text-text-strong">
-                Atendendo os contatos
-              </dt>
-              <dd className="text-text-secondary">
-                O assistente responde pelo WhatsApp dos números ligados a quem
-                escrever, dentro do público escolhido em Regras e limites. Só a
-                equipe Conduzza liga, pelo Painel geral.
-              </dd>
-            </div>
-          </dl>
-
           {/* O limite de gasto, so leitura (onda 2, P8): o ajuste e da
               equipe Conduzza, no Painel geral. */}
-          <div className="grid gap-0.5">
+          <div className="flex min-w-0 items-center gap-1">
             <p className="cz-num text-[13px] font-semibold text-text-strong">
               {textoDoLimiteDeGasto(dados.liberacao)}
             </p>
-            <p className="text-[12px] text-text-secondary">
-              {TEXTOS_DA_IA.tetoExplicacao}
-            </p>
+            <Ajuda rotulo="Limite de gasto" texto={TEXTOS_DA_IA.tetoExplicacao} />
           </div>
         </CardContent>
       </Card>
@@ -881,16 +832,16 @@ export function CartaoDosNumeros({
   return (
     <Card role="region" aria-labelledby={tituloId}>
       <CardHeader>
-        <div className="flex min-w-0 items-center gap-3">
-          <Ladrilho icone={Smartphone} />
-          <div className="grid min-w-0 gap-[3px]">
-            <CardTitle id={tituloId}>Números do assistente</CardTitle>
-            <CardDescription>
-              {emProducao
+        <div className="flex min-w-0 items-center gap-1">
+          <CardTitle id={tituloId}>Números do assistente</CardTitle>
+          <Ajuda
+            rotulo="Números do assistente"
+            texto={
+              emProducao
                 ? TEXTOS_DA_IA.descricaoDosNumerosEmProducao
-                : TEXTOS_DA_IA.descricaoDosNumeros}
-            </CardDescription>
-          </div>
+                : TEXTOS_DA_IA.descricaoDosNumeros
+            }
+          />
         </div>
       </CardHeader>
       <CardContent className="grid gap-3">
@@ -921,7 +872,7 @@ export function CartaoDosNumeros({
             />
           )
         ) : (
-          <ul className="grid gap-2" aria-label="Números da clínica">
+          <ul className="divide-y divide-border" aria-label="Números da clínica">
             {numeros.map((numero) => {
               const qual = `numero-${numero.id}`;
               const estadoNoAssistente = estadoDoNumero(dados, numero.id);
@@ -950,14 +901,7 @@ export function CartaoDosNumeros({
                 </Button>
               );
               return (
-                <li
-                  key={numero.id}
-                  className={
-                    ligado
-                      ? "grid gap-2 rounded-lg border border-border px-3.5 py-3"
-                      : "grid gap-2 rounded-lg border border-border bg-surface-2 px-3.5 py-3"
-                  }
-                >
+                <li key={numero.id} className="grid gap-2 py-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="grid min-w-0 gap-1">
                       <span className="font-semibold break-words text-text-strong">
@@ -1326,22 +1270,16 @@ export function CartaoDosTelefones({
   return (
     <Card role="region" aria-labelledby={tituloId}>
       <CardHeader>
-        <div className="flex min-w-0 items-center gap-3">
-          <Ladrilho icone={Phone} />
-          <div className="grid min-w-0 gap-[3px]">
-            <CardTitle id={tituloId}>Telefones da equipe</CardTitle>
-            <CardDescription>
-              O celular de quem vai conversar com o assistente para testar.
-            </CardDescription>
-          </div>
+        <div className="grid min-w-0 gap-[3px]">
+          <CardTitle id={tituloId}>Telefones da equipe</CardTitle>
+          <CardDescription>
+            {emProducao
+              ? TEXTOS_DA_IA.telefonesEmProducao
+              : TEXTOS_DA_IA.soEstesTelefones}
+          </CardDescription>
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <Aviso tom="info" role="note">
-          {emProducao
-            ? TEXTOS_DA_IA.telefonesEmProducao
-            : TEXTOS_DA_IA.soEstesTelefones}
-        </Aviso>
 
         <Form {...form}>
           <form
@@ -1502,10 +1440,10 @@ export function CartaoDosTelefones({
             compact
             icon={Phone}
             title="Nenhum telefone da equipe ainda"
-            description="Cadastre acima o celular de quem vai conversar com o assistente. Sem telefone, o assistente não conversa com ninguém pelo WhatsApp."
+            description="Cadastre acima o celular de quem vai testar."
           />
         ) : (
-          <ul className="grid gap-2" aria-label="Telefones cadastrados">
+          <ul className="divide-y divide-border" aria-label="Telefones cadastrados">
             {telefonesNaOrdem(telefones).map((telefone) => {
               const qual = `telefone-${telefone.id}`;
               const qualExcluir = `excluir-${telefone.id}`;
@@ -1565,14 +1503,7 @@ export function CartaoDosTelefones({
                 </Button>
               );
               return (
-                <li
-                  key={telefone.id}
-                  className={
-                    telefone.ativo && !invalido
-                      ? "grid gap-2 rounded-lg border border-border px-3.5 py-3"
-                      : "grid gap-2 rounded-lg border border-border bg-surface-2 px-3.5 py-3"
-                  }
-                >
+                <li key={telefone.id} className="grid gap-2 py-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="grid min-w-0 gap-1">
                       <span className="font-semibold break-words text-text-strong">

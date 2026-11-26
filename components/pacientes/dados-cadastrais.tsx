@@ -297,7 +297,7 @@ export function DadosCadastrais({
                     {...field}
                     rows={3}
                     maxLength={2000}
-                    placeholder="Recado da recepção, como preferência de horário ou de profissional."
+                    placeholder="Ex.: prefere horário à tarde"
                     disabled={!podeEditar}
                   />
                 </FormControl>

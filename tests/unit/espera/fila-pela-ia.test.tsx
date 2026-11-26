@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { Sparkles } from "lucide-react";
+import { Bot } from "lucide-react";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -17,7 +17,7 @@ import { ROLES } from "@/lib/domain/permissions";
 import type { EntradaDaEspera } from "@/lib/queries/espera";
 
 // AG5 na Tela 10 (a IA coloca o paciente na lista de espera; desenho, secao
-// 6): a entrada que a IA criou leva o selo "Pela IA" em 3 camadas (Sparkles,
+// 6): a entrada que a IA criou leva o selo "Pela IA" em 3 camadas (Bot,
 // tom ai e o rotulo, o mesmo sentido do selo da IA no Atendimento), com a
 // frase inteira para o leitor de tela; o pagamento declarado aparece na
 // linha da preferencia; "Abrir conversa" (40px) respeita o papel (quem ve
@@ -139,19 +139,19 @@ function selos(html: string): string[] {
 // ---------------------------------------------------------------------------
 
 describe("o selo Pela IA", () => {
-  it("é um status em 3 camadas: Sparkles, tom ai e o rótulo", () => {
+  it("é um status em 3 camadas: Bot, tom ai e o rótulo", () => {
     expect(ORIGEM_PELA_IA).toEqual({
       label: "Pela IA",
       tone: "ai",
-      icon: Sparkles,
+      icon: Bot,
     });
     // O mesmo sentido (e a mesma forma e cor) do selo da IA no Atendimento:
-    // o Sparkles e sempre do tom ai.
-    expect(CONVERSATION_STATUS.ia_atendendo.icon).toBe(Sparkles);
+    // o Bot e sempre do tom ai.
+    expect(CONVERSATION_STATUS.ia_atendendo.icon).toBe(Bot);
     expect(CONVERSATION_STATUS.ia_atendendo.tone).toBe(ORIGEM_PELA_IA.tone);
     // Nenhum status de consulta usa a forma da IA.
     for (const definicao of Object.values(APPOINTMENT_STATUS)) {
-      expect(definicao.icon).not.toBe(Sparkles);
+      expect(definicao.icon).not.toBe(Bot);
     }
   });
 
@@ -165,9 +165,9 @@ describe("o selo Pela IA", () => {
     expect(selos(daEquipe)).toHaveLength(0);
     expect(daEquipe).not.toContain(LEITURA_DA_ORIGEM_PELA_IA);
 
-    // Forma: o icone Sparkles; rotulo: o texto; cor: o par de tokens do ai.
+    // Forma: o icone Bot; rotulo: o texto; cor: o par de tokens do ai.
     for (const selo of selos(daIa)) {
-      expect(selo).toContain("lucide-sparkles");
+      expect(selo).toContain("lucide-bot");
       expect(selo).toContain(`color:${STATUS_TONE_VARS.ai.text}`);
       expect(selo).toContain(`background-color:${STATUS_TONE_VARS.ai.bg}`);
     }
@@ -361,12 +361,10 @@ describe("Abrir conversa", () => {
 });
 
 describe("estados e cópia", () => {
-  it("vazio: diz que dá para adicionar também pelo assistente", () => {
+  it("vazio: só a frase curta, sem parágrafo", () => {
     const html = fila([]);
     expect(texto(html)).toContain("Ninguém na lista de espera");
-    expect(texto(html)).toContain(
-      "Dá para adicionar por aqui, pela ficha do paciente, pela conversa ou pelo assistente.",
-    );
+    expect(texto(html)).not.toContain("Dá para adicionar por aqui");
   });
 
   it("sem travessão e sem jargão nos textos novos", () => {

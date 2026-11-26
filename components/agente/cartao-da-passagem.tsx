@@ -1,8 +1,8 @@
 "use client";
 
-import { UserRoundCheck, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 
+import { Ajuda } from "@/components/agente/ajuda";
 import { CartoesDeEscolha } from "@/components/agente/cartoes-de-escolha";
 import {
   useAvisarNaoSalvo,
@@ -16,7 +16,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -39,8 +38,9 @@ import {
 // sem a frase), e a pessoa que escreve de novo antes da atribuicao tambem
 // fica nela. Quem decide e o banco, depois da frase
 // (atribuir_conversa_passada_pela_ia), pela ultima versao publicada: a tela
-// so guarda a escolha. O paragrafo de ajuda e a descricao do grupo de
-// cartoes (aria-describedby), para o leitor de tela ouvir as excecoes.
+// so guarda a escolha. A ajuda (o "?" do titulo, com o texto escondido) e a
+// descricao do grupo de cartoes (aria-describedby), para o leitor de tela
+// ouvir as excecoes.
 //
 // Molde do cartao "Quem o assistente atende": cartoes de radio com o proprio
 // Salvar (grava no RASCUNHO pela acao salvarPassagemAction, vale ao
@@ -48,24 +48,9 @@ import {
 // pelos cartoes sem gravar a cada passo. O que foi escolhido e nao salvo
 // avisa o painel (o publicar confere). Sem permissao (recepcao), os cartoes
 // ficam travados e o Salvar, visivel e desabilitado com a dica.
-//
-// O ladrilho do cabecalho (UserRoundCheck) e decorativo e neutro: a cor nao
-// diz estado (docs/06, 4.6: sem dono de status).
 
-/** O paragrafo de ajuda, que descreve o grupo de cartoes (um so na tela). */
+/** O texto da ajuda, que descreve o grupo de cartoes (um so na tela). */
 const ID_DA_AJUDA = "agente-passagem-ajuda";
-
-/** Ladrilho decorativo do cabecalho dos cartoes da AG6: a cor nao diz estado. */
-export function LadrilhoDoCartao({ icone: Icone }: { icone: LucideIcon }) {
-  return (
-    <span
-      aria-hidden
-      className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-3"
-    >
-      <Icone className="size-5 text-text-strong" />
-    </span>
-  );
-}
 
 export function CartaoDaPassagem({
   passagemPara,
@@ -114,12 +99,9 @@ export function CartaoDaPassagem({
   return (
     <Card role="region" aria-labelledby="agente-passagem-titulo">
       <CardHeader>
-        <div className="flex min-w-0 items-center gap-3">
-          <LadrilhoDoCartao icone={UserRoundCheck} />
-          <div className="grid min-w-0 gap-[3px]">
-            <CardTitle id="agente-passagem-titulo">{T.titulo}</CardTitle>
-            <CardDescription>{T.descricao}</CardDescription>
-          </div>
+        <div className="flex min-w-0 items-center gap-1">
+          <CardTitle id="agente-passagem-titulo">{T.titulo}</CardTitle>
+          <Ajuda rotulo={T.titulo} texto={T.ajuda} id={ID_DA_AJUDA} />
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -140,9 +122,6 @@ export function CartaoDaPassagem({
             descricao: T.opcoes[valor].descricao,
           }))}
         />
-        <p id={ID_DA_AJUDA} className="text-[12.5px] text-text-secondary">
-          {T.ajuda}
-        </p>
         {erro ? (
           <Aviso tom="alert" role="alert">
             {erro}

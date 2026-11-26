@@ -266,8 +266,7 @@ export function MensagensPadraoTab({
                 id="mensagem-atalho-dica"
                 className="text-[11.5px] text-text-secondary"
               >
-                No Atendimento, digite / e o atalho. Letras minúsculas, números
-                e _.
+                Use /atalho no Atendimento. Minúsculas, números e _
               </span>
             </div>
           </div>
@@ -298,10 +297,7 @@ export function MensagensPadraoTab({
             />
           </div>
           <div className="grid gap-1.5">
-            <span className="text-xs text-text-secondary">
-              Toque num campo para inserir no texto. No Atendimento, ele vira o
-              nome do contato da conversa ou o nome da clínica.
-            </span>
+            <span className="text-xs text-text-secondary">Inserir campo</span>
             <div className="flex flex-wrap gap-x-1.5 gap-y-2.5">
               {PLACEHOLDERS_DA_RESPOSTA.map((campo) => (
                 <button
@@ -309,7 +305,7 @@ export function MensagensPadraoTab({
                   type="button"
                   disabled={pendente}
                   onClick={() => inserirCampo(campo)}
-                  className="hit-40 h-[30px] rounded-sm border border-border-strong bg-card px-2 cz-num text-[11.5px] text-foreground shadow-xs cz-transition hover:bg-surface-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid disabled:cursor-not-allowed disabled:opacity-45"
+                  className="hit-40 h-[30px] rounded-sm border border-border-strong bg-card px-2 cz-num text-[11.5px] text-foreground cz-transition hover:bg-surface-3 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   {`{{${campo}}}`}
                 </button>
@@ -328,11 +324,9 @@ export function MensagensPadraoTab({
               <span className="cz-num">{"{{clinica}}"}</span>.
             </Aviso>
           ) : null}
-          <Aviso tom="info" titulo="Texto da clínica para o paciente.">
-            Não prometa resultado nem oriente sobre sintoma, remédio ou
-            diagnóstico: é regra do CFM e vale para toda mensagem da clínica. No
-            Atendimento, a mensagem entra no campo para a pessoa revisar antes
-            de enviar.
+          <Aviso tom="info">
+            Regra do CFM: sem promessa de resultado e sem orientar sobre
+            sintoma, remédio ou diagnóstico.
           </Aviso>
           {/* Checkbox, e nao Switch: a escolha so vale depois do Salvar
               (docs/06, C31). O radix pode devolver "indeterminate": so
@@ -344,23 +338,14 @@ export function MensagensPadraoTab({
               onCheckedChange={(valor) =>
                 setRascunho((atual) => ({ ...atual, ativo: valor === true }))
               }
-              aria-describedby="mensagem-ativa-descricao"
               className="mt-px"
             />
-            <div className="grid gap-1">
-              <Label
-                htmlFor="mensagem-ativa"
-                className="text-[13.5px] leading-[1.3]"
-              >
-                Ativa: aparece na lista do Atendimento
-              </Label>
-              <p
-                id="mensagem-ativa-descricao"
-                className="text-xs text-text-secondary"
-              >
-                Desmarcada, sai da lista e continua guardada aqui.
-              </p>
-            </div>
+            <Label
+              htmlFor="mensagem-ativa"
+              className="text-[13.5px] leading-[1.3]"
+            >
+              Ativa: aparece na lista do Atendimento
+            </Label>
           </div>
           {erro ? (
             <Aviso tom="alert" role="alert">
@@ -401,8 +386,7 @@ export function MensagensPadraoTab({
           </span>
           <BalaoWhatsApp corpo={previa} />
           <p className="text-[11.5px] text-text-secondary">
-            Amostra com o nome fictício {NOME_DE_AMOSTRA}. No Atendimento, entra
-            o nome do contato da conversa.
+            Amostra com o nome {NOME_DE_AMOSTRA}
           </p>
           {previaSemNome !== null ? (
             <p className="text-[11.5px] text-text-secondary">
@@ -445,7 +429,6 @@ export function MensagensPadraoTab({
         <EmptyState
           icon={SquareSlash}
           title="Nenhuma mensagem padrão ainda"
-          description="Textos prontos, como o endereço da clínica ou a confirmação de um horário. No Atendimento, digite / na resposta ao paciente para usar um."
         />
       ) : (
         <ul className="divide-y divide-border">
@@ -552,9 +535,7 @@ export function MensagensPadraoTab({
           <DialogHeader>
             <DialogTitle>Excluir {excluindo?.titulo}?</DialogTitle>
             <DialogDescription>
-              Ela sai da lista do Atendimento para toda a equipe. Isso não pode
-              ser desfeito. Para só tirar da lista por um tempo, desative em vez
-              de excluir.
+              Não pode ser desfeito. Para tirar da lista por um tempo, desative.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

@@ -37,8 +37,6 @@ import type { Convenio } from "@/lib/queries/catalogo";
 
 export const TEXTOS_DOS_REQUISITOS = {
   titulo: "O que o paciente precisa",
-  ajuda:
-    "O que o paciente precisa levar ou fazer para este procedimento. Cada item vale para todos ou só para um convênio.",
   vazio: "Nenhum item cadastrado.",
   adicionar: "Adicionar item",
   tipo: "O que é",
@@ -47,10 +45,8 @@ export const TEXTOS_DOS_REQUISITOS = {
   texto: "O que dizer ao paciente",
   textoOpcional: "O que dizer ao paciente (opcional)",
   textoExemplo: "Ex.: Traga a carteirinha e um documento com foto.",
-  textoAjuda:
-    "O texto passa pelas mesmas regras das respostas do assistente: sem telefone, link, valor nem orientação de saúde.",
+  textoAjuda: "Sem telefone, link, valor nem orientação de saúde.",
   ativo: "Item ativo",
-  ativoDescricao: "Desmarcado, fica guardado e deixa de valer.",
   remover: "Remover",
   convenioInativo: "inativo",
   leituraVazia: "Nenhum item cadastrado.",
@@ -160,17 +156,12 @@ export function RequisitosDoProcedimento({
       aria-labelledby="proc-requisitos-titulo"
       className="grid gap-3 border-t border-border pt-4"
     >
-      <div className="grid gap-1">
-        <h3
-          id="proc-requisitos-titulo"
-          className="text-sm font-bold text-text-strong"
-        >
-          {TEXTOS_DOS_REQUISITOS.titulo}
-        </h3>
-        <p className="text-xs text-text-secondary">
-          {TEXTOS_DOS_REQUISITOS.ajuda}
-        </p>
-      </div>
+      <h3
+        id="proc-requisitos-titulo"
+        className="text-sm font-bold text-text-strong"
+      >
+        {TEXTOS_DOS_REQUISITOS.titulo}
+      </h3>
       {requisitos.length === 0 ? (
         <p className="text-[13px] text-text-secondary">
           {TEXTOS_DOS_REQUISITOS.vazio}
@@ -304,7 +295,6 @@ export function RequisitosDoProcedimento({
                   <CampoDeMarcar
                     id={`${id}-ativo`}
                     rotulo={TEXTOS_DOS_REQUISITOS.ativo}
-                    descricao={TEXTOS_DOS_REQUISITOS.ativoDescricao}
                     marcado={requisito.ativo}
                     aoMudar={(ativo) => mudar(requisito.chave, { ativo })}
                   />

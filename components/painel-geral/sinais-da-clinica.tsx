@@ -1,4 +1,3 @@
-import { HeartPulse } from "lucide-react";
 import { useId } from "react";
 
 import {
@@ -8,12 +7,12 @@ import {
   SAUDE_STATUS,
   TEXTOS_DO_PAINEL,
 } from "@/components/painel-geral/painel-geral";
+import { DicaDeAjuda } from "@/components/shared/dica-de-ajuda";
 import { StatusChip } from "@/components/shared/status-chip";
 import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -90,19 +89,11 @@ export function SaudeDaClinicaCartao({
   return (
     <Card role="region" aria-labelledby={`${id}-titulo`}>
       <CardHeader>
-        <div className="flex min-w-0 items-center gap-3">
-          <span
-            aria-hidden
-            className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-3"
-          >
-            <HeartPulse className="size-5 text-text-strong" />
-          </span>
-          <div className="grid min-w-0 gap-[3px]">
-            <CardTitle id={`${id}-titulo`}>
-              {TEXTOS_DO_PAINEL.saudeTitulo}
-            </CardTitle>
-            <CardDescription>{TEXTOS_DO_PAINEL.saudeRegra}</CardDescription>
-          </div>
+        <div className="flex items-center gap-1">
+          <CardTitle id={`${id}-titulo`}>
+            {TEXTOS_DO_PAINEL.saudeTitulo}
+          </CardTitle>
+          <DicaDeAjuda rotulo="Como a saúde é calculada" texto={TEXTOS_DO_PAINEL.saudeRegra} />
         </div>
         <CardAction>
           <StatusChip definition={SAUDE_STATUS[clinica.saude]} />

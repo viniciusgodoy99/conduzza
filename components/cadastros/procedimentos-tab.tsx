@@ -180,8 +180,7 @@ const FORM_VAZIO: FormProcedimento = {
  */
 export const ROTULO_IA_PODE_INFORMAR =
   "A IA pode informar o preço e o que o procedimento exige";
-export const AJUDA_IA_PODE_INFORMAR =
-  "Mesmo quando a IA não agenda este procedimento, ela pode dizer o preço e o que o paciente precisa.";
+export const AJUDA_IA_PODE_INFORMAR = "Vale mesmo quando a IA não agenda.";
 
 /**
  * A frase quando o procedimento gravou e "O que o paciente precisa" nao (a
@@ -261,11 +260,11 @@ const ERRO_GENERICO_DO_SALVAR = "Não foi possível salvar.";
 
 /** Ajuda de "Convenios que cobrem este procedimento" (sem travessao) */
 export const AJUDA_DOS_CONVENIOS_QUE_COBREM =
-  "Quem faz este procedimento e atende o convênio no cadastro do profissional recebe o convênio já marcado, em Quem faz e convênios.";
+  "Já vem marcado para quem faz e atende o convênio.";
 
 /** D6: nenhum convenio para oferecer. So texto: trocar de aba fecha o modal */
 export const VAZIO_DOS_CONVENIOS_QUE_COBREM =
-  "Nenhum convênio ativo. Cadastre ou reative um na aba Convênios para marcar quais cobrem este procedimento.";
+  "Nenhum convênio ativo. Cadastre na aba Convênios.";
 
 /** Nenhum convenio marcado em "cobrem": todos ficam so com o Particular */
 export const SO_PARTICULAR =
@@ -273,7 +272,7 @@ export const SO_PARTICULAR =
 
 /** Ajuda de "Quem faz e convenios" (sem travessao) */
 export const AJUDA_DE_QUEM_FAZ =
-  'Cada profissional mostra os convênios que cobrem este procedimento e que ele atende no cadastro dele, já marcados. Desmarcar aqui vale só para este procedimento. Preço e duração vêm do procedimento: Particular pelo preço base e convênio como Coberto. Personalize só o que for diferente. A chave "IA pode agendar" vale para todos.';
+  "Desmarcar aqui vale só para este procedimento.";
 
 /**
  * Titulo do aviso de consultas antes de gravar (D4): o Salvar tira do
@@ -703,7 +702,7 @@ function LinhaDoConvenio({
           />
           {particular ? (
             <p className="text-xs text-text-secondary">
-              Coberto pelo convênio só vale quando um convênio é escolhido.
+              Coberto só vale com convênio.
             </p>
           ) : null}
           <div className="grid items-start gap-3 sm:grid-cols-2">
@@ -988,8 +987,7 @@ function QuemFazEConvenios({
 
       {linhas.length === 0 ? (
         <p className="rounded-xl bg-surface-subtle px-3.5 py-3 text-[13px] text-text-secondary">
-          Ninguém faz este procedimento ainda. Sem isso, a agenda e a IA não
-          conseguem marcar.
+          Ninguém faz este procedimento ainda. Sem isso, não dá para agendar.
         </p>
       ) : (
         <ul className="grid gap-3">
@@ -1199,7 +1197,7 @@ function QuemFazEConvenios({
           >
             {temProfissionalAtivo
               ? "Todos os profissionais ativos já estão na lista."
-              : "Cadastre os profissionais na aba Profissionais para dizer quem faz este procedimento."}
+              : "Cadastre profissionais na aba Profissionais."}
           </p>
         ) : null}
       </div>
@@ -1230,8 +1228,7 @@ function QuemFazSomenteLeitura({
   );
   const nota = oferecidas.ocultos ? (
     <p className="text-xs text-text-secondary">
-      Profissionais e convênios inativos não aparecem aqui, porque a Agenda não
-      os oferece.
+      Inativos não aparecem.
     </p>
   ) : null;
   if (oferecidas.linhas.length === 0) {
@@ -1298,14 +1295,14 @@ function CobremSomenteLeitura({
   const nota =
     ativos.length !== planos.length ? (
       <p className="text-xs text-text-secondary">
-        Convênios inativos não aparecem aqui, porque a Agenda não os oferece.
+        Convênios inativos não aparecem.
       </p>
     ) : null;
   return (
     <div className="grid gap-1 whitespace-normal">
       {ativos.length === 0 ? (
         <span className="text-text-secondary">
-          Nenhum convênio cobre: este procedimento é só Particular.
+          Nenhum convênio cobre: só Particular.
         </span>
       ) : (
         <span>{ativos.map(nomes.nomeDoConvenio).join(", ")}</span>
@@ -1979,7 +1976,6 @@ export function ProcedimentosTab({
         <VazioDaAba
           icon={ClipboardList}
           titulo="Nenhum procedimento cadastrado"
-          descricao="Cadastre os procedimentos da clínica para a agenda e o agente oferecerem os serviços certos."
           acao={{
             rotulo: "Cadastrar o primeiro procedimento",
             onClick: () => abrir(),
@@ -2215,7 +2211,7 @@ export function ProcedimentosTab({
           <CampoDeMarcar
             id="proc-ia"
             rotulo="IA pode agendar"
-            descricao="O agente pode oferecer e agendar este procedimento, com todos os profissionais e convênios abaixo"
+            descricao="Vale para todos os profissionais e convênios abaixo."
             marcado={form.bookable_by_ai}
             aoMudar={(marcado) => setForm({ ...form, bookable_by_ai: marcado })}
           />

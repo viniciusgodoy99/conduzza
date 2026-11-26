@@ -178,7 +178,8 @@ describe("Habilidades: Agendar consulta e Confirmar presença", () => {
     expect(visivel).not.toContain("quem agenda, remarca e cancela");
     expect(visivel).not.toContain("Remarcar, cancelar");
     expect(visivel).not.toContain("Lista de espera e encaixe");
-    expect(visivel).toContain("Encaixe continua com a equipe.");
+    // Pedido do dono de 26/11/2026: sem descricao embaixo do titulo da aba.
+    expect(visivel).not.toContain("O que o assistente pode fazer na conversa");
   });
 
   it("sem a antecedência e o horizonte, Agendar fica desabilitada com a dica, escrita e no cursor", () => {
@@ -325,10 +326,6 @@ describe("Habilidades: Agendar consulta e Confirmar presença", () => {
     expect(nota).toContain(
       "só com telefone da equipe cadastrado pela equipe Conduzza",
     );
-    expect(nota).toContain(
-      "depois que a equipe aprova a consulta, o contato vira paciente",
-    );
-    expect(nota).toContain("um telefone comum deixa de acionar o assistente");
     expect(nota).not.toMatch(/[—–]/);
     expect(nota).not.toMatch(
       /\b(for[çc]ad[oa]|prompt|token|LLM|skill|tenant|handoff|opt-in|slot|hold)\b/i,
@@ -359,12 +356,10 @@ describe("Regras e limites: limites para marcar consulta", () => {
     expect(visivel).toContain("Limites para marcar consulta");
     expect(visivel).toContain("Antecedência mínima para marcar (horas)");
     expect(visivel).toContain("Até quantos dias à frente");
-    expect(visivel).toContain(
-      "De 0 a 720 horas. O assistente só oferece horário que começa depois desse tempo.",
-    );
-    expect(visivel).toContain(
-      "De 1 a 365 dias. O assistente não oferece horário além disso.",
-    );
+    expect(visivel).toContain("De 0 a 720 horas.");
+    expect(visivel).toContain("De 1 a 365 dias.");
+    // A aprovacao da equipe continua escrita no cartao.
+    expect(visivel).toContain(TEXTOS_DO_AGENTE.agendaDescricao);
     const campos = html.match(/<input[^>]*type="number"[^>]*>/g) ?? [];
     expect(campos).toHaveLength(2);
     const [antecedencia, horizonte] = campos;
@@ -390,7 +385,7 @@ describe("Regras e limites: limites para marcar consulta", () => {
       expect(campo).not.toContain(' placeholder="');
     }
     expect(html).toMatch(
-      /role="note"[^>]*data-tom="info"[^>]*>(?:(?!<\/div>).)*Com um dos campos vazio, a habilidade Agendar consulta não vale: o assistente não marca consulta\./,
+      /role="note"[^>]*data-tom="info"[^>]*>(?:(?!<\/div>).)*Com um campo vazio, o assistente não marca consulta\./,
     );
     expect(texto(renderCartao({ agenda: SO_ANTECEDENCIA }))).toContain(
       TEXTOS_DO_AGENTE.agendaIncompleta,
@@ -657,7 +652,6 @@ describe("cópia nova", () => {
       ["agendaIncompleta", T.agendaIncompleta],
       ["salvarAgenda", T.salvarAgenda],
       ["agendaSalva", T.agendaSalva],
-      ["habilidadesDescricao", T.habilidadesDescricao],
       ["habilidadeNaFaseDeTeste", T.habilidadeNaFaseDeTeste],
       ["semRascunho", T.semRascunho],
       ["restaurarDescricao", T.restaurarDescricao],

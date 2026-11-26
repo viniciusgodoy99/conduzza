@@ -10,7 +10,7 @@ import {
   ListChecks,
   MessagesSquare,
   Settings,
-  Sparkles,
+  Bot,
   UserPlus,
   Users,
   Workflow,
@@ -155,7 +155,7 @@ export const NAV_ITEMS: NavItem[] = [
   {
     href: "/agente",
     label: "Agente de IA",
-    icon: Sparkles,
+    icon: Bot,
     group: "inteligencia",
     moduleKey: "agente",
   },

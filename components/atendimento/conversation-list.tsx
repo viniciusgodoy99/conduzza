@@ -824,7 +824,6 @@ export function ConversationList({
             tom="erro"
             compact
             title="Não foi possível carregar as resolvidas."
-            description="As conversas continuam guardadas. Tente de novo em instantes."
           >
             <Button variant="outline" size="sm" onClick={onRetryResolved}>
               Tentar de novo
@@ -835,7 +834,6 @@ export function ConversationList({
             compact
             icon={Search}
             title="Nenhuma conversa com esses filtros"
-            description="Ajuste os filtros ou limpe tudo."
             onClearFilters={limparFiltros}
           />
         ) : ehProfissional ? (
@@ -843,7 +841,6 @@ export function ConversationList({
             compact
             icon={MessagesSquare}
             title="Nenhuma conversa com você"
-            description="As conversas que a equipe passar para você aparecem aqui."
           >
             {temArquivo ? (
               <Button
@@ -860,7 +857,6 @@ export function ConversationList({
             compact
             icon={MessagesSquare}
             title="Nenhuma conversa em andamento"
-            description="As conversas resolvidas continuam guardadas."
           >
             <Button
               variant="outline"
@@ -875,7 +871,6 @@ export function ConversationList({
             compact
             icon={MessagesSquare}
             title="Nenhuma conversa ainda"
-            description="Quando um paciente escrever no WhatsApp da clínica, a conversa aparece aqui na hora."
           />
         )}
       </div>

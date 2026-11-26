@@ -13,7 +13,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -75,17 +74,8 @@ export function GoogleAdsTab({
       <Card>
         <CardHeader>
           <CardTitle>Conectar com o Google (em breve)</CardTitle>
-          <CardDescription>
-            Com a conta do Google Ads conectada, o Conduzza vai mostrar o nome
-            de cada campanha e quanto foi investido nela, para o custo por lead
-            do Google em Resultados.
-          </CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-3">
-          <p className="text-[13px] text-text-secondary">
-            Enquanto isso, a origem e o número da campanha já chegam pelo
-            rastreio do site.
-          </p>
+        <CardContent>
           <DisabledWithHint hint={TEXTOS_DO_RASTREIO.conectarEmBreve}>
             {botaoConectar}
           </DisabledWithHint>

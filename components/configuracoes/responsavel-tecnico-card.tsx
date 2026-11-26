@@ -19,7 +19,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -73,8 +72,6 @@ import { CONSELHOS, UFS, ehConselho, ehUf } from "@/lib/domain/preparo";
 
 export const TEXTOS_DO_RESPONSAVEL_TECNICO = {
   titulo: "Responsável técnico",
-  descricao:
-    "A pessoa da equipe que aprova as orientações de preparo enviadas aos pacientes, com o registro no conselho de classe.",
   vazio:
     "Sem responsável técnico definido. Sem ele, nenhuma orientação de preparo é enviada aos pacientes.",
   semAcesso:
@@ -699,7 +696,6 @@ export function ResponsavelTecnicoCard({
     <Card>
       <CardHeader>
         <CardTitle>{T.titulo}</CardTitle>
-        <CardDescription>{T.descricao}</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">
         {dados === null ? (

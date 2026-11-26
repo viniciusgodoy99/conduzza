@@ -27,7 +27,7 @@ export function VisaoDoProfissional({
       agenda={agenda}
       dimensao={dimensao}
       aoMudarDimensao={setDimensao}
-      rotuloProprio="Seus atendimentos nos últimos 30 dias, comparados com os 30 anteriores."
+      rotuloProprio="Seus atendimentos, comparados com os 30 dias anteriores"
     />
   );
 }

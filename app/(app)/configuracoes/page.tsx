@@ -559,9 +559,7 @@ export default async function ConfiguracoesPage({
   return (
     <div className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
       <PageHeader
-        eyebrow="Administração"
         title="Configurações"
-        description={`Equipe, dados da clínica, WhatsApp e o que a equipe usa todo dia em ${active.clinicName}.`}
       />
       <AvisoCelular />
       <ConfiguracoesClient

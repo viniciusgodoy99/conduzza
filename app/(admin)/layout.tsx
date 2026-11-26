@@ -49,12 +49,7 @@ export default async function AreaDaEquipeLayout({
           icone={OctagonAlert}
           tom="alerta"
           titulo="Seu acesso não carregou"
-          descricao={
-            <p>
-              Houve uma falha ao consultar o acesso desta conta. Nada foi
-              alterado: tente de novo em instantes.
-            </p>
-          }
+          descricao={<p>Nada foi alterado. Tente de novo em instantes.</p>}
         >
           <BotaoRecarregar rotulo="Tentar de novo" />
           <SairDaConta

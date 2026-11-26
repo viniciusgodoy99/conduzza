@@ -1,8 +1,6 @@
 import { StatusChip } from "@/components/shared/status-chip";
 import {
   Card,
-  CardContent,
-  CardDescription,
   CardFooter,
   CardHeader,
   CardTitle,
@@ -17,7 +15,6 @@ import {
 } from "@/components/ui/table";
 import { ACCESS_LEVEL_STATUS } from "@/lib/design/status";
 import {
-  DESCRICAO_DO_PAPEL,
   MODULE_KEYS,
   MODULE_LABELS,
   PAPEIS_NA_TELA,
@@ -26,8 +23,10 @@ import {
   ROTULO_DO_PAPEL,
 } from "@/lib/domain/permissions";
 
-// Referencia de consulta de quem escolhe o papel de um colega: uma frase por
-// papel e a matriz inteira, celula a celula. Somente leitura: a matriz vem da
+// Referencia de consulta de quem escolhe o papel de um colega: a matriz
+// inteira, celula a celula (a frase por papel saiu em 26/11/2026, pedido do
+// dono de tela que mostra e nao explica; o que a matriz nao diz fica no
+// rodape). Somente leitura: a matriz vem da
 // secao 5 do brief e nao se edita por clinica (docs/06, C25). O nivel de
 // acesso e sempre StatusChip (icone, texto de ACCESS_LABELS e cor, de
 // ACCESS_LEVEL_STATUS), e a tabela rola sozinha no celular com a coluna das
@@ -36,36 +35,16 @@ import {
 // Implementador (onda 5, item 18): coluna propria, logo depois do
 // Administrador, com as celulas do administrador (no banco ele e um
 // administrador com a marca; a matriz nao muda). O que ele nao faz (mexer
-// em administrador, exportar os leads) esta na frase do papel.
+// em administrador, exportar os leads) esta no rodape.
 
 export function PainelPapeis() {
   return (
     <Card>
       <CardHeader>
         <CardTitle>O que cada papel pode fazer</CardTitle>
-        <CardDescription>
-          Confira antes de escolher o papel de alguém da equipe.
-        </CardDescription>
       </CardHeader>
-      <CardContent>
-        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {PAPEIS_NA_TELA.map((papel) => (
-            <li
-              key={papel}
-              className="grid gap-1 rounded-xl bg-surface-4 p-3.5"
-            >
-              <p className="text-[13.5px] font-bold text-text-strong">
-                {ROTULO_DO_PAPEL[papel]}
-              </p>
-              <p className="text-[12.5px] text-text-secondary">
-                {DESCRICAO_DO_PAPEL[papel]}
-              </p>
-            </li>
-          ))}
-        </ul>
-      </CardContent>
 
-      <Table containerClassName="border-t border-border">
+      <Table>
         <TableHeader>
           <TableRow>
             <TableHead className="left-0 z-[2] min-w-44">Tela</TableHead>
@@ -98,10 +77,13 @@ export function PainelPapeis() {
         </TableBody>
       </Table>
 
-      <CardFooter>
-        <p className="text-xs text-text-secondary">
-          Só o que é dele: a pessoa vê e altera apenas os próprios atendimentos,
-          os próprios horários e os próprios números.
+      <CardFooter className="grid gap-1 text-xs text-text-secondary">
+        <p>
+          Só o que é dele: os próprios atendimentos, horários e números.
+        </p>
+        <p>
+          Implementador: vê e faz tudo o que o administrador faz, menos mexer
+          em administradores e exportar os leads.
         </p>
       </CardFooter>
     </Card>

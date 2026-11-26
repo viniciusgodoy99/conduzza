@@ -46,7 +46,7 @@ export function CartaoReoferta({
   return (
     <section
       aria-labelledby="titulo-da-reoferta"
-      className="flex min-w-0 flex-col gap-3 rounded-card border border-border bg-card p-4 shadow-sm"
+      className="flex min-w-0 flex-col gap-3 rounded-card border border-border bg-card p-4"
     >
       <div className="flex items-center justify-between gap-2">
         <h2
@@ -66,7 +66,6 @@ export function CartaoReoferta({
           compact
           icon={Send}
           title="Nenhuma vaga em reoferta agora"
-          description="Quando um horário vagar, a oferta sai sozinha para a fila e aparece aqui."
         />
       ) : (
         <ul className="grid gap-3">

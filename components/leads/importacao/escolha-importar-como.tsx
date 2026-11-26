@@ -22,14 +22,12 @@ export const OPCOES_IMPORTAR_COMO: readonly {
   {
     valor: "leads",
     rotulo: "Leads",
-    descricao:
-      "Entram no funil como leads. Quem já está na clínica continua como está.",
+    descricao: "Entram no funil. Quem já existe fica como está.",
   },
   {
     valor: "pacientes",
     rotulo: "Pacientes",
-    descricao:
-      "Entram direto em Pacientes, sem consulta marcada. Quem já é lead passa a paciente, sem mudar de etapa.",
+    descricao: "Quem já é lead vira paciente, na mesma etapa.",
   },
 ];
 

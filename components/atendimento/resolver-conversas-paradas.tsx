@@ -183,7 +183,6 @@ export function ResolverConversasParadas({
             <DialogTitle>{T.titulo}</DialogTitle>
             <DialogDescription>{T.descricao}</DialogDescription>
           </DialogHeader>
-          <p className="text-[13px] text-text-secondary">{T.porQue}</p>
           <CartoesDeEscolha
             nome="conversas-paradas"
             rotuloDoGrupo={T.rotuloDoGrupo}

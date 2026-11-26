@@ -1,4 +1,3 @@
-import { Milestone } from "lucide-react";
 import Link from "next/link";
 import { useId } from "react";
 
@@ -14,7 +13,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -116,22 +114,9 @@ export function ImplantacaoDaClinicaCartao({
       className="scroll-mt-4"
     >
       <CardHeader>
-        <div className="flex min-w-0 items-center gap-3">
-          <span
-            aria-hidden
-            className="grid size-10 shrink-0 place-items-center rounded-md bg-surface-3"
-          >
-            <Milestone className="size-5 text-text-strong" />
-          </span>
-          <div className="grid min-w-0 gap-[3px]">
-            <CardTitle id={`${id}-titulo`}>
-              {TEXTOS_DO_PAINEL.implantacaoTitulo}
-            </CardTitle>
-            <CardDescription>
-              {TEXTOS_DO_PAINEL.implantacaoDescricao}
-            </CardDescription>
-          </div>
-        </div>
+        <CardTitle id={`${id}-titulo`}>
+          {TEXTOS_DO_PAINEL.implantacaoTitulo}
+        </CardTitle>
         <CardAction>
           <span className="cz-num text-[13px] font-semibold text-text-strong">
             {textoDaImplantacao(

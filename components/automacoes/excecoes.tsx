@@ -9,6 +9,7 @@ import {
   excluirReguaAction,
   salvarLimiarDaReforcadaAction,
 } from "@/app/(app)/automacoes/actions";
+import { Ajuda } from "@/components/agente/ajuda";
 import { AbaRegua } from "@/components/automacoes/aba-regua";
 import {
   DialogoDeExclusao,
@@ -90,7 +91,6 @@ const CAMPO_DO_VINCULO: Record<
     semCadastro: string;
     /** Tudo o que esta ativo ja tem regua deste tipo. */
     semLivre: string;
-    ajuda?: string;
   }
 > = {
   medico: {
@@ -103,8 +103,6 @@ const CAMPO_DO_VINCULO: Record<
     semCadastro:
       "Nenhum profissional ativo tem especialidade preenchida em Cadastros.",
     semLivre: "Todas as especialidades já têm régua própria.",
-    ajuda:
-      "A lista vem das especialidades dos profissionais ativos, em Cadastros.",
   },
   procedimento: {
     placeholder: "Escolha o procedimento",
@@ -117,7 +115,6 @@ const CAMPO_DO_VINCULO: Record<
 const COPIA_DO_TIPO: Record<
   KindVinculavel,
   {
-    apoio: string;
     /** Frase que so a confirmacao tem (a reforcada). */
     extra: string | null;
     vazio: string;
@@ -135,8 +132,6 @@ const COPIA_DO_TIPO: Record<
   }
 > = {
   confirmacao: {
-    apoio:
-      "Procedimentos com preparo, como colonoscopia, têm falta muito maior e pedem mais toques. Um médico ou uma especialidade também podem pedir outra conversa.",
     extra:
       "Para quem tem histórico de falta, a reforçada vale no lugar da geral.",
     vazio: "A régua geral de confirmação cobre todas as consultas.",
@@ -155,8 +150,6 @@ const COPIA_DO_TIPO: Record<
     },
   },
   pos_falta: {
-    apoio:
-      "Quando a falta de um médico, de uma especialidade ou de um procedimento pede outra conversa, a recuperação ganha uma régua própria.",
     extra: null,
     vazio: "A régua geral de recuperação cobre todas as faltas.",
     nomeDaGeral: "régua geral de recuperação",
@@ -426,21 +419,22 @@ export function ReguasVinculadas({
 
   return (
     <section className="grid gap-3" aria-labelledby={idTitulo}>
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="grid gap-1">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-1">
           <h2
             id={idTitulo}
             className="text-base leading-[1.3] font-bold tracking-[-0.01em]"
           >
             Réguas vinculadas
           </h2>
-          <p className="max-w-[62ch] text-[13px] text-text-secondary">
-            {copia.apoio}
-          </p>
-          <p className="max-w-[62ch] text-[13px] text-foreground">
-            {AJUDA_DA_PRECEDENCIA}
-            {copia.extra ? ` ${copia.extra}` : null}
-          </p>
+          <Ajuda
+            rotulo="Réguas vinculadas"
+            texto={
+              copia.extra
+                ? `${AJUDA_DA_PRECEDENCIA} ${copia.extra}`
+                : AJUDA_DA_PRECEDENCIA
+            }
+          />
         </div>
         {podeEditar ? (
           <Button variant="outline" disabled={pendente} onClick={abrirDialogo}>
@@ -608,8 +602,8 @@ export function ReguasVinculadas({
           <DialogHeader>
             <DialogTitle>Nova régua vinculada</DialogTitle>
             <DialogDescription>
-              A régua nasce desligada, copiando a janela e as mensagens da{" "}
-              {copia.nomeDaGeral}, para você ajustar antes de ligar.
+              Nasce desligada, com a janela e as mensagens da{" "}
+              {copia.nomeDaGeral}.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3">
@@ -669,10 +663,6 @@ export function ReguasVinculadas({
                   <p className="text-[11px] text-text-secondary">
                     {cadastrados === 0 ? campo.semCadastro : campo.semLivre}
                   </p>
-                ) : campo.ajuda ? (
-                  <p className="text-[11px] text-text-secondary">
-                    {campo.ajuda}
-                  </p>
                 ) : null}
               </div>
             ) : (
@@ -691,8 +681,7 @@ export function ReguasVinculadas({
                 {/* Achado 53: a frase antiga dizia que o numero aparecia na
                     etiqueta de risco da ficha, e nao aparece. */}
                 <p className="text-[11px] text-text-secondary">
-                  <FraseDoLimiar /> Dá para mudar o número depois, na própria
-                  régua.
+                  <FraseDoLimiar />
                 </p>
               </div>
             )}

@@ -72,7 +72,6 @@ export default async function ConfirmacoesPage({
       <PageHeader
         eyebrow={dataDoEyebrow}
         title="Confirmações"
-        description="Quem já confirmou a consulta e quem ainda precisa de um empurrão"
       />
       {/* Tela pensada para computador (brief secao 6): no celular, o aviso. */}
       <AvisoCelular />

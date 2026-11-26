@@ -75,8 +75,7 @@ export function PainelEtiquetarLead({
   return (
     <div className="grid gap-3 p-[5px]">
       <p className="text-[11px] leading-[1.4] text-text-secondary">
-        Estas etiquetas ficam no lead e não mudam as etiquetas da conversa no
-        Atendimento.
+        Só no lead, não muda a conversa.
       </p>
 
       <div className="grid">
@@ -168,8 +167,8 @@ export function PainelEtiquetarLead({
         ) : leitura === "pronto" ? (
           <p className="text-xs leading-[1.4] text-text-secondary">
             {opcoes.length > 0
-              ? "Este lead já tem todas as etiquetas da clínica. Escreva uma acima para criar outra."
-              : "A clínica ainda não tem etiquetas. Escreva uma acima para criar a primeira."}
+              ? "Este lead já tem todas as etiquetas da clínica."
+              : "A clínica ainda não tem etiquetas."}
           </p>
         ) : null}
       </div>
@@ -178,8 +177,8 @@ export function PainelEtiquetarLead({
         <div className="grid gap-1.5">
           <p className="text-xs text-text-secondary">
             {umLead
-              ? "Etiquetas deste lead (toque no X para remover)"
-              : "Etiquetas do lead nos selecionados (toque no X para remover)"}
+              ? "Etiquetas deste lead"
+              : "Etiquetas do lead nos selecionados"}
           </p>
           <div className="flex cz-scroll max-h-28 flex-wrap gap-2 overflow-y-auto">
             {etiquetasDosSelecionados.map((etiqueta) => (

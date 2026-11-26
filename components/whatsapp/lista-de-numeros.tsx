@@ -351,7 +351,6 @@ export function ListaDeNumeros({
           <EmptyState
             icon={MessageCircle}
             title="Nenhum número de WhatsApp ainda"
-            description="Adicione o número que atende os pacientes e leia o QR code no celular para conectar."
           >
             {adicionarProtegido(true)}
           </EmptyState>
@@ -396,12 +395,6 @@ export function ListaDeNumeros({
           ))}
           <li className="min-w-0">
             <div className="flex h-full min-h-44 flex-col items-center justify-center gap-2.5 rounded-card border border-dashed border-border-heavy p-4 text-center">
-              <span
-                aria-hidden
-                className="grid size-10 place-items-center rounded-md bg-primary-soft"
-              >
-                <Plus className="size-5 text-primary-text" />
-              </span>
               {limite !== null ? (
                 <p className="text-xs text-text-secondary">
                   <span className="cz-num">{total}</span> de{" "}
@@ -522,7 +515,7 @@ export function ListaDeNumeros({
         aberto={aberto && alvo?.tipo === "desconectar"}
         aoFechar={fechar}
         titulo={`Desconectar ${numeroDoAlvo?.nome ?? ""}?`}
-        descricao="Enquanto estiver desconectado, este número não recebe nem envia mensagens pelo Conduzza, e as mensagens automáticas dele esperam a reconexão."
+        descricao="O número para de receber e enviar mensagens, e as automáticas dele esperam a reconexão."
         rotulo="Desconectar"
         rotuloPendente="Desconectando..."
         icone={Unplug}

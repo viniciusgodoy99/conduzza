@@ -203,7 +203,7 @@ describe("dialogo Agendar mensagem (4.2)", () => {
     const html = dialogo({ ...AGENDAR, semCitacao: true, comAnexo: true });
     expect(html).toContain("A mensagem agendada sai sem a citação.");
     expect(html).toContain(
-      "Só o texto é agendado. O arquivo anexado continua aqui para enviar agora.",
+      "Só o texto é agendado, sem o anexo.",
     );
   });
 
@@ -256,7 +256,7 @@ describe("dialogo Editar mensagem agendada (4.3, A1)", () => {
       agendada: agendada({ enviarEm: "2026-10-06T12:01:00.000Z" }),
     });
     expect(html).toContain(
-      "Esta mensagem sai em instantes. Se ela começar a sair antes de você salvar, a mudança não vale.",
+      "Sai em instantes. Se sair antes de salvar, a mudança não vale.",
     );
   });
 

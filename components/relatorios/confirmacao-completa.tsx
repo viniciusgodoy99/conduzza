@@ -6,6 +6,7 @@ import { ptBR } from "date-fns/locale";
 import { CalendarSearch, ClipboardCheck, Flag, History } from "lucide-react";
 import { useState } from "react";
 
+import { DicaDeAjuda } from "@/components/shared/dica-de-ajuda";
 import { DialogLinhaDeBase } from "@/components/relatorios/dialog-linha-de-base";
 import { Secao } from "@/components/relatorios/secao";
 import { CartaoDeMetrica } from "@/components/shared/cartao-de-metrica";
@@ -127,6 +128,9 @@ export function ConfirmacaoCompleta({
         titulo="Confirmação de consulta"
         icone={ClipboardCheck}
         meta="Consultas com início no período"
+        acao={
+          <DicaDeAjuda rotulo="Como as taxas são contadas" texto="Confirmadas em algum momento conta quem confirmou, mesmo que depois tenha comparecido ou faltado. Remarcaram após a falta: consulta nova em até 30 dias." />
+        }
       >
         {agenda.total === 0 ? (
           <EmptyState
@@ -161,12 +165,6 @@ export function ConfirmacaoCompleta({
             })}
           </div>
         )}
-        <p className="text-xs text-text-secondary">
-          Confirmadas em algum momento conta quem confirmou mesmo que depois
-          tenha comparecido ou faltado. Remarcaram após a falta: consulta nova
-          em até <span className="cz-num">30</span> dias, então faltas recentes
-          ainda estão dentro dessa janela.
-        </p>
       </Secao>
 
       <Secao titulo="Contra a linha de base" icone={Flag}>
@@ -194,7 +192,6 @@ export function ConfirmacaoCompleta({
             compact
             icon={Flag}
             title="A linha de base ainda não foi registrada"
-            description="Registre a taxa de faltas da clínica dos 30 dias anteriores às mensagens automáticas. Sem ela, não existe prova de resultado."
           >
             {botaoDaLinhaDeBase("Registrar a linha de base")}
           </EmptyState>
@@ -225,7 +222,6 @@ export function ConfirmacaoCompleta({
             compact
             icon={History}
             title="A régua desta clínica ainda não enviou nenhuma mensagem"
-            description="Quando o primeiro toque sair, o comparativo aparece aqui."
           />
         )}
       </Secao>

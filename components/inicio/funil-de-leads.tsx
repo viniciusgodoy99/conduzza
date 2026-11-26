@@ -47,12 +47,7 @@ export function FunilDeLeads({ funil }: { funil: Leitura<EtapaDoFunil[]> }) {
   if (soma === 0) {
     return (
       <Secao titulo={TITULO} icone={Funnel} acao={<AbrirLeads />}>
-        <EmptyState
-          compact
-          icon={Inbox}
-          title="Nenhum lead na jornada ainda"
-          description="Quando alguém escrever para a clínica, o lead entra na primeira etapa e aparece aqui."
-        />
+        <EmptyState compact icon={Inbox} title="Nenhum lead na jornada ainda" />
       </Secao>
     );
   }

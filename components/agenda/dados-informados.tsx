@@ -16,6 +16,7 @@ import {
   horaNaClinica,
 } from "@/components/atendimento/fuso-da-clinica";
 import { Aviso } from "@/components/shared/aviso";
+import { DicaDeAjuda } from "@/components/shared/dica-de-ajuda";
 import { EmptyState } from "@/components/shared/empty-state";
 import { DisabledWithHint } from "@/components/shared/permission-hint";
 import { Button } from "@/components/ui/button";
@@ -120,6 +121,7 @@ export const TEXTOS_DOS_DADOS_INFORMADOS = {
       ? `Conferido na aprovação da consulta, em ${quando}.`
       : `Conferido na aprovação por ${quem}, em ${quando}.`,
   alguemDaEquipe: "alguém da equipe",
+  aoAprovarCurto: "Ao aprovar, estes dados podem entrar no cadastro.",
   aoAprovar:
     "Ao aprovar a consulta, estes dados entram no cadastro do paciente assim: o nome, se o cadastro estiver sem nome ou com o nome que veio do WhatsApp; nascimento e CPF, se estiverem vazios; a carteirinha, se estiver vazia e a consulta for pelo convênio, com o convênio do cadastro vazio (ele entra junto) ou o mesmo. Fora disso, o cadastro não muda.",
   fechar: "Fechar",
@@ -380,6 +382,11 @@ function Linha({
   );
 }
 
+/**
+ * A regra inteira de como os dados entram no cadastro (achado 13), fora da
+ * tela: o icone de ajuda (alvo de 40px pelo hit-40) mostra a dica no hover e
+ * no foco, e o texto inteiro e o nome acessivel.
+ */
 function Vazio({ texto }: { texto: string }) {
   return <span className="text-text-secondary">{texto}</span>;
 }
@@ -591,11 +598,18 @@ export function CorpoDosDadosInformados({
         </Linha>
       </dl>
       {situacao === "pendente" && dados.paraOTitular && dados.aplicadoEm === null ? (
-        <Aviso tom="info" role="note">
-          {T.aoAprovar}
+        <Aviso
+          tom="info"
+          role="note"
+          acao={<DicaDeAjuda texto={T.aoAprovar} />}
+        >
+          {T.aoAprovarCurto}
         </Aviso>
       ) : dados.aplicadoEm !== null ? (
-        <p className="text-xs text-text-secondary">{T.regraDoCadastro}</p>
+        <p className="flex items-center gap-1 text-xs text-text-secondary">
+          Como os dados entram no cadastro
+          <DicaDeAjuda texto={T.regraDoCadastro} />
+        </p>
       ) : null}
     </div>
   );

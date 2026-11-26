@@ -7,6 +7,7 @@ import {
   useAvisarNaoSalvo,
   type AvisarNaoSalvo,
 } from "@/components/agente/nao-salvo";
+import { Ajuda } from "@/components/agente/ajuda";
 import { TEXTOS_DO_AGENTE as T } from "@/components/agente/textos";
 import type { RetornoDaAcao } from "@/components/agente/tipos";
 import { Aviso } from "@/components/shared/aviso";
@@ -15,7 +16,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -103,11 +103,11 @@ export function CartaoDosDadosExigidos({
   return (
     <Card role="region" aria-labelledby="agente-dados-titulo">
       <CardHeader>
-        <div className="grid min-w-0 gap-[3px]">
+        <div className="flex min-w-0 items-center gap-1">
           <CardTitle id="agente-dados-titulo">
             {ROTULO_DOS_DADOS_EXIGIDOS}
           </CardTitle>
-          <CardDescription>{T.dadosDescricao}</CardDescription>
+          <Ajuda rotulo={ROTULO_DOS_DADOS_EXIGIDOS} texto={T.dadosNoCadastro} />
         </div>
       </CardHeader>
       <CardContent>
@@ -152,10 +152,9 @@ export function CartaoDosDadosExigidos({
               ))}
             </fieldset>
 
-            <div className="grid gap-1 text-[13px] text-text-secondary">
-              <p>{T.dadosNoCadastro}</p>
-              <p>{T.dadosCarteirinha}</p>
-            </div>
+            <p className="text-[13px] text-text-secondary">
+              {T.dadosCarteirinha}
+            </p>
 
             {nenhumDadoExigido(atuais) ? (
               <Aviso tom="info" role="note">

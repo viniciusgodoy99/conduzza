@@ -354,18 +354,15 @@ export function AutomacoesClient({
               value={aba.chave}
               aria-label={aba.rotulo}
               aria-describedby={idSituacao}
-              className="flex h-auto min-h-[88px] items-start justify-start gap-3 rounded-card border border-border bg-card p-3.5 text-left whitespace-normal shadow-sm transition-[box-shadow,translate,background-color,border-color] duration-(--dur-base) ease-standard hover:-translate-y-px hover:shadow-md motion-reduce:hover:translate-y-0 data-active:border-primary-edge data-active:bg-primary-soft"
+              className="flex h-auto min-h-[88px] items-start justify-start gap-3 rounded-card border border-border bg-card p-3.5 text-left whitespace-normal transition-[background-color,border-color] duration-(--dur-base) ease-standard hover:bg-surface-subtle data-active:border-primary-edge data-active:bg-primary-soft"
             >
-              <span
+              <Icone
                 className={cn(
-                  "grid size-[34px] shrink-0 place-items-center rounded-md",
-                  situacao.ligada
-                    ? "bg-primary-soft text-primary-text"
-                    : "bg-surface-4 text-text-secondary",
+                  "mt-px size-4 shrink-0",
+                  situacao.ligada ? "text-primary-text" : "text-text-secondary",
                 )}
-              >
-                <Icone className="size-[17px]" aria-hidden />
-              </span>
+                aria-hidden
+              />
               <span className="grid min-w-0 gap-1.5">
                 <span className="text-[13.5px] leading-tight font-bold text-text-strong">
                   {aba.rotulo}
@@ -390,11 +387,6 @@ export function AutomacoesClient({
       </TabsList>
 
       <TabsContent value="confirmacao" className="grid gap-4">
-        <p className="max-w-[62ch] text-[13.5px] text-text-secondary">
-          As mensagens que confirmam a consulta antes da hora, com os botões
-          Confirmar, Remarcar e Cancelar. A resposta do paciente muda a agenda
-          sozinha, com autoria registrada.
-        </p>
         <AbaRegua
           clinicId={clinicId}
           regua={reguas.confirmacao}
@@ -441,9 +433,8 @@ export function AutomacoesClient({
 
       <TabsContent value="pos_falta" className="grid gap-4">
         {/* A falta so se marca na Agenda (achados 54 e 64). */}
-        <p className="max-w-[62ch] text-[13.5px] text-text-secondary">
-          As mensagens que buscam o paciente de volta depois de uma falta. Saem
-          só para quem foi marcado como falta na Agenda.
+        <p className="text-[13px] text-text-secondary">
+          Sai só para quem foi marcado como falta na Agenda.
         </p>
         <AbaRegua
           clinicId={clinicId}
@@ -489,12 +480,6 @@ export function AutomacoesClient({
       </TabsContent>
 
       <TabsContent value="followup" className="grid gap-4">
-        <p className="max-w-[62ch] text-[13.5px] text-text-secondary">
-          Mensagens de acompanhamento por etapa da jornada: o lead entrou na
-          etapa, esperou o tempo configurado e ainda não respondeu nem se moveu,
-          a mensagem sai. Quem responde, agenda ou muda de etapa sai da régua na
-          hora.
-        </p>
         <AbaFollowup
           clinicId={clinicId}
           followups={followups}
@@ -514,19 +499,8 @@ export function AutomacoesClient({
       <TabsContent value="espera" className="grid gap-4">
         <Card className="max-w-[62ch]">
           <CardContent className="grid gap-3">
-            <div className="flex items-center gap-3">
-              <span className="grid size-[34px] shrink-0 place-items-center rounded-md bg-surface-4 text-text-secondary">
-                <Hourglass className="size-[17px]" aria-hidden />
-              </span>
-              <h2 className="text-base leading-[1.3] font-bold tracking-[-0.01em]">
-                A reoferta não é uma régua de texto
-              </h2>
-            </div>
-            <p className="text-[13.5px] text-text-secondary">
-              Quando uma consulta é cancelada, o sistema oferece o horário para
-              quem está na lista de espera, em ondas, e o primeiro que responde
-              SIM leva. A fila, a configuração da onda e o acompanhamento das
-              ofertas moram na tela de Lista de espera.
+            <p className="text-[13.5px] text-foreground">
+              A reoferta de horário fica na Lista de espera.
             </p>
             <Button asChild variant="outline" className="w-fit">
               <Link href="/espera">Abrir a Lista de espera</Link>
@@ -537,12 +511,6 @@ export function AutomacoesClient({
 
       {fluxo ? (
         <TabsContent value="fluxo" className="grid gap-4">
-          <p className="max-w-[62ch] text-[13.5px] text-text-secondary">
-            Regras que andam com o lead sozinhas: quando ele fica parado, deixa
-            de responder, entra numa etapa ou manda mensagem, a automação move
-            de etapa, coloca etiqueta, cria uma atividade ou deixa uma nota
-            interna. Nenhuma delas manda mensagem para o paciente.
-          </p>
           {fluxo.automacoes ? (
             <AbaFluxo
               automacoes={fluxo.automacoes}

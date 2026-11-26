@@ -623,9 +623,7 @@ export function Thread({
                     </Button>
                   ) : null
                 }
-              >
-                A conversa continua salva. Tente de novo em instantes.
-              </Aviso>
+              />
             ) : null}
             {erroNasDecisoes && !erroAoCarregar ? (
               <Aviso
@@ -662,7 +660,7 @@ export function Thread({
             ) : null}
             {fioVazio ? (
               <p className="py-8 text-center text-[12.5px] text-text-secondary">
-                Nenhuma mensagem nesta conversa ainda.
+                Nenhuma mensagem.
               </p>
             ) : null}
             {linhas.map((linha) => {

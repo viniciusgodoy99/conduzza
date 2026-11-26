@@ -95,9 +95,7 @@ export default async function CadastrosPage({
   return (
     <div className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
       <PageHeader
-        eyebrow="Administração"
         title="Cadastros"
-        description="Profissionais, procedimentos e quem faz cada um, convênios, pacotes e unidades da clínica"
       />
       {/* Tela de computador (brief secao 6): no celular so avisa, nada trava */}
       <AvisoCelular />

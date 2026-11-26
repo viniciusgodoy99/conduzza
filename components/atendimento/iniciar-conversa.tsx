@@ -280,10 +280,7 @@ export function ConteudoIniciarConversa({
     <>
       <DialogHeader>
         <DialogTitle>{ROTULO_INICIAR_CONVERSA}</DialogTitle>
-        <DialogDescription>
-          A primeira mensagem sai pelo WhatsApp da clínica, e a conversa fica
-          com você no Atendimento.
-        </DialogDescription>
+        <DialogDescription>A conversa fica com você.</DialogDescription>
       </DialogHeader>
 
       <p className="text-[13px] text-foreground">
@@ -379,7 +376,7 @@ export function ConteudoIniciarConversa({
                     />
                     {!opcaoConectada ? (
                       <span className="text-xs text-text-secondary">
-                        Reconecte em Configurações para enviar por este número.
+                        Reconecte em Configurações.
                       </span>
                     ) : null}
                   </span>
@@ -389,8 +386,8 @@ export function ConteudoIniciarConversa({
           })}
           {!algumConectado ? (
             <Aviso tom="warning">
-              Nenhum número está conectado agora. Reconecte em Configurações,
-              aba WhatsApp, para iniciar a conversa.
+              Nenhum número conectado. Reconecte em Configurações, aba
+              WhatsApp.
             </Aviso>
           ) : null}
         </fieldset>

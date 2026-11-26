@@ -143,8 +143,7 @@ describe("painel do Atendimento, bloco Origem", () => {
         source_ad_id: null,
       }),
     );
-    expect(html).toContain("Origem ainda não identificada");
-    expect(html).toContain("anúncio de clique para WhatsApp");
+    expect(html).toContain("Origem não identificada");
   });
 
   it("nenhum travessão no bloco", () => {

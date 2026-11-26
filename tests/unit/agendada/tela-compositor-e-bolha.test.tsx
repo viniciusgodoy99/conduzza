@@ -215,7 +215,7 @@ describe("conversa resolvida (secao 4.6)", () => {
       conversation: conversa({ status: "resolvida" }),
     });
     expect(html).toContain(
-      "Para responder ou agendar uma mensagem, use Reabrir e responder, no topo da conversa.",
+      "Use Reabrir e responder, no topo.",
     );
     expect(html).not.toContain("Para responder de novo");
     expect(botaoDeAgendar(html)).toBeNull();

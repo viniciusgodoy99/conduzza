@@ -245,7 +245,7 @@ export function BarraDeAnexo({
   };
 
   const previa = escolhido ? (
-    <div className="grid gap-2 rounded-xl border border-border-strong bg-card p-2.5 shadow-xs">
+    <div className="grid gap-2 rounded-xl border border-border-strong bg-card p-2.5">
       <div className="flex items-center gap-2.5">
         {escolhido.type.startsWith("image/") ? (
           // eslint-disable-next-line @next/next/no-img-element -- previa local

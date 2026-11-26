@@ -57,7 +57,6 @@ export function PassoConsentimento({
     <div className="grid gap-4">
       <p className="text-[13.5px] text-text-secondary">
         Como estas pessoas autorizaram receber mensagens da clínica no WhatsApp?
-        A declaração fica registrada junto de cada contato.
       </p>
 
       <div

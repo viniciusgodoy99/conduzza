@@ -88,9 +88,8 @@ describe("liberar e retirar, na linha da lista", () => {
   it("liberar: o título, que começa em Teste, o efeito do teste, o detalhe dos números e o teto; motivo opcional", () => {
     const saida = dialogo();
     expect(saida).toContain(
-      escapado("Liberar o agente de IA na Clínica Aurora?"),
+      escapado("Liberar o agente de IA na Clínica Aurora, em Teste?"),
     );
-    expect(saida).toContain("Ele começa em Teste.");
     for (const efeito of TEXTOS_DO_PAINEL.efeitoDoTeste) {
       expect(saida).toContain(escapado(efeito));
     }

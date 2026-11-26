@@ -1,4 +1,4 @@
-import { Sparkles } from "lucide-react";
+import { Bot } from "lucide-react";
 import { redirect } from "next/navigation";
 
 // [AG7 preparo] início
@@ -118,7 +118,7 @@ function Vazio() {
   return (
     <Card>
       <EmptyState
-        icon={Sparkles}
+        icon={Bot}
         title="A recepcionista de IA ainda não está ligada nesta clínica"
         description="Por enquanto a equipe responde pelo Atendimento."
         action={{
@@ -287,9 +287,7 @@ export default async function AgentePage({
     <>
       <AvisoCelular />
       <PageHeader
-        eyebrow={TEXTOS_DO_AGENTE.eyebrow}
         title={TEXTOS_DO_AGENTE.titulo}
-        description={TEXTOS_DO_AGENTE.descricao}
       />
     </>
   );

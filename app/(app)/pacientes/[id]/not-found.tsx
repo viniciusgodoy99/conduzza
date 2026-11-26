@@ -23,13 +23,7 @@ export default async function FichaNaoEncontrada() {
       <EstadoDeTela
         icone={UserRoundX}
         titulo="Paciente não encontrado nesta clínica"
-        descricao={
-          <p>
-            {variasClinicas
-              ? "O cadastro pode ter sido removido, ou ser de outra clínica. Se o link é da outra clínica em que você trabalha, troque a clínica ativa e abra de novo."
-              : "O cadastro pode ter sido removido, ou o link é de outra clínica."}
-          </p>
-        }
+        descricao={<p>Pode ter sido removido ou ser de outra clínica.</p>}
       >
         <div className="flex flex-wrap justify-center gap-2">
           <Button asChild variant="outline">

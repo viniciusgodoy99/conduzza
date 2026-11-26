@@ -66,23 +66,16 @@ import type { Unidade } from "@/lib/queries/catalogo";
 
 export const TEXTOS_DA_UNIDADE = {
   vazioTitulo: "Nenhuma unidade cadastrada",
-  vazioDescricao:
-    "Cadastre a unidade com o endereço e o horário: o assistente usa para dizer onde a clínica fica e quando abre.",
   endereco: "Endereço",
-  enderecoAjuda:
-    "Preencha rua, número, bairro, cidade e UF: o endereço completo é montado a partir deles.",
   enderecoAntigo: "Endereço antigo, em texto livre",
-  enderecoAntigoAjuda:
-    "Preencha os campos acima: o endereço passa a ser montado a partir deles e este texto sai.",
+  enderecoAntigoAjuda: "Preencha os campos acima para substituir este texto.",
   comoFica: "Como fica",
-  cepAjuda:
-    "Fica guardado no cadastro. O assistente não manda CEP ao paciente.",
+  cepAjuda: "O CEP não vai ao paciente.",
   comoChegar: "Como chegar",
   referencia: "Ponto de referência",
   referenciaExemplo: "Ex.: Em frente à praça, ao lado da farmácia.",
   linkDoMapa: "Link do mapa",
-  linkDoMapaAjuda:
-    "Cole o link do Google Maps ou de outro mapa, começando com https://. Fica guardado no cadastro: hoje o assistente não manda link na conversa.",
+  linkDoMapaAjuda: "Começa com https://. O link não vai ao paciente.",
   estacionamento: "Estacionamento",
   // D-22 (decisao do dono, 27/10/2026): as regras das respostas do
   // assistente barram "gratuito", "sem custo", "grátis" e "de graça" como
@@ -90,14 +83,14 @@ export const TEXTOS_DA_UNIDADE = {
   estacionamentoExemplo:
     "Ex.: Estacionamento de cortesia para pacientes, no subsolo.",
   estacionamentoAjuda:
-    'Se o estacionamento não for cobrado, escreva "de cortesia", como no exemplo. Gratuito, grátis, de graça e sem custo não passam nas regras das respostas do assistente.',
+    'Sem cobrança? Escreva "de cortesia". Gratuito, grátis, de graça e sem custo são recusados.',
   acessibilidade: "Acessibilidade",
   acessibilidadeExemplo: "Ex.: Rampa na entrada e elevador até o consultório.",
   observacao: "Observação ao paciente",
   observacaoAjuda:
-    "Algo que o paciente precisa saber sobre esta unidade. O texto passa pelas mesmas regras das respostas do assistente.",
+    "Vai ao paciente: sem telefone, link, valor nem orientação de saúde.",
   textosAoPaciente:
-    "Estes textos vão ao paciente: não escreva telefone, link, valor nem orientação de saúde.",
+    "Vão ao paciente: sem telefone, link, valor nem orientação de saúde.",
   semHorario: "Não informado",
   ufVazia: "Não informada",
 } as const;
@@ -409,7 +402,6 @@ export function UnidadesTab({
         <VazioDaAba
           icon={Building2}
           titulo={TEXTOS_DA_UNIDADE.vazioTitulo}
-          descricao={TEXTOS_DA_UNIDADE.vazioDescricao}
           acao={{
             rotulo: "Cadastrar a primeira unidade",
             onClick: () => abrir(),
@@ -537,9 +529,6 @@ export function UnidadesTab({
             <legend className="text-sm font-bold text-text-strong">
               {TEXTOS_DA_UNIDADE.endereco}
             </legend>
-            <p className="text-xs text-text-secondary">
-              {TEXTOS_DA_UNIDADE.enderecoAjuda}
-            </p>
             <div className="grid gap-3 sm:grid-cols-[minmax(0,3fr)_minmax(0,1fr)]">
               <div className="grid gap-1.5">
                 <Label htmlFor="unidade-logradouro">Rua ou avenida</Label>

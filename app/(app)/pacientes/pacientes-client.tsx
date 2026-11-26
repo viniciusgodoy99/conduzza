@@ -183,8 +183,7 @@ export function PacientesClient({
     <>
       {soDaSuaAgenda ? (
         <Aviso tom="info" role="note">
-          Você vê só as consultas da sua agenda. Última e próxima consulta,
-          comparecimento e sinais contam só elas.
+          Você vê só as consultas da sua agenda.
         </Aviso>
       ) : null}
 
@@ -201,7 +200,7 @@ export function PacientesClient({
         soDaSuaAgenda={soDaSuaAgenda}
       />
 
-      <div className="flex min-h-0 flex-col overflow-hidden rounded-card border border-border bg-card shadow-sm">
+      <div className="flex min-h-0 flex-col overflow-hidden rounded-card border border-border bg-card">
         <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
           <FiltrosPacientes
             valores={valores}
@@ -228,8 +227,7 @@ export function PacientesClient({
               </Button>
             }
           >
-            Não foi possível atualizar a lista. Os dados exibidos podem estar
-            desatualizados.
+            Não foi possível atualizar a lista.
           </Aviso>
         ) : null}
 
@@ -237,7 +235,6 @@ export function PacientesClient({
           <EmptyState
             tom="erro"
             title="Não foi possível carregar os pacientes"
-            description="Confira a conexão e tente de novo. Nada foi perdido."
           >
             <Button variant="outline" onClick={tentarDeNovo}>
               <RotateCw aria-hidden />
@@ -250,7 +247,7 @@ export function PacientesClient({
           <EmptyState
             icon={UsersRound}
             title="Nenhum paciente ainda"
-            description="A pessoa entra aqui quando tem a primeira consulta marcada. Quem ainda não agendou fica em Leads."
+            description="Quem ainda não agendou fica em Leads."
             action={{
               label: "Abrir a agenda",
               href: "/agenda",
@@ -262,7 +259,6 @@ export function PacientesClient({
             compact
             icon={SearchX}
             title="Nenhum paciente com esses filtros"
-            description="Ajuste os filtros ou limpe para ver todos os pacientes."
             onClearFilters={limparFiltros}
           />
         ) : (

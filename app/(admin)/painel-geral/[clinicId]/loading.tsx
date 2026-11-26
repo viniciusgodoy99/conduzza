@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 // tabela e as duas colunas de cartoes), nunca giratorio no meio da tela.
 function CartaoEsqueleto({ linhas }: { linhas: number }) {
   return (
-    <div className="overflow-hidden rounded-card border border-border bg-card shadow-sm">
+    <div className="overflow-hidden rounded-card border border-border bg-card">
       <div className="flex min-h-[64px] items-center gap-3 border-b border-border px-4">
         <Skeleton className="size-10 rounded-md" />
         <div className="grid flex-1 gap-2">
@@ -44,8 +44,8 @@ export default function CarregandoClinicaNoPainel() {
               key={i}
               className={
                 i === 0
-                  ? "col-span-2 grid content-start gap-2.5 rounded-card border border-border bg-card p-4 shadow-sm"
-                  : "grid content-start gap-2.5 rounded-card border border-border bg-card p-4 shadow-sm"
+                  ? "col-span-2 grid content-start gap-2.5 rounded-card border border-border bg-card p-4"
+                  : "grid content-start gap-2.5 rounded-card border border-border bg-card p-4"
               }
             >
               <Skeleton className="h-2.5 w-3/5" />
@@ -64,7 +64,7 @@ export default function CarregandoClinicaNoPainel() {
           </div>
         </div>
         <CartaoEsqueleto linhas={2} />
-        <div className="overflow-hidden rounded-card border border-border bg-card shadow-sm">
+        <div className="overflow-hidden rounded-card border border-border bg-card">
           <div className="flex min-h-[64px] items-center gap-3 border-b border-border px-4">
             <Skeleton className="size-10 rounded-md" />
             <div className="grid flex-1 gap-2">

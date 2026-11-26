@@ -104,7 +104,7 @@ test("a conversa com a IA continua com o aviso do compositor e Assumir conversa"
     fio.getByText("A IA está atendendo esta conversa."),
   ).toBeVisible();
   await expect(
-    fio.getByText("Para responder, use Assumir conversa, no topo da conversa."),
+    fio.getByText("Assuma a conversa para responder."),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Assumir conversa" }),

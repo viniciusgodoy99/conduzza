@@ -18,7 +18,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -163,10 +162,7 @@ export function AbaPersona({
   return (
     <Card role="region" aria-labelledby="agente-persona-titulo">
       <CardHeader>
-        <div className="grid min-w-0 gap-[3px]">
-          <CardTitle id="agente-persona-titulo">{T.personaTitulo}</CardTitle>
-          <CardDescription>{T.personaDescricao}</CardDescription>
-        </div>
+        <CardTitle id="agente-persona-titulo">{T.personaTitulo}</CardTitle>
       </CardHeader>
       <CardContent>
         <Form {...form}>
@@ -206,7 +202,6 @@ export function AbaPersona({
                         autoComplete="off"
                       />
                     </FormControl>
-                    <FormDescription>{T.nomeDica}</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -292,7 +287,6 @@ export function AbaPersona({
                             className="text-sm"
                           />
                         </FormControl>
-                        <FormDescription>{T.saudacaoDica}</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -348,7 +342,6 @@ export function AbaPersona({
                             className="text-sm"
                           />
                         </FormControl>
-                        <FormDescription>{T.encerramentoDica}</FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -359,9 +352,6 @@ export function AbaPersona({
                     {T.comoOPacienteVe}
                   </span>
                   <BalaoWhatsApp corpo={textoDaPrevia(valores)} />
-                  <p className="text-[11.5px] text-text-secondary">
-                    {T.previaExplicacao}
-                  </p>
                 </div>
               </div>
             </fieldset>

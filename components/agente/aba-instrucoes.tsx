@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
@@ -89,7 +88,6 @@ export function AbaInstrucoes({
             <CardTitle id="agente-instrucoes-titulo">
               {T.instrucoesTitulo}
             </CardTitle>
-            <CardDescription>{T.instrucoesDescricao}</CardDescription>
           </div>
         </CardHeader>
         <CardContent>
@@ -169,7 +167,6 @@ export function AbaInstrucoes({
         <CardHeader>
           <div className="grid min-w-0 gap-[3px]">
             <CardTitle id="agente-previa-titulo">{T.previaTitulo}</CardTitle>
-            <CardDescription>{T.previaDescricao}</CardDescription>
           </div>
         </CardHeader>
         <CardContent>

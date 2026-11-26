@@ -1,4 +1,4 @@
-import { ArrowRight, BotMessageSquare, Reply, Sparkles } from "lucide-react";
+import { ArrowRight, BotMessageSquare, Reply, Bot } from "lucide-react";
 
 import { Secao } from "@/components/relatorios/secao";
 import { CartaoDeMetrica } from "@/components/shared/cartao-de-metrica";
@@ -48,7 +48,7 @@ export function CartaoDoAgente({
     variante: "afundado",
     tamanho: "md",
     rotulo,
-    icone: Sparkles,
+    icone: Bot,
     tom: "ai",
   } as const;
   if (leitura.estado === "nao-medido") {

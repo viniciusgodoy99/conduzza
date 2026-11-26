@@ -73,7 +73,7 @@ export function FaixaDeBloqueio({
         <PopoverTrigger asChild>
           <button
             type="button"
-            className="absolute inset-x-0.5 z-[1] flex cursor-pointer items-start overflow-hidden rounded-md border border-border-strong bg-surface-4 p-1 text-left transition-shadow duration-(--dur-fast) outline-none hover:shadow-sm focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus focus-visible:outline-solid"
+            className="absolute inset-x-0.5 z-[1] flex cursor-pointer items-start overflow-hidden rounded-md border border-border-strong bg-surface-4 p-1 text-left outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus focus-visible:outline-solid"
             style={{ top, height, backgroundImage: HACHURA }}
             aria-label={`Bloqueio de ${nome}: ${bloqueio.reason}, ${periodo}`}
             onClick={(event) => {

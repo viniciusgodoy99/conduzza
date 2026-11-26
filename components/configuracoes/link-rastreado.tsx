@@ -37,8 +37,7 @@ import { cn } from "@/lib/utils";
 
 export const TEXTOS_DO_LINK_RASTREADO = {
   titulo: "Link rastreado",
-  paraQueServe:
-    "Use este na bio, no QR Code e nos anúncios: ele conta os cliques e guarda de onde a pessoa veio.",
+  paraQueServe: "Para a bio, o QR Code e os anúncios",
   semEndereco:
     "Não foi possível montar o link: o endereço do sistema não está configurado.",
   copiar: "Copiar link rastreado",
@@ -46,8 +45,7 @@ export const TEXTOS_DO_LINK_RASTREADO = {
   naoCopiou: "Não foi possível copiar. Selecione o link e copie à mão.",
   verQr: "Ver QR Code",
   tituloDoQr: "QR Code do link rastreado",
-  paraQueServeOQr:
-    "Imprima ou deixe na recepção. Quem apontar a câmera abre o WhatsApp da clínica com a mensagem pronta, e o clique conta nesta origem.",
+  paraQueServeOQr: "Imprima ou deixe na recepção. O clique conta nesta origem.",
   baixarQr: "Baixar PNG",
   naoBaixou: "Não foi possível baixar. Tire uma foto da tela ou tente de novo.",
 } as const;
@@ -171,7 +169,7 @@ export function LinkRastreado({
 
   return (
     <div
-      className={cn("grid gap-2 rounded-xl bg-surface-4 p-3", className)}
+      className={cn("grid gap-2 border-t border-border pt-2.5", className)}
       role="group"
       aria-labelledby={`${id}-titulo`}
     >

@@ -53,9 +53,7 @@ test("é impossível importar sem declarar a autorização", async ({ page }) =>
   await continuar.click();
 
   // Passo de colunas: o pre-mapeamento pelo cabecalho Nome;Telefone resolve.
-  await expect(
-    dialogo.getByText("Diga de qual coluna da planilha vem cada informação"),
-  ).toBeVisible();
+  await expect(dialogo.getByText("Telefone (obrigatório)")).toBeVisible();
   await continuar.click();
 
   // Passo da declaracao: sem escolher, continuar fica DESABILITADO.
@@ -115,9 +113,7 @@ test("o alerta sobre a nota do número aparece no passo da declaração", async 
   const dialogo = await abrirComArquivo(page);
   const continuar = dialogo.getByRole("button", { name: "Continuar" });
   await continuar.click();
-  await expect(
-    dialogo.getByText("Diga de qual coluna da planilha vem cada informação"),
-  ).toBeVisible();
+  await expect(dialogo.getByText("Telefone (obrigatório)")).toBeVisible();
   await continuar.click();
 
   const aviso = dialogo.getByRole("note");

@@ -371,7 +371,7 @@ describe("confirmação", () => {
     );
     expect(html).toContain("Devolver para a IA?");
     expect(html).toContain(
-      "A IA volta a responder esta conversa a partir da próxima mensagem do contato. O que foi conversado antes não vai para a IA.",
+      "A IA responde a partir da próxima mensagem do contato, sem ler o que foi conversado antes.",
     );
     expect(html).toContain("Cancelar</button>");
     expect(html).toContain("Devolver</button>");

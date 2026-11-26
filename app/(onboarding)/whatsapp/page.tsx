@@ -85,10 +85,7 @@ export default async function WhatsAppOnboardingPage() {
 
   return (
     <div className="grid gap-6">
-      <PageHeader
-        title="Conexão do WhatsApp"
-        description={`O número que atende os pacientes de ${active?.clinicName ?? "sua clínica"}`}
-      />
+      <PageHeader title="Conexão do WhatsApp" />
       {/* O QR se le com o celular: aberta no proprio celular, a tela nao tem
           como ser escaneada. */}
       <AvisoCelular />

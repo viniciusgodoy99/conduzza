@@ -747,7 +747,7 @@ export function Composer({
       <AvisoDoCompositor>
         <Aviso tom="success" titulo="Conversa resolvida.">
           {podeEditar
-            ? "Para responder ou agendar uma mensagem, use Reabrir e responder, no topo da conversa."
+            ? "Use Reabrir e responder, no topo."
             : SO_ACOMPANHA}
         </Aviso>
       </AvisoDoCompositor>
@@ -759,7 +759,7 @@ export function Composer({
       <AvisoDoCompositor>
         <Aviso tom="ia" titulo="A IA está atendendo esta conversa.">
           {podeEditar
-            ? "Para responder, use Assumir conversa, no topo da conversa."
+            ? "Assuma a conversa para responder."
             : SO_ACOMPANHA}
         </Aviso>
       </AvisoDoCompositor>
@@ -780,9 +780,7 @@ export function Composer({
               : "Ninguém está atendendo."
           }
         >
-          {podeEditar
-            ? "Use Assumir conversa, no topo da conversa."
-            : SO_ACOMPANHA}
+          {podeEditar ? null : SO_ACOMPANHA}
         </Aviso>
       </AvisoDoCompositor>
     );
@@ -796,7 +794,7 @@ export function Composer({
       <AvisoDoCompositor>
         <AvisoDeColega nome={quemAtende}>
           {podeEditar
-            ? `${quemAtende} está atendendo. Para responder, use Assumir do colega, no topo da conversa.`
+            ? `${quemAtende} está atendendo. Use Assumir do colega para responder.`
             : `${quemAtende} está atendendo. ${SO_ACOMPANHA}`}
         </AvisoDeColega>
       </AvisoDoCompositor>
@@ -820,8 +818,7 @@ export function Composer({
           icone={Eye}
           titulo="Esta conversa está com você, mas seu perfil só acompanha."
         >
-          {SO_ACOMPANHA} Peça a um administrador ou gestor para passar a
-          conversa a outra pessoa.
+          Peça a um administrador ou gestor para transferir.
         </Aviso>
       ) : null}
       {solto.sobrevoando ? (
@@ -1325,7 +1322,7 @@ function AvisoDoNumero({
         icone={Smartphone}
         titulo={`Esta conversa era do número ${trava.nome}, que foi removido.`}
       >
-        {`Nenhuma resposta sai mais por ele. O histórico continua aqui.${nota}`}
+        {`Nenhuma resposta sai mais por ele.${nota}`}
       </Aviso>
     );
   }
@@ -1384,9 +1381,8 @@ function AvisoDeAutorizacao({
         acao={abrirFicha}
       >
         Desde{" "}
-        <span className="cz-num">{dataNaClinica(revogadaEm, timezone)}</span>. A
-        resposta só sai depois de registrar a nova autorização na ficha. A nota
-        interna continua liberada.
+        <span className="cz-num">{dataNaClinica(revogadaEm, timezone)}</span>.
+        Para responder, registre a nova autorização na ficha.
       </Aviso>
     );
   }
@@ -1397,8 +1393,7 @@ function AvisoDeAutorizacao({
       titulo="Sem autorização registrada para mensagens."
       acao={abrirFicha}
     >
-      A resposta só sai depois de registrar a autorização na ficha. A nota
-      interna continua liberada.
+      Para responder, registre a autorização na ficha.
     </Aviso>
   );
 }

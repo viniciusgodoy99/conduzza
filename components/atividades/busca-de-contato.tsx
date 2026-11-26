@@ -89,7 +89,7 @@ export function BuscaDeContato({
     return (
       <div className="grid gap-1.5">
         <Label>Paciente ou lead</Label>
-        <div className="flex min-h-10 items-center justify-between gap-2 rounded-lg border border-border-strong bg-card pl-3 shadow-xs">
+        <div className="flex min-h-10 items-center justify-between gap-2 rounded-lg border border-border-strong bg-card pl-3">
           <span className="min-w-0 truncate text-sm font-semibold text-text-strong">
             {contato.nome ?? "Sem nome"}
             <span className="ml-2 cz-num text-xs font-normal text-text-secondary">
@@ -133,7 +133,7 @@ export function BuscaDeContato({
         />
       </div>
       {termo.trim().length >= 2 ? (
-        <div className="overflow-hidden rounded-xl border border-border-strong bg-card shadow-xs">
+        <div className="overflow-hidden rounded-xl border border-border-strong bg-card">
           {buscando ? (
             <div className="grid gap-1.5 p-2" aria-hidden>
               <Skeleton className="h-9 w-full" />

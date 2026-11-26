@@ -6,12 +6,13 @@ import type { EtapaDaJornada } from "@/lib/domain/jornada";
 
 // A aba "Jornada e conversões" de Configuracoes com as etapas de sistema da
 // onda 3 (21/10/2026, migration 20261023100000): Aguardando resposta e Em
-// contato ganham o cadeado, a frase do papel e somem do Excluir; a seta que
-// trocaria duas etapas do caminho do lead (Novo, Aguardando resposta, Em
-// contato, Agendou e Compareceu) fica visivel e desabilitada, com a dica
-// dizendo a ordem com os nomes da clinica (decisao D6); o rodape cita as
-// etapas de sistema. E tudo continua de pe com o banco de antes da
-// migration, em que as duas chegam sem papel.
+// contato ganham o cadeado, a frase do papel (na dica do cadeado desde
+// 26/11/2026) e somem do Excluir; a seta que trocaria duas etapas do caminho
+// do lead (Novo, Aguardando resposta, Em contato, Agendou e Compareceu) fica
+// visivel e desabilitada, com a dica dizendo a ordem com os nomes da clinica
+// (decisao D6). O rodape que repetia essas regras saiu em 26/11/2026. E tudo
+// continua de pe com o banco de antes da migration, em que as duas chegam
+// sem papel.
 //
 // O projeto nao tem jsdom: a tela e lida pelo HTML de renderToStaticMarkup.
 // A dica (Tooltip do Radix) nao aparece no HTML estatico, entao o
@@ -40,9 +41,16 @@ const DICA_DE_PERMISSAO =
 const DICA_DA_ORDEM =
   "A ordem das etapas de sistema é fixa: Novo, Aguardando resposta, Em contato, Agendou e Compareceu.";
 const FRASE_DO_AGUARDANDO =
-  "Etapa de sistema: quando a IA passa a conversa de um lead novo para a equipe, o lead vem para cá.";
+  "Etapa do sistema: lead novo que a IA passou para a equipe";
 const FRASE_DO_EM_CONTATO =
-  "Etapa de sistema: quando a equipe assume, inicia, passa para um colega ou reabre a conversa de um lead novo ou que aguarda resposta, o lead vem para cá.";
+  "Etapa do sistema: lead que a equipe assumiu, iniciou, passou ou reabriu";
+
+/** As dicas do cadeado: o nome acessivel do botao que envolve o chip. */
+function dicasDoCadeado(html: string): string[] {
+  return [...html.matchAll(/<button[^>]*aria-label="(Etapa do sistema[^"]*)"/g)].map(
+    (achado) => achado[1] ?? "",
+  );
+}
 
 function etapa(
   chave: string,
@@ -136,14 +144,14 @@ describe("aba Jornada: as etapas de sistema da onda 3", () => {
     expect(html.match(/<span>Sistema<\/span>/g) ?? []).toHaveLength(6);
   });
 
-  it("Aguardando resposta e Em contato explicam o que move o lead para lá", () => {
-    const html = aba(NOVA);
-    expect(html).toContain(FRASE_DO_AGUARDANDO);
-    expect(html).toContain(FRASE_DO_EM_CONTATO);
+  it("Aguardando resposta e Em contato explicam, na dica do cadeado, o que move o lead para lá", () => {
+    const dicas = dicasDoCadeado(aba(NOVA));
+    expect(dicas).toContain(FRASE_DO_AGUARDANDO);
+    expect(dicas).toContain(FRASE_DO_EM_CONTATO);
     // As quatro de antes continuam com as frases delas.
-    expect(html).toContain("Etapa de sistema: todo contato novo nasce aqui.");
-    expect(html).toContain(
-      "Etapa de sistema: marcar como perdido exige o motivo.",
+    expect(dicas).toContain("Etapa do sistema: todo contato novo entra aqui");
+    expect(dicas).toContain(
+      "Etapa do sistema: marcar como perdido pede o motivo",
     );
   });
 
@@ -160,15 +168,10 @@ describe("aba Jornada: as etapas de sistema da onda 3", () => {
     expect(aba(NOVA)).not.toContain("Excluir etapa");
   });
 
-  it("o rodapé cita as seis etapas de sistema e a ordem fixa", () => {
+  it("sem o rodapé: cada uma das seis etapas de sistema leva a dica no cadeado", () => {
     const html = aba(NOVA);
-    expect(html).toContain(
-      "As etapas de sistema (Novo, Aguardando resposta, Em contato, Agendou, Compareceu e Perdido) podem mudar de nome e de lugar, nunca sair",
-    );
-    expect(html).toContain(
-      "A ordem entre Novo, Aguardando resposta, Em contato, Agendou e Compareceu não muda",
-    );
-    expect(html).toContain("Os eventos de conversão vão para a Meta quando o envio está ligado");
+    expect(html).not.toContain("As etapas de sistema (");
+    expect(dicasDoCadeado(html)).toHaveLength(6);
   });
 });
 
@@ -286,14 +289,13 @@ describe("aba Jornada com o banco de antes da migration", () => {
     expect(seta(html, "Descer Agendou").desabilitada).toBe(true);
   });
 
-  it("o rodapé lista só as quatro de sistema de então e a ordem com Em contato", () => {
-    const html = aba(VELHA);
-    expect(html).toContain(
-      "As etapas de sistema (Novo, Agendou, Compareceu e Perdido)",
-    );
-    expect(html).toContain(
-      "A ordem entre Novo, Em contato, Agendou e Compareceu não muda",
-    );
+  it("só as quatro de sistema de então levam a dica no cadeado", () => {
+    expect(dicasDoCadeado(aba(VELHA))).toEqual([
+      "Etapa do sistema: todo contato novo entra aqui",
+      "Etapa do sistema: o contato vem para cá ao agendar",
+      "Etapa do sistema: o contato vem para cá ao comparecer",
+      "Etapa do sistema: marcar como perdido pede o motivo",
+    ]);
   });
 });
 

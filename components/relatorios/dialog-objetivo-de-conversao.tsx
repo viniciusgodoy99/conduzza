@@ -91,8 +91,7 @@ export function DialogObjetivoDeConversao({
         <DialogHeader>
           <DialogTitle>Objetivo de conversão</DialogTitle>
           <DialogDescription>
-            A porcentagem de leads do período que a clínica quer ver agendando
-            consulta. Aparece embaixo da taxa de conversão, para comparar.
+            Porcentagem de leads do período que a clínica quer ver agendando.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-1.5">

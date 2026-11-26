@@ -90,7 +90,7 @@ const DICA_VENDIDO_REMOVER =
   "Este pacote já foi vendido. Desative em vez de remover.";
 
 const DICA_ITENS_VENDIDOS =
-  "Pacote já vendido: os procedimentos e as sessões não mudam; crie um pacote novo.";
+  "Pacote já vendido: procedimentos e sessões não mudam.";
 
 // Pacote com varios procedimentos (pedido do dono em 29/09/2026): o pacote
 // tem nome, uma lista de procedimentos com as sessoes de cada um, o preco do
@@ -471,8 +471,7 @@ export function PacotesTab({
             </Button>
           }
         >
-          Não foi possível carregar as vendas dos pacotes: a coluna de pacientes
-          com saldo fica sem número até carregar.
+          Não foi possível carregar as vendas dos pacotes.
         </Aviso>
       ) : null}
 
@@ -480,7 +479,6 @@ export function PacotesTab({
         <VazioDaAba
           icon={Package2}
           titulo="Nenhum pacote cadastrado"
-          descricao="Pacotes de várias sessões são essenciais em estética: 10 sessões de drenagem, ou Botox e Facelift num pacote só. Cadastre o primeiro para a recepção oferecer."
           acao={{
             rotulo: "Cadastrar o primeiro pacote",
             onClick: () => abrir(),
@@ -496,7 +494,6 @@ export function PacotesTab({
         aberto={aberto}
         aoMudarAberto={setAberto}
         titulo={form.id ? "Editar pacote" : "Novo pacote"}
-        descricao="Junte um ou mais procedimentos, cada um com as suas sessões. A validade vale para o pacote inteiro."
         larga
         erro={erro}
         rodape={
@@ -564,7 +561,7 @@ export function PacotesTab({
           <CampoDeMarcar
             id="pacote-ativo"
             rotulo="Pacote à venda"
-            descricao="Desativado, ele sai da venda na ficha do paciente. Os saldos já vendidos continuam valendo."
+            descricao="Desmarcado, os saldos já vendidos continuam valendo."
             marcado={form.active}
             aoMudar={(marcado) => setForm({ ...form, active: marcado })}
           />
@@ -700,34 +697,27 @@ function ItensDoPacote({
       aria-labelledby={ID_DO_TITULO_DOS_ITENS}
       className="grid gap-3 border-t border-border pt-4"
     >
-      <div className="grid gap-1">
-        <h3
-          id={ID_DO_TITULO_DOS_ITENS}
-          // Alvo de foco de reserva do Remover (nao entra na ordem do Tab).
-          tabIndex={-1}
-          className="text-sm font-bold text-text-strong"
-        >
-          Procedimentos do pacote
-        </h3>
-        <p className="text-xs text-text-secondary">
-          Cada procedimento entra uma vez, com as suas sessões. Quando o
-          paciente comparece, a sessão sai do procedimento da consulta.
-        </p>
-      </div>
+      <h3
+        id={ID_DO_TITULO_DOS_ITENS}
+        // Alvo de foco de reserva do Remover (nao entra na ordem do Tab).
+        tabIndex={-1}
+        className="text-sm font-bold text-text-strong"
+      >
+        Procedimentos do pacote
+      </h3>
 
       {vendido ? (
         <p
           id={ID_DA_NOTA_DE_VENDIDO}
           className="rounded-xl bg-surface-subtle px-3.5 py-3 text-[13px] text-text-secondary"
         >
-          {DICA_ITENS_VENDIDOS} Nome, preço, validade e &quot;Pacote à
-          venda&quot; continuam editáveis.
+          {DICA_ITENS_VENDIDOS}
         </p>
       ) : null}
 
       {linhas.length === 0 ? (
         <p className="rounded-xl bg-surface-subtle px-3.5 py-3 text-[13px] text-text-secondary">
-          Nenhum procedimento no pacote ainda. Adicione o primeiro logo abaixo.
+          Nenhum procedimento no pacote.
         </p>
       ) : (
         <ul className="grid rounded-xl border border-border">
@@ -850,7 +840,7 @@ function ItensDoPacote({
           >
             {temProcedimentoAtivo
               ? "Todos os procedimentos ativos já estão no pacote."
-              : "Cadastre os procedimentos na aba Procedimentos para montar o pacote."}
+              : "Cadastre procedimentos na aba Procedimentos."}
           </p>
         ) : null}
       </div>
@@ -892,10 +882,10 @@ function PrecoDoItem({
 function notaDoAvulso(avulso: PrecoAvulso | null): string {
   if (avulso !== null && avulso.itensSemPreco > 0) {
     return avulso.itensSemPreco === 1
-      ? "1 procedimento está sem preço base, então a soma está incompleta. Cadastre o preço base em Procedimentos para ver o desconto."
-      : `${avulso.itensSemPreco} procedimentos estão sem preço base, então a soma está incompleta. Cadastre o preço base em Procedimentos para ver o desconto.`;
+      ? "1 procedimento sem preço base: soma incompleta."
+      : `${avulso.itensSemPreco} procedimentos sem preço base: soma incompleta.`;
   }
-  return "Soma de sessões x preço base de cada procedimento.";
+  return "Sessões x preço base.";
 }
 
 // Calculado ao vivo com os itens do formulario, nunca gravado: mudar o preco

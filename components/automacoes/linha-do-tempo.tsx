@@ -64,8 +64,8 @@ export function LinhaDoTempo({
                 className={cn(
                   "flex h-10 items-center gap-1.5 rounded-full border px-3.5 text-[12.5px] font-semibold cz-transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid",
                   selecionado
-                    ? "border-transparent bg-inverse text-inverse-foreground shadow-none"
-                    : "border-border-strong bg-card text-text-strong shadow-xs hover:bg-surface-subtle",
+                    ? "border-transparent bg-inverse text-inverse-foreground"
+                    : "border-border-strong bg-card text-text-strong hover:bg-surface-subtle",
                 )}
               >
                 {!ponto.temTexto ? (

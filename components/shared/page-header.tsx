@@ -28,11 +28,11 @@ export function PageHeader({
         {eyebrow ? (
           <p className="cz-eyebrow text-text-secondary">{eyebrow}</p>
         ) : null}
-        <h1 className="text-[24px] leading-[1.2] font-bold tracking-[-0.02em]">
+        <h1 className="text-xl leading-[1.25] font-semibold">
           {title}
         </h1>
         {description ? (
-          <p className="max-w-[62ch] text-[13.5px] text-text-secondary">
+          <p className="max-w-[62ch] text-[13px] text-text-secondary">
             {description}
           </p>
         ) : null}

@@ -12,7 +12,6 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -141,12 +140,9 @@ export function ModalNovoLead({
 
   return (
     <Dialog open={aberto} onOpenChange={(a) => (!a ? fechar() : null)}>
-      <DialogContent>
+      <DialogContent aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>Novo lead</DialogTitle>
-          <DialogDescription>
-            Cadastre quem chegou por fora do WhatsApp, como telefone ou balcão.
-          </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4">
           <div className="grid gap-1.5">

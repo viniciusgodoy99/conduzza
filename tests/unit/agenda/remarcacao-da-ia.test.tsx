@@ -6,7 +6,7 @@ import {
   CalendarCog,
   CalendarFold,
   CalendarSync,
-  Sparkles,
+  Bot,
 } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -485,10 +485,8 @@ describe("o cartão do Pendente de você", () => {
     expect(texto(html)).toMatch(/Aprovar .*Recusar/);
   });
 
-  it("vazio: o texto novo, com a remarcação", () => {
-    expect(texto(painel([]))).toContain(
-      "Quando a IA marcar ou remarcar uma consulta, ou sugerir um encaixe, aparece aqui para a equipe aprovar.",
-    );
+  it("vazio: só o título curto", () => {
+    expect(texto(painel([]))).toContain("Nada pendente de você");
   });
 });
 
@@ -559,7 +557,7 @@ describe("ícone de dono único (docs/06 4.6, C18)", () => {
     // Nunca o CalendarSync (o "Remarcada" da agenda) nem o CalendarCog.
     expect(CHIP_REMARCACAO_PELA_IA.icon).not.toBe(CalendarSync);
     expect(CHIP_REMARCACAO_PELA_IA.icon).not.toBe(CalendarCog);
-    expect(CHIP_ENCAIXE_IA.icon).toBe(Sparkles);
+    expect(CHIP_ENCAIXE_IA.icon).toBe(Bot);
   });
 });
 
@@ -601,7 +599,7 @@ describe("os diálogos da remarcação", () => {
     expect(html).toContain(`for="${id}"`);
     expect(caixa).toContain(`aria-describedby="${id}-descricao"`);
     expect(html).toContain(
-      `<p id="${id}-descricao" class="text-xs text-text-secondary">Sai uma mensagem automática com o novo dia e horário, só se o paciente autorizou receber mensagens.</p>`,
+      `<p id="${id}-descricao" class="text-xs text-text-secondary">Sai uma mensagem com o novo horário, se o paciente autorizou.</p>`,
     );
     expect(html).toMatch(/flex min-h-10 items-center gap-3/);
     const voltar = html.match(/<button[^>]*>Voltar<\/button>/)?.[0];
