@@ -1,6 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { TOLERANCIA_DE_BATIDA_MS } from "../../lib/domain/motor";
 import { adminClient } from "../rls/stack";
 import { provisionar } from "./fixtures";
 
@@ -37,8 +38,10 @@ async function exigirMotorVivo(): Promise<void> {
       Date.now() - new Date(b.batida_em).getTime(),
     ]),
   );
+  // A mesma tolerancia da faixa de motor parado: desde 27/11/2026 a fila so
+  // bate ponto a cada uns 2 minutos quando nao ha trabalho.
   const mortos = ["motor-fila", "motor-planner"].filter(
-    (papel) => (batidas.get(papel) ?? Infinity) > 2 * 60_000,
+    (papel) => (batidas.get(papel) ?? Infinity) > TOLERANCIA_DE_BATIDA_MS,
   );
   if (mortos.length > 0) {
     throw new Error(
