@@ -197,11 +197,14 @@ function MidiaIndisponivel({
   motivo: MotivoDeIndisponivel | null;
   fromPatient: boolean;
 }) {
-  const explicacao = !fromPatient
-    ? "Este arquivo não está disponível."
-    : motivo === "grande_demais"
-      ? "O arquivo passou do tamanho que o sistema consegue receber. Peça ao paciente para enviar um arquivo menor."
-      : "Não foi possível receber este arquivo. Peça ao paciente para enviar de novo.";
+  const explicacao =
+    motivo === "removida"
+      ? "Arquivo removido do sistema."
+      : !fromPatient
+        ? "Este arquivo não está disponível."
+        : motivo === "grande_demais"
+          ? "O arquivo passou do tamanho que o sistema consegue receber. Peça ao paciente para enviar um arquivo menor."
+          : "Não foi possível receber este arquivo. Peça ao paciente para enviar de novo.";
   return (
     <div className={cn(LADRILHO, "items-start")}>
       <CloudOff
@@ -561,7 +564,9 @@ function MidiaBody({
       <div className="grid gap-1">
         <MidiaIndisponivel
           rotulo={
-            fromPatient ? rotulos.naoRecebido : `${rotulos.nome} indisponível`
+            fromPatient && estado.motivo !== "removida"
+              ? rotulos.naoRecebido
+              : `${rotulos.nome} indisponível`
           }
           motivo={estado.motivo}
           fromPatient={fromPatient}

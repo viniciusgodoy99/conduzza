@@ -13,7 +13,7 @@ Três entradas no `pg_cron`, dentro do próprio Supabase, mais a quarta, `motor-
 | Entrada                      | Cadência                          | O que faz                                                                                                                                                                           | Onde executa                  |
 | ---------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
 | `motor-manutencao`           | 60 segundos                       | limpa reservas vencidas, fecha execuções órfãs, expira ofertas, planeja réguas, higiene, enfileira a leitura diária do investimento da Meta, planeja e fecha as mensagens agendadas | **dentro do banco**, SQL puro |
-| `motor-fila`                 | 20 segundos                       | chama a rota na Vercel, que processa a fila de tarefas                                                                                                                              | Vercel, região de São Paulo   |
+| `motor-fila`                 | 20 segundos, com guarda           | só quando há tarefa devida, ou a batida `motor-fila` passou de 100 s (sinal de vida), chama a rota na Vercel, que processa a fila de tarefas (migration `20261127100000`)             | Vercel, região de São Paulo   |
 | `poda-do-cron`               | 1 vez por dia, 03:17 de Fortaleza | apaga de `cron.job_run_details` as execuções com mais de 7 dias                                                                                                                     | **dentro do banco**, SQL puro |
 | `motor-ia` (E3)              | 10 segundos, com guarda           | só quando há resposta da IA devida de clínica da lista, chama a rota `/api/webhooks/motor-ia`, que roda o turno da IA                                                               | Vercel, região de São Paulo   |
 | `funil-da-passagem` (onda 3) | 60 segundos                       | tenta de novo levar para Aguardando resposta o lead cujo contato estava travado na passagem da IA (`processar_pendencias_do_funil()`) e bate ponto como `motor-funil`               | **dentro do banco**, SQL puro |
@@ -55,7 +55,7 @@ from net._http_response order by created desc limit 5;
 select saude_do_motor();
 ```
 
-O que esperar de `saude_do_motor()`: `fila` batida há menos de 20 segundos, `planner` há menos de 60, `atrasados` em zero. A tolerância da faixa na tela é de 3 minutos. Depois da M1 do E3, a saúde ganha a chave `ia` (ver "Resposta da IA no WhatsApp"): com a IA desligada, `vigiado` é falso e `alerta` também. A batida `motor-funil` (onda 3, depois da migration `20261023100000`) **não** entra na saúde: confira-a à parte, em "Funil da passagem da IA".
+O que esperar de `saude_do_motor()`: `fila` batida há menos de 2 minutos (desde 27/11/2026 a fila vazia só chama a Vercel no sinal de vida, a cada uns 2 min), `planner` há menos de 60, `atrasados` em zero. A tolerância da faixa na tela é de 3 minutos. Depois da M1 do E3, a saúde ganha a chave `ia` (ver "Resposta da IA no WhatsApp"): com a IA desligada, `vigiado` é falso e `alerta` também. A batida `motor-funil` (onda 3, depois da migration `20261023100000`) **não** entra na saúde: confira-a à parte, em "Funil da passagem da IA".
 
 Pela interface: a faixa "as mensagens automáticas estão paradas" **não** deve aparecer.
 
