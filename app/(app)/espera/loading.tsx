@@ -10,9 +10,6 @@ export default function CarregandoEspera() {
       <span role="status" className="sr-only">
         Carregando a lista de espera
       </span>
-      <div className="grid gap-2" aria-hidden>
-        <Skeleton className="h-7 w-48" />
-      </div>
       <div className="flex justify-end gap-2" aria-hidden>
         <Skeleton className="h-10 w-44 rounded-lg" />
         <Skeleton className="h-10 w-52 rounded-lg" />

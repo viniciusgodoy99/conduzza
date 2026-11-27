@@ -477,7 +477,9 @@ export function AbaRegua({
           />
           <div className="grid gap-1 text-[13px]">
             <p className="text-foreground">{resultado.frase}</p>
-            <p className="text-text-secondary">{resultado.fraseDeCusto}</p>
+            {resultado.fraseDeCusto ? (
+              <p className="text-text-secondary">{resultado.fraseDeCusto}</p>
+            ) : null}
           </div>
         </div>
       </Bloco>

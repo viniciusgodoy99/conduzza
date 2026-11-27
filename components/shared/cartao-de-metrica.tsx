@@ -159,14 +159,11 @@ export function CartaoDeMetrica(props: CartaoDeMetricaProps) {
   );
 
   let corpo: ReactNode = null;
-  let semBase: string | null = null;
 
   if (props.estado === undefined || props.estado === "valor") {
     const descrita = props.variacao ? descreverVariacao(props.variacao) : null;
     let variacao: ReactNode = null;
-    if (descrita?.semBase) {
-      semBase = descrita.texto;
-    } else if (descrita) {
+    if (descrita && !descrita.semBase) {
       const IconeDaTendencia =
         descrita.sentido === "subiu"
           ? TrendingUp
@@ -320,9 +317,6 @@ export function CartaoDeMetrica(props: CartaoDeMetricaProps) {
         ) : null}
       </span>
       {corpo}
-      {semBase ? (
-        <span className={cn("text-xs", secundario)}>{semBase}</span>
-      ) : null}
       {children}
       {rodape != null && rodape !== false ? (
         <div className={cn("text-xs", secundario)}>{rodape}</div>

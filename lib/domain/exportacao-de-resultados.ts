@@ -1121,24 +1121,24 @@ export const AUTOR_ROTULO: Record<string, string> = {
 //   sem resposta nao foi resolvida) e sem resposta da IA sem recibo (enviando
 //   ou falhou: o motor passa para a equipe sem gravar o motivo);
 // - transferidas para a equipe: conversas com escalation_reason nao nulo;
-// - escalonadas por insatisfacao: escalation_reason = 'insatisfacao';
+// - transferidas por insatisfacao: escalation_reason = 'insatisfacao';
 // - primeira resposta da IA: mediana entre a 1a entrada da conversa no periodo
 //   e a 1a resposta da IA que saiu;
 // - agendamentos feitos pela IA: appointment.created_by = 'ia' criadas no
 //   periodo, como a etapa Agendou da Jornada (sem a pendente de aprovacao e
 //   a recusada) e sem a remarcacao (a consulta ja contou ao ser marcada;
 //   metricas certas, 23/11/2026);
-// - satisfacao: regra decidida depois, sempre "Ainda não medido".
+// A Satisfacao saiu da lista em 27/11/2026 (pedido do dono): a regra nunca foi
+// decidida e o cartao nunca teve numero.
 // Sem atividade da IA no recorte (nem atendida, nem transferida, nem
 // agendamento) ou sem o bloco (migration nao aplicada), nao existe numero:
 // "Ainda não medido", nunca zero, na tela e no CSV.
 export const METRICAS_DO_AGENTE = [
   "Resolvidas sem humano",
   "Transferidas para a equipe",
-  "Escalonadas por insatisfação",
+  "Transferidas por insatisfação",
   "Primeira resposta da IA",
   "Agendamentos feitos pela IA",
-  "Satisfação",
 ] as const;
 
 export type MetricaDoAgente = (typeof METRICAS_DO_AGENTE)[number];
@@ -1172,7 +1172,7 @@ export function lerMetricaDoAgente(
   agente: DesempenhoDoAgente | null,
   anterior: DesempenhoDoAgente | null = null,
 ): LeituraDaMetricaDoAgente {
-  if (rotulo === "Satisfação" || !agenteComAtividade(agente)) {
+  if (!agenteComAtividade(agente)) {
     return { estado: "nao-medido" };
   }
   // Periodo anterior sem atividade nao e base: o zero dele nao foi medido.
@@ -1205,7 +1205,7 @@ export function lerMetricaDoAgente(
           };
     case "Transferidas para a equipe":
       return contagem((bloco) => bloco.transferidas, "menor-melhor");
-    case "Escalonadas por insatisfação":
+    case "Transferidas por insatisfação":
       return contagem((bloco) => bloco.insatisfacao, "menor-melhor");
     case "Agendamentos feitos pela IA":
       return contagem((bloco) => bloco.agendamentos, "maior-melhor");
@@ -1660,7 +1660,7 @@ function linhasDaConfirmacao(
   }
   if (linhaDeBase) {
     linhas.push([
-      "Linha de base de faltas (informada pela clínica)",
+      "Faltas antes (informada pela clínica)",
       `${formatarPercentualDoObjetivo(linhaDeBase.ratePercent)}%`,
     ]);
   }

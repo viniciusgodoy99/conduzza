@@ -64,13 +64,9 @@ describe("CartaoCustoPorLead", () => {
     expect(html).not.toContain("R$");
   });
 
-  it("sem leitura configurada: Ainda não medido, com a dica de onde ligar", () => {
+  it("sem leitura configurada: o cartão não aparece (nunca um cartão sem número)", () => {
     const html = cartao({ configurada: false, lidoDesde: null, sincronizadoEm: null });
-    expect(html).toContain('data-estado="nao-medido"');
-    expect(texto(html)).toContain("Ainda não medido");
-    expect(html).toContain(
-      'data-dica="Ligue a leitura do investimento em Configurações, aba Anúncios e rastreio."',
-    );
+    expect(html).toBe("");
   });
 
   it("antes da primeira leitura: Ainda não medido, a leitura não terminou", () => {

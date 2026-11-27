@@ -21,7 +21,7 @@ function BlocoEsqueleto({ children }: { children: React.ReactNode }) {
 export default function CarregandoFicha() {
   return (
     <div
-      className="mx-auto flex w-full max-w-content flex-col gap-4 p-6"
+      className="flex w-full max-w-content flex-col gap-4 p-6"
       aria-hidden
     >
       <Skeleton className="h-10 w-40" />

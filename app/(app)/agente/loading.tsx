@@ -8,10 +8,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function CarregandoAgente() {
   return (
     <div
-      className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
+      className="grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
       aria-hidden
     >
-      <Skeleton className="h-7 w-44" />
       <div className="grid gap-3 rounded-card border border-border bg-card p-6">
         <Skeleton className="h-4 w-56 max-w-full" />
         <Skeleton className="h-3.5 w-full" />

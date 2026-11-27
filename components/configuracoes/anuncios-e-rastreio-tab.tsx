@@ -2,7 +2,7 @@
 
 import { ChevronDown } from "lucide-react";
 import { Accordion as AccordionPrimitive } from "radix-ui";
-import { useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import { ConversoesPorEtapa } from "@/components/configuracoes/conversoes-por-etapa";
 import { ErroDaAba } from "@/components/configuracoes/erro-da-aba";
@@ -21,8 +21,6 @@ import {
   type DadosDasOrigens,
 } from "@/components/configuracoes/origem-dos-leads-tab";
 import { StatusChip } from "@/components/shared/status-chip";
-import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardHeader } from "@/components/ui/card";
 import { PASSO_DO_RASTREIO_STATUS } from "@/lib/design/status";
 import type { EtapaDaJornada } from "@/lib/domain/jornada";
 import { ONDE_ENCONTRAR } from "@/lib/domain/onde-encontrar";
@@ -36,16 +34,12 @@ import {
 
 // Aba "Anuncios e rastreio" de Configuracoes (decisao do dono de 17/11/2026,
 // desenho "passo a passo que abre"): um lugar so para o que substitui o
-// Tintim. No topo, a lista dos passos com a situacao de cada um; embaixo,
-// cada passo abre com o "onde encontro" e os campos (a explicacao de cada
-// passo saiu em 26/11/2026: tela que mostra e nao explica). As abas
-// antigas (Anuncios da Meta, Anuncios do Google e Origem dos leads) viraram
-// os passos, com os mesmos cartoes.
-
-export const TEXTOS_DO_RASTREIO_DA_ABA = {
-  titulo: "Passo a passo",
-  abrir: "Abrir",
-} as const;
+// Tintim. Cada passo e uma linha que abre, com a situacao e o que falta, e
+// dentro o "onde encontro" e os campos (a explicacao de cada passo saiu em
+// 26/11/2026; a lista "Passo a passo" do topo, que repetia as mesmas sete
+// linhas, saiu em 27/11/2026, a pedido do dono). As abas antigas (Anuncios
+// da Meta, Anuncios do Google e Origem dos leads) viraram os passos, com os
+// mesmos cartoes.
 
 export type DadosDaMeta = {
   conta: ContaMeta | null;
@@ -137,33 +131,10 @@ export function AnunciosERastreioTab({
       : null,
   });
   const prontos = prontosDoRastreio(passos);
-  const primeiroQueFalta = passos.find((passo) => passo.situacao === "falta");
 
   const [abertos, setAbertos] = useState<string[]>(() =>
     passosAbertosDeInicio(passos, passoDoEndereco, abaDoEndereco),
   );
-  const gatilhos = useRef<Partial<Record<ChaveDoPasso, HTMLButtonElement | null>>>(
-    {},
-  );
-
-  const abrir = (chave: ChaveDoPasso) => {
-    setAbertos((atuais) => (atuais.includes(chave) ? atuais : [...atuais, chave]));
-    // Depois de o passo abrir: leva a tela e o foco ate ele.
-    requestAnimationFrame(() => {
-      const gatilho = gatilhos.current[chave];
-      if (!gatilho) {
-        return;
-      }
-      const semMovimento = window.matchMedia(
-        "(prefers-reduced-motion: reduce)",
-      ).matches;
-      gatilho.scrollIntoView({
-        behavior: semMovimento ? "auto" : "smooth",
-        block: "start",
-      });
-      gatilho.focus({ preventScroll: true });
-    });
-  };
 
   const erroDaMeta = (
     <ErroDaAba titulo="Não foi possível carregar a conta de anúncios" />
@@ -222,49 +193,10 @@ export function AnunciosERastreioTab({
 
   return (
     <div className="grid gap-4">
-      <Card>
-        <CardHeader>
-          <h2 className="text-base leading-[1.3] font-bold tracking-[-0.01em]">
-            {TEXTOS_DO_RASTREIO_DA_ABA.titulo}
-          </h2>
-          <CardAction>
-            <p className="text-xs text-text-secondary">
-              <span className="cz-num">{prontos}</span> de{" "}
-              <span className="cz-num">{passos.length}</span> prontos
-            </p>
-          </CardAction>
-        </CardHeader>
-        <ol className="divide-y divide-border">
-          {passos.map((passo) => (
-            <li
-              key={passo.chave}
-              className="flex flex-wrap items-center gap-3 px-4 py-2.5"
-            >
-              <Numero valor={passo.numero} />
-              <div className="grid min-w-0 flex-1 basis-56 gap-0.5">
-                <span className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-semibold text-text-strong">
-                    {passo.titulo}
-                  </span>
-                  <ChipDoPasso passo={passo} />
-                </span>
-                {passo.detalhe ? (
-                  <span className="text-[12.5px] text-text-secondary">
-                    {passo.detalhe}
-                  </span>
-                ) : null}
-              </div>
-              <Button
-                variant={passo === primeiroQueFalta ? "solid" : "outline"}
-                onClick={() => abrir(passo.chave)}
-                aria-label={`${TEXTOS_DO_RASTREIO_DA_ABA.abrir} o passo ${passo.numero}, ${passo.titulo}`}
-              >
-                {TEXTOS_DO_RASTREIO_DA_ABA.abrir}
-              </Button>
-            </li>
-          ))}
-        </ol>
-      </Card>
+      <p className="text-xs text-text-secondary">
+        <span className="cz-num">{prontos}</span> de{" "}
+        <span className="cz-num">{passos.length}</span> passos prontos
+      </p>
 
       <AccordionPrimitive.Root
         type="multiple"
@@ -282,15 +214,19 @@ export function AnunciosERastreioTab({
             <AccordionPrimitive.Header asChild>
               <h3>
                 <AccordionPrimitive.Trigger
-                  ref={(elemento) => {
-                    gatilhos.current[passo.chave] = elemento;
-                  }}
-                  className="group/passo flex min-h-12 w-full scroll-mt-4 flex-wrap items-center gap-3 rounded-card border border-border bg-card px-4 py-2 text-left outline-none cz-transition hover:border-border-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
+                  className="group/passo flex min-h-12 w-full flex-wrap items-center gap-3 rounded-card border border-border bg-card px-4 py-2 text-left outline-none cz-transition hover:border-border-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
                 >
                   <Numero valor={passo.numero} />
                   <span className="sr-only">Passo {passo.numero}:</span>
-                  <span className="min-w-0 flex-1 text-[15px] font-bold tracking-[-0.01em] text-text-strong">
-                    {passo.titulo}
+                  <span className="grid min-w-0 flex-1 gap-0.5">
+                    <span className="text-[15px] font-bold tracking-[-0.01em] text-text-strong">
+                      {passo.titulo}
+                    </span>
+                    {passo.detalhe ? (
+                      <span className="text-[12.5px] text-text-secondary">
+                        {passo.detalhe}
+                      </span>
+                    ) : null}
                   </span>
                   <ChipDoPasso passo={passo} />
                   <ChevronDown

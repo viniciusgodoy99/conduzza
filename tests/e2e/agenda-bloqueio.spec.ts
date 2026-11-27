@@ -62,7 +62,7 @@ async function clicarNoVaoDaAna(page: Page, hora: number): Promise<void> {
 
 async function abrirDiaDaAna(page: Page, dia: string): Promise<void> {
   await page.goto("/agenda");
-  await expect(page.getByText("Dra. Ana Costa")).toBeVisible();
+  await expect(page.getByTitle("Dra. Ana Costa")).toBeVisible();
   // Só a coluna da Ana: o contador e o bloqueio ficam sem ambiguidade.
   await page.getByRole("combobox", { name: "Profissional" }).click();
   await page.getByRole("option", { name: "Dra. Ana Costa" }).click();
@@ -153,7 +153,7 @@ test("recepção vê bloquear e remover visíveis, desabilitados e com o porquê
   const d = dados();
   await login(page, d.emails.recepcao);
   await page.goto("/agenda");
-  await expect(page.getByText("Dr. João Pereira")).toBeVisible();
+  await expect(page.getByTitle("Dr. João Pereira")).toBeVisible();
 
   const bloquear = page.getByRole("button", { name: "Bloquear horário" });
   await expect(bloquear).toBeVisible();

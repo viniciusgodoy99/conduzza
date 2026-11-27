@@ -28,9 +28,9 @@ type EmptyStateProps = {
   | { tom: "erro"; icon?: undefined }
 );
 
-// Vazio no desenho do EmptyState do design system Conduzza (docs/06 secao
-// 4.6): sem moldura propria, ladrilho lime suave com o icone, titulo, uma
-// linha de apoio e a proxima acao. Onde o vazio fica solto na pagina, quem
+// Vazio sem moldura propria: o icone solto (o ladrilho colorido atras dele
+// saiu com o visual plano, 27/11/2026), titulo, uma linha de apoio e a
+// proxima acao. Onde o vazio fica solto na pagina, quem
 // chama o poe dentro de um Card. O titulo continua sendo paragrafo, e nao
 // heading, para nao somar um nivel de titulo onde a tela nao tem.
 export function EmptyState({
@@ -56,21 +56,14 @@ export function EmptyState({
         className,
       )}
     >
-      <span
+      <Icon
+        aria-hidden
         className={cn(
-          "grid shrink-0 place-items-center rounded-card",
-          compact ? "size-[38px]" : "size-[52px]",
-          erro ? "bg-alert-bg" : "bg-primary-soft",
+          "shrink-0",
+          compact ? "size-5" : "size-7",
+          erro ? "text-alert-text" : "text-text-secondary",
         )}
-      >
-        <Icon
-          aria-hidden
-          className={cn(
-            compact ? "size-[18px]" : "size-6",
-            erro ? "text-alert-text" : "text-primary-text",
-          )}
-        />
-      </span>
+      />
       <p
         className={cn(
           "font-bold tracking-[-0.01em] text-text-strong",

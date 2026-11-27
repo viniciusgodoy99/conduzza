@@ -23,7 +23,8 @@ export type BaseDaEstimativa = {
 export type EstimativaDaRegua = {
   mensagensPorMes: number;
   frase: string;
-  fraseDeCusto: string;
+  /** null sem preco na tabela (canal por QR): nada a dizer sobre custo. */
+  fraseDeCusto: string | null;
 };
 
 const formatadorBRL = new Intl.NumberFormat("pt-BR", {
@@ -46,7 +47,7 @@ export function estimarRegua(base: BaseDaEstimativa): EstimativaDaRegua {
         } por ${porEvento}.`;
   const fraseDeCusto =
     base.precoCents === null
-      ? "No WhatsApp conectado por QR não há custo por mensagem. Quando o canal oficial estiver ativo, o custo estimado em reais aparece aqui."
+      ? null
       : `Custo estimado: ${formatadorBRL.format((mensagensPorMes * base.precoCents) / 100)} por mês. Mensagens respondidas dentro de 24 horas não são cobradas.`;
   return { mensagensPorMes, frase, fraseDeCusto };
 }

@@ -557,8 +557,8 @@ export default async function ConfiguracoesPage({
   } | null;
 
   return (
-    <div className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
-      <PageHeader
+    <div className="grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
+      <PageHeader tituloNaBarra
         title="Configurações"
       />
       <AvisoCelular />

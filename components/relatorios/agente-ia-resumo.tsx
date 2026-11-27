@@ -5,7 +5,6 @@ import { CartaoDeMetrica } from "@/components/shared/cartao-de-metrica";
 import { Button } from "@/components/ui/button";
 import { formatarDuracao } from "@/lib/domain/duracao";
 import {
-  agenteComAtividade,
   lerMetricaDoAgente,
   type MetricaDoAgente,
 } from "@/lib/domain/exportacao-de-resultados";
@@ -22,10 +21,6 @@ import type {
 
 export const DICA_DO_AGENTE =
   "Chega com o agente de IA. Sem o agente atendendo, não existe número para mostrar.";
-
-// Com o agente atendendo, a dica de cima seria falsa no cartao de Satisfacao.
-const DICA_DA_SATISFACAO =
-  "A forma de medir a satisfação do paciente ainda não foi definida.";
 
 const RESUMO_DO_AGENTE = [
   "Resolvidas sem humano",
@@ -56,11 +51,7 @@ export function CartaoDoAgente({
       <CartaoDeMetrica
         {...casca}
         estado="nao-medido"
-        dica={
-          rotulo === "Satisfação" && agenteComAtividade(agente)
-            ? DICA_DA_SATISFACAO
-            : DICA_DO_AGENTE
-        }
+        dica={DICA_DO_AGENTE}
       />
     );
   }

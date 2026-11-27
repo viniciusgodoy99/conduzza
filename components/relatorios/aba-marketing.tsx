@@ -116,7 +116,7 @@ export function AbaMarketing({
     <div className="grid gap-4">
       <section
         aria-label="Indicadores do período"
-        className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5"
+        className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:auto-cols-fr xl:grid-flow-col xl:grid-cols-none"
       >
         <CartaoDeMetrica
           rotulo="Leads recebidos"

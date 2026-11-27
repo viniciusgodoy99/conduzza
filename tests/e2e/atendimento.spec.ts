@@ -24,6 +24,11 @@ test("lista com segmentos de posse e chips de status contados", async ({
   await login(page, dados().emails.recepcao);
   await page.goto("/atendimento");
   await expect(page.getByRole("button", { name: /Todas 4/ })).toBeVisible();
+  // Situacao, tipo, numero e etiquetas ficam atras de "Filtros" (27/11/2026).
+  await expect(
+    page.getByRole("button", { name: /IA atendendo 1/ }),
+  ).toBeHidden();
+  await page.getByRole("button", { name: "Filtros", exact: true }).click();
   await expect(
     page.getByRole("button", { name: /IA atendendo 1/ }),
   ).toBeVisible();
@@ -466,6 +471,7 @@ test.describe("clínica com dois números", () => {
     await login(page, EMAIL);
     await page.goto("/atendimento");
     const lista = page.getByRole("complementary", { name: "Conversas" });
+    await lista.getByRole("button", { name: "Filtros", exact: true }).click();
     const filtro = lista.getByRole("group", { name: "Filtrar por número" });
     await expect(filtro.getByRole("button", { name: /Todos 2/ })).toBeVisible();
     await expect(

@@ -5,12 +5,10 @@ import {
   CalendarCheck,
   CalendarX,
   CircleDashed,
-  Hourglass,
   Repeat,
   Workflow,
   type LucideIcon,
 } from "lucide-react";
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { AbaRegua } from "@/components/automacoes/aba-regua";
@@ -28,8 +26,7 @@ import { NumeroDasAutomaticas } from "@/components/automacoes/numero-das-automat
 import type { NumerosDasAutomaticas } from "@/components/automacoes/numeros-de-envio";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusChip } from "@/components/shared/status-chip";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { REGUA_STATUS, type StatusDefinition } from "@/lib/design/status";
 import { createClient } from "@/lib/supabase/client";
@@ -55,9 +52,8 @@ import {
 // mesmo padrao de Configuracoes. As reguas usam a MESMA chave de cache do
 // painel da Tela 2: mexer aqui atualiza la e vice-versa.
 //
-// A aba Lista de espera nao tem regua propria: a reoferta e mecanica de
-// fila e mora na Tela 10 (/espera), entao aqui ela vira o cartao que explica
-// e leva para la.
+// A Lista de espera nao tem aba aqui: a reoferta e mecanica de fila e mora
+// na Tela 10 (/espera). O cartao que so apontava para la saiu em 27/11/2026.
 //
 // Desenho do design system (docs/06 secao 5.10): as abas viram cartoes
 // seletores, ainda Tabs do Radix (role=tab, setas e ?aba= iguais). Cada
@@ -65,14 +61,14 @@ import {
 // (REGUA_STATUS), ligada ao cartao por aria-describedby, com o numero de
 // mensagens enviadas em 24 horas que a tela ja busca.
 //
-// Automacoes de fluxo (decisao do dono de 20/10/2026, onda 4): o quinto
+// Automacoes de fluxo (decisao do dono de 20/10/2026, onda 4): o quarto
 // cartao, ?aba=fluxo, que saiu de Configuracoes. So administrador e gestor
 // o veem: a pagina decide no servidor (fluxo nulo para os outros papeis,
 // sem ler nada da aba), e ai o cartao nao existe e ?aba=fluxo cai na
 // Confirmacao, como aba desconhecida. Fica FORA de ABAS de proposito, no
 // fim da fileira, como a aba do Agente de IA em Configuracoes.
 
-type AbaKey = "confirmacao" | "pos_falta" | "followup" | "espera" | "fluxo";
+type AbaKey = "confirmacao" | "pos_falta" | "followup" | "fluxo";
 
 type DefinicaoDaAba = { chave: AbaKey; rotulo: string; icone: LucideIcon };
 
@@ -80,7 +76,6 @@ const ABAS: readonly DefinicaoDaAba[] = [
   { chave: "confirmacao", rotulo: "Confirmação", icone: CalendarCheck },
   { chave: "pos_falta", rotulo: "Pós falta", icone: CalendarX },
   { chave: "followup", rotulo: "Follow-up de leads", icone: Repeat },
-  { chave: "espera", rotulo: "Lista de espera", icone: Hourglass },
 ];
 
 const ABA_DO_FLUXO: DefinicaoDaAba = {
@@ -317,11 +312,6 @@ export function AutomacoesClient({
               </>
             ),
           },
-    espera: {
-      ligada: false,
-      chip: null,
-      nota: "A reoferta mora na Lista de espera",
-    },
     fluxo: fluxo
       ? situacaoDoFluxo(fluxo.automacoes)
       : { ligada: false, chip: null, nota: null },
@@ -341,7 +331,7 @@ export function AutomacoesClient({
         variant="cartoes"
         className={cn(
           "grid-cols-1 items-stretch sm:grid-cols-2",
-          abas.length > ABAS.length ? "xl:grid-cols-5" : "xl:grid-cols-4",
+          abas.length > ABAS.length ? "xl:grid-cols-4" : "xl:grid-cols-3",
         )}
       >
         {abas.map((aba) => {
@@ -494,19 +484,6 @@ export function AutomacoesClient({
           numeros={numeros}
           aoMudar={invalidar}
         />
-      </TabsContent>
-
-      <TabsContent value="espera" className="grid gap-4">
-        <Card className="max-w-[62ch]">
-          <CardContent className="grid gap-3">
-            <p className="text-[13.5px] text-foreground">
-              A reoferta de horário fica na Lista de espera.
-            </p>
-            <Button asChild variant="outline" className="w-fit">
-              <Link href="/espera">Abrir a Lista de espera</Link>
-            </Button>
-          </CardContent>
-        </Card>
       </TabsContent>
 
       {fluxo ? (

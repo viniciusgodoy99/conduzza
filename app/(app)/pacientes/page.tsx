@@ -55,7 +55,7 @@ export default async function PacientesPage() {
   // cada um com a sua query e o dado inicial do servidor.
   return (
     <div className="flex flex-col gap-3.5 p-6">
-      <PageHeader
+      <PageHeader tituloNaBarra
         title={titulo}
       />
       <AvisoCelular />

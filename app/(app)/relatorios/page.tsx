@@ -51,7 +51,7 @@ const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
 // Casca do design system (docs/06 secao 5.9). A tela inteira some na
 // impressao: o que imprime e o layout proprio da exportacao.
 const CONTEINER =
-  "mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6 print:hidden";
+  "grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6 print:hidden";
 
 /**
  * A clinica tem algum numero no canal OFICIAL da Meta. Hoje so o provedor
@@ -73,15 +73,6 @@ async function temCanalOficial(
     throw new Error(error.message);
   }
   return (data ?? []).some((conta) => conta.provider === "cloud_api");
-}
-
-/** "26/08/26 a 24/09/26" (nunca meia-risca entre as datas). */
-function rotuloDoRecorte(diaDe: string, diaAte: string): string {
-  const curto = (dia: string) => {
-    const [ano, mes, diaDoMes] = dia.split("-");
-    return `${diaDoMes}/${mes}/${ano?.slice(2)}`;
-  };
-  return `${curto(diaDe)} a ${curto(diaAte)}`;
 }
 
 export default async function ResultadosPage({
@@ -126,7 +117,7 @@ export default async function ResultadosPage({
       return (
         <div className={CONTEINER}>
           <AvisoCelular />
-          <PageHeader title="Resultados" />
+          <PageHeader tituloNaBarra title="Resultados" />
           <Card>
             <EmptyState
               icon={TrendingUp}
@@ -149,7 +140,7 @@ export default async function ResultadosPage({
     return (
       <div className={CONTEINER}>
         <AvisoCelular />
-        <PageHeader eyebrow="Últimos 30 dias" title="Resultados" />
+        <PageHeader tituloNaBarra eyebrow="Últimos 30 dias" title="Resultados" />
         <VisaoDoProfissional agenda={agendaPropria} />
       </div>
     );
@@ -240,17 +231,10 @@ export default async function ResultadosPage({
     ).catch(() => undefined),
   ]);
 
-  const recortePadrao = diaDe === diaDePadrao && diaAte === diaAtePadrao;
-
   return (
     <div className={CONTEINER}>
       <AvisoCelular />
-      <PageHeader
-        eyebrow={
-          recortePadrao ? "Últimos 30 dias" : rotuloDoRecorte(diaDe, diaAte)
-        }
-        title="Resultados"
-      />
+      <PageHeader tituloNaBarra title="Resultados" />
       <RelatoriosClient
         clinicId={active.clinicId}
         timezone={active.timezone}

@@ -8,10 +8,6 @@ export default function CarregandoLeads() {
   return (
     <div className="flex flex-col gap-3.5 p-6" aria-hidden>
       <div className="flex flex-wrap items-end gap-4">
-        <div className="grid gap-2">
-          <Skeleton className="h-7 w-28" />
-          <Skeleton className="h-4 w-80 max-w-full" />
-        </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Skeleton className="hidden h-10 w-44 rounded-lg lg:block" />
           <Skeleton className="h-10 w-11 rounded-lg sm:w-40" />

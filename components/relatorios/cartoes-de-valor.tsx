@@ -61,9 +61,9 @@ function linhasDoRodape(partes: (string | null)[]): ReactNode {
  * periodo dividido pelo divisor da decisao D2 (DIVISOR_DO_CUSTO_POR_LEAD).
  * Estados (lib/domain/custo-por-lead.ts, o mesmo texto do CSV):
  * - sem acesso (outros papeis): "Sem acesso", sem numero no HTML;
- * - sem leitura configurada, antes da primeira leitura, periodo antes do
- *   primeiro dia lido e leitura parada antes do fim do periodo: "Ainda não
- *   medido", com o porque na dica;
+ * - sem leitura configurada: o cartao nao aparece;
+ * - antes da primeira leitura, periodo antes do primeiro dia lido e leitura
+ *   parada antes do fim do periodo: "Ainda não medido", com o porque na dica;
  * - outra moeda, sem investimento, nenhum lead de anuncio: o estado escrito;
  * - valor: "R$ 18,40", rodape "R$ 3.420,00 em N leads do Meta Ads" e
  *   "Atualizado em", variacao so com os dois periodos medidos por inteiro
@@ -132,6 +132,9 @@ export function CartaoCustoPorLead({
         />
       );
     case "nao-configurado":
+      // Sem leitura de investimento ligada o cartao nao aparece (pedido do
+      // dono de 27/11/2026: indicador que nunca tem numero sai da tela).
+      return null;
     case "aguardando-primeira-leitura":
     case "antes-da-leitura":
     case "leitura-atrasada":

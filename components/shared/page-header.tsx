@@ -8,6 +8,11 @@ type PageHeaderProps = {
   eyebrow?: string;
   /** Acoes da pagina (botoes), alinhadas a direita */
   children?: React.ReactNode;
+  /**
+   * O titulo e o mesmo da barra superior: o h1 fica so para leitor de tela
+   * (titulo repetido tirado a pedido do dono em 27/11/2026).
+   */
+  tituloNaBarra?: boolean;
   className?: string;
 };
 
@@ -21,14 +26,23 @@ export function PageHeader({
   eyebrow,
   children,
   className,
+  tituloNaBarra,
 }: PageHeaderProps) {
+  // So o titulo, e ele ja esta na barra: nada visivel e nenhuma linha ocupada.
+  if (tituloNaBarra && !eyebrow && !description && !children) {
+    return <h1 className="sr-only">{title}</h1>;
+  }
   return (
     <header className={cn("flex flex-wrap items-end gap-4", className)}>
       <div className="grid min-w-0 gap-1">
         {eyebrow ? (
           <p className="cz-eyebrow text-text-secondary">{eyebrow}</p>
         ) : null}
-        <h1 className="text-xl leading-[1.25] font-semibold">
+        <h1
+          className={
+            tituloNaBarra ? "sr-only" : "text-xl leading-[1.25] font-semibold"
+          }
+        >
           {title}
         </h1>
         {description ? (

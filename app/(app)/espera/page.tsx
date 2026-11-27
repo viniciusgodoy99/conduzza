@@ -95,7 +95,7 @@ export default async function EsperaPage({
 
   return (
     <div className="flex flex-col gap-3.5 p-6">
-      <PageHeader
+      <PageHeader tituloNaBarra
         title="Lista de espera"
       />
       <AvisoCelular />

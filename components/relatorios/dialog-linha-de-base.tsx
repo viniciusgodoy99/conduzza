@@ -71,7 +71,7 @@ export function DialogLinhaDeBase({
       if (resultado.aviso) {
         toast.warning(resultado.aviso);
       } else {
-        toast.success("Linha de base registrada.");
+        toast.success("Taxa de faltas de antes salva.");
       }
       onFechar();
       await aoMudar();
@@ -82,7 +82,7 @@ export function DialogLinhaDeBase({
     <Dialog open={aberto} onOpenChange={(v) => (!v ? onFechar() : null)}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Registrar a linha de base</DialogTitle>
+          <DialogTitle>Informar as faltas de antes</DialogTitle>
           <DialogDescription>
             Taxa de faltas antes das mensagens automáticas.
           </DialogDescription>

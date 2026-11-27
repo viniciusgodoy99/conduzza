@@ -69,7 +69,7 @@ export default async function ConfirmacoesPage({
 
   return (
     <div className="flex flex-col gap-3.5 p-6">
-      <PageHeader
+      <PageHeader tituloNaBarra
         eyebrow={dataDoEyebrow}
         title="Confirmações"
       />

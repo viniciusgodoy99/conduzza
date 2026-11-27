@@ -134,8 +134,8 @@ export default async function AutomacoesPage({
   const { aba } = await searchParams;
 
   return (
-    <div className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
-      <PageHeader
+    <div className="grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
+      <PageHeader tituloNaBarra
         title="Automações"
       />
       {/* Tela pensada para computador (brief secao 6): no celular, o aviso. */}

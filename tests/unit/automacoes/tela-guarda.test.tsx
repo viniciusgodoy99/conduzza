@@ -335,7 +335,7 @@ describe("guarda de módulo da rota /automacoes", () => {
 
 describe("aba Automações de fluxo: só administrador e gestor", () => {
   it.each<Role>(["admin", "gestor"])(
-    "%s: o quinto cartão, no fim da fileira, e a aba abre pela URL",
+    "%s: o quarto cartão, no fim da fileira, e a aba abre pela URL",
     async (papel) => {
       sessao.atual = contexto(papel);
       const html = await tela("fluxo");
@@ -343,7 +343,6 @@ describe("aba Automações de fluxo: só administrador e gestor", () => {
         { nome: "Confirmação", selecionado: false },
         { nome: "Pós falta", selecionado: false },
         { nome: "Follow-up de leads", selecionado: false },
-        { nome: "Lista de espera", selecionado: false },
         { nome: "Automações de fluxo", selecionado: true },
       ]);
       // O conteudo da aba, com as regras lidas pela clinica da sessao.
@@ -359,8 +358,8 @@ describe("aba Automações de fluxo: só administrador e gestor", () => {
         expect.anything(),
         CLINICA,
       );
-      // A grade cabe os cinco cartoes na tela larga.
-      expect(html).toContain("xl:grid-cols-5");
+      // A grade cabe os quatro cartoes na tela larga.
+      expect(html).toContain("xl:grid-cols-4");
     },
   );
 
@@ -371,11 +370,10 @@ describe("aba Automações de fluxo: só administrador e gestor", () => {
       "Confirmação",
       "Pós falta",
       "Follow-up de leads",
-      "Lista de espera",
     ]);
     expect(html).not.toContain("Automações de fluxo");
-    expect(html).toContain("xl:grid-cols-4");
-    expect(html).not.toContain("xl:grid-cols-5");
+    expect(html).toContain("xl:grid-cols-3");
+    expect(html).not.toContain("xl:grid-cols-4");
     expect(banco.fetchAutomacoesDeFluxo).not.toHaveBeenCalled();
     expect(banco.fetchEtiquetasDeConversa).not.toHaveBeenCalled();
     // Nem as etiquetas em uso nos leads (so para quem edita um filtro).
@@ -454,7 +452,7 @@ describe("cartão Automações de fluxo", () => {
     expect(html).not.toContain("Automações de fluxo da clínica");
     expect(situacaoDoCartao(html, "fluxo")).toBe("Não foi possível carregar");
     // Os outros cartoes continuam.
-    expect(cartoes(html)).toHaveLength(5);
+    expect(cartoes(html)).toHaveLength(4);
   });
 
   it("etiquetas que não carregam não derrubam a aba", async () => {
@@ -534,9 +532,9 @@ describe("aba Follow-up de leads: a lista de etapas da régua", () => {
 });
 
 describe("esqueleto de Automações", () => {
-  it("desenha os cinco cartões seletores da fileira de administrador e gestor", () => {
+  it("desenha os quatro cartões seletores da fileira de administrador e gestor", () => {
     const html = renderToStaticMarkup(<CarregandoAutomacoes />);
-    expect(html.match(/min-h-\[88px\]/g) ?? []).toHaveLength(5);
-    expect(html).toContain("xl:grid-cols-5");
+    expect(html.match(/min-h-\[88px\]/g) ?? []).toHaveLength(4);
+    expect(html).toContain("xl:grid-cols-4");
   });
 });

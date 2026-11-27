@@ -58,9 +58,13 @@ const LISTA = [
   conversa("3", "Carla Paciente", "paciente"),
 ];
 
-function lista(conversations: ConversationListItem[] = LISTA): string {
+function lista(
+  conversations: ConversationListItem[] = LISTA,
+  filtroInicial: "sem_resposta_24h" | null = null,
+): string {
   return renderToStaticMarkup(
     <ConversationList
+      filtroInicial={filtroInicial}
       nomesDeEtapa={{ novo: "Novo" }}
       etiquetas={[]}
       conversations={conversations}
@@ -150,5 +154,27 @@ describe("filtro Todos / Leads / Pacientes na lista", () => {
       expect(html).toContain(nome);
     }
     expect(html).not.toContain("Nenhuma conversa com esses filtros");
+  });
+
+  // Pedido do dono de 27/11/2026: tipo, situacao, numero e etiquetas ficam
+  // atras do botao "Filtros"; a busca e a posse continuam a vista.
+  it("os filtros chegam recolhidos atrás do botão Filtros", () => {
+    const html = lista();
+    expect(html).toMatch(/<button[^>]*aria-expanded="false"[^>]*aria-controls="filtros-da-lista"/);
+    expect(html).toMatch(/<div[^>]*id="filtros-da-lista"[^>]*hidden=""/);
+    // A posse fica fora do painel recolhido.
+    expect(html.indexOf('aria-label="Filtrar por responsável"')).toBeLessThan(
+      html.indexOf('id="filtros-da-lista"'),
+    );
+    expect(html.indexOf(`aria-label="${GRUPO}"`)).toBeGreaterThan(
+      html.indexOf('id="filtros-da-lista"'),
+    );
+  });
+
+  it("chegar por um link que já filtra abre o painel e conta o filtro no botão", () => {
+    const html = lista(LISTA, "sem_resposta_24h");
+    expect(html).toMatch(/<button[^>]*aria-expanded="true"[^>]*aria-controls="filtros-da-lista"/);
+    expect(html).not.toMatch(/<div[^>]*id="filtros-da-lista"[^>]*hidden=""/);
+    expect(html).toContain('aria-label="Filtros, 1 ligado"');
   });
 });

@@ -93,8 +93,8 @@ export default async function CadastrosPage({
   // [AG7 preparo] fim
 
   return (
-    <div className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
-      <PageHeader
+    <div className="grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
+      <PageHeader tituloNaBarra
         title="Cadastros"
       />
       {/* Tela de computador (brief secao 6): no celular so avisa, nada trava */}

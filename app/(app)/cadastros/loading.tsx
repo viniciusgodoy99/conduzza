@@ -9,10 +9,9 @@ import { ABAS_DE_CADASTROS } from "./abas";
 export default function CarregandoCadastros() {
   return (
     <div
-      className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
+      className="grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
       aria-hidden
     >
-      <Skeleton className="h-7 w-40" />
       <div className="flex gap-1 overflow-hidden border-b border-border">
         {ABAS_DE_CADASTROS.map(([chave]) => (
           <div key={chave} className="flex h-10 shrink-0 items-center px-3">

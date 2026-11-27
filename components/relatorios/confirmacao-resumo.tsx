@@ -80,7 +80,7 @@ export function ConfirmacaoResumo({
       <p className="border-t border-border pt-3 text-xs text-text-secondary">
         {linhaDeBase ? (
           <>
-            Linha de base informada pela clínica:{" "}
+            Faltas antes, informada pela clínica:{" "}
             <span className="cz-num font-semibold text-foreground">
               {formatarPercentualDoObjetivo(linhaDeBase.ratePercent)}%
             </span>{" "}
@@ -91,7 +91,7 @@ export function ConfirmacaoResumo({
             .
           </>
         ) : (
-          "A linha de base de faltas ainda não foi registrada."
+          "A taxa de faltas de antes ainda não foi informada."
         )}
       </p>
       <Button variant="ghost" className="w-fit" onClick={aoVerDetalhes}>

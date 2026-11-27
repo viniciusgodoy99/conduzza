@@ -153,19 +153,17 @@ describe("IndicadoresDaLista, com dados", () => {
     expect(markup).not.toContain("lucide-moon-star");
   });
 
-  it("historico menor que 6 meses: 'Ainda não medido' com o dia em que comeca a contar", () => {
-    const semConsulta = cartao(
-      html({
-        metricas: {
-          ...METRICAS,
-          sem_contato_6m: 0,
-          primeiro_comparecimento: "2026-09-10T13:00:00Z",
-        },
-      }),
-      "Sem consulta há 6 meses",
-    );
-    expect(semConsulta).toContain('data-estado="nao-medido"');
-    expect(texto(semConsulta)).toContain("Começa a contar em 11/03/2027");
+  it("historico menor que 6 meses: o cartao nao aparece (nunca um cartao sem numero)", () => {
+    const markup = html({
+      metricas: {
+        ...METRICAS,
+        sem_contato_6m: 0,
+        primeiro_comparecimento: "2026-09-10T13:00:00Z",
+      },
+    });
+    expect(markup).not.toContain("Sem consulta há 6 meses");
+    expect(markup).not.toContain("Começa a contar em");
+    expect(markup).toContain("Pacientes ativos");
   });
 
   it("profissional: cada rodape diz que conta so a agenda dele", () => {
@@ -195,9 +193,6 @@ describe("IndicadoresDaLista, com dados", () => {
     });
     expect(texto(cartao(naoMedido, "Retorno em 90 dias"))).toContain(
       "Primeira medida em 10/12/2026, na sua agenda",
-    );
-    expect(texto(cartao(naoMedido, "Sem consulta há 6 meses"))).toContain(
-      "Começa a contar em 11/03/2027, na sua agenda",
     );
   });
 

@@ -84,6 +84,7 @@ test("Sem atendente não conta a conversa da IA (D27)", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: /Sem atendente 1/ }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Filtros", exact: true }).click();
   await expect(
     page.getByRole("button", { name: /IA atendendo 1/ }),
   ).toBeVisible();

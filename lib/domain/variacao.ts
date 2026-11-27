@@ -45,9 +45,8 @@ export type VariacaoDescrita =
       boa: boolean | null;
     }
   | {
+      /** Base zero: a tela mostra so o numero, sem linha de comparacao. */
       semBase: true;
-      /** "sem base de comparação (vs. período anterior)", visivel e falado. */
-      texto: string;
     };
 
 /**
@@ -94,10 +93,7 @@ export function descreverVariacao(
   } = entrada;
 
   if (!Number.isFinite(atual) || !Number.isFinite(anterior) || anterior <= 0) {
-    return {
-      semBase: true,
-      texto: `sem base de comparação (vs. ${comparadoCom})`,
-    };
+    return { semBase: true };
   }
 
   const bruta =

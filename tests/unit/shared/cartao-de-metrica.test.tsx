@@ -108,13 +108,14 @@ describe("CartaoDeMetrica, valor e variação", () => {
     expect(markup).toContain("estável vs. período anterior");
   });
 
-  it("base zero: sem seta e com 'sem base de comparação'", () => {
+  it("base zero: só o número, sem seta nem linha de comparação", () => {
     const markup = html({
       rotulo: "Leads recebidos",
       valor: "4",
       variacao: { atual: 4, anterior: 0, comparadoCom: VS },
     });
-    expect(markup).toContain("sem base de comparação (vs. período anterior)");
+    expect(markup).not.toContain("sem base de comparação");
+    expect(markup).not.toContain("vs. período anterior");
     expect(markup).not.toContain("lucide-trending");
     expect(markup).not.toContain('data-parte="variacao"');
   });

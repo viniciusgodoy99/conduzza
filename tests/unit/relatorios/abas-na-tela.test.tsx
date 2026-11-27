@@ -244,7 +244,7 @@ describe("Comercial", () => {
     expect(lido).toContain("Consultas recuperadas");
     expect(lido).toContain("R$ 150,00 em receita associada");
     expect(lido).toContain("R$ 284.000,00");
-    expect(lido).toContain("Contra a linha de base");
+    expect(lido).toContain("Faltas: antes e agora");
     // Venda pela Jornada: separada do faturamento.
     expect(lido).toContain("Vendas 3");
     expect(lido).toContain("R$ 750,00");

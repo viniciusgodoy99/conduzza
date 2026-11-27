@@ -34,7 +34,8 @@ import type {
 // O lime da aba Comercial e o das Consultas recuperadas (C17): aqui todo
 // botao e outline, inclusive o "Registrar a linha de base".
 
-const DICA_LINHA_DE_BASE = "Só quem administra a clínica registra a linha de base.";
+const DICA_LINHA_DE_BASE =
+  "Só quem administra a clínica informa a taxa de faltas de antes.";
 
 /** Instante (timestamptz) exibido no fuso da clinica (regra 3.6). */
 function dataCurta(instante: string, timezone: string): string {
@@ -167,12 +168,12 @@ export function ConfirmacaoCompleta({
         )}
       </Secao>
 
-      <Secao titulo="Contra a linha de base" icone={Flag}>
+      <Secao titulo="Faltas: antes e agora" icone={Flag}>
         {linhaDeBase ? (
           <div className="grid gap-3 sm:grid-cols-2">
             <CartaoDeMetrica
               variante="afundado"
-              rotulo="Linha de base (informada pela clínica)"
+              rotulo="Faltas antes (informada pela clínica)"
               valor={formatarPercentualDoObjetivo(linhaDeBase.ratePercent)}
               unidade="%"
               rodape={`faltas medidas de ${dataDoDia(linhaDeBase.measuredFrom, timezone)} a ${dataDoDia(linhaDeBase.measuredTo, timezone)}${
@@ -191,9 +192,9 @@ export function ConfirmacaoCompleta({
           <EmptyState
             compact
             icon={Flag}
-            title="A linha de base ainda não foi registrada"
+            title="A taxa de faltas de antes ainda não foi informada"
           >
-            {botaoDaLinhaDeBase("Registrar a linha de base")}
+            {botaoDaLinhaDeBase("Informar as faltas de antes")}
           </EmptyState>
         )}
       </Secao>

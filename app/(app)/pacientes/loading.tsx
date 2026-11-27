@@ -7,7 +7,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function CarregandoPacientes() {
   return (
     <div className="flex flex-col gap-3.5 p-6" aria-hidden>
-      <Skeleton className="h-7 w-40" />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[0, 1, 2, 3].map((i) => (
           <div

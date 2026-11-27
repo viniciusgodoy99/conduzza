@@ -495,7 +495,7 @@ export function LeadsClient({
 
   return (
     <div className="flex flex-col gap-3.5 p-6">
-      <PageHeader title="Leads">
+      <PageHeader tituloNaBarra title="Leads">
         {/* Some por CSS, nao por estado: o estado de tela estreita so fica
             pronto DEPOIS da montagem, e trocar o DOM naquele instante
             derrubava o foco de quem navega por teclado. */}

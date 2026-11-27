@@ -99,13 +99,10 @@ describe("descreverVariacao", () => {
     ).toMatchObject({ sentido: "estavel", boa: null });
   });
 
-  it("base zero: sem base de comparação, sem sentido nem cor", () => {
+  it("base zero: sem base, sem sentido nem cor", () => {
     expect(
       descreverVariacao({ atual: 4, anterior: 0, comparadoCom: VS }),
-    ).toEqual({
-      semBase: true,
-      texto: "sem base de comparação (vs. período anterior)",
-    });
+    ).toEqual({ semBase: true });
     expect(
       descreverVariacao({
         atual: 34,

@@ -20,14 +20,11 @@ function LinhaEsqueleto() {
 export default function CarregandoAtividades() {
   return (
     <div
-      className="mx-auto flex w-full max-w-content flex-col gap-4 p-4 md:p-6"
+      className="flex w-full max-w-content flex-col gap-4 p-4 md:p-6"
       aria-hidden
     >
       <div className="flex flex-wrap items-end gap-4">
-        <div className="grid gap-2">
-          <Skeleton className="h-7 w-36" />
-          <Skeleton className="h-4 w-64 max-w-full" />
-        </div>
+        <Skeleton className="h-4 w-64 max-w-full" />
         <Skeleton className="ml-auto h-10 w-40 rounded-lg" />
       </div>
       <div className="flex flex-wrap items-center gap-3">

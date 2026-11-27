@@ -8,6 +8,7 @@ import {
   MessagesSquare,
   OctagonAlert,
   Search,
+  SlidersHorizontal,
   Tag,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -298,6 +299,10 @@ export function ConversationList({
   );
   const [search, setSearch] = useState("");
   const [etiquetasEscolhidas, setEtiquetasEscolhidas] = useState<string[]>([]);
+  // Tipo, numero, situacao e etiquetas ficam recolhidos atras de "Filtros"
+  // (pedido do dono de 27/11/2026: as fileiras tomavam a lista). Chegar por
+  // um link que ja filtra abre o painel, para o filtro ligado nao ficar oculto.
+  const [filtrosAbertos, setFiltrosAbertos] = useState(filtroInicial !== null);
   // Relogio da lista: "Ha mais de 24h" e o "hoje" da hora do cartao andam com
   // ele. Comeca no relogio do servidor (o HTML e a hidratacao concordam) e
   // anda de minuto em minuto.
@@ -485,25 +490,53 @@ export function ConversationList({
         : String(n);
 
   const marcadas = etiquetasAtivas.length;
+  const filtrosLigados =
+    (tipo !== "todos" ? 1 : 0) +
+    (situacao !== null ? 1 : 0) +
+    (numeroAtivo !== null ? 1 : 0) +
+    marcadas;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="grid shrink-0 gap-[9px] border-b border-border p-3">
-        <label className="flex h-10 items-center gap-2 rounded-full border border-input bg-surface-4 px-3 cz-transition focus-within:border-focus focus-within:bg-card focus-within:ring-3 focus-within:ring-ring/55">
-          <Search
-            aria-hidden
-            className="size-[15px] shrink-0 text-text-secondary"
-          />
-          <input
-            type="text"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar por nome ou telefone"
-            aria-label="Buscar conversa"
-            autoComplete="off"
-            className="h-full min-w-0 flex-1 bg-transparent text-base text-text-strong outline-none placeholder:text-text-tertiary md:text-[13px]"
-          />
-        </label>
+        <div className="flex items-center gap-2">
+          <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full border border-input bg-surface-4 px-3 cz-transition focus-within:border-focus focus-within:bg-card focus-within:ring-3 focus-within:ring-ring/55">
+            <Search
+              aria-hidden
+              className="size-[15px] shrink-0 text-text-secondary"
+            />
+            <input
+              type="text"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Buscar por nome ou telefone"
+              aria-label="Buscar conversa"
+              autoComplete="off"
+              className="h-full min-w-0 flex-1 bg-transparent text-base text-text-strong outline-none placeholder:text-text-tertiary md:text-[13px]"
+            />
+          </label>
+          <Button
+            variant="outline"
+            className="shrink-0"
+            aria-expanded={filtrosAbertos}
+            aria-controls="filtros-da-lista"
+            aria-label={
+              // Contem o rotulo visivel ("Filtros"), para quem usa voz.
+              filtrosLigados > 0
+                ? `Filtros, ${filtrosLigados} ${filtrosLigados === 1 ? "ligado" : "ligados"}`
+                : "Filtros"
+            }
+            onClick={() => setFiltrosAbertos((aberto) => !aberto)}
+          >
+            <SlidersHorizontal aria-hidden />
+            Filtros
+            {filtrosLigados > 0 ? (
+              <span className="grid h-[18px] min-w-[18px] place-items-center rounded-full bg-inverse px-[5px] text-[10.5px] font-bold text-inverse-foreground cz-num">
+                {filtrosLigados}
+              </span>
+            ) : null}
+          </Button>
+        </div>
 
         {/* Posse. Sem "block": as opcoes dividem a largura pelo tamanho do
             rotulo (flex-auto), para "Sem atendente 12" caber numa linha nos
@@ -525,151 +558,258 @@ export function ConversationList({
           ]}
         />
 
-        {/* Tipo do contato, no mesmo desenho da posse (rotulo e contagem;
+        {/* hidden e nao desmontado: fechar o painel nao perde o que esta
+            marcado, e o painel fechado sai da leitura e do Tab. */}
+        <div
+          id="filtros-da-lista"
+          hidden={!filtrosAbertos}
+          className="grid gap-[9px]"
+        >
+          {/* Tipo do contato, no mesmo desenho da posse (rotulo e contagem;
             ligado em negrito, sombra e anel, nao so na cor). */}
-        <SegmentedControl
-          size="sm"
-          ariaLabel="Filtrar por lead ou paciente"
-          className="flex w-full [&>button]:flex-auto [&>button]:px-2"
-          value={tipo}
-          onChange={escolherTipo}
-          options={TIPOS.map((opcao) => ({
-            ...opcao,
-            count: counts.porTipo[opcao.value],
-          }))}
-        />
+          <SegmentedControl
+            size="sm"
+            ariaLabel="Filtrar por lead ou paciente"
+            className="flex w-full [&>button]:flex-auto [&>button]:px-2"
+            value={tipo}
+            onChange={escolherTipo}
+            options={TIPOS.map((opcao) => ({
+              ...opcao,
+              count: counts.porTipo[opcao.value],
+            }))}
+          />
 
-        {comNumeros ? (
-          // Numero da clinica (docs/07): escolha unica, com "Todos". Chips e
-          // nao SegmentedControl porque o nome e livre (ate 40 letras) e a
-          // clinica pode ter varios: a fileira quebra linha, e no celular rola
-          // de lado como a de situacao.
+          {comNumeros ? (
+            // Numero da clinica (docs/07): escolha unica, com "Todos". Chips e
+            // nao SegmentedControl porque o nome e livre (ate 40 letras) e a
+            // clinica pode ter varios: a fileira quebra linha, e no celular rola
+            // de lado como a de situacao.
+            <div
+              role="group"
+              aria-label="Filtrar por número"
+              className="flex flex-wrap items-center gap-x-1.5 gap-y-3 max-sm:-my-1.5 max-sm:[scrollbar-width:none] max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:py-1.5 max-sm:[&::-webkit-scrollbar]:hidden"
+            >
+              <span
+                aria-hidden
+                className="shrink-0 text-[11.5px] font-semibold text-text-secondary"
+              >
+                Número
+              </span>
+              {[
+                {
+                  id: null,
+                  nome: "Todos",
+                  removido: false,
+                  cor: null,
+                  total: counts.all,
+                },
+                ...opcoesDeNumero,
+              ].map((opcao) => {
+                const ativo = numeroAtivo === opcao.id;
+                return (
+                  <button
+                    key={opcao.id ?? "todos"}
+                    type="button"
+                    aria-pressed={ativo}
+                    onClick={() =>
+                      escolherNumero(
+                        opcao.id === null || ativo ? null : opcao.id,
+                      )
+                    }
+                    title={
+                      opcao.id === null ? undefined : `Número ${opcao.nome}`
+                    }
+                    className={cn(
+                      "hit-40 inline-flex h-7 max-w-[180px] shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold cz-transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid",
+                      // Ligado: tinta cheia, como os chips de situacao. Sem cor
+                      // de status: numero e origem, nao estado.
+                      ativo
+                        ? "border-transparent bg-inverse text-inverse-foreground"
+                        : "border-border-strong bg-card text-foreground hover:bg-surface-3",
+                    )}
+                  >
+                    {opcao.id !== null ? (
+                      // A cor do numero (06/10/2026) no lugar do celular: o
+                      // rotulo "Numero" do grupo ja diz o que o chip e.
+                      <MarcadorDoNumero cor={opcao.cor} />
+                    ) : null}
+                    <span className="min-w-0 truncate">{opcao.nome}</span>
+                    {opcao.removido ? (
+                      <>
+                        {" "}
+                        <span className="shrink-0 font-medium">(removido)</span>
+                      </>
+                    ) : null}{" "}
+                    <span className="shrink-0 cz-num">{opcao.total}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+
           <div
             role="group"
-            aria-label="Filtrar por número"
-            className="flex flex-wrap items-center gap-x-1.5 gap-y-3 max-sm:-my-1.5 max-sm:[scrollbar-width:none] max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:py-1.5 max-sm:[&::-webkit-scrollbar]:hidden"
+            aria-label="Filtrar por situação"
+            // No celular a fileira rola de lado; o py com -my devolvem ao
+            // alvo de 40px (hit-40) o espaco que o recorte da rolagem tiraria.
+            className="flex flex-wrap gap-x-1.5 gap-y-3 max-sm:-my-1.5 max-sm:[scrollbar-width:none] max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:py-1.5 max-sm:[&::-webkit-scrollbar]:hidden"
           >
-            <span
-              aria-hidden
-              className="shrink-0 text-[11.5px] font-semibold text-text-secondary"
-            >
-              Número
-            </span>
-            {[
-              {
-                id: null,
-                nome: "Todos",
-                removido: false,
-                cor: null,
-                total: counts.all,
-              },
-              ...opcoesDeNumero,
-            ].map((opcao) => {
-              const ativo = numeroAtivo === opcao.id;
+            {SITUACOES.map((alvo) => {
+              const ativo = situacao === alvo;
+              const n = counts.porSituacao[alvo];
+              if (SO_COM_CONVERSA.has(alvo) && n === 0 && !ativo) {
+                return null;
+              }
+              const definicao = definicaoDaSituacao(alvo);
+              const tom = STATUS_TONE_VARS[definicao.tone];
+              const Icone = definicao.icon;
+              const carregando =
+                alvo === "resolvida" && ativo && resolvedLoading;
+              const mostraNumero = alvo !== "resolvida" || arquivoCarregado;
               return (
                 <button
-                  key={opcao.id ?? "todos"}
+                  key={alvo}
                   type="button"
                   aria-pressed={ativo}
-                  onClick={() =>
-                    escolherNumero(opcao.id === null || ativo ? null : opcao.id)
-                  }
-                  title={opcao.id === null ? undefined : `Número ${opcao.nome}`}
+                  onClick={() => alternarSituacao(alvo)}
                   className={cn(
-                    "hit-40 inline-flex h-7 max-w-[180px] shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold cz-transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid",
-                    // Ligado: tinta cheia, como os chips de situacao. Sem cor
-                    // de status: numero e origem, nao estado.
+                    "hit-40 inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold cz-transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid",
+                    // Ligado: tinta cheia, diferenca de luminancia e nao de
+                    // matiz. A forma do icone e o rotulo continuam iguais.
                     ativo
                       ? "border-transparent bg-inverse text-inverse-foreground"
-                      : "border-border-strong bg-card text-foreground hover:bg-surface-3",
+                      : "border-border-strong bg-card hover:bg-surface-3",
                   )}
+                  style={ativo ? undefined : { color: tom.text }}
                 >
-                  {opcao.id !== null ? (
-                    // A cor do numero (06/10/2026) no lugar do celular: o
-                    // rotulo "Numero" do grupo ja diz o que o chip e.
-                    <MarcadorDoNumero cor={opcao.cor} />
+                  {Icone ? (
+                    <Icone aria-hidden className="size-3 shrink-0" />
+                  ) : (
+                    // Em atendimento: a forma e o circulo de iniciais, como no
+                    // chip do cartao.
+                    <span
+                      aria-hidden
+                      className="grid size-3.5 shrink-0 place-items-center rounded-full bg-current/15 text-[7px] font-bold"
+                    >
+                      AT
+                    </span>
+                  )}
+                  {alvo === "sem_resposta_24h" ? (
+                    <span className="sr-only">Sem resposta </span>
                   ) : null}
-                  <span className="min-w-0 truncate">{opcao.nome}</span>
-                  {opcao.removido ? (
+                  {definicao.label}
+                  {carregando ? (
                     <>
                       {" "}
-                      <span className="shrink-0 font-medium">(removido)</span>
+                      <LoaderCircle
+                        aria-hidden
+                        className="size-3 animate-spin"
+                      />
+                      <span className="sr-only">carregando</span>
                     </>
-                  ) : null}{" "}
-                  <span className="shrink-0 cz-num">{opcao.total}</span>
+                  ) : mostraNumero ? (
+                    <>
+                      {" "}
+                      <span className="cz-num">
+                        {alvo === "resolvida" ? numeroDeResolvidas(n) : n}
+                      </span>
+                    </>
+                  ) : null}
                 </button>
               );
             })}
           </div>
-        ) : null}
 
-        <div
-          role="group"
-          aria-label="Filtrar por situação"
-          // No celular a fileira rola de lado; o py com -my devolvem ao
-          // alvo de 40px (hit-40) o espaco que o recorte da rolagem tiraria.
-          className="flex flex-wrap gap-x-1.5 gap-y-3 max-sm:-my-1.5 max-sm:[scrollbar-width:none] max-sm:flex-nowrap max-sm:overflow-x-auto max-sm:py-1.5 max-sm:[&::-webkit-scrollbar]:hidden"
-        >
-          {SITUACOES.map((alvo) => {
-            const ativo = situacao === alvo;
-            const n = counts.porSituacao[alvo];
-            if (SO_COM_CONVERSA.has(alvo) && n === 0 && !ativo) {
-              return null;
-            }
-            const definicao = definicaoDaSituacao(alvo);
-            const tom = STATUS_TONE_VARS[definicao.tone];
-            const Icone = definicao.icon;
-            const carregando = alvo === "resolvida" && ativo && resolvedLoading;
-            const mostraNumero = alvo !== "resolvida" || arquivoCarregado;
-            return (
-              <button
-                key={alvo}
-                type="button"
-                aria-pressed={ativo}
-                onClick={() => alternarSituacao(alvo)}
-                className={cn(
-                  "hit-40 inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-semibold cz-transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid",
-                  // Ligado: tinta cheia, diferenca de luminancia e nao de
-                  // matiz. A forma do icone e o rotulo continuam iguais.
-                  ativo
-                    ? "border-transparent bg-inverse text-inverse-foreground"
-                    : "border-border-strong bg-card hover:bg-surface-3",
-                )}
-                style={ativo ? undefined : { color: tom.text }}
-              >
-                {Icone ? (
-                  <Icone aria-hidden className="size-3 shrink-0" />
-                ) : (
-                  // Em atendimento: a forma e o circulo de iniciais, como no
-                  // chip do cartao.
-                  <span
-                    aria-hidden
-                    className="grid size-3.5 shrink-0 place-items-center rounded-full bg-current/15 text-[7px] font-bold"
-                  >
-                    AT
-                  </span>
-                )}
-                {alvo === "sem_resposta_24h" ? (
-                  <span className="sr-only">Sem resposta </span>
-                ) : null}
-                {definicao.label}
-                {carregando ? (
-                  <>
-                    {" "}
-                    <LoaderCircle aria-hidden className="size-3 animate-spin" />
-                    <span className="sr-only">carregando</span>
-                  </>
-                ) : mostraNumero ? (
-                  <>
-                    {" "}
-                    <span className="cz-num">
-                      {alvo === "resolvida" ? numeroDeResolvidas(n) : n}
+          {etiquetas.length > 0 ? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="justify-self-start"
+                  aria-label={
+                    // Contem o rotulo visivel ("Etiquetas"), para quem usa voz.
+                    marcadas > 0
+                      ? `Filtrar por etiquetas, ${marcadas} ${marcadas === 1 ? "marcada" : "marcadas"}`
+                      : "Filtrar por etiquetas"
+                  }
+                >
+                  <Tag aria-hidden />
+                  Etiquetas
+                  {marcadas > 0 ? (
+                    <span className="grid h-[18px] min-w-[18px] place-items-center rounded-full bg-inverse px-[5px] text-[10.5px] font-bold text-inverse-foreground cz-num">
+                      {marcadas}
                     </span>
-                  </>
+                  ) : null}
+                  <ChevronDown aria-hidden className="text-text-secondary" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-64 gap-[5px] p-[5px]">
+                <div
+                  role="group"
+                  aria-label="Etiquetas"
+                  className="grid cz-scroll max-h-72 gap-0.5 overflow-y-auto"
+                >
+                  {etiquetas.map((etiqueta) => {
+                    const ativa = etiquetasAtivas.includes(etiqueta.chave);
+                    return (
+                      <button
+                        key={etiqueta.chave}
+                        type="button"
+                        aria-pressed={ativa}
+                        onClick={() =>
+                          setEtiquetasEscolhidas((atuais) =>
+                            ativa
+                              ? atuais.filter(
+                                  (chave) => chave !== etiqueta.chave,
+                                )
+                              : [...atuais, etiqueta.chave],
+                          )
+                        }
+                        className="flex min-h-10 w-full items-center gap-2 rounded-sm px-2 text-left text-[13px] font-medium text-foreground cz-transition hover:bg-surface-3 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
+                      >
+                        {/* O check e a camada de FORMA: marcado nao pode ser
+                          comunicado so por cor. */}
+                        <span
+                          aria-hidden
+                          className={cn(
+                            "grid size-4 shrink-0 place-items-center rounded-[4px] border",
+                            ativa
+                              ? "border-primary-edge bg-primary text-primary-foreground"
+                              : "border-input bg-card",
+                          )}
+                        >
+                          {ativa ? <Check className="size-3" /> : null}
+                        </span>
+                        <span
+                          aria-hidden
+                          className="size-[7px] shrink-0 rounded-[2px]"
+                          style={{
+                            background: STATUS_TONE_VARS[etiqueta.tom].marker,
+                          }}
+                        />
+                        <span className="min-w-0 flex-1 truncate">
+                          {etiqueta.nome}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {marcadas > 0 ? (
+                  <div className="border-t border-border pt-[5px]">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full justify-start"
+                      onClick={() => setEtiquetasEscolhidas([])}
+                    >
+                      Limpar etiquetas
+                    </Button>
+                  </div>
                 ) : null}
-              </button>
-            );
-          })}
+              </PopoverContent>
+            </Popover>
+          ) : null}
         </div>
 
         {erroNoArquivo && filtered.length > 0 ? (
@@ -684,95 +824,6 @@ export function ConversationList({
               Tentar de novo
             </button>
           </p>
-        ) : null}
-
-        {etiquetas.length > 0 ? (
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="justify-self-start"
-                aria-label={
-                  // Contem o rotulo visivel ("Etiquetas"), para quem usa voz.
-                  marcadas > 0
-                    ? `Filtrar por etiquetas, ${marcadas} ${marcadas === 1 ? "marcada" : "marcadas"}`
-                    : "Filtrar por etiquetas"
-                }
-              >
-                <Tag aria-hidden />
-                Etiquetas
-                {marcadas > 0 ? (
-                  <span className="grid h-[18px] min-w-[18px] place-items-center rounded-full bg-inverse px-[5px] cz-num text-[10.5px] font-bold text-inverse-foreground">
-                    {marcadas}
-                  </span>
-                ) : null}
-                <ChevronDown aria-hidden className="text-text-secondary" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-64 gap-[5px] p-[5px]">
-              <div
-                role="group"
-                aria-label="Etiquetas"
-                className="grid cz-scroll max-h-72 gap-0.5 overflow-y-auto"
-              >
-                {etiquetas.map((etiqueta) => {
-                  const ativa = etiquetasAtivas.includes(etiqueta.chave);
-                  return (
-                    <button
-                      key={etiqueta.chave}
-                      type="button"
-                      aria-pressed={ativa}
-                      onClick={() =>
-                        setEtiquetasEscolhidas((atuais) =>
-                          ativa
-                            ? atuais.filter((chave) => chave !== etiqueta.chave)
-                            : [...atuais, etiqueta.chave],
-                        )
-                      }
-                      className="flex min-h-10 w-full items-center gap-2 rounded-sm px-2 text-left text-[13px] font-medium text-foreground cz-transition hover:bg-surface-3 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus focus-visible:outline-solid"
-                    >
-                      {/* O check e a camada de FORMA: marcado nao pode ser
-                          comunicado so por cor. */}
-                      <span
-                        aria-hidden
-                        className={cn(
-                          "grid size-4 shrink-0 place-items-center rounded-[4px] border",
-                          ativa
-                            ? "border-primary-edge bg-primary text-primary-foreground"
-                            : "border-input bg-card",
-                        )}
-                      >
-                        {ativa ? <Check className="size-3" /> : null}
-                      </span>
-                      <span
-                        aria-hidden
-                        className="size-[7px] shrink-0 rounded-[2px]"
-                        style={{
-                          background: STATUS_TONE_VARS[etiqueta.tom].marker,
-                        }}
-                      />
-                      <span className="min-w-0 flex-1 truncate">
-                        {etiqueta.nome}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              {marcadas > 0 ? (
-                <div className="border-t border-border pt-[5px]">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="w-full justify-start"
-                    onClick={() => setEtiquetasEscolhidas([])}
-                  >
-                    Limpar etiquetas
-                  </Button>
-                </div>
-              ) : null}
-            </PopoverContent>
-          </Popover>
         ) : null}
 
         {filtrandoNoTeto ? (

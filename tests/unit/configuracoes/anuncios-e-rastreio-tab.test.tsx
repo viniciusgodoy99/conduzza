@@ -147,11 +147,11 @@ function abertos(html: string): string[] {
 }
 
 describe("AnunciosERastreioTab", () => {
-  it("lista os sete passos, numerados, com a situação em chip e o botão de abrir", () => {
+  it("lista os sete passos uma vez só, numerados, com a situação em chip", () => {
     const html = aba();
     const visivel = texto(html);
-    expect(visivel).toContain("Passo a passo");
-    expect(visivel).toContain("1 de 7 prontos");
+    expect(visivel).not.toContain("Passo a passo");
+    expect(visivel).toContain("1 de 7 passos prontos");
     for (const titulo of [
       "Conta da Meta",
       "Token das conversões",
@@ -163,7 +163,9 @@ describe("AnunciosERastreioTab", () => {
     ]) {
       expect(visivel).toContain(titulo);
     }
-    expect(html.match(/aria-label="Abrir o passo \d, /g)).toHaveLength(7);
+    // Cada titulo aparece uma vez: a lista do topo, que repetia, saiu.
+    expect(html.match(/Conta da Meta/g)).toHaveLength(1);
+    expect(html.match(/data-passo="/g)).toHaveLength(7);
     // As tres camadas do status: o rotulo escrito, alem do icone e da cor.
     expect(visivel).toContain("Pronto");
     expect(visivel).toContain("Falta fazer");

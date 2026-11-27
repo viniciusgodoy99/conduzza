@@ -697,7 +697,10 @@ function ColunaDoProfissional({
         </span>
         <div className="grid min-w-0 gap-0.5">
           <span className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-[13px] font-bold text-text-strong">
+            <span
+              className="truncate text-[13px] font-bold text-text-strong"
+              title={profissional.name}
+            >
               {profissional.name}
             </span>
             {inativo ? (

@@ -54,7 +54,7 @@ export async function registrarLinhaDeBaseAction(
   if (context.active.role !== "admin") {
     return {
       ok: false,
-      error: "Só quem administra a clínica registra a linha de base.",
+      error: "Só quem administra a clínica informa a taxa de faltas de antes.",
     };
   }
   const parsed = linhaDeBaseSchema.safeParse(input);
@@ -76,7 +76,7 @@ export async function registrarLinhaDeBaseAction(
     .select("id")
     .single();
   if (error || !linha) {
-    return { ok: false, error: "Não foi possível registrar a linha de base." };
+    return { ok: false, error: "Não foi possível salvar a taxa de faltas de antes." };
   }
 
   await supabase.from("audit_log").insert({

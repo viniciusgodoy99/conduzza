@@ -49,11 +49,13 @@ test("as 4 vistas são abas de verdade e a URL guarda a aba", async ({
     "Leads recebidos",
     "Consultas agendadas",
     "Taxa de conversão",
-    "Custo por lead",
     "Faturamento estimado",
   ]) {
     await expect(cartao(page, rotulo)).toBeVisible();
   }
+  // Sem leitura de investimento ligada, o Custo por lead nao aparece
+  // (27/11/2026: indicador que nunca tem numero sai da tela).
+  await expect(cartao(page, "Custo por lead")).toHaveCount(0);
   // Sem rosca: a origem e em barras com o numero escrito.
   await expect(
     page.getByRole("heading", { name: "Origem dos leads" }),
@@ -88,7 +90,7 @@ test("link antigo ?aba=confirmacao abre Comercial com a confirmação completa",
     "true",
   );
   await expect(
-    page.getByRole("heading", { name: "Contra a linha de base" }),
+    page.getByRole("heading", { name: "Faltas: antes e agora" }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", {

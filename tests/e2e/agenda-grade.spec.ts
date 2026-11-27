@@ -20,9 +20,10 @@ test.beforeEach(() => {
 async function abrirAgenda(page: Page): Promise<void> {
   await login(page, dados().emails.recepcao);
   await page.goto("/agenda");
-  // Colunas carregadas: os dois profissionais do catalogo E2E.
-  await expect(page.getByText("Dr. João Pereira")).toBeVisible();
-  await expect(page.getByText("Dra. Ana Costa")).toBeVisible();
+  // Colunas carregadas: os dois profissionais do catalogo E2E. Pelo title do
+  // cabecalho da coluna: o nome aparece tambem no painel de pendencias.
+  await expect(page.getByTitle("Dr. João Pereira")).toBeVisible();
+  await expect(page.getByTitle("Dra. Ana Costa")).toBeVisible();
 }
 
 async function filtrar(
@@ -40,8 +41,8 @@ test("quem está livre para dermato pela Unimed, sem tocar no filtro de profissi
   await abrirAgenda(page);
   await filtrar(page, "Especialidade", "Dermatologia");
   await filtrar(page, "Convênio", "Unimed");
-  await expect(page.getByText("Dra. Ana Costa")).toBeVisible();
-  await expect(page.getByText("Dr. João Pereira")).not.toBeVisible();
+  await expect(page.getByTitle("Dra. Ana Costa")).toBeVisible();
+  await expect(page.getByTitle("Dr. João Pereira")).not.toBeVisible();
 });
 
 test("vazio por filtro com limpar", async ({ page }) => {
@@ -53,8 +54,8 @@ test("vazio por filtro com limpar", async ({ page }) => {
     page.getByText("Nenhum profissional com esses filtros"),
   ).toBeVisible();
   await page.getByRole("button", { name: "Limpar filtros" }).click();
-  await expect(page.getByText("Dr. João Pereira")).toBeVisible();
-  await expect(page.getByText("Dra. Ana Costa")).toBeVisible();
+  await expect(page.getByTitle("Dr. João Pereira")).toBeVisible();
+  await expect(page.getByTitle("Dra. Ana Costa")).toBeVisible();
 });
 
 test("a grade do dia mostra consulta, bloqueio, hold e o painel de pendências", async ({

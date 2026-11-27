@@ -122,8 +122,9 @@ export function IndicadoresDaLista({
   const consultas = pluralize(termoConsulta);
   const { ativos, retorno, semConsulta6m } = cartoes;
 
+  // Colunas iguais para 3 ou 4 cartoes: o de 6 meses so existe com medida.
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 lg:auto-cols-fr lg:grid-flow-col lg:grid-cols-none">
       <CartaoDeMetrica
         rotulo={rotulos.ativos}
         icone={icones.ativos}
@@ -180,19 +181,7 @@ export function IndicadoresDaLista({
           valor={numero.format(semConsulta6m.valor)}
           rodape={`Atendidos há mais de 6 meses, nada marcado${naSuaAgenda}`}
         />
-      ) : (
-        <CartaoDeMetrica
-          rotulo={rotulos.semConsulta}
-          icone={icones.semConsulta}
-          estado="nao-medido"
-          dica="Precisa de 6 meses de atendimentos no sistema."
-          rodape={
-            semConsulta6m.contaDesde === null
-              ? undefined
-              : `Começa a contar em ${semConsulta6m.contaDesde}${naSuaAgenda}`
-          }
-        />
-      )}
+      ) : null}
     </div>
   );
 }

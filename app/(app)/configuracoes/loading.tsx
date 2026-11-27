@@ -35,10 +35,9 @@ function CabecalhoDeCartao({ largura }: { largura: string }) {
 export default function CarregandoConfiguracoes() {
   return (
     <div
-      className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
+      className="grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
       aria-hidden
     >
-      <Skeleton className="h-6 w-44" />
       <div className="flex gap-4 overflow-hidden border-b border-border pt-2.5 pb-3">
         {ABAS.map((largura, indice) => (
           <Skeleton key={indice} className={`h-4 shrink-0 ${largura}`} />

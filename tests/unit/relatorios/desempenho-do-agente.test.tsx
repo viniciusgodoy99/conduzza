@@ -161,8 +161,8 @@ describe("os cartoes do agente", () => {
     expect(texto(cartao("Transferidas para a equipe", AGENTE))).toBe(
       "Transferidas para a equipe 6",
     );
-    expect(texto(cartao("Escalonadas por insatisfação", AGENTE))).toBe(
-      "Escalonadas por insatisfação 2",
+    expect(texto(cartao("Transferidas por insatisfação", AGENTE))).toBe(
+      "Transferidas por insatisfação 2",
     );
     expect(texto(cartao("Primeira resposta da IA", AGENTE))).toBe(
       "Primeira resposta da IA 9 min mediana do período",
@@ -194,19 +194,11 @@ describe("os cartoes do agente", () => {
 
   it("insatisfacao sozinha nao e atividade (nunca vem sem transferida)", () => {
     expect(
-      cartao("Escalonadas por insatisfação", {
+      cartao("Transferidas por insatisfação", {
         ...SEM_ATIVIDADE,
         insatisfacao: 1,
       }),
     ).toContain('data-estado="nao-medido"');
-  });
-
-  it("Satisfação fica em Ainda não medido, com uma dica que nao contradiz a atividade", () => {
-    const html = cartao("Satisfação", AGENTE);
-    expect(html).toContain('data-estado="nao-medido"');
-    expect(texto(html)).toBe("Satisfação Ainda não medido");
-    expect(html).not.toContain(DICA_DO_AGENTE);
-    expect(html).toContain("ainda não foi definida");
   });
 
   it("com atividade e sem atendida: Resolvidas sem dados, nunca 0 de 0", () => {
@@ -244,7 +236,7 @@ describe("os cartoes do agente", () => {
     const transferidas = cartao("Transferidas para a equipe", AGENTE, anterior);
     expect(transferidas).toMatch(/data-sentido="subiu"[^>]*text-alert-text/);
     const insatisfacao = cartao(
-      "Escalonadas por insatisfação",
+      "Transferidas por insatisfação",
       AGENTE,
       anterior,
     );
@@ -287,13 +279,13 @@ describe("os cartoes do agente", () => {
       );
     // Sem paragrafo explicando: o "Ainda não medido" com a dica ja diz.
     expect(aba(null)).not.toContain(paragrafo);
-    expect(aba(null).match(/Ainda não medido/g)).toHaveLength(6);
-    expect(aba(SEM_ATIVIDADE).match(/Ainda não medido/g)).toHaveLength(6);
+    expect(aba(null).match(/Ainda não medido/g)).toHaveLength(5);
+    expect(aba(SEM_ATIVIDADE).match(/Ainda não medido/g)).toHaveLength(5);
     const comNumeros = aba(AGENTE);
     expect(comNumeros).not.toContain(paragrafo);
     expect(comNumeros).toContain("12 de 21 conversas atendidas pela IA");
-    // So a Satisfacao continua sem numero.
-    expect(comNumeros.match(/Ainda não medido/g)).toHaveLength(1);
+    // Com atividade, nenhum cartao fica sem numero (a Satisfacao saiu).
+    expect(comNumeros).not.toContain("Ainda não medido");
   });
 
   it("a Visao geral: os tres cartoes do resumo, com e sem atividade", () => {
@@ -350,14 +342,13 @@ describe("a exportacao do agente", () => {
   const NUMEROS: string[][] = [
     ["Resolvidas sem humano", "12 de 21"],
     ["Transferidas para a equipe", "6"],
-    ["Escalonadas por insatisfação", "2"],
+    ["Transferidas por insatisfação", "2"],
     ["Primeira resposta da IA", "9 min"],
     ["Agendamentos feitos pela IA", "7"],
-    ["Satisfação", "Ainda não medido"],
   ];
 
   it.each(["geral", "ia"] as const)(
-    "%s, com atividade: os numeros da tela e a Satisfação sem numero",
+    "%s, com atividade: os numeros da tela",
     (aba) => {
       const linhas = secaoDoAgente(aba, AGENTE);
       for (const linha of NUMEROS) {
@@ -388,7 +379,7 @@ describe("a exportacao do agente", () => {
     expect(linhas).toContainEqual(["Primeira resposta da IA", "sem dados"]);
     expect(linhas).toContainEqual(["Transferidas para a equipe", "3"]);
     // Zero medido: a IA atuou no periodo e ninguem reclamou.
-    expect(linhas).toContainEqual(["Escalonadas por insatisfação", "0"]);
+    expect(linhas).toContainEqual(["Transferidas por insatisfação", "0"]);
   });
 
   it("o CSV leva as mesmas linhas", () => {

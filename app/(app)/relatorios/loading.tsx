@@ -12,14 +12,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function CarregandoRelatorios() {
   return (
     <div
-      className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
+      className="grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
       aria-hidden
     >
-      <div className="grid gap-2">
-        <Skeleton className="h-2.5 w-28" />
-        <Skeleton className="h-7 w-40" />
-        <Skeleton className="h-3.5 w-64 max-w-full" />
-      </div>
       <div className="flex items-center gap-2">
         <Skeleton className="h-10 w-[152px]" />
         <Skeleton className="h-10 w-[152px]" />

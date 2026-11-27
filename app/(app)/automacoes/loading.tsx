@@ -12,12 +12,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function CarregandoAutomacoes() {
   return (
     <div
-      className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
+      className="grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
       aria-hidden
     >
-      <Skeleton className="h-7 w-40" />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {[0, 1, 2, 3, 4].map((cartao) => (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {[0, 1, 2, 3].map((cartao) => (
           <div
             key={cartao}
             className="flex min-h-[88px] gap-3 rounded-card border border-border bg-card p-3.5"

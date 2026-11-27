@@ -11,11 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function CarregandoConfirmacoes() {
   return (
     <div className="flex flex-col gap-3.5 p-6" aria-hidden>
-      <div className="grid gap-1.5">
-        <Skeleton className="h-2.5 w-40" />
-        <Skeleton className="h-7 w-44" />
-        <Skeleton className="h-3.5 w-72 max-w-full" />
-      </div>
+      <Skeleton className="h-2.5 w-40" />
 
       <div className="flex flex-wrap items-center gap-2">
         <Skeleton className="h-10 w-72 max-w-full rounded-lg" />

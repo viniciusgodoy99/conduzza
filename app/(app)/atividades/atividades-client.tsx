@@ -339,8 +339,8 @@ export function AtividadesClient({
   const vazioDoFiltro = VAZIO_DA_SITUACAO[filtros.situacao];
 
   return (
-    <div className="mx-auto flex w-full max-w-content flex-col gap-4 p-4 md:p-6">
-      <PageHeader title="Atividades" description={descricao}>
+    <div className="flex w-full max-w-content flex-col gap-4 p-4 md:p-6">
+      <PageHeader tituloNaBarra title="Atividades" description={descricao}>
         {botaoNova}
       </PageHeader>
       <AvisoCelular />

@@ -286,19 +286,19 @@ export default async function AgentePage({
   const cabecalho = (
     <>
       <AvisoCelular />
-      <PageHeader
+      <PageHeader tituloNaBarra
         title={TEXTOS_DO_AGENTE.titulo}
       />
     </>
   );
   const casca = (conteudo: React.ReactNode) => (
-    <div className="mx-auto grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
+    <div className="grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
       {cabecalho}
       {conteudo}
     </div>
   );
   const cascaDoPainel = (conteudo: React.ReactNode) => (
-    <div className="mx-auto flex min-h-full w-full max-w-content min-w-0 flex-col gap-4 p-6 [main:has(&)]:scroll-pb-32">
+    <div className="flex min-h-full w-full max-w-content min-w-0 flex-col gap-4 p-6 [main:has(&)]:scroll-pb-32">
       {cabecalho}
       {conteudo}
     </div>

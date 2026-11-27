@@ -160,9 +160,7 @@ describe("IndicadoresDoDia", () => {
     );
     expect(texto(consultas)).toContain("147");
     expect(texto(consultas)).toContain("3 unidades");
-    expect(texto(consultas)).toContain(
-      "sem base de comparação (vs. mesmo dia da semana passada)",
-    );
+    expect(texto(consultas)).not.toContain("sem base de comparação");
     expect(consultas).not.toContain('data-parte="variacao"');
   });
 
