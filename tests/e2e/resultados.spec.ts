@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { nascerDeMensagem } from "../rls/lead-de-verdade";
 import { adminClient } from "../rls/stack";
 import { dados } from "./dados";
 import { login } from "./helpers";
@@ -366,7 +367,7 @@ async function montarInvestimento(
   // Dois leads que chegaram pelo anuncio (service role: a atribuicao de
   // anuncio so e protegida contra a sessao).
   const chegada = new Date(Date.now() - 60 * 60_000).toISOString();
-  await admin
+  const { data: criados } = await admin
     .from("contact")
     .insert(
       TELEFONES_DE_ANUNCIO.map((telefone, indice) => ({
@@ -379,7 +380,14 @@ async function montarInvestimento(
         first_contact_at: chegada,
       })),
     )
+    .select("id")
     .throwOnError();
+  // Metricas certas (23/11/2026): so conta como lead quem nasceu de mensagem.
+  await nascerDeMensagem(
+    admin,
+    [clinicId],
+    ((criados ?? []) as { id: string }[]).map((contato) => contato.id),
+  );
 }
 
 function secaoDeCampanhas(page: Page) {
@@ -393,8 +401,29 @@ test("admin vê o custo por lead e as colunas de investimento com o gasto lido",
 }) => {
   apenasDesktop();
   const anterior = await lerEstadoMetaAnterior();
+  const admin = adminClient();
+  // Lead com a campanha digitada no contato, fora da Meta. Proprio deste
+  // teste: desde as metricas certas (23/11/2026) o lead da fixture, criado a
+  // mao, nao conta como lead e a campanha dele nao entra na tabela.
+  const TELEFONE_DIGITADO = "+5584970000093";
   try {
     await montarInvestimento();
+    const { data: digitado } = await admin
+      .from("contact")
+      .insert({
+        clinic_id: dados().clinicId,
+        phone_e164: TELEFONE_DIGITADO,
+        name: null,
+        kind: "lead",
+        source_channel: "trafego_pago",
+        source_campaign: "Campanha E2E Digitada",
+        source_method: "manual",
+        first_contact_at: new Date(Date.now() - 60 * 60_000).toISOString(),
+      })
+      .select("id")
+      .single()
+      .throwOnError();
+    await nascerDeMensagem(admin, [dados().clinicId], [digitado!.id as string]);
     await login(page, dados().emails.admin);
     await page.goto("/relatorios");
 
@@ -424,8 +453,10 @@ test("admin vê o custo por lead e as colunas de investimento com o gasto lido",
     const semLead = campanhas.getByRole("row", { name: /Campanha E2E Sem Lead/ });
     await expect(semLead).toContainText(/R\$\s500,00/);
     await expect(semLead).toContainText("Sem leads");
-    // Campanha digitada no contato (fixture "Campanha E2E"): fora da Meta.
-    await expect(campanhas).toContainText("Fora da Meta");
+    // Campanha digitada no contato: fora da Meta.
+    await expect(
+      campanhas.getByRole("row", { name: /Campanha E2E Digitada/ }),
+    ).toContainText("Fora da Meta");
     await expect(campanhas).toContainText(
       /Investimento sem lead casado: R\$\s500,00 em 1 campanha/,
     );
@@ -445,6 +476,11 @@ test("admin vê o custo por lead e as colunas de investimento com o gasto lido",
       }),
     ).toBeVisible();
   } finally {
+    await admin
+      .from("contact")
+      .delete()
+      .eq("clinic_id", dados().clinicId)
+      .eq("phone_e164", TELEFONE_DIGITADO);
     await limparInvestimento(anterior);
   }
 });
@@ -766,7 +802,7 @@ test("escolher Meta Ads filtra os leads, guarda a origem na URL, avisa o que aco
       source_channel: "trafego_pago",
       source_origin: "Google",
     };
-    await admin
+    const { data: criados } = await admin
       .from("contact")
       .insert(
         [daMeta, daMeta, doGoogle].map((origem, indice) => ({
@@ -778,7 +814,14 @@ test("escolher Meta Ads filtra os leads, guarda a origem na URL, avisa o que aco
           ...origem,
         })),
       )
+      .select("id")
       .throwOnError();
+    // Metricas certas (23/11/2026): so conta como lead quem nasceu de mensagem.
+    await nascerDeMensagem(
+      admin,
+      [clinicId],
+      ((criados ?? []) as { id: string }[]).map((contato) => contato.id),
+    );
 
     await login(page, dados().emails.admin);
     await page.goto(`/relatorios?de=${dia}&ate=${dia}`);

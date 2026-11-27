@@ -150,8 +150,14 @@ async function criarRegua(page: Page, etiqueta: string) {
     `Follow-up de Novo: ${etiqueta}`,
   );
   await dialogo.getByRole("button", { name: "Criar régua" }).click();
+  // O dialogo fechado e o sinal de que ESTA regua foi gravada: o aviso da
+  // regua anterior ainda pode estar na tela e deixava o teste seguir cedo.
+  await expect(dialogo).toBeHidden();
+  // last(): o aviso da regua anterior ainda pode estar na tela.
   await expect(
-    page.getByText("Régua criada, desligada. Confira as mensagens e ligue."),
+    page
+      .getByText("Régua criada, desligada. Confira as mensagens e ligue.")
+      .last(),
   ).toBeVisible();
 }
 
@@ -230,11 +236,13 @@ test("gestor muda a ordem: Descer grava a prioridade pela RPC e as pontas acompa
   await etapa
     .getByRole("button", { name: `Subir a régua Follow-up de Novo: ${VIP}` })
     .click();
-  await expect(page.getByText("Ordem das réguas salva.")).toBeVisible();
-  expect((await comEtiqueta()).map((regua) => regua.etiquetas[0])).toEqual([
-    VIP,
-    RETORNO,
-  ]);
+  // poll e nao o aviso: o "Ordem das réguas salva." do Descer ainda pode
+  // estar na tela, e a leitura do banco saia antes de o Subir gravar.
+  await expect
+    .poll(async () =>
+      (await comEtiqueta()).map((regua) => regua.etiquetas[0]),
+    )
+    .toEqual([VIP, RETORNO]);
 });
 
 test("Para quem: duas etiquetas com Todas; tirando uma, o modo volta a qualquer uma", async ({
@@ -288,8 +296,9 @@ test("Para quem: duas etiquetas com Todas; tirando uma, o modo volta a qualquer 
     dialogo.getByRole("button", { name: "Todas", exact: true }),
   ).toHaveCount(0);
   await dialogo.getByRole("button", { name: "Salvar" }).click();
-  await expect(page.getByText("Régua salva.")).toBeVisible();
-  expect(await filtro()).toEqual({
+  // poll e nao o aviso: o "Régua salva." do primeiro Salvar ainda pode estar
+  // na tela, e a leitura do banco saia antes de este gravar.
+  await expect.poll(filtro).toEqual({
     etiquetas: [VIP],
     etiquetas_modo: "qualquer",
   });

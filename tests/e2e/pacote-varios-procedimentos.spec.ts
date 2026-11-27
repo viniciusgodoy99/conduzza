@@ -348,7 +348,7 @@ test("pacote vendido: os procedimentos ficam travados, com a dica", async ({
   ).toBeVisible();
   await expect(
     dialogo.getByText(
-      "Pacote já vendido: os procedimentos e as sessões não mudam; crie um pacote novo.",
+      "Pacote já vendido: procedimentos e sessões não mudam.",
     ),
   ).toBeVisible();
   await expect(dialogo.getByLabel(`Sessões de ${BOTOX}`)).toBeDisabled();

@@ -211,7 +211,7 @@ test("a recepção vê a escolha de cada tipo, desabilitada, com a dica", async 
       card.getByRole("combobox", { name: "Aviso de remarcação", exact: true }),
     ).toContainText(nome);
     await expect(
-      card.getByText(`O número "${nome}" não está conectado.`, {
+      card.getByText(`O número "${nome}" não está conectado`, {
         exact: false,
       }),
     ).toBeVisible();

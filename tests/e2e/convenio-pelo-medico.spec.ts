@@ -813,7 +813,10 @@ test.describe("convênio pelo médico, de ponta a ponta", () => {
       name: NOMES.golden,
     });
     await expect(desativado).toBeChecked();
-    await desativado.uncheck();
+    // click e nao uncheck: desmarcado, o convenio inativo sai da lista (so
+    // aparece enquanto esta marcado), e o uncheck ficava esperando por ele.
+    await desativado.click();
+    await expect(desativado).toHaveCount(0);
     await dialogo.getByRole("button", { name: "Salvar", exact: true }).click();
     await expect(dialogo).toBeHidden();
     await expect(page.getByText("Profissional atualizado")).toBeVisible();

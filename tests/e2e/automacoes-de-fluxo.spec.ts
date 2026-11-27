@@ -244,7 +244,7 @@ test("o link antigo de Configurações leva para a aba nova", async ({
 // da migration 20261023100000. Ultimo do modo serial: tira as regras deste
 // spec antes (o afterAll faria o mesmo); a Clinica E2E nao tem outra
 // automacao de fluxo.
-test("sem automação, o vazio dá o exemplo da jornada nova", async ({
+test("sem automação, o vazio convida a criar a primeira, sem parágrafo de exemplo", async ({
   page,
 }) => {
   await admin
@@ -257,12 +257,9 @@ test("sem automação, o vazio dá o exemplo da jornada nova", async ({
   await expect(
     page.getByText("Nenhuma automação de fluxo ainda"),
   ).toBeVisible();
+  // O exemplo escrito saiu com o visual plano (26/11/2026): fica a acao.
   await expect(
-    page.getByText(
-      "Por exemplo: quem entrou em Aguardando resposta ganha uma atividade de responder, ou quem ficou 3 dias sem responder em Em contato vai para Perdido.",
-    ),
+    page.getByRole("button", { name: "Criar a primeira" }),
   ).toBeVisible();
-  await expect(
-    page.getByText("sem responder em Aguardando resposta"),
-  ).toHaveCount(0);
+  await expect(page.getByText("Por exemplo:")).toHaveCount(0);
 });
