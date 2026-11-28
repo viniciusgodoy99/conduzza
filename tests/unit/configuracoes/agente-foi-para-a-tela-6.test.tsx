@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // O lado de Configuracoes:
 //   - a aba "Agente de IA" nao existe mais, em clinica nenhuma;
 //   - o link antigo, /configuracoes?aba=ia, vai para /agente?aba=whatsapp
-//     no servidor, antes de abrir a sessao ou o banco;
+//     no servidor, antes de abrir o banco (a guarda do modulo confere a
+//     sessao primeiro: desde 28/11/2026 ela mora na pagina, nao num layout);
 //   - nas clinicas com o agente habilitado (decisao do servidor), a aba
 //     WhatsApp avisa onde ficaram os numeros e os telefones do assistente,
 //     com o link; nas outras, nenhum aviso;
@@ -104,17 +105,22 @@ function abaSelecionada(html: string): string {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Sem sessao: a pagina que passa da conferencia do ?aba= para no Inicio,
-  // sem precisar do banco.
-  espias.getSessionContext.mockResolvedValue(null);
+  // Sem clinica ativa: a pagina para no Inicio, na guarda do modulo, sem
+  // precisar do banco.
+  espias.getSessionContext.mockResolvedValue({ active: null });
 });
 
 describe("/configuracoes?aba=ia, o link antigo", () => {
-  it("vai para a aba WhatsApp da tela Agente de IA, antes da sessão e do banco", async () => {
+  it("vai para a aba WhatsApp da tela Agente de IA, antes do banco", async () => {
+    espias.getSessionContext.mockResolvedValue({ active: { role: "gestor" } });
     expect(await destinoDaPagina("ia")).toBe("redirect:/agente?aba=whatsapp");
-    expect(espias.getSessionContext).not.toHaveBeenCalled();
     expect(espias.createClient).not.toHaveBeenCalled();
     expect(espias.createAdminClient).not.toHaveBeenCalled();
+  });
+
+  it("quem não entra em Configurações vai para o Início, e não para a tela do agente", async () => {
+    espias.getSessionContext.mockResolvedValue({ active: { role: "recepcao" } });
+    expect(await destinoDaPagina("ia")).toBe("redirect:/inicio");
   });
 
   it.each([undefined, "equipe", "whatsapp"])(

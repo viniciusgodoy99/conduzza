@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ReactElement, ReactNode } from "react";
+import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,7 +10,8 @@ import type { Role } from "@/lib/domain/permissions";
 
 // A rota /automacoes depois do item 13 da onda 4 (decisoes do dono de
 // 20/10/2026):
-//   - a guarda de modulo no layout: profissional e leitura vao para o Inicio
+//   - a guarda de modulo, na pagina desde 28/11/2026 (era de um layout
+//     proprio): profissional e leitura vao para o Inicio
 //     (antes abriam a tela pela URL; so o menu escondia o item), recepcao,
 //     administrador e gestor entram;
 //   - a aba "Automações de fluxo" (?aba=fluxo), que saiu de Configuracoes,
@@ -115,8 +116,6 @@ vi.mock("@/app/(app)/confirmacoes/actions", () => ({
   manterHorarioAction: vi.fn(),
 }));
 
-const { default: AutomacoesLayout } =
-  await import("@/app/(app)/automacoes/layout");
 const { default: AutomacoesPage } = await import("@/app/(app)/automacoes/page");
 const { default: CarregandoAutomacoes } =
   await import("@/app/(app)/automacoes/loading");
@@ -238,9 +237,9 @@ function clienteDaSessao() {
   };
 }
 
-async function destinoDoLayout(): Promise<string> {
+async function destinoDaRota(): Promise<string> {
   try {
-    await AutomacoesLayout({ children: "conteudo" as ReactNode });
+    await AutomacoesPage({ searchParams: Promise.resolve({}) });
     return "entrou";
   } catch (erro) {
     return erro instanceof Error ? erro.message : "erro";
@@ -319,17 +318,17 @@ describe("guarda de módulo da rota /automacoes", () => {
     ["leitura", "redirect:/inicio"],
   ])("%s: %s", async (papel, esperado) => {
     sessao.atual = contexto(papel);
-    expect(await destinoDoLayout()).toBe(esperado);
+    expect(await destinoDaRota()).toBe(esperado);
   });
 
   it("sem sessão vai para o login", async () => {
     sessao.atual = null;
-    expect(await destinoDoLayout()).toBe("redirect:/login");
+    expect(await destinoDaRota()).toBe("redirect:/login");
   });
 
   it("sem clínica ativa vai para o Início", async () => {
     sessao.atual = { ...contexto("admin"), active: null };
-    expect(await destinoDoLayout()).toBe("redirect:/inicio");
+    expect(await destinoDaRota()).toBe("redirect:/inicio");
   });
 });
 

@@ -13,7 +13,7 @@ import {
   podeAcessarAutomacoesDeFluxo,
 } from "@/lib/domain/automacoes-de-fluxo";
 import { etapaRecebeFollowup } from "@/lib/domain/jornada";
-import { canEdit, permissionHint } from "@/lib/domain/permissions";
+import { can, canEdit, permissionHint } from "@/lib/domain/permissions";
 import {
   fetchEtiquetasParaFiltro,
   fetchFollowups,
@@ -65,8 +65,11 @@ async function fetchNumerosDasAutomaticas(
 // (o historico das automacoes de fluxo, que traz o nome do lead, chega sob
 // demanda pela Server Action, que grava a trilha).
 //
-// A guarda do modulo mora no layout (profissional e leitura vao para o
-// Inicio). A aba de fluxo e so de administrador e gestor, decidido AQUI no
+// A guarda do modulo mora AQUI, na pagina (profissional e leitura vao para o
+// Inicio): ate 28/11/2026 ela ficava num layout proprio, que rodava tambem a
+// cada pre-carga do menu (4 idas ao banco por tela aberta, sem ninguem
+// clicar). Esconder a tela nao protege nada: a RLS e as Server Actions
+// conferem. A aba de fluxo e so de administrador e gestor, decidido AQUI no
 // servidor (podeAcessarAutomacoesDeFluxo): para a recepcao, nada dela e lido
 // nem vai para o cliente, e ?aba=fluxo cai na aba padrao, como aba
 // desconhecida.
@@ -76,8 +79,11 @@ export default async function AutomacoesPage({
   searchParams: Promise<{ aba?: string }>;
 }) {
   const context = await getSessionContext();
-  const active = context?.active;
-  if (!context || !active) {
+  if (!context) {
+    redirect("/login");
+  }
+  const active = context.active;
+  if (!active || can(active.role, "automacoes") === "nada") {
     redirect("/inicio");
   }
 

@@ -33,7 +33,7 @@ import {
 import { getSessionContext } from "@/lib/auth/active-clinic";
 import { comMudancaDasInstrucoes } from "@/lib/domain/agente/config";
 import { corDoNumero } from "@/lib/domain/cor-do-numero";
-import { canEdit, permissionHint } from "@/lib/domain/permissions";
+import { can, canEdit, permissionHint } from "@/lib/domain/permissions";
 import {
   fetchConfigDoAgente,
   fetchVersoesDoAgente,
@@ -56,7 +56,7 @@ import { createClient } from "@/lib/supabase/server";
 // geral; antes, teste123 e Conduzza Teste fixas), decidido AQUI no servidor
 // pela mesma lista das acoes da aba WhatsApp (abaDaIaVisivel): nas outras, a
 // tela continua o vazio honesto de antes (achado 111) e nada do agente e
-// lido nem vai para o cliente. A guarda de papel mora no layout
+// lido nem vai para o cliente. A guarda de papel mora no comeco da pagina
 // (profissional e leitura vao para o Inicio).
 //
 // Dentro da fase, a pagina le pela SESSAO (RLS) a configuracao em edicao, a
@@ -277,9 +277,18 @@ export default async function AgentePage({
 }: {
   searchParams: Promise<{ aba?: string }>;
 }) {
+  // A guarda do modulo, que ate 28/11/2026 ficava num layout proprio (ele
+  // rodava tambem a cada pre-carga do menu: 4 idas ao banco sem ninguem
+  // clicar). A equipe Conduzza entra em qualquer papel.
   const context = await getSessionContext();
-  const active = context?.active;
-  if (!context || !active) {
+  if (!context) {
+    redirect("/login");
+  }
+  const active = context.active;
+  if (
+    !active ||
+    (can(active.role, "agente") === "nada" && !context.isProductAdmin)
+  ) {
     redirect("/inicio");
   }
 

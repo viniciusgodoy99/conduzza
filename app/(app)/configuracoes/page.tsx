@@ -30,6 +30,7 @@ import { getSessionContext } from "@/lib/auth/active-clinic";
 import { corDoNumero } from "@/lib/domain/cor-do-numero";
 import { baseDosLinks } from "@/lib/domain/link-rastreado";
 import {
+  can,
   canEdit,
   ehAdminPleno as ehAdministradorPleno,
   permissionHint,
@@ -172,13 +173,25 @@ async function convidadosQueAindaNaoEntraram(
 //
 // As automacoes de fluxo sairam daqui em 20/10/2026 (decisao do dono, onda
 // 4): moram na tela Automacoes. O link antigo (?aba=fluxo) vai para la antes
-// de qualquer leitura; quem nao e administrador nem gestor nem chega aqui
-// (o layout manda para o Inicio), e la a aba so existe para os dois.
+// de qualquer leitura de dado da tela; quem nao tem acesso a Configuracoes
+// nem chega a ele (a guarda do modulo, logo no comeco, manda para o Inicio),
+// e la a aba so existe para administrador e gestor. A guarda ficava num
+// layout proprio ate 28/11/2026: ele rodava tambem a cada pre-carga do menu
+// (4 idas ao banco sem ninguem clicar).
 export default async function ConfiguracoesPage({
   searchParams,
 }: {
   searchParams: Promise<{ aba?: string; passo?: string }>;
 }) {
+  const context = await getSessionContext();
+  if (!context) {
+    redirect("/login");
+  }
+  const active = context.active;
+  if (!active || can(active.role, "configuracoes") === "nada") {
+    redirect("/inicio");
+  }
+
   const { aba, passo } = await searchParams;
   if (aba === "fluxo") {
     redirect("/automacoes?aba=fluxo");
@@ -187,12 +200,6 @@ export default async function ConfiguracoesPage({
   // agente habilitado, a Tela 6 mostra o vazio de sempre.
   if (aba === "ia") {
     redirect("/agente?aba=whatsapp");
-  }
-
-  const context = await getSessionContext();
-  const active = context?.active;
-  if (!context || !active) {
-    redirect("/inicio");
   }
 
   const supabase = await createClient();

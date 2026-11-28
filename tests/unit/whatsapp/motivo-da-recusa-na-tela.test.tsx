@@ -311,7 +311,7 @@ describe("Configurações > WhatsApp: o cartão chega com o motivo", () => {
     );
   });
 
-  it("papel que não gerencia o número: nenhum motivo e a trilha nem é lida", async () => {
+  it("papel que não gerencia o número: nem entra na tela, e a trilha nem é lida", async () => {
     usarUazapi();
     numeroComInstancia(CLINICA_B, "tok-b", {
       connection_status: "conectado",
@@ -320,14 +320,13 @@ describe("Configurações > WhatsApp: o cartão chega com o motivo", () => {
     const numero = numeroComInstancia(CLINICA_A, "tok-a");
     instanciaQueDesliga("5584999990000");
     await recusarNoDialogo(numero);
-    // O layout de Configuracoes ja barra os outros papeis; a pagina confere
-    // de novo antes de ler o motivo.
+    // A guarda do modulo (na pagina desde 28/11/2026; antes, num layout)
+    // manda o papel para o Inicio antes de qualquer leitura.
     sessao.active.role = "recepcao";
     leituras.length = 0;
 
-    const numeros = await numerosDeConfiguracoes();
+    await expect(numerosDeConfiguracoes()).rejects.toThrow("NEXT_REDIRECT");
 
-    expect(numeros[0]?.motivoDaDesconexao).toBeNull();
     expect(leuATrilhaPorServiceRole()).toBe(false);
   });
 

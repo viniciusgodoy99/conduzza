@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // sairam de Configuracoes e moram na tela Automacoes (?aba=fluxo de la). O
 // lado de Configuracoes:
 //   - o link antigo, /configuracoes?aba=fluxo, vai para /automacoes?aba=fluxo
-//     no servidor, antes de abrir a sessao ou o banco;
+//     no servidor, antes de abrir o banco (a guarda do modulo confere a
+//     sessao primeiro: desde 28/11/2026 ela mora na pagina, nao num layout);
 //   - as outras abas seguem o caminho de sempre;
 //   - a fileira de abas nao tem mais "Automações de fluxo", e ?aba=fluxo que
 //     chegasse ao cliente cairia na equipe, como aba desconhecida.
@@ -100,19 +101,29 @@ function abaSelecionada(html: string): string {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Sem sessao: a pagina que passa da conferencia do ?aba=fluxo para no
-  // Inicio, sem precisar do banco.
-  espias.getSessionContext.mockResolvedValue(null);
+  // Sem clinica ativa: a pagina para no Inicio, na guarda do modulo, sem
+  // precisar do banco.
+  espias.getSessionContext.mockResolvedValue({ active: null });
 });
 
 describe("/configuracoes?aba=fluxo, o link antigo", () => {
-  it("vai para a aba nova em Automações, antes da sessão e do banco", async () => {
+  it("vai para a aba nova em Automações, antes do banco", async () => {
+    espias.getSessionContext.mockResolvedValue({ active: { role: "admin" } });
     expect(await destinoDaPagina("fluxo")).toBe(
       "redirect:/automacoes?aba=fluxo",
     );
-    expect(espias.getSessionContext).not.toHaveBeenCalled();
     expect(espias.createClient).not.toHaveBeenCalled();
     expect(espias.createAdminClient).not.toHaveBeenCalled();
+  });
+
+  it("quem não entra em Configurações vai para o Início, e não para a aba nova", async () => {
+    espias.getSessionContext.mockResolvedValue({ active: { role: "recepcao" } });
+    expect(await destinoDaPagina("fluxo")).toBe("redirect:/inicio");
+  });
+
+  it("sem sessão vai para o login", async () => {
+    espias.getSessionContext.mockResolvedValue(null);
+    expect(await destinoDaPagina("fluxo")).toBe("redirect:/login");
   });
 
   it.each([undefined, "equipe", "jornada", "etiquetas"])(

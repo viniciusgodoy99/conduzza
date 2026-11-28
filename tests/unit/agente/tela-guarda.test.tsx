@@ -1,4 +1,4 @@
-import type { ReactElement, ReactNode } from "react";
+import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,7 +8,8 @@ import { configPadraoDoAgente } from "@/lib/domain/agente/config";
 
 import { CLINICA, ITEM_ATIVO } from "./tela-fixtures";
 
-// A rota /agente: a guarda de papel do layout (profissional e leitura vao
+// A rota /agente: a guarda de papel, na pagina desde 28/11/2026 (era de um
+// layout proprio, que rodava a cada pre-carga do menu; profissional e leitura vao
 // para o Inicio; recepcao entra; super admin entra com qualquer papel) e a
 // decisao da pagina (fora da fase controlada, o vazio de sempre SEM ler nada
 // do agente; dentro, o painel, com o erro honesto quando a leitura falha).
@@ -63,7 +64,6 @@ vi.mock("@/lib/agente/painel", () => ({
 }));
 vi.mock("@/components/agente/acoes", () => ({ acoesDoAgente: {} }));
 
-const { default: AgenteLayout } = await import("@/app/(app)/agente/layout");
 const { default: AgentePage } = await import("@/app/(app)/agente/page");
 const { TooltipProvider } = await import("@/components/ui/tooltip");
 
@@ -112,9 +112,9 @@ function adminComALista(lista: unknown = [CLINICA]) {
   };
 }
 
-async function destinoDoLayout(): Promise<string> {
+async function destinoDaRota(): Promise<string> {
   try {
-    await AgenteLayout({ children: "conteudo" as ReactNode });
+    await AgentePage({ searchParams: Promise.resolve({}) });
     return "entrou";
   } catch (erro) {
     return erro instanceof Error ? erro.message : "erro";
@@ -162,17 +162,17 @@ describe("guarda de papel da rota", () => {
     ["leitura", "redirect:/inicio"],
   ])("%s: %s", async (papel, esperado) => {
     sessao.atual = contexto(papel);
-    expect(await destinoDoLayout()).toBe(esperado);
+    expect(await destinoDaRota()).toBe(esperado);
   });
 
   it("super admin entra com qualquer papel", async () => {
     sessao.atual = contexto("leitura", { isProductAdmin: true });
-    expect(await destinoDoLayout()).toBe("entrou");
+    expect(await destinoDaRota()).toBe("entrou");
   });
 
   it("sem sessão vai para o login", async () => {
     sessao.atual = null;
-    expect(await destinoDoLayout()).toBe("redirect:/login");
+    expect(await destinoDaRota()).toBe("redirect:/login");
   });
 });
 
