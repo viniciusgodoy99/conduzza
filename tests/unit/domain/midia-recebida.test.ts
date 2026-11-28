@@ -61,6 +61,9 @@ describe("estadoDaMidia: baixando, pronta ou indisponivel", () => {
       estadoDaMidia(marcaDeIndisponivel("grande_demais"), CRIADA, CRIADA_MS),
     ).toEqual({ tipo: "indisponivel", motivo: "grande_demais" });
     expect(
+      estadoDaMidia(marcaDeIndisponivel("removida"), CRIADA, CRIADA_MS),
+    ).toEqual({ tipo: "indisponivel", motivo: "removida" });
+    expect(
       estadoDaMidia("indisponivel://outra_coisa", CRIADA, CRIADA_MS),
     ).toEqual({ tipo: "indisponivel", motivo: null });
   });

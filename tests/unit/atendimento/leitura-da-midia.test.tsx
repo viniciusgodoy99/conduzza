@@ -1407,3 +1407,15 @@ describe("o ver mais medido, num DOM de verdade (R3 de d1a15f6, 4)", () => {
     expect(botao()).toBeNull();
   });
 });
+
+describe("arquivo removido para liberar espaço (27/11/2026)", () => {
+  it("diz que foi removido, e não pede ao paciente para mandar de novo", () => {
+    const visivel = texto(
+      bolha(foto({ media_url: "indisponivel://removida", body: null })),
+    );
+    expect(visivel).toContain("Foto indisponível");
+    expect(visivel).toContain("Arquivo removido do sistema.");
+    expect(visivel).not.toContain("não recebida");
+    expect(visivel).not.toContain("enviar de novo");
+  });
+});

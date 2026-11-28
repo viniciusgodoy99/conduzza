@@ -36,7 +36,10 @@ export type MotivoDeIndisponivel =
   | "storage_falhou"
   | "download_falhou"
   | "sem_url"
-  | "desistiu";
+  | "desistiu"
+  // Apagada de proposito para liberar espaco (27/11/2026, a midia da
+  // Conduzza Teste): o arquivo existiu e foi removido, nao falhou.
+  | "removida";
 
 const MOTIVOS: ReadonlySet<string> = new Set<MotivoDeIndisponivel>([
   "grande_demais",
@@ -44,6 +47,7 @@ const MOTIVOS: ReadonlySet<string> = new Set<MotivoDeIndisponivel>([
   "download_falhou",
   "sem_url",
   "desistiu",
+  "removida",
 ]);
 
 export function marcaDeIndisponivel(motivo: MotivoDeIndisponivel): string {
