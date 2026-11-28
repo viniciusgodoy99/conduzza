@@ -51,7 +51,6 @@ import {
   type LeituraDasEtiquetas,
 } from "@/lib/domain/etiquetas-do-lead";
 import {
-  algumaEtapaComDescricao,
   type EtapaDaJornada,
 } from "@/lib/domain/jornada";
 import {
@@ -495,57 +494,68 @@ export function LeadsClient({
 
   return (
     <div className="flex flex-col gap-3.5 p-6">
-      <PageHeader tituloNaBarra title="Leads">
-        {/* Some por CSS, nao por estado: o estado de tela estreita so fica
-            pronto DEPOIS da montagem, e trocar o DOM naquele instante
-            derrubava o foco de quem navega por teclado. */}
-        <div className="hidden lg:contents">
-          <SegmentedControl
-            options={VISOES}
-            value={visao}
-            onChange={trocarVisao}
-            ariaLabel="Modo de exibição"
-          />
-        </div>
-        {/* Abaixo de 640px Importar e Exportar ficam so com o icone (o nome
-            continua para o leitor de tela): com os dois e o Novo lead, a
-            barra passaria da largura do celular. */}
-        <BotaoProtegido
-          podeEditar={podeEditar}
-          dica={dica}
-          variant="outline"
-          onClick={() => setImportAberto(true)}
-        >
-          <Upload className="size-4" aria-hidden />
-          <span className="max-sm:sr-only">Importar planilha</span>
-        </BotaoProtegido>
-        <BotaoExportarLeads
-          podeExportar={podeExportar}
-          exportando={exportacao.exportando}
-          aoExportar={exportacao.exportar}
-        />
-        <BotaoProtegido
-          podeEditar={podeEditar}
-          dica={dica}
-          onClick={() => setNovoAberto(true)}
-        >
-          <Plus className="size-4" /> Novo lead
-        </BotaoProtegido>
-      </PageHeader>
+      <PageHeader tituloNaBarra title="Leads" />
 
       <AvisoCelular />
 
-      <FiltrosLeads
-        jornada={jornada}
-        valores={valores}
-        responsaveis={responsaveisDoFiltro}
-        opcoesDeCampanha={opcoesDaCampanha}
-        dicaDaCampanha={dicaDaCampanha}
-        opcoesDeAnuncio={opcoesDoAnuncio}
-        resumo={resumo}
-        aoMudar={mudarFiltro}
-        aoLimpar={limparFiltros}
-      />
+      {/* Acoes e filtros dividem a linha quando cabem (tela larga, pedido do
+          dono de 28/11/2026: a linha so dos botoes sobrava); senao as acoes
+          ficam em cima, como antes. row-reverse: as acoes vem primeiro no
+          DOM (a ordem do Tab nao muda) e ficam a direita. */}
+      <div className="flex flex-row-reverse flex-wrap items-center gap-x-4 gap-y-3.5">
+        <div className="flex shrink-0 items-center gap-2">
+          {/* Some por CSS, nao por estado: o estado de tela estreita so fica
+              pronto DEPOIS da montagem, e trocar o DOM naquele instante
+              derrubava o foco de quem navega por teclado. */}
+          <div className="hidden lg:contents">
+            <SegmentedControl
+              options={VISOES}
+              value={visao}
+              onChange={trocarVisao}
+              ariaLabel="Modo de exibição"
+            />
+          </div>
+          {/* Abaixo de 640px Importar e Exportar ficam so com o icone (o nome
+              continua para o leitor de tela): com os dois e o Novo lead, a
+              barra passaria da largura do celular. */}
+          <BotaoProtegido
+            podeEditar={podeEditar}
+            dica={dica}
+            variant="outline"
+            onClick={() => setImportAberto(true)}
+          >
+            <Upload className="size-4" aria-hidden />
+            <span className="max-sm:sr-only">Importar planilha</span>
+          </BotaoProtegido>
+          <BotaoExportarLeads
+            podeExportar={podeExportar}
+            exportando={exportacao.exportando}
+            aoExportar={exportacao.exportar}
+          />
+          <BotaoProtegido
+            podeEditar={podeEditar}
+            dica={dica}
+            onClick={() => setNovoAberto(true)}
+          >
+            <Plus className="size-4" /> Novo lead
+          </BotaoProtegido>
+        </div>
+        {/* basis de 640px: abaixo disso os filtros descem para a linha de
+            baixo inteira, em vez de se espremerem ao lado das acoes. */}
+        <div className="min-w-0 grow basis-[640px]">
+          <FiltrosLeads
+            jornada={jornada}
+            valores={valores}
+            responsaveis={responsaveisDoFiltro}
+            opcoesDeCampanha={opcoesDaCampanha}
+            dicaDaCampanha={dicaDaCampanha}
+            opcoesDeAnuncio={opcoesDoAnuncio}
+            resumo={resumo}
+            aoMudar={mudarFiltro}
+            aoLimpar={limparFiltros}
+          />
+        </div>
+      </div>
 
       {/* O mapa nao carregou e nenhuma campanha esta filtrada: so o filtro
           de campanha fica de fora (com o filtro ativo, o erro ocupa o lugar
@@ -619,10 +629,7 @@ export function LeadsClient({
         </Card>
       ) : leadsQuery.isLoading || (campanhaSemMapa && !mapaQuery.isError) ? (
         visaoEfetiva === "kanban" ? (
-          <ColunasCarregando
-            colunas={jornada.length}
-            comDescricao={algumaEtapaComDescricao(jornada)}
-          />
+          <ColunasCarregando colunas={jornada.length} />
         ) : (
           <TableSkeleton columns={10} />
         )

@@ -599,17 +599,6 @@ export function normalizarDescricaoDaEtapa(
   return limpo === "" ? null : limpo;
 }
 
-/**
- * Alguma etapa tem descricao? Quando sim, TODAS as colunas do Kanban (e do
- * esqueleto) reservam a altura das 2 linhas, para os cartoes comecarem na
- * mesma altura em todas (o grid e items-start).
- */
-export function algumaEtapaComDescricao(
-  jornada: readonly Pick<EtapaDaJornada, "descricao">[],
-): boolean {
-  return jornada.some((etapa) => Boolean(etapa.descricao));
-}
-
 // ---------------------------------------------------------------------------
 // Recusas do banco ao salvar ou excluir etapa.
 

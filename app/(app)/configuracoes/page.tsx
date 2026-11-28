@@ -564,7 +564,7 @@ export default async function ConfiguracoesPage({
   } | null;
 
   return (
-    <div className="grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
+    <div className="grid w-full grid-cols-[minmax(0,1fr)] content-start gap-4 p-6">
       <PageHeader tituloNaBarra
         title="Configurações"
       />

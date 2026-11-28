@@ -1,7 +1,7 @@
 "use client";
 
 import { useDroppable } from "@dnd-kit/core";
-import { Workflow } from "lucide-react";
+import { Info, Workflow } from "lucide-react";
 import { useId } from "react";
 
 import { LeadCard } from "@/components/leads/lead-card";
@@ -29,19 +29,16 @@ import { cn } from "@/lib/utils";
 // linhas. O corte e so visual (line-clamp): o texto inteiro continua no DOM,
 // entra no aria-describedby da section e aparece na dica por hover e por
 // foco. O aria-label da section continua comecando por "{nome}," (o e2e
-// acha a coluna por ele). Quando ALGUMA etapa tem descricao, todas reservam
-// a mesma altura (reservarDescricao), para os cartoes comecarem alinhados.
-// Nunca no cartao do lead (regra dos 5 elementos).
-
-/** Altura das 2 linhas da descricao (11.5px x 1.35 x 2, arredondado). */
-const ALTURA_DA_DESCRICAO = "h-8";
+// acha a coluna por ele). A descricao mora num icone com dica ao lado do
+// nome (28/11/2026, pedido do dono: as duas linhas dela, reservadas em todas
+// as colunas, deixavam um vao acima dos cartoes). Nunca no cartao do lead
+// (regra dos 5 elementos).
 
 export function KanbanColuna({
   etapa,
   leads,
   membros,
   reguaNome,
-  reservarDescricao = false,
   podeEditar,
   onAbrirLead,
 }: {
@@ -50,11 +47,6 @@ export function KanbanColuna({
   membros: Record<string, string>;
   /** Nome da regua de follow-up ligada nesta etapa; null sem regua */
   reguaNome: string | null;
-  /**
-   * Alguma etapa da jornada tem descricao: esta coluna reserva a altura das
-   * 2 linhas mesmo sem descricao propria, para alinhar os cartoes.
-   */
-  reservarDescricao?: boolean;
   podeEditar: boolean;
   onAbrirLead: (lead: LeadResumo) => void;
 }) {
@@ -90,6 +82,27 @@ export function KanbanColuna({
           <span className="shrink-0 cz-num text-xs text-text-secondary">
             {leads.length}
           </span>
+          {/* Foco pelo teclado abre a mesma dica do hover. O texto fica na
+              pagina (sr-only) para o aria-describedby da coluna. */}
+          {descricao ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`Sobre a etapa ${definicao.label}`}
+                  className="hit-40 grid size-5 shrink-0 place-items-center rounded-sm text-text-secondary outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus focus-visible:outline-solid"
+                >
+                  <Info className="size-3.5" aria-hidden />
+                  <span id={descricaoId} className="sr-only">
+                    {descricao}
+                  </span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="start">
+                {descricao}
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
           {reguaNome ? (
             <span
               title={`Régua de follow-up ligada: ${reguaNome}`}
@@ -101,29 +114,6 @@ export function KanbanColuna({
             </span>
           ) : null}
         </header>
-        {/* Foco pelo teclado abre a mesma dica do hover: o corte em 2
-            linhas nao pode esconder texto de quem nao usa mouse. */}
-        {descricao ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <p
-                id={descricaoId}
-                tabIndex={0}
-                className={cn(
-                  ALTURA_DA_DESCRICAO,
-                  "line-clamp-2 cursor-default rounded-sm px-1 text-[11.5px] leading-[1.35] break-words text-text-secondary outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-focus focus-visible:outline-solid",
-                )}
-              >
-                {descricao}
-              </p>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" align="start">
-              {descricao}
-            </TooltipContent>
-          </Tooltip>
-        ) : reservarDescricao ? (
-          <div aria-hidden className={ALTURA_DA_DESCRICAO} />
-        ) : null}
       </div>
       <div className="grid content-start gap-2">
         {leads.length === 0 ? (

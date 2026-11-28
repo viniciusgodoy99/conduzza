@@ -141,38 +141,42 @@ export function EsperaClient({
     ]);
   };
 
-  return (
-    <div className="flex flex-col gap-3.5">
-      {/* "Adicionar manualmente" e o unico lime cheio da tela. */}
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        {ehAdmin ? (
-          <Button variant="outline" onClick={() => setConfigAberta(true)}>
+  // Os dois botoes moram no cabecalho do cartao da fila (28/11/2026, pedido
+  // do dono: a linha so deles sobrava). "Adicionar manualmente" e o unico
+  // lime cheio da tela.
+  const acoesDaFila = (
+    <>
+      {ehAdmin ? (
+        <Button variant="outline" onClick={() => setConfigAberta(true)}>
+          <Settings2 />
+          Configurar reoferta
+        </Button>
+      ) : (
+        <DisabledWithHint hint="Somente administradores alteram a configuração da reoferta">
+          <Button variant="outline" disabled>
             <Settings2 />
             Configurar reoferta
           </Button>
-        ) : (
-          <DisabledWithHint hint="Somente administradores alteram a configuração da reoferta">
-            <Button variant="outline" disabled>
-              <Settings2 />
-              Configurar reoferta
-            </Button>
-          </DisabledWithHint>
-        )}
-        {podeEditar ? (
-          <Button onClick={() => setModalAberto(true)}>
+        </DisabledWithHint>
+      )}
+      {podeEditar ? (
+        <Button onClick={() => setModalAberto(true)}>
+          <UserRoundPlus />
+          Adicionar manualmente
+        </Button>
+      ) : (
+        <DisabledWithHint hint={dicaSemPermissao}>
+          <Button disabled>
             <UserRoundPlus />
             Adicionar manualmente
           </Button>
-        ) : (
-          <DisabledWithHint hint={dicaSemPermissao}>
-            <Button disabled>
-              <UserRoundPlus />
-              Adicionar manualmente
-            </Button>
-          </DisabledWithHint>
-        )}
-      </div>
+        </DisabledWithHint>
+      )}
+    </>
+  );
 
+  return (
+    <div className="flex flex-col gap-3.5">
       {falhouAoAtualizar ? (
         <Aviso
           tom="warning"
@@ -200,6 +204,7 @@ export function EsperaClient({
             podeAbrirConversa={podeAbrirConversa}
             dicaAbrirConversa={dicaAbrirConversa}
             aoMudar={invalidar}
+            acoes={acoesDaFila}
           />
         </div>
         {/* Fixa ao rolar, com altura maxima de uma tela (108px = barra

@@ -9,7 +9,7 @@ import { ABAS_DE_CADASTROS } from "./abas";
 export default function CarregandoCadastros() {
   return (
     <div
-      className="grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
+      className="grid w-full grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
       aria-hidden
     >
       <div className="flex gap-1 overflow-hidden border-b border-border">

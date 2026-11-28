@@ -24,7 +24,7 @@ import {
   UserRoundMinus,
 } from "lucide-react";
 import Link from "next/link";
-import { useTransition } from "react";
+import { useTransition, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import {
@@ -195,6 +195,7 @@ export function FilaDeEspera({
   podeAbrirConversa,
   dicaAbrirConversa,
   aoMudar,
+  acoes,
 }: {
   entradas: EntradaDaEspera[];
   timezone: string;
@@ -205,6 +206,8 @@ export function FilaDeEspera({
   /** A dica do "Abrir conversa" desabilitado ("" quando pode). */
   dicaAbrirConversa: string;
   aoMudar: () => Promise<unknown> | void;
+  /** Botoes da tela (configurar e adicionar), no cabecalho do cartao. */
+  acoes?: ReactNode;
 }) {
   const [pendente, iniciarTransicao] = useTransition();
   const sensores = useSensors(
@@ -261,10 +264,15 @@ export function FilaDeEspera({
         <CardTitle>
           <h2>Fila de espera</h2>
         </CardTitle>
-        {grupos.length > 0 ? (
-          <CardAction className="text-[12.5px] text-text-secondary">
-            <span className="cz-num">{total}</span>{" "}
-            {total === 1 ? "pessoa" : "pessoas"}
+        {grupos.length > 0 || acoes ? (
+          <CardAction className="flex-wrap justify-end gap-2 text-[12.5px] text-text-secondary">
+            {grupos.length > 0 ? (
+              <span className="mr-1">
+                <span className="cz-num">{total}</span>{" "}
+                {total === 1 ? "pessoa" : "pessoas"}
+              </span>
+            ) : null}
+            {acoes}
           </CardAction>
         ) : null}
       </CardHeader>

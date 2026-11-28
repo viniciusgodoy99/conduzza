@@ -55,7 +55,7 @@ import { VisaoDoProfissional } from "../relatorios/visao-do-profissional";
 // de Proximas acoes, que ja foram buscadas.
 
 const CONTEINER =
-  "grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-4 md:p-6";
+  "grid w-full grid-cols-[minmax(0,1fr)] content-start gap-4 p-4 md:p-6";
 
 function Resumo({ trechos }: { trechos: TrechoDoResumo[] }) {
   return trechos.map((trecho, indice) =>

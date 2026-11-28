@@ -12,7 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function CarregandoAutomacoes() {
   return (
     <div
-      className="grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
+      className="grid w-full grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
       aria-hidden
     >
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">

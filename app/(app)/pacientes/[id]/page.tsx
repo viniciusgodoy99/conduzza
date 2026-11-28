@@ -170,7 +170,7 @@ export default async function FichaPacientePage({
   const t = createT(active.labels);
 
   return (
-    <div className="flex w-full max-w-content flex-col gap-4 p-6">
+    <div className="flex w-full flex-col gap-4 p-6">
       <Button variant="ghost" className="-ml-2.5 w-fit" asChild>
         <Link href="/pacientes">
           <ArrowLeft aria-hidden />

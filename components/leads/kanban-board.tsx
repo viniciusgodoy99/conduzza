@@ -26,7 +26,6 @@ import { nomesDasReguas, reguasPorEtapa } from "@/components/leads/mudar-etapa";
 import { Button } from "@/components/ui/button";
 import {
   agruparPorJornada,
-  algumaEtapaComDescricao,
   type EtapaDaJornada,
 } from "@/lib/domain/jornada";
 import { compararPorProximaAcao } from "@/lib/domain/leads-ui";
@@ -41,10 +40,6 @@ import { cn } from "@/lib/utils";
 // persiste nada: o modal de motivo decide, e cancelar devolve o cartao,
 // porque nada foi gravado. A coluna cuja etapa tem regua de follow-up ligada
 // diz isso no cabecalho: soltar ali faz o lead autorizado receber a regua.
-//
-// Quando alguma etapa tem descricao (02/10/2026), todas as colunas reservam
-// a altura das 2 linhas dela: o grid e items-start, e sem a reserva os
-// cartoes da coluna com descricao comecariam mais abaixo que os das outras.
 //
 // O id do DndContext vem do useId: sem ele o dnd-kit numera o
 // aria-describedby dos cartoes por um contador global, que diverge entre o
@@ -170,7 +165,6 @@ export function KanbanBoard({
       nomesDasReguas(daEtapa),
     ]),
   );
-  const reservarDescricao = algumaEtapaComDescricao(jornada);
 
   return (
     <DndContext id={dndId} sensors={sensores} onDragEnd={aoSoltar}>
@@ -203,7 +197,6 @@ export function KanbanBoard({
               leads={grupos.get(etapa.chave) ?? []}
               membros={membros}
               reguaNome={reguaPorEtapa.get(etapa.chave) ?? null}
-              reservarDescricao={reservarDescricao}
               podeEditar={podeEditar}
               onAbrirLead={onAbrirLead}
             />

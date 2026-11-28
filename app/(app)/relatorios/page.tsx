@@ -51,7 +51,7 @@ const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
 // Casca do design system (docs/06 secao 5.9). A tela inteira some na
 // impressao: o que imprime e o layout proprio da exportacao.
 const CONTEINER =
-  "grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6 print:hidden";
+  "grid w-full grid-cols-[minmax(0,1fr)] content-start gap-4 p-6 print:hidden";
 
 /**
  * A clinica tem algum numero no canal OFICIAL da Meta. Hoje so o provedor

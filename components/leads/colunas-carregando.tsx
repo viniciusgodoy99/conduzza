@@ -4,23 +4,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 // cartoes claros). Usada pelo loading.tsx da rota e pelo leads-client, com
 // uma coluna por etapa da jornada.
 //
-// comDescricao acompanha a reserva do Kanban (02/10/2026): quando alguma
-// etapa tem descricao, as colunas reais tem as 2 linhas dela abaixo do
-// cabecalho, e o esqueleto reserva o mesmo espaco para os cartoes nao
-// pularem quando a lista chega. Quem sabe a jornada passa
-// algumaEtapaComDescricao(jornada).
-//
 // A faixa das setas (20/10/2026) tambem e reservada, com a mesma altura e o
 // mesmo vao da FaixaDeRolagem do kanban-board: antes de medir, o Kanban
 // mostra a faixa (LIMITES_ANTES_DE_MEDIR), entao o quadro nao desce quando a
 // lista chega.
-export function ColunasCarregando({
-  colunas,
-  comDescricao = false,
-}: {
-  colunas: number;
-  comDescricao?: boolean;
-}) {
+export function ColunasCarregando({ colunas }: { colunas: number }) {
   return (
     <div aria-hidden className="flex flex-col gap-1">
       <div className="flex items-center gap-2 pt-2 pb-1">
@@ -41,12 +29,6 @@ export function ColunasCarregando({
                 <Skeleton className="size-3.5 rounded-sm bg-card" />
                 <Skeleton className="h-3 w-2/5 bg-card" />
               </div>
-              {comDescricao ? (
-                <div className="grid h-8 content-center gap-1.5 px-1">
-                  <Skeleton className="h-2.5 w-11/12 bg-card" />
-                  <Skeleton className="h-2.5 w-3/5 bg-card" />
-                </div>
-              ) : null}
             </div>
             {Array.from({ length: 3 }).map((_, cartao) => (
               <div

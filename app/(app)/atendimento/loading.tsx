@@ -49,7 +49,7 @@ export default function CarregandoAtendimento() {
             <Skeleton className="h-3 w-24" />
           </div>
         </div>
-        <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col justify-end gap-2 p-4">
+        <div className="flex w-full flex-1 flex-col justify-end gap-2 p-4">
           <Skeleton className="h-12 w-3/5 rounded-bubble rounded-bl-[6px]" />
           <Skeleton className="h-9 w-2/5 self-end rounded-bubble rounded-br-[6px]" />
           <Skeleton className="h-16 w-1/2 rounded-bubble rounded-bl-[6px]" />

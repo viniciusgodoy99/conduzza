@@ -7,7 +7,6 @@ import {
   OPCOES_TERMOS_DE_QUEM,
   TERMOS_DE_QUEM,
   ajudaDosTermos,
-  algumaEtapaComDescricao,
   normalizarDescricaoDaEtapa,
   resumoDosTermos,
   traduzirRecusaDaJornada,
@@ -93,24 +92,6 @@ describe("normalizarDescricaoDaEtapa", () => {
     const longo = "a".repeat(LIMITE_DA_DESCRICAO + 5);
     expect(normalizarDescricaoDaEtapa(longo)).toBe(longo);
     expect(LIMITE_DA_DESCRICAO).toBe(140);
-  });
-});
-
-describe("algumaEtapaComDescricao", () => {
-  it("só reserva a altura quando alguma etapa tem descrição de verdade", () => {
-    expect(algumaEtapaComDescricao([])).toBe(false);
-    expect(
-      algumaEtapaComDescricao([{ descricao: null }, { descricao: null }]),
-    ).toBe(false);
-    expect(
-      algumaEtapaComDescricao([{ descricao: null }, { descricao: "" }]),
-    ).toBe(false);
-    expect(
-      algumaEtapaComDescricao([
-        { descricao: null },
-        { descricao: "Pediu o valor" },
-      ]),
-    ).toBe(true);
   });
 });
 

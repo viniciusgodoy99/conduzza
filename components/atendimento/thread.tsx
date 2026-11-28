@@ -279,7 +279,7 @@ function EsqueletoDoFio() {
     { paciente: true, classe: "h-10 w-[30%]" },
   ];
   return (
-    <div role="status" className="mx-auto flex max-w-3xl flex-col gap-3">
+    <div role="status" className="flex flex-col gap-3">
       <span className="sr-only">Carregando as mensagens</span>
       {bolhas.map((bolha, indice) => (
         <Skeleton
@@ -610,7 +610,7 @@ export function Thread({
         {isLoading ? (
           <EsqueletoDoFio />
         ) : (
-          <div className="mx-auto flex max-w-3xl flex-col gap-2">
+          <div className="flex flex-col gap-2">
             {erroAoCarregar ? (
               <Aviso
                 tom="alert"

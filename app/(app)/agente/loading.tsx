@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function CarregandoAgente() {
   return (
     <div
-      className="grid w-full max-w-content grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
+      className="grid w-full grid-cols-[minmax(0,1fr)] content-start gap-4 p-6"
       aria-hidden
     >
       <div className="grid gap-3 rounded-card border border-border bg-card p-6">

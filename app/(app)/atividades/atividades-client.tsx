@@ -339,13 +339,13 @@ export function AtividadesClient({
   const vazioDoFiltro = VAZIO_DA_SITUACAO[filtros.situacao];
 
   return (
-    <div className="flex w-full max-w-content flex-col gap-4 p-4 md:p-6">
-      <PageHeader tituloNaBarra title="Atividades" description={descricao}>
-        {botaoNova}
-      </PageHeader>
+    <div className="flex w-full flex-col gap-4 p-4 md:p-6">
+      <PageHeader tituloNaBarra title="Atividades" />
       <AvisoCelular />
 
-      <div className="flex flex-wrap items-end gap-3">
+      {/* Filtros, resumo e o botao numa linha so (28/11/2026, pedido do dono:
+          a linha so do botao sobrava). Em tela estreita a linha quebra. */}
+      <div className="flex flex-wrap items-center gap-3">
         <SegmentedControl
           ariaLabel="De quem"
           options={QUEM}
@@ -438,6 +438,12 @@ export function AtividadesClient({
             Limpar filtros
           </Button>
         ) : null}
+        <div className="ml-auto flex flex-wrap items-center gap-3">
+          {descricao ? (
+            <p className="text-[13px] text-text-secondary">{descricao}</p>
+          ) : null}
+          {botaoNova}
+        </div>
       </div>
 
       {listaQuery.data?.cortada ? (
